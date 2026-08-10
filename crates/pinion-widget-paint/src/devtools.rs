@@ -757,7 +757,21 @@ impl ExternalIntrospect for ClickRouter {
             const {
                 &[
                     SchemaField::new(CLICK_ROUTER_LAST_CLICKED_SLOT, "string"),
-                    SchemaField::new(CLICK_ROUTER_INVOKE_PATH, "string"),
+                    // R1643 — an ACTION, which is what it has always been.
+                    //
+                    // Declared with `new` since R683.C, so `$schema` said "query
+                    // me" about the one name only `invoke` answers — and `query`
+                    // returns `None` for it, so the declaration was wrong in
+                    // both directions at once. Invisible until R1637 made the
+                    // declaration a precondition of dispatch, at which point
+                    // three demos began refusing with `PathIsAReadSlot`
+                    // (`r679`, `r680`, `r683`) — and stayed red, because the
+                    // catalog walk that would have caught it reaches
+                    // `pinion-core` only and nothing in this crate's devtools
+                    // module had a test at all
+                    // ([[debt-the-declaration-walk-reaches-one-crate]], closed
+                    // by widening that walk to this crate in the same round).
+                    SchemaField::action(CLICK_ROUTER_INVOKE_PATH, "string"),
                 ]
             },
         )

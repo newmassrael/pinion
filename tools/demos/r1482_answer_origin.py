@@ -44,6 +44,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
+    declared_read_paths,
     assert_disclosed,
     assert_eq,
     assert_rpc_error,
@@ -186,8 +187,11 @@ def body() -> None:
         # this drift into testing less than the whole surface.
         checked = 0
         for base, expected in ((MODEL, "state"), (SIM, "paint_driver"), (PROBE, "paint_frame")):
-            declared = [f["path"] for f in tf.query(f"{base}/$schema")]
-            assert declared, f"I: {base} declares at least one slot"
+            # R1643 — the READ channel only; an origin is a property of an
+            # ANSWER, and a declared action does not answer `query` (see
+            # `declared_read_paths`).
+            declared = declared_read_paths(tf.query(f"{base}/$schema"))
+            assert declared, f"I: {base} declares at least one readable slot"
             for slot in declared:
                 assert_eq(
                     origin_of(tf, f"{base}/{slot}"),

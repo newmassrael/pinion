@@ -823,7 +823,8 @@ pub enum CompositionEvent {
 /// `widgets::button` so a rename on either side is caught at test time.
 /// The keyboard-side `"KeyboardActivate"` token is a separate wire
 /// vocabulary (not a pointer event) and is left to its callers.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, pinion_derive::VariantCensus)]
+#[variant_census(all)]
 pub enum PointerWireEvent {
     /// `"PointerEnter"` — cursor entered the target (hover begins).
     Enter,
@@ -839,6 +840,53 @@ pub enum PointerWireEvent {
 }
 
 impl PointerWireEvent {
+    /// Every pointer wire event, for a consumer that must cover the vocabulary.
+    pub const ALL: [Self; Self::ARMS] =
+        [Self::Enter, Self::Down, Self::Up, Self::Leave, Self::Cancel];
+
+    /// R1643 — the closed vocabulary an argument's `ArgDomain::OneOf` points at,
+    /// projected from [`ALL`](Self::ALL) through
+    /// [`as_wire_name`](Self::as_wire_name) rather than written out, so the
+    /// published set and the set [`from_wire_name`](Self::from_wire_name) admits
+    /// cannot disagree — and `ALL`'s length is the `VariantCensus` arm count, so
+    /// a sixth event is a build failure here instead of a vocabulary quietly one
+    /// short on the wire. R1630's ratchet; see
+    /// `ArrangePass::WIRE_NAMES` for the same shape.
+    ///
+    /// It exists because `SplitterExternal`'s `send` accepts exactly these five
+    /// and had no way to say so: the surface declared the name on the READ
+    /// channel and published no vocabulary at all, which the widened catalog
+    /// walk found on its first run (R1643).
+    pub const WIRE_NAMES: [&'static str; Self::ARMS] = {
+        let mut out = [""; Self::ARMS];
+        let mut i = 0;
+        while i < Self::ARMS {
+            out[i] = Self::ALL[i].as_wire_name_const();
+            i += 1;
+        }
+        out
+    };
+
+    /// The `const` half of [`as_wire_name`](Self::as_wire_name), which
+    /// [`WIRE_NAMES`](Self::WIRE_NAMES) is folded out of.
+    ///
+    /// Two spellings of one match because a `const` cannot call a non-`const`
+    /// method and `as_wire_name` is public API with callers that do not need
+    /// const-ness; `r1643_the_pointer_vocabulary_has_one_spelling` holds the two
+    /// to each other over every arm, so the duplication cannot drift. The same
+    /// shape R1639 recorded for `WidgetEventName`, where a derive macro emits
+    /// the arms twice for the same reason.
+    #[must_use]
+    pub const fn as_wire_name_const(self) -> &'static str {
+        match self {
+            Self::Enter => "PointerEnter",
+            Self::Down => "PointerDown",
+            Self::Up => "PointerUp",
+            Self::Leave => "PointerLeave",
+            Self::Cancel => "PointerCancel",
+        }
+    }
+
     /// Encode `self` into its canonical W3C wire name — the single
     /// source the router emits. Inverse of [`from_wire_name`](Self::from_wire_name).
     #[must_use]
@@ -2140,13 +2188,12 @@ mod r56_2_a_composition_event_tests {
         }
     }
 
-    const ALL_POINTER_WIRE_EVENTS: [PointerWireEvent; 5] = [
-        PointerWireEvent::Enter,
-        PointerWireEvent::Down,
-        PointerWireEvent::Up,
-        PointerWireEvent::Leave,
-        PointerWireEvent::Cancel,
-    ];
+    // R1643 — the crate's own `ALL`, which is held to the variant count by
+    // `#[variant_census(all)]`. This was a fourth hand-written copy of the arm
+    // list, in a test, so a sixth event would have left it silently short in the
+    // one place that checks the round trip.
+    use super::PointerWireEvent as PWE;
+    const ALL_POINTER_WIRE_EVENTS: [PointerWireEvent; PWE::ARMS] = PWE::ALL;
 
     #[test]
     fn r773_pointer_wire_event_encode_decode_round_trips() {
@@ -2156,6 +2203,55 @@ mod r56_2_a_composition_event_tests {
         for e in ALL_POINTER_WIRE_EVENTS {
             assert_eq!(PointerWireEvent::from_wire_name(e.as_wire_name()), Some(e));
         }
+    }
+
+    /// R1643 — the two spellings of the wire name agree on every arm.
+    ///
+    /// `WIRE_NAMES` is a `const` folded out of `as_wire_name_const`, and
+    /// `as_wire_name` is the public non-const accessor its callers use. A `const`
+    /// cannot call a non-`const` method, so the match exists twice — the shape
+    /// R1639 recorded for the `WidgetEventName` derive, where a macro emits the
+    /// arms twice for the same reason. A generator's duplication is invisible to
+    /// its author; a hand-written one is not, so it is pinned here.
+    /// # The cardinality check alone is not enough, and a counterfactual said so
+    ///
+    /// `#[variant_census(all)]` holds `ALL`'s LENGTH to the arm count, which
+    /// catches a list that is short. It cannot catch a list that is the right
+    /// length with an arm written twice — and that is not a hypothetical: a
+    /// counterfactual replacing `Cancel` with a second `Leave` left this test,
+    /// the round trip, and the whole workspace suite green while
+    /// `WIRE_NAMES` published `PointerLeave` twice and `PointerCancel` not at
+    /// all. R1630 recorded the argument that closes it (total + surjective +
+    /// equal cardinality implies injective) and this test had only the third
+    /// term, so the set below supplies the second.
+    #[test]
+    fn r1643_the_pointer_vocabulary_has_one_spelling() {
+        assert_eq!(PWE::WIRE_NAMES.len(), PWE::ALL.len());
+        let distinct: std::collections::BTreeSet<&str> = PWE::WIRE_NAMES.into_iter().collect();
+        assert_eq!(
+            distinct.len(),
+            PWE::ARMS,
+            "every arm must publish its OWN name: {:?}",
+            PWE::WIRE_NAMES,
+        );
+        for (i, event) in PWE::ALL.into_iter().enumerate() {
+            assert_eq!(
+                event.as_wire_name(),
+                event.as_wire_name_const(),
+                "{event:?} is spelled twice and they must agree",
+            );
+            assert_eq!(
+                PWE::WIRE_NAMES[i],
+                event.as_wire_name(),
+                "the published list IS the names, in declaration order",
+            );
+            assert_eq!(
+                PWE::from_wire_name(PWE::WIRE_NAMES[i]),
+                Some(event),
+                "every published name is one the parser admits",
+            );
+        }
+        assert_eq!(PWE::from_wire_name("PointerHover"), None, "and only those");
     }
 
     #[test]

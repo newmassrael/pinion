@@ -314,6 +314,72 @@ fn catalog() -> Vec<(&'static str, Box<dyn pinion_core::external::External>)> {
     ]
 }
 
+/// R1643 — every `ExternalIntrospect` surface in `pinion-widget-paint`, the
+/// crate the walk did not reach.
+///
+/// A second catalog rather than entries in the first, because the two crates'
+/// completeness is checked against two directories and one list would have to
+/// carry which entry came from where. The channel checks walk both.
+///
+/// # What this crate's absence cost, measured
+///
+/// R1640 widened the walk from 19 of 39 `pinion-core` widgets to all 39 and the
+/// debt it registered named this crate next: `dock` had a test (R1637's, which
+/// found three mis-declarations on its first run) and `splitter`, `tree_view`
+/// and `devtools` had **no check of any kind**. `ClickRouter::click` had been
+/// declared with `SchemaField::new` since R683.C — a READ, for the one name only
+/// `invoke` answers, and `query` returns `None` for it, so the declaration was
+/// wrong in both directions at once. R1637 made the declaration a precondition
+/// of dispatch, at which point three demos began refusing with
+/// `PathIsAReadSlot` — and stayed red in CI for six rounds, because the demo
+/// sweep is CI's and no local gate could see this crate.
+///
+/// That is the argument for the widening rather than for a fourth per-module
+/// test: what failed was not any one module's coverage, it was that the
+/// denominator stopped at a directory boundary nothing had stated.
+fn paint_catalog() -> Vec<(&'static str, Box<dyn pinion_core::external::External>)> {
+    use pinion_core::reactive::Signal;
+    use pinion_widget_paint::devtools::ClickRouter;
+    use pinion_widget_paint::dock::{DockReorganizeExternal, DockReorganizer, TabWellExternal};
+    use pinion_widget_paint::splitter::{SplitterExternal, SplitterOrientation};
+    use pinion_widget_paint::tree_view::TreeRowClickExternal;
+    use std::rc::Rc;
+
+    let reorganizer = Rc::new(DockReorganizer::new(Rc::new(Signal::new(None))));
+    vec![
+        ("ClickRouter", ext_scene(ClickRouter::new())),
+        (
+            "SplitterExternal",
+            ext_scene(SplitterExternal::new(SplitterOrientation::Horizontal)),
+        ),
+        (
+            "TreeRowClickExternal",
+            ext_scene(TreeRowClickExternal::new()),
+        ),
+        (
+            "DockReorganizeExternal",
+            ext_scene(DockReorganizeExternal::from_reorganizer(Rc::clone(
+                &reorganizer,
+            ))),
+        ),
+        (
+            "TabWellExternal",
+            ext_scene(TabWellExternal::new("well", reorganizer)),
+        ),
+        ("DockPanelExternal", ext_scene(DockPanelExternal::new("a"))),
+    ]
+}
+
+/// Both catalogs, which is the population every channel check walks.
+///
+/// One function so a check cannot cover one crate and report a pass — the
+/// R1640 finding, applied to the boundary R1640 itself stopped at.
+fn every_catalog() -> Vec<(&'static str, Box<dyn pinion_core::external::External>)> {
+    let mut all = paint_catalog();
+    all.extend(catalog());
+    all
+}
+
 #[test]
 fn r1637_a_declared_read_is_not_a_name_the_surface_dispatches() {
     /// How a surface answered — the variant alone, because the CONTROL below
@@ -330,7 +396,7 @@ fn r1637_a_declared_read_is_not_a_name_the_surface_dispatches() {
 
     let mut wrong: Vec<String> = Vec::new();
     let mut checked = 0_usize;
-    for (label, handle) in catalog() {
+    for (label, handle) in every_catalog() {
         let mut handle = handle;
         let intro = handle
             .introspect_mut()
@@ -400,9 +466,10 @@ fn r1638_optional_arguments_are_a_suffix() {
 
     let mut checked = 0_usize;
     let mut wrong: Vec<String> = Vec::new();
-    let mut surfaces: Vec<(&str, Box<dyn pinion_core::external::External>)> =
-        vec![("dock_panel", Box::new(DockPanelExternal::new("a")))];
-    surfaces.extend(catalog());
+    // R1643 — both crates. `DockPanelExternal` used to be prepended here by
+    // hand because the catalog reached `pinion-core` only; it is now an entry in
+    // `paint_catalog` beside the five surfaces that had no check at all.
+    let surfaces = every_catalog();
     for (label, handle) in surfaces {
         let intro = handle.introspect().expect("opts into introspection");
         for field in intro.schema().fields {
@@ -441,9 +508,10 @@ fn r1642_conditional_declarations_can_be_followed() {
     let mut checked = 0_usize;
     let mut inhabitants: Vec<String> = Vec::new();
     let mut wrong: Vec<String> = Vec::new();
-    let mut surfaces: Vec<(&str, Box<dyn pinion_core::external::External>)> =
-        vec![("dock_panel", Box::new(DockPanelExternal::new("a")))];
-    surfaces.extend(catalog());
+    // R1643 — both crates. `DockPanelExternal` used to be prepended here by
+    // hand because the catalog reached `pinion-core` only; it is now an entry in
+    // `paint_catalog` beside the five surfaces that had no check at all.
+    let surfaces = every_catalog();
     for (label, handle) in surfaces {
         let intro = handle.introspect().expect("opts into introspection");
         for field in intro.schema().fields {
@@ -488,7 +556,7 @@ fn r1639_no_catalog_send_is_left_undeclared() {
 
     let mut silent: Vec<String> = Vec::new();
     let mut seen = 0_usize;
-    for (label, handle) in catalog() {
+    for (label, handle) in every_catalog() {
         let intro = handle.introspect().expect("opts into introspection");
         for field in intro.schema().fields.iter().filter(|f| f.path == "send") {
             seen += 1;
@@ -548,42 +616,74 @@ fn r1640_the_catalog_is_every_widget_external() {
     /// rather than being silently dropped from the list.
     const NOT_A_WIDGET_SURFACE: &[(&str, &str)] = &[];
 
-    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../pinion-core/src/widgets");
+    // R1643 — TWO areas, because the walk now covers two crates and a gate that
+    // scanned one while the catalogs held both would report a pass over a
+    // denominator nobody stated. That is R1640's own finding applied to the
+    // boundary R1640 stopped at: it widened the walk to every widget in
+    // `pinion-core` and left `pinion-widget-paint` unscanned, so
+    // `ClickRouter`'s `click` — declared a READ since R683.C and dispatched by
+    // `invoke` — survived six rounds of red CI with every local gate green.
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
+    let areas: [(&str, std::path::PathBuf, BTreeSet<&str>); 2] = [
+        (
+            "pinion-core::widgets",
+            root.join("../pinion-core/src/widgets"),
+            catalog().into_iter().map(|(name, _)| name).collect(),
+        ),
+        (
+            "pinion-widget-paint",
+            root.join("../pinion-widget-paint/src"),
+            paint_catalog().into_iter().map(|(name, _)| name).collect(),
+        ),
+    ];
+
     let mut found: BTreeSet<String> = BTreeSet::new();
+    let mut unaccounted: Vec<String> = Vec::new();
     let mut files = 0_usize;
-    for entry in std::fs::read_dir(&dir).expect("the widget directory is readable") {
-        let path = entry.expect("a readable entry").path();
-        if path.extension().is_none_or(|e| e != "rs") {
-            continue;
-        }
-        files += 1;
-        let src = std::fs::read_to_string(&path).expect("a readable widget module");
-        for line in src.lines() {
-            // Only a top-level impl, which is what an addressable surface is:
-            // an indented one is inside a test module's fixture.
-            if let Some(rest) = line.strip_prefix("impl ExternalIntrospect for ") {
-                found.insert(rest.trim_end_matches(" {").trim().to_owned());
+    for (label, dir, built) in areas {
+        let mut here: BTreeSet<String> = BTreeSet::new();
+        let mut here_files = 0_usize;
+        for entry in std::fs::read_dir(&dir).unwrap_or_else(|e| panic!("{label}: {e}")) {
+            let path = entry.expect("a readable entry").path();
+            if path.extension().is_none_or(|e| e != "rs") {
+                continue;
+            }
+            here_files += 1;
+            let src = std::fs::read_to_string(&path).expect("a readable module");
+            for line in src.lines() {
+                // Only a top-level impl, which is what an addressable surface is:
+                // an indented one is inside a test module's fixture.
+                if let Some(rest) = line.strip_prefix("impl ExternalIntrospect for ") {
+                    here.insert(rest.trim_end_matches(" {").trim().to_owned());
+                }
             }
         }
+        assert!(
+            here_files > 3,
+            "{label}: the scan must see the real directory, saw {here_files}"
+        );
+        assert!(!here.is_empty(), "{label}: and the real impls in it");
+        // Per area, so a fat catalog cannot account for a starved one — the
+        // per-surface reporting R1603 adopted for the reference census, for the
+        // same reason.
+        unaccounted.extend(
+            here.iter()
+                .filter(|n| !built.contains(n.as_str()))
+                .map(|n| format!("{label}::{n}")),
+        );
+        files += here_files;
+        found.extend(here);
     }
     assert!(
-        files > 30,
-        "the scan must see the real directory, saw {files}"
+        files > 35,
+        "both areas were scanned, saw {files} file(s) between them"
     );
     assert!(
-        found.len() > 30,
-        "and the real impls in it, saw {}",
+        found.len() > 40,
+        "and both crates' impls, saw {}",
         found.len()
     );
 
-    // The catalog's labels ARE the type names, so this is an exact set
-    // comparison. An earlier draft matched a snake_case label against the type
-    // by lowercasing and dropping underscores, and four entries that WERE in
-    // the catalog came back unaccounted (`row_dissect` against
-    // `RowDissectionExternal`) — a fuzzy comparison inside a completeness gate
-    // reports the gate's own spelling as a gap, which is the one failure a
-    // completeness gate must not have.
-    let built: BTreeSet<&str> = catalog().into_iter().map(|(name, _)| name).collect();
     // R1640 — an exclusion is the ONLY way a surface leaves this walk, so it is
     // not free: it must name a reason, and the reason must be about that
     // surface rather than a placeholder. A counterfactual that added a
@@ -602,13 +702,24 @@ fn r1640_the_catalog_is_every_widget_external() {
     }
     let excused: BTreeSet<&str> = NOT_A_WIDGET_SURFACE.iter().map(|(n, _)| *n).collect();
 
-    let unaccounted: Vec<&String> = found
+    // The area loop already compared each source name against that area's own
+    // catalog, by exact set difference — the catalogs' labels ARE the type
+    // names, so no normalisation is involved. (An earlier draft matched a
+    // snake_case label against the type by lowercasing and dropping
+    // underscores, and four entries that WERE in the catalog came back
+    // unaccounted: a fuzzy comparison inside a completeness gate reports the
+    // gate's own spelling as a gap, which is the one failure a completeness
+    // gate must not have.) Only the stated exclusions are subtracted here.
+    let unaccounted: Vec<&String> = unaccounted
         .iter()
-        .filter(|name| !built.contains(name.as_str()) && !excused.contains(name.as_str()))
+        .filter(|entry| {
+            let name = entry.rsplit("::").next().unwrap_or(entry);
+            !excused.contains(name)
+        })
         .collect();
     assert!(
         unaccounted.is_empty(),
-        "these widget surfaces are in the source and in neither the catalog nor \
-         the stated exclusions: {unaccounted:?}",
+        "these surfaces are in the source and in neither catalog nor the stated \
+         exclusions: {unaccounted:?}",
     );
 }

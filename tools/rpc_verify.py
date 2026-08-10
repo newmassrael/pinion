@@ -2018,6 +2018,39 @@ def call(tf, method: str, params: Any = None) -> Any:
     return resp.result
 
 
+def declared_read_paths(fields: Any) -> list[str]:
+    """The paths of `fields` a READ walk should visit: declared on the read
+    channel, addressable as spelled.
+
+    R1643 — one definition of the population, because five walkers had their own
+    and the fix reached one of them. R1637 made the declaration a precondition of
+    dispatch, so a walk that queries every declared path now FAILS on the first
+    declared action with `PathIsAnAction`; four demos over
+    `hello-answer-origin` did exactly that and stayed red in CI from R1637,
+    while R1641.6 repaired the fifth copy — a Rust unit test — and its own
+    blast-radius note read the two sibling *unit* walks and not these.
+
+    `assert_declared_channels_are_true` (R1566) already asserted both channels
+    over a whole surface, and nothing routed the copies to it. That is the
+    lesson worth keeping: the abstraction existed for 76 rounds and the
+    duplication was not for want of one, it was for want of a POINTER to it. So
+    this is deliberately the small piece those walks each need — the filter —
+    rather than a second whole-surface assertion they would have to be rewritten
+    around.
+
+    A parametric template is excluded because it addresses nothing (`cell.<row>`
+    is not a path), which is the same reason `scene/snapshot` omits it, and
+    `SchemaField::EMPTY`'s blank path for the same reason.
+    """
+    if isinstance(fields, dict):
+        fields = fields.get("fields", fields)
+    return [
+        f["path"]
+        for f in fields
+        if f.get("path") and "<" not in f["path"] and f.get("channel", "read") == "read"
+    ]
+
+
 def assert_declared_channels_are_true(tf, external: str = "/external") -> dict:
     """Assert every scalar path in `external`'s `$schema` answers on the channel
     it declares. Returns `{"read": n, "invoke": n}`, the counts it checked.

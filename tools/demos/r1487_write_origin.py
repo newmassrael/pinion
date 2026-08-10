@@ -55,6 +55,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rpc_verify import (  # noqa: E402
+    declared_read_paths,
     RpcSubprocess,
     assert_disclosed,
     assert_eq,
@@ -236,8 +237,11 @@ def body():
         # a future surface cannot slip back into denying its own existence.
         checked = 0
         for surface in (MODEL, SIM, PROBE):
-            for field in g.query(f"{surface}/$schema"):
-                path = f"{surface}/{field['path']}"
+            # R1643 — the READ channel only. A declared ACTION is refused by
+            # `query` with `PathIsAnAction` since R1637, so sweeping every
+            # declared path asserts the opposite of what the contract says.
+            for slot in declared_read_paths(g.query(f"{surface}/$schema")):
+                path = f"{surface}/{slot}"
                 # The premise of each sweep step, and it must be the read
                 # that establishes it: `query` raises if it cannot resolve
                 # the address, so reaching the loop body IS the assertion

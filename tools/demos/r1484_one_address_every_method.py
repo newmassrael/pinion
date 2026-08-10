@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
+    declared_read_paths,
     assert_eq,
     assert_rpc_error,
     run_demo,
@@ -146,7 +147,12 @@ def body() -> None:
         # test cover less than the surface it claims to cover.
         schema = tf.query(f"/{NAME}/external/$schema")
         assert isinstance(schema, list) and schema, f"I: schema reads {schema!r}"
-        declared = [f["path"] for f in schema]
+        # R1643 — the READ channel only. A declared ACTION is refused by
+        # `query` with `PathIsAnAction` since R1637 made the declaration a
+        # precondition of dispatch, so a walk over every declared path asserts
+        # something the contract says is false.
+        declared = declared_read_paths(schema)
+        assert declared, f"I: the surface declares a readable slot: {schema!r}"
         for path in declared:
             assert tf.query(f"/{NAME}/external/{path}") is not None, (
                 f"★I: declared slot {path} must answer through the name"

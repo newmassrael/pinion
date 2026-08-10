@@ -76,8 +76,9 @@ use std::collections::VecDeque;
 use std::rc::Rc;
 
 use pinion_core::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership,
 };
 use pinion_core::input::{DragCalibration, PointerWireEvent};
 use pinion_core::intent::Intent;
@@ -987,7 +988,29 @@ impl ExternalIntrospect for SplitterExternal {
                     SchemaField::new("orientation", "string"),
                     SchemaField::new("ratio", "float"),
                     SchemaField::new("dragging", "bool"),
-                    SchemaField::new("send", "string"),
+                    // R1643 — an ACTION, and one that says which events it takes.
+                    //
+                    // Declared with `new` — a READ — while `invoke` is the only
+                    // thing that answers it, so `$schema` said "query me" about
+                    // the surface's one verb. Found by the catalog walk on its
+                    // first run after R1643 widened it to this crate; before
+                    // that, nothing in `splitter` had a declaration check of any
+                    // kind. The vocabulary is the five names `from_wire_name`
+                    // admits, projected from the enum rather than listed here,
+                    // and the surface accepts all five (`Up`, `Cancel`, and
+                    // `Down | Enter | Leave`), so the claim is exact.
+                    SchemaField::action_with(
+                        "send",
+                        "null",
+                        ArgForm::Scalar,
+                        const {
+                            &[SchemaArg::one_of(
+                                "event",
+                                "string",
+                                &PointerWireEvent::WIRE_NAMES,
+                            )]
+                        },
+                    ),
                 ]
             },
         )

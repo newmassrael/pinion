@@ -42,6 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
+    declared_read_paths,
     assert_eq,
     assert_rpc_error,
     run_demo,
@@ -106,8 +107,9 @@ def body() -> None:
 
         # Every declared slot answers through the tag address, walked from the
         # surface's own schema so adding a slot cannot make this test less.
-        declared = [f["path"] for f in by_tag]
-        assert declared, "A: the primary declares at least one slot"
+        # R1643 — the READ channel only; see `declared_read_paths`.
+        declared = declared_read_paths(by_tag)
+        assert declared, "A: the primary declares at least one readable slot"
         for path in declared:
             assert tf.query(f"/{tag}/external/{path}") is not None, (
                 f"★A: declared slot {path} must answer through the tag address"

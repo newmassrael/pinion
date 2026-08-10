@@ -32,8 +32,9 @@ use std::rc::Rc;
 
 use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership,
 };
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
@@ -698,6 +699,87 @@ impl ExternalIntrospect for FlowOracle {
                     SchemaField::new("entered", "string"),
                     SchemaField::new("at_fixed_point", "string"),
                     SchemaField::new("ticks_to_finish", "int"),
+                    // R1643 — the control plane's VERBS, which this surface had
+                    // never declared. All ten were dispatched by `act` and none
+                    // was in `$schema`, so §2 #2's primary path could drive a
+                    // graph it could not discover — the `pinion-audio` shape
+                    // R1637 found, in an example R1637's source census did not
+                    // reach (this binding landed at R1599/R1600, and the census
+                    // was a hand classification of invoke-body string literals).
+                    // Invisible locally because the demo sweep is CI's, and red
+                    // in CI from R1637 until now.
+                    //
+                    // Each says what it takes, from the decoder rather than from
+                    // the name: `Self::pair` reads four numbers off
+                    // `"<n>.<p>,<n>.<p>"`, `set_reading` splits `"<node>,<value>"`
+                    // on a comma, and `Self::number` takes a bare int. The two
+                    // separators differ, which is why the form is per action and
+                    // not one grammar for the surface.
+                    SchemaField::action_with(
+                        "wire",
+                        "string",
+                        ArgForm::Delimited(','),
+                        const {
+                            &[
+                                SchemaArg::open("from", "string"),
+                                SchemaArg::open("to", "string"),
+                            ]
+                        },
+                    ),
+                    SchemaField::action_with(
+                        "unwire",
+                        "string",
+                        ArgForm::Scalar,
+                        const { &[SchemaArg::open("link", "int")] },
+                    ),
+                    SchemaField::action_with(
+                        "set_budget",
+                        "int",
+                        ArgForm::Scalar,
+                        const { &[SchemaArg::open("steps", "int")] },
+                    ),
+                    SchemaField::action_with(
+                        "set_reading",
+                        "int",
+                        ArgForm::Delimited(','),
+                        const {
+                            &[
+                                SchemaArg::index("node", "nodes"),
+                                SchemaArg::open("value", "int"),
+                            ]
+                        },
+                    ),
+                    SchemaField::action_with(
+                        "bypass",
+                        "string",
+                        ArgForm::Scalar,
+                        const { &[SchemaArg::index("node", "nodes")] },
+                    ),
+                    // The four machine verbs share one dispatcher and take four
+                    // DIFFERENT argument shapes, which is why each declares its
+                    // own. Read off the decoders rather than guessed from the
+                    // names — the first draft of this list had `settle` nullary
+                    // and `rewind` taking a count, and both were backwards.
+                    SchemaField::action_with("tick", "string", ArgForm::Nullary, &[]),
+                    SchemaField::action_with(
+                        "settle",
+                        "string",
+                        ArgForm::Scalar,
+                        const { &[SchemaArg::open("budget", "int")] },
+                    ),
+                    SchemaField::action_with(
+                        "force",
+                        "string",
+                        ArgForm::Delimited(','),
+                        const {
+                            &[
+                                SchemaArg::index("node", "nodes"),
+                                SchemaArg::open("value", "int"),
+                            ]
+                        },
+                    ),
+                    SchemaField::action_with("rewind", "string", ArgForm::Nullary, &[]),
+                    SchemaField::action_with("reset", "string", ArgForm::Nullary, &[]),
                 ]
             },
         )
