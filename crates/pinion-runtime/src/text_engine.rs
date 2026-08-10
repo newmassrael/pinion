@@ -245,6 +245,26 @@ pub fn self_hosted_text_eligible(
         // two CSS keywords cannot move a line by themselves, so a zero-amount
         // indent carrying `hanging` is nothing to reproduce and stays eligible.
         && style.text_indent.is_none()
+        // R1641.7 §5.36 — declared TRACKING declines to this arm, for exactly
+        // the reason the background and the indent above it do. This arm shapes
+        // through its own pen and never applies a letter- or word-spacing
+        // value, so serving such a leaf would paint text at the font's natural
+        // advances while the scene declares it tracked — the silent divergence
+        // this predicate exists to make impossible.
+        //
+        // It had no clause here from R47.5 until R1641.7, and an audit found it
+        // rather than a test: the arm reports a box and paints glyphs, and both
+        // halves ignore the same field, so measure and paint agree with EACH
+        // OTHER while both disagree with the scene. Two arms consistent with one
+        // another is what made it invisible.
+        //
+        // Keyed on the RESOLVED amount rather than on the variant: `PxX100(0)`
+        // and `EmX1000(0)` are callers who asked for no tracking and get
+        // exactly that, so declining them would cost an eligible leaf and
+        // reproduce nothing. The first draft matched on `Normal` and its own
+        // test caught the disagreement between that and this paragraph.
+        && style.letter_spacing.resolved_px_x100(style.font_size_px) == 0
+        && style.word_spacing.resolved_px_x100(style.font_size_px) == 0
 }
 
 /// R1070.1 §5.37 — the vertical metrics of one `Normal` line box for `font` at
@@ -1090,6 +1110,79 @@ mod tests {
     /// which measured as served and would have painted Regular.
     ///
     /// Asserted on both arms, because eligibility is their shared SSOT.
+    /// R1641.7 §5.36 §5.37 — declared TRACKING is not this arm's to paint.
+    ///
+    /// The eligibility predicate exists so a leaf whose declared style this arm
+    /// cannot reproduce renders through the platform shaper instead of being
+    /// painted wrong. Background (R1546) and text-indent (R1551) each got a
+    /// clause and a test; letter spacing had neither from R47.5 until an audit
+    /// went looking, and word spacing arrived at R1641.3 with the same hole.
+    ///
+    /// It hid because BOTH arms ignore the field: the measure reports a box at
+    /// the natural advances and the paint draws at the natural advances, so
+    /// they register perfectly with each other while both contradict the scene.
+    /// The "measure and paint agree" contract this module is built around was
+    /// satisfied and the text was still wrong.
+    ///
+    /// Asserted on both arms, because eligibility is their shared SSOT.
+    #[test]
+    fn r1641_7_declared_tracking_is_not_this_arms_to_paint() {
+        use crate::layout::TextMeasure;
+        use pinion_core::style::TextSpacing;
+        let engine = noto_engine();
+        let base = TextStyle::new().with_size_px(20);
+        assert!(
+            self_hosted_text_eligible("Tracked", &base, &[], false),
+            "the plain leaf must be eligible, or this test proves nothing",
+        );
+
+        for (label, styled) in [
+            (
+                "letter px",
+                base.clone().with_letter_spacing(TextSpacing::PxX100(-150)),
+            ),
+            (
+                "letter em",
+                base.clone().with_letter_spacing(TextSpacing::EmX1000(-20)),
+            ),
+            (
+                "word px",
+                base.clone().with_word_spacing(TextSpacing::PxX100(200)),
+            ),
+            (
+                "word em",
+                base.clone().with_word_spacing(TextSpacing::EmX1000(120)),
+            ),
+        ] {
+            assert!(
+                !self_hosted_text_eligible("Tracked", &styled, &[], false),
+                "{label} must not be eligible: this arm never applies it",
+            );
+            assert!(
+                !engine.serves("Tracked", &styled, &[], false),
+                "{label} must not be served by the paint arm",
+            );
+            assert!(
+                engine
+                    .measure_text("Tracked", &styled, &[], None, false)
+                    .is_none(),
+                "{label} must defer on the measure arm too — one SSOT",
+            );
+        }
+
+        // A caller who explicitly asked for NO tracking gets the arm, because
+        // declining that would cost an eligible leaf and reproduce nothing.
+        assert!(
+            self_hosted_text_eligible(
+                "Tracked",
+                &base.clone().with_letter_spacing(TextSpacing::PxX100(0)),
+                &[],
+                false,
+            ),
+            "an explicit zero is the same rendering as Normal",
+        );
+    }
+
     #[test]
     fn r1510_a_face_this_arm_does_not_hold_is_not_this_arms_to_paint() {
         use crate::layout::TextMeasure;

@@ -34090,6 +34090,44 @@
         "carry 0: the class is closed here. What this leaves is a note about ordering rather than a debt -- R1637 changed what a declaration MEANS, and the assertion that encoded the old meaning lived in an example whose tests the local gate does not run for a pinion-core change. The gap between \"the crate's own tests pass\" and \"the examples still hold\" is the one this red travelled through, and it is already registered as the demo-sweep process gap"
       ]
     },
+    "R1641.7": {
+      "decision_summary": "declared tracking is not the self-hosted arm's to paint. Found by an audit rather than a test, and the reason it was invisible is the finding: `self_hosted_text_eligible` is an SSOT that DECLINES any leaf whose declared style the arm cannot reproduce -- a background declines (R1546), a text-indent declines (R1551), each with a clause and a comment saying that serving it would paint something the scene does not declare. Letter spacing had no clause from R47.5, and word spacing arrived at R1641.3 with the same hole, so a leaf declaring tracking was measured and painted at the font's NATURAL advances while the scene said otherwise. IT HID BECAUSE BOTH ARMS IGNORE THE SAME FIELD: the measure reports a box at the natural advances and the paint draws at the natural advances, so they register exactly with each other -- the \"measure and paint cannot drift\" contract this module is built around was satisfied the whole time, and the text was still wrong. Two arms consistent with one another is not the same as either being right, and only a third reference (the scene's own declaration) can tell them apart. THE TEST CAUGHT ITS AUTHOR on the first run: the clause was drafted as `matches!(spacing, Normal)` while the comment beside it argued that an explicitly-zero tracking should stay eligible because it renders identically, and the assertion written from the comment failed against the code. The comment's argument was the right one, so the clause now keys on the RESOLVED amount -- `PxX100(0)` and `EmX1000(0)` are callers who asked for no tracking and get exactly that. THE BLAST RADIUS OF THE CLASS WAS CHECKED, not assumed: the TUI ignores tracking too and cannot do otherwise (a cell grid has no sub-cell advance), but unlike this arm it has nowhere to decline TO, so it is registered as its own question -- what a backend does with a declaration it cannot honour -- rather than folded in here.",
+      "changes_bullets": [
+        "pinion-runtime/text_engine.rs: declared letter or word spacing declines to the platform shaper",
+        "the clause keys on the RESOLVED amount, so an explicit zero stays eligible",
+        "a decline test on both arms, matching the background and indent precedents"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-runtime --features vello: all pass, including the new both-arms decline test",
+        "cargo test -p pinion-core -p pinion-text -p pinion-rpc -p pinion-shell: all pass",
+        "the audit that found it: grep for the field name across both arms returned zero lines in either"
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.37"
+      ],
+      "carry_forward_bullets": [
+        "two audit findings registered rather than fixed: a baseline row that never settles within the pass budget is silent in release (and whether non-convergence is even reachable is unverified), and the TUI drops declared tracking with no way to decline -- which is the general question of what a backend does with a declaration it cannot honour, not a tracking question"
+      ],
+      "publishable_decision_summary": "declared tracking is not the self-hosted arm's to paint. Found by an audit rather than a test, and the reason it was invisible is the finding: `self_hosted_text_eligible` is an SSOT that DECLINES any leaf whose declared style the arm cannot reproduce -- a background declines (R1546), a text-indent declines (R1551), each with a clause and a comment saying that serving it would paint something the scene does not declare. Letter spacing had no clause from R47.5, and word spacing arrived at R1641.3 with the same hole, so a leaf declaring tracking was measured and painted at the font's NATURAL advances while the scene said otherwise. IT HID BECAUSE BOTH ARMS IGNORE THE SAME FIELD: the measure reports a box at the natural advances and the paint draws at the natural advances, so they register exactly with each other -- the \"measure and paint cannot drift\" contract this module is built around was satisfied the whole time, and the text was still wrong. Two arms consistent with one another is not the same as either being right, and only a third reference (the scene's own declaration) can tell them apart. THE TEST CAUGHT ITS AUTHOR on the first run: the clause was drafted as `matches!(spacing, Normal)` while the comment beside it argued that an explicitly-zero tracking should stay eligible because it renders identically, and the assertion written from the comment failed against the code. The comment's argument was the right one, so the clause now keys on the RESOLVED amount -- `PxX100(0)` and `EmX1000(0)` are callers who asked for no tracking and get exactly that. THE BLAST RADIUS OF THE CLASS WAS CHECKED, not assumed: the TUI ignores tracking too and cannot do otherwise (a cell grid has no sub-cell advance), but unlike this arm it has nowhere to decline TO, so it is registered as its own question -- what a backend does with a declaration it cannot honour -- rather than folded in here.",
+      "publishable_changes_bullets": [
+        "pinion-runtime/text_engine.rs: declared letter or word spacing declines to the platform shaper",
+        "the clause keys on the RESOLVED amount, so an explicit zero stays eligible",
+        "a decline test on both arms, matching the background and indent precedents"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-runtime --features vello: all pass, including the new both-arms decline test",
+        "cargo test -p pinion-core -p pinion-text -p pinion-rpc -p pinion-shell: all pass",
+        "the audit that found it: grep for the field name across both arms returned zero lines in either"
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.37"
+      ],
+      "publishable_carry_forward_bullets": [
+        "two audit findings registered rather than fixed: a baseline row that never settles within the pass budget is silent in release (and whether non-convergence is even reachable is unverified), and the TUI drops declared tracking with no way to decline -- which is the general question of what a backend does with a declaration it cannot honour, not a tracking question"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
