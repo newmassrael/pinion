@@ -983,6 +983,49 @@ ok "a non-numeric vendored budget is rejected, not silently defaulted" \
         | grep -c 'must be a positive integer of GiB' )" \
    "1"
 
+# --- the shared volume (R1641) ---
+#
+# The per-project budget was ON target and the build died anyway, because the
+# volume every project's target/ lives on was full. These assert the two halves
+# of what that cost: the volume's number is always said, and pressure on it
+# tightens a budget the project is otherwise within.
+vol_tmp="$(mktemp_tracked)"
+mkdir -p "$vol_tmp/target"
+
+ok "the volume's free space is read as a number" \
+   "$( [[ "$(volume_free_gib "$vol_tmp")" =~ ^[0-9]+$ ]] && echo yes )" \
+   "yes"
+
+ok "an unreadable path yields nothing rather than a bogus zero" \
+   "$(volume_free_gib "$vol_tmp/does-not-exist")" \
+   ""
+
+# A floor of 0 can never be crossed, so this is the "no pressure" arm: the
+# volume is still REPORTED, and the declared budget is the one applied.
+ok "with room, the volume is reported and the project's own budget stands" \
+   "$( { PINION_VOLUME_FREE_FLOOR_GB=1 PINION_TARGET_BUDGET_GB=100 \
+         enforce_target_budget "$vol_tmp" test; } 2>&1 \
+        | grep -cE 'volume has [0-9]+ GiB free|target/ is 0 GiB \(budget 100 GiB\)' )" \
+   "2"
+
+# A floor above any real free space forces the pressure arm. The budget line
+# must then show the TIGHT number, which is the whole behaviour: a project
+# inside its steady-state allowance still gets swept when the shared resource
+# is short.
+ok "under pressure the budget tightens, and says so" \
+   "$( { PINION_VOLUME_FREE_FLOOR_GB=999999 PINION_TARGET_BUDGET_GB=100 \
+         PINION_TARGET_BUDGET_TIGHT_GB=45 enforce_target_budget "$vol_tmp" test; } 2>&1 \
+        | grep -cE 'tightening this project.s budget 100 -> 45 GiB|target/ is 0 GiB \(budget 45 GiB\)' )" \
+   "2"
+
+# The tight budget is a FLOOR on tightening, not a replacement: a project
+# already declaring less than it must not be loosened by the pressure arm.
+ok "pressure never loosens an already-smaller budget" \
+   "$( { PINION_VOLUME_FREE_FLOOR_GB=999999 PINION_TARGET_BUDGET_GB=10 \
+         PINION_TARGET_BUDGET_TIGHT_GB=45 enforce_target_budget "$vol_tmp" test; } 2>&1 \
+        | grep -c 'target/ is 0 GiB (budget 10 GiB)' )" \
+   "1"
+
 ok "no vendored cache at all is silent" \
    "$( { report_vendored_cache "$mn_tmp/no-such-repo" test >/dev/null; } 2>&1 | wc -c )" \
    "0"

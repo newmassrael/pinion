@@ -1270,6 +1270,15 @@ fn style_properties(
     )]
     let letter_spacing_px =
         style.letter_spacing.resolved_px_x100(style.font_size_px) as f32 / 100.0;
+    // R1641.3 — the same resolve for the same reason, at the other gap. Two
+    // fields, ONE arithmetic: an em means the same thing between clusters and
+    // between words, and a second copy of the conversion is a second place for
+    // that to stop being true.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "resolved word spacing |v| <= 2^24 in practice"
+    )]
+    let word_spacing_px = style.word_spacing.resolved_px_x100(style.font_size_px) as f32 / 100.0;
     let mut props = vec![
         StyleProperty::FontSize(font_size),
         StyleProperty::Brush(style.fg_color),
@@ -1277,6 +1286,7 @@ fn style_properties(
         StyleProperty::FontStyle(map_font_style(style.font_style)),
         StyleProperty::LineHeight(map_line_height(style.line_height)),
         StyleProperty::LetterSpacing(letter_spacing_px),
+        StyleProperty::WordSpacing(word_spacing_px),
         // R1540 — parley is asked for the underline's METRICS and BRUSH; the
         // FORM (single / double / curly / dotted / dashed) is pinion's and is
         // resolved by `glyph_run::positioned_runs`, because parley has no
@@ -2082,6 +2092,74 @@ mod tests {
             (warm_width - fresh_width).abs() < f32::EPSILON,
             "same input shapes the same whether the context was just built \
              or already warm: warm={warm_width} fresh={fresh_width}",
+        );
+    }
+
+    /// R1641.3 §5.36 — word spacing reaches the shaper, and reaches a
+    /// different gap than letter spacing does.
+    ///
+    /// The failure this exists to catch is a field that is plumbed and inert:
+    /// it round-trips through the wire, it serialises, it hashes, and nothing
+    /// ever moves. So the assertions are about ADVANCE, and the sharpest one
+    /// is negative — a string with no word separator must not respond to word
+    /// spacing at all, which no amount of accidental plumbing produces.
+    #[test]
+    fn r1641_3_word_spacing_moves_only_the_word_gaps() {
+        use pinion_core::style::TextSpacing;
+        let mut cache = crate::test_font::own_font_cache();
+        let mut base = style(16);
+        base.font_size_px = 16;
+
+        let one_em_words = {
+            let mut s = base.clone();
+            s.word_spacing = TextSpacing::EmX1000(1000);
+            s
+        };
+        let one_em_letters = {
+            let mut s = base.clone();
+            s.letter_spacing = TextSpacing::EmX1000(1000);
+            s
+        };
+
+        let plain = cache.layout("a b", &base, None).width();
+        let worded = cache.layout("a b", &one_em_words, None).width();
+        let lettered = cache.layout("a b", &one_em_letters, None).width();
+
+        assert!(
+            worded > plain,
+            "word spacing widens a string that HAS a word gap: {plain} -> {worded}",
+        );
+        assert!(
+            (worded - lettered).abs() > 1.0,
+            "and it is not the same gap letter spacing widens: word={worded} letter={lettered}",
+        );
+
+        // The negative control. `ab` has no separator, so word spacing has
+        // nothing to act on — while letter spacing still does.
+        let solid = cache.layout("ab", &base, None).width();
+        let solid_worded = cache.layout("ab", &one_em_words, None).width();
+        let solid_lettered = cache.layout("ab", &one_em_letters, None).width();
+        assert!(
+            (solid_worded - solid).abs() < f32::EPSILON,
+            "no separator, no effect: {solid} vs {solid_worded}",
+        );
+        assert!(
+            solid_lettered > solid,
+            "while letter spacing acts between the two clusters: {solid} -> {solid_lettered}",
+        );
+
+        // And the em unit is the font's, not a constant: the same authored
+        // value at twice the size moves twice as far.
+        let mut big = one_em_words.clone();
+        big.font_size_px = 32;
+        let mut big_plain = base.clone();
+        big_plain.font_size_px = 32;
+        let grew_small = worded - plain;
+        let grew_big =
+            cache.layout("a b", &big, None).width() - cache.layout("a b", &big_plain, None).width();
+        assert!(
+            grew_big > grew_small * 1.5,
+            "an em follows the font size: {grew_small} at 16px, {grew_big} at 32px",
         );
     }
 

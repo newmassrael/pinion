@@ -91,6 +91,20 @@ pub struct LayoutNode {
     /// Lets AI clients verify single-line button labels without
     /// screenshot inspection (Scene-as-data invariant §2 #7).
     pub line_count: u32,
+    /// R1641.4 §5.12 — the measured advance INCLUDING trailing whitespace,
+    /// where [`Self::rect`]'s width excludes it.
+    ///
+    /// Wire-projection of `pinion_core::scene::TextNode.advance_px`.
+    /// `advance_px - rect.w` is the trailing space the box declined to count,
+    /// and a client reading a row of labels that render flush can see the
+    /// cause here instead of inferring it from a screenshot (§2 #7).
+    ///
+    /// `0` for every non-Text variant and for a Text leaf whose owning Scene
+    /// has not been laid out — but it carries no sentinel of its own, because
+    /// an empty string genuinely advances `0`. [`Self::line_count`] is the
+    /// field that distinguishes "not measured" (`0`) from "measured empty"
+    /// (`1`).
+    pub advance_px: u32,
     /// Recursive children. Empty for leaves.
     pub children: Vec<LayoutNode>,
 }
@@ -229,6 +243,7 @@ pub fn build_layout_node(scene: &Scene, path_prefix: &str) -> LayoutNode {
         tag: projected.tag,
         content: projected.content,
         line_count: projected.line_count,
+        advance_px: projected.advance_px,
         children,
     }
 }
@@ -244,6 +259,7 @@ struct SceneProjection<'a> {
     tag: Option<String>,
     content: Option<String>,
     line_count: u32,
+    advance_px: u32,
     children: &'a [Scene],
 }
 
@@ -255,6 +271,7 @@ fn describe_scene(scene: &Scene) -> SceneProjection<'_> {
             tag: c.tag.as_ref().map(ToString::to_string),
             content: None,
             line_count: 0,
+            advance_px: 0,
             children: c.children.as_slice(),
         },
         Scene::Box(b) => SceneProjection {
@@ -263,6 +280,7 @@ fn describe_scene(scene: &Scene) -> SceneProjection<'_> {
             tag: b.tag.as_ref().map(ToString::to_string),
             content: None,
             line_count: 0,
+            advance_px: 0,
             children: &[],
         },
         Scene::Text(t) => SceneProjection {
@@ -271,6 +289,7 @@ fn describe_scene(scene: &Scene) -> SceneProjection<'_> {
             tag: t.tag.as_ref().map(ToString::to_string),
             content: Some(t.content.clone()),
             line_count: t.line_count,
+            advance_px: t.advance_px,
             children: &[],
         },
         Scene::Path(p) => SceneProjection {
@@ -279,6 +298,7 @@ fn describe_scene(scene: &Scene) -> SceneProjection<'_> {
             tag: p.tag.as_ref().map(ToString::to_string),
             content: None,
             line_count: 0,
+            advance_px: 0,
             children: &[],
         },
         Scene::Image(i) => SceneProjection {
@@ -287,6 +307,7 @@ fn describe_scene(scene: &Scene) -> SceneProjection<'_> {
             tag: i.tag.as_ref().map(ToString::to_string),
             content: None,
             line_count: 0,
+            advance_px: 0,
             children: &[],
         },
         Scene::External(e) => SceneProjection {
@@ -295,6 +316,7 @@ fn describe_scene(scene: &Scene) -> SceneProjection<'_> {
             tag: e.tag.as_ref().map(ToString::to_string),
             content: None,
             line_count: 0,
+            advance_px: 0,
             children: &[],
         },
         Scene::Effect(_) => SceneProjection {
@@ -308,6 +330,7 @@ fn describe_scene(scene: &Scene) -> SceneProjection<'_> {
             tag: None,
             content: None,
             line_count: 0,
+            advance_px: 0,
             children: &[],
         },
         // Forward-compatibility for future `#[non_exhaustive]` Scene
@@ -324,6 +347,7 @@ fn describe_scene(scene: &Scene) -> SceneProjection<'_> {
             tag: None,
             content: None,
             line_count: 0,
+            advance_px: 0,
             children: &[],
         },
     }

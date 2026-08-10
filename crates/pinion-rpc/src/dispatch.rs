@@ -5977,19 +5977,20 @@ fn line_height_to_json(lh: pinion_core::style::LineHeight) -> Value {
     }
 }
 
-/// R1641 §5.36 §5.49 — wire serialization for `LetterSpacing`.
+/// R1641 §5.36 §5.49 — wire serialization for `TextSpacing`, used by BOTH
+/// `letter_spacing` and `word_spacing` (R1641.3).
 ///
 /// The `{kind, value}` shape [`line_height_to_json`] already publishes, because
 /// this is the same either-or: absolute device units or a fraction of the font.
 /// The `Normal` case is a bare string for the same reason it is there — a
 /// payloadless variant with a `value` key would have to invent one.
-fn letter_spacing_to_json(ls: pinion_core::style::LetterSpacing) -> Value {
-    use pinion_core::style::LetterSpacing;
+fn text_spacing_to_json(ls: pinion_core::style::TextSpacing) -> Value {
+    use pinion_core::style::TextSpacing;
     let (kind, value) = match ls {
-        LetterSpacing::Normal => return Value::String("Normal".to_string()),
-        LetterSpacing::PxX100(v) => ("PxX100", v),
-        LetterSpacing::EmX1000(v) => ("EmX1000", v),
-        // `LetterSpacing` is `#[non_exhaustive]`; a variant added without a
+        TextSpacing::Normal => return Value::String("Normal".to_string()),
+        TextSpacing::PxX100(v) => ("PxX100", v),
+        TextSpacing::EmX1000(v) => ("EmX1000", v),
+        // `TextSpacing` is `#[non_exhaustive]`; a variant added without a
         // wire decision reaches here rather than failing to compile, and says
         // so instead of picking a spelling.
         _ => return Value::String("Unknown".to_string()),
@@ -6153,7 +6154,13 @@ fn text_style_to_json(style: &pinion_core::style::TextStyle) -> Value {
     // number meaning whole px, and a number is exactly what this never emits.
     obj.insert(
         "letter_spacing".to_string(),
-        letter_spacing_to_json(style.letter_spacing),
+        text_spacing_to_json(style.letter_spacing),
+    );
+    // R1641.3 — the second gap, same encoding. One codec for both, so a client
+    // that learned to read one has learned to read the other.
+    obj.insert(
+        "word_spacing".to_string(),
+        text_spacing_to_json(style.word_spacing),
     );
     obj.insert(
         "text_align".to_string(),

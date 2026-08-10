@@ -1170,6 +1170,7 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("tag", WireTy::String, None).optional(),
                 WireField::new("content", WireTy::String, None).optional(),
                 WireField::new("line_count", WireTy::Integer, None),
+                WireField::new("advance_px", WireTy::Integer, None),
                 WireField::new("children", WireTy::Array, Some("LayoutNode")),
             ],
         },

@@ -1839,7 +1839,15 @@ pub enum LineHeight {
     MultiplierX100(u16),
 }
 
-/// Letter-spacing (tracking) policy (§5.36 R47.5, widened R1641).
+/// A spacing policy for text: absolute, or a fraction of the font size
+/// (§5.36 R47.5, widened R1641, shared R1641.3).
+///
+/// Two fields carry one: [`TextStyle::letter_spacing`] (between every cluster)
+/// and [`TextStyle::word_spacing`] (added at word separators). They are the
+/// same *kind* of quantity asked about different gaps, so [`Self::resolved_px_x100`]
+/// is the single place either resolves — a second copy of that arithmetic
+/// would be a second place for "what an em means here" to drift. The FIELD
+/// names which gap; this type names only the policy.
 ///
 /// Absolute or font-relative, the same either-or [`LineHeight`] draws one type
 /// above, and for the same reason: a type scale states some of its values in
@@ -1871,12 +1879,33 @@ pub enum LineHeight {
 /// that must be restated for every size is the thing a scale exists to avoid.
 ///
 /// [`Self::EmX1000`] is pinion's relative form and it is **em-relative (CSS
-/// `letter-spacing: -0.02em`), not advance-relative**. That is a deliberate
-/// difference from the reference, whose percentage form scales each glyph's own
-/// natural advance: the shaper this crate feeds takes one absolute per-cluster
-/// spacing, so an advance-proportional form cannot be expressed by resolving to
-/// a single number, while the em form can and is what a design system writes
-/// down.
+/// `letter-spacing: -0.02em`), not advance-relative**. That is a decision, and
+/// R1641.6 closed it rather than leaving it open, so here is the reasoning
+/// rather than a pointer to it.
+///
+/// The reference's percentage form scales each glyph's OWN natural advance, so
+/// a wide glyph is tracked further than a narrow one. pinion could do that:
+/// the shaper takes per-range spacing and exposes each cluster's advance, so
+/// shaping once to read the advances and again with a range per cluster would
+/// produce it exactly. It is not blocked; it is declined, for three reasons
+/// worth more than the effect:
+///
+/// 1. **The capability is already here.** What the reference establishes as a
+///    floor is that spacing can be specified relative to the font instead of
+///    in device units. `EmX1000` is that. Which quantity it is relative to is
+///    the SHAPE, and shape is chosen fresh each time.
+/// 2. **Nothing else expresses it.** CSS spells tracking as a length, with
+///    `em` among its units and no advance-proportional form at all; the design
+///    system that forced this type into existence authored in px and em. A
+///    value nobody can write down in the medium designs arrive in is a value
+///    that arrives here already converted.
+/// 3. **The cost is structural, not incidental.** Two shaping passes per node
+///    and one style range per cluster, on every node that uses it — and the
+///    per-cluster ranges live outside [`TextStyle`], so they are invisible to
+///    the §5.16 cache key that makes shaping cheap at all.
+///
+/// If a consumer ever needs it, the seam is named above and none of it is
+/// research.
 ///
 /// Thousandths rather than [`LineHeight::MultiplierX100`]'s hundredths because
 /// the two quantities live at different magnitudes: a line-height multiplier is
@@ -1886,7 +1915,7 @@ pub enum LineHeight {
 #[derive(
     Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
 )]
-pub enum LetterSpacing {
+pub enum TextSpacing {
     /// The font's own spacing, unmodified. Default.
     #[default]
     Normal,
@@ -1897,7 +1926,7 @@ pub enum LetterSpacing {
     EmX1000(i32),
 }
 
-impl LetterSpacing {
+impl TextSpacing {
     /// The absolute spacing this policy resolves to at `font_size_px`.
     ///
     /// One resolution, used by the shaper and by anything that needs to reason
@@ -2693,8 +2722,20 @@ pub struct TextStyle {
     /// CSS `line-height` (R47.5). Default = [`LineHeight::Normal`].
     pub line_height: LineHeight,
     /// CSS `letter-spacing` (R47.5; widened from a whole-px `i32` to
-    /// [`LetterSpacing`] at R1641). Default = [`LetterSpacing::Normal`].
-    pub letter_spacing: LetterSpacing,
+    /// [`TextSpacing`] at R1641). Default = [`TextSpacing::Normal`].
+    ///
+    /// Applied between every cluster. Its sibling [`Self::word_spacing`]
+    /// applies only at word separators.
+    pub letter_spacing: TextSpacing,
+    /// CSS `word-spacing` (R1641.3). Default = [`TextSpacing::Normal`].
+    ///
+    /// Extra advance at word separators, on top of whatever
+    /// [`Self::letter_spacing`] adds between every cluster. The reference
+    /// toolkit's font has carried it as long as it has carried letter
+    /// spacing, CSS has it, and the shaper this crate feeds takes it — pinion
+    /// was the only layer in that stack without it until R1641.3, which is
+    /// the shape of gap "no consumer has asked" leaves behind.
+    pub word_spacing: TextSpacing,
     /// CSS `text-align` (R47.5). Default = [`TextAlign::Start`].
     pub text_align: TextAlign,
     /// CSS `text-indent` (R1551) — the first line's own start offset, and the only field
@@ -2730,7 +2771,8 @@ impl TextStyle {
             font_weight: FontWeight::NORMAL,
             font_style: FontStyle::Normal,
             line_height: LineHeight::Normal,
-            letter_spacing: LetterSpacing::Normal,
+            letter_spacing: TextSpacing::Normal,
+            word_spacing: TextSpacing::Normal,
             text_align: TextAlign::Start,
             text_indent: TextIndent::none(),
             decoration: TextDecoration::none(),
@@ -2827,7 +2869,7 @@ impl TextStyle {
         self
     }
 
-    /// Builder: override the letter-spacing (R47.5; takes [`LetterSpacing`]
+    /// Builder: override the letter-spacing (R47.5; takes [`TextSpacing`]
     /// since R1641).
     ///
     /// Shaped like [`Self::with_line_height`] rather than taking a bare number,
@@ -2835,15 +2877,28 @@ impl TextStyle {
     /// one it is:
     ///
     /// ```
-    /// # use pinion_core::style::{LetterSpacing, TextStyle};
-    /// let display = TextStyle::new().with_letter_spacing(LetterSpacing::PxX100(-150));
-    /// let scale = TextStyle::new().with_letter_spacing(LetterSpacing::EmX1000(-20));
+    /// # use pinion_core::style::{TextSpacing, TextStyle};
+    /// let display = TextStyle::new().with_letter_spacing(TextSpacing::PxX100(-150));
+    /// let scale = TextStyle::new().with_letter_spacing(TextSpacing::EmX1000(-20));
     /// # assert_eq!(display.letter_spacing.resolved_px_x100(64), -150);
     /// # assert_eq!(scale.letter_spacing.resolved_px_x100(64), -128);
     /// ```
     #[must_use]
-    pub const fn with_letter_spacing(mut self, spacing: LetterSpacing) -> Self {
+    pub const fn with_letter_spacing(mut self, spacing: TextSpacing) -> Self {
         self.letter_spacing = spacing;
+        self
+    }
+
+    /// Builder: override the word-spacing (R1641.3).
+    ///
+    /// ```
+    /// # use pinion_core::style::{TextSpacing, TextStyle};
+    /// let airy = TextStyle::new().with_word_spacing(TextSpacing::EmX1000(120));
+    /// # assert_eq!(airy.word_spacing.resolved_px_x100(20), 240);
+    /// ```
+    #[must_use]
+    pub const fn with_word_spacing(mut self, spacing: TextSpacing) -> Self {
+        self.word_spacing = spacing;
         self
     }
 
@@ -3374,21 +3429,21 @@ pub enum AlignItems {
     ///
     /// # What participates
     ///
-    /// A [`Scene::Text`](crate::scene::Scene::Text) child, because a measured
-    /// text box is the only thing in the tree that can currently report where
-    /// its baseline is. Every other child keeps [`Self::Start`] behaviour and
-    /// is **not** moved.
+    /// Every child, as in CSS. A [`Scene::Text`](crate::scene::Scene::Text)
+    /// leaf reports the baseline its own shaping produced; any other child has
+    /// one **synthesized at its bottom margin edge**, which is the rule that
+    /// makes a badge or a swatch sit ON the line of the text beside it rather
+    /// than hanging below it.
     ///
-    /// CSS instead *synthesizes* a baseline for a non-participating item from
-    /// its bottom margin edge. pinion does not do that yet, and the difference
-    /// is deliberate rather than pending: a synthesized baseline needs the
-    /// item's laid-out height, while the shift here is computed BEFORE layout
-    /// precisely so the row's own height comes out of the layout engine instead
-    /// of being corrected afterwards. Under-aligning is the error direction
-    /// that shows up as "this did not move"; the other one moves things by a
-    /// number derived from a box that was not final.
+    /// The two arrive at different times, and that is the whole of the
+    /// implementation: a text baseline is a function of font metrics and can
+    /// be measured before anything is laid out, while a synthesized one needs
+    /// the item's laid-out height. So the text offsets are injected first and
+    /// the rest are corrected on a second pass — bounded, and skipped entirely
+    /// by a row whose children are all text.
     ///
-    /// With fewer than two participants the alignment is a no-op, matching CSS.
+    /// With fewer than two children the alignment is a no-op, matching CSS:
+    /// one box cannot be aligned to another.
     Baseline,
 }
 
@@ -4980,7 +5035,7 @@ mod tests {
         assert_eq!(s.font_weight, FontWeight::NORMAL);
         assert_eq!(s.font_style, FontStyle::Normal);
         assert_eq!(s.line_height, LineHeight::Normal);
-        assert_eq!(s.letter_spacing, LetterSpacing::Normal);
+        assert_eq!(s.letter_spacing, TextSpacing::Normal);
         assert_eq!(s.text_align, TextAlign::Start);
         assert_eq!(s.decoration, TextDecoration::none());
         assert_eq!(s.overflow, TextOverflow::Visible);
@@ -5090,10 +5145,10 @@ mod tests {
 
     #[test]
     fn text_style_with_letter_spacing_accepts_signed_values() {
-        let s = TextStyle::new().with_letter_spacing(LetterSpacing::PxX100(-200));
-        assert_eq!(s.letter_spacing, LetterSpacing::PxX100(-200));
-        let s = TextStyle::new().with_letter_spacing(LetterSpacing::PxX100(400));
-        assert_eq!(s.letter_spacing, LetterSpacing::PxX100(400));
+        let s = TextStyle::new().with_letter_spacing(TextSpacing::PxX100(-200));
+        assert_eq!(s.letter_spacing, TextSpacing::PxX100(-200));
+        let s = TextStyle::new().with_letter_spacing(TextSpacing::PxX100(400));
+        assert_eq!(s.letter_spacing, TextSpacing::PxX100(400));
     }
 
     /// R1641 §5.36 — the five tracking values of the type scale that forced
@@ -5114,7 +5169,7 @@ mod tests {
             ("display-sm", -30),
             ("caption-upper", 150),
         ] {
-            let s = TextStyle::new().with_letter_spacing(LetterSpacing::PxX100(hundredths));
+            let s = TextStyle::new().with_letter_spacing(TextSpacing::PxX100(hundredths));
             assert_eq!(
                 s.letter_spacing.resolved_px_x100(64),
                 hundredths,
@@ -5126,8 +5181,8 @@ mod tests {
         // what the §5.16 paint-fragment cache key derives from, so two styles
         // differing by three hundredths of a px must be distinguishable AND
         // hashable. A float field would have cost both.
-        let a = TextStyle::new().with_letter_spacing(LetterSpacing::PxX100(-30));
-        let b = TextStyle::new().with_letter_spacing(LetterSpacing::PxX100(-33));
+        let a = TextStyle::new().with_letter_spacing(TextSpacing::PxX100(-30));
+        let b = TextStyle::new().with_letter_spacing(TextSpacing::PxX100(-33));
         assert_ne!(a, b, "a 0.03px difference is a difference");
         let mut set = std::collections::HashSet::new();
         set.insert(a);
@@ -5142,11 +5197,11 @@ mod tests {
     /// (an absolute mode and a font-relative one, chosen per value), so the
     /// existence of a font-relative form is a floor, not a preference. What is
     /// chosen here is the reference QUANTITY: em, as CSS writes it, rather than
-    /// the reference's per-glyph natural advance — see [`LetterSpacing`] on why
+    /// the reference's per-glyph natural advance — see [`TextSpacing`] on why
     /// the shaper this feeds cannot express the latter as one number.
     #[test]
     fn r1641_em_relative_tracking_scales_with_the_font() {
-        let tracking = LetterSpacing::EmX1000(-20); // -0.02em
+        let tracking = TextSpacing::EmX1000(-20); // -0.02em
 
         // The same authored value, three sizes, three resolved widths — which
         // is the entire point: an absolute value would have to be restated.
@@ -5156,7 +5211,7 @@ mod tests {
 
         // An absolute value is size-invariant, and the two forms are only
         // interchangeable at the size where they happen to meet.
-        let absolute = LetterSpacing::PxX100(-128);
+        let absolute = TextSpacing::PxX100(-128);
         assert_eq!(absolute.resolved_px_x100(16), -128);
         assert_eq!(
             absolute.resolved_px_x100(64),
@@ -5167,8 +5222,8 @@ mod tests {
         // `Normal` is not `PxX100(0)` as a value even though it resolves the
         // same: the default is "the font's own spacing", and a style that says
         // so is distinguishable from one that pins zero.
-        assert_eq!(LetterSpacing::Normal.resolved_px_x100(64), 0);
-        assert_ne!(LetterSpacing::Normal, LetterSpacing::PxX100(0));
+        assert_eq!(TextSpacing::Normal.resolved_px_x100(64), 0);
+        assert_ne!(TextSpacing::Normal, TextSpacing::PxX100(0));
     }
 
     #[test]
@@ -5224,7 +5279,7 @@ mod tests {
         s.insert(TextStyle::new().with_weight(FontWeight::BOLD));
         s.insert(TextStyle::new().with_style(FontStyle::Italic));
         s.insert(TextStyle::new().with_line_height(LineHeight::MultiplierX100(120)));
-        s.insert(TextStyle::new().with_letter_spacing(LetterSpacing::PxX100(200)));
+        s.insert(TextStyle::new().with_letter_spacing(TextSpacing::PxX100(200)));
         s.insert(TextStyle::new().with_align(TextAlign::Center));
         s.insert(TextStyle::new().with_decoration(TextDecoration::underline()));
         s.insert(TextStyle::new().with_overflow(TextOverflow::Ellipsis));

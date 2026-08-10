@@ -105,8 +105,8 @@ use crate::input::is_activation_event;
 use crate::intent::Intent;
 use crate::scene::Rect;
 use crate::style::{
-    Color, FontStyle, FontWeight, LetterSpacing, LineHeight, TextAlign, TextDecoration,
-    TextOverflow, TextStyle, UnderlineStyle,
+    Color, FontStyle, FontWeight, LineHeight, TextAlign, TextDecoration, TextOverflow, TextSpacing,
+    TextStyle, UnderlineStyle,
 };
 use crate::widget_core::ExtraExternal;
 use crate::widgets::caret_blink::{CaretBlink, use_caret_blink};
@@ -2616,8 +2616,11 @@ pub fn json_to_text_style(obj: &serde_json::Map<String, serde_json::Value>) -> T
     if let Some(lh) = obj.get("line_height").and_then(json_to_line_height) {
         s.line_height = lh;
     }
-    if let Some(ls) = obj.get("letter_spacing").and_then(json_to_letter_spacing) {
+    if let Some(ls) = obj.get("letter_spacing").and_then(json_to_text_spacing) {
         s.letter_spacing = ls;
+    }
+    if let Some(ws) = obj.get("word_spacing").and_then(json_to_text_spacing) {
+        s.word_spacing = ws;
     }
     if let Some(ta) = obj.get("text_align").and_then(serde_json::Value::as_str) {
         // R1504 — the spelling table moved to `TextAlign::from_wire`; what stays
@@ -2709,7 +2712,7 @@ fn json_to_line_height(v: &serde_json::Value) -> Option<LineHeight> {
     }
 }
 
-/// R1641 §5.36 §5.22 — decode a wire `letter_spacing` value.
+/// R1641 §5.36 §5.22 — decode a wire `letter_spacing` / `word_spacing` value.
 ///
 /// Three JSON shapes, and the third is a retirement rather than a spelling:
 ///
@@ -2722,20 +2725,20 @@ fn json_to_line_height(v: &serde_json::Value) -> Option<LineHeight> {
 ///   type that looks slightly wrong rather than as an error, which is the worse
 ///   failure. The encoder never emits a number, so the two forms cannot be
 ///   confused in the direction that matters.
-fn json_to_letter_spacing(v: &serde_json::Value) -> Option<LetterSpacing> {
+fn json_to_text_spacing(v: &serde_json::Value) -> Option<TextSpacing> {
     match v {
-        serde_json::Value::String(s) if s == "Normal" => Some(LetterSpacing::Normal),
+        serde_json::Value::String(s) if s == "Normal" => Some(TextSpacing::Normal),
         serde_json::Value::Object(o) => {
             let value = i32::try_from(o.get("value").and_then(serde_json::Value::as_i64)?).ok()?;
             match o.get("kind").and_then(serde_json::Value::as_str)? {
-                "PxX100" => Some(LetterSpacing::PxX100(value)),
-                "EmX1000" => Some(LetterSpacing::EmX1000(value)),
+                "PxX100" => Some(TextSpacing::PxX100(value)),
+                "EmX1000" => Some(TextSpacing::EmX1000(value)),
                 _ => None,
             }
         }
         serde_json::Value::Number(_) => {
             let px = i32::try_from(v.as_i64()?).ok()?;
-            Some(LetterSpacing::PxX100(px.saturating_mul(100)))
+            Some(TextSpacing::PxX100(px.saturating_mul(100)))
         }
         _ => None,
     }

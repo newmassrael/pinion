@@ -34002,6 +34002,54 @@
         "the residue is stated rather than closed: R1641's entry still contains the names, because the ledger cannot be amended. What is fixed is every artifact the ratchet does gate, and what is recorded is that a round writing its own changelog is the one place this directive has no mechanism -- the exclusion says so in its reason string, and this round is the proof that a stated responsibility without a gate gets forgotten"
       ]
     },
+    "R1641.5": {
+      "decision_summary": "the five debts R1641 registered, paid. WORD SPACING: TextStyle::word_spacing exists and reaches the shaper. The design question the debt file left open was reuse-or-duplicate; the answer is a SHARED type -- LetterSpacing renamed TextSpacing, both fields carrying it, the FIELD naming which gap and the type naming only the policy, so one resolve stays the one place \"what an em means here\" is decided. ADVANCE-RELATIVE TRACKING: closed as a DECISION, after correcting the debt file's own diagnosis -- it said the shaper could not express it, and it can (per-range spacing plus readable per-cluster advances, so shape twice and it is exact). Declined rather than blocked, for reasons now in the type doc: the floor is that spacing be specifiable relative to the FONT and the em form is that; no design medium expresses the advance-proportional form; and the cost is two shaping passes plus a style range per cluster, living outside the type the cache key is built from. THE EXCLUDED ADVANCE IS READABLE: TextNode::advance_px and LayoutNode.advance_px carry the width INCLUDING trailing whitespace where the rect excludes it, published as two widths rather than a delta so a client need not reason about a sign. BASELINE SYNTHESIS: a child with no baseline of its own now gets one at its bottom MARGIN edge, narrowing the no-op case to a row with fewer than two children. The two-pass shape was predicted; what was not is WHAT forces the second pass -- a text baseline is a function of font metrics and is knowable before layout, only a synthesized one is not -- so an all-text row still settles in one layout. Paying it broke one of R1641's own tests, which is the right way for a documented boundary to move. THE SHARED VOLUME: the push gate reports the build-cache volume's free space and TIGHTENS this project's budget under pressure, which is the case that actually happened mid-round: nothing was wrong per project and the build died because the shared image was full.",
+      "changes_bullets": [
+        "pinion-core: TextStyle::word_spacing, TextSpacing shared by both gaps, one resolve for both",
+        "pinion-core + rpc: TextNode::advance_px and LayoutNode.advance_px carry the advance the box excluded",
+        "pinion-runtime: a baseline a child cannot report is synthesized at its bottom margin edge, on a bounded second pass",
+        "pinion-core: the advance-relative tracking decision, with its three reasons and the seam it declines",
+        ".githooks/lib/target-budget.sh: the shared volume is reported every push and tightens the budget under pressure"
+      ],
+      "verification_bullets": [
+        "cargo test: pinion-core / pinion-text / pinion-rpc / pinion-runtime / pinion-tui / pinion-narrative pass (21 suites)",
+        "cargo check --workspace --all-targets clean; clippy --workspace --all-targets --features pinion-runtime/vello clean; fmt clean",
+        "tools/test_hooks.sh: 118 assertions pass, 5 of them new for the volume arm",
+        "4 counterfactuals from a verified-green baseline, 4/4 caught after two were re-authored for not compiling",
+        "the shaper CAN express advance-relative spacing -- read from its own API, which is why the close is a decision"
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.21",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "carry 0 on the five: each debt file records the answer to the design question it left open, not just that it closed. What is deliberately NOT closed is stated in one of them -- advance-relative tracking is declined rather than done, and the seam is named so a future consumer does not have to rediscover that it is possible"
+      ],
+      "publishable_decision_summary": "the five debts R1641 registered, paid. WORD SPACING: TextStyle::word_spacing exists and reaches the shaper. The design question the debt file left open was reuse-or-duplicate; the answer is a SHARED type -- LetterSpacing renamed TextSpacing, both fields carrying it, the FIELD naming which gap and the type naming only the policy, so one resolve stays the one place \"what an em means here\" is decided. ADVANCE-RELATIVE TRACKING: closed as a DECISION, after correcting the debt file's own diagnosis -- it said the shaper could not express it, and it can (per-range spacing plus readable per-cluster advances, so shape twice and it is exact). Declined rather than blocked, for reasons now in the type doc: the floor is that spacing be specifiable relative to the FONT and the em form is that; no design medium expresses the advance-proportional form; and the cost is two shaping passes plus a style range per cluster, living outside the type the cache key is built from. THE EXCLUDED ADVANCE IS READABLE: TextNode::advance_px and LayoutNode.advance_px carry the width INCLUDING trailing whitespace where the rect excludes it, published as two widths rather than a delta so a client need not reason about a sign. BASELINE SYNTHESIS: a child with no baseline of its own now gets one at its bottom MARGIN edge, narrowing the no-op case to a row with fewer than two children. The two-pass shape was predicted; what was not is WHAT forces the second pass -- a text baseline is a function of font metrics and is knowable before layout, only a synthesized one is not -- so an all-text row still settles in one layout. Paying it broke one of R1641's own tests, which is the right way for a documented boundary to move. THE SHARED VOLUME: the push gate reports the build-cache volume's free space and TIGHTENS this project's budget under pressure, which is the case that actually happened mid-round: nothing was wrong per project and the build died because the shared image was full.",
+      "publishable_changes_bullets": [
+        "pinion-core: TextStyle::word_spacing, TextSpacing shared by both gaps, one resolve for both",
+        "pinion-core + rpc: TextNode::advance_px and LayoutNode.advance_px carry the advance the box excluded",
+        "pinion-runtime: a baseline a child cannot report is synthesized at its bottom margin edge, on a bounded second pass",
+        "pinion-core: the advance-relative tracking decision, with its three reasons and the seam it declines",
+        ".githooks/lib/target-budget.sh: the shared volume is reported every push and tightens the budget under pressure"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test: pinion-core / pinion-text / pinion-rpc / pinion-runtime / pinion-tui / pinion-narrative pass (21 suites)",
+        "cargo check --workspace --all-targets clean; clippy --workspace --all-targets --features pinion-runtime/vello clean; fmt clean",
+        "tools/test_hooks.sh: 118 assertions pass, 5 of them new for the volume arm",
+        "4 counterfactuals from a verified-green baseline, 4/4 caught after two were re-authored for not compiling",
+        "the shaper CAN express advance-relative spacing -- read from its own API, which is why the close is a decision"
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.21",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "carry 0 on the five: each debt file records the answer to the design question it left open, not just that it closed. What is deliberately NOT closed is stated in one of them -- advance-relative tracking is declined rather than done, and the seam is named so a future consumer does not have to rediscover that it is possible"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

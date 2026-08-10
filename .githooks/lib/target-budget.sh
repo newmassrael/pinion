@@ -69,6 +69,44 @@
 # reached. Override per-machine with `PINION_TARGET_BUDGET_GB`.
 TARGET_BUDGET_GB_DEFAULT=100
 
+# R1641 — THE BUDGET ABOVE IS PER PROJECT AND THE VOLUME IS SHARED, so keeping
+# it is not the same as having room. Measured 2026-08-10, mid-round, when a
+# build died:
+#
+#   error: failed to write .../.fingerprint/pinion-rpc-.../invoked.timestamp
+#   /dev/loop0  160G  158G  0  100%  /home/coin/.buildcache
+#
+# pinion was at exactly 100 GiB apparent — ON budget, so this gate had nothing
+# to say — while six sibling projects held another ~160 GiB apparent between
+# them and the volume was full. R1489 established that a fixed-size image makes
+# filling the ROOT filesystem impossible; what it did not make impossible is
+# the build failing, and this is the part that was missing.
+#
+# Two things follow, and this file supplies both:
+#
+#   1. THE VOLUME'S NUMBER, printed every push beside the project's own, for
+#      the reason (1) above gives for the project's: the failure mode is a
+#      resource nobody is watching. One `df`, no tree walk.
+#   2. PRESSURE TIGHTENS THE BUDGET. Below the floor, the effective budget
+#      drops to the tight one, so the sweep fires while the project is still
+#      nominally within its steady-state allowance. That is the case that
+#      actually happened: nothing was wrong per project, and the build stopped.
+#
+# The tight budget is measured, not picked: `cargo sweep --maxsize 45GB`
+# reclaimed 73.94 GiB here and took the volume from 0 to 47 GiB free, with the
+# workspace rebuilding incrementally afterwards.
+#
+# The floor is deliberately larger than one workspace rebuild: a full clean
+# workspace test build materialises ~40 GiB apparent (R1489's measurement),
+# which is ~10 GiB of volume at the compression measured today.
+#
+# NOT swept from here: the sibling projects. They are other repositories, and
+# a push hook in this one reaching into them is the cross-repo line this
+# project holds elsewhere. The daily user timer sweeps every project; what
+# this can honestly do is say that the pressure is not ours to fix alone.
+TARGET_BUDGET_TIGHT_GB_DEFAULT=45
+VOLUME_FREE_FLOOR_GB_DEFAULT=15
+
 # Drop artifacts built by a toolchain rustup no longer has.
 #
 # Unconditional, unlike the budget sweep below, because this removal is
@@ -143,6 +181,29 @@ enforce_target_budget() {
     fi
 
     local gib=$(( bytes / 1073741824 ))
+
+    # R1641 — the volume this project's target/ actually lives on, and whether
+    # the per-project budget is still the binding constraint. Read BEFORE the
+    # budget is applied, because under pressure it changes which budget applies.
+    local free_gib
+    free_gib="$(volume_free_gib "$target")"
+    if [[ -n "$free_gib" ]]; then
+        local floor_gb="${PINION_VOLUME_FREE_FLOOR_GB:-$VOLUME_FREE_FLOOR_GB_DEFAULT}"
+        echo "$label: build-cache volume has ${free_gib} GiB free (floor ${floor_gb} GiB, shared with every project)" >&2
+        if (( free_gib < floor_gb )); then
+            local tight_gb="${PINION_TARGET_BUDGET_TIGHT_GB:-$TARGET_BUDGET_TIGHT_GB_DEFAULT}"
+            if (( tight_gb < budget_gb )); then
+                echo "$label: volume under the floor — tightening this project's budget ${budget_gb} -> ${tight_gb} GiB" >&2
+                budget_gb="$tight_gb"
+            fi
+        fi
+    else
+        # Announced, not swallowed: the whole point of this block is that an
+        # unwatched shared resource is what failed, and silence here would
+        # restore exactly that condition.
+        echo "$label: could not read the build-cache volume's free space — only the per-project bound applies" >&2
+    fi
+
     echo "$label: target/ is ${gib} GiB (budget ${budget_gb} GiB)" >&2
 
     # R1508 — the vendored gate tool builds into its OWN target/, inside a
@@ -174,7 +235,36 @@ enforce_target_budget() {
     if bytes="$(du -sbL "$target" 2>/dev/null | cut -f1)" && [[ -n "$bytes" ]]; then
         echo "$label: target/ now $(( bytes / 1073741824 )) GiB" >&2
     fi
+
+    # R1641 — and whether it was ENOUGH. A sweep that empties this project and
+    # leaves the volume full is the case worth naming out loud, because the
+    # remedy is then somewhere this hook must not go.
+    free_gib="$(volume_free_gib "$target")"
+    if [[ -n "$free_gib" ]]; then
+        local floor_gb="${PINION_VOLUME_FREE_FLOOR_GB:-$VOLUME_FREE_FLOOR_GB_DEFAULT}"
+        echo "$label: volume now ${free_gib} GiB free" >&2
+        if (( free_gib < floor_gb )); then
+            echo "$label: STILL under the floor — the pressure is not this project's alone." >&2
+            echo "$label:   du -shL /home/coin/.buildcache/* 2>/dev/null | sort -h" >&2
+            echo "$label:   (the daily buildcache-sweep timer covers the others; this hook does not)" >&2
+        fi
+    fi
     return 0
+}
+
+# R1641 — GiB free on the filesystem holding `path`, or empty when it cannot be
+# read.
+#
+# `-P` for POSIX single-line output: the default wraps a long device name onto
+# its own line, which would make the field offsets below read the wrong column.
+# `--output=avail` would be tidier and is coreutils-only, so this stays on the
+# portable form the rest of these hooks use.
+volume_free_gib() {
+    local path="${1:?volume_free_gib needs a path}"
+    local avail_kib
+    avail_kib="$(df -Pk "$path" 2>/dev/null | awk 'NR==2 {print $4}')" || return 0
+    [[ "$avail_kib" =~ ^[0-9]+$ ]] || return 0
+    echo $(( avail_kib / 1048576 ))
 }
 
 # R1508 — report the vendored gate tool's build cache, and (R1509) bound it.

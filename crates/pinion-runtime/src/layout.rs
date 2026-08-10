@@ -141,6 +141,16 @@ pub struct TextBox {
     /// measure that quietly stopped reporting would align every row slightly
     /// wrong instead of visibly not at all.
     pub baseline: Option<f32>,
+    /// R1641.4 §5.36 §5.12 — the advance INCLUDING trailing whitespace, where
+    /// [`Self::width`] excludes it.
+    ///
+    /// The two differ by exactly the trailing space a text engine declines to
+    /// count toward a box, and until R1641.4 that difference was unreadable
+    /// anywhere in the tree — a consumer met it as two labels rendering flush
+    /// against each other and had to infer the cause from pixels. A measure
+    /// that does not distinguish the two reports the same number twice, which
+    /// is honest for a uniform cell grid and wrong for nothing.
+    pub advance: f32,
 }
 
 impl TextBox {
@@ -156,6 +166,7 @@ impl TextBox {
             height,
             line_count: 1,
             baseline: None,
+            advance: width,
         }
     }
 }
@@ -500,7 +511,14 @@ fn compute_layout_inner(
     let width_unbounded = matches!(unbounded, Some(ScrollAxis::Horizontal | ScrollAxis::Both));
     let height_unbounded = matches!(unbounded, Some(ScrollAxis::Vertical | ScrollAxis::Both));
     let mut tree: TaffyTree<NodeContext> = TaffyTree::new();
-    let layout_tree = build(scene, &mut tree, cache, text_measure);
+    let mut baseline_rows: Vec<BaselineRow> = Vec::new();
+    let layout_tree = build(scene, &mut tree, cache, text_measure, &mut baseline_rows);
+    // R1641 — the offsets every baseline row can know WITHOUT a layout: its
+    // text leaves'. Injected before the first pass so the common all-text row
+    // is finished in one, and so the row's height is the engine's answer.
+    for row in &baseline_rows {
+        baseline_pass(row, &mut tree, false);
+    }
     // Force the root to fill the viewport. The user's declared size
     // on the root is ignored at the top level; child sizing is the
     // user's domain. This mirrors how browsers treat `<html>`.
@@ -564,92 +582,24 @@ fn compute_layout_inner(
     // lines().count()` is the shape backend agnostic source — the
     // `pinion_text::LayoutCache` swap to a self-hosted text engine
     // (§5.37.7 carry) keeps the same `.lines().count()` surface.
-    let mut text_lines: HashMap<NodeId, u32> = HashMap::new();
+    let mut measured_text = MeasuredText::default();
+    // R1641.4 §5.12 — the sibling side-channel, for the sibling datum: the
+    // advance including trailing whitespace, which only the measure knows and
+    // which `apply` drains into `TextNode::advance_px`.
     // R47.4 §5.36 — measure callback. Scene::Text leaves consult parley
     // (via `cache`) for intrinsic width / height; non-Text leaves
     // return `Size::ZERO`, matching the pre-R47.4 `compute_layout`
     // behaviour for variants without explicit `size` declarations.
-    tree.compute_layout_with_measure(
+    settle_layout(
+        &mut tree,
         layout_tree.node,
         available,
-        |known_dimensions, available_space, node_id, node_context, _style| {
-            if let TaffySize {
-                width: Some(width),
-                height: Some(height),
-            } = known_dimensions
-            {
-                return TaffySize { width, height };
-            }
-            match node_context {
-                Some(NodeContext::Text {
-                    content,
-                    style,
-                    runs,
-                    caret_bearing,
-                }) => {
-                    // available_space.width.Definite → parley wrap point
-                    // (multi-line); MinContent / MaxContent → no wrap
-                    // (single line / unbounded), matching how taffy
-                    // probes the leaf during flex resolution.
-                    let max_width = match available_space.width {
-                        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                        AvailableSpace::Definite(w) if w.is_finite() && w >= 0.0 => Some(w as u32),
-                        _ => None,
-                    };
-                    // R1070 §5.37 — opt-in self-hosted measure. A supplied engine
-                    // override sizes an eligible single-style leaf by the §5.37
-                    // metrics so the measured box registers with the §5.37 paint
-                    // arm (closing the R1068 paint-only gap). `None` — no override,
-                    // ineligible, or a single line that would soft-wrap — is the
-                    // unchanged parley measure, so `text_measure == None` is
-                    // byte-identical to the pre-R1070 path.
-                    if let Some(measured) = text_measure.and_then(|tm| {
-                        tm.measure_text(content, style, runs, max_width, *caret_bearing)
-                    }) {
-                        // R1344 §5.12 — the impl reports its own line count.
-                        // Pre-R1344 this hardcoded `1` on the premise that "the
-                        // §5.37 arm renders exactly one line by construction" —
-                        // true of R1070's engine (it declines anything that would
-                        // wrap), false of any measure that wraps, so the premise
-                        // belongs to the impl, not to this call site.
-                        text_lines.insert(node_id, measured.line_count);
-                        // R47.7.6 integer pixel snapping (see the parley branch).
-                        TaffySize {
-                            width: measured.width.ceil(),
-                            height: measured.height.ceil(),
-                        }
-                    } else {
-                        let layout = cache.layout_with_runs(content, style, runs, max_width);
-                        // R51.1 §5.12 — capture line count on the last
-                        // measure probe per node id; taffy may call this
-                        // closure multiple times during flex resolution
-                        // (MinContent / MaxContent / Definite). The final
-                        // call uses the resolved Definite width, which is
-                        // also what `apply` would re-measure against, so
-                        // overwriting on every call is correct.
-                        #[allow(clippy::cast_possible_truncation)]
-                        let line_count = layout.lines().count() as u32;
-                        text_lines.insert(node_id, line_count);
-                        // R47.7.6 — integer pixel snapping. parley returns
-                        // sub-pixel f32 widths; without `ceil` the value
-                        // oscillates `77.0`/`77.8` between adjacent
-                        // viewport widths, producing a visible 1-px text
-                        // jitter on mouse-drag resize. `ceil` rounds toward
-                        // "fits inside taffy's bound" so the result snaps
-                        // monotonically and the cached `rect.w` stays stable
-                        // across consecutive frames at the same content.
-                        TaffySize {
-                            width: layout.width().ceil(),
-                            height: layout.height().ceil(),
-                        }
-                    }
-                }
-                None => TaffySize::ZERO,
-            }
-        },
-    )
-    .expect("taffy compute_layout failed");
-    apply(scene, &layout_tree, &tree, &text_lines, 0.0, 0.0);
+        cache,
+        text_measure,
+        &baseline_rows,
+        &mut measured_text,
+    );
+    apply(scene, &layout_tree, &tree, &measured_text, 0.0, 0.0);
     // R55.G.2 §5.45 — outer apply does not descend into `Scene::Scroll`
     // content (build also stops at Scroll), so any Scroll in the
     // tree now needs its content re-entered with its own taffy
@@ -667,6 +617,160 @@ fn compute_layout_inner(
     LayoutPass {
         scroll_dirty: post_layout_write_backs(scene),
         nodes,
+    }
+}
+
+/// R1641.5 §5.12 — the per-node facts only the MEASURE knows, bridged from the
+/// measure pass to the apply pass.
+///
+/// taffy's measure closure has no `&mut Scene` access and `NodeContext` has no
+/// mutable accessor on the path `compute_layout_with_measure` returns, so these
+/// travel beside the tree rather than on it. They are one struct because they
+/// are always filled together and always drained together — carrying them as
+/// separate parameters is what pushed two functions past the argument lint,
+/// which was the lint noticing they are one thing.
+#[derive(Default)]
+struct MeasuredText {
+    /// `NodeId -> TextNode::line_count` (R51.1 §5.12).
+    lines: HashMap<NodeId, u32>,
+    /// `NodeId -> TextNode::advance_px` (R1641.4 §5.12).
+    advances: HashMap<NodeId, u32>,
+}
+
+/// R1641.5 §5.21 — lay the tree out, re-running while baseline offsets are
+/// still moving.
+///
+/// Extracted from [`compute_layout_inner`] when the settle loop pushed that
+/// function past the length lint. The lint was right: "measure and place every
+/// node" and "keep placing until the baselines agree" are two jobs, and only
+/// the second one has a termination argument to make.
+fn settle_layout(
+    tree: &mut TaffyTree<NodeContext>,
+    root: NodeId,
+    available: TaffySize<AvailableSpace>,
+    cache: &mut LayoutCache,
+    text_measure: Option<&dyn TextMeasure>,
+    baseline_rows: &[BaselineRow],
+    measured_text: &mut MeasuredText,
+) {
+    // R1641.5 §5.21 — the layout runs more than once ONLY when a baseline row
+    // holds a child whose baseline has to be synthesized from its laid-out box
+    // (CSS's bottom-margin-edge rule for an item that has no baseline of its
+    // own). Everything else settles on the first pass and breaks out.
+    //
+    // Bounded rather than run-to-fixpoint: the offsets are top margins, and a
+    // top margin does not change a cross-axis-Start item's own height, so the
+    // second pass is exact and the loop normally exits after it. The bound
+    // exists for the one shape that can still move — a percentage cross size,
+    // which resolves against a container height the offsets DO change — where
+    // stopping at a stated budget beats iterating on a tree the caller is
+    // waiting for. The same budget the frame's settle loop uses.
+    for pass in 0..SETTLE_PASS_BUDGET {
+        tree.compute_layout_with_measure(
+            root,
+            available,
+            |known_dimensions, available_space, node_id, node_context, _style| {
+                if let TaffySize {
+                    width: Some(width),
+                    height: Some(height),
+                } = known_dimensions
+                {
+                    return TaffySize { width, height };
+                }
+                match node_context {
+                    Some(NodeContext::Text {
+                        content,
+                        style,
+                        runs,
+                        caret_bearing,
+                    }) => {
+                        // available_space.width.Definite → parley wrap point
+                        // (multi-line); MinContent / MaxContent → no wrap
+                        // (single line / unbounded), matching how taffy
+                        // probes the leaf during flex resolution.
+                        let max_width = match available_space.width {
+                            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                            AvailableSpace::Definite(w) if w.is_finite() && w >= 0.0 => {
+                                Some(w as u32)
+                            }
+                            _ => None,
+                        };
+                        // R1070 §5.37 — opt-in self-hosted measure. A supplied engine
+                        // override sizes an eligible single-style leaf by the §5.37
+                        // metrics so the measured box registers with the §5.37 paint
+                        // arm (closing the R1068 paint-only gap). `None` — no override,
+                        // ineligible, or a single line that would soft-wrap — is the
+                        // unchanged parley measure, so `text_measure == None` is
+                        // byte-identical to the pre-R1070 path.
+                        if let Some(measured) = text_measure.and_then(|tm| {
+                            tm.measure_text(content, style, runs, max_width, *caret_bearing)
+                        }) {
+                            // R1344 §5.12 — the impl reports its own line count.
+                            // Pre-R1344 this hardcoded `1` on the premise that "the
+                            // §5.37 arm renders exactly one line by construction" —
+                            // true of R1070's engine (it declines anything that would
+                            // wrap), false of any measure that wraps, so the premise
+                            // belongs to the impl, not to this call site.
+                            measured_text.lines.insert(node_id, measured.line_count);
+                            measured_text
+                                .advances
+                                .insert(node_id, ceil_px(measured.advance));
+                            // R47.7.6 integer pixel snapping (see the parley branch).
+                            TaffySize {
+                                width: measured.width.ceil(),
+                                height: measured.height.ceil(),
+                            }
+                        } else {
+                            let layout = cache.layout_with_runs(content, style, runs, max_width);
+                            // R51.1 §5.12 — capture line count on the last
+                            // measure probe per node id; taffy may call this
+                            // closure multiple times during flex resolution
+                            // (MinContent / MaxContent / Definite). The final
+                            // call uses the resolved Definite width, which is
+                            // also what `apply` would re-measure against, so
+                            // overwriting on every call is correct.
+                            #[allow(clippy::cast_possible_truncation)]
+                            let line_count = layout.lines().count() as u32;
+                            measured_text.lines.insert(node_id, line_count);
+                            // R1641.4 — `full_width()` is the shaper's own name for
+                            // "including the trailing whitespace `width()` drops".
+                            measured_text
+                                .advances
+                                .insert(node_id, ceil_px(layout.full_width()));
+                            // R47.7.6 — integer pixel snapping. parley returns
+                            // sub-pixel f32 widths; without `ceil` the value
+                            // oscillates `77.0`/`77.8` between adjacent
+                            // viewport widths, producing a visible 1-px text
+                            // jitter on mouse-drag resize. `ceil` rounds toward
+                            // "fits inside taffy's bound" so the result snaps
+                            // monotonically and the cached `rect.w` stays stable
+                            // across consecutive frames at the same content.
+                            TaffySize {
+                                width: layout.width().ceil(),
+                                height: layout.height().ceil(),
+                            }
+                        }
+                    }
+                    None => TaffySize::ZERO,
+                }
+            },
+        )
+        .expect("taffy compute_layout failed");
+        // Now every box has a size, so a row that was holding a
+        // not-yet-synthesizable baseline can finish. `moved` is false on the
+        // pass where nothing changed, which is what ends this for an all-text
+        // tree after exactly one layout.
+        let mut moved = false;
+        for row in baseline_rows {
+            moved |= baseline_pass(row, tree, true);
+        }
+        if !moved {
+            break;
+        }
+        debug_assert!(
+            pass + 1 < SETTLE_PASS_BUDGET,
+            "baseline offsets did not settle within {SETTLE_PASS_BUDGET} passes",
+        );
     }
 }
 
@@ -970,6 +1074,22 @@ struct LayoutShadow {
     children: Vec<LayoutShadow>,
 }
 
+/// R1641.4 — px, rounded up, clamped at zero.
+///
+/// The same `ceil` the measured box takes (R47.7.6): without it a sub-pixel
+/// advance oscillates between adjacent integers across frames, and the whole
+/// point of this number is that a client can compare it with `rect.w`, which
+/// is integral. Rounding them differently would manufacture a trailing space
+/// that is not there.
+#[allow(
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a text advance is a small non-negative px value after the clamp"
+)]
+fn ceil_px(v: f32) -> u32 {
+    v.max(0.0).ceil() as u32
+}
+
 /// R1641 §5.21 §5.36 — where a child's first text baseline sits, measured from
 /// the top of its own box, or `None` when it has none to report.
 ///
@@ -1001,38 +1121,77 @@ fn text_baseline_of(
     layout.lines().next().map(|line| line.metrics().baseline)
 }
 
-/// R1641 §5.21 — push each participating child down so the row's first text
-/// baselines coincide.
+/// R1641 §5.21 — one row whose children align on a common baseline.
 ///
-/// Injected as extra taffy `margin.top` BEFORE `compute_layout`, so the row's
-/// own height is the layout engine's answer about the shifted children rather
-/// than a number this function would otherwise have to correct afterwards —
-/// and so a parent sizing itself around this row sees the true height on the
-/// same pass.
+/// Recorded at build time rather than derived later because it holds the two
+/// facts a later pass cannot recover: each child's DECLARED margin (so a
+/// re-computed offset replaces the previous one instead of accumulating on top
+/// of it), and the baseline of every child that could report one before layout.
+struct BaselineRow {
+    items: Vec<BaselineItem>,
+}
+
+struct BaselineItem {
+    node: NodeId,
+    /// The application's own `margin.y` / `margin.h`, untouched.
+    declared_top: u32,
+    declared_bottom: u32,
+    /// Where this child's first baseline is, when it is a text leaf and could
+    /// be measured without laying anything out. `None` means the baseline has
+    /// to be SYNTHESIZED from the laid-out box — see [`baseline_pass`].
+    measured: Option<f32>,
+}
+
+/// R1641 §5.21 — set each item's top margin so the row's baselines coincide.
+/// Returns whether any margin actually moved.
 ///
-/// The largest baseline wins, so every delta is `>= 0` and no child is lifted
-/// above the row's content box.
+/// The offset is injected as taffy `margin.top` BEFORE `compute_layout`, so the
+/// row's own height is the layout engine's answer about the shifted children
+/// rather than a number this would otherwise have to correct afterwards — and
+/// so a parent sizing itself around this row sees the true height on the same
+/// pass.
+///
+/// `synthesize` is what makes the second call different from the first. A child
+/// that is not a text leaf has no baseline of its own, and CSS synthesizes one
+/// from its bottom margin edge — a number that does not exist until the child
+/// has been laid out. So the first pass runs with `synthesize = false` and only
+/// the text baselines, and once the tree has a layout the same function runs
+/// again with every baseline known. R1641 shipped only the first half and
+/// documented the second as absent; this is that half.
+///
+/// The largest baseline wins, so every offset is `>= 0` and no child is ever
+/// lifted above the row's content box.
 #[allow(
     clippy::cast_precision_loss,
-    reason = "a declared margin is a small px value; the same cast every other \
-              margin in `to_taffy_style` already makes"
+    reason = "a declared margin and a laid-out box are small px values; the \
+              same cast every other margin in `to_taffy_style` already makes"
 )]
-fn apply_baseline_offsets(
-    children: &[Scene],
-    shadows: &[LayoutShadow],
-    tree: &mut TaffyTree<NodeContext>,
-    cache: &mut LayoutCache,
-    text_measure: Option<&dyn TextMeasure>,
-) {
-    let baselines: Vec<Option<f32>> = children
+fn baseline_pass(row: &BaselineRow, tree: &mut TaffyTree<NodeContext>, synthesize: bool) -> bool {
+    // Fewer than two boxes cannot be aligned to each other. CSS reaches the
+    // same no-op, and stating it here keeps the common single-child row off
+    // the `set_style` path entirely.
+    if row.items.len() < 2 {
+        return false;
+    }
+
+    let baselines: Vec<Option<f32>> = row
+        .items
         .iter()
-        .map(|child| text_baseline_of(child, cache, text_measure))
+        .map(|item| {
+            item.measured.or_else(|| {
+                if !synthesize {
+                    return None;
+                }
+                // CSS synthesizes a missing baseline at the BOTTOM MARGIN
+                // EDGE, which is what makes a box sit on the same line as the
+                // text beside it rather than hanging below it.
+                let layout = tree.layout(item.node).ok()?;
+                Some(layout.size.height + item.declared_bottom as f32)
+            })
+        })
         .collect();
-    // One participant has nothing to align WITH; zero has nothing to align.
-    // CSS reaches the same no-op, and stating it here keeps the common
-    // single-text row off the `set_style` path entirely.
     if baselines.iter().filter(|b| b.is_some()).count() < 2 {
-        return;
+        return false;
     }
     let deepest = baselines
         .iter()
@@ -1040,25 +1199,29 @@ fn apply_baseline_offsets(
         .copied()
         .fold(f32::NEG_INFINITY, f32::max);
 
-    for ((child, shadow), baseline) in children.iter().zip(shadows).zip(&baselines) {
-        let Some(baseline) = baseline else { continue };
+    let mut moved = false;
+    for (item, baseline) in row.items.iter().zip(&baselines) {
         // Rounded because every rect this feeds is snapped to integer pixels
-        // downstream; a sub-pixel delta would only be truncated there, and
+        // downstream; a sub-pixel offset would only be truncated there, and
         // truncation is what makes two equal baselines land a pixel apart.
-        let delta = (deepest - baseline).round();
-        if delta <= 0.0 {
-            continue;
-        }
+        let offset = baseline.map_or(0.0, |b| (deepest - b).round().max(0.0));
+        // Always written from the DECLARED margin, never added to whatever the
+        // previous pass left: that is what keeps a second pass a correction
+        // rather than an accumulation.
+        let want = item.declared_top as f32 + offset;
         let mut style = tree
-            .style(shadow.node)
+            .style(item.node)
             .expect("taffy style query failed")
             .clone();
-        // Added to the child's DECLARED margin, not substituted for it: the
-        // application's own spacing is still its own.
-        style.margin.top = length(layout_style_of(child).margin.y as f32 + delta);
-        tree.set_style(shadow.node, style)
-            .expect("taffy set_style failed");
+        let already = style.margin.top;
+        style.margin.top = length(want);
+        if style.margin.top != already {
+            moved = true;
+            tree.set_style(item.node, style)
+                .expect("taffy set_style failed");
+        }
     }
+    moved
 }
 
 fn build(
@@ -1066,6 +1229,7 @@ fn build(
     tree: &mut TaffyTree<NodeContext>,
     cache: &mut LayoutCache,
     text_measure: Option<&dyn TextMeasure>,
+    rows: &mut Vec<BaselineRow>,
 ) -> LayoutShadow {
     // R55.G.4 §5.45 — Scroll's `layout` field now carries its
     // taffy style (seeded with `viewport.{w,h}` by
@@ -1077,7 +1241,7 @@ fn build(
             let shadows: Vec<LayoutShadow> = c
                 .children
                 .iter()
-                .map(|s| build(s, tree, cache, text_measure))
+                .map(|s| build(s, tree, cache, text_measure, rows))
                 .collect();
             // R1641 — baseline alignment is a CROSS-axis rule, so it applies
             // only where the cross axis is vertical. `to_taffy_style` maps
@@ -1086,7 +1250,22 @@ fn build(
             if matches!(c.layout.align_items, AlignItems::Baseline)
                 && !matches!(c.layout.flex_direction, FlexDirection::Column)
             {
-                apply_baseline_offsets(&c.children, &shadows, tree, cache, text_measure);
+                rows.push(BaselineRow {
+                    items: c
+                        .children
+                        .iter()
+                        .zip(&shadows)
+                        .map(|(child, shadow)| {
+                            let margin = layout_style_of(child).margin;
+                            BaselineItem {
+                                node: shadow.node,
+                                declared_top: margin.y,
+                                declared_bottom: margin.h,
+                                measured: text_baseline_of(child, cache, text_measure),
+                            }
+                        })
+                        .collect(),
+                });
             }
             shadows
         }
@@ -1124,7 +1303,7 @@ fn apply(
     scene: &mut Scene,
     shadow: &LayoutShadow,
     tree: &TaffyTree<NodeContext>,
-    text_lines: &HashMap<NodeId, u32>,
+    measured: &MeasuredText,
     parent_x: f32,
     parent_y: f32,
 ) {
@@ -1144,12 +1323,20 @@ fn apply(
     // Other variants stay at the `TextNode::default()` `line_count = 0`
     // because the field is Text-only by semantics.
     if let Scene::Text(t) = scene {
-        t.line_count = text_lines.get(&shadow.node).copied().unwrap_or(0);
+        t.line_count = measured.lines.get(&shadow.node).copied().unwrap_or(0);
+        // Falls back to the laid-out width rather than 0: a node the measure
+        // never saw advanced exactly as far as its box, and reporting 0 would
+        // make `advance_px - rect.w` read as a NEGATIVE trailing space.
+        t.advance_px = measured
+            .advances
+            .get(&shadow.node)
+            .copied()
+            .unwrap_or(rect.w);
     }
 
     if let Scene::Container(c) = scene {
         for (child, shadow_child) in c.children.iter_mut().zip(&shadow.children) {
-            apply(child, shadow_child, tree, text_lines, abs_x, abs_y);
+            apply(child, shadow_child, tree, measured, abs_x, abs_y);
         }
     }
 }
@@ -1366,7 +1553,7 @@ fn to_taffy_style(layout: &LayoutStyle) -> TaffyStyle {
         AlignItems::Center => TaffyAlign::Center,
         AlignItems::End => TaffyAlign::End,
         // R1641 — `AlignItems::Baseline` lowers to taffy's START, and the
-        // shift is pinion's own (see `apply_baseline_offsets`).
+        // shift is pinion's own (see `baseline_pass`).
         //
         // NOT `TaffyAlign::Baseline`, which would look like the obvious
         // mapping and would be a no-op alias for `End` on exactly the items
@@ -3096,6 +3283,67 @@ mod tests {
         assert!(!c.is_empty(), "measure pass populates LayoutCache");
     }
 
+    /// R1641.4 §5.36 §5.12 — the box declines to count a trailing space, and
+    /// now SAYS how much it declined.
+    ///
+    /// The consumer case verbatim: `"최소 "` beside `"1회"` renders as
+    /// `최소1회`, because the first leaf's box excludes the trailing space's
+    /// advance. That behaviour is correct and stays; what was missing is that
+    /// the amount existed nowhere a client could read, so the only way to
+    /// learn it was to look at pixels — the thing §2 #7 exists to avoid.
+    #[test]
+    fn r1641_4_a_text_node_reports_the_advance_its_box_excluded() {
+        let mut c = cache();
+        let mut scene = Scene::Container(
+            ContainerNode::new(vec![
+                Scene::Text(TextNode::styled(
+                    "ab ",
+                    Rect::default(),
+                    TextStyle::new().with_size_px(20),
+                )),
+                Scene::Text(TextNode::styled(
+                    "ab",
+                    Rect::default(),
+                    TextStyle::new().with_size_px(20),
+                )),
+            ])
+            .with_layout(LayoutStyle::new().flex(FlexDirection::Row)),
+        );
+        compute_layout(&mut scene, &mut c, 400, 200);
+
+        let Scene::Container(container) = &scene else {
+            panic!("container")
+        };
+        let (Scene::Text(spaced), Scene::Text(solid)) =
+            (&container.children[0], &container.children[1])
+        else {
+            panic!("two text leaves")
+        };
+
+        assert!(
+            spaced.advance_px > spaced.rect.w,
+            "the trailing space is in the advance and not in the box: \
+             advance={} box={}",
+            spaced.advance_px,
+            spaced.rect.w,
+        );
+        assert_eq!(
+            spaced.rect.w, solid.rect.w,
+            "and the two boxes are the SAME width, which is the symptom the \
+             consumer reported",
+        );
+        assert_eq!(
+            solid.advance_px, solid.rect.w,
+            "a string with no trailing space reports no excluded advance",
+        );
+        // The pair is comparable because both are ceiled px. A client reading
+        // `advance_px - rect.w` gets the gap it did not get on screen.
+        assert!(
+            spaced.advance_px - spaced.rect.w >= 1,
+            "the difference is a whole pixel a client can act on",
+        );
+    }
+
     // ─────────────────────────────────────────────────────────────────
     // R1641 §5.21 — `AlignItems::Baseline`.
     //
@@ -3229,26 +3477,107 @@ mod tests {
             );
         }
 
+        fn box_px(w: u32, h: u32, margin_bottom: u32) -> Scene {
+            Scene::Box(
+                BoxNode::new(Rect::default(), BoxStyle::default()).with_layout(
+                    LayoutStyle::new()
+                        .with_size(Size::px(w, h))
+                        .with_margin(Rect::new(0, 0, 0, margin_bottom)),
+                ),
+            )
+        }
+
+        /// R1641.5 — a child with no baseline of its own gets one SYNTHESIZED
+        /// from its bottom margin edge, which is what CSS does.
+        ///
+        /// R1641 shipped this case top-aligned and documented the absence; the
+        /// test that recorded it failed the moment the second pass landed,
+        /// which is the right way for a documented boundary to move.
         #[test]
-        fn r1641_one_participant_is_a_no_op() {
-            // CSS reaches the same place: there is nothing to align with. The
-            // Box sibling is not a participant, so this row has exactly one.
+        #[allow(
+            clippy::cast_precision_loss,
+            reason = "a laid-out edge within a 200px viewport is exact in f32"
+        )]
+        fn r1641_5_a_box_is_aligned_by_its_bottom_margin_edge() {
             let mut c = cache();
-            let sized = Scene::Box(
-                BoxNode::new(Rect::default(), BoxStyle::default())
-                    .with_layout(LayoutStyle::new().with_size(Size::px(30, 30))),
+            let mut scene = row(
+                AlignItems::Baseline,
+                vec![text("92.5", BIG), box_px(30, 30, 0)],
             );
-            let mut scene = row(AlignItems::Baseline, vec![text("92.5", BIG), sized]);
             compute_layout(&mut scene, &mut c, 400, 200);
 
             let items = children_of(&scene);
-            assert_eq!(items[0].rect().y, 0, "the text is not moved");
-            assert_eq!(
-                items[1].rect().y,
-                0,
-                "and the non-text child keeps Start behaviour rather than \
-                 being aligned to a baseline it cannot report",
+            let (numeral, boxed) = (&items[0], items[1].rect());
+            let text_baseline = absolute_baseline(numeral, &mut c);
+
+            assert!(
+                boxed.y > 0,
+                "the box moved down to meet the text's baseline, where R1641 \
+                 left it at the top",
             );
+            assert!(
+                ((boxed.y + boxed.h) as f32 - text_baseline).abs() <= 1.0,
+                "its BOTTOM sits on the text's baseline: bottom={} baseline={}",
+                boxed.y + boxed.h,
+                text_baseline,
+            );
+        }
+
+        /// The bottom MARGIN edge, not the border box: a declared bottom
+        /// margin pushes the synthesized baseline further down, so the box
+        /// rides higher.
+        #[test]
+        fn r1641_5_a_bottom_margin_is_part_of_the_synthesized_baseline() {
+            let mut c = cache();
+            let mut flush = row(
+                AlignItems::Baseline,
+                vec![text("92.5", BIG), box_px(30, 30, 0)],
+            );
+            let mut margined = row(
+                AlignItems::Baseline,
+                vec![text("92.5", BIG), box_px(30, 30, 8)],
+            );
+            compute_layout(&mut flush, &mut c, 400, 200);
+            compute_layout(&mut margined, &mut c, 400, 200);
+
+            let a = children_of(&flush)[1].rect().y;
+            let b = children_of(&margined)[1].rect().y;
+            assert_eq!(
+                a.saturating_sub(b),
+                8,
+                "8px of bottom margin lifts the box by exactly 8px: {a} -> {b}",
+            );
+        }
+
+        /// Two boxes and no text at all: they still align, because a
+        /// synthesized baseline is a baseline.
+        #[test]
+        fn r1641_5_two_boxes_align_without_any_text() {
+            let mut c = cache();
+            let mut scene = row(
+                AlignItems::Baseline,
+                vec![box_px(20, 40, 0), box_px(20, 12, 0)],
+            );
+            compute_layout(&mut scene, &mut c, 400, 200);
+            let items = children_of(&scene);
+            let (tall, short) = (items[0].rect(), items[1].rect());
+            assert_eq!(
+                tall.y + tall.h,
+                short.y + short.h,
+                "both bottom edges land on the one baseline",
+            );
+            assert_eq!(tall.y, 0, "and the deepest one does not move");
+        }
+
+        #[test]
+        fn r1641_a_single_child_is_a_no_op() {
+            // Fewer than two boxes cannot be aligned TO each other. CSS
+            // reaches the same place, and this is the only case that is still
+            // a no-op now that every child can produce a baseline.
+            let mut c = cache();
+            let mut scene = row(AlignItems::Baseline, vec![box_px(30, 30, 0)]);
+            compute_layout(&mut scene, &mut c, 400, 200);
+            assert_eq!(children_of(&scene)[0].rect().y, 0);
         }
 
         #[test]

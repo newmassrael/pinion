@@ -181,7 +181,7 @@ footprint_is_zero!(
     crate::style::FontWeight,
     crate::style::GenericFontFamily,
     crate::style::LineHeight,
-    crate::style::LetterSpacing,
+    crate::style::TextSpacing,
     crate::style::BlockFormat,
     crate::style::TextAlign,
     crate::style::TextDecoration,
@@ -226,6 +226,7 @@ impl Footprint for crate::style::TextStyle {
             font_style,
             line_height,
             letter_spacing,
+            word_spacing,
             text_align,
             text_indent,
             decoration,
@@ -239,6 +240,7 @@ impl Footprint for crate::style::TextStyle {
             + font_style.footprint()
             + line_height.footprint()
             + letter_spacing.footprint()
+            + word_spacing.footprint()
             + text_align.footprint()
             + text_indent.footprint()
             + decoration.footprint()

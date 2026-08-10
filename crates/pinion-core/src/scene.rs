@@ -1066,6 +1066,11 @@ impl Scene {
                 t.style.hash(&mut h);
                 t.layout.hash(&mut h);
                 t.line_count.hash(&mut h);
+                // R1641.4 — the sibling measured datum, folded in for the
+                // same reason and with the same effect: both are functions of
+                // the shaping inputs already hashed above, so this can only
+                // ever agree with them.
+                t.advance_px.hash(&mut h);
                 // R713 §5.36 — fold the styled-run spans into the paint
                 // hash so the R682 paint-cache re-keys when a run's
                 // range or style changes (e.g. a highlight toggling a
@@ -2625,6 +2630,28 @@ pub struct TextNode {
     /// `LayoutNode.line_count` so AI clients verify single-line text
     /// without pixel inspection (Scene-as-data invariant §2 #7).
     pub line_count: u32,
+    /// R1641.4 §5.36 §5.12 — the measured advance **including** trailing
+    /// whitespace, in px (rounded up, like [`Self::rect`]'s width).
+    ///
+    /// [`Self::rect`]'s width EXCLUDES it. That is the right box — CSS
+    /// removes a flex item's trailing whitespace, and text alignment needs a
+    /// width that does not count a space nobody can see — but it means a
+    /// string ending in a space is laid out narrower than it was shaped, and
+    /// until R1641.4 the amount was not readable anywhere. The first consumer
+    /// outside this workspace met it as two labels rendering with no gap
+    /// between them and had to infer the cause from pixels, which is exactly
+    /// what §2 #7 exists to make unnecessary.
+    ///
+    /// `advance_px - rect.w` is what the box declined to count. The reference
+    /// toolkit publishes the same pair as two widths rather than a delta
+    /// (a natural-text width and an advance), and this follows that: two
+    /// measurements a client can compare beat one number whose sign it has to
+    /// reason about.
+    ///
+    /// No sentinel of its own — an empty string genuinely advances `0`. Ask
+    /// [`Self::line_count`] whether a shape pass has run at all; it reserves
+    /// `0` for that and reports `1` for the empty string.
+    pub advance_px: u32,
     /// R713 §5.36 — optional ordered styled-run spans for rich
     /// (multi-style) text. Empty (the default) is the single-style
     /// node: the whole string uses `style`. Non-empty applies each
@@ -2795,6 +2822,7 @@ impl TextNode {
             layout: LayoutStyle::new(),
             tag: None,
             line_count: 0,
+            advance_px: 0,
             runs: Vec::new(),
             role: None,
             caret_bearing: false,

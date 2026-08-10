@@ -239,6 +239,9 @@ mod tests {
                     // font metrics to report a baseline from, and on a uniform
                     // grid top-alignment already puts first rows level.
                     baseline: None,
+                    // Cells are counted whether or not they hold a space, so
+                    // this measure never dropped a trailing advance to report.
+                    advance: (cols.min(budget) * 8) as f32,
                 };
                 Some(measured)
             }

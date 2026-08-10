@@ -297,6 +297,7 @@ fn fade_text_style(style: &mut TextStyle, backdrop: Color) {
         font_style: _,
         line_height: _,
         letter_spacing: _,
+        word_spacing: _,
         text_align: _,
         text_indent: _,
         decoration,

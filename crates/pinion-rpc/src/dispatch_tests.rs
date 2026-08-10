@@ -1672,8 +1672,8 @@ fn r770_1_text_style_json_decode_is_inverse_of_encode() {
     // This test pins them in sync (R743.1: decode is the inverse of
     // encode; R615 from_hex/to_hex precedent).
     use pinion_core::style::{
-        Color, FontStyle, FontWeight, LetterSpacing, LineHeight, TextAlign, TextDecoration,
-        TextOverflow, TextStyle,
+        Color, FontStyle, FontWeight, LineHeight, TextAlign, TextDecoration, TextOverflow,
+        TextSpacing, TextStyle,
     };
     use pinion_core::widgets::text_field::json_to_text_style;
 
@@ -1686,7 +1686,7 @@ fn r770_1_text_style_json_decode_is_inverse_of_encode() {
     let mut b = TextStyle::new();
     b.font_style = FontStyle::Oblique(Some(-14));
     b.line_height = LineHeight::Px(30);
-    b.letter_spacing = LetterSpacing::PxX100(350);
+    b.letter_spacing = TextSpacing::PxX100(350);
     b.text_align = TextAlign::Center;
     b.decoration = TextDecoration::none()
         .with_underline(true)
@@ -1718,7 +1718,7 @@ fn r770_1_text_style_json_decode_is_inverse_of_encode() {
     // not carry at all. `b`'s 350 is whole-px-expressible; this one is not, so
     // the pair is exercised on a value that only exists after the rescale.
     let mut fractional = TextStyle::new();
-    fractional.letter_spacing = LetterSpacing::PxX100(-150);
+    fractional.letter_spacing = TextSpacing::PxX100(-150);
 
     // R1641 — and the em-relative unit, which is the half of this axis the
     // reference toolkit has (its font-relative spacing mode) and pinion did not
@@ -1726,9 +1726,25 @@ fn r770_1_text_style_json_decode_is_inverse_of_encode() {
     // authored in em unrepresentable without resolving it first, which is the
     // resolution this type exists to defer.
     let mut em_relative = TextStyle::new();
-    em_relative.letter_spacing = LetterSpacing::EmX1000(-20);
+    em_relative.letter_spacing = TextSpacing::EmX1000(-20);
 
-    for sample in [TextStyle::new(), a, b, c, d, fractional, em_relative] {
+    // R1641.3 — the second field the one codec serves. Set to a DIFFERENT
+    // value than its sibling, so an encode that wrote one key twice, or a
+    // decode that read one key into both, fails here.
+    let mut both_gaps = TextStyle::new();
+    both_gaps.letter_spacing = TextSpacing::PxX100(-50);
+    both_gaps.word_spacing = TextSpacing::EmX1000(120);
+
+    for sample in [
+        TextStyle::new(),
+        a,
+        b,
+        c,
+        d,
+        fractional,
+        em_relative,
+        both_gaps,
+    ] {
         let encoded = text_style_to_json(&sample);
         let decoded = json_to_text_style(encoded.as_object().unwrap());
         assert_eq!(
@@ -1751,18 +1767,18 @@ fn r770_1_text_style_json_decode_is_inverse_of_encode() {
 /// what a client should send and the legacy form is not a contract (R1639).
 #[test]
 fn r1641_the_retired_letter_spacing_key_is_read_as_whole_px() {
-    use pinion_core::style::{LetterSpacing, TextStyle};
+    use pinion_core::style::{TextSpacing, TextStyle};
     use pinion_core::widgets::text_field::json_to_text_style;
 
     let legacy: serde_json::Value = serde_json::json!({ "letter_spacing": -2 });
     assert_eq!(
         json_to_text_style(legacy.as_object().unwrap()).letter_spacing,
-        LetterSpacing::PxX100(-200),
+        TextSpacing::PxX100(-200),
         "a pre-R1641 client's bare -2 is still -2px",
     );
 
     let encoded =
-        text_style_to_json(&TextStyle::new().with_letter_spacing(LetterSpacing::PxX100(-150)));
+        text_style_to_json(&TextStyle::new().with_letter_spacing(TextSpacing::PxX100(-150)));
     let published = encoded.as_object().unwrap().get("letter_spacing").unwrap();
     assert!(
         published.is_object(),
@@ -3997,12 +4013,12 @@ fn r55_g10_scene_snapshot_text_wire_carries_layout_axis() {
     // the visual-axis fields landed by R55.G.8.
     use pinion_core::scene::{Rect, TextNode};
     use pinion_core::style::{
-        LetterSpacing, LineHeight, TextAlign, TextDecoration, TextOverflow, TextStyle,
+        LineHeight, TextAlign, TextDecoration, TextOverflow, TextSpacing, TextStyle,
     };
     let mut node = TextNode::new("hi", Rect::default());
     node.style = TextStyle::new()
         .with_line_height(LineHeight::MultiplierX100(150))
-        .with_letter_spacing(LetterSpacing::PxX100(200))
+        .with_letter_spacing(TextSpacing::PxX100(200))
         .with_align(TextAlign::Center)
         .with_decoration(TextDecoration::underline())
         .with_overflow(TextOverflow::Ellipsis);
@@ -4023,6 +4039,12 @@ fn r55_g10_scene_snapshot_text_wire_carries_layout_axis() {
     let ls = style.get("letter_spacing").unwrap().as_object().unwrap();
     assert_eq!(ls.get("kind"), Some(&Value::String("PxX100".into())));
     assert_eq!(ls.get("value"), Some(&Value::Number(200.into())));
+    // R1641.3 — word_spacing is on the wire beside it, in the same encoding,
+    // and says `Normal` rather than being absent when nothing set it.
+    assert_eq!(
+        style.get("word_spacing"),
+        Some(&Value::String("Normal".into())),
+    );
     assert_eq!(
         style.get("text_align"),
         Some(&Value::String("Center".into())),

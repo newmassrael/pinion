@@ -600,6 +600,11 @@ impl TextMeasure for CellTextLayout {
             // placement `AlignItems::Baseline` would produce. Reporting a
             // number here would claim a font metric this measure never took.
             baseline: None,
+            // R1641.4 — a cell grid counts a trailing space as a cell, so
+            // there is no excluded advance to report and the two widths are
+            // the same number. Stated rather than left to a default, because
+            // "the same" is a measurement here, not an absence.
+            advance: (cols * self.metric.cell_w()) as f32,
         };
         Some(measured)
     }
