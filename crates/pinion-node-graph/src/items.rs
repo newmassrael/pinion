@@ -362,6 +362,113 @@ impl<K: NodeKind> ItemChange<K> {
     }
 }
 
+/// R1642 — which item edit to run, as a **value**.
+///
+/// The three edits keep their own methods, because they take different
+/// arguments and answer differently-shaped changes; this names the CHOICE
+/// between them, which is what a caller sends over a wire and what a schema
+/// declares. Exactly the move R1638 made for [`ArrangePass`](crate::ArrangePass),
+/// and made here for the same reason: the vocabulary was three string literals
+/// matched at the call site, so it could not be enumerated, offered in a menu,
+/// or published to a client, and every consumer re-wrote the three-way match.
+///
+/// The wire names are the ones the surface already accepted, so publishing the
+/// vocabulary describes the wire rather than changing it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, pinion_derive::VariantCensus)]
+#[variant_census(all)]
+pub enum ItemEdit {
+    /// [`Document::insert_item`] — add an item at a position.
+    Add,
+    /// [`Document::remove_item`] — take the item at a position away.
+    Remove,
+    /// [`Document::move_item`] — carry an item to another position, links and
+    /// authored values with it.
+    Move,
+}
+
+impl ItemEdit {
+    /// Every edit, for a consumer that must cover the vocabulary.
+    pub const ALL: [Self; 3] = [Self::Add, Self::Remove, Self::Move];
+
+    /// A stable name, for a caption or a wire form.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Add => "add",
+            Self::Remove => "remove",
+            Self::Move => "move",
+        }
+    }
+
+    /// Parse a wire name back to the edit, or `None` — the inverse of
+    /// [`name`](Self::name), which `r1642_every_item_edit_name_parses_back`
+    /// holds it to.
+    #[must_use]
+    pub fn from_wire(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|e| e.name() == name)
+    }
+
+    /// The closed vocabulary, projected from [`ALL`](Self::ALL) rather than
+    /// written out — see [`ArrangePass::WIRE_NAMES`](crate::ArrangePass::WIRE_NAMES).
+    pub const WIRE_NAMES: [&'static str; Self::ARMS] = {
+        let mut out = [""; Self::ARMS];
+        let mut i = 0;
+        while i < Self::ARMS {
+            out[i] = Self::ALL[i].name();
+            i += 1;
+        }
+        out
+    };
+
+    /// What this edit reads after the position — the one fact a caller needs
+    /// that the edit's name does not carry.
+    ///
+    /// This is what makes the item verb a *conditional* call rather than a
+    /// uniform one: the three edits do not merely constrain the last argument
+    /// differently, they take a different NUMBER of them. No flat positional
+    /// argument list describes `add:in:1` and `move:in:2:0` at once, which is
+    /// the shape `ArgDomain::OneOfWith` exists for.
+    #[must_use]
+    pub const fn tail(self) -> ItemEditTail {
+        match self {
+            Self::Add => ItemEditTail::Label,
+            Self::Remove => ItemEditTail::None,
+            Self::Move => ItemEditTail::Destination,
+        }
+    }
+}
+
+/// What an [`ItemEdit`] reads from its trailing argument (R1642).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, pinion_derive::VariantCensus)]
+pub enum ItemEditTail {
+    /// Nothing — the edit is fully determined by the side and the position.
+    None,
+    /// A label for the new item.
+    Label,
+    /// The position to carry the item to.
+    Destination,
+}
+
+impl ItemEditTail {
+    /// Whether a caller must supply the trailing argument — the peer of
+    /// [`ArrangeTail::required`](crate::ArrangeTail::required), and required for
+    /// the same reason: a declaration that says "required" about a segment the
+    /// dispatcher defaults, or "optional" about one it demands, is wrong in the
+    /// direction that costs a client a refused call.
+    ///
+    /// A [`Label`](Self::Label) may be left out — an unnamed item is
+    /// [`Item::plain`] and perfectly ordinary — while a
+    /// [`Destination`](Self::Destination) cannot be defaulted: there is no
+    /// position a move to nowhere means.
+    #[must_use]
+    pub const fn required(self) -> bool {
+        match self {
+            Self::Destination => true,
+            Self::None | Self::Label => false,
+        }
+    }
+}
+
 /// Why an item edit could not happen (R1632).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ItemError {

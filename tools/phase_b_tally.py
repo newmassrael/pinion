@@ -1582,9 +1582,48 @@ AXES = [
         # deliberately undecided here — and it has now grown, because
         # `hello-richtext-cells` and `hello-richtext-list` are rich-text
         # DOCUMENT work while `textgrid` / `app-font` / `completer` are not.
-        "judged_at": 1560,
-        "completion": 90,
-        "evidence_snapshot": {"example-name": 13, "round-axis": 6},
+        #
+        # R1642 re-judged 90 -> 92, DEMANDED by the tool (round-axis 6 -> 8,
+        # +33%; R1615 and R1641 each declared this axis and neither re-judged).
+        #
+        # ONE OF R1560's FIVE NAMED GAPS CLOSED, which is why the move is small
+        # and real rather than large or nil. R1560 recorded the CHARACTER half as
+        # "unchanged since R1546"; R1641 moved it, and moved it as a type rather
+        # than a number — `LetterSpacing { Normal, PxX100, EmX1000 }` shaped like
+        # the `LineHeight` above it, so tracking is specifiable relative to the
+        # font instead of restated per size, with `word_spacing` landing beside it
+        # in the same encoding at R1641.3. Fixed point rather than a float because
+        # `TextStyle` derives `Eq + Hash` and that participates in the §5.16 paint
+        # fragment cache key. R1615 is the other round: `StyleRun::name` gives a
+        # styled run an IDENTITY, where the reference's range decoration IS its
+        # format, so two runs resolving to the same ink are indistinguishable
+        # there once drawn.
+        #
+        # +2 and not more. The four remaining gaps were re-verified at R1642 by
+        # identifier census, and TWO OF THE COUNTS WERE FALSE POSITIVES worth
+        # recording, because both are the failure mode this tool's own axes have
+        # been burned by:
+        #
+        #  - **`setMarkdown` / `toHtml`** — 0 sites. Still the last of R1551's
+        #    three, and still the import/export half of the document model.
+        #  - **Nested tables.** Unchanged. The honest way in is the general text
+        #    frame containment axis, not a second ad-hoc level counter.
+        #  - **text block format's three** (`nonBreakableLines`,
+        #    `pageBreakPolicy`, `tabPositions`) — 0 sites each.
+        #  - **the character half's remainder**: vertical alignment
+        #    (super/subscript) and overline. `Subscript` matches 74 times in
+        #    `crates/` and every one is a substring of `Subscription*` — the
+        #    unbounded-substring credit R1560 itself warned about, one axis over.
+        #    `overline` matches once, in a comment about Roman numerals.
+        #  - **the grid vocabulary**: `minmax()` / `fit-content()` and
+        #    `grid-auto-flow`. `minmax` matches three times and all three are doc
+        #    comments in `pinion-runtime::layout` explaining how a `GridTrack`
+        #    LOWERS to taffy's minmax pair — the mechanism is used, the AUTHORING
+        #    vocabulary is not exposed, and a census that stopped at the count
+        #    would have reported this closed.
+        "judged_at": 1642,
+        "completion": 92,
+        "evidence_snapshot": {"example-name": 13, "round-axis": 8},
     },
     {
         "key": "perf",
@@ -2032,9 +2071,51 @@ AXES = [
         # cannot be observed from inside `pinion-rpc`, so publishing it would
         # ship a fact the surface has not established
         # ([[debt-scope-effect-per-method-unpublished]], R1539's own precedent).
-        "judged_at": 1585,
-        "completion": 65,
-        "evidence_snapshot": {"example-name": 9, "round-axis": 6},
+        #
+        # R1642 re-judged 65 -> 72, DEMANDED by the tool (round-axis 6 -> 11,
+        # +83%, the largest evidence move this axis has had; R1637 / R1638 /
+        # R1639 / R1640 each declared it and none re-judged).
+        #
+        # Five rounds of contract work, and one of them is this axis's FIRST
+        # GUARANTEE rather than another description. R1637 turned the order of
+        # two questions around so the transport asks the declaration BEFORE it
+        # dispatches: a name absent from a surface's `$schema` is now absent from
+        # the wire, in both directions, which is what makes "read the declaration"
+        # a contract instead of advice. Turning it on found 123 undeclared or
+        # mis-declared actions plus 2 reads. R1638 gave a declared action its
+        # ARGUMENT GRAMMAR (form, names, types, and where the values come from);
+        # R1639 gave a widget its driveable verb vocabulary, projected from the
+        # statechart's own drivable const so an internal event stays unforgeable;
+        # R1640 widened the gates from 19 of 39 widget surfaces to all 39 and
+        # repaired the oracle, the comparison and the escape hatch it found
+        # broken on the way; R1642 made a CONDITIONAL argument declarable, which
+        # is a shape the reference cannot express at all, and moved `SchemaArg`'s
+        # wire form into the crate that owns the type so a `#[non_exhaustive]`
+        # field can no longer be silently dropped by a renderer one crate away.
+        #
+        # +7 and not more, and the reason is a NEW measurement rather than the
+        # old refrain. THERE ARE TWO SELF-DESCRIBING SURFACES HERE AND ONLY ONE
+        # OF THEM GOT THE TREATMENT. Probed over the wire at R1642: `rpc/methods`
+        # answers 111 methods whose entries carry exactly `{name, occ, window}` —
+        # no parameters, no return type, no error codes, no revision — and
+        # `rpc/version` is not a method at all (-32601). So everything R1637-R1642
+        # built lives on the per-External `$schema` path, while the JSON-RPC
+        # METHOD surface, which is the one this axis is named for, is where it was
+        # at R1585. That asymmetry is now measured rather than inferred, and it is
+        # registered: [[debt-two-describing-surfaces-at-different-maturity]].
+        #
+        # Audited at R1642, all still open and now probe-backed rather than
+        # copied forward: no method -> type binding (the toolkit's meta-method has
+        # `returnMetaType()` and `parameterTypes()`; `rpc/methods` has neither),
+        # no version negotiation, no deprecation path, no compatibility policy,
+        # no freeze, no per-method error taxonomy, the type census still covers
+        # `pinion-rpc` only, and no per-subscription filter. `SchemaChannel` still
+        # cannot say a slot is WRITABLE (R1566's item, two arms unchanged), so a
+        # settable value is still two unrelated fields — `x` and `set_x` — with
+        # nothing published to relate them.
+        "judged_at": 1642,
+        "completion": 72,
+        "evidence_snapshot": {"example-name": 9, "round-axis": 11},
                 # R1565 re-judged 55 -> 62, DEMANDED by the tool (ledger 3 -> 4). It
         # closes BOTH items R1564's own audit left open.
         #

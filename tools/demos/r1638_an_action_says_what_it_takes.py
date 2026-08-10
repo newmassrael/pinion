@@ -62,23 +62,63 @@ def schema_of(tf: RpcSubprocess) -> dict[str, dict]:
     return {f["path"]: f for f in tf.query(SCHEMA)}
 
 
+def segments(field: dict, values: dict[str, str]) -> list[dict]:
+    """The arguments this call takes, in wire order.
+
+    R1642 — one argument may carry a case table, and then the segment list
+    depends on the value chosen for it: a case's arguments come after every
+    argument the field declares. Read off the schema, so this stays a
+    declaration-driven builder rather than a place that knows about `arrange`.
+    """
+    for arg in field["args"]:
+        if arg["domain"]["kind"] != "one_of_with":
+            continue
+        chosen = values.get(arg["name"])
+        case = next(
+            (c for c in arg["domain"]["cases"] if c["value"] == chosen), None
+        )
+        # No case for a value the vocabulary does not publish, which is the
+        # refusal check below: the shared segments are all such a call has.
+        return field["args"] + (case["then"] if case else [])
+    return field["args"]
+
+
+def a_value(arg: dict) -> str:
+    """One value this argument admits, read off its domain.
+
+    Enough to build a call; enumerating every value is R1642's sweep. An `open`
+    domain is the surface saying it publishes nothing to enumerate, so the sample
+    is this file's and is marked as such.
+    """
+    domain = arg["domain"]
+    if domain["kind"] == "one_of":
+        return domain["values"][0]
+    if domain["kind"] == "open":
+        return "8" if arg["type"] == "int" else "probe"
+    raise AssertionError(f"no value can be built for {arg}")
+
+
 def build_payload(field: dict, values: dict[str, str]) -> str:
     """Build a delimited payload FROM THE DECLARATION.
 
-    Deliberately generic: it reads the separator and the segment order off the
-    schema rather than knowing anything about `arrange`. A demo that spelled
-    `"align:horizontal:start"` would prove the surface works and say nothing
-    about whether the declaration describes it.
+    Deliberately generic: it reads the separator, the segment order and — since
+    R1642 — the chosen case's own arguments off the schema, rather than knowing
+    anything about `arrange`. A demo that spelled `"align:horizontal:start"` would
+    prove the surface works and say nothing about whether the declaration
+    describes it.
     """
     assert field["arg_form"]["kind"] == "delimited", field
     sep = field["arg_form"]["separator"]
     out: list[str] = []
-    for arg in field["args"]:
+    for arg in segments(field, values):
         if arg["name"] in values:
             out.append(values[arg["name"]])
-        else:
-            assert arg.get("optional"), f"{arg['name']} is required: {arg}"
+        elif arg.get("optional"):
             break
+        else:
+            # A required argument the caller did not name: take a value the
+            # declaration admits, which is the whole claim being tested.
+            out.append(a_value(arg))
     return sep.join(out)
 
 
@@ -92,7 +132,9 @@ def checks(tf: RpcSubprocess) -> None:
     assert_eq(arrange["arg_form"]["kind"], "delimited", "arrange's form")
     assert_eq(arrange["arg_form"]["separator"], ":", "and its separator")
     names = [a["name"] for a in arrange["args"]]
-    assert_eq(names, ["pass", "axis", "edge_or_gap"], "in wire order")
+    # R1642 — the third segment is no longer one merged slot: it belongs to
+    # whichever case the pass selects, so the shared list is two.
+    assert_eq(names, ["pass", "axis"], "in wire order")
 
     silent = [
         p
@@ -107,18 +149,22 @@ def checks(tf: RpcSubprocess) -> None:
 
     # ── (D) an argument says where its values come from ──────────────────
     by_name = {a["name"]: a for a in arrange["args"]}
-    assert_eq(by_name["pass"]["domain"]["kind"], "one_of", "a closed vocabulary")
+    # R1642 — a closed vocabulary still, and now one whose values each bring
+    # their own arguments. What R1638 asserted here (`one_of`) was true and
+    # incomplete: the tail it described as one optional open slot is per case.
+    assert_eq(by_name["pass"]["domain"]["kind"], "one_of_with", "a closed vocabulary")
     assert_eq(by_name["axis"]["domain"]["kind"], "one_of", "and so is the axis")
-    assert by_name["edge_or_gap"].get("optional"), "the tail may be elided"
     assert not by_name["pass"].get("optional"), "a required argument is silent"
-    # The live-domain half is checked on the audio surface below, because THIS
-    # one has none — a count printed here would have been a vacuous zero, and
-    # this round has already had one oracle that could not discriminate.
 
-    passes = by_name["pass"]["domain"]["values"]
+    passes = [c["value"] for c in by_name["pass"]["domain"]["cases"]]
     axes = by_name["axis"]["domain"]["values"]
     assert_eq(sorted(passes), ["align", "distribute", "stack", "straighten"])
     assert_eq(sorted(axes), ["horizontal", "vertical"])
+    # The optional segment moved to the case that has one, which is the claim
+    # (E) exercises below.
+    tails = {c["value"]: c["then"] for c in by_name["pass"]["domain"]["cases"]}
+    assert tails["stack"][0].get("optional"), "stack's gap may be elided"
+    assert not tails["align"][0].get("optional"), "align's edge may not"
 
     # ── (B) + (C) the declaration is enough to CALL it ───────────────────
     # Two nodes are selected so an arrangement has something to move.
@@ -126,18 +172,10 @@ def checks(tf: RpcSubprocess) -> None:
     landed = 0
     for pass_name in passes:
         for axis in axes:
-            # `align` reads an edge and `stack` an integer gap; the demo learns
-            # nothing about which from the name — it supplies a value the
-            # surface accepts for either and lets the optional rule drop it
-            # when the pass does not read one.
-            payload = build_payload(
-                arrange,
-                {"pass": pass_name, "axis": axis, "edge_or_gap": "start"}
-                if pass_name == "align"
-                else {"pass": pass_name, "axis": axis, "edge_or_gap": "8"}
-                if pass_name == "stack"
-                else {"pass": pass_name, "axis": axis},
-            )
+            # R1642 — the demo still learns nothing about the tail from the
+            # pass's NAME; it now learns it from the pass's CASE, which is the
+            # difference between reading a declaration and knowing the surface.
+            payload = build_payload(arrange, {"pass": pass_name, "axis": axis})
             answer = str(tf.invoke(f"{EXT}/{THE_VERB}", payload))
             assert answer.startswith("moved:"), f"{payload!r} -> {answer!r}"
             landed += 1
@@ -146,7 +184,7 @@ def checks(tf: RpcSubprocess) -> None:
 
     # ── (C) and a value the vocabulary does not publish is refused ───────
     for bad, slot in (("straightn", "pass"), ("diagonal", "axis")):
-        values = {"pass": "align", "axis": "horizontal", "edge_or_gap": "start"}
+        values = {"pass": "align", "axis": "horizontal"}
         values[slot] = bad
         assert_action_refused(
             lambda p=build_payload(arrange, values): tf.invoke(f"{EXT}/{THE_VERB}", p),
@@ -155,15 +193,21 @@ def checks(tf: RpcSubprocess) -> None:
     print("[demo] a value outside the published set is refused, and named")
 
     # ── (E) the optional segment is optional ─────────────────────────────
-    short = build_payload(arrange, {"pass": "distribute", "axis": "horizontal"})
-    assert_eq(short.count(":"), 1, f"the tail was elided: {short!r}")
+    # R1642 moved the optional segment onto the case that has one, so the pair
+    # is now `stack` with and without its gap — and the short form of a case
+    # whose argument is REQUIRED is refused, which is what makes `optional` a
+    # claim about this case rather than about the verb.
+    short = build_payload(arrange, {"pass": "stack", "axis": "horizontal"})
+    assert_eq(short.count(":"), 1, f"the gap was elided: {short!r}")
     assert str(tf.invoke(f"{EXT}/{THE_VERB}", short)).startswith("moved:")
-    long = build_payload(
-        arrange, {"pass": "align", "axis": "vertical", "edge_or_gap": "end"}
-    )
-    assert_eq(long.count(":"), 2, f"and supplied when the pass reads one: {long!r}")
+    long = build_payload(arrange, {"pass": "stack", "axis": "vertical", "gap": "12"})
+    assert_eq(long.count(":"), 2, f"and supplied when named: {long!r}")
     assert str(tf.invoke(f"{EXT}/{THE_VERB}", long)).startswith("moved:")
-    print("[demo] the optional segment is optional in both directions")
+    assert_action_refused(
+        lambda: tf.invoke(f"{EXT}/{THE_VERB}", "align:vertical"),
+        saying="is missing",
+    )
+    print("[demo] the optional segment is optional, and a required one is not")
 
 
 #: The retained single-thread engine in `hello-audio-rt`, addressed by tag.

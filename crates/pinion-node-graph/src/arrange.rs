@@ -104,6 +104,19 @@ impl Axis {
         }
     }
 
+    /// Parse a wire name back to the axis, or `None` — the inverse of
+    /// [`name`](Self::name).
+    ///
+    /// R1642 — the crate published [`WIRE_NAMES`](Self::WIRE_NAMES) from R1638
+    /// and could not read one back, so the consumer that declared the vocabulary
+    /// also owned its parser and the two were two definitions of one set. A
+    /// declaration whose whole claim is "these values are accepted" needs the
+    /// acceptance derived from the same place as the publication.
+    #[must_use]
+    pub fn from_wire(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|a| a.name() == name)
+    }
+
     /// This node's leading coordinate on the axis.
     const fn lead<K: NodeKind>(self, node: &Node<K>) -> i32 {
         match self {
@@ -224,6 +237,30 @@ pub enum ArrangeTail {
     Gap,
 }
 
+impl ArrangeTail {
+    /// Whether a caller must supply the trailing argument, or may leave it out
+    /// and take a default.
+    ///
+    /// A second fact about the tail rather than a second set of arms, because
+    /// *what the segment is* and *whether it may be elided* are independent —
+    /// folding them into the names (`Edge` beside `OptionalGap`) would spell one
+    /// axis into the other and leave no room for a required gap.
+    ///
+    /// The answers are properties of the types, not of any one caller: there is
+    /// no neutral [`Edge`] to fall back to, while a [`Gap`](Self::Gap) of zero is
+    /// the meaningful "no gap" a `stack` with no argument means. R1642 —
+    /// consumed by the `$schema` case table, which is why a *fact* rather than a
+    /// convention: a declaration that says "required" about a segment the
+    /// dispatcher defaults is wrong in the direction that costs.
+    #[must_use]
+    pub const fn required(self) -> bool {
+        match self {
+            Self::Edge => true,
+            Self::None | Self::Gap => false,
+        }
+    }
+}
+
 impl Edge {
     /// Every edge, for a consumer that must cover the vocabulary.
     pub const ALL: [Self; 3] = [Self::Start, Self::Center, Self::End];
@@ -254,6 +291,14 @@ impl Edge {
             Self::Center => "center",
             Self::End => "end",
         }
+    }
+
+    /// Parse a wire name back to the edge, or `None` — the inverse of
+    /// [`name`](Self::name), and needed here for the reason
+    /// [`Axis::from_wire`] gives.
+    #[must_use]
+    pub fn from_wire(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|e| e.name() == name)
     }
 }
 

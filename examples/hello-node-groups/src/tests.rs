@@ -306,3 +306,60 @@ fn r1594_the_wire_form_round_trips() {
     assert_eq!(Val::parse("nope"), None);
     assert_eq!(Val::parse("1,2"), None);
 }
+
+/// R1642 — this surface's two conditional verbs can be followed, and the case
+/// tables are the model's own answers.
+///
+/// The workspace walk in `pinion-shell` cannot reach an example's declarations,
+/// so the same predicate is applied here rather than restated — and the count is
+/// asserted for the reason that gate gives: over a population of zero,
+/// "no defect" is not a finding.
+///
+/// What the compile-time assertion beside the tables already covers is the
+/// *agreement* between each case and `tail()` / `required()`. What it cannot
+/// cover is that the arguments a case adds are the ones the dispatcher then
+/// reads; that is the round's demo, which builds every admitted call from the
+/// wire and requires each to land.
+#[test]
+fn r1642_this_surfaces_conditional_verbs_can_be_followed() {
+    use pinion_core::external::ExternalIntrospect;
+    use pinion_node_graph::{ArrangePass, ItemEdit};
+
+    let oracle = super::GroupsOracle::new();
+    let fields = oracle.schema().fields;
+
+    let conditional: Vec<&str> = fields
+        .iter()
+        .filter(|f| f.declares_cases())
+        .map(|f| f.path)
+        .collect();
+    assert_eq!(
+        conditional,
+        vec!["arrange", "item"],
+        "the two verbs whose trailing segment their first segment chooses",
+    );
+    for field in fields {
+        assert_eq!(
+            field.conditional_defect(),
+            None,
+            "{} cannot be followed",
+            field.path,
+        );
+    }
+
+    // The published cases ARE the model's vocabulary — the property that makes
+    // the table a projection rather than a copy. A pass added to the crate
+    // without a case here would fail this, and the `const` assertion beside the
+    // tables would already have refused to compile.
+    let cases = |path: &str| -> Vec<&str> {
+        let field = fields.iter().find(|f| f.path == path).expect("declared");
+        let arg = field
+            .args
+            .iter()
+            .find(|a| !a.domain.cases().is_empty())
+            .expect("a discriminant");
+        arg.domain.cases().iter().map(|c| c.value).collect()
+    };
+    assert_eq!(cases("arrange"), ArrangePass::WIRE_NAMES.to_vec());
+    assert_eq!(cases("item"), ItemEdit::WIRE_NAMES.to_vec());
+}

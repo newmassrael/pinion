@@ -46,7 +46,7 @@ use std::rc::Rc;
 
 use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::external::{
-    ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
+    ArgCase, ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
     SchemaField, ThreadOwnership,
 };
@@ -62,10 +62,11 @@ use std::collections::BTreeSet;
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_node_graph::{
-    Align, ArrangePass, Axis, Conversion, Crossings, Definitions, Distribute, Document, Edge,
-    EditPath, Enframed, Extent, Fragment, Grow, Inserted, InterfaceSide, Item, LinkId, Node,
-    NodeBody, NodeId, NodeKind, Orphaned, Port, PortChange, PortRef, ROOT, Reach, Repartitioned,
-    Rewired, Severed, Sharing, Side, Socket, Stack, Straighten, TreeId, Variadic,
+    Align, ArrangePass, ArrangeTail, Axis, Conversion, Crossings, Definitions, Distribute,
+    Document, Edge, EditPath, Enframed, Extent, Fragment, Grow, Inserted, InterfaceSide, Item,
+    ItemEdit, ItemEditTail, LinkId, Node, NodeBody, NodeId, NodeKind, Orphaned, Port, PortChange,
+    PortRef, ROOT, Reach, Repartitioned, Rewired, Severed, Sharing, Side, Socket, Stack,
+    Straighten, TreeId, Variadic,
 };
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use serde::{Deserialize, Serialize};
@@ -76,6 +77,144 @@ vello_renderer_impl!(HelloNodeGroupsRenderer, HelloNodeGroupsRendererError);
 const THEME_TAG: &str = "app";
 const VIEW_TAG: &str = "nodegroups";
 const STATE_KEY: &str = "nodegroups-state";
+
+// ---------------------------------------------------------------------------
+// R1642 — the two conditional verbs declare their cases.
+//
+// `arrange` and `item` both read a trailing segment whose presence, meaning and
+// vocabulary depend on the FIRST segment. R1638 declared `arrange`'s as one
+// `{string, open, optional}` slot, which was not silence but a false statement:
+// measured over the wire, it admitted `align:horizontal` (elided), and
+// `align:horizontal:17` and `stack:horizontal:start` (wrong vocabulary), all
+// three of which the dispatcher refuses — and `distribute:horizontal:start`,
+// which it accepted and silently ignored. `item` said nothing at all, and could
+// not have said anything useful: `add:in:1` and `move:in:2:0` are different
+// arities, so no flat positional list covers both.
+//
+// The case tables below are BUILT from the model's own answers
+// (`ArrangePass::tail()` / `ItemEdit::tail()` and each tail's `required()`), so
+// a new pass or a new edit cannot arrive without one. What cannot be built from
+// them is the `SchemaArg` itself — `pinion-node-graph` is pure data and must not
+// depend on the framework to name one — so the argument's name, type and
+// vocabulary are spelled here and a `const` assertion holds the pair to the
+// model's facts. A changed `required()` is then a build failure rather than a
+// schema that lies.
+// ---------------------------------------------------------------------------
+
+/// What `align` adds: which edge of the selection's own box to meet.
+const ARRANGE_EDGE: &[SchemaArg] = &[SchemaArg::one_of("edge", "string", &Edge::WIRE_NAMES)];
+/// What `stack` adds: the gap, which defaults to none when left out.
+const ARRANGE_GAP: &[SchemaArg] = &[SchemaArg::open("gap", "int").optional()];
+
+/// R1642 — which sides of the selected node `item` will answer for.
+///
+/// `side`'s vocabulary is `Side`'s two words, but the ANSWERABLE set is per
+/// node: a kind declares a variadic run on one side, both, or neither, and
+/// `item` refuses `NotVariadic` for the rest. Declaring the argument as the
+/// closed pair would have been the same mistake this round repairs one segment
+/// along — a schema admitting calls the surface refuses — so the argument points
+/// at this read instead and the answer comes fresh, which is what
+/// `ArgDomain::ValuesOf` is for.
+///
+/// Empty when the selection is not exactly one node, because `item` refuses then
+/// anyway: an empty domain is the surface saying "no call is well formed right
+/// now", which is true and useful, where the closed pair would have said the
+/// opposite.
+fn item_sides(document: &Document<Op>, tree: TreeId, selection: &[NodeId]) -> String {
+    let [node] = *selection else {
+        return String::new();
+    };
+    Side::ALL
+        .iter()
+        .filter(|side| document.variadic(tree, node, **side).is_some())
+        .map(|side| side.name())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// The arguments a pass adds, by what it reads after the axis.
+///
+/// Exhaustive on purpose: a new [`ArrangeTail`] arm fails to compile here, which
+/// is the only place that would otherwise quietly keep publishing the old table.
+const fn arrange_tail_args(tail: ArrangeTail) -> &'static [SchemaArg] {
+    match tail {
+        ArrangeTail::None => &[],
+        ArrangeTail::Edge => ARRANGE_EDGE,
+        ArrangeTail::Gap => ARRANGE_GAP,
+    }
+}
+
+/// One case per pass, projected from [`ArrangePass::ALL`].
+const ARRANGE_CASES: [ArgCase; ArrangePass::ARMS] = {
+    let mut out = [ArgCase::EMPTY; ArrangePass::ARMS];
+    let mut i = 0;
+    while i < ArrangePass::ARMS {
+        let pass = ArrangePass::ALL[i];
+        out[i] = ArgCase::new(pass.name(), arrange_tail_args(pass.tail()));
+        i += 1;
+    }
+    out
+};
+
+/// What `add` adds: an optional label for the new item.
+const ITEM_LABEL: &[SchemaArg] = &[SchemaArg::open("label", "string").optional()];
+/// What `move` adds: the position to carry the item to.
+const ITEM_DESTINATION: &[SchemaArg] = &[SchemaArg::open("to", "int")];
+
+/// The arguments an item edit adds, by what it reads after the position.
+const fn item_tail_args(tail: ItemEditTail) -> &'static [SchemaArg] {
+    match tail {
+        ItemEditTail::None => &[],
+        ItemEditTail::Label => ITEM_LABEL,
+        ItemEditTail::Destination => ITEM_DESTINATION,
+    }
+}
+
+/// One case per item edit, projected from [`ItemEdit::ALL`].
+const ITEM_CASES: [ArgCase; ItemEdit::ARMS] = {
+    let mut out = [ArgCase::EMPTY; ItemEdit::ARMS];
+    let mut i = 0;
+    while i < ItemEdit::ARMS {
+        let edit = ItemEdit::ALL[i];
+        out[i] = ArgCase::new(edit.name(), item_tail_args(edit.tail()));
+        i += 1;
+    }
+    out
+};
+
+/// Every case adds what the model says its tail is, with the optionality the
+/// model says — checked at compile time, since this is the one fact the schema
+/// and the model each hold a copy of.
+const _: () = {
+    let mut i = 0;
+    while i < ArrangePass::ARMS {
+        let tail = ArrangePass::ALL[i].tail();
+        let count = if matches!(tail, ArrangeTail::None) {
+            0
+        } else {
+            1
+        };
+        assert!(
+            ARRANGE_CASES[i].adds(count, !tail.required()),
+            "an arrange case disagrees with ArrangePass::tail() / ArrangeTail::required()"
+        );
+        i += 1;
+    }
+    let mut j = 0;
+    while j < ItemEdit::ARMS {
+        let tail = ItemEdit::ALL[j].tail();
+        let count = if matches!(tail, ItemEditTail::None) {
+            0
+        } else {
+            1
+        };
+        assert!(
+            ITEM_CASES[j].adds(count, !tail.required()),
+            "an item case disagrees with ItemEdit::tail() / ItemEditTail::required()"
+        );
+        j += 1;
+    }
+};
 
 const WIN_W: u32 = 900;
 const WIN_H: u32 = 560;
@@ -1296,6 +1435,49 @@ impl GroupsOracle {
             .map_err(|_| InvokeError::rejected(format!("{raw:?} is not a number")))
     }
 
+    /// R1642 — read one segment against a **closed vocabulary**, with the
+    /// vocabulary itself in the refusal.
+    ///
+    /// `parse` is the crate's own `from_wire`, so the set this admits is the set
+    /// `names` publishes by construction — the property the round's conformance
+    /// demo checks in both directions over the wire. Before this, the three
+    /// vocabularies `arrange` and `item` read were spelled as match arms here
+    /// while `$schema` published the crate's `WIRE_NAMES`, which is two
+    /// definitions of one set: the declaration could go on advertising a value
+    /// this parser had stopped accepting and nothing would notice.
+    fn word<T>(
+        what: &str,
+        segment: Option<&str>,
+        names: &[&'static str],
+        parse: impl Fn(&str) -> Option<T>,
+    ) -> Result<T, InvokeError> {
+        let Some(segment) = segment else {
+            return Err(InvokeError::rejected(format!(
+                "{what} is missing; expected one of {names:?}"
+            )));
+        };
+        parse(segment).ok_or_else(|| {
+            InvokeError::rejected(format!("{what} {segment:?} is not one of {names:?}"))
+        })
+    }
+
+    /// R1642 — refuse a segment past the ones the declaration accounts for.
+    ///
+    /// A delimited payload can always carry more words, and dropping them is the
+    /// failure mode this round is about seen from the other side: the client is
+    /// told nothing while the surface does something other than what was asked.
+    fn no_more<'a>(
+        what: &str,
+        mut parts: impl Iterator<Item = &'a str>,
+    ) -> Result<(), InvokeError> {
+        match parts.next() {
+            None => Ok(()),
+            Some(extra) => Err(InvokeError::rejected(format!(
+                "{what} takes no further segment, got {extra:?}"
+            ))),
+        }
+    }
+
     /// `"3"` or `"3,5,8"` — a node id list.
     fn ids(arg: &IntrospectValue) -> Result<Vec<NodeId>, InvokeError> {
         let raw = Self::text(arg)?;
@@ -1410,6 +1592,8 @@ impl ExternalIntrospect for GroupsOracle {
                     // right now": `node::parent` is one pointer per node, so
                     // the relation exists only as something you reassemble.
                     SchemaField::new("frames", "string"),
+                    // R1642 — the live bound `item`'s `side` argument points at.
+                    SchemaField::new("item_sides", "string"),
                     // Argument-taking reads.
                     SchemaField::action("node_kind", "string"),
                     SchemaField::action("node_value", "string"),
@@ -1465,22 +1649,45 @@ impl ExternalIntrospect for GroupsOracle {
                     // vocabulary cannot be enumerated at all; here the pass, the
                     // axis and the edge-or-gap are three declared segments whose
                     // vocabularies are projected from the crate's own enums.
+                    // R1642 — and the third segment is no longer one `open`
+                    // slot: the pass CHOOSES it, so the pass declares the cases
+                    // and each says what it brings. `ARRANGE_CASES` for why.
                     SchemaField::action_with(
                         "arrange",
                         "string",
                         ArgForm::Delimited(':'),
                         const {
                             &[
-                                SchemaArg::one_of("pass", "string", &ArrangePass::WIRE_NAMES),
+                                SchemaArg::one_of_with("pass", "string", &ARRANGE_CASES),
                                 SchemaArg::one_of("axis", "string", &Axis::WIRE_NAMES),
-                                // `align` reads an edge, `stack` an integer gap,
-                                // and the other two read nothing — one slot, and
-                                // the pass says how to fill it.
-                                SchemaArg::open("edge_or_gap", "string").optional(),
                             ]
                         },
                     ),
-                    SchemaField::action("item", "string"),
+                    // R1642 — the second conditional verb, and the one a flat
+                    // argument list cannot describe at all: `add:in:1` and
+                    // `move:in:2:0` are different arities.
+                    SchemaField::action_with(
+                        "item",
+                        "string",
+                        ArgForm::Delimited(':'),
+                        const {
+                            &[
+                                SchemaArg::one_of_with("verb", "string", &ITEM_CASES),
+                                // Not the closed pair: which side answers is a
+                                // property of the selected node's kind, so the
+                                // argument names the live path that lists them.
+                                SchemaArg::key("side", "string", "item_sides"),
+                                // Open, and honestly so: the bound is the item
+                                // count on the side named by the PREVIOUS
+                                // argument, and `IndexOf` addresses one fixed
+                                // path. A domain that depends on a sibling
+                                // argument is the residue this round leaves —
+                                // cases make an argument's PRESENCE depend on a
+                                // sibling, not another argument's bound.
+                                SchemaArg::open("index", "int"),
+                            ]
+                        },
+                    ),
                 ]
             },
         )
@@ -1523,6 +1730,11 @@ impl ExternalIntrospect for GroupsOracle {
                     .collect::<Vec<_>>()
                     .join(","),
             )),
+            "item_sides" => Some(IntrospectValue::Text(item_sides(
+                &document,
+                tree,
+                &state.selection.get(),
+            ))),
             "last_refusal" => Some(IntrospectValue::Text(state.refusal.get())),
             "clipboard" => {
                 Some(IntrospectValue::Text(state.clipboard.get().map_or_else(
@@ -1929,22 +2141,33 @@ impl GroupsOracle {
     /// record nothing. `straighten` additionally reports the links it could
     /// not straighten, which is the fact the reference's command does not
     /// publish at all.
+    ///
+    /// R1642 — the parse walks the schema's own shape: the discriminant, then the
+    /// arguments every case shares, then the ones this case declared. A segment
+    /// past that is **refused** rather than dropped, because the declaration says
+    /// `distribute` takes none and a surface that quietly swallows one is how an
+    /// author comes to believe a tool is broken (the field lesson behind plane
+    /// B's `HOT` / `RESTART` badges: a setting that is accepted and ignored is
+    /// worse than one that is rejected).
     fn arrange(&mut self, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
         let state = self.bound()?;
         let tree = state.current();
         let spec = Self::text(args)?;
         let mut parts = spec.split(':');
-        let pass = parts.next().unwrap_or_default();
-        let axis = match parts.next() {
-            Some("horizontal") => Axis::Horizontal,
-            Some("vertical") => Axis::Vertical,
-            other => {
-                return Err(InvokeError::rejected(format!(
-                    "arrange axis {other:?} is not \"horizontal\" or \"vertical\""
-                )));
-            }
-        };
+        let pass = Self::word(
+            "arrange pass",
+            parts.next(),
+            &ArrangePass::WIRE_NAMES,
+            ArrangePass::from_wire,
+        )?;
+        let axis = Self::word(
+            "arrange axis",
+            parts.next(),
+            &Axis::WIRE_NAMES,
+            Axis::from_wire,
+        )?;
         let tail = parts.next();
+        Self::no_more("arrange", parts)?;
         let selection: BTreeSet<NodeId> = state.selection.get().into_iter().collect();
         let document = state.document.get();
         // The card's own geometry, which is the application's to know: the
@@ -1956,19 +2179,16 @@ impl GroupsOracle {
                 card_height((shown.inputs.len(), shown.outputs.len())),
             )
         };
-        let edge = |word: Option<&str>| match word {
-            Some("start") => Ok(Edge::Start),
-            Some("center") => Ok(Edge::Center),
-            Some("end") => Ok(Edge::End),
-            other => Err(InvokeError::rejected(format!(
-                "arrange edge {other:?} is not \"start\", \"center\" or \"end\""
-            ))),
-        };
-        let Some(pass) = ArrangePass::from_wire(pass) else {
+        // A pass that declared no tail is handed none: `ArrangeTail::None` is a
+        // claim the dispatcher has to honour, not a permission to ignore.
+        if matches!(pass.tail(), ArrangeTail::None) && tail.is_some() {
             return Err(InvokeError::rejected(format!(
-                "arrange pass {pass:?} is not one of {:?}",
-                ArrangePass::WIRE_NAMES
+                "arrange {} reads no third segment, got {tail:?}",
+                pass.name()
             )));
+        }
+        let edge = |word: Option<&str>| {
+            Self::word("arrange edge", word, &Edge::WIRE_NAMES, Edge::from_wire)
         };
         let (placement, report) = match pass {
             ArrangePass::Align => (
@@ -2022,23 +2242,33 @@ impl GroupsOracle {
         let tree = state.current();
         let spec = Self::text(args)?;
         let mut parts = spec.split(':');
-        let verb = parts.next().unwrap_or_default().to_owned();
-        let side = match parts.next() {
-            Some("in") => Side::Input,
-            Some("out") => Side::Output,
-            other => {
-                return Err(InvokeError::rejected(format!(
-                    "item side {other:?} is not \"in\" or \"out\""
-                )));
-            }
+        let verb = Self::word(
+            "item verb",
+            parts.next(),
+            &ItemEdit::WIRE_NAMES,
+            ItemEdit::from_wire,
+        )?;
+        let side = Self::word(
+            "item side",
+            parts.next(),
+            &Side::WIRE_NAMES,
+            Side::from_wire,
+        )?;
+        let index = |what: &str, word: Option<&str>| -> Result<u32, InvokeError> {
+            word.and_then(|w| w.parse().ok())
+                .ok_or_else(|| InvokeError::rejected(format!("{what} {word:?} is not a number")))
         };
-        let index = |word: Option<&str>| -> Result<u32, InvokeError> {
-            word.and_then(|w| w.parse().ok()).ok_or_else(|| {
-                InvokeError::rejected(format!("item index {word:?} is not a number"))
-            })
-        };
-        let first = index(parts.next())?;
+        let first = index("item index", parts.next())?;
         let tail = parts.next().map(str::to_owned);
+        Self::no_more("item", parts)?;
+        // Same rule as `arrange`: `remove` declared no fourth segment, so one
+        // handed to it is a mistake the surface states rather than absorbs.
+        if matches!(verb.tail(), ItemEditTail::None) && tail.is_some() {
+            return Err(InvokeError::rejected(format!(
+                "item {} reads no fourth segment, got {tail:?}",
+                verb.name()
+            )));
+        }
         let selection = state.selection.get();
         let [node] = selection[..] else {
             return Err(InvokeError::rejected(format!(
@@ -2047,8 +2277,8 @@ impl GroupsOracle {
             )));
         };
 
-        let change = match verb.as_str() {
-            "add" => {
+        let change = match verb {
+            ItemEdit::Add => {
                 let mut item = Item::plain();
                 if let Some(label) = tail {
                     item = item.named(label);
@@ -2059,23 +2289,18 @@ impl GroupsOracle {
                         .map_err(|error| format!("{error:?}"))
                 })
             }
-            "remove" => state.edit(|document| {
+            ItemEdit::Remove => state.edit(|document| {
                 document
                     .remove_item(tree, node, side, first)
                     .map_err(|error| format!("{error:?}"))
             }),
-            "move" => {
-                let to = index(tail.as_deref())?;
+            ItemEdit::Move => {
+                let to = index("item destination", tail.as_deref())?;
                 state.edit(|document| {
                     document
                         .move_item(tree, node, side, first, to)
                         .map_err(|error| format!("{error:?}"))
                 })
-            }
-            other => {
-                return Err(InvokeError::rejected(format!(
-                    "item verb {other:?} is not \"add\", \"remove\" or \"move\""
-                )));
             }
         }
         .map_err(InvokeError::rejected)?;

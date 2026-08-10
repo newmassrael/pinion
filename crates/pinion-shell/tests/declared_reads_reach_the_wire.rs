@@ -419,6 +419,56 @@ fn r1638_optional_arguments_are_a_suffix() {
     );
 }
 
+/// R1642 — every conditional declaration in the walked catalog can be followed.
+///
+/// The rule itself is [`SchemaField::conditional_defect`], stated once in the
+/// crate that owns the types; this applies it to the population the walk can
+/// reach.
+///
+/// # This gate has no inhabitants today, and says so
+///
+/// No `pinion_core::widgets` surface declares a case table — the two verbs that
+/// do (`arrange`, `item`) live in `hello-node-groups`, which the walk does not
+/// reach ([[debt-the-declaration-walk-reaches-one-crate]]); their own test module
+/// applies the same predicate, and the round's demo drives them over the wire.
+/// So the count is asserted rather than the absence of defects: R1640's finding
+/// was that a gate which does not state its denominator reads as coverage, and
+/// a gate reporting "no defect" over zero fields would be the purest form of
+/// that. When a catalog widget gains a conditional verb, the count moves and
+/// this check starts discriminating without being edited.
+#[test]
+fn r1642_conditional_declarations_can_be_followed() {
+    let mut checked = 0_usize;
+    let mut inhabitants: Vec<String> = Vec::new();
+    let mut wrong: Vec<String> = Vec::new();
+    let mut surfaces: Vec<(&str, Box<dyn pinion_core::external::External>)> =
+        vec![("dock_panel", Box::new(DockPanelExternal::new("a")))];
+    surfaces.extend(catalog());
+    for (label, handle) in surfaces {
+        let intro = handle.introspect().expect("opts into introspection");
+        for field in intro.schema().fields {
+            checked += 1;
+            if field.declares_cases() {
+                inhabitants.push(format!("{label}.{}", field.path));
+            }
+            if let Some(defect) = field.conditional_defect() {
+                wrong.push(format!("{label}.{}: {defect:?}", field.path));
+            }
+        }
+    }
+    assert!(checked > 100, "the walk must be non-trivial, saw {checked}");
+    assert!(
+        wrong.is_empty(),
+        "a declaration cannot be followed: {wrong:?}"
+    );
+    assert_eq!(
+        inhabitants.len(),
+        0,
+        "the walked catalog declares no case table; when one does, this count is \
+         the population the check above ran against: {inhabitants:?}",
+    );
+}
+
 /// R1639 — no `send` in the widget catalog is left saying nothing.
 ///
 /// `send` is the most-declared action in the tree and, until R1638/R1639, the

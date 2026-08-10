@@ -222,7 +222,7 @@ pub use group::{
     EditPath, GroupError, Grouped, NestError, PathEntry, PathError, UngroupError, Ungrouped,
     Violation,
 };
-pub use items::{Item, ItemChange, ItemError, Items, Variadic};
+pub use items::{Item, ItemChange, ItemEdit, ItemEditTail, ItemError, Items, Variadic};
 pub use layout::{Extent, Layered, Organic, Placement, Quality};
 pub use machine::{Committed, ForceError, Machine, Tick};
 pub use model::{

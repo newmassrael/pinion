@@ -160,20 +160,14 @@ fn field_value(f: &pinion_core::external::SchemaField) -> Value {
     Value::Object(obj)
 }
 
-/// One argument's wire object. `optional` is present only when true, for the
-/// same reason `channel` is: the absent key is the common case and a reader
-/// that predates it must keep seeing the shape it knew.
+/// One argument's wire object.
+///
+/// R1642 — the body moved to [`SchemaArg::to_wire`](pinion_core::external::SchemaArg::to_wire),
+/// which is where it can be recursive: an `ArgDomain::OneOfWith` case carries
+/// arguments of its own, so rendering a domain now means rendering an argument.
+/// See that method for the rest of the reasoning.
 fn arg_value(a: &pinion_core::external::SchemaArg) -> Value {
-    let mut obj = serde_json::Map::new();
-    obj.insert("name".to_owned(), Value::from(a.name));
-    obj.insert("type".to_owned(), Value::from(a.ty));
-    // Rendered by the enum itself — see `ArgDomain::to_wire` for why the match
-    // does not live here.
-    obj.insert("domain".to_owned(), a.domain.to_wire());
-    if a.optional {
-        obj.insert("optional".to_owned(), Value::Bool(true));
-    }
-    Value::Object(obj)
+    a.to_wire()
 }
 
 /// Reasons the typed [`query`] dispatcher can fail.

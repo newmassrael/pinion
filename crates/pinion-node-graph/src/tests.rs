@@ -10202,3 +10202,82 @@ fn r1638_the_axis_and_edge_vocabularies_are_their_own_names() {
         assert_eq!(*n, Edge::ALL[i].name());
     }
 }
+
+/// R1642 — every published vocabulary in this crate parses back, including the
+/// three that could not before.
+///
+/// R1638 projected `WIRE_NAMES` for the axis and the edge and gave neither an
+/// inverse, so the consumer that declared them owned the parser: `$schema`
+/// advertised the crate's names while a `match` in the example decided what was
+/// accepted. Two definitions of one set, and the direction that breaks silently
+/// is the declaration going on advertising a value the parser has stopped
+/// taking. `Side` was the same, spelled a third time in `PortRef`'s `Display`.
+#[test]
+fn r1642_every_published_vocabulary_parses_back() {
+    use crate::{ArrangePass, Axis, Edge, ItemEdit, Side};
+
+    macro_rules! round_trip {
+        ($ty:ty, $reject:expr) => {{
+            let names = <$ty>::WIRE_NAMES;
+            let all = <$ty>::ALL;
+            assert_eq!(names.len(), all.len(), "one name per arm");
+            for (i, name) in names.iter().enumerate() {
+                assert_eq!(*name, all[i].name(), "the list IS the names");
+                assert_eq!(
+                    <$ty>::from_wire(name),
+                    Some(all[i]),
+                    "{name:?} is published, so it must be admitted",
+                );
+            }
+            assert_eq!(<$ty>::from_wire($reject), None, "and nothing else is");
+        }};
+    }
+
+    round_trip!(ArrangePass, "straightn");
+    round_trip!(Axis, "diagonal");
+    round_trip!(Edge, "middle");
+    round_trip!(Side, "input");
+    round_trip!(ItemEdit, "insert");
+
+    // `PortRef`'s wire spelling is now that same one definition rather than a
+    // fourth copy of the two words.
+    assert_eq!(crate::PortRef::input(3).to_string(), "in3");
+    assert_eq!(crate::PortRef::output(0).to_string(), "out0");
+}
+
+/// R1642 — the two conditional verbs state what their discriminant decides.
+///
+/// The tail is the fact a caller cannot read off the verb's name, and the two
+/// facts are separate on purpose: `tail()` says *what* the trailing segment is
+/// and `required()` says whether it may be left out. Asserted here because the
+/// schema's case table is built from exactly this pair, so a change to either
+/// moves what a client is told.
+#[test]
+fn r1642_a_conditional_verb_states_its_tail() {
+    use crate::{ArrangePass, ArrangeTail, ItemEdit, ItemEditTail};
+
+    assert_eq!(ArrangePass::Align.tail(), ArrangeTail::Edge);
+    assert_eq!(ArrangePass::Stack.tail(), ArrangeTail::Gap);
+    assert_eq!(ArrangePass::Distribute.tail(), ArrangeTail::None);
+    assert_eq!(ArrangePass::Straighten.tail(), ArrangeTail::None);
+    // There is no neutral edge to fall back to; a gap of zero is a real answer.
+    assert!(ArrangeTail::Edge.required());
+    assert!(!ArrangeTail::Gap.required());
+    assert!(!ArrangeTail::None.required());
+
+    assert_eq!(ItemEdit::Add.tail(), ItemEditTail::Label);
+    assert_eq!(ItemEdit::Remove.tail(), ItemEditTail::None);
+    assert_eq!(ItemEdit::Move.tail(), ItemEditTail::Destination);
+    // An unnamed item is ordinary; a move to nowhere is not.
+    assert!(!ItemEditTail::Label.required());
+    assert!(ItemEditTail::Destination.required());
+    assert!(!ItemEditTail::None.required());
+
+    // The three item edits are three ARITIES, which is why no flat argument
+    // list can describe the verb and a case table has to.
+    let arities: Vec<usize> = ItemEdit::ALL
+        .iter()
+        .map(|e| usize::from(!matches!(e.tail(), ItemEditTail::None)))
+        .collect();
+    assert_eq!(arities, vec![1, 0, 1], "add and move read one, remove none");
+}

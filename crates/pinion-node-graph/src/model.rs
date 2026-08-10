@@ -878,6 +878,9 @@ pub enum Side {
 }
 
 impl Side {
+    /// Both sides, for a consumer that must cover the vocabulary.
+    pub const ALL: [Self; 2] = [Self::Input, Self::Output];
+
     /// The other one.
     ///
     /// Two arms and no default, so a third side — if a graph ever grows one —
@@ -889,6 +892,40 @@ impl Side {
             Self::Output => Self::Input,
         }
     }
+
+    /// A stable name, for a caption or a wire form.
+    ///
+    /// R1642 — these two words were already the wire form in three places
+    /// ([`PortRef`]'s `Display`, the schema's `side` vocabulary, and the parse
+    /// that reads it back) and were spelled out at each. One definition, so a
+    /// client's published vocabulary and the parser that admits it cannot
+    /// disagree.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Input => "in",
+            Self::Output => "out",
+        }
+    }
+
+    /// Parse a wire name back to the side, or `None` — the inverse of
+    /// [`name`](Self::name).
+    #[must_use]
+    pub fn from_wire(name: &str) -> Option<Self> {
+        Self::ALL.into_iter().find(|s| s.name() == name)
+    }
+
+    /// The closed vocabulary, projected from [`ALL`](Self::ALL) — see
+    /// [`ArrangePass::WIRE_NAMES`](crate::ArrangePass::WIRE_NAMES).
+    pub const WIRE_NAMES: [&'static str; 2] = {
+        let mut out = [""; 2];
+        let mut i = 0;
+        while i < 2 {
+            out[i] = Self::ALL[i].name();
+            i += 1;
+        }
+        out
+    };
 }
 
 /// One port of one node, named from inside that node (R1594).
@@ -925,11 +962,7 @@ impl PortRef {
 
 impl fmt::Display for PortRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let side = match self.side {
-            Side::Input => "in",
-            Side::Output => "out",
-        };
-        write!(f, "{side}{}", self.index)
+        write!(f, "{}{}", self.side.name(), self.index)
     }
 }
 

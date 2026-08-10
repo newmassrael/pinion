@@ -168,6 +168,65 @@ pub enum ArgDomain {
     /// enum-typed parameter (its meta-enum); this constrains any argument,
     /// including a string one.
     OneOf(&'static [&'static str]),
+    /// R1642 — a closed vocabulary where **the value chosen decides what the
+    /// rest of the call looks like**: each [`ArgCase`] names one admissible
+    /// value and the arguments that value brings with it.
+    ///
+    /// # The shape this exists for
+    ///
+    /// `arrange` is spelled `pass:axis:tail`, and the third segment is a closed
+    /// edge vocabulary after `align`, an integer after `stack`, and **absent**
+    /// after `distribute` and `straighten`. Flattened
+    /// into one argument list that can only be described as
+    /// `{type: "string", domain: open, optional: true}` — which is what R1638
+    /// declared, and which admits three calls the surface refuses
+    /// (`align:horizontal` with the segment elided, `align:horizontal:17`,
+    /// `stack:horizontal:start`) plus one it accepts and silently ignores
+    /// (`distribute:horizontal:start`). Silence would have been honest; that
+    /// declaration was not silent, it was wrong, which is the error direction
+    /// R1602 records as the expensive one.
+    ///
+    /// A flat list cannot be made right here, because the dependency is not a
+    /// missing detail but a different *arity*: `item`'s `add:in:1[:label]` and
+    /// `move:in:2:0` do not have the same number of segments, and no single
+    /// positional list describes both.
+    ///
+    /// # Why the case table hangs off the discriminant
+    ///
+    /// Because "which values may I pass" and "what does that value then
+    /// require" are one fact, and a declaration that splits them lets them
+    /// drift — the argument R1593 made for links, where legality and conversion
+    /// became one declaration precisely so "may I draw this" and "what arrives
+    /// if I do" could not disagree. Reading a domain of `OneOfWith` tells a
+    /// client both halves at once, in one place, with nothing to correlate.
+    ///
+    /// # Composition rule
+    ///
+    /// A case's [`then`](ArgCase::then) arguments come **after every argument
+    /// the field declares**, in the case's own order — so a field's `args` hold
+    /// what every case shares and the case holds what only it takes.
+    /// `arrange` declares `[pass, axis]` and `align` brings `edge`, which
+    /// expands to `pass:axis:edge`. At most one argument per field may carry
+    /// this domain, since two would leave the append order ambiguous; a
+    /// discriminant may not be [`optional`](SchemaArg::optional), since a case
+    /// cannot be selected by an absent value.
+    /// `r1642_a_discriminant_is_singular_and_required` and
+    /// `r1642_declared_case_arguments_do_not_shadow` hold every declaration in
+    /// the workspace to all of it.
+    ///
+    /// # Where the reference stands
+    ///
+    /// The meta-object cannot express this at all: a parameter list is
+    /// generated from one C++ signature, so a conditional argument has to
+    /// become *separate methods* — and the toolkit does exactly that, spelling
+    /// the eleven alignment commands R1631 folded into parameters as eleven
+    /// names. Its one concession is `Cloned`, the synthetic shorter overloads a
+    /// default argument generates, which enumerates arities but cannot say that
+    /// two of them belong to different values of the same parameter. So a
+    /// client there discovers eleven unrelated verbs; here it discovers one
+    /// verb and its four cases, which is the same information plus the fact
+    /// that they are one operation.
+    OneOfWith(&'static [ArgCase]),
     /// The surface publishes nothing a client can enumerate the argument from.
     ///
     /// **Worth suspicion at every use, and common enough to matter**: this is
@@ -210,8 +269,103 @@ impl ArgDomain {
                 serde_json::json!({ "kind": "values_of", "values_path": values_path })
             }
             Self::OneOf(values) => serde_json::json!({ "kind": "one_of", "values": values }),
+            Self::OneOfWith(cases) => serde_json::json!({
+                "kind": "one_of_with",
+                "cases": cases.iter().map(ArgCase::to_wire).collect::<Vec<_>>(),
+            }),
             Self::Open => serde_json::json!({ "kind": "open" }),
         }
+    }
+
+    /// The case table — non-empty for [`OneOfWith`](Self::OneOfWith) alone, and
+    /// empty for every other domain, which is what "this argument decides
+    /// nothing about the rest of the call" means.
+    ///
+    /// Matched exhaustively rather than with a `_` arm even though this is the
+    /// defining crate, so a future domain that also carries cases has to be
+    /// listed here instead of silently answering "none" — the same reasoning
+    /// [`to_wire`](Self::to_wire) gives for its own match, applied to the
+    /// question a gate asks.
+    #[must_use]
+    pub const fn cases(self) -> &'static [ArgCase] {
+        match self {
+            Self::OneOfWith(cases) => cases,
+            Self::OneOf(_) | Self::IndexOf(_) | Self::ValuesOf(_) | Self::Open => &[],
+        }
+    }
+}
+
+/// R1642 — one admissible value of a discriminant argument, together with the
+/// arguments choosing it brings.
+///
+/// See [`ArgDomain::OneOfWith`] for what this is for, where the case's
+/// arguments sit in the call, and what the reference can and cannot say.
+///
+/// A struct rather than a `(&str, &[SchemaArg])` pair for the reason
+/// [`SchemaField`] is not the pair it replaced: the pair has no room for the
+/// next dimension, and this one is already short of an obvious one — a case has
+/// no place to say what it *returns*, though `arrange`'s four passes answer
+/// four differently-shaped reports. Named fields with a `const` constructor mean
+/// that lands additively.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ArgCase {
+    /// The discriminant value that selects this case — one member of the closed
+    /// vocabulary, in the same spelling the surface's own parser admits.
+    pub value: &'static str,
+    /// The arguments this case adds, in wire order, **after** every argument the
+    /// field declares. Empty when choosing this value adds nothing, which is a
+    /// claim (`distribute` takes no tail) rather than silence.
+    pub then: &'static [SchemaArg],
+}
+
+impl ArgCase {
+    /// The fill value for a fixed-size array a `const fn` builds before
+    /// overwriting every slot — the same role, and the same hazard, as
+    /// [`SchemaField::EMPTY`]. An empty value matches no discriminant, so a slot
+    /// left un-overwritten is a visibly blank case rather than a plausible one.
+    pub const EMPTY: Self = Self::new("", &[]);
+
+    /// One case: the value, and what choosing it adds.
+    #[must_use]
+    pub const fn new(value: &'static str, then: &'static [SchemaArg]) -> Self {
+        Self { value, then }
+    }
+
+    /// The `$schema` wire form — rendered here for the reason
+    /// [`ArgDomain::to_wire`] gives.
+    #[must_use]
+    pub fn to_wire(&self) -> serde_json::Value {
+        serde_json::json!({
+            "value": self.value,
+            "then": self.then.iter().map(SchemaArg::to_wire).collect::<Vec<_>>(),
+        })
+    }
+
+    /// Whether this case adds exactly `count` arguments, the last of them
+    /// optional iff `optional`.
+    ///
+    /// A `const fn` because it exists to be called from a `const` assertion at a
+    /// declaration site, where the case table is composed by hand out of a
+    /// mapping the owning crate answers. `ArrangePass::tail()` says whether a
+    /// pass reads a trailing segment and `ArrangeTail::required()` says whether
+    /// it may be elided; the `SchemaArg` that states those two facts on the wire
+    /// has to be spelled beside the schema, because a model crate that must not
+    /// depend on the framework cannot name one. That leaves one fact written in
+    /// two places — the exact drift this round is repairing one level up — so the
+    /// site asserts the agreement at compile time and a changed `required()`
+    /// becomes a build failure instead of a schema that lies.
+    ///
+    /// `count` is a length rather than a shape because that is all a caller can
+    /// check without naming argument types it does not own; the *names* and
+    /// domains are checked over the wire by the round's conformance demo, which
+    /// drives every call the declaration admits.
+    #[must_use]
+    pub const fn adds(&self, count: usize, optional: bool) -> bool {
+        if self.then.len() != count {
+            return false;
+        }
+        count == 0 || self.then[count - 1].optional == optional
     }
 }
 
@@ -338,6 +492,53 @@ impl SchemaArg {
             ..self
         }
     }
+
+    /// R1642 — the discriminant argument of a conditional call: a closed
+    /// vocabulary in which each value brings its own trailing arguments
+    /// ([`ArgDomain::OneOfWith`]).
+    ///
+    /// Pass a `const` derived from the definition that owns the mapping, never a
+    /// table spelled at the call site — R1630's ratchet, and here it buys more
+    /// than a length check: the *cases* are the mapping, so a hand-written table
+    /// can disagree with the dispatcher about what a value implies, not merely
+    /// about how many values there are.
+    #[must_use]
+    pub const fn one_of_with(
+        name: &'static str,
+        ty: &'static str,
+        cases: &'static [ArgCase],
+    ) -> Self {
+        Self {
+            name,
+            ty,
+            domain: ArgDomain::OneOfWith(cases),
+            optional: false,
+        }
+    }
+
+    /// The `$schema` wire form of this argument.
+    ///
+    /// R1642 moved this out of `pinion-rpc`, where it was a free function beside
+    /// `$schema`'s assembly. Two reasons, and the second is the forcing one:
+    /// this struct is `#[non_exhaustive]`, so a renderer in another crate cannot
+    /// be held to covering a field added later — and `ArgDomain::OneOfWith`
+    /// makes the form **recursive**, so [`ArgDomain::to_wire`] must be able to
+    /// render an argument, which it can only do from here. The transport
+    /// forwards; the types render themselves.
+    #[must_use]
+    pub fn to_wire(&self) -> serde_json::Value {
+        let mut obj = serde_json::Map::new();
+        obj.insert("name".to_owned(), serde_json::Value::from(self.name));
+        obj.insert("type".to_owned(), serde_json::Value::from(self.ty));
+        obj.insert("domain".to_owned(), self.domain.to_wire());
+        // Present only when true, for the same reason `channel` is: the absent
+        // key is the common case and a reader that predates it must keep seeing
+        // the shape it knew.
+        if self.optional {
+            obj.insert("optional".to_owned(), serde_json::Value::Bool(true));
+        }
+        serde_json::Value::Object(obj)
+    }
 }
 
 /// R1638 §5.12 §2 #2 — **how** a declared field's arguments are carried, and
@@ -428,6 +629,65 @@ impl ArgForm {
             }
         }
     }
+}
+
+/// R1642 — a way a field's [`ArgDomain::OneOfWith`] declaration is malformed, as
+/// reported by [`SchemaField::conditional_defect`].
+///
+/// Each arm is a way the *client's* call-assembly would become ambiguous or
+/// impossible, not a matter of taste — which is why they are refusals rather
+/// than lint notes. A declaration is the only thing an agent has; one that
+/// cannot be followed unambiguously is worse than none, because it carries a
+/// schema's authority.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConditionalDefect {
+    /// Two arguments both carry a case table, so where each case's added
+    /// arguments go is undefined: the rule appends them after the field's own
+    /// arguments, and two appenders have no order between them.
+    TwoDiscriminants {
+        /// The first argument found carrying a case table.
+        first: &'static str,
+        /// The second.
+        second: &'static str,
+    },
+    /// The discriminant is [`optional`](SchemaArg::optional). A case is selected
+    /// by a value, so an absent value selects none, and the arguments that
+    /// follow would be unaccountable.
+    OptionalDiscriminant(&'static str),
+    /// A case's added argument reuses a name the field already declares, or one
+    /// an earlier argument of the same case does — so a client keying arguments
+    /// by name (the object form) could not tell them apart.
+    ShadowedName {
+        /// The case that adds it.
+        case: &'static str,
+        /// The name already in use.
+        name: &'static str,
+    },
+    /// Expanding this case puts an optional argument before a required one,
+    /// which the delimited form cannot represent (see
+    /// `r1638_optional_arguments_are_a_suffix`). The commonest way in is a case
+    /// whose added argument is required while the field's own trailing argument
+    /// is optional.
+    OptionalNotASuffix {
+        /// The case whose expansion breaks the rule.
+        case: &'static str,
+    },
+    /// A case's added argument carries a case table of its own.
+    ///
+    /// The append rule extends to a second level without ambiguity, so this is
+    /// not forbidden because it could not be defined — it is forbidden because
+    /// nothing in this tree needs it and an unexercised wire shape is a claim no
+    /// client has been held to. A round that needs nesting removes this arm and
+    /// gains a consumer in the same commit; publishing it first would be the
+    /// dead-capability shape R1641 recorded, where a mapping was advertised
+    /// through a channel nothing carried.
+    NestedDiscriminant {
+        /// The outer case.
+        case: &'static str,
+        /// The argument inside it that carries a second case table.
+        name: &'static str,
+    },
 }
 
 /// R1504 — which channel a declared path belongs to: something a client
@@ -809,6 +1069,83 @@ impl SchemaField {
             first = false;
         }
         rest == tmpl
+    }
+
+    /// R1642 — the first way this field's conditional declaration is malformed,
+    /// or `None` when a client can follow it unambiguously.
+    ///
+    /// One definition of the composition rule stated in [`ArgDomain::OneOfWith`],
+    /// because three callers ask it and three copies would drift: a
+    /// `pinion-core` unit test that drives every arm against a fixture built to
+    /// violate it (a checker nobody has seen fail is a checker nobody has
+    /// tested), the workspace declaration walk, and each surface that declares a
+    /// conditional verb, whose own test module holds its real declaration to it.
+    ///
+    /// Answers `None` for the overwhelming majority of fields, which declare no
+    /// discriminant at all — the rules are about a shape most declarations do not
+    /// have, so a caller reporting "no defect" over a population with no
+    /// inhabitants is reporting nothing. Callers should state the inhabitant
+    /// count beside the verdict; [`declares_cases`](Self::declares_cases) is how.
+    #[must_use]
+    pub fn conditional_defect(&self) -> Option<ConditionalDefect> {
+        let mut discriminant: Option<&SchemaArg> = None;
+        for arg in self.args {
+            if arg.domain.cases().is_empty() {
+                continue;
+            }
+            if let Some(first) = discriminant {
+                return Some(ConditionalDefect::TwoDiscriminants {
+                    first: first.name,
+                    second: arg.name,
+                });
+            }
+            if arg.optional {
+                return Some(ConditionalDefect::OptionalDiscriminant(arg.name));
+            }
+            discriminant = Some(arg);
+        }
+        let discriminant = discriminant?;
+        for case in discriminant.domain.cases() {
+            for added in case.then {
+                if !added.domain.cases().is_empty() {
+                    return Some(ConditionalDefect::NestedDiscriminant {
+                        case: case.value,
+                        name: added.name,
+                    });
+                }
+                if self.args.iter().any(|a| a.name == added.name)
+                    || case.then.iter().filter(|a| a.name == added.name).count() > 1
+                {
+                    return Some(ConditionalDefect::ShadowedName {
+                        case: case.value,
+                        name: added.name,
+                    });
+                }
+            }
+            // The expansion is the field's own arguments followed by this case's,
+            // which is the order a client sends and therefore the order the
+            // optional-suffix rule has to hold of.
+            let optional: Vec<bool> = self
+                .args
+                .iter()
+                .chain(case.then)
+                .map(|a| a.optional)
+                .collect();
+            if let Some(i) = optional.iter().position(|o| *o)
+                && !optional[i..].iter().all(|o| *o)
+            {
+                return Some(ConditionalDefect::OptionalNotASuffix { case: case.value });
+            }
+        }
+        None
+    }
+
+    /// Whether this field declares a case table at all — the denominator a
+    /// caller of [`conditional_defect`](Self::conditional_defect) should report,
+    /// so "no defect" cannot be read as coverage over a population of zero.
+    #[must_use]
+    pub fn declares_cases(&self) -> bool {
+        self.args.iter().any(|a| !a.domain.cases().is_empty())
     }
 }
 
@@ -4339,5 +4676,207 @@ mod raw_json_tests {
             "a Json holding the same document is still not a Raw",
         );
         assert!(IntrospectValue::Null.as_raw().is_none());
+    }
+}
+
+// R1642 §5.12 §2 #2 — a conditional argument: the discriminant's case table.
+#[cfg(test)]
+mod conditional_argument_tests {
+    use super::{ArgCase, ArgDomain, ArgForm, ConditionalDefect, SchemaArg, SchemaField};
+
+    /// The legal shape every fixture below is one step away from: a discriminant
+    /// whose first case adds an argument and whose second adds none.
+    const LEGAL_CASES: &[ArgCase] = &[
+        ArgCase::new("one", &[SchemaArg::open("extra", "int")]),
+        ArgCase::new("two", &[]),
+    ];
+    /// A case adding an argument the field already declares.
+    const SHADOWING: &[ArgCase] = &[ArgCase::new("one", &[SchemaArg::open("common", "int")])];
+    /// A case adding an argument that carries a case table of its own.
+    const NESTED: &[ArgCase] = &[ArgCase::new(
+        "one",
+        &[SchemaArg::one_of_with("deep", "string", LEGAL_CASES)],
+    )];
+
+    /// A delimited action taking `args`, so each fixture differs from the
+    /// control in exactly one respect and a refusal is attributable.
+    fn verb(args: &'static [SchemaArg]) -> SchemaField {
+        SchemaField::action_with("verb", "string", ArgForm::Delimited(':'), args)
+    }
+
+    /// R1642 — the shape the refusals below are each one step away from.
+    ///
+    /// A control, and a load-bearing one: every test in this group asserts a
+    /// refusal, and a checker that refused everything would pass all of them.
+    #[test]
+    fn r1642_a_well_formed_conditional_declaration_is_accepted() {
+        let legal = verb(
+            const {
+                &[
+                    SchemaArg::one_of_with("kind", "string", LEGAL_CASES),
+                    SchemaArg::open("common", "int"),
+                ]
+            },
+        );
+        assert_eq!(legal.conditional_defect(), None, "the control is legal");
+        assert!(legal.declares_cases(), "and it is an inhabitant");
+    }
+
+    /// R1642 — a field with no case table is not this rule's business.
+    ///
+    /// The arm that makes "no defect" over a catalog an honest answer rather
+    /// than a vacuous one: most declarations have no discriminant at all, so a
+    /// caller must be able to tell "checked and clean" from "nothing to check",
+    /// which is what `declares_cases` is for.
+    #[test]
+    fn r1642_a_declaration_without_cases_is_not_an_inhabitant() {
+        let plain = SchemaField::action_with(
+            "verb",
+            "string",
+            ArgForm::Scalar,
+            const { &[SchemaArg::one_of("kind", "string", &["one", "two"])] },
+        );
+        assert_eq!(plain.conditional_defect(), None);
+        assert!(!plain.declares_cases());
+    }
+
+    /// R1642 — two case tables leave the append order undefined.
+    #[test]
+    fn r1642_two_discriminants_are_refused() {
+        let two = verb(
+            const {
+                &[
+                    SchemaArg::one_of_with("kind", "string", LEGAL_CASES),
+                    SchemaArg::one_of_with("also", "string", LEGAL_CASES),
+                ]
+            },
+        );
+        assert_eq!(
+            two.conditional_defect(),
+            Some(ConditionalDefect::TwoDiscriminants {
+                first: "kind",
+                second: "also",
+            }),
+        );
+    }
+
+    /// R1642 — an absent value selects no case, so the arguments that follow it
+    /// would be unaccountable.
+    #[test]
+    fn r1642_an_optional_discriminant_is_refused() {
+        let optional =
+            verb(const { &[SchemaArg::one_of_with("kind", "string", LEGAL_CASES).optional()] });
+        assert_eq!(
+            optional.conditional_defect(),
+            Some(ConditionalDefect::OptionalDiscriminant("kind")),
+        );
+    }
+
+    /// R1642 — a case may not add a name the field already uses: a client keying
+    /// arguments by name could not tell the two apart.
+    #[test]
+    fn r1642_a_shadowed_argument_name_is_refused() {
+        let shadow = verb(
+            const {
+                &[
+                    SchemaArg::one_of_with("kind", "string", SHADOWING),
+                    SchemaArg::open("common", "int"),
+                ]
+            },
+        );
+        assert_eq!(
+            shadow.conditional_defect(),
+            Some(ConditionalDefect::ShadowedName {
+                case: "one",
+                name: "common",
+            }),
+        );
+    }
+
+    /// R1642 — the optional-suffix rule holds of the EXPANSION, not only of the
+    /// field's own arguments.
+    ///
+    /// The commonest real way in: the field's trailing argument is optional and a
+    /// case adds a required one after it, so the delimited payload would have to
+    /// leave a hole in the middle — which `"3::l"` already proved it cannot
+    /// (R1638). The flat check on `args` alone passes this declaration, which is
+    /// why the rule had to be restated over expansions when cases arrived.
+    #[test]
+    fn r1642_an_expansion_that_puts_an_optional_before_a_required_is_refused() {
+        let hole = verb(
+            const {
+                &[
+                    SchemaArg::one_of_with("kind", "string", LEGAL_CASES),
+                    SchemaArg::open("common", "int").optional(),
+                ]
+            },
+        );
+        assert_eq!(
+            hole.conditional_defect(),
+            Some(ConditionalDefect::OptionalNotASuffix { case: "one" }),
+        );
+    }
+
+    /// R1642 — a second level of cases is refused while nothing needs one.
+    ///
+    /// Not because the append rule breaks down, but because an unexercised wire
+    /// shape is a claim no client has been held to. See
+    /// [`ConditionalDefect::NestedDiscriminant`].
+    #[test]
+    fn r1642_a_nested_case_table_is_refused() {
+        let nested = verb(const { &[SchemaArg::one_of_with("kind", "string", NESTED)] });
+        assert_eq!(
+            nested.conditional_defect(),
+            Some(ConditionalDefect::NestedDiscriminant {
+                case: "one",
+                name: "deep",
+            }),
+        );
+    }
+
+    /// R1642 — the case table reaches the wire whole, arguments and all.
+    ///
+    /// The recursion is the point: a case's arguments are `SchemaArg`s, so
+    /// rendering a domain means rendering an argument, which is why both wire
+    /// forms live in this crate. A renderer that stopped at the case's name would
+    /// publish the vocabulary and drop precisely the half this round adds.
+    #[test]
+    fn r1642_a_case_table_survives_the_wire_form() {
+        const CASES: &[ArgCase] = &[
+            ArgCase::new(
+                "align",
+                &[SchemaArg::one_of("edge", "string", &["start", "end"])],
+            ),
+            ArgCase::new("distribute", &[]),
+        ];
+        let wire = ArgDomain::OneOfWith(CASES).to_wire();
+        assert_eq!(wire["kind"], "one_of_with");
+        let cases = wire["cases"].as_array().expect("an array of cases");
+        assert_eq!(cases.len(), 2);
+        assert_eq!(cases[0]["value"], "align");
+        let then = cases[0]["then"]
+            .as_array()
+            .expect("align adds one argument");
+        assert_eq!(then.len(), 1);
+        assert_eq!(then[0]["name"], "edge");
+        assert_eq!(then[0]["domain"]["kind"], "one_of");
+        assert_eq!(then[0]["domain"]["values"][1], "end");
+        assert_eq!(
+            cases[1]["then"].as_array().map(Vec::len),
+            Some(0),
+            "an empty `then` is a claim: choosing this adds nothing",
+        );
+        // And the closed vocabulary is still readable as one, so a client that
+        // only wants the legal values does not have to understand cases.
+        let values: Vec<&str> = ArgDomain::OneOfWith(CASES)
+            .cases()
+            .iter()
+            .map(|c| c.value)
+            .collect();
+        assert_eq!(values, vec!["align", "distribute"]);
+        assert!(
+            ArgDomain::OneOf(&["a"]).cases().is_empty(),
+            "and a plain closed set decides nothing about the rest of the call",
+        );
     }
 }
