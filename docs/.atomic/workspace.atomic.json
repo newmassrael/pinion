@@ -33592,6 +33592,52 @@
         "debt-a-chart-is-one-node-to-assistive-tech is CLOSED by this round"
       ]
     },
+    "R1634.1": {
+      "decision_summary": "the half of R1634's carry that was never a carry: `BoxPlotChart::access_table` and `CandlestickChart::access_table`. R1634 registered `debt-a-line-chart-has-no-per-sample-mark` and wrote inside it that boxplot and candlestick \"have no structural obstacle\" -- and then deferred them anyway. A carry whose own file says there is nothing in the way is not a carry; the standing rule is that the only legitimate one is an external dependency. The user asked why it was not paid immediately, which is the correct question, and this is the payment. AND THE PAYMENT VALIDATED THE ABSTRACTION, which is the part worth recording rather than the discipline. Both new consumers have columns that are NOT SERIES: a box plot's are the five landmarks a summary is made of and a candlestick's are open / high / low / close. `ChartColumn` was named and documented for a series because its only two consumers were a single-series bar chart and a multi-series scatter, and one of those exercises no column axis at all. So the definition is now what it should always have been -- a column is WHAT THE CHART CARRIES PER POINT -- and the doc says so with the three cases beside it. Deferring would have left that abstraction resting on one consumer with one column. TWO FINDINGS FELL OUT. First, the wire spelling and the announced word are different audiences: `SummaryPosition::name` answers `lower_extreme` for a client that matches on it and the new `label` answers \"lower whisker\" for a person who hears it, because running the wire spelling through a screen reader has it say an underscore -- the same split R1628 drew between a measurement's shape and a scene's. Second, and this one is about truth rather than phrasing: the word is WHISKER and not MINIMUM, because a distribution with outliers has values below its whisker, so announcing it as the minimum states something false to exactly the reader who cannot check it against the picture. `Distribution::positions` / `at` are lifted to mirror `Candle::positions` / `at` -- the argument is symmetry with an existing type rather than a count of copies, and `off_scale` becomes a call site of the pair instead of re-listing the five landmarks itself.",
+      "changes_bullets": [
+        "BoxPlotChart::access_table — columns are the five summary landmarks, not series",
+        "CandlestickChart::access_table — columns are open / high / low / close, window-bounded",
+        "ChartColumn is redefined and redocumented as what the chart carries PER POINT",
+        "SummaryPosition::label — the word a person hears, beside name's wire spelling",
+        "Distribution::positions / at — mirroring Candle's pair; off_scale is now a call site"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-chart: 442 pass (2 new); pinion-a11y 286+17 pass",
+        "blast radius 230 packages / 261 test targets: all pass",
+        "clippy / doc / reference-names ratchet: clean",
+        "demos r1634 and r1629 PASS",
+        "the boxplot test caught the wire-spelling slip before it shipped: to_string() answered `lower_extreme`"
+      ],
+      "impact_refs": [
+        "5.40",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "carry 0. debt-a-line-chart-has-no-per-sample-mark is narrowed to line / timeline, where the obstacle is real: samples are drawn as one path, so a cell would have no rectangle to point at. Its file now records that half of it was never a carry and why the payment validated ChartColumn"
+      ],
+      "publishable_decision_summary": "the half of R1634's carry that was never a carry: `BoxPlotChart::access_table` and `CandlestickChart::access_table`. R1634 registered `debt-a-line-chart-has-no-per-sample-mark` and wrote inside it that boxplot and candlestick \"have no structural obstacle\" -- and then deferred them anyway. A carry whose own file says there is nothing in the way is not a carry; the standing rule is that the only legitimate one is an external dependency. The user asked why it was not paid immediately, which is the correct question, and this is the payment. AND THE PAYMENT VALIDATED THE ABSTRACTION, which is the part worth recording rather than the discipline. Both new consumers have columns that are NOT SERIES: a box plot's are the five landmarks a summary is made of and a candlestick's are open / high / low / close. `ChartColumn` was named and documented for a series because its only two consumers were a single-series bar chart and a multi-series scatter, and one of those exercises no column axis at all. So the definition is now what it should always have been -- a column is WHAT THE CHART CARRIES PER POINT -- and the doc says so with the three cases beside it. Deferring would have left that abstraction resting on one consumer with one column. TWO FINDINGS FELL OUT. First, the wire spelling and the announced word are different audiences: `SummaryPosition::name` answers `lower_extreme` for a client that matches on it and the new `label` answers \"lower whisker\" for a person who hears it, because running the wire spelling through a screen reader has it say an underscore -- the same split R1628 drew between a measurement's shape and a scene's. Second, and this one is about truth rather than phrasing: the word is WHISKER and not MINIMUM, because a distribution with outliers has values below its whisker, so announcing it as the minimum states something false to exactly the reader who cannot check it against the picture. `Distribution::positions` / `at` are lifted to mirror `Candle::positions` / `at` -- the argument is symmetry with an existing type rather than a count of copies, and `off_scale` becomes a call site of the pair instead of re-listing the five landmarks itself.",
+      "publishable_changes_bullets": [
+        "BoxPlotChart::access_table — columns are the five summary landmarks, not series",
+        "CandlestickChart::access_table — columns are open / high / low / close, window-bounded",
+        "ChartColumn is redefined and redocumented as what the chart carries PER POINT",
+        "SummaryPosition::label — the word a person hears, beside name's wire spelling",
+        "Distribution::positions / at — mirroring Candle's pair; off_scale is now a call site"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-chart: 442 pass (2 new); pinion-a11y 286+17 pass",
+        "blast radius 230 packages / 261 test targets: all pass",
+        "clippy / doc / reference-names ratchet: clean",
+        "demos r1634 and r1629 PASS",
+        "the boxplot test caught the wire-spelling slip before it shipped: to_string() answered `lower_extreme`"
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "carry 0. debt-a-line-chart-has-no-per-sample-mark is narrowed to line / timeline, where the obstacle is real: samples are drawn as one path, so a cell would have no rectangle to point at. Its file now records that half of it was never a carry and why the payment validated ChartColumn"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

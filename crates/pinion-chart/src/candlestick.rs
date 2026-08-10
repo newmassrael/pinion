@@ -61,6 +61,7 @@
 //! Read the crate-level "Known limitations" — `Scene::Path` does not render on
 //! TUI, and a candlestick chart is almost entirely paths.
 
+use pinion_a11y::chart::{ChartCell, ChartColumn, ChartRow, ChartTable};
 use pinion_core::Scene;
 use pinion_core::contrast::contrast_ratio;
 use pinion_core::derivation::{Derivation, DerivationKind, DerivationSet, Evidence};
@@ -81,6 +82,7 @@ use crate::scale::{
     AxisKind, Categories, CategoryScale, CategoryWindow, DEFAULT_LOG_BASE, ValueScale,
 };
 use crate::style::ChartStyle;
+use crate::ticks::format_si;
 use crate::ticks::{TickFormat, format_time_tick, tick_step};
 
 /// The fraction of a session's pitch the body occupies. The toolkit's
@@ -321,6 +323,67 @@ impl CandlestickChart {
     pub const fn window(mut self, window: CategoryWindow) -> Self {
         self.window = Some(window);
         self
+    }
+
+    /// R1634 §5.40 — this chart's data as an accessible **table**: one row per
+    /// session, one column per OHLC slot.
+    ///
+    /// The same shape the box plot takes and for the same reason: a column is
+    /// what the chart carries **per point**, which here is the four prices a
+    /// session IS. A reader crossing a row hears open, high, low and close for
+    /// one session — the comparison a candle is drawn to make, and one a single
+    /// summary string gives no way to step through.
+    ///
+    /// The session names come from the chart's own slot names, so a windowed
+    /// chart's rows are the sessions it drew and
+    /// [`ChartTable::set_size`] states how many there are altogether.
+    #[must_use]
+    pub fn access_table(&self, name: &str, axis_name: &str) -> ChartTable {
+        let prefix = &self.tag_prefix;
+        let visible: Vec<usize> = self.window.as_ref().map_or_else(
+            || (0..self.candles.len()).collect(),
+            |w| {
+                (w.lo()..=w.hi())
+                    .filter(|i| *i < self.candles.len())
+                    .collect()
+            },
+        );
+        ChartTable {
+            tag: prefix.clone(),
+            name: name.to_owned(),
+            axis_name: axis_name.to_owned(),
+            columns: Candle::positions()
+                .into_iter()
+                .map(|at| ChartColumn {
+                    tag: format!("{prefix}.a11y.{}", at.name()),
+                    name: at.name().to_owned(),
+                })
+                .collect(),
+            rows: visible
+                .iter()
+                .map(|&i| ChartRow {
+                    tag: format!("{prefix}.a11y.r{i}"),
+                    name: self.sessions.at(i).unwrap_or_default().to_owned(),
+                    cells: Candle::positions()
+                        .into_iter()
+                        .map(|at| ChartCell {
+                            // Open and close are the body's two edges; the
+                            // extremes are the wicks' ends, each drawn as its
+                            // own stroke, so all four have a mark to point at.
+                            tag: Some(match at {
+                                CandlePosition::High => format!("{prefix}.wick.{i}.hi"),
+                                CandlePosition::Low => format!("{prefix}.wick.{i}.lo"),
+                                CandlePosition::Open | CandlePosition::Close => {
+                                    format!("{prefix}.candle.{i}")
+                                }
+                            }),
+                            value: format_si(self.candles[i].at(at)),
+                        })
+                        .collect(),
+                })
+                .collect(),
+            set_size: (visible.len() < self.candles.len()).then_some(self.candles.len()),
+        }
     }
 
     /// Pin the value-axis domain instead of deriving it from the data.
@@ -1164,6 +1227,66 @@ struct CandleInspect {
 mod tests {
     use super::*;
     use crate::scene_probe::{count_prefix, find, has, tags, text_of};
+
+    /// ★ R1634 — a candlestick's columns are its four PRICES, and a windowed
+    /// chart presents the sessions it drew while declaring how many there are.
+    ///
+    /// The third consumer of the projection and the second whose columns are
+    /// not series, which is what makes "a column is what the chart carries per
+    /// point" a rule rather than one chart's convenience.
+    #[test]
+    fn r1634_a_candlestick_projects_its_four_prices_as_columns() {
+        let candles: Vec<Candle> = (0..8)
+            .map(|i| {
+                let base = f64::from(i) + 10.0;
+                Candle::new(
+                    f64::from(i) * 86_400_000.0,
+                    base,
+                    base + 3.0,
+                    base - 2.0,
+                    base + 1.0,
+                )
+                .expect("a well-ordered session")
+            })
+            .collect();
+        let chart = CandlestickChart::new(candles).with_tag_prefix("cs");
+
+        let table = chart.access_table("Prices", "Session");
+        assert_eq!(
+            table
+                .columns
+                .iter()
+                .map(|c| c.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["open", "high", "low", "close"],
+        );
+        assert_eq!(table.rows.len(), 8);
+        assert_eq!(table.rows[0].cells.len(), 4);
+        assert_eq!(table.rows[0].cells[0].value, "10", "the first open");
+        assert_eq!(table.rows[0].cells[1].value, "13", "and its high");
+        assert_eq!(
+            table.rows[0].cells[1].tag.as_deref(),
+            Some("cs.wick.0.hi"),
+            "the high points at the wick it is the end of"
+        );
+        assert_eq!(
+            table.rows[0].cells[0].tag.as_deref(),
+            Some("cs.candle.0"),
+            "and the open at the body it is an edge of"
+        );
+        assert_eq!(table.set_size, None, "nothing is windowed");
+
+        let windowed = chart
+            .window(CategoryWindow::new(2, 4))
+            .access_table("Prices", "Session");
+        assert_eq!(windowed.rows.len(), 3, "the window is the bound");
+        assert_eq!(
+            windowed.set_size,
+            Some(8),
+            "★ and the whole extent is declared, so an AT does not describe the \
+             window as the data"
+        );
+    }
 
     const RECT: Rect = Rect::new(0, 0, 720, 400);
 

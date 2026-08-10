@@ -247,6 +247,32 @@ impl SummaryPosition {
     }
 }
 
+impl SummaryPosition {
+    /// The word a **person** hears, as distinct from
+    /// [`name`](Self::name)'s wire spelling (R1634).
+    ///
+    /// Two audiences, so two strings: a client matches `lower_extreme` and a
+    /// screen reader announces "lower whisker", and running the wire spelling
+    /// through a reader would have it say an underscore. The same split R1628
+    /// drew between a measurement's shape and a scene's.
+    ///
+    /// **"Whisker", not "minimum"** — and that is the reason this is a table
+    /// rather than a substitution. A whisker end is the smallest sample inside
+    /// the fence; a distribution with outliers has values below it, so
+    /// announcing it as the minimum would state something false about the data
+    /// to precisely the reader who cannot check it against the picture.
+    #[must_use]
+    pub const fn label(self) -> &'static str {
+        match self {
+            Self::LowerExtreme => "lower whisker",
+            Self::LowerQuartile => "lower quartile",
+            Self::Median => "median",
+            Self::UpperQuartile => "upper quartile",
+            Self::UpperExtreme => "upper whisker",
+        }
+    }
+}
+
 impl std::fmt::Display for SummaryPosition {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(self.name())
@@ -390,6 +416,38 @@ pub struct Distribution {
 }
 
 impl Distribution {
+    /// The five landmarks in ascending order — the enumeration
+    /// [`at`](Self::at) is the accessor for (R1634).
+    ///
+    /// The peer of [`Candle::positions`](crate::Candle::positions), and here
+    /// for the same reason: a summary IS its five numbers, so "which numbers
+    /// does a distribution carry" is a fact about this type rather than
+    /// something each consumer re-lists. `off_scale` listed them once and the
+    /// accessible projection would have listed them again.
+    #[must_use]
+    pub const fn positions() -> [SummaryPosition; 5] {
+        use SummaryPosition as P;
+        [
+            P::LowerExtreme,
+            P::LowerQuartile,
+            P::Median,
+            P::UpperQuartile,
+            P::UpperExtreme,
+        ]
+    }
+
+    /// The value at one landmark (R1634).
+    #[must_use]
+    pub const fn at(&self, at: SummaryPosition) -> f64 {
+        match at {
+            SummaryPosition::LowerExtreme => self.lower_whisker,
+            SummaryPosition::LowerQuartile => self.q1,
+            SummaryPosition::Median => self.median,
+            SummaryPosition::UpperQuartile => self.q3,
+            SummaryPosition::UpperExtreme => self.upper_whisker,
+        }
+    }
+
     /// The slot label — a category name on the x-axis.
     #[must_use]
     pub fn label(&self) -> &str {

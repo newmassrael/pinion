@@ -46,6 +46,7 @@
 //! Read the crate-level "Known limitations" — `Scene::Path` does not render
 //! on TUI, and a box plot is almost entirely paths.
 
+use pinion_a11y::chart::{ChartCell, ChartColumn, ChartRow, ChartTable};
 use pinion_core::Scene;
 use pinion_core::derivation::{Derivation, DerivationKind, DerivationSet, Evidence};
 use pinion_core::scene::{ContainerNode, Rect};
@@ -72,6 +73,7 @@ use crate::scale::{
     AxisKind, Categories, CategoryScale, CategoryWindow, DEFAULT_LOG_BASE, ValueScale,
 };
 use crate::style::ChartStyle;
+use crate::ticks::format_si;
 use crate::ticks::{TickFormat, tick_step};
 
 /// The fraction of a category slot the box occupies. The toolkit's
@@ -281,6 +283,66 @@ impl BoxPlotChart {
         self.geom(rect, style).x.visible()
     }
 
+    /// R1634 §5.40 — this chart's data as an accessible **table**: one row per
+    /// distribution, one column per summary landmark.
+    ///
+    /// ★ The column axis here is **not a series**, and that is what this
+    /// consumer settles: a column is *what the chart carries per point*. For a
+    /// scatter that is a series; for a box plot it is the five numbers a
+    /// summary IS. A reader crossing a row hears the whole five-number summary
+    /// of one slot, which is the thing a box is drawn to show and the thing a
+    /// single string cannot give one at a time.
+    ///
+    /// Every cell points at the mark its landmark was drawn as where there is
+    /// one — the median has its own rule, the quartiles are the box's two
+    /// edges, and the whisker ends have no separate node — so a touch explorer
+    /// lands on the box rather than on the chart.
+    #[must_use]
+    pub fn access_table(&self, name: &str, axis_name: &str) -> ChartTable {
+        let prefix = &self.tag_prefix;
+        ChartTable {
+            tag: prefix.clone(),
+            name: name.to_owned(),
+            axis_name: axis_name.to_owned(),
+            columns: Distribution::positions()
+                .into_iter()
+                .map(|at| ChartColumn {
+                    tag: format!("{prefix}.a11y.{}", at.name()),
+                    name: at.label().to_owned(),
+                })
+                .collect(),
+            rows: self
+                .distributions
+                .iter()
+                .enumerate()
+                .map(|(i, d)| ChartRow {
+                    tag: format!("{prefix}.a11y.r{i}"),
+                    name: d.label().to_owned(),
+                    cells: Distribution::positions()
+                        .into_iter()
+                        .map(|at| ChartCell {
+                            // The box carries the two quartiles and the median
+                            // has a line of its own; a whisker END is drawn as
+                            // part of the whisker stroke and has no node, so it
+                            // claims none rather than borrowing the box's.
+                            tag: match at {
+                                SummaryPosition::Median => Some(format!("{prefix}.median.{i}")),
+                                SummaryPosition::LowerQuartile | SummaryPosition::UpperQuartile => {
+                                    Some(format!("{prefix}.box.{i}"))
+                                }
+                                SummaryPosition::LowerExtreme | SummaryPosition::UpperExtreme => {
+                                    None
+                                }
+                            },
+                            value: format_si(d.at(at)),
+                        })
+                        .collect(),
+                })
+                .collect(),
+            set_size: None,
+        }
+    }
+
     /// Override the default box-colour palette.
     #[must_use]
     pub fn with_palette(mut self, palette: CategoricalPalette) -> Self {
@@ -354,17 +416,12 @@ impl BoxPlotChart {
     /// counterfactual worth keeping in mind when reading a non-empty one.
     #[must_use]
     pub fn off_scale(&self) -> Vec<OffScaleLandmark> {
-        use SummaryPosition as P;
         let mut out = Vec::new();
         for (i, d) in self.distributions.iter().enumerate() {
-            let five = [
-                (P::LowerExtreme, d.lower_whisker()),
-                (P::LowerQuartile, d.q1()),
-                (P::Median, d.median()),
-                (P::UpperQuartile, d.q3()),
-                (P::UpperExtreme, d.upper_whisker()),
-            ];
-            for (at, value) in five {
+            // R1634 — the five landmarks are a fact about a `Distribution`, so
+            // they are enumerated there rather than re-listed at each consumer.
+            for at in Distribution::positions() {
+                let value = d.at(at);
                 if !self.y_kind.defines(value) {
                     out.push(OffScaleLandmark {
                         distribution: i,
@@ -1097,6 +1154,70 @@ mod tests {
     use super::*;
     use crate::distribution::{DistributionError, QuantileMethod};
     use crate::scene_probe::{count_prefix, find, has, tags};
+
+    /// ★ R1634 — a box plot's columns are its five LANDMARKS, which is what
+    /// settles that a column is "what the chart carries per point" rather than
+    /// "a series".
+    ///
+    /// A reader crossing a row hears the whole five-number summary of one slot.
+    /// The landmark list comes from `Distribution::positions`, so this and
+    /// `off_scale` cannot disagree about what a summary is made of.
+    #[test]
+    fn r1634_a_box_plot_projects_its_five_landmarks_as_columns() {
+        let chart = BoxPlotChart::new(vec![
+            Distribution::from_samples(
+                "/login",
+                &[1.0, 2.0, 3.0, 4.0, 9.0],
+                QuantileMethod::Linear,
+            )
+            .unwrap(),
+            Distribution::from_samples(
+                "/health",
+                &[2.0, 4.0, 6.0, 8.0, 10.0],
+                QuantileMethod::Linear,
+            )
+            .unwrap(),
+        ])
+        .with_tag_prefix("box");
+
+        let table = chart.access_table("Latency", "Endpoint");
+        assert_eq!(
+            table
+                .columns
+                .iter()
+                .map(|c| c.name.as_str())
+                .collect::<Vec<_>>(),
+            vec![
+                "lower whisker",
+                "lower quartile",
+                "median",
+                "upper quartile",
+                "upper whisker"
+            ],
+            "★ the word a PERSON hears, not the wire spelling — and 'whisker' \
+             rather than 'minimum', because a distribution with outliers has \
+             values below it and the reader cannot check that against the picture",
+        );
+        assert_eq!(table.rows.len(), 2);
+        assert_eq!(table.rows[0].name, "/login");
+        assert_eq!(table.rows[0].cells.len(), 5, "one cell per landmark");
+        assert_eq!(table.rows[0].cells[2].value, "3", "the median of 1..9 is 3");
+        assert_eq!(
+            table.rows[0].cells[2].tag.as_deref(),
+            Some("box.median.0"),
+            "the median points at its own line"
+        );
+        assert_eq!(
+            table.rows[0].cells[1].tag.as_deref(),
+            Some("box.box.0"),
+            "a quartile points at the box it is an edge of"
+        );
+        assert_eq!(
+            table.rows[0].cells[0].tag, None,
+            "★ and a whisker END has no node of its own, so it claims none \
+             rather than borrowing the box's"
+        );
+    }
 
     const RECT: Rect = Rect::new(0, 0, 640, 360);
 

@@ -33,7 +33,9 @@
 //!
 //! # The orientation, and why this way round
 //!
-//! **Rows are data points; columns are series.** A chart usually has many
+//! **Rows are data points; columns are whatever the chart carries per point.**
+//! For a scatter that is its series; for a box plot it is the five numbers of a
+//! summary; for a candlestick it is open / high / low / close. A chart usually has many
 //! points and few series, so this keeps the *column* count small — which is what
 //! a table reader moves across — and lets the common gesture, reading down a
 //! column, be reading one series in order. It is also the projection the
@@ -82,13 +84,22 @@ pub struct ChartCell {
     pub value: String,
 }
 
-/// One series, as a **column** of the projected table (R1634).
+/// One **column** of the projected table (R1634).
+///
+/// A column is *what the chart carries per point*, which is not always a
+/// series and was not always going to be obvious: a scatter's columns are its
+/// series, a box plot's are the five numbers a summary IS, and a candlestick's
+/// are open / high / low / close. Naming this type for the series would have
+/// made the second and third consumers look like abuses of it when they are the
+/// same shape — a reader crossing a row hears everything the chart knows about
+/// one point, whatever that turns out to be.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ChartColumn {
-    /// The column header's tag. Usually the series' own painted tag, which is
-    /// how a reader's cursor reaches the line or the swatch it names.
+    /// The column header's tag. A series' own painted tag where there is one,
+    /// so a reader's cursor reaches the line or the swatch it names; a derived
+    /// tag where the column is a landmark rather than a drawn thing.
     pub tag: String,
-    /// The series name, announced as the column header.
+    /// What the column is called, announced as the header.
     pub name: String,
 }
 
