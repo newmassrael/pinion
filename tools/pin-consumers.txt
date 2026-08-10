@@ -1,0 +1,17 @@
+# Repositories that depend on pinion by git rev, and must therefore all name
+# the SAME pinion rev and the SCE rev that pinion rev itself pins.
+#
+# pinion is deliberately absent: it is the SCE reference, not a consumer.
+# pin_sync.py refuses to rewrite it.
+#
+# One path per line. `#` starts a comment. `~` is expanded, so a path written
+# that way is portable between machines and does not commit one user's home
+# directory into a shared file. A path that is not checked out here is
+# announced and skipped, not an error — the list is shared, a clone is not.
+#
+# This file does NOT gate anything. `pin_sync.py --check-dual-pin` is the
+# pre-push gate and reads pinion alone; the consumer clauses are a human's
+# `--check`, because a machine without these clones cannot answer them.
+
+~/sprag
+~/derrick

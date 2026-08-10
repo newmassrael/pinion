@@ -157,6 +157,27 @@ if ! python3 "$repo_root/tools/blast_radius.py" --selftest >&2; then
     exit 1
 fi
 
+# R1641 — the SCE dual pin: `Cargo.toml`'s rev, this repo's `Cargo.lock`, and
+# the `vendor/sce` submodule gitlink are three statements of one fact, and until
+# now the only thing holding them together was a comment in `Cargo.toml`
+# carrying a shell one-liner for whoever remembered to run it. The Mnemosyne
+# pin got the mechanical treatment at R1508; `.githooks/lib/mnemosyne-tool.sh`
+# describes that as "the same dual discipline `vendor/sce` has, made
+# mechanical", which names in passing that this one was not.
+#
+# Drifting them apart splits the SCE instance in any consumer that rev-pins
+# pinion — the failure `Cargo.toml`'s own comment describes, and one that
+# surfaces as an `Engine`/`StatePolicy` type mismatch a long way from its cause.
+# Reads three files and the index; boots nothing.
+if ! python3 "$repo_root/tools/test_pin_sync.py" >&2; then
+    echo "pre-push: the pin-sync gate failed its own tests" >&2
+    exit 1
+fi
+if ! python3 "$repo_root/tools/pin_sync.py" --check-dual-pin >&2; then
+    echo "pre-push: pinion's SCE pin disagrees with itself" >&2
+    exit 1
+fi
+
 msg_gate_failed=0
 tmp_msg="$(mktemp)"
 trap 'rm -f "$tmp_msg"' EXIT

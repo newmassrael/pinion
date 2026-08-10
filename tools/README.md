@@ -90,6 +90,16 @@ answer a question a round would otherwise estimate:
   typed-reader list is not short first counted four rustdoc mentions).
 - `reference_names.py`, `reference_census.py`, `phase_b_tally.py` — the
   standing gates; each has its own `--selftest` and the push hook runs them.
+- `pin_sync.py` (R1641) — the rev pin shared with the consumer repos that
+  git-pin pinion. `--check-dual-pin` is the push gate and reads pinion alone:
+  `Cargo.toml`'s SCE rev, this repo's `Cargo.lock`, and the `vendor/sce`
+  submodule gitlink are three statements of one fact, and drifting them apart
+  splits the SCE instance in every consumer. `--check` additionally verifies
+  that the repos in `pin-consumers.txt` name one pinion rev, derive their SCE
+  rev from it, and have locks that agree with their manifests; it is a human's
+  command, not a gate, because a machine without those clones cannot answer it.
+  Passing a rev (or `--head`) REWRITES those manifests — see the module
+  docstring on why an agent session must not do that.
 
 ## Why Python, not Rust
 

@@ -280,8 +280,14 @@ authors = ["pinion contributors"]
 # built SCE drifts from the vendored checkout (C++ side / canon sync still track
 # the submodule). The two `rev` values below are the ONLY statement of the pin —
 # an earlier version of this comment also named the SHA in prose and had drifted
-# two bumps behind, which is what a duplicated constant does. Check the pair with
-#   test "$(git -C vendor/sce rev-parse HEAD)" = "$(grep -m1 -oP 'rev = "\K[0-9a-f]{40}' Cargo.toml)"
+# two bumps behind, which is what a duplicated constant does.
+#
+# R1641 — the pair is now GATED, not remembered: `pre-push` runs
+#   python3 tools/pin_sync.py --check-dual-pin
+# which compares this rev against Cargo.lock, the vendor/sce gitlink recorded in
+# the index, and that submodule's checked-out HEAD. The check that used to live
+# here was a shell one-liner in prose, run by whoever thought of it — the shape
+# R1470 and R1495 cost a round each to learn is not a gate.
 sce-rust-runtime = { git = "https://github.com/newmassrael/scxml-core-engine.git", rev = "8597e6929a772d6fe56202b5566d8fe86fd76b2e", default-features = false }
 sce-build = { git = "https://github.com/newmassrael/scxml-core-engine.git", rev = "8597e6929a772d6fe56202b5566d8fe86fd76b2e" }
 
