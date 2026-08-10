@@ -7231,6 +7231,34 @@ fn handle_scene_input_state(
     }))
 }
 
+/// R1627 §5.49 — every axis `scene/input_state` answers with.
+///
+/// The census lives here, in the crate that owns the wire, because that is the
+/// only place it can be held to what is actually emitted — and it is held, by
+/// `r1627_the_declared_input_axes_are_the_emitted_ones`, in both directions.
+///
+/// ## Why this exists
+///
+/// Three demos each hand-wrote this list and asserted set EQUALITY against it.
+/// R1619 added `held_pointer_buttons` and R1620 added `auto_scroll`, so all
+/// three went red and stayed red for five rounds, because the local gate runs
+/// only the demos a round touched and the full sweep is CI's. Two things were
+/// wrong and both are fixed: the list was copied three times with nothing
+/// relating the copies, and set equality was the wrong assertion for a
+/// consumer that only reads four of the axes — an ADDITIVE wire change should
+/// not break a reader that never looked at the new field. The demos now assert
+/// the axes they use are present; "no axis silently disappeared" is this
+/// const's job, in the crate, where a change to the emitter is in the same
+/// diff as a change to the census.
+pub const INPUT_STATE_AXES: [&str; 6] = [
+    "auto_scroll",
+    "cursor",
+    "held_keys",
+    "held_pointer_buttons",
+    "key_dispatch",
+    "modifiers",
+];
+
 /// R629 §5.28 — `scene/animate_settle` typed handler. 28th `scene/*`
 /// method. Bulk-walks every animation registered on `runtime_owner`
 /// (and descendant scopes) and lands each at its internal target

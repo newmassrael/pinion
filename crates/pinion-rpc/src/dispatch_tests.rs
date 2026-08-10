@@ -653,6 +653,54 @@ fn r1074_scene_input_state_key_dispatch_null_vs_empty_are_distinct() {
 /// owns this state on every backend, so "axis unavailable" would be a lie the
 /// wire cannot tell), and the names are the same closed vocabulary
 /// `scene/pointer_button` accepts, so a client can round-trip what it reads.
+/// R1627 §5.49 — the declared input axes ARE the emitted ones, both ways.
+///
+/// This is the census three demos were hand-writing. It belongs here because
+/// this is the only place a change to the emitter and a change to the census
+/// land in the same diff — R1619 and R1620 each added an axis, and the three
+/// hand-written copies went red for five rounds without anything relating
+/// them to the emitter.
+///
+/// Both directions matter for different reasons: a MISSING axis is a wire
+/// regression (a reader loses a field it depends on), and an EXTRA axis is a
+/// stale census (the next round's reader is told the wrong shape).
+#[test]
+fn r1627_the_declared_input_axes_are_the_emitted_ones() {
+    let mut scene = counted_scene(3);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_input_state(pinion_core::InputStateSnapshot::default());
+    let resp = dispatch(
+        &mut ctx,
+        r#"{"jsonrpc":"2.0","id":1,"method":"scene/input_state"}"#,
+    )
+    .expect("response frame");
+    let v: serde_json::Value = serde_json::from_str(&resp).expect("valid response json");
+    let mut emitted: Vec<&str> = v["result"]
+        .as_object()
+        .expect("input_state is an object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    emitted.sort_unstable();
+    let declared: Vec<&str> = crate::dispatch::INPUT_STATE_AXES.to_vec();
+    assert_eq!(
+        emitted, declared,
+        "every emitted axis is declared and every declared axis is emitted",
+    );
+    // And every axis is PRESENT at boot rather than omitted when idle — a
+    // reader that must probe for a key cannot tell "absent" from "unavailable",
+    // which is the distinction `auto_scroll`'s null and
+    // `held_pointer_buttons`'s empty array exist to make.
+    for axis in declared {
+        assert!(
+            v["result"].get(axis).is_some(),
+            "{axis} is present at boot, with its own empty / null form",
+        );
+    }
+}
+
 #[test]
 fn r1619_input_state_publishes_the_held_pointer_buttons() {
     use pinion_core::{PointerButton, PointerButtons};

@@ -52,6 +52,7 @@ from rpc_verify import (  # noqa: E402
     RpcError,
     RpcSubprocess,
     assert_eq,
+    assert_input_axes,
     run_demo,
 )
 
@@ -100,6 +101,12 @@ def _drive(tf: RpcSubprocess, focused: bool, **params: Any) -> Any:
     return resp.result
 
 
+#: R1627 — the `scene/input_state` axes this demo actually reads. Declared here
+#: so the assertion names its own dependency; the whole-set census lives beside
+#: the emitter (`pinion_rpc::dispatch::INPUT_STATE_AXES`).
+USES = ("cursor", "held_keys", "key_dispatch", "modifiers")
+
+
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
         # ── (A) discovery ────────────────────────────────────────────
@@ -122,9 +129,8 @@ def body() -> None:
                   "boot: the reactive view reads None → the blurred label")        # 5
         # the label the view paints agrees with the gate leg
         assert_eq(_os_focused(tf), None, "gate + view agree at boot")              # 6
-        assert_eq(sorted(boot.keys()),
-                  ["cursor", "held_keys", "key_dispatch", "modifiers"],
-                  "input_state carries the full axis set")                         # 7
+        # R1627 — the axes THIS demo reads (see r885 for why not equality).
+        assert_input_axes(boot, needs=USES, label="boot input_state")               # 7
 
         # ── (C) drive focus(true): gate + drive echo + reactive view ─
         res = _drive(tf, True)

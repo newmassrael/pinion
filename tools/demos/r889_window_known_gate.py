@@ -46,6 +46,7 @@ from rpc_verify import (  # noqa: E402
     RpcError,
     RpcSubprocess,
     assert_eq,
+    assert_input_axes,
     run_demo,
     wait_until,
 )
@@ -75,6 +76,12 @@ def _expect_unknown_window(label: str, supplied: str, fn) -> None:
     raise AssertionError(f"{label}: expected unknown_window rejection, got success")
 
 
+#: R1627 — the `scene/input_state` axes this demo actually reads. Declared here
+#: so the assertion names its own dependency; the whole-set census lives beside
+#: the emitter (`pinion_rpc::dispatch::INPUT_STATE_AXES`).
+USES = ("cursor", "held_keys", "key_dispatch", "modifiers")
+
+
 def body() -> None:
     with RpcSubprocess("hello-multi-window", boot_grace=1.5) as tf:
         # ── (A) known windows answer the per-window READ axes ────────
@@ -85,17 +92,17 @@ def body() -> None:
         assert_eq(sorted(r_insp.keys()), ["fps"], "inspector pacing axis present")      # 3
         assert_eq(r_insp["fps"], None, "inspector boots on the default policy")         # 4
         s_main = _input_state(tf, "main")
-        assert_eq(
-            sorted(s_main.keys()),
-            ["cursor", "held_keys", "key_dispatch", "modifiers"],
-            "main input_state carries the full R885 + R1074 key set",
-        )                                                                               # 5
+        # R1627 — the axes THIS demo reads (see r885 for why not equality).
+        assert_input_axes(s_main, needs=USES, label="main input_state")                  # 5
         assert_eq(s_main["held_keys"], [], "no chord key held at boot (main)")          # 6
         s_insp = _input_state(tf, "inspector")
-        assert_eq(
-            sorted(s_insp.keys()),
-            ["cursor", "held_keys", "key_dispatch", "modifiers"],
-            "inspector input_state available (known window, NOT Unavailable)",
+        # The point here is that a KNOWN window answers at all rather than
+        # refusing — so the assertion is that the axes arrived, not that the
+        # set has never grown.
+        assert_input_axes(
+            s_insp,
+            needs=USES,
+            label="inspector input_state available (known window, NOT Unavailable)",
         )                                                                               # 7
         assert_eq(s_insp["held_keys"], [], "no chord key held at boot (inspector)")     # 8
 

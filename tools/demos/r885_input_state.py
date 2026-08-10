@@ -58,6 +58,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    assert_input_axes,
     run_demo,
 )
 
@@ -70,13 +71,21 @@ def read(tf) -> dict:
     return resp.result
 
 
+#: R1627 — the `scene/input_state` axes this demo actually reads. Declared here
+#: so the assertion names its own dependency; the whole-set census lives beside
+#: the emitter (`pinion_rpc::dispatch::INPUT_STATE_AXES`).
+USES = ("cursor", "held_keys", "key_dispatch", "modifiers")
+
+
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
         # ── (A) boot: nothing held, no cursor event yet ─────────────
         r0 = read(tf)
-        assert_eq(sorted(r0.keys()),
-                  ["cursor", "held_keys", "key_dispatch", "modifiers"],
-                  "result carries exactly the four input axes")
+        # R1627 — the axes THIS demo reads, not the whole set. Set equality
+        # here went red for five rounds when R1619 and R1620 each added one;
+        # "no axis disappeared" is now a Rust census beside the emitter
+        # (`INPUT_STATE_AXES`), where the two land in the same diff.
+        assert_input_axes(r0, needs=USES, label="boot input_state")
         for bit in ("shift", "ctrl", "alt", "meta"):
             assert_eq(r0["modifiers"][bit], False, f"boot: {bit} not held")
         assert_eq(r0["held_keys"], [], "boot: no chord key held")

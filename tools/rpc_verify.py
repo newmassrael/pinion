@@ -1786,6 +1786,29 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             ) from None
 
 
+def assert_input_axes(state: dict, *, needs: Iterable[str], label: str = "input_state") -> None:
+    """R1627 — assert `scene/input_state` carries the axes a reader USES.
+
+    Deliberately a superset check, not set equality. Three demos used to
+    hand-write the whole axis list and demand equality; R1619 added
+    `held_pointer_buttons` and R1620 added `auto_scroll`, so all three went red
+    and stayed red for five rounds — because the local gate runs only the demos
+    a round touched and the full sweep is CI's. An ADDITIVE wire change must not
+    break a reader that never looked at the new field.
+
+    "No axis silently disappeared" is a different question and belongs where the
+    emitter is: `pinion_rpc::dispatch::INPUT_STATE_AXES`, asserted against the
+    emitted object in both directions by a Rust test. A demo cannot hold that
+    census honestly, because nothing makes a Python list and a Rust `json!`
+    literal land in the same diff.
+    """
+    missing = [axis for axis in needs if axis not in state]
+    if missing:
+        raise AssertionError(
+            f"{label}: missing {missing}; got {sorted(state.keys())}"
+        )
+
+
 def assert_eq(actual: Any, expected: Any, label: str = "value") -> None:
     if actual != expected:
         raise AssertionError(

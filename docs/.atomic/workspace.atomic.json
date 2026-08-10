@@ -33122,6 +33122,62 @@
         "no chart publishes its marks to assistive tech — its own debt file"
       ]
     },
+    "R1627": {
+      "decision_summary": "R1627 the red was not a flake: the pagination chevrons were dead since R1619 (bisected), the input-state axis census moves into the crate that owns the emitter, and r1182's marquee assertion was an obsolete statement about an absent substrate rather than a flake",
+      "changes_bullets": [
+        "pagination reads composite_tag::split_send_payload instead of a prefix",
+        "a named composite key is now as first-class as a numeric one",
+        "pinion_rpc::dispatch::INPUT_STATE_AXES + a two-way census test",
+        "rpc_verify::assert_input_axes — a reader names the axes it reads",
+        "r754: the no-op clamp assertion is paired with a moving one",
+        "r1182 section H asserts the capability R1620 added, measured not restored"
+      ],
+      "verification_bullets": [
+        "bisect: R1618 green, R1619 red, both from release builds of the demo",
+        "the wire proves it: 2-segment steps 2->1, +buttons segment does not",
+        "2 new pagination tests spelling the click every way the grammar allows",
+        "1 rpc test holding declared == emitted axes in both directions",
+        "all five formerly-red demos PASS; r1182 confirmed over 3 repeats",
+        "clippy pedantic clean; cargo doc clean; cargo fmt --all --check clean"
+      ],
+      "impact_refs": [
+        "5.35",
+        "5.49"
+      ],
+      "carry_forward_bullets": [
+        "the demo sweep still does not gate a push; CI caught this 8 rounds late",
+        "pagination was the only hand-rolled `:` split, but nothing forbids a new one",
+        "the two R1566 reads r1182 depends on (atomic multi-read, stopping the",
+        "clock from the wire) are still unregistered as debts"
+      ],
+      "publishable_decision_summary": "R1627 the red was not a flake: the pagination chevrons were dead since R1619 (bisected), the input-state axis census moves into the crate that owns the emitter, and r1182's marquee assertion was an obsolete statement about an absent substrate rather than a flake",
+      "publishable_changes_bullets": [
+        "pagination reads composite_tag::split_send_payload instead of a prefix",
+        "a named composite key is now as first-class as a numeric one",
+        "pinion_rpc::dispatch::INPUT_STATE_AXES + a two-way census test",
+        "rpc_verify::assert_input_axes — a reader names the axes it reads",
+        "r754: the no-op clamp assertion is paired with a moving one",
+        "r1182 section H asserts the capability R1620 added, measured not restored"
+      ],
+      "publishable_verification_bullets": [
+        "bisect: R1618 green, R1619 red, both from release builds of the demo",
+        "the wire proves it: 2-segment steps 2->1, +buttons segment does not",
+        "2 new pagination tests spelling the click every way the grammar allows",
+        "1 rpc test holding declared == emitted axes in both directions",
+        "all five formerly-red demos PASS; r1182 confirmed over 3 repeats",
+        "clippy pedantic clean; cargo doc clean; cargo fmt --all --check clean"
+      ],
+      "publishable_impact_refs": [
+        "5.35",
+        "5.49"
+      ],
+      "publishable_carry_forward_bullets": [
+        "the demo sweep still does not gate a push; CI caught this 8 rounds late",
+        "pagination was the only hand-rolled `:` split, but nothing forbids a new one",
+        "the two R1566 reads r1182 depends on (atomic multi-read, stopping the",
+        "clock from the wire) are still unregistered as debts"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

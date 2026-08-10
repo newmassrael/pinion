@@ -201,19 +201,48 @@ def body() -> None:
         assert_eq((vq(tf, "x"), vq(tf, "y")), (150.0, 90.0), "G.1 an idle tick never pans")
         assert_eq(vq(tf, "zoom"), 1.0, "G.2 an idle tick never zooms")
 
-        # ── (H) a background (marquee) drag at the rim does not auto-pan ─
+        # ── (H) a marquee at the rim REACHES PAST IT (R1620 → R1627) ────
+        #
+        # R1182 asserted here that a marquee drag never auto-pans, and that was
+        # a statement about what EXISTED rather than about what should: there
+        # was no auto-scroll substrate, so a marquee could only ever select
+        # what was already on screen. R1620 built one and it defaults on (a
+        # region that says nothing still lets a drag reach past its edge), so
+        # this section went red — and R1627 measured which of the two was
+        # right rather than restoring the old number.
+        #
+        # It is the new behaviour, and the anchor is why: `use_marquee_rect`
+        # holds the band in GRAPH units, so panning under a live marquee moves
+        # the viewport and leaves the rectangle's corner where the user put it.
+        # The rubber band therefore grows over ground that scrolled into view,
+        # which is the whole point. Asserted the only way that means anything:
+        # a node that starts OFF SCREEN ends up selected.
         reset_view(tf)
         tf.intervene("/external/selected", None)
-        # Sweep every seed node far off-screen so the canvas is provably empty,
-        # then a background press at the rim can only arm a marquee, not a grab.
-        for i in range(4):
-            tf.intervene(f"/external/node.{i}.x", 1600 + i * 40)
-            tf.intervene(f"/external/node.{i}.y", 1600)
+        # One node off the right edge; the rest swept far away so nothing else
+        # can be caught, and a background press can only arm a marquee.
+        tf.intervene("/external/node.0.x", 700)
+        tf.intervene("/external/node.0.y", 190)
+        for i in range(1, 4):
+            tf.intervene(f"/external/node.{i}.x", 2600 + i * 40)
+            tf.intervene(f"/external/node.{i}.y", 2600)
+        assert_eq(tf.query("/external/selected"), None, "H.0 nothing selected yet")
         tf.drag(from_at=canvas_at(40, 40), to_at=RIGHT_RIM, steps=10, phase="begin")
-        tf.tick(0.2)
-        assert_eq(vq(tf, "x"), 0.0, "H.1 a marquee drag at the rim never auto-pans")
-        assert_eq(vq(tf, "y"), 0.0, "H.2 a marquee drag never pans y either")
-        release(tf, RIGHT_RIM)
+        vx_h0 = vq(tf, "x")
+        for _ in range(6):
+            tf.tick(0.1)
+        vx_h1 = vq(tf, "x")
+        assert vx_h1 > vx_h0, f"H.1 a marquee at the rim auto-pans (+x): {vx_h0} -> {vx_h1}"
+        assert_eq(vq(tf, "y"), 0.0, "H.2 a horizontal rim leaves y alone")
+        tf.drag(from_at=RIGHT_RIM, to_at=RIGHT_RIM, steps=1, phase="end")
+        # THE POINT: the off-screen node is selected. Without the pan the band
+        # could not have reached it, and if the anchor were in viewport units
+        # the band would have slid off it instead.
+        assert_eq(
+            tf.query("/external/selected"),
+            0,
+            "H.3 the marquee caught a node that started off screen",
+        )
         tf.intervene("/external/selected", None)
 
         # ── (I) at 2x zoom the auto-pan still works ──────────────────

@@ -114,6 +114,20 @@ def body() -> None:
         assert cell_fill(paint(d), 4)[3] == 255, "page 4 now opaque Accent"
 
         # ── click next on the last page: clamp (no-op) ───────────────────
+        #
+        # R1627 — this assertion USED TO PASS FOR THE WRONG REASON. R1619 grew
+        # the send wire by a segment and both chevrons went silently dead, so
+        # "next did nothing" was true because next did nothing EVER. A no-op
+        # assertion cannot tell a clamp from a corpse, so it is now paired
+        # with a click in the direction that must move — and the pair is
+        # ordered so the moving one runs first, which is what makes the
+        # standing-still one mean something.
+        d.click(path=f"{NAV}#prev")
+        d.pointer_leave()
+        assert_eq(cur(d), 3, "the chevron is alive: prev steps 4 -> 3")
+        d.click(path=f"{NAV}#next")
+        d.pointer_leave()
+        assert_eq(cur(d), 4, "and next steps back 3 -> 4")
         d.click(path=f"{NAV}#next")
         d.pointer_leave()
         assert_eq(cur(d), 4, "next on the last page clamps (no-op)")
@@ -122,6 +136,7 @@ def body() -> None:
         d.click(path=f"{NAV}#prev")
         d.pointer_leave()
         assert_eq(cur(d), 3, "prev steps 4 -> 3")
+        assert_eq(d.query("/external/can_next"), True, "and next is available again")
         assert_eq(d.query("/external/can_next"), True, "next available again")
 
         # ── click page 0: current moves; prev clamps off ────────────────

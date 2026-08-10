@@ -345,22 +345,32 @@ impl ExternalIntrospect for PaginationExternal {
         match path {
             "send" => match args {
                 IntrospectValue::Text(s) => {
-                    // Composite nav sub-tags: `"{tag}#prev"` / `"{tag}#next"`
-                    // arrive as `"prev:<Event>"` / `"next:<Event>"`. Drive
-                    // the chevron button (hover / press / capture); step on
-                    // its click edge. A `Disabled` button (clamped end)
+                    // Composite nav sub-tags: `"{tag}#prev"` / `"{tag}#next"`.
+                    // Drive the chevron button (hover / press / capture); step
+                    // on its click edge. A `Disabled` button (clamped end)
                     // ignores the events, so no step occurs.
-                    if let Some(ev) = s.strip_prefix("prev:") {
-                        if Self::drive_chevron(&mut self.prev, ev) {
-                            self.step(-1);
+                    //
+                    // R1627 — decoded through the `:` grammar's SSOT rather
+                    // than by stripping a prefix and treating the remainder as
+                    // the event name. That hand-rolled read is what R1619
+                    // broke: the wire grew a fourth segment, the remainder
+                    // became `"PointerDown::l"`, `ButtonEvent::from_name`
+                    // answered `None`, and the chevrons went silently dead for
+                    // eight rounds. A named key is now as first-class as a
+                    // numeric one, so there is no longer a reason to hand-roll
+                    // this.
+                    if let Some(payload) = crate::composite_tag::split_send_payload(&s) {
+                        let chevron = match payload.key {
+                            "prev" => Some((&mut self.prev, -1_i32)),
+                            "next" => Some((&mut self.next, 1_i32)),
+                            _ => None,
+                        };
+                        if let Some((button, delta)) = chevron {
+                            if Self::drive_chevron(button, payload.event) {
+                                self.step(delta);
+                            }
+                            return Ok(IntrospectValue::Null);
                         }
-                        return Ok(IntrospectValue::Null);
-                    }
-                    if let Some(ev) = s.strip_prefix("next:") {
-                        if Self::drive_chevron(&mut self.next, ev) {
-                            self.step(1);
-                        }
-                        return Ok(IntrospectValue::Null);
                     }
                     // Page cell `"<i>:<Event>"` — delegate to the group,
                     // then re-sync the chevrons (the current page may have
@@ -391,6 +401,68 @@ mod tests {
         ] {
             p.send_page(idx, ev);
         }
+    }
+
+    /// R1627 — the chevrons survive the `:` grammar GROWING.
+    ///
+    /// This is the test that was missing for eight rounds. `drive_chevron`
+    /// read everything after `"prev:"` as the event name, so when R1619 added
+    /// the fourth wire segment the remainder became `"PointerDown::l"`,
+    /// `ButtonEvent::from_name` answered `None`, and both chevrons went
+    /// silently dead — `r754_pagination` caught it in CI and nothing in
+    /// `cargo test` did, because every unit test here spells the payload the
+    /// pre-R1619 way.
+    ///
+    /// So the payload is spelled EVERY way the grammar allows, including the
+    /// shapes a future segment would produce: a fifth segment must leave the
+    /// chevron working, because `split_send_payload` bounds its split at four
+    /// and hands the rest back as context.
+    #[test]
+    fn r1627_a_chevron_click_survives_every_shape_of_the_wire() {
+        // Each row is the same click, spelled with more of the grammar. The
+        // `::l` form is exactly what R1619's router emits for a press.
+        /// One way of spelling the same event: a name, and the suffix the
+        /// wire appends for that much context.
+        type Spelling = (&'static str, &'static str);
+        let shapes: [Spelling; 4] = [
+            ("bare", ""),
+            ("modifiers", ":"),
+            ("buttons", "::l"),
+            ("modifiers+buttons", ":sc:l"),
+        ];
+        for (name, suffix) in shapes {
+            let mut p = PaginationExternal::new(5, 2);
+            for ev in ["PointerEnter", "PointerDown", "PointerUp", "PointerLeave"] {
+                let payload = format!("prev:{ev}{suffix}");
+                let _ = p.invoke("send", IntrospectValue::Text(payload));
+            }
+            assert_eq!(
+                p.current(),
+                1,
+                "{name}: a prev click steps the page whatever context the wire carries",
+            );
+        }
+    }
+
+    /// R1627 — and the NEGATIVE control: a payload whose event name is
+    /// genuinely unknown must still be a no-op, so the test above is not
+    /// passing because the parser became permissive.
+    #[test]
+    fn r1627_an_unknown_event_is_still_a_no_op() {
+        let mut p = PaginationExternal::new(5, 2);
+        for payload in ["prev:Nonsense", "prev:Nonsense::l", "prev:", "prev"] {
+            let _ = p.invoke("send", IntrospectValue::Text(payload.to_string()));
+        }
+        assert_eq!(p.current(), 2, "nothing that is not a click steps the page");
+        // An unknown KEY falls through to the page group, which is what makes
+        // `"<i>:<Event>"` work — and it must not be read as a chevron.
+        let mut q = PaginationExternal::new(5, 2);
+        let _ = q.invoke("send", IntrospectValue::Text("previous:PointerUp".into()));
+        assert_eq!(
+            q.current(),
+            2,
+            "a key that merely starts with `prev` is not one"
+        );
     }
 
     /// Drive the full pointer click cycle on a chevron through the wire.
