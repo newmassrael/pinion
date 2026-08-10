@@ -1745,37 +1745,37 @@
     "GraphEditor::AlignNodesBottom": {
       "covered_by": "pinion_node_graph::arrange — Align::to(Axis::Vertical, Edge::End). R1631.",
       "mechanism": "GraphEditor",
-      "proven_by": "pinion-node-graph tests::r1631_an_align_meets_one_edge_and_moves_on_one_axis_only",
+      "proven_by": "pinion-node-graph::engine_graph_editor_align_nodes_bottom",
       "verdict": "have"
     },
     "GraphEditor::AlignNodesCenter": {
       "covered_by": "pinion_node_graph::arrange — Align::to(Axis::Horizontal, Edge::Center). R1631.",
       "mechanism": "GraphEditor",
-      "proven_by": "pinion-node-graph tests::r1631_an_align_is_idempotent_including_the_centre",
+      "proven_by": "pinion-node-graph::engine_graph_editor_align_nodes_center",
       "verdict": "have"
     },
     "GraphEditor::AlignNodesLeft": {
       "covered_by": "pinion_node_graph::arrange — Align::to(Axis::Horizontal, Edge::Start). R1631.",
       "mechanism": "GraphEditor",
-      "proven_by": "pinion-node-graph tests::r1631_an_align_meets_one_edge_and_moves_on_one_axis_only",
+      "proven_by": "pinion-node-graph::engine_graph_editor_align_nodes_left",
       "verdict": "have"
     },
     "GraphEditor::AlignNodesMiddle": {
       "covered_by": "pinion_node_graph::arrange — Align::to(Axis::Vertical, Edge::Center). R1631.",
       "mechanism": "GraphEditor",
-      "proven_by": "pinion-node-graph tests::r1631_an_align_is_idempotent_including_the_centre",
+      "proven_by": "pinion-node-graph::engine_graph_editor_align_nodes_middle",
       "verdict": "have"
     },
     "GraphEditor::AlignNodesRight": {
       "covered_by": "pinion_node_graph::arrange — Align::to(Axis::Horizontal, Edge::End). R1631.",
       "mechanism": "GraphEditor",
-      "proven_by": "pinion-node-graph tests::r1631_an_align_meets_one_edge_and_moves_on_one_axis_only",
+      "proven_by": "pinion-node-graph::engine_graph_editor_align_nodes_right",
       "verdict": "have"
     },
     "GraphEditor::AlignNodesTop": {
       "covered_by": "pinion_node_graph::arrange — Align::to(Axis::Vertical, Edge::Start). R1631.",
       "mechanism": "GraphEditor",
-      "proven_by": "pinion-node-graph tests::r1631_an_align_meets_one_edge_and_moves_on_one_axis_only",
+      "proven_by": "pinion-node-graph::engine_graph_editor_align_nodes_top",
       "verdict": "have"
     },
     "GraphEditor::AssignReferencedActor": {
@@ -1889,13 +1889,13 @@
     "GraphEditor::DistributeNodesHorizontally": {
       "covered_by": "pinion_node_graph::arrange — Distribute::along(Axis::Horizontal). R1631.",
       "mechanism": "GraphEditor",
-      "proven_by": "pinion-node-graph tests::r1631_distribute_equalises_the_gaps_and_pins_the_extremes",
+      "proven_by": "pinion-node-graph::engine_graph_editor_distribute_nodes_horizontally",
       "verdict": "have"
     },
     "GraphEditor::DistributeNodesVertically": {
       "covered_by": "pinion_node_graph::arrange — Distribute::along(Axis::Vertical). R1631.",
       "mechanism": "GraphEditor",
-      "proven_by": "pinion-node-graph tests::r1631_distribute_equalises_the_gaps_and_pins_the_extremes",
+      "proven_by": "pinion-node-graph::engine_graph_editor_distribute_nodes_vertically",
       "verdict": "have"
     },
     "GraphEditor::EnableBreakpoint": {
@@ -2135,13 +2135,13 @@
     "GraphEditor::StackNodesHorizontally": {
       "covered_by": "pinion_node_graph::arrange — Stack::along(Axis::Horizontal, gap). R1631.",
       "mechanism": "GraphEditor",
-      "proven_by": "pinion-node-graph tests::r1631_a_stack_packs_with_the_gap_it_was_given",
+      "proven_by": "pinion-node-graph::engine_graph_editor_stack_nodes_horizontally",
       "verdict": "have"
     },
     "GraphEditor::StackNodesVertically": {
       "covered_by": "pinion_node_graph::arrange — Stack::along(Axis::Vertical, gap). R1631.",
       "mechanism": "GraphEditor",
-      "proven_by": "pinion-node-graph tests::r1631_a_stack_packs_with_the_gap_it_was_given",
+      "proven_by": "pinion-node-graph::engine_graph_editor_stack_nodes_vertically",
       "verdict": "have"
     },
     "GraphEditor::StartWatchingPin": {
@@ -2159,7 +2159,7 @@
     "GraphEditor::StraightenConnections": {
       "covered_by": "pinion_node_graph::arrange — Straighten::along(axis), which also REPORTS the links it could not straighten (Straightened::bent) where the reference moves what it can silently. R1631.",
       "mechanism": "GraphEditor",
-      "proven_by": "pinion-node-graph tests::r1631_straighten_reports_the_links_it_could_not_straighten",
+      "proven_by": "pinion-node-graph::engine_graph_editor_straighten_connections",
       "verdict": "have"
     },
     "GraphEditor::SummonCreateNodeMenu": {

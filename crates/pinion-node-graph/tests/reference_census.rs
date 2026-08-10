@@ -44,9 +44,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use pinion_node_graph::{
-    Appearance, Conversion, Crossings, Definitions, Document, EditPath, Fragment, Grow,
-    InterfaceSide, LinkId, NodeBody, NodeId, NodeKind, Port, PortRef, ROOT, Reach, Sharing, Socket,
-    TreeId,
+    Align, Appearance, Axis, Conversion, Crossings, Definitions, Distribute, Document, Edge,
+    EditPath, Extent, Fragment, Grow, InterfaceSide, LinkId, Node, NodeBody, NodeId, NodeKind,
+    Port, PortRef, ROOT, Reach, Sharing, Socket, Stack, Straighten, TreeId,
 };
 
 // ---------------------------------------------------------------- taxonomy
@@ -313,6 +313,7 @@ fn proofs() -> Vec<Proof> {
     all.extend(engine_wire_proofs());
     all.extend(engine_editor_proofs());
     all.extend(engine_hook_proofs());
+    all.extend(engine_arrangement_proofs());
     all.extend(engine_schema_hook_proofs());
     all
 }
@@ -616,6 +617,71 @@ fn engine_material_editor_matertial_paste_here() {
         );
     }
     assert_eq!(fragment.origin(), (300, 63), "and the anchor is readable");
+}
+
+/// R1631 — the ARRANGEMENT cluster: the engine's eleven align / distribute /
+/// stack / straighten commands. Its own registry because the hook registry was
+/// already at the line ceiling, and because these eleven are one capability.
+fn engine_arrangement_proofs() -> Vec<Proof> {
+    vec![
+        // R1631 — the alignment cluster. Six aligns, two distributes, two
+        // stacks and a straighten, all from the same three parameters.
+        proof(
+            "engine",
+            "GraphEditor::AlignNodesLeft",
+            engine_graph_editor_align_nodes_left,
+        ),
+        proof(
+            "engine",
+            "GraphEditor::AlignNodesRight",
+            engine_graph_editor_align_nodes_right,
+        ),
+        proof(
+            "engine",
+            "GraphEditor::AlignNodesTop",
+            engine_graph_editor_align_nodes_top,
+        ),
+        proof(
+            "engine",
+            "GraphEditor::AlignNodesBottom",
+            engine_graph_editor_align_nodes_bottom,
+        ),
+        proof(
+            "engine",
+            "GraphEditor::AlignNodesCenter",
+            engine_graph_editor_align_nodes_center,
+        ),
+        proof(
+            "engine",
+            "GraphEditor::AlignNodesMiddle",
+            engine_graph_editor_align_nodes_middle,
+        ),
+        proof(
+            "engine",
+            "GraphEditor::DistributeNodesHorizontally",
+            engine_graph_editor_distribute_nodes_horizontally,
+        ),
+        proof(
+            "engine",
+            "GraphEditor::DistributeNodesVertically",
+            engine_graph_editor_distribute_nodes_vertically,
+        ),
+        proof(
+            "engine",
+            "GraphEditor::StackNodesHorizontally",
+            engine_graph_editor_stack_nodes_horizontally,
+        ),
+        proof(
+            "engine",
+            "GraphEditor::StackNodesVertically",
+            engine_graph_editor_stack_nodes_vertically,
+        ),
+        proof(
+            "engine",
+            "GraphEditor::StraightenConnections",
+            engine_graph_editor_straighten_connections,
+        ),
+    ]
 }
 
 /// The HOOK surface (R1603): the virtuals of `the graph node` and
@@ -3587,5 +3653,258 @@ fn engine_schema_try_set_default_value() {
         chain.document.port_value(ROOT, mul, PortRef::output(0)),
         Some(&Val::Number(11)),
         "an OUTPUT may be authored too: one sentence covers both sides"
+    );
+}
+
+// ---------------------------------------------------- R1631 arrangement
+
+/// A card, in the application's own units.
+const R1631_CARD: Extent = Extent::new(150, 40);
+
+/// Four nodes scattered on the canvas, in the order they were added.
+fn r1631_scattered() -> (Document<Op>, Vec<NodeId>) {
+    let mut document = Document::new("root");
+    let ids: Vec<NodeId> = [
+        (Op::Num(1), 10, 5),
+        (Op::Num(2), 40, 90),
+        (Op::Add, 200, 30),
+        (Op::Sink, 260, 140),
+    ]
+    .into_iter()
+    .map(|(op, x, y)| {
+        document
+            .add_node(ROOT, NodeBody::Kind(op), x, y)
+            .expect("root tree")
+    })
+    .collect();
+    (document, ids)
+}
+
+/// The engine's `AlignNodesLeft`: the selection's leading x edge, and NOTHING
+/// moves on the other axis.
+#[test]
+fn engine_graph_editor_align_nodes_left() {
+    let (document, ids) = r1631_scattered();
+    let picked: BTreeSet<NodeId> = ids.iter().copied().collect();
+    let placed =
+        Align::to(Axis::Horizontal, Edge::Start).run(&document, ROOT, &picked, |_| R1631_CARD);
+    assert!(ids.iter().all(|id| placed.positions()[id].0 == 10));
+    for &id in &ids {
+        let was = document.tree(ROOT).unwrap().node(id).unwrap();
+        assert_eq!(
+            placed.positions()[&id].1,
+            was.y,
+            "a horizontal align keeps y"
+        );
+    }
+}
+
+/// The engine's `AlignNodesRight`: trailing edges meet, so the CARD's width is
+/// part of the answer.
+#[test]
+fn engine_graph_editor_align_nodes_right() {
+    let (document, ids) = r1631_scattered();
+    let picked: BTreeSet<NodeId> = ids.iter().copied().collect();
+    let placed =
+        Align::to(Axis::Horizontal, Edge::End).run(&document, ROOT, &picked, |_| R1631_CARD);
+    assert!(
+        ids.iter()
+            .all(|id| placed.positions()[id].0 + R1631_CARD.width == 260 + R1631_CARD.width)
+    );
+    assert_ne!(
+        placed.positions()[&ids[0]].0,
+        10,
+        "the leading node really moved"
+    );
+}
+
+/// The engine's `AlignNodesTop`.
+#[test]
+fn engine_graph_editor_align_nodes_top() {
+    let (document, ids) = r1631_scattered();
+    let picked: BTreeSet<NodeId> = ids.iter().copied().collect();
+    let placed =
+        Align::to(Axis::Vertical, Edge::Start).run(&document, ROOT, &picked, |_| R1631_CARD);
+    assert!(ids.iter().all(|id| placed.positions()[id].1 == 5));
+    for &id in &ids {
+        let was = document.tree(ROOT).unwrap().node(id).unwrap();
+        assert_eq!(placed.positions()[&id].0, was.x, "a vertical align keeps x");
+    }
+}
+
+/// The engine's `AlignNodesBottom`.
+#[test]
+fn engine_graph_editor_align_nodes_bottom() {
+    let (document, ids) = r1631_scattered();
+    let picked: BTreeSet<NodeId> = ids.iter().copied().collect();
+    let placed = Align::to(Axis::Vertical, Edge::End).run(&document, ROOT, &picked, |_| R1631_CARD);
+    assert!(
+        ids.iter()
+            .all(|id| placed.positions()[id].1 + R1631_CARD.height == 140 + R1631_CARD.height)
+    );
+    assert_ne!(
+        placed.positions()[&ids[0]].1,
+        5,
+        "the top node really moved"
+    );
+}
+
+/// The engine's `AlignNodesCenter` — the x midline, and the arm that DRIFTS if
+/// the rounding goes outward, so it is applied twice against uneven cards.
+#[test]
+fn engine_graph_editor_align_nodes_center() {
+    let (mut document, ids) = r1631_scattered();
+    let odd = ids[1];
+    let extent = |node: &Node<Op>| {
+        if node.id == odd {
+            Extent::new(45, 55)
+        } else {
+            R1631_CARD
+        }
+    };
+    let picked: BTreeSet<NodeId> = ids.iter().copied().collect();
+    let once = Align::to(Axis::Horizontal, Edge::Center).run(&document, ROOT, &picked, extent);
+    assert!(document.apply(ROOT, &once) > 0, "the first press moves");
+    let twice = Align::to(Axis::Horizontal, Edge::Center).run(&document, ROOT, &picked, extent);
+    assert_eq!(document.apply(ROOT, &twice), 0, "and the second does not");
+}
+
+/// The engine's `AlignNodesMiddle` — the y midline, same idempotence.
+#[test]
+fn engine_graph_editor_align_nodes_middle() {
+    let (mut document, ids) = r1631_scattered();
+    let odd = ids[1];
+    let extent = |node: &Node<Op>| {
+        if node.id == odd {
+            Extent::new(45, 55)
+        } else {
+            R1631_CARD
+        }
+    };
+    let picked: BTreeSet<NodeId> = ids.iter().copied().collect();
+    let once = Align::to(Axis::Vertical, Edge::Center).run(&document, ROOT, &picked, extent);
+    assert!(document.apply(ROOT, &once) > 0, "the first press moves");
+    let twice = Align::to(Axis::Vertical, Edge::Center).run(&document, ROOT, &picked, extent);
+    assert_eq!(document.apply(ROOT, &twice), 0, "and the second does not");
+}
+
+/// The engine's `DistributeNodesHorizontally`: equal GAPS — not equal pitches —
+/// with the extremes pinned. The cards differ in width so the two rules give
+/// different answers.
+#[test]
+fn engine_graph_editor_distribute_nodes_horizontally() {
+    let (document, ids) = r1631_scattered();
+    let picked: BTreeSet<NodeId> = ids.iter().copied().collect();
+    let widths = [40, 100, 20, 60];
+    let extent = |node: &Node<Op>| {
+        let i = ids.iter().position(|&id| id == node.id).unwrap_or(0);
+        Extent::new(widths[i], 40)
+    };
+    let placed = Distribute::along(Axis::Horizontal).run(&document, ROOT, &picked, extent);
+    let mut spans: Vec<(i32, i32)> = ids
+        .iter()
+        .enumerate()
+        .map(|(i, &id)| {
+            let x = placed.positions()[&id].0;
+            (x, x + widths[i])
+        })
+        .collect();
+    spans.sort_unstable();
+    assert_eq!(spans[0].0, 10, "the leading extreme is pinned");
+    assert_eq!(spans[3].1, 260 + 60, "and the trailing one");
+    let gaps: Vec<i32> = spans.windows(2).map(|p| p[1].0 - p[0].1).collect();
+    let lo = *gaps.iter().min().expect("gaps");
+    let hi = *gaps.iter().max().expect("gaps");
+    assert!(
+        hi - lo <= 1,
+        "equal but for the integer remainder: {gaps:?}"
+    );
+}
+
+/// The engine's `DistributeNodesVertically` — the same rule on the other axis,
+/// which is what makes the axis a parameter rather than two commands.
+#[test]
+fn engine_graph_editor_distribute_nodes_vertically() {
+    let (document, ids) = r1631_scattered();
+    let picked: BTreeSet<NodeId> = ids.iter().copied().collect();
+    let placed = Distribute::along(Axis::Vertical).run(&document, ROOT, &picked, |_| R1631_CARD);
+    let mut ys: Vec<i32> = ids.iter().map(|id| placed.positions()[id].1).collect();
+    ys.sort_unstable();
+    assert_eq!(ys[0], 5, "pinned");
+    assert_eq!(ys[3], 140, "pinned");
+    let gaps: Vec<i32> = ys
+        .windows(2)
+        .map(|p| p[1] - p[0] - R1631_CARD.height)
+        .collect();
+    let lo = *gaps.iter().min().expect("gaps");
+    let hi = *gaps.iter().max().expect("gaps");
+    assert!(hi - lo <= 1, "{gaps:?}");
+}
+
+/// The engine's `StackNodesHorizontally` — and the gap is a PARAMETER, which is
+/// the constant the reference compiles into its editor.
+#[test]
+fn engine_graph_editor_stack_nodes_horizontally() {
+    let (document, ids) = r1631_scattered();
+    let picked: BTreeSet<NodeId> = ids.iter().copied().collect();
+    for gap in [0, 12, 50] {
+        let placed =
+            Stack::along(Axis::Horizontal, gap).run(&document, ROOT, &picked, |_| R1631_CARD);
+        let mut xs: Vec<i32> = ids.iter().map(|id| placed.positions()[id].0).collect();
+        xs.sort_unstable();
+        assert_eq!(xs[0], 10, "the run starts where its leading node was");
+        assert!(
+            xs.windows(2).all(|p| p[1] - p[0] == R1631_CARD.width + gap),
+            "gap {gap}: {xs:?}"
+        );
+    }
+}
+
+/// The engine's `StackNodesVertically`, plus the clamp: a negative gap is an
+/// overlap, and an overlap is not a stack.
+#[test]
+fn engine_graph_editor_stack_nodes_vertically() {
+    let (document, ids) = r1631_scattered();
+    let picked: BTreeSet<NodeId> = ids.iter().copied().collect();
+    let placed = Stack::along(Axis::Vertical, 12).run(&document, ROOT, &picked, |_| R1631_CARD);
+    let mut ys: Vec<i32> = ids.iter().map(|id| placed.positions()[id].1).collect();
+    ys.sort_unstable();
+    assert_eq!(ys[0], 5);
+    assert!(ys.windows(2).all(|p| p[1] - p[0] == R1631_CARD.height + 12));
+
+    let clamped = Stack::along(Axis::Vertical, -30).run(&document, ROOT, &picked, |_| R1631_CARD);
+    let mut tight: Vec<i32> = ids.iter().map(|id| clamped.positions()[id].1).collect();
+    tight.sort_unstable();
+    assert!(
+        tight.windows(2).all(|p| p[1] - p[0] == R1631_CARD.height),
+        "clamped to touching: {tight:?}"
+    );
+}
+
+/// The engine's `StraightenConnections`, and the answer it does not give: a
+/// fan-in cannot be straightened, and the leftover link is NAMED.
+#[test]
+fn engine_graph_editor_straighten_connections() {
+    let (mut document, ids) = r1631_scattered();
+    wire(&mut document, ids[0], 0, ids[2], 0);
+    wire(&mut document, ids[1], 0, ids[2], 1);
+    let picked: BTreeSet<NodeId> = ids.iter().copied().collect();
+
+    let done = Straighten::along(Axis::Horizontal).run(&document, ROOT, &picked);
+    assert_eq!(
+        done.straight().len(),
+        1,
+        "one producer claimed the consumer"
+    );
+    assert_eq!(
+        done.bent().len(),
+        1,
+        "and the second is reported, not hidden"
+    );
+    assert!(!done.is_complete());
+    assert_eq!(
+        done.placement().positions().get(&ids[2]).map(|p| p.1),
+        Some(5),
+        "the consumer met the producer that claimed it first"
     );
 }
