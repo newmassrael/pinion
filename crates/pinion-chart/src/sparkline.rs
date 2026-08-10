@@ -162,6 +162,11 @@ impl Sparkline {
                 children.push(area_path(
                     &g.points,
                     g.baseline_y,
+                    // R1628 — a sparkline states no interpolation, so it takes
+                    // the one that invents nothing. Explicit rather than
+                    // defaulted, so adding the choice here is a decision
+                    // someone makes rather than one that happens.
+                    crate::Interpolation::Linear,
                     color.with_alpha(SPARK_FILL_ALPHA),
                     format!("{}.area", self.tag_prefix),
                 ));

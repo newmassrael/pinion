@@ -625,7 +625,7 @@ impl Distribution {
     ///
     /// The reason this exists rather than leaving the caller to compose
     /// [`from_samples`](Self::from_samples) with
-    /// [`Density::from_samples`](crate::Density::from_samples) and
+    /// [`Density::estimate`](crate::Density::estimate) and
     /// [`with_density`](Self::with_density): that composition takes the
     /// sample slice twice, and nothing would notice if the second one were a
     /// different slice.
@@ -634,16 +634,18 @@ impl Distribution {
     ///
     /// Whatever [`from_samples`](Self::from_samples) raises, or
     /// [`DistributionError::Density`] carrying the estimate's own refusal.
+    ///
+    /// R1628 — `spec` is one value rather than a widening argument list, and
+    /// it carries the bounded choice, because reflecting the kernel is part of
+    /// estimating rather than something done to an estimate afterwards.
     pub fn from_samples_with_density(
         label: impl Into<String>,
         samples: &[f64],
         method: QuantileMethod,
-        kernel: crate::Kernel,
-        rule: crate::Bandwidth,
+        spec: crate::DensitySpec,
     ) -> Result<Self, DistributionError> {
         let summary = Self::from_samples(label, samples, method)?;
-        let density = Density::from_samples(samples, kernel, rule, crate::DEFAULT_RESOLUTION)
-            .map_err(DistributionError::Density)?;
+        let density = Density::estimate(samples, spec).map_err(DistributionError::Density)?;
         summary.with_density(density)
     }
 

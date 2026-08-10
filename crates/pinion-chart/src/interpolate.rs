@@ -141,6 +141,13 @@ pub fn curve(points: &[(f32, f32)], kind: Interpolation) -> Vec<CurveSegment> {
         .collect()
 }
 
+/// Whether the effective join is straight — either because that is what was
+/// asked for, or because the samples are not a graph and a function
+/// interpolant would draw a shape that is not the caller's data.
+fn is_straight(points: &[(f32, f32)], kind: Interpolation) -> bool {
+    kind == Interpolation::Linear || !is_graph(points)
+}
+
 /// Straight segments expressed as cubics, so every interpolation answers in
 /// one shape and a consumer never branches on which it asked for.
 fn straight(points: &[(f32, f32)]) -> Vec<CurveSegment> {
@@ -287,6 +294,38 @@ pub fn overshoot(points: &[(f32, f32)], kind: Interpolation) -> Vec<Overshoot> {
     out
 }
 
+/// R1628 — append the cubics that walk `points` from its **last** point back
+/// to its first, continuing an open path rather than starting one.
+///
+/// What an area fill needs: a band's outline runs forward along the upper
+/// curve and backwards along the lower one, and reversing the point list and
+/// re-interpolating would not do — a descending x is not a graph
+/// ([`is_graph`]), so it would fall back to straight segments and leave the
+/// band's lower edge visibly flat under a curved upper one.
+///
+/// The reversal is EXACT rather than a re-estimate: a cubic from `p` to `q`
+/// with controls `(c1, c2)` is the same curve as one from `q` to `p` with
+/// `(c2, c1)`, so the forward segments are walked in reverse with their
+/// controls swapped. No new tangent is chosen, so the two edges of a band
+/// cannot disagree about the curve they share.
+pub fn append_reversed(points: &[(f32, f32)], kind: Interpolation, out: &mut Vec<PathCommand>) {
+    if is_straight(points, kind) {
+        for &(x, y) in points.iter().rev().skip(1) {
+            out.push(PathCommand::LineTo(PathPoint::new(x, y)));
+        }
+        return;
+    }
+    let segments = curve(points, kind);
+    for (i, seg) in segments.iter().enumerate().rev() {
+        let start = points[i];
+        out.push(PathCommand::CurveTo {
+            c1: PathPoint::new(seg.c2.0, seg.c2.1),
+            c2: PathPoint::new(seg.c1.0, seg.c1.1),
+            end: PathPoint::new(start.0, start.1),
+        });
+    }
+}
+
 /// The [`PathCommand`] stream for `points` under `kind`, ready for a
 /// [`pinion_core::Scene::Path`].
 ///
@@ -300,6 +339,19 @@ pub fn commands(points: &[(f32, f32)], kind: Interpolation) -> Vec<PathCommand> 
         return Vec::new();
     };
     let mut out = vec![PathCommand::MoveTo(PathPoint::new(x0, y0))];
+    // R1628 — a straight join publishes as `LineTo`, not as a degenerate
+    // cubic. `curve` answers in cubics for every interpolation because a
+    // uniform shape is what its callers want to measure; the SCENE is a
+    // different audience. Under §2 #7 a client reads what was authored, and a
+    // straight segment authored straight must not arrive claiming to be a
+    // curve — which is also why every pre-existing filled chart's command
+    // stream is byte-unchanged by this round.
+    if is_straight(points, kind) {
+        for &(x, y) in points.iter().skip(1) {
+            out.push(PathCommand::LineTo(PathPoint::new(x, y)));
+        }
+        return out;
+    }
     for seg in curve(points, kind) {
         out.push(PathCommand::CurveTo {
             c1: PathPoint::new(seg.c1.0, seg.c1.1),
@@ -457,6 +509,71 @@ mod tests {
             let y = sample(&seg, pts[0], t);
             assert!((y - t * 60.0).abs() < 1e-3, "t={t} gives {y}");
         }
+    }
+
+    /// ★ R1628 — the reversed walk is the SAME curve, not a re-estimate.
+    ///
+    /// Sampled at matching parameters from both directions: a band's two edges
+    /// share a curve, so if this were a fresh interpolation of a reversed point
+    /// list the two would disagree (and a descending x would fall back to
+    /// straight segments, which is the bug this exists to avoid).
+    #[test]
+    fn r1628_the_reversed_walk_retraces_the_forward_curve() {
+        let pts = walk(7, 11);
+        // Linear is excluded on purpose: it publishes `LineTo`, not cubics,
+        // so "the controls swap" is not a statement about it. Its straight
+        // reversal is checked below.
+        for kind in [Interpolation::Monotone, Interpolation::CatmullRom] {
+            let forward = curve(&pts, kind);
+            let mut back = Vec::new();
+            append_reversed(&pts, kind, &mut back);
+            assert_eq!(back.len(), forward.len(), "{kind:?}: one cubic per gap");
+            for (k, cmd) in back.iter().enumerate() {
+                // `back[k]` retraces `forward[len-1-k]`.
+                let f = forward[forward.len() - 1 - k];
+                let start = pts[forward.len() - 1 - k];
+                let PathCommand::CurveTo { c1, c2, end } = *cmd else {
+                    panic!("{kind:?}: a reversed walk is all cubics, got {cmd:?}");
+                };
+                assert_eq!((c1.x, c1.y), f.c2, "{kind:?} {k}: controls swap");
+                assert_eq!((c2.x, c2.y), f.c1, "{kind:?} {k}: controls swap");
+                assert_eq!((end.x, end.y), start, "{kind:?} {k}: lands on the sample");
+                // And the midpoints agree, which is the geometric statement.
+                // The reversed segment starts where the forward one ended.
+                let mid_back = sample(
+                    &CurveSegment {
+                        c1: f.c2,
+                        c2: f.c1,
+                        end: start,
+                    },
+                    f.end,
+                    0.5,
+                );
+                let mid_fwd = sample(&f, start, 0.5);
+                assert!(
+                    (mid_back - mid_fwd).abs() < 1e-2,
+                    "{kind:?} {k}: same curve, {mid_back} vs {mid_fwd}",
+                );
+            }
+        }
+        // A straight reversal walks the samples back as lines, one per gap.
+        let mut flat = Vec::new();
+        append_reversed(&pts, Interpolation::Linear, &mut flat);
+        assert_eq!(flat.len(), pts.len() - 1, "one line per gap");
+        for (k, cmd) in flat.iter().enumerate() {
+            let PathCommand::LineTo(q) = *cmd else {
+                panic!("a straight reversal is all lines, got {cmd:?}");
+            };
+            let expected = pts[pts.len() - 2 - k];
+            assert_eq!((q.x, q.y), expected, "{k}: lands on the sample");
+        }
+        // A single point has no gap and therefore no reversal.
+        let mut none = Vec::new();
+        append_reversed(&[(0.0, 0.0)], Interpolation::Monotone, &mut none);
+        assert!(none.is_empty());
+        let mut none_flat = Vec::new();
+        append_reversed(&[(0.0, 0.0)], Interpolation::Linear, &mut none_flat);
+        assert!(none_flat.is_empty());
     }
 
     #[test]

@@ -335,7 +335,7 @@ pub use candle::{
 };
 pub use candlestick::{CandlestickChart, OffScaleCandle, SessionAxis, SessionMark};
 pub use color_scale::{ColorScale, contrast_ratio, readable_ink, relative_luminance};
-pub use density::{Bandwidth, DEFAULT_RESOLUTION, Density, DensityError, Kernel};
+pub use density::{Bandwidth, DEFAULT_RESOLUTION, Density, DensityError, DensitySpec, Kernel};
 pub use distribution::{
     DEFAULT_FENCE, Distribution, DistributionError, DistributionSource, QuantileMethod,
     SummaryPosition, distribution_bounds, positive_distribution_bounds,

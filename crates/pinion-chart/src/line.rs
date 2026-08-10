@@ -821,6 +821,79 @@ impl LineChart {
 
     /// The per-series area fills (when [`filled`](Self::filled)) and
     /// polylines. Areas paint before lines so the stroke sits on top.
+    /// R1628 — series `i`'s area fill, in whichever of its three shapes
+    /// applies: a colour-encoded gradient along x, a band between this curve
+    /// and the cumulative total below it, or the plain fill onto a scalar
+    /// baseline.
+    ///
+    /// Extracted when `clippy::too_many_lines` fired on `series_layer` after
+    /// this round threaded the interpolation through all three — which is the
+    /// lint doing its job: the three shapes are one decision and they read
+    /// better where a reader can see them side by side.
+    #[allow(
+        clippy::too_many_arguments,
+        reason = "one call site; every argument is series i's own resolved geometry or paint"
+    )]
+    fn area_for(
+        &self,
+        plot: &CartesianPlot,
+        pts: &[(f32, f32)],
+        encoded: &[Option<Color>],
+        lower: Option<&[DataPoint]>,
+        baseline_y: f32,
+        color: Color,
+        muted: bool,
+        style: &ChartStyle,
+        i: usize,
+    ) -> Vec<Scene> {
+        let alpha = if muted {
+            crate::draw::mul_alpha(style.area_alpha, MUTED_ALPHA)
+        } else {
+            style.area_alpha
+        };
+        let tag = format!("{}.area.{i}", self.tag_prefix);
+        if encoded.iter().any(Option::is_some) {
+            // The area spans a range of x, so its measure is encoded
+            // CONTINUOUSLY: a gradient whose stops sit at the samples' own x
+            // positions rather than one colour standing in for every value
+            // under the curve.
+            let ramp: Vec<(f32, Color)> = pts
+                .iter()
+                .zip(encoded)
+                .map(|(&(px, _), enc)| (px, enc.unwrap_or(color).with_alpha(alpha)))
+                .collect();
+            return vec![area_path_along_x(
+                pts,
+                baseline_y,
+                self.interpolation,
+                &ramp,
+                tag,
+            )];
+        }
+        if let Some(lower) = lower {
+            // R1622 — a band is filled between its own curve and the
+            // cumulative total below it, which a scalar baseline cannot
+            // express.
+            let base: Vec<(f32, f32)> = lower.iter().filter_map(|p| plot.map_point(p)).collect();
+            return crate::draw::area_between(
+                pts,
+                &base,
+                self.interpolation,
+                color.with_alpha(alpha),
+                tag,
+            )
+            .into_iter()
+            .collect();
+        }
+        vec![area_path(
+            pts,
+            baseline_y,
+            self.interpolation,
+            color.with_alpha(alpha),
+            tag,
+        )]
+    }
+
     fn series_layer(&self, plot: &CartesianPlot, baseline: f64, style: &ChartStyle) -> Vec<Scene> {
         // A log y-axis has no zero, so `baseline` was already clamped into
         // the (positive) domain and maps; `plot.bottom` is the fallback an
@@ -887,38 +960,17 @@ impl LineChart {
                 clipped.iter().map(|p| self.value_color(*p)).collect();
             let any_encoded = encoded.iter().any(Option::is_some);
             if self.fill_area {
-                let alpha = if muted {
-                    crate::draw::mul_alpha(style.area_alpha, MUTED_ALPHA)
-                } else {
-                    style.area_alpha
-                };
-                let tag = format!("{}.area.{i}", self.tag_prefix);
-                if any_encoded {
-                    // The area spans a range of x, so its measure is encoded
-                    // CONTINUOUSLY: a gradient whose stops sit at the samples'
-                    // own x positions rather than one colour standing in for
-                    // every value under the curve.
-                    let ramp: Vec<(f32, Color)> = pts
-                        .iter()
-                        .zip(&encoded)
-                        .map(|(&(px, _), enc)| (px, enc.unwrap_or(color).with_alpha(alpha)))
-                        .collect();
-                    out.push(area_path_along_x(&pts, baseline_y, &ramp, tag));
-                } else if let Some(lower) = lower {
-                    // R1622 — a band is filled between its own curve and the
-                    // cumulative total below it, which a scalar baseline
-                    // cannot express.
-                    let base: Vec<(f32, f32)> =
-                        lower.iter().filter_map(|p| plot.map_point(p)).collect();
-                    out.extend(crate::draw::area_between(
-                        &pts,
-                        &base,
-                        color.with_alpha(alpha),
-                        tag,
-                    ));
-                } else {
-                    out.push(area_path(&pts, baseline_y, color.with_alpha(alpha), tag));
-                }
+                out.extend(self.area_for(
+                    plot,
+                    &pts,
+                    &encoded,
+                    lower.as_deref(),
+                    baseline_y,
+                    color,
+                    muted,
+                    style,
+                    i,
+                ));
             }
             let line_color = if muted {
                 color.with_alpha(MUTED_ALPHA)
@@ -948,6 +1000,7 @@ impl LineChart {
                         out.push(area_path(
                             &focus,
                             baseline_y,
+                            self.interpolation,
                             color.with_alpha(style.area_alpha),
                             format!("{}.focus.area.{i}", self.tag_prefix),
                         ));
@@ -2826,6 +2879,98 @@ mod tests {
             Interpolation::Linear,
             "straight by default — the join that invents nothing",
         );
+    }
+
+    /// ★ R1628 — the FILL takes the interpolation too.
+    ///
+    /// The debt R1625 created: it moved the series stroke onto
+    /// `curve_stroke_path` and left `area_path` on the polyline, so a filled
+    /// smooth chart drew a curved line over a straight-edged fill — one node's
+    /// two halves derived from different shapes. Both edges of a stacked band
+    /// have the same obligation, and the band's lower edge is the harder one:
+    /// re-interpolating a reversed point list would fall back to straight
+    /// segments, because a descending x is not a graph.
+    #[test]
+    fn r1628_the_area_fill_curves_with_the_line() {
+        let style = ChartStyle::default();
+        let pts: Vec<DataPoint> = (0..6)
+            .map(|i| DataPoint::new(f64::from(i), f64::from(i * i)))
+            .collect();
+        let curves_in = |tag: &str, scene: &Scene| {
+            let Some(Scene::Path(p)) = find(scene, tag) else {
+                panic!("{tag} is a path");
+            };
+            (
+                p.commands
+                    .iter()
+                    .filter(|c| matches!(c, PathCommand::CurveTo { .. }))
+                    .count(),
+                p.commands
+                    .iter()
+                    .filter(|c| matches!(c, PathCommand::LineTo(_)))
+                    .count(),
+            )
+        };
+
+        // Straight: the fill is all line segments, exactly as before.
+        let flat = LineChart::new(vec![Series::new("s", pts.clone())])
+            .filled(true)
+            .build(Rect::new(0, 0, 400, 300), &style);
+        let (flat_curves, flat_lines) = curves_in("chart.area.0", &flat);
+        assert_eq!(flat_curves, 0, "a straight chart's fill has no cubics");
+        assert!(
+            flat_lines >= pts.len(),
+            "and one segment per gap plus the base"
+        );
+
+        // Smooth: the top edge is cubics, and the two closing edges stay
+        // straight because a baseline IS straight.
+        for kind in [Interpolation::Monotone, Interpolation::CatmullRom] {
+            let scene = LineChart::new(vec![Series::new("s", pts.clone())])
+                .filled(true)
+                .interpolation(kind)
+                .build(Rect::new(0, 0, 400, 300), &style);
+            let (curves, lines) = curves_in("chart.area.0", &scene);
+            assert_eq!(curves, pts.len() - 1, "{kind:?}: one cubic per gap");
+            assert_eq!(
+                lines, 2,
+                "{kind:?}: only the two baseline edges are straight"
+            );
+        }
+    }
+
+    /// ★ R1628 — and a stacked band curves on BOTH edges.
+    #[test]
+    fn r1628_a_stacked_band_curves_on_both_of_its_edges() {
+        let style = ChartStyle::default();
+        let mk = |scale: f64| {
+            (0..6)
+                .map(|i| DataPoint::new(f64::from(i), f64::from(i * i) * scale + 1.0))
+                .collect::<Vec<DataPoint>>()
+        };
+        let series = vec![Series::new("a", mk(1.0)), Series::new("b", mk(0.5))];
+        let scene = LineChart::new(series)
+            .stacked(true)
+            .interpolation(Interpolation::Monotone)
+            .build(Rect::new(0, 0, 400, 300), &style);
+        // The upper band sits on the lower one, so its ring is upper-curve +
+        // one joining line + lower-curve reversed. Straight segments would
+        // betray a lower edge that was re-interpolated instead of retraced.
+        let Some(Scene::Path(band)) = find(&scene, "chart.area.1") else {
+            panic!("the stacked band is a path");
+        };
+        let curves = band
+            .commands
+            .iter()
+            .filter(|c| matches!(c, PathCommand::CurveTo { .. }))
+            .count();
+        let lines = band
+            .commands
+            .iter()
+            .filter(|c| matches!(c, PathCommand::LineTo(_)))
+            .count();
+        assert_eq!(curves, 2 * (6 - 1), "both edges are cubics, one per gap");
+        assert_eq!(lines, 1, "and only the joining edge is straight");
     }
 
     /// R1625 — the chart REPORTS a curve that left its data, in data space,

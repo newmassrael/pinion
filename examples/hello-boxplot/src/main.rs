@@ -55,7 +55,7 @@ use pinion_a11y::{
     radiogroup_radio_nodes, toggle_button_group_nodes,
 };
 use pinion_chart::{
-    Bandwidth, BoxPlotChart, ChartStyle, Distribution, DistributionMark, Kernel, LandmarkKind,
+    BoxPlotChart, ChartStyle, DensitySpec, Distribution, DistributionMark, LandmarkKind,
     QuantileMethod,
 };
 use pinion_core::external::External;
@@ -188,14 +188,8 @@ fn summarise(method: QuantileMethod) -> Vec<Distribution> {
             // summary and the density describe the same data by
             // construction; composing the two constructors would take the
             // slice twice and nothing would notice a mismatch.
-            Distribution::from_samples_with_density(
-                *name,
-                samples,
-                method,
-                Kernel::Gaussian,
-                Bandwidth::Silverman,
-            )
-            .expect("every endpoint has finite, spread samples")
+            Distribution::from_samples_with_density(*name, samples, method, DensitySpec::default())
+                .expect("every endpoint has finite, spread samples")
         })
         .collect()
 }

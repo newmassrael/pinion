@@ -994,8 +994,7 @@ mod tests {
             name,
             &samples,
             QuantileMethod::Tukey,
-            crate::Kernel::Gaussian,
-            crate::Bandwidth::Silverman,
+            crate::DensitySpec::default(),
         )
         .expect("a dense fixture is estimable")
     }
@@ -1154,13 +1153,8 @@ mod tests {
         assert!(summary.density().is_none());
         assert_eq!(
             summary.clone().with_density(
-                crate::Density::from_samples(
-                    &[1.0, 2.0, 3.0],
-                    crate::Kernel::Gaussian,
-                    crate::Bandwidth::Silverman,
-                    64,
-                )
-                .expect("estimable"),
+                crate::Density::estimate(&[1.0, 2.0, 3.0], crate::DensitySpec::default())
+                    .expect("estimable"),
             ),
             Err(DistributionError::DensityWithoutSamples),
             "an estimate beside five pre-computed numbers describes other data",

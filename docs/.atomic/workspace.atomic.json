@@ -33178,6 +33178,58 @@
         "clock from the wire) are still unregistered as debts"
       ]
     },
+    "R1628": {
+      "decision_summary": "R1628 a fill is the same shape as its line: the area builders take the Interpolation (a band's lower edge retracing the forward curve exactly rather than re-interpolating a descending x), and DensitySpec makes bounding part of estimating instead of a second pass over the samples",
+      "changes_bullets": [
+        "area_path / area_path_along_x / area_between all take an Interpolation",
+        "interpolate::append_reversed retraces the forward curve, controls swapped",
+        "a straight join publishes as LineTo, so existing charts are byte-unchanged",
+        "the area bbox comes from the curve, not from the samples",
+        "DensitySpec {kernel, rule, bounded, resolution}; Density::estimate is the one",
+        "Density::bounded(&self, samples) is deleted",
+        "line::area_for extracted; hello-chart-fill's stack is monotone"
+      ],
+      "verification_bullets": [
+        "4 new tests: the exact reversal, the fill, the band's two edges, the spec",
+        "6 counterfactuals, 6 caught, from a verified-green baseline",
+        "the round caught its own wire regression: Linear was emitting cubics",
+        "an inert demo assertion was removed rather than left reading as coverage",
+        "5 chart demos re-pass; clippy / doc / fmt clean"
+      ],
+      "impact_refs": [
+        "5.28",
+        "5.3"
+      ],
+      "carry_forward_bullets": [
+        "the chart derivations still do not reach the RPC wire (its own debt)",
+        "no chart publishes its marks to assistive tech (its own debt)"
+      ],
+      "publishable_decision_summary": "R1628 a fill is the same shape as its line: the area builders take the Interpolation (a band's lower edge retracing the forward curve exactly rather than re-interpolating a descending x), and DensitySpec makes bounding part of estimating instead of a second pass over the samples",
+      "publishable_changes_bullets": [
+        "area_path / area_path_along_x / area_between all take an Interpolation",
+        "interpolate::append_reversed retraces the forward curve, controls swapped",
+        "a straight join publishes as LineTo, so existing charts are byte-unchanged",
+        "the area bbox comes from the curve, not from the samples",
+        "DensitySpec {kernel, rule, bounded, resolution}; Density::estimate is the one",
+        "Density::bounded(&self, samples) is deleted",
+        "line::area_for extracted; hello-chart-fill's stack is monotone"
+      ],
+      "publishable_verification_bullets": [
+        "4 new tests: the exact reversal, the fill, the band's two edges, the spec",
+        "6 counterfactuals, 6 caught, from a verified-green baseline",
+        "the round caught its own wire regression: Linear was emitting cubics",
+        "an inert demo assertion was removed rather than left reading as coverage",
+        "5 chart demos re-pass; clippy / doc / fmt clean"
+      ],
+      "publishable_impact_refs": [
+        "5.28",
+        "5.3"
+      ],
+      "publishable_carry_forward_bullets": [
+        "the chart derivations still do not reach the RPC wire (its own debt)",
+        "no chart publishes its marks to assistive tech (its own debt)"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

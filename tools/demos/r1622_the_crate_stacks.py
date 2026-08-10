@@ -38,6 +38,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    find_by_tag,
     indexed_tags,
     run_demo,
     text_of_tag,
@@ -108,6 +109,27 @@ def run(tf: RpcSubprocess) -> None:
     assert len(set(heights)) > 1, (
         f"the bands differ in height, so they carry different series: {heights}"
     )
+
+    # ── 4b. R1628 — BOTH edges of every band are curved ──────────────────
+    #      R1625 curved the series stroke and left every fill on the polyline,
+    #      so one node's two halves drew different shapes. A band is the hard
+    #      case: its lower edge is walked backwards, and re-interpolating a
+    #      descending x would silently fall back to straight segments.
+    snap_cmds = tf.snapshot(source="paint", viewport=WIN)
+    for i in areas:
+        node = find_by_tag(snap_cmds, f"{CHART}.area.{i}")
+        assert node is not None, f"band {i} is in the scene"
+        kinds = [c.get("type") for c in node.get("commands", [])]
+        curves = len([k for k in kinds if k == "CurveTo"])
+        lines = len([k for k in kinds if k == "LineTo"])
+        assert curves > 0, f"band {i} is curved: {set(kinds)}"
+        # EVERY band is drawn between two curves, including the bottom one —
+        # `stack` gives it the zero line as its lower series rather than a
+        # scalar baseline, which is what makes the whole stack one shape. So
+        # each ring is upper-curve + one joining edge + lower-curve reversed.
+        assert lines == 1, f"band {i} closes onto a curve, not a baseline: {lines}"
+        assert curves % 2 == 0, f"band {i} curves on BOTH edges: {curves}"
+    print(f"[demo] every band curves on both edges ({len(areas)} bands)")
 
     # ── 5. the picture is stable across frames ───────────────────────────
     for _ in range(3):

@@ -57,7 +57,7 @@
 //! `publish_pane_viewports` tests pin the mechanism.
 
 use pinion_a11y::WidgetA11y;
-use pinion_chart::{ChartStyle, DataPoint, LineChart, Series};
+use pinion_chart::{ChartStyle, DataPoint, Interpolation, LineChart, Series};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{BoxStyle, LayoutStyle, Size, SizeValue, TextStyle};
 use pinion_core::widget_core::{ExtraExternal, PrimarySurface};
@@ -145,6 +145,13 @@ fn view(_state: (), _frame: &Frame) -> Scene {
     // own data, which threw away every series' own value on the way in.
     let chart = LineChart::new(sample_series())
         .stacked(true)
+        // R1628 — MONOTONE, which is where a stack most wants a curve and
+        // where the choice is least arguable: a stacked area chart of a
+        // sampled quantity reads as bins when its edges are straight, and the
+        // monotone interpolant is the one that cannot draw a total the data
+        // never reached. Both edges of every band take it — R1625 curved only
+        // the stroke, and R1628 is the round that paid that.
+        .interpolation(Interpolation::Monotone)
         .build_fill((cw, ch), &chart_style(&theme));
 
     // R1360.4 — AUTO height, not a constant. A definite width with an `auto`

@@ -127,8 +127,14 @@ pub(crate) fn polygon_node(points: &[(f32, f32)], style: PathStyle, tag: String)
 }
 
 /// A filled area path: the polyline dropped to `baseline_y` and closed.
-pub(crate) fn area_path(points: &[(f32, f32)], baseline_y: f32, fill: Color, tag: String) -> Scene {
-    let (bbox, commands) = area_geometry(points, baseline_y);
+pub(crate) fn area_path(
+    points: &[(f32, f32)],
+    baseline_y: f32,
+    kind: Interpolation,
+    fill: Color,
+    tag: String,
+) -> Scene {
+    let (bbox, commands) = area_geometry(points, baseline_y, kind);
     Scene::Path(
         PathNode::new(bbox, commands, PathStyle::filled(fill))
             .with_tag(tag)
@@ -151,20 +157,26 @@ pub(crate) fn area_path(points: &[(f32, f32)], baseline_y: f32, fill: Color, tag
 pub(crate) fn area_between(
     upper: &[(f32, f32)],
     lower: &[(f32, f32)],
+    kind: Interpolation,
     fill: Color,
     tag: String,
 ) -> Option<Scene> {
     if upper.len() != lower.len() || upper.len() < 2 {
         return None;
     }
-    let ring: Vec<(f32, f32)> = upper
-        .iter()
-        .copied()
-        .chain(lower.iter().rev().copied())
-        .collect();
-    let bbox = bbox_of(&ring, 0);
-    let mut commands = polyline_commands(&rebased(&ring, bbox), false);
-    commands.push(PathCommand::Close);
+    // R1628 — both edges take the interpolation. The lower one is walked
+    // backwards through `append_reversed`, which retraces the FORWARD curve
+    // exactly rather than re-interpolating a descending x (which is not a
+    // graph, and would silently flatten the band's underside).
+    let mut ring = crate::interpolate::commands(upper, kind);
+    ring.push(PathCommand::LineTo(PathPoint::new(
+        lower[lower.len() - 1].0,
+        lower[lower.len() - 1].1,
+    )));
+    crate::interpolate::append_reversed(lower, kind, &mut ring);
+    ring.push(PathCommand::Close);
+    let bbox = curve_bbox(&ring, None);
+    let commands = translated(&ring, bbox);
     Some(Scene::Path(
         PathNode::new(bbox, commands, PathStyle::filled(fill))
             .with_tag(tag)
@@ -194,10 +206,11 @@ pub(crate) fn area_between(
 pub(crate) fn area_path_along_x(
     points: &[(f32, f32)],
     baseline_y: f32,
+    kind: Interpolation,
     ramp: &[(f32, Color)],
     tag: String,
 ) -> Scene {
-    let (bbox, commands) = area_geometry(points, baseline_y);
+    let (bbox, commands) = area_geometry(points, baseline_y, kind);
     let span = to_f32(bbox.w).max(1.0);
     let origin = to_f32(bbox.x);
     let mut gradient = Gradient::horizontal();
@@ -221,26 +234,46 @@ pub(crate) fn area_path_along_x(
 /// The bounding box and rebased commands of an area path — the ONE definition
 /// both [`area_path`] and [`area_path_along_x`] read, so a gradient placed
 /// against the bbox lands on the shape that bbox describes.
-fn area_geometry(points: &[(f32, f32)], baseline_y: f32) -> (Rect, Vec<PathCommand>) {
-    // The bbox must be resolved BEFORE the commands: the baseline union can
-    // move the box's origin (a baseline above every point lifts `bbox.y`), and
-    // R1358 rebases the commands onto that final origin.
-    let mut bbox = bbox_of(points, 0);
-    bbox = bbox.union(Rect::new(bbox.x, to_u32(baseline_y), 1, 1));
-    let (ox, oy) = (to_f32(bbox.x), to_f32(bbox.y));
-    let mut commands = polyline_commands(&rebased(points, bbox), false);
+fn area_geometry(
+    points: &[(f32, f32)],
+    baseline_y: f32,
+    kind: Interpolation,
+) -> (Rect, Vec<PathCommand>) {
+    // R1628 — the top edge takes the interpolation, the two closing edges are
+    // straight because a baseline IS straight. Before this the stroke curved
+    // and its own fill did not, so one node's two halves disagreed about the
+    // shape they were drawing.
+    let mut absolute = crate::interpolate::commands(points, kind);
     if let (Some(&(last_x, _)), Some(&(first_x, _))) = (points.last(), points.first()) {
-        commands.push(PathCommand::LineTo(PathPoint::new(
-            last_x - ox,
-            baseline_y - oy,
-        )));
-        commands.push(PathCommand::LineTo(PathPoint::new(
-            first_x - ox,
-            baseline_y - oy,
-        )));
-        commands.push(PathCommand::Close);
+        absolute.push(PathCommand::LineTo(PathPoint::new(last_x, baseline_y)));
+        absolute.push(PathCommand::LineTo(PathPoint::new(first_x, baseline_y)));
+        absolute.push(PathCommand::Close);
     }
+    // The bbox is resolved from the CURVE, not from the samples: a smooth
+    // interpolation may leave the box its points span, and a node rect that
+    // did not know that would clip the excursion `overshoot` reports.
+    let bbox = curve_bbox(&absolute, Some(baseline_y));
+    let commands = translated(&absolute, bbox);
     (bbox, commands)
+}
+
+/// R1628 — the pixel box a command stream occupies, optionally unioned with a
+/// baseline row (which can lift the box's origin above every sample).
+fn curve_bbox(absolute: &[PathCommand], baseline_y: Option<f32>) -> Rect {
+    let Some(b) = pinion_core::path_data::bounds(absolute) else {
+        return Rect::default();
+    };
+    let mut corners = vec![(b.min_x, b.min_y), (b.max_x, b.max_y)];
+    if let Some(y) = baseline_y {
+        corners.push((b.min_x, y));
+    }
+    bbox_of(&corners, 0)
+}
+
+/// R1358 — rebase absolute commands onto `bbox`'s origin, so a path is placed
+/// by its rect. Reuses R1623's transform rather than re-emitting the stream.
+fn translated(absolute: &[PathCommand], bbox: Rect) -> Vec<PathCommand> {
+    pinion_core::path_data::scale_translate(absolute, 1.0, -to_f32(bbox.x), -to_f32(bbox.y))
 }
 
 /// R1358 — rebase plot-space points onto `bbox`'s origin so the emitted

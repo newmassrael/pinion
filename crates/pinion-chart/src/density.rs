@@ -146,6 +146,96 @@ impl std::error::Error for DensityError {}
 /// small enough that a chart of twenty categories stays cheap.
 pub const DEFAULT_RESOLUTION: usize = 128;
 
+/// R1628 — how a [`Density`] is to be estimated: the kernel, the bandwidth
+/// rule, whether to bound the estimate at the data, and the grid resolution.
+///
+/// ## Why this replaced a four-argument constructor and a `bounded` method
+///
+/// R1626 shipped `Density::bounded(&self, samples)`, which took the sample
+/// slice a SECOND time — the exact mismatch risk the same round created
+/// `Distribution::from_samples_with_density` to prevent, since nothing noticed
+/// if the second slice was a different one. Reflection is a **re-estimation**,
+/// not a post-process, so bounding belongs where the estimate is decided
+/// rather than after it, and gathering the four knobs into one value keeps the
+/// call sites from growing an argument every time a fifth appears.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DensitySpec {
+    kernel: Kernel,
+    rule: Bandwidth,
+    bounded: bool,
+    resolution: usize,
+}
+
+impl Default for DensitySpec {
+    /// A Gaussian kernel at Silverman's bandwidth, unbounded, at
+    /// [`DEFAULT_RESOLUTION`]. Unbounded is the default because it is the
+    /// honest one: it reaches past the data and [`Density::spill`] says by how
+    /// much, where bounding silently decides that the data's extremes are also
+    /// the quantity's.
+    fn default() -> Self {
+        Self {
+            kernel: Kernel::default(),
+            rule: Bandwidth::default(),
+            bounded: false,
+            resolution: DEFAULT_RESOLUTION,
+        }
+    }
+}
+
+impl DensitySpec {
+    /// A spec with `kernel` and `rule`, unbounded, at the default resolution.
+    #[must_use]
+    pub const fn new(kernel: Kernel, rule: Bandwidth) -> Self {
+        Self {
+            kernel,
+            rule,
+            bounded: false,
+            resolution: DEFAULT_RESOLUTION,
+        }
+    }
+
+    /// Reflect the kernel at the observed extremes, so the estimate is exactly
+    /// zero outside the range the samples spanned.
+    ///
+    /// The answer for a bounded quantity — a duration, a queue depth, a byte
+    /// count — where the unbounded estimate puts mass below zero and a reader
+    /// cannot tell that from a measurement. Reflection is the principled form:
+    /// clipping would leave the visible mass short of one, while reflection
+    /// folds the escaped mass back where it came from, so the outline still
+    /// integrates to one and [`Density::spill`] becomes zero rather than
+    /// merely hidden.
+    #[must_use]
+    pub const fn bounded(mut self) -> Self {
+        self.bounded = true;
+        self
+    }
+
+    /// Evaluate the estimate on `resolution` grid points.
+    #[must_use]
+    pub const fn with_resolution(mut self, resolution: usize) -> Self {
+        self.resolution = resolution;
+        self
+    }
+
+    /// The kernel this spec smooths with.
+    #[must_use]
+    pub const fn kernel(self) -> Kernel {
+        self.kernel
+    }
+
+    /// The rule this spec chooses its bandwidth by.
+    #[must_use]
+    pub const fn rule(self) -> Bandwidth {
+        self.rule
+    }
+
+    /// Whether the estimate is bounded at the observed extremes.
+    #[must_use]
+    pub const fn is_bounded(self) -> bool {
+        self.bounded
+    }
+}
+
 /// A kernel density estimate over one sample set.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Density {
@@ -160,7 +250,11 @@ pub struct Density {
 }
 
 impl Density {
-    /// Estimate the density of `samples`.
+    /// Estimate the density of `samples` under `spec`.
+    ///
+    /// The ONE constructor: bounding is part of the spec rather than a method
+    /// that takes the samples again, because reflecting the kernel is a
+    /// re-estimation and a second slice could be a different slice.
     ///
     /// Non-finite samples are dropped before anything else, the way
     /// [`crate::Distribution::from_samples`] drops them — a `NaN` is a gap in
@@ -171,12 +265,13 @@ impl Density {
     /// [`DensityError`] when the samples cannot support an estimate: fewer
     /// than two of them, no spread at all, a non-positive fixed bandwidth, or
     /// a grid of fewer than two points.
-    pub fn from_samples(
-        samples: &[f64],
-        kernel: Kernel,
-        rule: Bandwidth,
-        resolution: usize,
-    ) -> Result<Self, DensityError> {
+    pub fn estimate(samples: &[f64], spec: DensitySpec) -> Result<Self, DensityError> {
+        let DensitySpec {
+            kernel,
+            rule,
+            bounded,
+            resolution,
+        } = spec;
         if resolution < 2 {
             return Err(DensityError::BadResolution);
         }
@@ -192,10 +287,33 @@ impl Density {
         }
         let bandwidth = resolve_bandwidth(&finite, rule)?;
 
-        let reach = kernel.support() * bandwidth;
-        let (from, to) = (lo - reach, hi + reach);
-        let grid = evaluate(&finite, kernel, bandwidth, from, to, resolution, None);
-        let spill = mass_outside(&grid, lo, hi);
+        let (grid, spill) = if bounded {
+            // The grid spans exactly the data, and the kernel is folded back
+            // at both ends, so no mass escapes to be reported.
+            let grid = evaluate(
+                &finite,
+                kernel,
+                bandwidth,
+                lo,
+                hi,
+                resolution,
+                Some((lo, hi)),
+            );
+            (grid, 0.0)
+        } else {
+            let reach = kernel.support() * bandwidth;
+            let grid = evaluate(
+                &finite,
+                kernel,
+                bandwidth,
+                lo - reach,
+                hi + reach,
+                resolution,
+                None,
+            );
+            let spill = mass_outside(&grid, lo, hi);
+            (grid, spill)
+        };
         Ok(Self {
             grid,
             bandwidth,
@@ -204,49 +322,7 @@ impl Density {
             count: finite.len(),
             observed: (lo, hi),
             spill,
-            bounded: false,
-        })
-    }
-
-    /// Re-estimate with the kernel **reflected** at the observed extremes, so
-    /// the density is exactly zero outside the range the samples spanned.
-    ///
-    /// The answer for a bounded quantity — a duration, a queue depth, a byte
-    /// count — where the unbounded estimate puts mass below zero and a reader
-    /// has no way to tell that from a measurement. Reflection is the
-    /// principled form: clipping the picture would leave the visible mass
-    /// short of one, while reflection folds the escaped mass back where it
-    /// came from, so the outline still integrates to one and
-    /// [`spill`](Self::spill) becomes zero rather than merely hidden.
-    ///
-    /// # Errors
-    ///
-    /// Only the errors [`from_samples`](Self::from_samples) can raise; a
-    /// density that exists can always be bounded.
-    pub fn bounded(&self, samples: &[f64]) -> Result<Self, DensityError> {
-        let finite: Vec<f64> = samples.iter().copied().filter(|v| v.is_finite()).collect();
-        if finite.len() < 2 {
-            return Err(DensityError::TooFewSamples);
-        }
-        let (lo, hi) = self.observed;
-        let grid = evaluate(
-            &finite,
-            self.kernel,
-            self.bandwidth,
-            lo,
-            hi,
-            self.grid.len(),
-            Some((lo, hi)),
-        );
-        Ok(Self {
-            grid,
-            bandwidth: self.bandwidth,
-            kernel: self.kernel,
-            rule: self.rule,
-            count: self.count,
-            observed: self.observed,
-            spill: 0.0,
-            bounded: true,
+            bounded,
         })
     }
 
@@ -293,7 +369,7 @@ impl Density {
     /// [`observed`](Self::observed) — what the smoothing invented.
     ///
     /// Never zero for an unbounded [`Kernel::Gaussian`] estimate, and exactly
-    /// zero for a [`bounded`](Self::bounded) one.
+    /// zero for a [`DensitySpec::bounded`] one.
     #[must_use]
     pub const fn spill(&self) -> f64 {
         self.spill
@@ -468,6 +544,11 @@ mod tests {
             .collect()
     }
 
+    /// The default spec at the tests' working resolution.
+    fn spec64() -> DensitySpec {
+        DensitySpec::default().with_resolution(64)
+    }
+
     fn integral(d: &Density) -> f64 {
         d.grid()
             .windows(2)
@@ -478,8 +559,11 @@ mod tests {
     #[test]
     fn a_density_integrates_to_one() {
         for kernel in Kernel::ALL {
-            let d = Density::from_samples(&spread(200), kernel, Bandwidth::Silverman, 512)
-                .expect("estimable");
+            let d = Density::estimate(
+                &spread(200),
+                DensitySpec::new(kernel, Bandwidth::Silverman).with_resolution(512),
+            )
+            .expect("estimable");
             assert!(
                 (integral(&d) - 1.0).abs() < 0.02,
                 "{kernel:?} integrates to {}",
@@ -493,8 +577,11 @@ mod tests {
     #[test]
     fn an_unbounded_gaussian_estimate_always_spills() {
         let samples = spread(200);
-        let d = Density::from_samples(&samples, Kernel::Gaussian, Bandwidth::Silverman, 256)
-            .expect("estimable");
+        let d = Density::estimate(
+            &samples,
+            DensitySpec::new(Kernel::Gaussian, Bandwidth::Silverman).with_resolution(256),
+        )
+        .expect("estimable");
         assert!(d.spill() > 0.0, "spill is {}", d.spill());
         assert!(!d.is_bounded());
         let (lo, hi) = d.observed();
@@ -507,9 +594,11 @@ mod tests {
     #[test]
     fn a_bounded_estimate_stops_at_the_data_and_keeps_its_mass() {
         let samples = spread(200);
-        let raw = Density::from_samples(&samples, Kernel::Gaussian, Bandwidth::Silverman, 512)
-            .expect("estimable");
-        let bounded = raw.bounded(&samples).expect("boundable");
+        let spec = DensitySpec::new(Kernel::Gaussian, Bandwidth::Silverman).with_resolution(512);
+        let raw = Density::estimate(&samples, spec).expect("estimable");
+        // R1628 — bounding is asked for in the SPEC, so the samples are never
+        // handed over a second time and cannot be a different slice.
+        let bounded = Density::estimate(&samples, spec.bounded()).expect("estimable");
         assert!(
             bounded.spill().abs() < f64::EPSILON,
             "exactly zero, not merely small"
@@ -538,11 +627,46 @@ mod tests {
 
     /// The compact kernel stops exactly one bandwidth past the data, which is
     /// the property that distinguishes it.
+    /// ★ R1628 — the bounded estimate is asked for in the SPEC, and one
+    /// sample set produces both readings without ever being handed over twice.
+    ///
+    /// The debt R1626 created: it shipped `bounded(&self, samples)`, taking the
+    /// slice a second time — the exact mismatch the same round built
+    /// `from_samples_with_density` to prevent. Nothing could have noticed a
+    /// different slice, and a reflected estimate of other data looks entirely
+    /// plausible.
+    #[test]
+    fn r1628_bounding_is_part_of_the_spec_not_a_second_pass() {
+        let samples = spread(200);
+        let spec = DensitySpec::default().with_resolution(512);
+        assert!(!spec.is_bounded(), "unbounded is the honest default");
+        assert!(spec.bounded().is_bounded());
+
+        let raw = Density::estimate(&samples, spec).expect("estimable");
+        let bounded = Density::estimate(&samples, spec.bounded()).expect("estimable");
+
+        // The same samples, the same bandwidth rule, the same count — the only
+        // difference is the reflection.
+        assert_eq!(raw.count(), bounded.count());
+        assert_eq!(raw.observed(), bounded.observed());
+        assert!(
+            (raw.bandwidth() - bounded.bandwidth()).abs() < 1e-12,
+            "the bandwidth is a property of the samples, not of the bounding",
+        );
+        assert!(raw.spill() > 0.0 && bounded.spill().abs() < f64::EPSILON);
+        assert!(!raw.is_bounded() && bounded.is_bounded());
+        assert_eq!(bounded.extent(), bounded.observed());
+        assert!(raw.extent().0 < raw.observed().0);
+    }
+
     #[test]
     fn the_compact_kernel_stops_one_bandwidth_past_the_data() {
         let samples = spread(200);
-        let d = Density::from_samples(&samples, Kernel::Epanechnikov, Bandwidth::Silverman, 256)
-            .expect("estimable");
+        let d = Density::estimate(
+            &samples,
+            DensitySpec::new(Kernel::Epanechnikov, Bandwidth::Silverman).with_resolution(256),
+        )
+        .expect("estimable");
         let (lo, hi) = d.observed();
         let (elo, ehi) = d.extent();
         assert!((elo - (lo - d.bandwidth())).abs() < 1e-9, "{elo} vs {lo}");
@@ -570,9 +694,12 @@ mod tests {
         let mut polluted = clean.clone();
         polluted.push(5_000.0);
         let h = |samples: &[f64], rule| {
-            Density::from_samples(samples, Kernel::Gaussian, rule, 64)
-                .expect("estimable")
-                .bandwidth()
+            Density::estimate(
+                samples,
+                DensitySpec::new(Kernel::Gaussian, rule).with_resolution(64),
+            )
+            .expect("estimable")
+            .bandwidth()
         };
         let sil_ratio = h(&polluted, Bandwidth::Silverman) / h(&clean, Bandwidth::Silverman);
         let scott_ratio = h(&polluted, Bandwidth::Scott) / h(&clean, Bandwidth::Scott);
@@ -599,9 +726,12 @@ mod tests {
             "so silverman stays the narrower of the two",
         );
         assert_eq!(
-            Density::from_samples(&clean, Kernel::Gaussian, Bandwidth::Silverman, 64)
-                .expect("estimable")
-                .rule(),
+            Density::estimate(
+                &clean,
+                DensitySpec::new(Kernel::Gaussian, Bandwidth::Silverman).with_resolution(64)
+            )
+            .expect("estimable")
+            .rule(),
             Bandwidth::Silverman,
         );
     }
@@ -610,8 +740,11 @@ mod tests {
     fn a_wider_bandwidth_merges_the_two_modes() {
         let samples = spread(200);
         let modes = |h: f64| {
-            let d = Density::from_samples(&samples, Kernel::Gaussian, Bandwidth::Fixed(h), 512)
-                .expect("estimable");
+            let d = Density::estimate(
+                &samples,
+                DensitySpec::new(Kernel::Gaussian, Bandwidth::Fixed(h)).with_resolution(512),
+            )
+            .expect("estimable");
             d.grid()
                 .windows(3)
                 .filter(|w| w[1].1 > w[0].1 && w[1].1 > w[2].1)
@@ -628,24 +761,30 @@ mod tests {
     #[test]
     fn an_inestimable_sample_set_is_refused_by_name() {
         assert_eq!(
-            Density::from_samples(&[1.0], Kernel::Gaussian, Bandwidth::Silverman, 64),
+            Density::estimate(&[1.0], spec64()),
             Err(DensityError::TooFewSamples),
         );
         assert_eq!(
-            Density::from_samples(&[f64::NAN, 2.0], Kernel::Gaussian, Bandwidth::Silverman, 64),
+            Density::estimate(&[f64::NAN, 2.0], spec64()),
             Err(DensityError::TooFewSamples),
             "a NaN is a gap in the record, not a value",
         );
         assert_eq!(
-            Density::from_samples(&[3.0, 3.0, 3.0], Kernel::Gaussian, Bandwidth::Silverman, 64),
+            Density::estimate(&[3.0, 3.0, 3.0], spec64()),
             Err(DensityError::NoSpread),
         );
         assert_eq!(
-            Density::from_samples(&spread(20), Kernel::Gaussian, Bandwidth::Fixed(-1.0), 64),
+            Density::estimate(
+                &spread(20),
+                DensitySpec::new(Kernel::Gaussian, Bandwidth::Fixed(-1.0)).with_resolution(64)
+            ),
             Err(DensityError::BadBandwidth),
         );
         assert_eq!(
-            Density::from_samples(&spread(20), Kernel::Gaussian, Bandwidth::Silverman, 1),
+            Density::estimate(
+                &spread(20),
+                DensitySpec::new(Kernel::Gaussian, Bandwidth::Silverman).with_resolution(1)
+            ),
             Err(DensityError::BadResolution),
         );
         assert!(DensityError::NoSpread.to_string().contains("spread"));
@@ -654,8 +793,11 @@ mod tests {
     #[test]
     fn the_estimate_publishes_what_produced_it() {
         let samples = spread(50);
-        let d = Density::from_samples(&samples, Kernel::Epanechnikov, Bandwidth::Scott, 64)
-            .expect("estimable");
+        let d = Density::estimate(
+            &samples,
+            DensitySpec::new(Kernel::Epanechnikov, Bandwidth::Scott).with_resolution(64),
+        )
+        .expect("estimable");
         assert_eq!(d.count(), samples.len());
         assert_eq!(d.kernel(), Kernel::Epanechnikov);
         assert_eq!(d.rule(), Bandwidth::Scott);
