@@ -865,7 +865,12 @@ impl ExternalIntrospect for ColumnResizeExternal {
                 &[
                     SchemaField::new("col", "int"),
                     SchemaField::new("dragging", "bool"),
-                    SchemaField::new("send", "string"),
+                    // R1640 — declared on the invoke channel it has always
+                    // been dispatched on, with the composite grammar its own
+                    // `split_send_payload` call resolves. The widened catalog
+                    // walk found it: this surface takes no constructor
+                    // argument-free shape, so nothing had ever checked it.
+                    SchemaField::send("string"),
                 ]
             },
         )

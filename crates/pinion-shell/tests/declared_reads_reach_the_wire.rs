@@ -111,50 +111,223 @@ fn r1637_every_declared_read_on_a_real_widget_answers_over_the_wire() {
 /// Scoped to the externals a test can construct with no model. That is a stated
 /// limit, not a coverage claim: a surface needing a `Signal`, a row model or a
 /// tag is absent here and its declaration is unchecked.
-/// Every widget external a test can build with no model, boxed to the trait.
+/// R1640 — **every** widget external in `pinion_core::widgets`, boxed to the
+/// trait, with a minimal model where the type needs one.
 ///
-/// One list, because two tests now walk it and a second copy would let them
-/// drift into checking different populations while reporting the same coverage.
+/// One list, because three tests walk it and a second copy would let them drift
+/// into checking different populations while reporting the same coverage. The
+/// list is held to the source by
+/// `r1640_the_catalog_is_every_widget_external`, so a widget added later cannot
+/// slip past these checks by simply not being written down — which is how it
+/// stood until R1640: the walk built the nineteen types whose constructors took
+/// nothing, and the other twenty were invisible to it AND to any reader, since
+/// nothing stated the denominator.
+///
+/// The models are deliberately tiny and meaningless. Nothing here asserts on
+/// behaviour; what is under test is each surface's DECLARATION, which is a
+/// property of the type rather than of the data it holds.
+// A list of thirty-nine constructors is thirty-nine lines of data, and the
+// lint's ceiling is about control flow. Splitting it would put the
+// completeness this file gates across two places, which is the drift the
+// gate exists to prevent.
+#[allow(clippy::too_many_lines)]
 fn catalog() -> Vec<(&'static str, Box<dyn pinion_core::external::External>)> {
+    use pinion_core::directory::InMemoryDirectory;
     use pinion_core::widgets::{
-        badge::BadgeExternal, button::ButtonExternal, checkbox::CheckboxExternal,
-        color_area::ColorAreaExternal, context_menu::ContextMenuExternal,
-        disclosure::DisclosureExternal, disclosure_group::DisclosureGroupExternal,
-        key_sequence::KeySequenceEditExternal, listbox_item::ListBoxItemExternal,
-        pagination::PaginationExternal, radio::RadioExternal, range_slider::RangeSliderExternal,
-        scrollbar::ScrollBarExternal, slider::SliderExternal, spin_button::SpinButtonExternal,
-        text_field::TextFieldExternal, toggle::ToggleExternal, tooltip::TooltipExternal,
+        badge::BadgeExternal,
+        button::{ButtonExternal, ButtonState, ButtonStateSnapshot},
+        checkbox::CheckboxExternal,
+        color_area::ColorAreaExternal,
+        column_widths::{ColumnResizeExternal, ColumnWidthExternal, ColumnWidths},
+        completion::{CompleterExternal, CompletionState},
+        context_menu::ContextMenuExternal,
+        datepicker::DatePickerExternal,
+        disclosure::DisclosureExternal,
+        disclosure_group::DisclosureGroupExternal,
+        file_browser::{DirectoryExternal, DirectoryState},
+        grid_sort::{GridSortExternal, GridSortState},
+        group_order::{GroupOrderExternal, GroupOrderState},
+        key_sequence::KeySequenceEditExternal,
+        listbox::ListBoxExternal,
+        listbox_item::ListBoxItemExternal,
+        menu::MenuBarExternal,
+        pagination::PaginationExternal,
+        progress_bar::ProgressBarExternal,
+        radio::RadioExternal,
+        radio_group::RadioGroupExternal,
+        range_slider::RangeSliderExternal,
+        row_dissect::{RowDissectionExternal, RowDissectionState},
+        row_search::{RowSearchExternal, RowSearchState},
+        row_style::{RowStyleExternal, RowStyleState},
+        scroll::ScrollState,
+        scrollbar::ScrollBarExternal,
+        slider::SliderExternal,
+        spin_button::SpinButtonExternal,
+        table::TableExternal,
+        text_field::TextFieldExternal,
+        toggle::{ToggleExternal, ToggleState, ToggleStateSnapshot},
+        toolbar::{ToolItem, ToolbarExternal},
+        tooltip::TooltipExternal,
+        tree_filter::{TreeFilterExternal, TreeFilterState},
+        view_order::{ViewOrderState, ViewSortFilterExternal},
+        virtual_select::VirtualSelectExternal,
     };
+    use std::rc::Rc;
+
+    let cells = || vec![vec!["a".to_owned()], vec!["b".to_owned()]];
+    let widths = || Rc::new(ColumnWidths::new(vec![80, 80]));
     vec![
-        ("badge", ext_scene(BadgeExternal::new())),
-        ("button", ext_scene(ButtonExternal::new())),
-        ("checkbox", ext_scene(CheckboxExternal::new())),
-        ("color_area", ext_scene(ColorAreaExternal::new())),
-        ("context_menu", ext_scene(ContextMenuExternal::new(3))),
-        ("disclosure", ext_scene(DisclosureExternal::new())),
+        ("BadgeExternal", ext_scene(BadgeExternal::new())),
+        ("ButtonExternal", ext_scene(ButtonExternal::new())),
         (
-            "disclosure_group",
+            "ButtonStateSnapshot",
+            ext_scene(ButtonStateSnapshot::new(ButtonState::Idle)),
+        ),
+        ("CheckboxExternal", ext_scene(CheckboxExternal::new())),
+        ("ColorAreaExternal", ext_scene(ColorAreaExternal::new())),
+        (
+            "ColumnResizeExternal",
+            ext_scene(ColumnResizeExternal::new(
+                widths(),
+                0,
+                Rc::new(ScrollState::new()),
+                "grid",
+            )),
+        ),
+        (
+            "ColumnWidthExternal",
+            ext_scene(ColumnWidthExternal::new(widths())),
+        ),
+        (
+            "CompleterExternal",
+            ext_scene(CompleterExternal::new(Rc::new(CompletionState::new(vec![
+                "alpha".to_owned(),
+            ])))),
+        ),
+        (
+            "ContextMenuExternal",
+            ext_scene(ContextMenuExternal::new(3)),
+        ),
+        (
+            "DatePickerExternal",
+            ext_scene(DatePickerExternal::new(2026, 8, None)),
+        ),
+        (
+            "DirectoryExternal",
+            ext_scene(DirectoryExternal::new(Rc::new(DirectoryState::new(
+                Rc::new(InMemoryDirectory::new()),
+                "/",
+            )))),
+        ),
+        ("DisclosureExternal", ext_scene(DisclosureExternal::new())),
+        (
+            "DisclosureGroupExternal",
             ext_scene(DisclosureGroupExternal::new(3)),
         ),
-        ("key_sequence", ext_scene(KeySequenceEditExternal::new())),
-        ("listbox_item", ext_scene(ListBoxItemExternal::new())),
-        ("pagination", ext_scene(PaginationExternal::new(9, 0))),
-        ("radio", ext_scene(RadioExternal::new())),
-        ("range_slider", ext_scene(RangeSliderExternal::new())),
-        ("scrollbar", ext_scene(ScrollBarExternal::new())),
-        ("slider", ext_scene(SliderExternal::new())),
         (
-            "spin_button",
+            "GridSortExternal",
+            ext_scene(GridSortExternal::new(Rc::new(GridSortState::new(
+                1,
+                cells(),
+            )))),
+        ),
+        (
+            "GroupOrderExternal",
+            ext_scene(GroupOrderExternal::new(Rc::new(GroupOrderState::new(
+                vec![0, 1],
+                vec!["g0".to_owned(), "g1".to_owned()],
+            )))),
+        ),
+        (
+            "KeySequenceEditExternal",
+            ext_scene(KeySequenceEditExternal::new()),
+        ),
+        ("ListBoxExternal", ext_scene(ListBoxExternal::new(3))),
+        ("ListBoxItemExternal", ext_scene(ListBoxItemExternal::new())),
+        (
+            "MenuBarExternal",
+            ext_scene(MenuBarExternal::new(vec![2, 2])),
+        ),
+        (
+            "PaginationExternal",
+            ext_scene(PaginationExternal::new(9, 0)),
+        ),
+        ("ProgressBarExternal", ext_scene(ProgressBarExternal::new())),
+        ("RadioExternal", ext_scene(RadioExternal::new())),
+        ("RadioGroupExternal", ext_scene(RadioGroupExternal::new(3))),
+        ("RangeSliderExternal", ext_scene(RangeSliderExternal::new())),
+        (
+            "RowDissectionExternal",
+            ext_scene(RowDissectionExternal::new(Rc::new(
+                RowDissectionState::new(vec![serde_json::json!({"a": 1})]),
+            ))),
+        ),
+        (
+            "RowSearchExternal",
+            ext_scene(RowSearchExternal::new(Rc::new(RowSearchState::new(
+                1,
+                cells(),
+            )))),
+        ),
+        (
+            "RowStyleExternal",
+            ext_scene(RowStyleExternal::new(Rc::new(RowStyleState::default()))),
+        ),
+        ("ScrollBarExternal", ext_scene(ScrollBarExternal::new())),
+        ("SliderExternal", ext_scene(SliderExternal::new())),
+        (
+            "SpinButtonExternal",
             ext_scene(SpinButtonExternal::new(1.0, 0.0, 10.0, 1.0)),
         ),
-        ("text_field", ext_scene(TextFieldExternal::new())),
-        ("toggle", ext_scene(ToggleExternal::new())),
-        ("tooltip", ext_scene(TooltipExternal::new())),
+        (
+            "TableExternal",
+            ext_scene(TableExternal::new(vec!["h".to_owned()], cells())),
+        ),
+        ("TextFieldExternal", ext_scene(TextFieldExternal::new())),
+        ("ToggleExternal", ext_scene(ToggleExternal::new())),
+        (
+            "ToggleStateSnapshot",
+            ext_scene(ToggleStateSnapshot::new(ToggleState::Idle, false)),
+        ),
+        (
+            "ToolbarExternal",
+            ext_scene(ToolbarExternal::new(vec![ToolItem::Command])),
+        ),
+        ("TooltipExternal", ext_scene(TooltipExternal::new())),
+        (
+            "TreeFilterExternal",
+            ext_scene(TreeFilterExternal::new(Rc::new(TreeFilterState::new(
+                Box::new(|_| Vec::new()),
+            )))),
+        ),
+        (
+            "ViewSortFilterExternal",
+            ext_scene(ViewSortFilterExternal::new(Rc::new(ViewOrderState::new(
+                vec!["k".to_owned()],
+                vec![0],
+            )))),
+        ),
+        (
+            "VirtualSelectExternal",
+            ext_scene(VirtualSelectExternal::new(3)),
+        ),
     ]
 }
 
 #[test]
 fn r1637_a_declared_read_is_not_a_name_the_surface_dispatches() {
+    /// How a surface answered — the variant alone, because the CONTROL below
+    /// compares answers to each other rather than to a fixed expectation.
+    fn shape(answer: &Result<IntrospectValue, InvokeError>) -> u8 {
+        match answer {
+            Err(InvokeError::UnknownPath) => 0,
+            Err(InvokeError::TypeMismatch) => 1,
+            Err(InvokeError::Rejected(_)) => 2,
+            Err(_) => 3,
+            Ok(_) => 4,
+        }
+    }
+
     let mut wrong: Vec<String> = Vec::new();
     let mut checked = 0_usize;
     for (label, handle) in catalog() {
@@ -162,6 +335,16 @@ fn r1637_a_declared_read_is_not_a_name_the_surface_dispatches() {
         let intro = handle
             .introspect_mut()
             .expect("every entry opts into introspection");
+        // R1640 — the NEGATIVE CONTROL, and the walk is worthless without it.
+        // The first version asked only "does `invoke` answer something other
+        // than UnknownPath", which reads a UNIFORM refusal as recognition:
+        // `ButtonStateSnapshot` and `ToggleStateSnapshot` decline every name
+        // with one stated sentence ("this surface is a read-only copy"), and
+        // three of their declared reads were reported as mis-declared channels
+        // on the walk's first widened run. A surface that answers a name it has
+        // never heard of the same way it answers a declared one is not telling
+        // us anything about either.
+        let control = shape(&intro.invoke("$__no_such_action__", IntrospectValue::Null));
         let reads: Vec<&'static str> = intro
             .schema()
             .fields
@@ -171,10 +354,7 @@ fn r1637_a_declared_read_is_not_a_name_the_surface_dispatches() {
             .collect();
         for path in reads {
             checked += 1;
-            if !matches!(
-                intro.invoke(path, IntrospectValue::Null),
-                Err(InvokeError::UnknownPath)
-            ) {
+            if shape(&intro.invoke(path, IntrospectValue::Null)) != control {
                 wrong.push(format!("{label}.{path}"));
             }
         }
@@ -285,5 +465,100 @@ fn r1639_no_catalog_send_is_left_undeclared() {
     assert!(
         silent.is_empty(),
         "these declare `send` and do not say what it takes: {silent:?}",
+    );
+}
+
+/// R1640 — the catalog **is** every `ExternalIntrospect` in
+/// `pinion_core::widgets`, and a widget added later cannot slip past these
+/// checks by not being written down.
+///
+/// Before this the walk built the nineteen types whose constructors took
+/// nothing, and the denominator was stated nowhere — so "the catalog passes"
+/// read as coverage while half the catalog was invisible. Widening it to all
+/// thirty-nine found a real mis-declared channel (`ColumnResizeExternal`'s
+/// `send`) in the first run, which is the same hit rate the walk had on its
+/// very first run against dock.
+///
+/// # Why this reads the source, and how it avoids the census trap
+///
+/// Rust cannot enumerate the impls of a trait at runtime, so the denominator
+/// has to come from the text. This session burned three times on text censuses
+/// that read the wrong thing (a comment, a tuple pattern, a first match only),
+/// so the rule here is R1605's: **every occurrence must account for itself**.
+/// The scan does not count — it collects names, and every name must be either
+/// in the catalog or in `NOT_A_WIDGET_SURFACE` with a reason. A mis-parse
+/// therefore surfaces as an unaccounted NAME, which a reader can act on,
+/// rather than as a number that happens to match.
+#[test]
+fn r1640_the_catalog_is_every_widget_external() {
+    use std::collections::BTreeSet;
+
+    /// Types that impl the trait in that directory and are deliberately absent.
+    /// Empty today, and kept as the place a future exclusion must state itself
+    /// rather than being silently dropped from the list.
+    const NOT_A_WIDGET_SURFACE: &[(&str, &str)] = &[];
+
+    let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../pinion-core/src/widgets");
+    let mut found: BTreeSet<String> = BTreeSet::new();
+    let mut files = 0_usize;
+    for entry in std::fs::read_dir(&dir).expect("the widget directory is readable") {
+        let path = entry.expect("a readable entry").path();
+        if path.extension().is_none_or(|e| e != "rs") {
+            continue;
+        }
+        files += 1;
+        let src = std::fs::read_to_string(&path).expect("a readable widget module");
+        for line in src.lines() {
+            // Only a top-level impl, which is what an addressable surface is:
+            // an indented one is inside a test module's fixture.
+            if let Some(rest) = line.strip_prefix("impl ExternalIntrospect for ") {
+                found.insert(rest.trim_end_matches(" {").trim().to_owned());
+            }
+        }
+    }
+    assert!(
+        files > 30,
+        "the scan must see the real directory, saw {files}"
+    );
+    assert!(
+        found.len() > 30,
+        "and the real impls in it, saw {}",
+        found.len()
+    );
+
+    // The catalog's labels ARE the type names, so this is an exact set
+    // comparison. An earlier draft matched a snake_case label against the type
+    // by lowercasing and dropping underscores, and four entries that WERE in
+    // the catalog came back unaccounted (`row_dissect` against
+    // `RowDissectionExternal`) — a fuzzy comparison inside a completeness gate
+    // reports the gate's own spelling as a gap, which is the one failure a
+    // completeness gate must not have.
+    let built: BTreeSet<&str> = catalog().into_iter().map(|(name, _)| name).collect();
+    // R1640 — an exclusion is the ONLY way a surface leaves this walk, so it is
+    // not free: it must name a reason, and the reason must be about that
+    // surface rather than a placeholder. A counterfactual that added a
+    // reason-less exclusion passed against the first draft, which made the
+    // gate's own escape hatch the cheapest way through it.
+    for (name, reason) in NOT_A_WIDGET_SURFACE {
+        assert!(
+            reason.len() > 20,
+            "{name} is excluded from the walk with no stated reason: {reason:?}",
+        );
+        assert!(
+            found.contains(*name),
+            "{name} is excluded and is not in the source — a stale exclusion \
+             silently shrinks the denominator",
+        );
+    }
+    let excused: BTreeSet<&str> = NOT_A_WIDGET_SURFACE.iter().map(|(n, _)| *n).collect();
+
+    let unaccounted: Vec<&String> = found
+        .iter()
+        .filter(|name| !built.contains(name.as_str()) && !excused.contains(name.as_str()))
+        .collect();
+    assert!(
+        unaccounted.is_empty(),
+        "these widget surfaces are in the source and in neither the catalog nor \
+         the stated exclusions: {unaccounted:?}",
     );
 }

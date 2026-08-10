@@ -33872,6 +33872,50 @@
         "carry 0 on this round's subject. The send collision's remaining choice is the NAME itself -- whether four grammars should share one -- which is a wire-compatibility question rather than a declaration one, and stays in its own debt with the fifteen hand-rolled sites. The coverage remainder of the argument axis is likewise a counted number rather than prose"
       ]
     },
+    "R1640": {
+      "decision_summary": "the catalog walk is every widget surface, and its escape hatch is not free. R1637 built a walk that compares a surface's declaration against what it dispatches, R1638 and R1639 added two more checks to it, and all three ran against the nineteen widget externals whose constructors happen to take no arguments -- out of thirty-nine. THE DENOMINATOR WAS STATED NOWHERE, which is exactly what made the gap invisible: the walk built what was easy to build, passed, and read as coverage. Among the twenty nobody had ever checked were `TableExternal`, `ListBoxExternal`, `RadioGroupExternal` and `ToolbarExternal` -- four large surfaces that carry the composite send wire. Widening the catalog to all thirty-nine found a real mis-declared channel in the first run: `ColumnResizeExternal`'s `send` was declared a READ slot and has always been dispatched through `split_send_payload`. That is the same hit rate this walk had on its very first run, when it found three in dock. THE ORACLE HAD A HOLE, AND A NEGATIVE CONTROL IS WHAT CLOSED IT. The channel check asked whether a surface's `invoke` answers a declared read with anything other than `UnknownPath` -- and a surface that declines EVERY name with one stated sentence answers that way for names it has never heard of. `ButtonStateSnapshot` and `ToggleStateSnapshot` refuse uniformly (\"this surface is a read-only copy; drive the live button external instead\"), and three of their declared reads came back as mis-declared channels on the first widened run. The walk now probes an invented name FIRST and compares shapes: a surface that answers a name it does not know the same way it answers a declared one is telling us nothing about either. Three false positives out, one true positive left. A FUZZY COMPARISON INSIDE A COMPLETENESS GATE IS ITS OWN FAILURE MODE. The first draft matched a snake_case catalog label against the type name by lowercasing and dropping underscores, and four entries that WERE in the catalog came back unaccounted (`row_dissect` against `RowDissectionExternal`). The catalog's labels are now the type names themselves and the comparison is an exact set difference -- a completeness gate that reports its own spelling as a gap is worse than no gate, because the noise trains a reader to widen the matcher rather than to look. AND THE ESCAPE HATCH IS NOT FREE, which a counterfactual had to teach: adding a reason-less exclusion PASSED against the first draft, making the gate's own opt-out the cheapest way through it. An exclusion must now carry a reason of real length AND name a type that is actually present in the source, so a stale exclusion cannot quietly shrink the denominator either. THE SOURCE SCAN FOLLOWS R1605 RATHER THAN COUNTING. Rust cannot enumerate a trait's impls at runtime, so the denominator has to come from the text -- and this session has burned three times on text censuses that read a doc comment, a tuple pattern, and only the first match of a body. So the scan does not produce a number: it collects names, and every name must be in the catalog or in the stated exclusions. A mis-parse therefore surfaces as an unaccounted NAME that a reader can act on, rather than as a total that happens to agree.",
+      "changes_bullets": [
+        "crates/pinion-shell/tests: the catalog builds all 39 widget externals, with a minimal model where the type needs one",
+        "the channel walk probes an invented name first and compares shapes, so a uniformly-refusing surface is not misread",
+        "a completeness gate holds the catalog to the source by NAME, and refuses a reason-less or stale exclusion",
+        "pinion-core: ColumnResizeExternal's `send` moves to the invoke channel with the composite grammar it already decodes"
+      ],
+      "verification_bullets": [
+        "cargo test: pinion-core / pinion-rpc / pinion-shell all pass; the walk is now 5 checks over 39 surfaces",
+        "cargo check --workspace --all-targets clean; clippy / fmt clean",
+        "4 counterfactuals from a verified-green baseline, 4/4 caught after two were re-authored (one did not compile; one was the finding)",
+        "32 demos over the surfaces whose declarations moved, all pass"
+      ],
+      "impact_refs": [
+        "5.12",
+        "5.15",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "carry 0 on this round's subject: the walk's population is now the whole widget directory and is held there by a gate. What it still does not reach is stated rather than left implicit -- pinion-widget-paint's surfaces (dock has its own test; splitter, tree_view and devtools have none) and every example binding, neither of which lives in the directory this gate scans"
+      ],
+      "publishable_decision_summary": "the catalog walk is every widget surface, and its escape hatch is not free. R1637 built a walk that compares a surface's declaration against what it dispatches, R1638 and R1639 added two more checks to it, and all three ran against the nineteen widget externals whose constructors happen to take no arguments -- out of thirty-nine. THE DENOMINATOR WAS STATED NOWHERE, which is exactly what made the gap invisible: the walk built what was easy to build, passed, and read as coverage. Among the twenty nobody had ever checked were `TableExternal`, `ListBoxExternal`, `RadioGroupExternal` and `ToolbarExternal` -- four large surfaces that carry the composite send wire. Widening the catalog to all thirty-nine found a real mis-declared channel in the first run: `ColumnResizeExternal`'s `send` was declared a READ slot and has always been dispatched through `split_send_payload`. That is the same hit rate this walk had on its very first run, when it found three in dock. THE ORACLE HAD A HOLE, AND A NEGATIVE CONTROL IS WHAT CLOSED IT. The channel check asked whether a surface's `invoke` answers a declared read with anything other than `UnknownPath` -- and a surface that declines EVERY name with one stated sentence answers that way for names it has never heard of. `ButtonStateSnapshot` and `ToggleStateSnapshot` refuse uniformly (\"this surface is a read-only copy; drive the live button external instead\"), and three of their declared reads came back as mis-declared channels on the first widened run. The walk now probes an invented name FIRST and compares shapes: a surface that answers a name it does not know the same way it answers a declared one is telling us nothing about either. Three false positives out, one true positive left. A FUZZY COMPARISON INSIDE A COMPLETENESS GATE IS ITS OWN FAILURE MODE. The first draft matched a snake_case catalog label against the type name by lowercasing and dropping underscores, and four entries that WERE in the catalog came back unaccounted (`row_dissect` against `RowDissectionExternal`). The catalog's labels are now the type names themselves and the comparison is an exact set difference -- a completeness gate that reports its own spelling as a gap is worse than no gate, because the noise trains a reader to widen the matcher rather than to look. AND THE ESCAPE HATCH IS NOT FREE, which a counterfactual had to teach: adding a reason-less exclusion PASSED against the first draft, making the gate's own opt-out the cheapest way through it. An exclusion must now carry a reason of real length AND name a type that is actually present in the source, so a stale exclusion cannot quietly shrink the denominator either. THE SOURCE SCAN FOLLOWS R1605 RATHER THAN COUNTING. Rust cannot enumerate a trait's impls at runtime, so the denominator has to come from the text -- and this session has burned three times on text censuses that read a doc comment, a tuple pattern, and only the first match of a body. So the scan does not produce a number: it collects names, and every name must be in the catalog or in the stated exclusions. A mis-parse therefore surfaces as an unaccounted NAME that a reader can act on, rather than as a total that happens to agree.",
+      "publishable_changes_bullets": [
+        "crates/pinion-shell/tests: the catalog builds all 39 widget externals, with a minimal model where the type needs one",
+        "the channel walk probes an invented name first and compares shapes, so a uniformly-refusing surface is not misread",
+        "a completeness gate holds the catalog to the source by NAME, and refuses a reason-less or stale exclusion",
+        "pinion-core: ColumnResizeExternal's `send` moves to the invoke channel with the composite grammar it already decodes"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test: pinion-core / pinion-rpc / pinion-shell all pass; the walk is now 5 checks over 39 surfaces",
+        "cargo check --workspace --all-targets clean; clippy / fmt clean",
+        "4 counterfactuals from a verified-green baseline, 4/4 caught after two were re-authored (one did not compile; one was the finding)",
+        "32 demos over the surfaces whose declarations moved, all pass"
+      ],
+      "publishable_impact_refs": [
+        "5.12",
+        "5.15",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "carry 0 on this round's subject: the walk's population is now the whole widget directory and is held there by a gate. What it still does not reach is stated rather than left implicit -- pinion-widget-paint's surfaces (dock has its own test; splitter, tree_view and devtools have none) and every example binding, neither of which lives in the directory this gate scans"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
