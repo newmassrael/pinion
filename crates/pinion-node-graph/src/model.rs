@@ -134,6 +134,28 @@ impl Instance {
     pub fn is_root(&self) -> bool {
         self.0.is_empty()
     }
+
+    /// Read a path back from the form [`Display`](fmt::Display) writes, or
+    /// `None` (R1644).
+    ///
+    /// An instance printed as `/0:5/2:1` is an address a client can be *given*
+    /// — a trace row, a register row, a breakpoint site all carry one — and
+    /// until now nothing could take one back. A published form with no inverse
+    /// is two definitions of the same thing kept in step by hand, which is the
+    /// finding R1642 recorded about [`Side`]'s wire names.
+    #[must_use]
+    pub fn from_wire(path: &str) -> Option<Self> {
+        if path == "/" {
+            return Some(Self::root());
+        }
+        let body = path.strip_prefix('/')?;
+        let mut chain = Vec::new();
+        for segment in body.split('/') {
+            let (tree, node) = segment.split_once(':')?;
+            chain.push((TreeId(tree.parse().ok()?), NodeId(node.parse().ok()?)));
+        }
+        Some(Self(chain))
+    }
 }
 
 impl fmt::Display for Instance {
@@ -927,6 +949,36 @@ impl Side {
         out
     };
 }
+
+/// Neither side's name is a prefix of the other's (R1644).
+///
+/// A composite address writes a side and an index with no separator
+/// (`in0`, `out3` — [`PortRef`]'s `Display`), so reading one back means finding
+/// which name the text starts with. That is only unambiguous while this holds,
+/// and it is a property of the **vocabulary**, so it is checked where the
+/// vocabulary is rather than inside each parse that depends on it. Renaming a
+/// side to something the other starts with fails the build here.
+const _: () = {
+    let mut outer = 0;
+    while outer < Side::ALL.len() {
+        let mut inner = 0;
+        while inner < Side::ALL.len() {
+            if outer != inner {
+                let one = Side::ALL[outer].name().as_bytes();
+                let other = Side::ALL[inner].name().as_bytes();
+                let mut same = one.len() <= other.len();
+                let mut at = 0;
+                while same && at < one.len() {
+                    same = one[at] == other[at];
+                    at += 1;
+                }
+                assert!(!same, "one side's wire name is a prefix of another's");
+            }
+            inner += 1;
+        }
+        outer += 1;
+    }
+};
 
 /// One port of one node, named from inside that node (R1594).
 ///

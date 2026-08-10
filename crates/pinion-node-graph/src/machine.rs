@@ -59,7 +59,7 @@ use crate::model::{Document, Instance, NodeBody, NodeId, NodeKind, TreeId};
 /// is for the other kind — one that arrived from a file with a containment
 /// cycle in it, which [`Document::validate`] reports and which would otherwise
 /// walk forever inside the process doing the validating.
-const NESTING_LIMIT: usize = 512;
+pub(crate) const NESTING_LIMIT: usize = 512;
 
 /// The registers of a running document (R1600).
 ///
@@ -466,7 +466,14 @@ impl<K: NodeKind> Document<K> {
     /// The one place an [`Instance`] built by hand is checked against the
     /// document. [`Descent`](crate::Descent) instances are built by the walk and
     /// cannot be wrong; one handed in from outside can be.
-    fn tree_of(&self, instance: &Instance) -> Option<TreeId> {
+    ///
+    /// Public since R1644, which needs it twice: to check a breakpoint site
+    /// whose occurrence was named by a client, and to say which tree each step
+    /// of a trace happened in — a [`Step`](crate::Step) carries its
+    /// [`Instance`] and its [`NodeId`], and the node is only unique within its
+    /// tree, so the pair is not an address until this resolves it.
+    #[must_use]
+    pub fn tree_of(&self, instance: &Instance) -> Option<TreeId> {
         let mut tree = crate::model::ROOT;
         for (host, node) in instance.path() {
             if *host != tree {

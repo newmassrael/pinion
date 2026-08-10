@@ -192,6 +192,7 @@
 mod appearance;
 mod arrange;
 mod bypass;
+mod debug;
 mod eval;
 mod fragment;
 mod frame;
@@ -213,6 +214,10 @@ pub use arrange::{
     Align, ArrangePass, ArrangeTail, Axis, Distribute, Edge, Stack, Straighten, Straightened,
 };
 pub use bypass::{Bridge, Passthrough, Rewired, Route};
+pub use debug::{
+    BreakError, Breakpoints, Command, Direction, Halt, Landing, NodeSite, Occurrence, Paused,
+    PortSite, Reading, Session, Stride, Timeline, WatchError, Watches,
+};
 pub use eval::{Descent, Evaluator};
 pub use fragment::{
     Crossings, Definitions, DuplicateError, ExtractError, Fragment, InsertError, Inserted, Severed,

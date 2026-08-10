@@ -653,6 +653,27 @@ AXES = [
         # R1519's own lesson, which this table exists for: a completion nobody
         # checked against a reference is not a measurement, and R1577 already
         # recorded that checking one moves it DOWN.
+        #
+        # R1644 — ADDENDUM, not a re-judgment, and for the reason R1604.1 gave:
+        # the staleness check has not fired (`example-name` 30 -> 31 = +3%,
+        # `round-axis` 23 -> 26 = +13%, both inside the band), and moving a
+        # number on evidence nobody was asked to re-read is the hand-adjustment
+        # this table exists to stop. What changed is recorded so the next
+        # demanded look starts from the truth rather than from R1604's figures:
+        #
+        #   * the engine moved for the first time in this series — 40% -> 62%
+        #     (109/211 -> 132/211), because R1644 closed the DEBUGGING cluster
+        #     whole: breakpoints, watches and stepping are three of the eight
+        #     capabilities the paragraph above names, and its tree-debugger
+        #     command list went 2/9 -> 9/9.
+        #   * the DCC did not move — 76% (58/76), untouched by that round.
+        #
+        # So the node-graph third's inputs are the DCC 76 / the engine 62 (equal
+        # weight 69) where R1604 computed from 75 / 40 (equal weight 57.5). Every
+        # widening before this one found more reference than pinion; this is the
+        # first round in the series that moved the measurement UP by building,
+        # which is worth naming as the other direction rather than as a
+        # correction.
         "judged_at": 1604,
         "completion": 86,
         "evidence_snapshot": {"example-name": 30, "round-axis": 23},

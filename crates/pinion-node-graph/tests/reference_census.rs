@@ -44,10 +44,10 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 
 use pinion_node_graph::{
-    Align, Appearance, Axis, Conversion, Crossings, Definitions, Distribute, Document, Edge,
-    EditPath, Extent, Fragment, Grow, InterfaceSide, Item, ItemError, LinkId, Node, NodeBody,
-    NodeId, NodeKind, Port, PortRef, ROOT, Reach, Sharing, Side, Socket, Stack, Straighten, TreeId,
-    Variadic,
+    Align, Appearance, Axis, Command, Conversion, Crossings, Definitions, Direction, Distribute,
+    Document, Edge, EditPath, Extent, Fragment, Grow, Instance, InterfaceSide, Item, ItemError,
+    LinkId, Machine, Node, NodeBody, NodeId, NodeKind, NodeSite, Port, PortRef, PortSite, ROOT,
+    Reach, Session, Sharing, Side, Socket, Stack, Straighten, Stride, TreeId, Variadic, WatchError,
 };
 
 // ---------------------------------------------------------------- taxonomy
@@ -98,6 +98,11 @@ enum Op {
     /// all but one of that reference's accessors declare and what the engine
     /// cannot express.
     Bundle,
+    /// R1644 — `In ->| Then, Cost: Number`. A node that **runs and carries a
+    /// value**, which no other member is: the debugging proofs need a
+    /// breakpoint and a watch to be able to land on one node, and every control
+    /// kind above is control-only while every valued kind above is pure.
+    Stage(i64),
 }
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
@@ -132,6 +137,7 @@ impl NodeKind for Op {
             Self::Choose => "Choose",
             Self::Blend => "Blend",
             Self::Bundle => "Bundle",
+            Self::Stage(_) => "Stage",
         }
         .to_owned()
     }
@@ -155,7 +161,7 @@ impl NodeKind for Op {
             // R1632 — the FIXED half of a variadic kind. What repeats is
             // declared once, in `variadic`, so these two can never disagree
             // about where the run is.
-            Self::Sequence => vec![Port::control("Execute")],
+            Self::Sequence | Self::Stage(_) => vec![Port::control("Execute")],
             Self::Choose => vec![Port::new("Index", Ty::Number).with_default(Val::Number(0))],
             Self::Blend => vec![
                 Port::new("Base", Ty::Number).with_default(Val::Number(0)),
@@ -201,6 +207,7 @@ impl NodeKind for Op {
             Self::Word(_) | Self::Shout | Self::Bundle => vec![Port::new("Out", Ty::Text)],
             Self::Choose | Self::Blend => vec![Port::new("Out", Ty::Number)],
             Self::Sink | Self::Sequence => Vec::new(),
+            Self::Stage(_) => vec![Port::control("Then"), Port::new("Cost", Ty::Number)],
         }
     }
 
@@ -239,6 +246,9 @@ impl NodeKind for Op {
                 other @ Val::Number(_) => other.clone(),
             })],
             Self::Sink | Self::Sequence => Vec::new(),
+            // Slot 0 is the control output and carries nothing: control is not
+            // a value, which is why watching that port is refused.
+            Self::Stage(cost) => vec![None, Some(Val::Number(*cost))],
             // R1632 — `inputs` is as long as the NODE's resolved signature, so
             // a variadic kind reads the run it declared instead of a fixed
             // arity. That is the whole reason `evaluate` needed no new
@@ -414,6 +424,7 @@ fn proofs() -> Vec<Proof> {
     all.extend(engine_arrangement_proofs());
     all.extend(engine_schema_hook_proofs());
     all.extend(engine_variadic_proofs());
+    all.extend(engine_debug_proofs());
     all.extend(dcc_item_proofs());
     all
 }
@@ -4743,4 +4754,910 @@ fn dcc_socket_items_make_move_item_operator() {
         vec![Some(Val::Text("42/40/41".into()))],
         "and every wire arrived at the port its item went to"
     );
+}
+
+// ================================================= stopping, stepping, watching
+
+/// R1644 — the DEBUGGING cluster: the engine's twenty-three commands for
+/// stopping a graph, stepping it and reading what it holds.
+///
+/// Its own registry for the reason the arrangement and variadic ones have
+/// theirs: the others are at the line ceiling, and these are one capability.
+/// Split in two for that same ceiling — stopping, then stepping and watching.
+fn engine_debug_proofs() -> Vec<Proof> {
+    let mut all = engine_breakpoint_proofs();
+    all.extend(engine_watch_and_stride_proofs());
+    all
+}
+
+/// The breakpoint half: where a run stops, and which of those places are live.
+fn engine_breakpoint_proofs() -> Vec<Proof> {
+    vec![
+        proof(
+            "engine",
+            "GraphEditor::AddBreakpoint",
+            engine_graph_editor_add_breakpoint,
+        ),
+        proof(
+            "engine",
+            "GraphEditor::RemoveBreakpoint",
+            engine_graph_editor_remove_breakpoint,
+        ),
+        proof(
+            "engine",
+            "GraphEditor::EnableBreakpoint",
+            engine_graph_editor_enable_breakpoint,
+        ),
+        proof(
+            "engine",
+            "GraphEditor::DisableBreakpoint",
+            engine_graph_editor_disable_breakpoint,
+        ),
+        proof(
+            "engine",
+            "GraphEditor::ToggleBreakpoint",
+            engine_graph_editor_toggle_breakpoint,
+        ),
+        proof(
+            "engine",
+            "script_editor::ClearAllBreakpoints",
+            engine_script_editor_clear_all_breakpoints,
+        ),
+        proof(
+            "engine",
+            "script_editor::EnableAllBreakpoints",
+            engine_script_editor_enable_all_breakpoints,
+        ),
+        proof(
+            "engine",
+            "script_editor::DisableAllBreakpoints",
+            engine_script_editor_disable_all_breakpoints,
+        ),
+    ]
+}
+
+/// The watch and stride half: what a stopped run holds, and how it moves.
+fn engine_watch_and_stride_proofs() -> Vec<Proof> {
+    vec![
+        proof(
+            "engine",
+            "GraphEditor::StartWatchingPin",
+            engine_graph_editor_start_watching_pin,
+        ),
+        proof(
+            "engine",
+            "GraphEditor::StopWatchingPin",
+            engine_graph_editor_stop_watching_pin,
+        ),
+        proof(
+            "engine",
+            "schema::IsPinBeingWatched",
+            engine_schema_is_pin_being_watched,
+        ),
+        proof(
+            "engine",
+            "schema::DoesSupportPinWatching",
+            engine_schema_does_support_pin_watching,
+        ),
+        proof(
+            "engine",
+            "script_editor::ClearAllWatches",
+            engine_script_editor_clear_all_watches,
+        ),
+        proof(
+            "engine",
+            "AnimGraph::TogglePoseWatch",
+            engine_anim_graph_toggle_pose_watch,
+        ),
+        proof(
+            "engine",
+            "BehaviorTreeDebugger::ForwardInto",
+            engine_behavior_tree_debugger_forward_into,
+        ),
+        proof(
+            "engine",
+            "BehaviorTreeDebugger::ForwardOver",
+            engine_behavior_tree_debugger_forward_over,
+        ),
+        proof(
+            "engine",
+            "BehaviorTreeDebugger::StepOut",
+            engine_behavior_tree_debugger_step_out,
+        ),
+        proof(
+            "engine",
+            "BehaviorTreeDebugger::BackInto",
+            engine_behavior_tree_debugger_back_into,
+        ),
+        proof(
+            "engine",
+            "BehaviorTreeDebugger::BackOver",
+            engine_behavior_tree_debugger_back_over,
+        ),
+        proof(
+            "engine",
+            "BehaviorTreeDebugger::CurrentValues",
+            engine_behavior_tree_debugger_current_values,
+        ),
+        proof(
+            "engine",
+            "BehaviorTreeDebugger::SavedValues",
+            engine_behavior_tree_debugger_saved_values,
+        ),
+        proof(
+            "engine",
+            "script_editor::OpenBlueprintDebugger",
+            engine_script_editor_open_blueprint_debugger,
+        ),
+    ]
+}
+
+/// What a debug session is built on: `head -> [Stage] -> tail`, with the middle
+/// stage collapsed so the run crosses a boundary.
+///
+/// Its trace is five steps at depths `0,1,1,1,0` — the entry, the definition's
+/// inside-input node, the stage, the inside-output node, and the tail. A run
+/// that never left the root would let `into`, `over` and `out` be one function
+/// with no proof noticing.
+struct Debugging {
+    document: Document<Op>,
+    session: Session,
+    head: NodeId,
+    tail: NodeId,
+    inside: NodeId,
+    definition: TreeId,
+    instance: NodeId,
+}
+
+fn debugging() -> Debugging {
+    let mut document: Document<Op> = Document::new("root");
+    let head = node(&mut document, Op::Stage(1));
+    let mid = node(&mut document, Op::Stage(2));
+    let tail = node(&mut document, Op::Stage(3));
+    wire_control(&mut document, head, mid);
+    wire_control(&mut document, mid, tail);
+    let grouped = document.group(ROOT, &[mid], "Stage").expect("it collapses");
+    let inside = document
+        .tree(grouped.definition)
+        .and_then(|held| held.nodes().find(|n| matches!(n.body, NodeBody::Kind(_))))
+        .map(|n| n.id)
+        .expect("the stage moved in");
+    let session = Session::new(ROOT, head, 32);
+    Debugging {
+        document,
+        session,
+        head,
+        tail,
+        inside,
+        definition: grouped.definition,
+        instance: grouped.node,
+    }
+}
+
+fn wire_control(document: &mut Document<Op>, from: NodeId, to: NodeId) {
+    document
+        .connect(ROOT, Socket::new(from, 0), Socket::new(to, 0))
+        .expect("control wires");
+}
+
+/// How far a session gets on one resume, and why it stopped.
+fn resume(document: &Document<Op>, session: &mut Session) -> (usize, &'static str) {
+    let paused = document
+        .debug(session, &Machine::new(), Command::Resume)
+        .expect("the run starts");
+    (paused.at(), paused.halt().name())
+}
+
+/// Put a session at step `at`, through the commands a client has: back to the
+/// entry, then one step at a time. There is deliberately no setter for the
+/// position — a debugger moves by stepping, and a proof that reached its
+/// fixture state some other way would not be exercising the surface.
+fn at_step(document: &Document<Op>, session: &mut Session, at: usize) {
+    document
+        .debug(session, &Machine::new(), Command::Restart)
+        .expect("the run is there");
+    for _ in 0..at {
+        document
+            .debug(
+                session,
+                &Machine::new(),
+                Command::Step {
+                    direction: Direction::Forward,
+                    stride: Stride::Into,
+                },
+            )
+            .expect("the run is there");
+    }
+    assert_eq!(session.at(), at, "the fixture is where it says it is");
+}
+
+#[test]
+fn engine_graph_editor_add_breakpoint() {
+    let Debugging {
+        document,
+        mut session,
+        tail,
+        ..
+    } = debugging();
+    assert_eq!(resume(&document, &mut session), (5, "halted"));
+
+    at_step(&document, &mut session, 0);
+    assert!(
+        document
+            .set_breakpoint(session.breakpoints_mut(), NodeSite::any(ROOT, tail))
+            .unwrap()
+    );
+    let paused = document
+        .debug(&mut session, &Machine::new(), Command::Resume)
+        .unwrap();
+    assert_eq!(paused.at(), 4, "it stopped where nothing stopped it before");
+    assert_eq!(paused.next().map(|step| step.node), Some(tail));
+    assert!(
+        paused
+            .taken()
+            .iter()
+            .all(|step| !(step.instance.is_root() && step.node == tail)),
+        "and BEFORE the marked node ran, which is where the reference stops too"
+    );
+    // ★ The occurrence is in that comparison because a `NodeId` is unique only
+    // within its tree: the definition's own nodes carry ids that collide with
+    // the root's, and a check by node alone reports the tail as having run
+    // inside the instance. Written the naive way first, and this fixture caught
+    // it.
+    assert!(
+        paused.taken().iter().any(|step| step.node == tail),
+        "★ flattened, the ids collide across trees"
+    );
+}
+
+#[test]
+fn engine_graph_editor_remove_breakpoint() {
+    let Debugging {
+        document,
+        mut session,
+        tail,
+        ..
+    } = debugging();
+    let site = NodeSite::any(ROOT, tail);
+    document
+        .set_breakpoint(session.breakpoints_mut(), site.clone())
+        .unwrap();
+    assert_eq!(resume(&document, &mut session), (4, "breakpoint"));
+
+    at_step(&document, &mut session, 0);
+    assert!(session.breakpoints_mut().disarm(&site));
+    assert!(!session.breakpoints_mut().disarm(&site), "and once only");
+    assert_eq!(
+        resume(&document, &mut session),
+        (5, "halted"),
+        "with the mark gone the run is not stopped"
+    );
+}
+
+#[test]
+fn engine_graph_editor_enable_breakpoint() {
+    let Debugging {
+        document,
+        mut session,
+        tail,
+        ..
+    } = debugging();
+    let site = NodeSite::any(ROOT, tail);
+    document
+        .set_breakpoint(session.breakpoints_mut(), site.clone())
+        .unwrap();
+    assert_eq!(
+        session.breakpoints_mut().set_enabled(&site, false),
+        Some(true)
+    );
+    assert_eq!(resume(&document, &mut session), (5, "halted"));
+
+    at_step(&document, &mut session, 0);
+    assert_eq!(
+        session.breakpoints_mut().set_enabled(&site, true),
+        Some(false),
+        "and it answers the flag it replaced"
+    );
+    assert_eq!(resume(&document, &mut session), (4, "breakpoint"));
+}
+
+#[test]
+fn engine_graph_editor_disable_breakpoint() {
+    let Debugging {
+        document,
+        mut session,
+        tail,
+        ..
+    } = debugging();
+    let site = NodeSite::any(ROOT, tail);
+    document
+        .set_breakpoint(session.breakpoints_mut(), site.clone())
+        .unwrap();
+    session.breakpoints_mut().set_enabled(&site, false);
+
+    // Disabled is NOT removed: the place is remembered, which is why the
+    // reference has five commands here rather than three.
+    assert!(session.breakpoints().contains(&site));
+    assert!(!session.breakpoints().is_enabled(&site));
+    assert_eq!(session.breakpoints().len(), 1);
+    assert_eq!(resume(&document, &mut session), (5, "halted"));
+}
+
+#[test]
+fn engine_graph_editor_toggle_breakpoint() {
+    let Debugging {
+        document,
+        mut session,
+        tail,
+        ..
+    } = debugging();
+    let site = NodeSite::any(ROOT, tail);
+    assert!(
+        document
+            .toggle_breakpoint(session.breakpoints_mut(), site.clone())
+            .unwrap()
+    );
+    assert!(session.breakpoints().is_enabled(&site));
+    session.breakpoints_mut().set_enabled(&site, false);
+
+    // A disabled one toggles AWAY, not back to enabled: toggling is about
+    // presence, and the reference draws the same line — its toggle creates or
+    // removes, and `bEnabled` moves only under its own two commands.
+    assert!(
+        !document
+            .toggle_breakpoint(session.breakpoints_mut(), site.clone())
+            .unwrap()
+    );
+    assert!(session.breakpoints().is_empty());
+    assert_eq!(resume(&document, &mut session), (5, "halted"));
+}
+
+#[test]
+fn engine_script_editor_clear_all_breakpoints() {
+    let Debugging {
+        document,
+        mut session,
+        head,
+        tail,
+        inside,
+        definition,
+        ..
+    } = debugging();
+    for site in [
+        NodeSite::any(ROOT, head),
+        NodeSite::any(ROOT, tail),
+        NodeSite::any(definition, inside),
+    ] {
+        document
+            .set_breakpoint(session.breakpoints_mut(), site)
+            .unwrap();
+    }
+    assert_eq!(session.breakpoints().len(), 3);
+    assert_eq!(session.breakpoints_mut().clear(), 3, "and it says how many");
+    assert_eq!(session.breakpoints_mut().clear(), 0);
+    assert_eq!(resume(&document, &mut session), (5, "halted"));
+}
+
+#[test]
+fn engine_script_editor_enable_all_breakpoints() {
+    let Debugging {
+        document,
+        mut session,
+        head,
+        tail,
+        ..
+    } = debugging();
+    for site in [NodeSite::any(ROOT, head), NodeSite::any(ROOT, tail)] {
+        document
+            .set_breakpoint(session.breakpoints_mut(), site)
+            .unwrap();
+    }
+    assert_eq!(session.breakpoints_mut().disable_all(), 2);
+    assert_eq!(resume(&document, &mut session), (5, "halted"));
+
+    at_step(&document, &mut session, 0);
+    assert_eq!(session.breakpoints_mut().enable_all(), 2);
+    assert_eq!(
+        session.breakpoints_mut().enable_all(),
+        0,
+        "and it counts what CHANGED, not what is armed"
+    );
+    // Back at the entry, whose own mark is live again — so the session is
+    // already stopped at one, and resuming carries on to the next.
+    assert_eq!(
+        document
+            .paused(&session, &Machine::new())
+            .unwrap()
+            .halt()
+            .name(),
+        "breakpoint"
+    );
+    assert_eq!(resume(&document, &mut session), (4, "breakpoint"));
+}
+
+#[test]
+fn engine_script_editor_disable_all_breakpoints() {
+    let Debugging {
+        document,
+        mut session,
+        head,
+        tail,
+        ..
+    } = debugging();
+    for site in [NodeSite::any(ROOT, head), NodeSite::any(ROOT, tail)] {
+        document
+            .set_breakpoint(session.breakpoints_mut(), site)
+            .unwrap();
+    }
+    assert_eq!(session.breakpoints_mut().disable_all(), 2);
+    assert_eq!(
+        session.breakpoints().len(),
+        2,
+        "every place is remembered, and none of them stops anything"
+    );
+    assert!(session.breakpoints().iter().all(|(_, live)| !live));
+    assert_eq!(resume(&document, &mut session), (5, "halted"));
+}
+
+#[test]
+fn engine_graph_editor_start_watching_pin() {
+    let Debugging {
+        document,
+        mut session,
+        inside,
+        definition,
+        instance,
+        ..
+    } = debugging();
+    let cost = PortSite::any(definition, inside, PortRef::output(1));
+    assert!(
+        document
+            .set_watch(session.watches_mut(), cost.clone())
+            .unwrap()
+    );
+    assert!(
+        !document
+            .set_watch(session.watches_mut(), cost.clone())
+            .unwrap(),
+        "watching twice is watching once"
+    );
+
+    let paused = document.paused(&session, &Machine::new()).unwrap();
+    assert_eq!(paused.readings().len(), 1);
+    let reading = &paused.readings()[0];
+    assert_eq!(reading.value, Some(Val::Number(2)), "the stage's own cost");
+    assert_eq!(reading.instance, Instance::root().inside(ROOT, instance));
+    assert_eq!(reading.ran_at, Some(2), "and it ran, at step 2");
+}
+
+#[test]
+fn engine_graph_editor_stop_watching_pin() {
+    let Debugging {
+        document,
+        mut session,
+        inside,
+        definition,
+        ..
+    } = debugging();
+    let cost = PortSite::any(definition, inside, PortRef::output(1));
+    document
+        .set_watch(session.watches_mut(), cost.clone())
+        .unwrap();
+    assert_eq!(
+        document
+            .paused(&session, &Machine::new())
+            .unwrap()
+            .readings()
+            .len(),
+        1
+    );
+
+    assert!(session.watches_mut().unwatch(&cost));
+    assert!(!session.watches_mut().unwatch(&cost), "and once only");
+    assert!(
+        document
+            .paused(&session, &Machine::new())
+            .unwrap()
+            .readings()
+            .is_empty(),
+        "nothing is reported for a port nobody is watching"
+    );
+}
+
+#[test]
+fn engine_schema_is_pin_being_watched() {
+    let Debugging {
+        document,
+        mut session,
+        inside,
+        definition,
+        instance,
+        ..
+    } = debugging();
+    let every = PortSite::any(definition, inside, PortRef::output(1));
+    let only = PortSite::at(
+        definition,
+        inside,
+        PortRef::output(1),
+        Instance::root().inside(ROOT, instance),
+    );
+    assert!(!session.watches().contains(&every));
+
+    document
+        .set_watch(session.watches_mut(), every.clone())
+        .unwrap();
+    assert!(session.watches().contains(&every));
+    // ★ The occurrence is part of the address: watching every occurrence is not
+    // watching one of them, and asking about the wrong one answers no. The
+    // reference has no such axis — a macro there is expanded per use before
+    // anything runs, so its watched pin is one copy's pin.
+    assert!(!session.watches().contains(&only));
+    document
+        .set_watch(session.watches_mut(), only.clone())
+        .unwrap();
+    assert_eq!(session.watches().len(), 2);
+    assert!(session.watches().contains(&only));
+}
+
+#[test]
+fn engine_schema_does_support_pin_watching() {
+    let Debugging {
+        document,
+        mut session,
+        inside,
+        definition,
+        ..
+    } = debugging();
+    // Output 0 of a stage is its control output. Control is not a value, so
+    // there is nothing to report and the watch is refused rather than armed to
+    // report nothing. The reference refuses the same thing, by asking its
+    // schema whether the pin's category is an execution one.
+    assert_eq!(
+        document.set_watch(
+            session.watches_mut(),
+            PortSite::any(definition, inside, PortRef::output(0)),
+        ),
+        Err(WatchError::NotAValue {
+            tree: definition,
+            node: inside,
+            port: PortRef::output(0),
+        })
+    );
+    assert!(session.watches().is_empty());
+    assert!(
+        document
+            .set_watch(
+                session.watches_mut(),
+                PortSite::any(definition, inside, PortRef::output(1)),
+            )
+            .is_ok(),
+        "and the value port beside it is admitted, so the check is not \
+         refusing everything"
+    );
+}
+
+#[test]
+fn engine_script_editor_clear_all_watches() {
+    let Debugging {
+        document,
+        mut session,
+        inside,
+        definition,
+        instance,
+        ..
+    } = debugging();
+    for site in [
+        PortSite::any(definition, inside, PortRef::output(1)),
+        PortSite::at(
+            definition,
+            inside,
+            PortRef::output(1),
+            Instance::root().inside(ROOT, instance),
+        ),
+    ] {
+        document.set_watch(session.watches_mut(), site).unwrap();
+    }
+    assert_eq!(
+        document
+            .paused(&session, &Machine::new())
+            .unwrap()
+            .readings()
+            .len(),
+        2
+    );
+    assert_eq!(session.watches_mut().clear(), 2, "and it says how many");
+    assert_eq!(session.watches_mut().clear(), 0);
+    assert!(
+        document
+            .paused(&session, &Machine::new())
+            .unwrap()
+            .readings()
+            .is_empty()
+    );
+}
+
+#[test]
+fn engine_anim_graph_toggle_pose_watch() {
+    let Debugging {
+        document,
+        mut session,
+        inside,
+        definition,
+        ..
+    } = debugging();
+    let cost = PortSite::any(definition, inside, PortRef::output(1));
+    assert!(
+        document
+            .toggle_watch(session.watches_mut(), cost.clone())
+            .unwrap()
+    );
+    assert_eq!(
+        document
+            .paused(&session, &Machine::new())
+            .unwrap()
+            .readings()
+            .len(),
+        1
+    );
+    assert!(
+        !document
+            .toggle_watch(session.watches_mut(), cost.clone())
+            .unwrap()
+    );
+    assert!(
+        document
+            .paused(&session, &Machine::new())
+            .unwrap()
+            .readings()
+            .is_empty(),
+        "one verb, both ways"
+    );
+}
+
+/// Where a stride lands, from `at`, on the fixture's `0,1,1,1,0` run.
+fn stride_to(
+    document: &Document<Op>,
+    session: &Session,
+    at: usize,
+    direction: Direction,
+    stride: Stride,
+) -> usize {
+    let mut moved = session.clone();
+    at_step(document, &mut moved, at);
+    document
+        .debug(
+            &mut moved,
+            &Machine::new(),
+            Command::Step { direction, stride },
+        )
+        .expect("the run is there")
+        .at()
+}
+
+#[test]
+fn engine_behavior_tree_debugger_forward_into() {
+    let Debugging {
+        document, session, ..
+    } = debugging();
+    for at in 0..5 {
+        assert_eq!(
+            stride_to(&document, &session, at, Direction::Forward, Stride::Into),
+            at + 1,
+            "one step is one step, boundary or not"
+        );
+    }
+    // Including INTO the instance: step 0 is at the root and step 1 is inside.
+    let timeline = document.timeline(&session, &Machine::new()).unwrap();
+    assert_eq!(timeline.depth(0), Some(0));
+    assert_eq!(timeline.depth(1), Some(1));
+}
+
+#[test]
+fn engine_behavior_tree_debugger_forward_over() {
+    let Debugging {
+        document, session, ..
+    } = debugging();
+    // From the root, the whole instance is skipped: three steps inside pass in
+    // one command, and the next thing at depth 0 is step 4.
+    assert_eq!(
+        stride_to(&document, &session, 0, Direction::Forward, Stride::Over),
+        4
+    );
+    assert_ne!(
+        stride_to(&document, &session, 0, Direction::Forward, Stride::Over),
+        stride_to(&document, &session, 0, Direction::Forward, Stride::Into),
+        "which is what makes it a different command from `into`"
+    );
+    // Inside the frame there is nothing deeper to skip, so it is one step.
+    assert_eq!(
+        stride_to(&document, &session, 1, Direction::Forward, Stride::Over),
+        2
+    );
+}
+
+#[test]
+fn engine_behavior_tree_debugger_step_out() {
+    let Debugging {
+        document, session, ..
+    } = debugging();
+    // From inside the instance, control leaves the frame: from step 1 or step
+    // 2, out lands at 4, which is the first step back at depth 0.
+    for at in 1..=2 {
+        assert_eq!(
+            stride_to(&document, &session, at, Direction::Forward, Stride::Out),
+            4
+        );
+    }
+    // And out of the OUTERMOST frame runs to the end, because there is nothing
+    // shallower to arrive at — which is what every debugger does.
+    assert_eq!(
+        stride_to(&document, &session, 0, Direction::Forward, Stride::Out),
+        5
+    );
+}
+
+#[test]
+fn engine_behavior_tree_debugger_back_into() {
+    let Debugging {
+        document, session, ..
+    } = debugging();
+    for at in 1..=5 {
+        assert_eq!(
+            stride_to(&document, &session, at, Direction::Back, Stride::Into),
+            at - 1
+        );
+    }
+    assert_eq!(
+        stride_to(&document, &session, 0, Direction::Back, Stride::Into),
+        0,
+        "the entry is the floor"
+    );
+    // ★ Backwards is the SAME arithmetic as forwards, on the same object —
+    // not a replay of recorded frames. The reference's backward commands read
+    // its recorded execution history, which is why "current" and "saved" values
+    // are two separate commands there.
+    let there = stride_to(&document, &session, 2, Direction::Forward, Stride::Into);
+    assert_eq!(
+        stride_to(&document, &session, there, Direction::Back, Stride::Into),
+        2
+    );
+}
+
+#[test]
+fn engine_behavior_tree_debugger_back_over() {
+    let Debugging {
+        document, session, ..
+    } = debugging();
+    // Back across the whole instance: from step 4 at the root, the previous
+    // thing at depth 0 is step 0.
+    assert_eq!(
+        stride_to(&document, &session, 4, Direction::Back, Stride::Over),
+        0
+    );
+    assert_ne!(
+        stride_to(&document, &session, 4, Direction::Back, Stride::Over),
+        stride_to(&document, &session, 4, Direction::Back, Stride::Into),
+        "which is what makes it a different command from `back into`"
+    );
+    // And within the frame it is one step, for the same reason `over` is.
+    assert_eq!(
+        stride_to(&document, &session, 2, Direction::Back, Stride::Over),
+        1
+    );
+}
+
+#[test]
+fn engine_behavior_tree_debugger_current_values() {
+    let Debugging {
+        document,
+        mut session,
+        inside,
+        definition,
+        ..
+    } = debugging();
+    document
+        .set_watch(
+            session.watches_mut(),
+            PortSite::any(definition, inside, PortRef::output(1)),
+        )
+        .unwrap();
+    let paused = document
+        .debug(
+            &mut session,
+            &Machine::new(),
+            Command::Step {
+                direction: Direction::Forward,
+                stride: Stride::Into,
+            },
+        )
+        .unwrap();
+    assert_eq!(paused.at(), 1);
+    assert_eq!(
+        paused.readings().first().and_then(|one| one.value.clone()),
+        Some(Val::Number(2)),
+        "the value at the place the run is stopped, from the same evaluator \
+         the run itself reads through"
+    );
+}
+
+#[test]
+fn engine_behavior_tree_debugger_saved_values() {
+    let Debugging {
+        document,
+        mut session,
+        inside,
+        definition,
+        ..
+    } = debugging();
+    document
+        .set_watch(
+            session.watches_mut(),
+            PortSite::any(definition, inside, PortRef::output(1)),
+        )
+        .unwrap();
+    let state = Machine::new();
+
+    // ★ "Live" and "recorded" are ONE object here, and this is the assertion
+    // that says so: the readings are identical at two different positions while
+    // the trace prefix is not. In the reference those are two commands over two
+    // data sources — the running debug object, and a recorded frame history —
+    // and they can disagree. Here a run is a pure function of the document and
+    // the registers, so there is nothing to record.
+    at_step(&document, &mut session, 1);
+    let early = document.paused(&session, &state).unwrap();
+    at_step(&document, &mut session, 4);
+    let late = document.paused(&session, &state).unwrap();
+    assert_eq!(early.readings(), late.readings());
+    assert_eq!(early.taken().len(), 1);
+    assert_eq!(late.taken().len(), 4, "and the trace DID grow between them");
+    assert_eq!(
+        late.taken()[..1],
+        *early.taken(),
+        "the earlier prefix is the later one's beginning"
+    );
+}
+
+#[test]
+fn engine_script_editor_open_blueprint_debugger() {
+    let Debugging {
+        document,
+        mut session,
+        inside,
+        definition,
+        instance,
+        ..
+    } = debugging();
+    document
+        .set_breakpoint(session.breakpoints_mut(), NodeSite::any(definition, inside))
+        .unwrap();
+    document
+        .set_watch(
+            session.watches_mut(),
+            PortSite::any(definition, inside, PortRef::output(1)),
+        )
+        .unwrap();
+
+    // The surface, in one read: where it is, why, what is about to run, the
+    // call stack it is in, what it has run, and what the watched ports hold.
+    // R1599 and R1600 gave `run` and `tick`, and nothing observed them from
+    // outside.
+    let paused = document
+        .debug(&mut session, &Machine::new(), Command::Resume)
+        .unwrap();
+    assert_eq!(paused.halt().name(), "breakpoint");
+    assert_eq!(paused.at(), 2);
+    assert_eq!(paused.next().map(|step| step.node), Some(inside));
+    assert_eq!(paused.stack(), [(ROOT, instance)], "one frame deep");
+    assert_eq!(paused.taken().len(), 2);
+    assert_eq!(paused.readings().len(), 1);
+    assert!(document.stale_breakpoints(session.breakpoints()).is_empty());
+
+    // And the session is a VALUE: the marks, the watches and the position
+    // survive the wire together, so a debugging setup can be saved or handed
+    // on. The reference keeps its breakpoints in the asset and its position
+    // nowhere at all.
+    let json = serde_json::to_string(&session).expect("a session serialises");
+    let back: Session = serde_json::from_str(&json).expect("and comes back");
+    assert_eq!(back, session);
+    assert_eq!(back.at(), 2);
 }

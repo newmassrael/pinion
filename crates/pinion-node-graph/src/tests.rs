@@ -9,13 +9,14 @@ use pinion_graph::Sugiyama;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Align, Appearance, Axis, Carried, ConnectError, Control, Conversion, Crossings, Definitions,
-    Distribute, Document, DuplicateError, Edge, EditError, EditPath, Extent, ExtractError,
-    ForceError, Fragment, GroupError, Grow, InsertError, Instance, InterfaceSide, Item, ItemError,
-    Layered, Machine, Multiplicity, NestError, Node, NodeBody, NodeId, NodeKind, Organic, Orphaned,
-    ParentError, PathError, Port, PortRef, PortValueError, ROOT, Reach, RepartitionError, Route,
-    RunError, SelectError, Severed, Sharing, Side, Socket, Stack, Stop, Straighten, Tick, TreeId,
-    UngroupError, Violation, crossing,
+    Align, Appearance, Axis, BreakError, Breakpoints, Carried, Command, ConnectError, Control,
+    Conversion, Crossings, Definitions, Direction, Distribute, Document, DuplicateError, Edge,
+    EditError, EditPath, Extent, ExtractError, ForceError, Fragment, GroupError, Grow, Halt,
+    InsertError, Instance, InterfaceSide, Item, ItemError, Layered, Machine, Multiplicity,
+    NestError, Node, NodeBody, NodeId, NodeKind, NodeSite, Occurrence, Organic, Orphaned,
+    ParentError, PathError, Port, PortRef, PortSite, PortValueError, ROOT, Reach, RepartitionError,
+    Route, RunError, SelectError, Session, Severed, Sharing, Side, Socket, Stack, Stop, Straighten,
+    Stride, Tick, Timeline, TreeId, UngroupError, Violation, WatchError, Watches, crossing,
 };
 
 /// The test taxonomy: two socket types, so type disagreement is reachable.
@@ -10280,4 +10281,1033 @@ fn r1642_a_conditional_verb_states_its_tail() {
         .map(|e| usize::from(!matches!(e.tail(), ItemEditTail::None)))
         .collect();
     assert_eq!(arities, vec![1, 0, 1], "add and move read one, remove none");
+}
+
+// ============================================ a run that stops (R1644)
+
+/// The tunnel fixture as a debug session: `Start -> [Stage] -> End`, whose run
+/// is five steps at depths `0,1,1,1,0`.
+///
+/// That depth profile is the whole reason this fixture is the one: a stride is
+/// about depth, and a run that never leaves the root would let `into`, `over`
+/// and `out` all be the same function without any test noticing.
+fn session_fixture() -> (Document<Flo>, Session, NodeId, NodeId, TreeId) {
+    let (document, start, instance, step_inside, definition) = tunnel_fixture();
+    let session = Session::new(ROOT, start, 32);
+    (document, session, instance, step_inside, definition)
+}
+
+fn depths<K: NodeKind>(timeline: &Timeline<K>) -> Vec<usize> {
+    (0..timeline.len())
+        .map(|at| timeline.depth(at).unwrap())
+        .collect()
+}
+
+#[test]
+fn r1644_a_breakpoint_cannot_change_the_run() {
+    let (document, mut session, instance, step_inside, _) = session_fixture();
+    let state = Machine::new();
+    let plain = document
+        .run(ROOT, session.entry(), session.budget())
+        .unwrap();
+
+    // Arm one everywhere a run can stop, in every occurrence.
+    let inside = Instance::root().inside(ROOT, instance);
+    for site in [
+        NodeSite::any(ROOT, session.entry()),
+        NodeSite::at(session.tree(), session.entry(), Instance::root()),
+    ] {
+        assert!(
+            document
+                .set_breakpoint(session.breakpoints_mut(), site)
+                .unwrap()
+        );
+    }
+    let held = document.tree_of(&inside).expect("the instance resolves");
+    assert!(
+        document
+            .set_breakpoint(session.breakpoints_mut(), NodeSite::any(held, step_inside))
+            .unwrap()
+    );
+    assert_eq!(session.breakpoints().len(), 3);
+
+    // The trace is IDENTICAL. Not "equivalent" — the same values, in the same
+    // order, with the same reason for stopping. The breakpoints are not an
+    // argument to the walk, so this cannot be otherwise; it is asserted because
+    // the property is the entire design and a future refactor could hand them in.
+    let timeline = document.timeline(&session, &state).unwrap();
+    assert_eq!(timeline.run().steps(), plain.steps());
+    assert_eq!(timeline.run().stop(), plain.stop());
+    assert_eq!(depths(&timeline), vec![0, 1, 1, 1, 0]);
+
+    // ★ The session OPENS stopped: a breakpoint on the entry node is reported
+    // before any command, because "where am I" is answered from the position
+    // and the marks rather than from a command's return value.
+    let opened = document.paused(&session, &state).unwrap();
+    assert_eq!(opened.at(), 0);
+    assert_eq!(opened.halt().name(), "breakpoint");
+
+    // And resuming to the end lands exactly where an uninterrupted run ended,
+    // having stopped on the way at the marks it had not already reported.
+    let mut stops = Vec::new();
+    loop {
+        let paused = document
+            .debug(&mut session, &state, Command::Resume)
+            .unwrap();
+        if matches!(paused.halt(), Halt::Ended(_)) {
+            assert_eq!(paused.at(), plain.steps().len());
+            assert_eq!(paused.taken(), plain.steps());
+            break;
+        }
+        stops.push(paused.at());
+        assert!(
+            stops.len() < 10,
+            "a resume that does not advance would loop"
+        );
+    }
+    assert_eq!(
+        stops,
+        vec![2],
+        "the step inside — and NOT 1, because entering the group tunnels \
+         through the definition's inside-input node and that node takes a turn \
+         of its own. The entry's own breakpoint is not stopped at twice: a \
+         resume that re-stopped where it stood could never get past one"
+    );
+}
+
+#[test]
+fn r1644_a_breakpoint_stops_before_the_node_runs() {
+    let (document, mut session, _, step_inside, definition) = session_fixture();
+    let state = Machine::new();
+    document
+        .set_breakpoint(
+            session.breakpoints_mut(),
+            NodeSite::any(definition, step_inside),
+        )
+        .unwrap();
+
+    let paused = document
+        .debug(&mut session, &state, Command::Resume)
+        .unwrap();
+    let Halt::AtBreakpoint {
+        site,
+        instance,
+        node,
+    } = paused.halt()
+    else {
+        panic!("stopped for the wrong reason: {:?}", paused.halt());
+    };
+    assert_eq!(*node, step_inside);
+    assert_eq!(site.node, step_inside);
+    assert_eq!(instance.depth(), 1);
+    assert_eq!(paused.halt().name(), "breakpoint");
+
+    // It has NOT run: the step is the one about to happen, and the taken prefix
+    // does not contain it. The reference stops in the same place.
+    assert_eq!(paused.next().map(|step| step.node), Some(step_inside));
+    assert!(
+        paused.taken().iter().all(|step| step.node != step_inside),
+        "the marked node had not run yet"
+    );
+    // The call stack says where it is, which is a question a graph with no
+    // instance cannot be asked.
+    assert_eq!(paused.stack().len(), 1);
+    assert_eq!(paused.stack(), instance.path());
+}
+
+#[test]
+fn r1644_a_disabled_breakpoint_keeps_its_place_and_stops_nothing() {
+    let (document, mut session, _, step_inside, definition) = session_fixture();
+    let state = Machine::new();
+    let site = NodeSite::any(definition, step_inside);
+    document
+        .set_breakpoint(session.breakpoints_mut(), site.clone())
+        .unwrap();
+    assert!(session.breakpoints().is_enabled(&site));
+
+    assert_eq!(
+        session.breakpoints_mut().set_enabled(&site, false),
+        Some(true),
+        "and it answers what it was"
+    );
+    assert!(session.breakpoints().contains(&site), "still armed");
+    assert!(!session.breakpoints().is_enabled(&site));
+    assert_eq!(session.breakpoints().len(), 1);
+
+    let paused = document
+        .debug(&mut session, &state, Command::Resume)
+        .unwrap();
+    assert_eq!(*paused.halt(), Halt::Ended(Stop::Halted));
+    assert_eq!(paused.at(), 5);
+
+    // Re-arming is NOT a way to re-enable: those are separate commands in every
+    // debugger there is, and conflating them would make "add" silently undo a
+    // deliberate disable.
+    assert!(
+        !document
+            .set_breakpoint(session.breakpoints_mut(), site.clone())
+            .unwrap()
+    );
+    assert!(!session.breakpoints().is_enabled(&site));
+    assert_eq!(session.breakpoints_mut().enable_all(), 1);
+    assert!(session.breakpoints().is_enabled(&site));
+    assert_eq!(session.breakpoints_mut().enable_all(), 0, "already enabled");
+    assert_eq!(session.breakpoints_mut().disable_all(), 1);
+    assert_eq!(session.breakpoints_mut().clear(), 1);
+    assert!(session.breakpoints().is_empty());
+    assert_eq!(
+        session.breakpoints_mut().set_enabled(&site, true),
+        None,
+        "nothing armed there is a different fact from disabled"
+    );
+}
+
+#[test]
+fn r1644_toggling_a_breakpoint_is_about_presence_not_about_enabled() {
+    let (document, mut session, _, _, _) = session_fixture();
+    let site = NodeSite::any(ROOT, session.entry());
+
+    assert!(
+        document
+            .toggle_breakpoint(session.breakpoints_mut(), site.clone())
+            .unwrap()
+    );
+    assert!(session.breakpoints().contains(&site));
+    session.breakpoints_mut().set_enabled(&site, false);
+
+    // A disabled breakpoint toggles AWAY, not back to enabled. The reference
+    // draws the same line: its toggle creates or removes, and `bEnabled` moves
+    // only under its own two commands.
+    assert!(
+        !document
+            .toggle_breakpoint(session.breakpoints_mut(), site.clone())
+            .unwrap()
+    );
+    assert!(!session.breakpoints().contains(&site));
+    assert!(
+        document
+            .toggle_breakpoint(session.breakpoints_mut(), site.clone())
+            .unwrap()
+    );
+    assert!(
+        session.breakpoints().is_enabled(&site),
+        "a fresh one is live"
+    );
+    assert!(session.breakpoints_mut().disarm(&site));
+    assert!(!session.breakpoints_mut().disarm(&site), "and once only");
+}
+
+#[test]
+fn r1644_a_breakpoint_that_could_never_fire_is_refused() {
+    let (mut document, mut session, instance, _, definition) = session_fixture();
+    let entry = session.entry();
+    let points = session.breakpoints_mut();
+
+    // A pure node: no control port at all, so a run never arrives at it — it is
+    // pulled by whoever reads its output. An armed one would read as a
+    // breakpoint that never fired.
+    let pure = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Const(1)), 0, 0)
+        .unwrap();
+    assert_eq!(
+        document.set_breakpoint(points, NodeSite::any(ROOT, pure)),
+        Err(BreakError::NotOnTheControlPlane {
+            tree: ROOT,
+            node: pure
+        })
+    );
+    // A group instance takes no turn of its own, and the refusal says where to
+    // break instead.
+    let refusal = document
+        .set_breakpoint(points, NodeSite::any(ROOT, instance))
+        .unwrap_err();
+    assert_eq!(
+        refusal,
+        BreakError::IsAnInstance {
+            tree: ROOT,
+            node: instance
+        }
+    );
+    assert!(format!("{refusal}").contains("takes no turn"));
+
+    assert_eq!(
+        document.set_breakpoint(points, NodeSite::any(TreeId(77), NodeId(0))),
+        Err(BreakError::NoSuchTree(TreeId(77)))
+    );
+    assert_eq!(
+        document.set_breakpoint(points, NodeSite::any(ROOT, NodeId(9999))),
+        Err(BreakError::NoSuchNode {
+            tree: ROOT,
+            node: NodeId(9999)
+        })
+    );
+    assert_eq!(
+        document.set_breakpoint(
+            points,
+            NodeSite::at(ROOT, entry, Instance::root().inside(ROOT, NodeId(4242))),
+        ),
+        Err(BreakError::NoSuchInstance)
+    );
+    // A real occurrence, of the WRONG tree: the address resolves, somewhere
+    // else. Opposite mistake from the one above, so it is a different arm.
+    assert_eq!(
+        document.set_breakpoint(
+            points,
+            NodeSite::at(ROOT, entry, Instance::root().inside(ROOT, instance)),
+        ),
+        Err(BreakError::InstanceIsElsewhere {
+            site: ROOT,
+            occurrence: definition
+        })
+    );
+    assert!(session.breakpoints().is_empty(), "not one of those armed");
+}
+
+#[test]
+fn r1644_a_site_the_document_no_longer_supports_is_named_not_dropped() {
+    let (mut document, mut session, _, step_inside, definition) = session_fixture();
+    let site = NodeSite::any(definition, step_inside);
+    document
+        .set_breakpoint(session.breakpoints_mut(), site.clone())
+        .unwrap();
+    let watched = PortSite::any(definition, step_inside, PortRef::output(1));
+    document
+        .set_watch(session.watches_mut(), watched.clone())
+        .unwrap();
+    assert!(document.stale_breakpoints(session.breakpoints()).is_empty());
+    assert!(document.stale_watches(session.watches()).is_empty());
+
+    // A document is editable while it is being debugged.
+    document.remove_node(definition, step_inside).unwrap();
+    assert_eq!(
+        document.stale_breakpoints(session.breakpoints()),
+        vec![(
+            site.clone(),
+            BreakError::NoSuchNode {
+                tree: definition,
+                node: step_inside
+            }
+        )],
+        "the mark is kept and reported, not silently forgotten"
+    );
+    assert_eq!(
+        document.stale_watches(session.watches()),
+        vec![(
+            watched,
+            WatchError::NoSuchNode {
+                tree: definition,
+                node: step_inside
+            }
+        )]
+    );
+    assert!(session.breakpoints().contains(&site));
+
+    // And a stale breakpoint stops nothing, because the run cannot reach a node
+    // that is not there.
+    let paused = document
+        .debug(&mut session, &Machine::new(), Command::Resume)
+        .unwrap();
+    assert!(matches!(paused.halt(), Halt::Ended(_)));
+}
+
+#[test]
+fn r1644_an_occurrence_narrows_a_breakpoint_to_one_instance() {
+    // Two instances of one definition, chained: `Start -> [A] -> [B] -> End`.
+    // The reference cannot express this at all — a macro there is expanded into
+    // a copy per use before anything runs, so a breakpoint on one is a
+    // breakpoint on one copy and "the second time through" is not a thing to say.
+    let (mut document, start, first, step_inside, definition) = tunnel_fixture();
+    let second = document.instantiate(ROOT, definition, 400, 0).unwrap();
+    let end = document
+        .tree(ROOT)
+        .unwrap()
+        .nodes()
+        .find(|node| node.body == NodeBody::Kind(Flo::End))
+        .map(|node| node.id)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(first, 0), Socket::new(second, 0))
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(second, 0), Socket::new(end, 0))
+        .unwrap();
+    let state = Machine::new();
+
+    let in_second = Instance::root().inside(ROOT, second);
+    assert_eq!(
+        document.occurrences(definition),
+        {
+            let mut both = vec![Instance::root().inside(ROOT, first), in_second.clone()];
+            both.sort();
+            both
+        },
+        "the definition has exactly two occurrences, and they are enumerable"
+    );
+    assert_eq!(document.occurrences(ROOT), vec![Instance::root()]);
+    assert!(
+        document.occurrences(TreeId(88)).is_empty(),
+        "a tree that is not there has none"
+    );
+
+    // Narrowed to the SECOND instance: the run passes the same node twice and
+    // stops once.
+    let mut narrow = Session::new(ROOT, start, 40);
+    document
+        .set_breakpoint(
+            narrow.breakpoints_mut(),
+            NodeSite::at(definition, step_inside, in_second.clone()),
+        )
+        .unwrap();
+    let paused = document
+        .debug(&mut narrow, &state, Command::Resume)
+        .unwrap();
+    let Halt::AtBreakpoint { instance, .. } = paused.halt() else {
+        panic!("expected a stop in the second instance");
+    };
+    assert_eq!(*instance, in_second);
+    assert!(
+        paused.taken().iter().any(|step| step.node == step_inside),
+        "the FIRST instance's turn at that node had already gone by"
+    );
+    let once = paused.at();
+    assert!(matches!(
+        document
+            .debug(&mut narrow, &state, Command::Resume)
+            .unwrap()
+            .halt(),
+        Halt::Ended(_)
+    ));
+
+    // Widened to every occurrence: two stops instead of one, same document.
+    let mut wide = Session::new(ROOT, start, 40);
+    document
+        .set_breakpoint(
+            wide.breakpoints_mut(),
+            NodeSite::any(definition, step_inside),
+        )
+        .unwrap();
+    let mut stops = Vec::new();
+    while let Ok(paused) = document.debug(&mut wide, &state, Command::Resume) {
+        if matches!(paused.halt(), Halt::Ended(_)) {
+            break;
+        }
+        stops.push(paused.at());
+        assert!(stops.len() < 8);
+    }
+    assert_eq!(stops.len(), 2, "one per occurrence");
+    assert!(stops.contains(&once), "including the narrow one's stop");
+}
+
+#[test]
+fn r1644_the_reference_names_five_stepping_commands_and_they_are_two_words() {
+    // The array's LENGTH is the product, not a literal, and the fill is
+    // positional — so adding an arm to either vocabulary grows the array and
+    // leaves a cell unfilled, which is a const-eval error rather than a census
+    // somebody has to remember to re-run. R1643's finding was the mirror: a
+    // hand-written list checked only for length passed with one arm used twice.
+    assert_eq!(
+        Command::STRIDES.len(),
+        Direction::ALL.len() * Stride::ALL.len()
+    );
+    assert_eq!(Command::STRIDES.len(), 6);
+    let distinct: BTreeSet<String> = Command::STRIDES
+        .iter()
+        .map(|command| format!("{command:?}"))
+        .collect();
+    assert_eq!(distinct.len(), 6, "six cells, six commands");
+    assert!(
+        Command::STRIDES
+            .iter()
+            .all(|one| matches!(one, Command::Step { .. })),
+        "every cell is a stride and none fell back to the initialiser"
+    );
+
+    // The reference names FIVE: forward-into, forward-over, back-into,
+    // back-over, and out. The sixth cell is not a feature added on top — it is
+    // the one its naming left unwritten.
+    let named = [
+        (Direction::Forward, Stride::Into),
+        (Direction::Forward, Stride::Over),
+        (Direction::Back, Stride::Into),
+        (Direction::Back, Stride::Over),
+        (Direction::Forward, Stride::Out),
+    ];
+    for (direction, stride) in named {
+        assert!(Command::STRIDES.contains(&Command::Step { direction, stride }));
+    }
+    assert!(
+        Command::STRIDES.contains(&Command::Step {
+            direction: Direction::Back,
+            stride: Stride::Out,
+        }),
+        "and the cell the reference has no command for"
+    );
+    assert_eq!(named.len() + 1, Command::STRIDES.len());
+
+    // Both vocabularies round-trip, so a client's published names and the
+    // parse that admits them cannot be two definitions (R1642).
+    for direction in Direction::ALL {
+        assert_eq!(Direction::from_wire(direction.name()), Some(direction));
+    }
+    for stride in Stride::ALL {
+        assert_eq!(Stride::from_wire(stride.name()), Some(stride));
+    }
+    assert_eq!(Direction::WIRE_NAMES, ["forward", "back"]);
+    assert_eq!(Stride::WIRE_NAMES, ["into", "over", "out"]);
+    assert_eq!(Direction::from_wire("sideways"), None);
+    assert_eq!(Stride::from_wire(""), None);
+}
+
+/// Every stride, on the five-step `0,1,1,1,0` run.
+#[test]
+fn r1644_a_stride_is_about_depth() {
+    let (document, session, _, _, _) = session_fixture();
+    let state = Machine::new();
+    let timeline = document.timeline(&session, &state).unwrap();
+    let none = Breakpoints::new();
+    assert_eq!(depths(&timeline), vec![0, 1, 1, 1, 0]);
+    let seek = |at: usize, direction: Direction, stride: Stride| {
+        timeline
+            .seek(at, Command::Step { direction, stride }, &none)
+            .at
+    };
+
+    // INTO takes one step wherever it is — including across the boundary.
+    for at in 0..5 {
+        assert_eq!(seek(at, Direction::Forward, Stride::Into), at + 1);
+    }
+    assert_eq!(
+        seek(5, Direction::Forward, Stride::Into),
+        5,
+        "the end is the end"
+    );
+
+    // OVER at the root skips the whole instance: step 0 hands control into the
+    // group, and the next thing at depth 0 is step 4.
+    assert_eq!(seek(0, Direction::Forward, Stride::Over), 4);
+    // Inside the instance, over and into agree — there is no deeper frame to
+    // skip, which is the case that makes the two functions distinguishable only
+    // because THIS fixture has a boundary in it.
+    assert_eq!(seek(1, Direction::Forward, Stride::Over), 2);
+    assert_eq!(seek(3, Direction::Forward, Stride::Over), 4);
+
+    // OUT from inside leaves the frame; out from the root frame runs to the end,
+    // because there is nothing shallower to arrive at.
+    assert_eq!(seek(1, Direction::Forward, Stride::Out), 4);
+    assert_eq!(seek(2, Direction::Forward, Stride::Out), 4);
+    assert_eq!(seek(0, Direction::Forward, Stride::Out), 5);
+    assert_eq!(seek(4, Direction::Forward, Stride::Out), 5);
+
+    // Backwards is the mirror of the same arithmetic — not a replay of recorded
+    // frames, which is what a debugger over a mutable-state graph is forced
+    // into (the reference has two separate commands for live and saved values).
+    for at in 1..=5 {
+        assert_eq!(seek(at, Direction::Back, Stride::Into), at - 1);
+    }
+    assert_eq!(
+        seek(0, Direction::Back, Stride::Into),
+        0,
+        "the entry is the floor"
+    );
+    assert_eq!(
+        seek(4, Direction::Back, Stride::Over),
+        0,
+        "back over the instance"
+    );
+    assert_eq!(seek(2, Direction::Back, Stride::Over), 1);
+    assert_eq!(seek(2, Direction::Back, Stride::Out), 0);
+    assert_eq!(seek(4, Direction::Back, Stride::Out), 0);
+
+    // ★ What the two directions are to each other, asserted over EVERY position
+    // and EVERY stride rather than at one convenient pair. The three answers
+    // differ, and the differences are facts about the operations:
+    for stride in Stride::ALL {
+        for at in 0..=timeline.len() {
+            let ahead = seek(at, Direction::Forward, stride);
+            let and_back = seek(ahead, Direction::Back, stride);
+            let behind = seek(at, Direction::Back, stride);
+            let and_forward = seek(behind, Direction::Forward, stride);
+            // Neither direction ever overshoots the other: going and coming
+            // back BRACKETS where you were. True for all three, and — apart
+            // from `into` — the only thing that is.
+            assert!(and_back <= ahead, "{stride:?} at {at}: back past the start");
+            assert!(
+                and_forward >= behind,
+                "{stride:?} at {at}: forward before the start"
+            );
+            match stride {
+                // INTO is an exact bijection on the positions a step can be
+                // taken from: one step is one step, either way. The two ends are
+                // where it stops being one, and they are ends rather than
+                // exceptions — nothing follows the last step, and nothing
+                // precedes the entry.
+                Stride::Into => {
+                    if at < timeline.len() {
+                        assert_eq!(and_back, at, "into inverts");
+                    }
+                    if at > 0 {
+                        assert_eq!(and_forward, at.min(timeline.len()), "both ways");
+                    }
+                }
+                // OVER returns exactly when the stride stayed in its frame. When
+                // it did not, the frame it left is the information a single
+                // position cannot carry.
+                Stride::Over => {
+                    if at < timeline.len() && timeline.depth(ahead) == timeline.depth(at) {
+                        assert_eq!(and_back, at, "over, within one frame, inverts");
+                    }
+                }
+                // OUT does not invert, and that is the operation rather than a
+                // defect: leaving a frame is precisely forgetting which frame
+                // you were in, and at the outermost one there is none to
+                // return into — so forward-out runs to the end and back-out
+                // returns to the entry.
+                Stride::Out => {}
+            }
+        }
+    }
+    assert_eq!(seek(1, Direction::Forward, Stride::Out), 4);
+    assert_eq!(
+        seek(4, Direction::Back, Stride::Out),
+        0,
+        "★ and not back to 1: stepping out of the root frame has no frame to \
+         return into, which is why `out` is the one stride that does not invert"
+    );
+}
+
+#[test]
+fn r1644_a_session_moves_and_restarts() {
+    let (document, mut session, _, step_inside, _) = session_fixture();
+    let state = Machine::new();
+    assert_eq!(session.at(), 0);
+    assert_eq!(
+        *document.paused(&session, &state).unwrap().halt(),
+        Halt::Entry
+    );
+    assert_eq!(
+        document.paused(&session, &state).unwrap().halt().name(),
+        "entry"
+    );
+
+    let stepped = document
+        .debug(
+            &mut session,
+            &state,
+            Command::Step {
+                direction: Direction::Forward,
+                stride: Stride::Into,
+            },
+        )
+        .unwrap();
+    assert_eq!(stepped.at(), 1);
+    assert_eq!(session.at(), 1, "the session moved with it");
+    assert_eq!(*stepped.halt(), Halt::Stepped);
+    assert_eq!(stepped.taken().len(), 1);
+    assert_ne!(
+        stepped.next().map(|step| step.node),
+        Some(step_inside),
+        "control entering a group tunnels through the definition's \
+         inside-input node, and that node takes a turn of its own"
+    );
+    assert_eq!(stepped.stack().len(), 1, "one frame deep now");
+    let deeper = document
+        .debug(
+            &mut session,
+            &state,
+            Command::Step {
+                direction: Direction::Forward,
+                stride: Stride::Into,
+            },
+        )
+        .unwrap();
+    assert_eq!(deeper.next().map(|step| step.node), Some(step_inside));
+
+    // Stepping out of the frame, then restarting.
+    let out = document
+        .debug(
+            &mut session,
+            &state,
+            Command::Step {
+                direction: Direction::Forward,
+                stride: Stride::Out,
+            },
+        )
+        .unwrap();
+    assert_eq!(out.at(), 4);
+    assert!(out.stack().is_empty(), "back at the root");
+    let restarted = document
+        .debug(&mut session, &state, Command::Restart)
+        .unwrap();
+    assert_eq!(restarted.at(), 0);
+    assert_eq!(*restarted.halt(), Halt::Entry);
+    assert!(restarted.taken().is_empty());
+
+    // A budget that runs out is reported as such, and stepping past the end
+    // stays at the end rather than erroring.
+    session.set_budget(2);
+    assert_eq!(session.budget(), 2);
+    let short = document
+        .debug(&mut session, &state, Command::Resume)
+        .unwrap();
+    assert_eq!(*short.halt(), Halt::Ended(Stop::BudgetExhausted));
+    assert_eq!(short.at(), 2);
+    assert_eq!(short.halt().name(), "budget_exhausted");
+    let again = document
+        .debug(
+            &mut session,
+            &state,
+            Command::Step {
+                direction: Direction::Forward,
+                stride: Stride::Into,
+            },
+        )
+        .unwrap();
+    assert_eq!(again.at(), 2);
+    assert!(again.next().is_none());
+}
+
+#[test]
+fn r1644_a_watch_reads_the_value_the_graph_acted_on() {
+    let (document, mut session, instance, step_inside, definition) = session_fixture();
+    let state = Machine::new();
+
+    // `Step:a`'s output 1 is its cost — a value port on a node that DOES run.
+    let cost = PortSite::any(definition, step_inside, PortRef::output(1));
+    assert!(
+        document
+            .set_watch(session.watches_mut(), cost.clone())
+            .unwrap()
+    );
+    assert!(
+        !document
+            .set_watch(session.watches_mut(), cost.clone())
+            .unwrap()
+    );
+    assert_eq!(session.watches().len(), 1);
+    assert!(session.watches().contains(&cost));
+
+    let paused = document.paused(&session, &state).unwrap();
+    assert_eq!(paused.readings().len(), 1, "one occurrence, one reading");
+    let reading = &paused.readings()[0];
+    assert_eq!(reading.site, cost);
+    assert_eq!(reading.instance, Instance::root().inside(ROOT, instance));
+    assert_eq!(
+        reading.value.as_ref().and_then(Val::number),
+        Some(1),
+        "\"a\" is one long"
+    );
+    assert_eq!(reading.ran_at, Some(2), "and it ran, at step 2");
+
+    // The value a watch reports is the value the run acted on: same evaluator,
+    // same descent, so they cannot disagree.
+    let mut evaluator = document.evaluator_on(&state);
+    let descent = evaluator.enter(&evaluator.root(ROOT), instance, definition);
+    assert_eq!(
+        evaluator
+            .outputs_in(&descent, step_inside)
+            .into_iter()
+            .nth(1)
+            .flatten(),
+        reading.value,
+    );
+    assert_eq!(
+        paused
+            .timeline()
+            .step(2)
+            .and_then(|step| step.outputs.get(1).cloned())
+            .flatten(),
+        reading.value,
+        "and it is what the trace recorded that node producing"
+    );
+
+    assert!(session.watches_mut().unwatch(&cost));
+    assert!(!session.watches_mut().unwatch(&cost));
+    assert!(
+        document
+            .paused(&session, &state)
+            .unwrap()
+            .readings()
+            .is_empty()
+    );
+}
+
+#[test]
+fn r1644_a_watch_on_a_pure_node_reports_a_value_that_is_not_on_the_trace() {
+    let (mut document, mut session, _, _, _) = session_fixture();
+    let state = Machine::new();
+    // A pure node: no control port, so it never appears in a trace. A
+    // breakpoint on it is refused; a WATCH on it is the point — it is pulled by
+    // whoever reads it, and that value is exactly what a person is asking about.
+    let konst = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Const(7)), 0, 0)
+        .unwrap();
+    document
+        .set_watch(
+            session.watches_mut(),
+            PortSite::any(ROOT, konst, PortRef::output(0)),
+        )
+        .unwrap();
+
+    let readings = document
+        .paused(&session, &state)
+        .unwrap()
+        .readings()
+        .to_vec();
+    assert_eq!(readings.len(), 1);
+    assert_eq!(readings[0].value.as_ref().and_then(Val::number), Some(7));
+    assert_eq!(
+        readings[0].ran_at, None,
+        "★ a value that is not on the trace — reported rather than left to be \
+         inferred, because it looks exactly like a value the run never reached"
+    );
+    assert!(
+        document
+            .set_breakpoint(session.breakpoints_mut(), NodeSite::any(ROOT, konst))
+            .is_err(),
+        "the same node cannot be broken at, and the two facts are consistent"
+    );
+}
+
+#[test]
+fn r1644_watching_control_is_refused_because_control_is_not_a_value() {
+    let (document, mut session, instance, step_inside, definition) = session_fixture();
+    let watches = session.watches_mut();
+
+    // Output 0 of `Step:a` is its control output. The reference refuses the same
+    // thing, by asking its schema whether the pin's category is an execution one.
+    assert_eq!(
+        document.set_watch(
+            watches,
+            PortSite::any(definition, step_inside, PortRef::output(0))
+        ),
+        Err(WatchError::NotAValue {
+            tree: definition,
+            node: step_inside,
+            port: PortRef::output(0),
+        })
+    );
+    let refusal = document
+        .set_watch(
+            watches,
+            PortSite::any(definition, step_inside, PortRef::input(0)),
+        )
+        .unwrap_err();
+    assert!(format!("{refusal}").contains("carries control, not a value"));
+
+    assert_eq!(
+        document.set_watch(
+            watches,
+            PortSite::any(definition, step_inside, PortRef::output(9))
+        ),
+        Err(WatchError::NoSuchPort {
+            tree: definition,
+            node: step_inside,
+            port: PortRef::output(9),
+        })
+    );
+    assert_eq!(
+        document.set_watch(
+            watches,
+            PortSite::any(TreeId(77), step_inside, PortRef::output(1))
+        ),
+        Err(WatchError::NoSuchTree(TreeId(77)))
+    );
+    assert_eq!(
+        document.set_watch(
+            watches,
+            PortSite::any(ROOT, NodeId(9999), PortRef::output(0))
+        ),
+        Err(WatchError::NoSuchNode {
+            tree: ROOT,
+            node: NodeId(9999)
+        })
+    );
+    assert_eq!(
+        document.set_watch(
+            watches,
+            PortSite::at(
+                definition,
+                step_inside,
+                PortRef::output(1),
+                Instance::root().inside(ROOT, NodeId(4242)),
+            ),
+        ),
+        Err(WatchError::NoSuchInstance)
+    );
+    assert_eq!(
+        document.set_watch(
+            watches,
+            PortSite::at(
+                ROOT,
+                instance,
+                PortRef::output(0),
+                Instance::root().inside(ROOT, instance)
+            ),
+        ),
+        Err(WatchError::InstanceIsElsewhere {
+            site: ROOT,
+            occurrence: definition
+        })
+    );
+    assert!(session.watches().is_empty(), "not one of those took");
+
+    // Toggling a watch is presence, like a breakpoint's, and it refuses for the
+    // same reasons when there is nothing to drop.
+    let cost = PortSite::any(definition, step_inside, PortRef::output(1));
+    assert!(
+        document
+            .toggle_watch(session.watches_mut(), cost.clone())
+            .unwrap()
+    );
+    assert!(
+        !document
+            .toggle_watch(session.watches_mut(), cost.clone())
+            .unwrap()
+    );
+    assert_eq!(session.watches_mut().clear(), 0);
+}
+
+#[test]
+fn r1644_a_watched_register_moves_when_the_world_does() {
+    // The counter: `Const -> Tally.A`, `Delay -> Tally.B`, `Tally -> Delay`.
+    let (mut document, delay, tally) = counter_fixture(1);
+    let start = document
+        .add_node(ROOT, NodeBody::Kind(Flo::Start), 0, 0)
+        .unwrap();
+    let end = document
+        .add_node(ROOT, NodeBody::Kind(Flo::End), 200, 0)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(start, 0), Socket::new(end, 0))
+        .unwrap();
+    let mut session = Session::new(ROOT, start, 8);
+    document
+        .set_watch(
+            session.watches_mut(),
+            PortSite::any(ROOT, tally, PortRef::output(0)),
+        )
+        .unwrap();
+
+    let mut state = Machine::new();
+    let reading = |state: &Machine<Flo>| {
+        document.paused(&session, state).unwrap().readings()[0]
+            .value
+            .as_ref()
+            .and_then(Val::number)
+    };
+    // A run READS the machine; a tick MOVES it. So the watched value is the
+    // same however many times it is asked, and different after a tick.
+    assert_eq!(reading(&state), Some(1));
+    assert_eq!(reading(&state), Some(1));
+    document.tick(ROOT, &mut state);
+    assert_eq!(reading(&state), Some(2));
+    document.settle(ROOT, &mut state, 3);
+    assert_eq!(reading(&state), Some(5));
+    // Forcing the register — the debugger's other verb (R1600) — moves it too,
+    // so the two write paths agree about what a watch sees.
+    document
+        .force(&mut state, &Instance::root(), delay, Val::Number(40))
+        .unwrap();
+    assert_eq!(reading(&state), Some(41));
+    let _ = delay;
+}
+
+#[test]
+fn r1644_a_debug_session_is_a_value() {
+    let (document, mut session, _, step_inside, definition) = session_fixture();
+    let entry = session.entry();
+    document
+        .set_breakpoint(
+            session.breakpoints_mut(),
+            NodeSite::any(definition, step_inside),
+        )
+        .unwrap();
+    document
+        .set_breakpoint(
+            session.breakpoints_mut(),
+            NodeSite::at(ROOT, entry, Instance::root()),
+        )
+        .unwrap();
+    session
+        .breakpoints_mut()
+        .set_enabled(&NodeSite::any(definition, step_inside), false);
+    document
+        .set_watch(
+            session.watches_mut(),
+            PortSite::any(definition, step_inside, PortRef::output(1)),
+        )
+        .unwrap();
+    document
+        .debug(&mut session, &Machine::new(), Command::Resume)
+        .unwrap();
+
+    // Position, breakpoints, enabled flags and watches all survive the wire —
+    // so a debugging setup is a thing to save, send, or attach to a bug report.
+    // A map keyed by a site is not expressible in JSON at all, which is why the
+    // breakpoints travel as rows; found by round-tripping rather than by
+    // reading the derive (R1600 met the same wall with registers).
+    let json = serde_json::to_string(&session).expect("a session serialises");
+    assert!(
+        json.contains("\"enabled\":false"),
+        "the flag is on the wire: {json}"
+    );
+    let back: Session = serde_json::from_str(&json).expect("and comes back");
+    assert_eq!(back, session);
+    assert_eq!(back.at(), session.at());
+    assert_eq!(back.breakpoints().len(), 2);
+    assert_eq!(back.watches().len(), 1);
+
+    // And every address round-trips through its own printed form, so a client
+    // handed a site in a trace or a report can hand it back (R1642).
+    let sites = [
+        NodeSite::any(definition, step_inside),
+        NodeSite::at(ROOT, NodeId(3), Instance::root()),
+        NodeSite::at(ROOT, NodeId(3), Instance::root().inside(ROOT, NodeId(9))),
+    ];
+    for site in sites {
+        assert_eq!(
+            NodeSite::from_wire(&format!("{site}")).as_ref(),
+            Some(&site)
+        );
+    }
+    for side in Side::ALL {
+        let port = PortSite::at(
+            definition,
+            step_inside,
+            PortRef { side, index: 12 },
+            Instance::root().inside(ROOT, NodeId(9)),
+        );
+        assert_eq!(
+            PortSite::from_wire(&format!("{port}")).as_ref(),
+            Some(&port)
+        );
+    }
+    assert_eq!(Occurrence::from_wire("*"), Some(Occurrence::Any));
+    assert_eq!(format!("{}", Occurrence::Any), "*");
+    assert_eq!(Instance::from_wire("/"), Some(Instance::root()));
+    assert_eq!(
+        Instance::from_wire("/0:9/0:4"),
+        Some(
+            Instance::root()
+                .inside(ROOT, NodeId(9))
+                .inside(ROOT, NodeId(4))
+        )
+    );
+    assert_eq!(
+        Instance::from_wire("0:9"),
+        None,
+        "a path starts with a slash"
+    );
+    assert_eq!(
+        Instance::from_wire("/0"),
+        None,
+        "and a segment has both halves"
+    );
+    assert_eq!(
+        NodeSite::from_wire("0:3"),
+        None,
+        "an address without an occurrence is not one"
+    );
+    assert_eq!(PortSite::from_wire("0:3.sideways0@*"), None);
+    let _: Watches = Watches::new();
 }

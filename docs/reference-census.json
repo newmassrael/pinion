@@ -1623,10 +1623,10 @@
       "verdict": "app-content"
     },
     "AnimGraph::TogglePoseWatch": {
-      "covered_by": "a watch on a node's computed value",
+      "covered_by": "R1644 — `Document::set_watch` / `Watches` / `Reading`. A reading is per OCCURRENCE rather than per step, which is a consequence rather than a simplification: a port's value is a pure function of the document and the registers, so within one run it cannot differ between two moments — `Document::toggle_watch`, one verb both ways",
       "mechanism": "AnimGraph",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_anim_graph_toggle_pose_watch",
+      "verdict": "have"
     },
     "BehaviorTree::NewBlackboard": {
       "covered_by": "a behaviour tree's blackboard asset",
@@ -1647,34 +1647,34 @@
       "verdict": "app-content"
     },
     "BehaviorTreeDebugger::BackInto": {
-      "covered_by": "stepping a graph's execution backwards into a subtree",
+      "covered_by": "R1644 — `Command::STRIDES`, the 2x3 product of `Direction` and `Stride`. The reference names five stepping commands and they are two words; the array's length is the product rather than a literal, so a new arm in either vocabulary is a compile error here. Backwards is the SAME arithmetic on the same object, not a replay of recorded frames",
       "mechanism": "BehaviorTreeDebugger",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_behavior_tree_debugger_back_into",
+      "verdict": "have"
     },
     "BehaviorTreeDebugger::BackOver": {
-      "covered_by": "stepping a graph's execution backwards",
+      "covered_by": "R1644 — `Command::STRIDES`, the 2x3 product of `Direction` and `Stride`. The reference names five stepping commands and they are two words; the array's length is the product rather than a literal, so a new arm in either vocabulary is a compile error here. And the cell the reference has no command for — back OUT — falls out of the product",
       "mechanism": "BehaviorTreeDebugger",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_behavior_tree_debugger_back_over",
+      "verdict": "have"
     },
     "BehaviorTreeDebugger::CurrentValues": {
-      "covered_by": "watching a running graph's live values",
+      "covered_by": "R1644 — `Paused::readings`, taken through the same evaluator the run reads through, so a watched value and the value the graph acted on cannot disagree",
       "mechanism": "BehaviorTreeDebugger",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_behavior_tree_debugger_current_values",
+      "verdict": "have"
     },
     "BehaviorTreeDebugger::ForwardInto": {
-      "covered_by": "stepping a graph's execution forwards into a subtree",
+      "covered_by": "R1644 — `Command::STRIDES`, the 2x3 product of `Direction` and `Stride`. The reference names five stepping commands and they are two words; the array's length is the product rather than a literal, so a new arm in either vocabulary is a compile error here. One step wherever it is, boundary or not",
       "mechanism": "BehaviorTreeDebugger",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_behavior_tree_debugger_forward_into",
+      "verdict": "have"
     },
     "BehaviorTreeDebugger::ForwardOver": {
-      "covered_by": "stepping a graph's execution forwards",
+      "covered_by": "R1644 — `Command::STRIDES`, the 2x3 product of `Direction` and `Stride`. The reference names five stepping commands and they are two words; the array's length is the product rather than a literal, so a new arm in either vocabulary is a compile error here. A group instance entered on the way runs to completion",
       "mechanism": "BehaviorTreeDebugger",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_behavior_tree_debugger_forward_over",
+      "verdict": "have"
     },
     "BehaviorTreeDebugger::OpenParentTree": {
       "covered_by": "`EditPath::exit` — the containing tree of the definition being edited",
@@ -1701,16 +1701,16 @@
       "verdict": "app-content"
     },
     "BehaviorTreeDebugger::SavedValues": {
-      "covered_by": "replaying a running graph's recorded values",
+      "covered_by": "R1644 — the same `Paused::readings`. Live and recorded are ONE object here: the readings are identical at two positions while the trace prefix is not, so there is nothing to record. The reference splits these into two commands over two data sources",
       "mechanism": "BehaviorTreeDebugger",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_behavior_tree_debugger_saved_values",
+      "verdict": "have"
     },
     "BehaviorTreeDebugger::StepOut": {
-      "covered_by": "stepping out of a subtree. `Document::run` derives a whole execution order and `tick` advances the clock; neither can be stopped part-way",
+      "covered_by": "R1644 — `Command::STRIDES`, the 2x3 product of `Direction` and `Stride`. The reference names five stepping commands and they are two words; the array's length is the product rather than a literal, so a new arm in either vocabulary is a compile error here. Out of the outermost frame runs to the end, because there is nothing shallower to arrive at",
       "mechanism": "BehaviorTreeDebugger",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_behavior_tree_debugger_step_out",
+      "verdict": "have"
     },
     "BehaviorTreeDebugger::StopPlaySession": {
       "covered_by": "the engine's play-in-editor session",
@@ -1719,10 +1719,10 @@
       "verdict": "app-content"
     },
     "GraphEditor::AddBreakpoint": {
-      "covered_by": "BREAKPOINTS: R1600 gave the run a trace and the machine its registers; stopping at a node is the next thing",
+      "covered_by": "R1644 — `Document::set_breakpoint` / `Breakpoints`. A breakpoint is a `NodeSite`: a node in SOME SET of its occurrences, which the reference cannot address because it expands a macro into a copy per use before anything runs. It cannot change the run — the timeline is computed without reference to any breakpoint, which a pure run (R1600) is what buys",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_graph_editor_add_breakpoint",
+      "verdict": "have"
     },
     "GraphEditor::AddExecutionPin": {
       "covered_by": "VARIADIC PORTS (R1632): `NodeKind::variadic` declares that one run of a kind's ports repeats, `Node::items` carries that node's, and `insert_item` / `remove_item` / `move_item` edit them — re-indexing every link and authored value through one correspondence, including the FIXED ports past the run. Appending is `insert_item` at the run's own length.",
@@ -1875,10 +1875,10 @@
       "verdict": "have"
     },
     "GraphEditor::DisableBreakpoint": {
-      "covered_by": "BREAKPOINTS: R1600 gave the run a trace and the machine its registers; stopping at a node is the next thing",
+      "covered_by": "R1644 — `Document::set_breakpoint` / `Breakpoints`. A breakpoint is a `NodeSite`: a node in SOME SET of its occurrences, which the reference cannot address because it expands a macro into a copy per use before anything runs. It cannot change the run — the timeline is computed without reference to any breakpoint, which a pure run (R1600) is what buys — disabled is not removed: the place is remembered, which is why the reference has five commands here and not three",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_graph_editor_disable_breakpoint",
+      "verdict": "have"
     },
     "GraphEditor::DisableNodes": {
       "covered_by": "Document::set_bypassed",
@@ -1899,10 +1899,10 @@
       "verdict": "have"
     },
     "GraphEditor::EnableBreakpoint": {
-      "covered_by": "BREAKPOINTS: R1600 gave the run a trace and the machine its registers; stopping at a node is the next thing",
+      "covered_by": "R1644 — `Document::set_breakpoint` / `Breakpoints`. A breakpoint is a `NodeSite`: a node in SOME SET of its occurrences, which the reference cannot address because it expands a macro into a copy per use before anything runs. It cannot change the run — the timeline is computed without reference to any breakpoint, which a pure run (R1600) is what buys — `Breakpoints::set_enabled`, which answers the flag it replaced",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_graph_editor_enable_breakpoint",
+      "verdict": "have"
     },
     "GraphEditor::EnableNodes": {
       "covered_by": "Document::set_bypassed",
@@ -2055,10 +2055,10 @@
       "verdict": "have"
     },
     "GraphEditor::RemoveBreakpoint": {
-      "covered_by": "BREAKPOINTS: R1600 gave the run a trace and the machine its registers; stopping at a node is the next thing",
+      "covered_by": "R1644 — `Document::set_breakpoint` / `Breakpoints`. A breakpoint is a `NodeSite`: a node in SOME SET of its occurrences, which the reference cannot address because it expands a macro into a copy per use before anything runs. It cannot change the run — the timeline is computed without reference to any breakpoint, which a pure run (R1600) is what buys — `Breakpoints::disarm`, which needs no document: forgetting a place is not a claim about one",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_graph_editor_remove_breakpoint",
+      "verdict": "have"
     },
     "GraphEditor::RemoveExecutionPin": {
       "covered_by": "VARIADIC PORTS (R1632): `NodeKind::variadic` declares that one run of a kind's ports repeats, `Node::items` carries that node's, and `insert_item` / `remove_item` / `move_item` edit them — re-indexing every link and authored value through one correspondence, including the FIXED ports past the run. `remove_item(.., i)`, which additionally NAMES the wires it cut; the reference answers void after `BreakAllPinLinks()`, and states its floor of two only as a menu gate.",
@@ -2145,16 +2145,16 @@
       "verdict": "have"
     },
     "GraphEditor::StartWatchingPin": {
-      "covered_by": "WATCHES: a named port whose value is reported every step",
+      "covered_by": "R1644 — `Document::set_watch` / `Watches` / `Reading`. A reading is per OCCURRENCE rather than per step, which is a consequence rather than a simplification: a port's value is a pure function of the document and the registers, so within one run it cannot differ between two moments",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_graph_editor_start_watching_pin",
+      "verdict": "have"
     },
     "GraphEditor::StopWatchingPin": {
-      "covered_by": "WATCHES: a named port whose value is reported every step",
+      "covered_by": "R1644 — `Document::set_watch` / `Watches` / `Reading`. A reading is per OCCURRENCE rather than per step, which is a consequence rather than a simplification: a port's value is a pure function of the document and the registers, so within one run it cannot differ between two moments — `Watches::unwatch`",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_graph_editor_stop_watching_pin",
+      "verdict": "have"
     },
     "GraphEditor::StraightenConnections": {
       "covered_by": "pinion_node_graph::arrange — Straighten::along(axis), which also REPORTS the links it could not straighten (Straightened::bent) where the reference moves what it can silently. R1631.",
@@ -2169,10 +2169,10 @@
       "verdict": "app-content"
     },
     "GraphEditor::ToggleBreakpoint": {
-      "covered_by": "BREAKPOINTS: R1600 gave the run a trace and the machine its registers; stopping at a node is the next thing",
+      "covered_by": "R1644 — `Document::set_breakpoint` / `Breakpoints`. A breakpoint is a `NodeSite`: a node in SOME SET of its occurrences, which the reference cannot address because it expands a macro into a copy per use before anything runs. It cannot change the run — the timeline is computed without reference to any breakpoint, which a pure run (R1600) is what buys — `Document::toggle_breakpoint`, which is about PRESENCE, the same line the reference draws",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_graph_editor_toggle_breakpoint",
+      "verdict": "have"
     },
     "GraphEditor::ZoomIn": {
       "covered_by": "editor navigation over a viewport the crate does not hold",
@@ -3309,10 +3309,10 @@
       "verdict": "app-content"
     },
     "schema::ClearPinWatch": {
-      "covered_by": "WATCHES: a named port whose value is reported every step",
+      "covered_by": "R1644 — `Document::set_watch` / `Watches` / `Reading`. A reading is per OCCURRENCE rather than per step, which is a consequence rather than a simplification: a port's value is a pure function of the document and the registers, so within one run it cannot differ between two moments — `Watches::unwatch`, the same verb as the graph editor's: one pin's watch dropped",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_graph_editor_stop_watching_pin",
+      "verdict": "have"
     },
     "schema::ConstructBasicPinTooltip": {
       "covered_by": "a port and a node carry a name and no description",
@@ -3369,10 +3369,10 @@
       "verdict": "have"
     },
     "schema::DoesSupportPinWatching": {
-      "covered_by": "WATCHES: a named port whose value is reported every step",
+      "covered_by": "R1644 — `Document::set_watch` / `Watches` / `Reading`. A reading is per OCCURRENCE rather than per step, which is a consequence rather than a simplification: a port's value is a pure function of the document and the registers, so within one run it cannot differ between two moments — the predicate, as a refusal: `WatchError::NotAValue` for a control port, checked at the document because only it knows the signature",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_schema_does_support_pin_watching",
+      "verdict": "have"
     },
     "schema::DropPinOnNode": {
       "covered_by": "dragging a pin onto a node and having the node grow one",
@@ -3627,10 +3627,10 @@
       "verdict": "app-content"
     },
     "schema::IsPinBeingWatched": {
-      "covered_by": "WATCHES: a named port whose value is reported every step",
+      "covered_by": "R1644 — `Document::set_watch` / `Watches` / `Reading`. A reading is per OCCURRENCE rather than per step, which is a consequence rather than a simplification: a port's value is a pure function of the document and the registers, so within one run it cannot differ between two moments — `Watches::contains`, and the occurrence is part of the address, so watching every occurrence is not watching one of them",
       "mechanism": "graph-schema",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_schema_is_pin_being_watched",
+      "verdict": "have"
     },
     "schema::IsPinDefaultValid": {
       "covered_by": "Document::set_port_value refuses a value the port's type cannot hold, and names the port",
@@ -3909,16 +3909,16 @@
       "verdict": "absent"
     },
     "script_editor::ClearAllBreakpoints": {
-      "covered_by": "breakpoints on nodes",
+      "covered_by": "R1644 — `Document::set_breakpoint` / `Breakpoints`. A breakpoint is a `NodeSite`: a node in SOME SET of its occurrences, which the reference cannot address because it expands a macro into a copy per use before anything runs. It cannot change the run — the timeline is computed without reference to any breakpoint, which a pure run (R1600) is what buys — `Breakpoints::clear`, answering how many were forgotten",
       "mechanism": "script-editor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_script_editor_clear_all_breakpoints",
+      "verdict": "have"
     },
     "script_editor::ClearAllWatches": {
-      "covered_by": "watched pins",
+      "covered_by": "R1644 — `Document::set_watch` / `Watches` / `Reading`. A reading is per OCCURRENCE rather than per step, which is a consequence rather than a simplification: a port's value is a pure function of the document and the registers, so within one run it cannot differ between two moments — `Watches::clear`",
       "mechanism": "script-editor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_script_editor_clear_all_watches",
+      "verdict": "have"
     },
     "script_editor::CompileBlueprint": {
       "covered_by": "a graph here is INTERPRETED (`Document::run`) and never lowered to a separate artifact, so there is no compile step, no compiled/dirty state and no compile-time diagnostic list",
@@ -3933,10 +3933,10 @@
       "verdict": "app-content"
     },
     "script_editor::DisableAllBreakpoints": {
-      "covered_by": "breakpoints on nodes",
+      "covered_by": "R1644 — `Document::set_breakpoint` / `Breakpoints`. A breakpoint is a `NodeSite`: a node in SOME SET of its occurrences, which the reference cannot address because it expands a macro into a copy per use before anything runs. It cannot change the run — the timeline is computed without reference to any breakpoint, which a pure run (R1600) is what buys — `Breakpoints::disable_all`",
       "mechanism": "script-editor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_script_editor_disable_all_breakpoints",
+      "verdict": "have"
     },
     "script_editor::DumpCachedIndexData": {
       "covered_by": "the visual script search index",
@@ -3945,10 +3945,10 @@
       "verdict": "app-content"
     },
     "script_editor::EnableAllBreakpoints": {
-      "covered_by": "breakpoints on nodes",
+      "covered_by": "R1644 — `Document::set_breakpoint` / `Breakpoints`. A breakpoint is a `NodeSite`: a node in SOME SET of its occurrences, which the reference cannot address because it expands a macro into a copy per use before anything runs. It cannot change the run — the timeline is computed without reference to any breakpoint, which a pure run (R1600) is what buys — `Breakpoints::enable_all`, counting what CHANGED rather than what is armed",
       "mechanism": "script-editor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_script_editor_enable_all_breakpoints",
+      "verdict": "have"
     },
     "script_editor::EnableSimulation": {
       "covered_by": "simulating the previewed actor",
@@ -4005,10 +4005,10 @@
       "verdict": "have"
     },
     "script_editor::OpenBlueprintDebugger": {
-      "covered_by": "a debugger surface over a running graph; R1599/R1600 gave `run` and `tick` and nothing observes them from outside",
+      "covered_by": "R1644 — `Document::paused` / `Session` / `Paused`: position, halt, the step about to run, the call stack, the prefix taken and the watched values, in one read. And the session is a VALUE — marks, watches and position survive the wire together, where the reference keeps its breakpoints in the asset and its position nowhere",
       "mechanism": "script-editor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_script_editor_open_blueprint_debugger",
+      "verdict": "have"
     },
     "script_editor::RefreshAllNodes": {
       "covered_by": "`Document::signature` is derived from `NodeKind` on every read, so the whole-graph refresh is the per-node one applied everywhere",
