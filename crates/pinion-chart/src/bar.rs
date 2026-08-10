@@ -93,8 +93,9 @@ use crate::draw::{
     CalloutRow, MUTED_ALPHA, absolute, box_node, callout, category_label_node, fill_parent,
     outline_box, plot_rect, to_f32, to_u32,
 };
+use crate::fit::Fitted;
 use crate::palette::CategoricalPalette;
-use crate::plot::axis_format;
+use crate::plot::{axis_format, axis_ticks};
 use crate::scale::{Categories, CategoryScale, CategoryWindow, LinearScale, ValueScale};
 use crate::style::ChartStyle;
 use crate::ticks::{TickFormat, format_axis_tick, nice_ticks, tick_step};
@@ -479,6 +480,10 @@ impl BarChart {
         // tests can and do check is that each surviving slot is labelled with
         // its OWN category under a window, where an off-by-one would show.
         let x_format = axis_format(&g.x_axis(), &[]);
+        // R1633 — the bars are drawn for every visible slot, the NAMES only for
+        // the slots that clear each other.
+        let x_fit = axis_ticks(&g.x_axis(), style.x_ticks, &style.room_x());
+        let labelled = crate::fit::labelled_indices(&x_fit);
         for i in visible_indices(&g) {
             let bar = &self.bars[i];
             let (_, bar_rect) = self.bar_slot_center_and_rect(&g, i);
@@ -499,8 +504,14 @@ impl BarChart {
                 };
                 children.push(box_node(r, color, format!("{}.bar.{i}", self.tag_prefix)));
             }
-            // Category label centred under the slot (always, even for a
-            // non-finite bar, so the axis stays legible).
+            // Category label centred under the slot — R1633: for the slots
+            // whose labels clear each other. Before this round it was every
+            // slot, "always, even for a non-finite bar, so the axis stays
+            // legible", which stops being legible the moment there are more
+            // names than room.
+            if !labelled.contains(&i) {
+                continue;
+            }
             children.push(category_label_node(
                 &g.x,
                 i,
@@ -561,7 +572,14 @@ impl BarChart {
             }
         }
 
-        derivations::chart_root(children, self.tag_prefix.clone(), self.derivations())
+        // R1633 — the label fit is GEOMETRY, and `derivations()` answers
+        // without any, so its reports join the set here.
+        let fitted = self.derivations().stating_all(
+            [("x", &x_fit), ("y", &g.y_fit)]
+                .into_iter()
+                .flat_map(|(axis, f)| derivations::fit_reports(axis, f)),
+        );
+        derivations::chart_root(children, self.tag_prefix.clone(), fitted)
     }
 
     /// The plot geometry, value scale, y-tick set, and slot metrics every bar,
@@ -579,7 +597,12 @@ impl BarChart {
         // plot edges; a pinned domain is honoured verbatim.
         let (y_lo, y_hi) = self.y_domain_snapped(style.y_ticks);
         let y = LinearScale::new((y_lo, y_hi), (bottom, top));
-        let y_ticks = nice_ticks(y_lo, y_hi, style.y_ticks);
+        // R1633 — through the fit like every other axis, rather than calling
+        // the tick generator directly: this was the fourth site in the crate
+        // reaching past `axis_ticks`, and a bar chart's value axis stacks its
+        // labels exactly as a line chart's does.
+        let y_fit = axis_ticks(&ValueScale::Linear(y), style.y_ticks, &style.room_y());
+        let y_ticks = y_fit.ticks().to_vec();
         let y_step = tick_step(&y_ticks);
         // The baseline the bars grow from — 0 when it is in the domain, else
         // the nearer domain edge.
@@ -600,6 +623,7 @@ impl BarChart {
             bottom,
             y,
             y_ticks,
+            y_fit,
             y_step,
             baseline_y,
             x,
@@ -750,6 +774,8 @@ struct BarGeom {
     bottom: f32,
     y: LinearScale,
     y_ticks: Vec<f64>,
+    /// R1633 — the y axis's fit, kept so the chart can report it.
+    y_fit: Fitted,
     y_step: f64,
     baseline_y: f32,
     /// R1545 — the categorical x-axis. Every slot position in this file used

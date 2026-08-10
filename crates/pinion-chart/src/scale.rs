@@ -845,7 +845,7 @@ pub(crate) fn index_value(index: usize) -> f64 {
     clippy::cast_sign_loss,
     reason = "clamped by the caller into a valid category index range, so the truncation is exact and the value non-negative"
 )]
-fn to_usize(v: f64) -> usize {
+pub(crate) fn to_usize(v: f64) -> usize {
     v as usize
 }
 

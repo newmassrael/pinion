@@ -366,8 +366,9 @@ impl ScatterChart {
             Rescale::default(),
             &self.kinds,
         );
-        let x_ticks = axis_ticks(&plot.x, style.x_ticks);
-        let y_ticks = axis_ticks(&plot.y, style.y_ticks);
+        let x_fit = axis_ticks(&plot.x, style.x_ticks, &style.room_x());
+        let y_fit = axis_ticks(&plot.y, style.y_ticks, &style.room_y());
+        let (x_ticks, y_ticks) = (x_fit.ticks().to_vec(), y_fit.ticks().to_vec());
         let steps = Steps {
             x: axis_format(&plot.x, &x_ticks),
             y: axis_format(&plot.y, &y_ticks),
@@ -424,7 +425,16 @@ impl ScatterChart {
         }
         children.extend(tooltip);
 
-        derivations::chart_root(children, self.tag_prefix.clone(), self.derivations())
+        // R1633 — the label fit is GEOMETRY, and `derivations()` is documented
+        // as answering without any. So the fit's reports join the set here,
+        // where the pixels are known, rather than making that method depend on
+        // a layout pass.
+        let fitted = self.derivations().stating_all(
+            [("x", &x_fit), ("y", &y_fit)]
+                .into_iter()
+                .flat_map(|(axis, f)| derivations::fit_reports(axis, f)),
+        );
+        derivations::chart_root(children, self.tag_prefix.clone(), fitted)
     }
 
     /// One filled circle per finite, in-domain point of every series. A point
@@ -613,8 +623,14 @@ impl ScatterChart {
             Rescale::default(),
             &self.kinds,
         );
-        let x_step = axis_format(&plot.x, &axis_ticks(&plot.x, style.x_ticks));
-        let y_step = axis_format(&plot.y, &axis_ticks(&plot.y, style.y_ticks));
+        let x_step = axis_format(
+            &plot.x,
+            axis_ticks(&plot.x, style.x_ticks, &style.room_x()).ticks(),
+        );
+        let y_step = axis_format(
+            &plot.y,
+            axis_ticks(&plot.y, style.y_ticks, &style.room_y()).ticks(),
+        );
         let (focus_x, hits) = resolve_focus(&self.series, self.inspect?, &plot, rect)?;
         // Same y-domain visibility filter the painted overlay applies, so the
         // readout names the SAME points the tooltip does (R1355 parity).

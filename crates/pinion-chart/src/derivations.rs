@@ -76,6 +76,13 @@ pub(crate) mod name {
     pub const DENSITY: &str = "density";
     /// How violin widths are scaled against one another.
     pub const VIOLIN_SCALE: &str = "violin_scale";
+    /// R1633 — how an axis's labels were made to fit the room they have.
+    pub const LABEL_FIT: &str = "label_fit";
+    /// R1633 — ticks the axis drew a gridline for and no label.
+    pub const LABELS_OMITTED: &str = "labels_omitted";
+    /// R1633 — how many pixels the tightest surviving pair of labels still
+    /// overlaps by, when the fit could not succeed.
+    pub const LABEL_CROWDING: &str = "label_crowding";
 }
 
 /// The units a [`Evidence::Real`] is measured in.
@@ -84,6 +91,9 @@ pub(crate) mod unit {
     pub const VALUE: &str = "value";
     /// A share of a whole, in `0.0..=1.0`.
     pub const FRACTION: &str = "fraction";
+    /// Device pixels (R1633) — the units a label fit is decided in, and the
+    /// first unit here that is about the PICTURE rather than the data.
+    pub const PIXEL: &str = "pixel";
 }
 
 /// The index spaces a chart's spans count in. Shares
@@ -180,6 +190,59 @@ pub(crate) fn chosen_name(name: &'static str, value: &'static str) -> Derivation
     Derivation::new(DerivationKind::Chosen, name, Evidence::Name(value.into()))
 }
 
+/// R1633 — what one axis's label fit did, as derivations.
+///
+/// Three entries and each obeys this module's rule about when to speak:
+///
+/// * [`name::LABEL_FIT`] is [`Chosen`](DerivationKind::Chosen) and is **always**
+///   published, `fits` included. "Nothing was hidden" is the answer a reader
+///   needs before trusting values read off an axis, and it is unreachable from
+///   the picture — a thinned axis and a sparse one look identical.
+/// * [`name::LABELS_OMITTED`] is [`Omitted`](DerivationKind::Omitted) and
+///   exists only when a tick really did lose its label. A coarsened ladder
+///   publishes none, because it has fewer ticks rather than fewer labels.
+/// * [`name::LABEL_CROWDING`] is [`Discarded`](DerivationKind::Discarded): the
+///   caller asked for labels that clear each other and the geometry could not
+///   support it, so the reader acts by giving the axis room. Neither reference
+///   reports this state — both reach it and draw overlapping text.
+///
+/// The subject is the axis, so a client reads x and y apart without the two
+/// entries colliding.
+pub(crate) fn fit_reports(axis: &'static str, fitted: &crate::Fitted) -> Vec<Derivation> {
+    let subject = format!("axis.{axis}");
+    let mut out = vec![
+        Derivation::new(
+            DerivationKind::Chosen,
+            name::LABEL_FIT,
+            Evidence::Name(fitted.rule().as_str().into()),
+        )
+        .about(subject.clone()),
+    ];
+    let omitted = fitted.omitted().len();
+    if omitted > 0 {
+        out.push(
+            Derivation::new(
+                DerivationKind::Omitted,
+                name::LABELS_OMITTED,
+                Evidence::Count(omitted),
+            )
+            .about(subject.clone()),
+        );
+    }
+    if fitted.crowding() > 0 {
+        out.push(
+            Derivation::new(
+                DerivationKind::Discarded,
+                name::LABEL_CROWDING,
+                Evidence::Real(f64::from(fitted.crowding())),
+            )
+            .about(subject)
+            .in_units(unit::PIXEL),
+        );
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -271,6 +334,105 @@ mod chart_tests {
             .filter(|d| d.name() == name)
             .map(|d| (d.subject().map(ToOwned::to_owned), d.evidence().clone()))
             .collect()
+    }
+
+    /// ★ R1633 — the label fit reaches the SCENE, on both axes, and says which
+    /// rule it used.
+    ///
+    /// Published unconditionally, `fits` included: a client cannot tell a
+    /// thinned axis from a sparse one by looking, so "nothing was hidden" is
+    /// itself the answer. Both references hide a label with `setVisible(false)`
+    /// and leave nothing to ask.
+    #[test]
+    fn r1633_every_axis_publishes_how_its_labels_were_fitted() {
+        let points: Vec<DataPoint> = (0..40)
+            .map(|i| DataPoint::new(f64::from(i), f64::from(i % 7)))
+            .collect();
+        let chart = LineChart::new(vec![Series::new("s", points)]);
+        let set = published(&chart.build(RECT, &ChartStyle::default()));
+
+        let fits = entries(&set, DerivationKind::Chosen, name::LABEL_FIT);
+        let axes: Vec<Option<String>> = fits.iter().map(|(s, _)| s.clone()).collect();
+        assert_eq!(
+            axes,
+            vec![Some("axis.x".to_owned()), Some("axis.y".to_owned())],
+            "both axes answer, and separately"
+        );
+        for (_, evidence) in &fits {
+            assert!(
+                matches!(evidence, Evidence::Name(_)),
+                "the rule is a NAME a client matches: {evidence:?}"
+            );
+        }
+        // ★ And NOTHING was omitted, which has to be an ABSENCE rather than a
+        // zero: a client filtering for omissions must get an empty answer
+        // exactly when the picture leaves nothing off, and publishing `0` would
+        // make "did this axis hide a label" answer yes for every chart ever
+        // drawn. The same rule this module states for `spill`.
+        assert!(
+            entries(&set, DerivationKind::Omitted, name::LABELS_OMITTED).is_empty(),
+            "a ladder axis with room omits nothing, and says so by silence"
+        );
+        assert!(
+            entries(&set, DerivationKind::Discarded, name::LABEL_CROWDING).is_empty(),
+            "and it is not crowded either"
+        );
+    }
+
+    /// ★ A **category** axis with more slots than room omits labels, and the
+    /// omission is a count on the wire.
+    ///
+    /// The discriminator is in the same test: the identical chart in six times
+    /// the width omits none, so "it omits" is not something it does to every
+    /// bar chart.
+    #[test]
+    fn r1633_a_crowded_category_axis_publishes_what_it_did_not_label() {
+        let chart = BoxPlotChart::new(
+            (0..30)
+                .map(|i| {
+                    Distribution::from_samples(
+                        format!("endpoint-{i}"),
+                        &[1.0, 2.0, 3.0, 4.0, 5.0],
+                        QuantileMethod::Linear,
+                    )
+                    .expect("five samples make a distribution")
+                })
+                .collect(),
+        );
+        let narrow = published(&chart.build(Rect::new(0, 0, 240, 200), &ChartStyle::default()));
+        let wide = published(&chart.build(Rect::new(0, 0, 1600, 900), &ChartStyle::default()));
+
+        let count = |set: &DerivationSet| -> usize {
+            entries(set, DerivationKind::Omitted, name::LABELS_OMITTED)
+                .into_iter()
+                .filter(|(subject, _)| subject.as_deref() == Some("axis.x"))
+                .map(|(_, evidence)| match evidence {
+                    Evidence::Count(n) => n,
+                    other => panic!("an omission is a count: {other:?}"),
+                })
+                .sum()
+        };
+        let tight = count(&narrow);
+        let roomy = count(&wide);
+        assert!(
+            tight > 0,
+            "★ thirty endpoint names do not fit 240 pixels, and the wire says \
+             how many were left off"
+        );
+        assert!(
+            roomy < tight,
+            "★ and the SAME chart in 1600 pixels omits fewer — without this the \
+             assertion above would hold for a pass that omitted everything: \
+             {tight} vs {roomy}"
+        );
+        assert!(
+            entries(&narrow, DerivationKind::Chosen, name::LABEL_FIT)
+                .iter()
+                .any(|(subject, evidence)| subject.as_deref() == Some("axis.x")
+                    && matches!(evidence, Evidence::Name(n) if n == "strided")),
+            "and it says the rule was a stride, which is the arm a category \
+             axis has and a ladder axis does not"
+        );
     }
 
     /// A plateau and then a jump — the case every spline overshoots, and the

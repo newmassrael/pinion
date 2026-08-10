@@ -727,8 +727,12 @@ impl LineChart {
         let (y_lo, y_hi) = plot.y.domain();
         // One tick-set resolver, shared with `inspect_readout` so the
         // painted axis and the AT readout format at the same precision.
-        let x_ticks = axis_ticks(&plot.x, style.x_ticks);
-        let y_ticks = axis_ticks(&plot.y, style.y_ticks);
+        // R1633 — the fit is part of resolving the axis, so the grid and the
+        // labels come from one pass: `ticks()` is every tick (the grid) and
+        // `labelled()` is the subset that clears its neighbours.
+        let x_fit = axis_ticks(&plot.x, style.x_ticks, &style.room_x());
+        let y_fit = axis_ticks(&plot.y, style.y_ticks, &style.room_y());
+        let (x_ticks, y_ticks) = (x_fit.ticks().to_vec(), y_fit.ticks().to_vec());
         let baseline = clamp(0.0, y_lo, y_hi);
         // The label precision each axis formats at (R1359: `format_si` alone
         // collapsed every sub-0.1 step onto one rounded digit; R1528: a log
@@ -757,7 +761,14 @@ impl LineChart {
         children.extend(self.axes(&plot, style));
         children.extend(self.series_layer(&plot, baseline, style));
         children.extend(markers);
-        children.extend(self.tick_labels(&plot, rect, &x_ticks, &y_ticks, style, &steps));
+        children.extend(self.tick_labels(
+            &plot,
+            rect,
+            x_fit.labelled(),
+            y_fit.labelled(),
+            style,
+            &steps,
+        ));
         if style.legend {
             // R1440 — one colour legend, never two: a value encoding replaces
             // the series swatch row with the colour bar, because the swatches
@@ -776,7 +787,16 @@ impl LineChart {
         }
         children.extend(tooltip);
 
-        derivations::chart_root(children, self.tag_prefix.clone(), self.derivations())
+        // R1633 — the label fit is GEOMETRY, and `derivations()` is documented
+        // as answering without any. So the fit's reports join the set here,
+        // where the pixels are known, rather than making that method depend on
+        // a layout pass.
+        let fitted = self.derivations().stating_all(
+            [("x", &x_fit), ("y", &y_fit)]
+                .into_iter()
+                .flat_map(|(axis, f)| derivations::fit_reports(axis, f)),
+        );
+        derivations::chart_root(children, self.tag_prefix.clone(), fitted)
     }
 
     /// R1629 §2 #7 — everything this chart's drawing did that the drawing
@@ -1271,8 +1291,12 @@ impl LineChart {
             self.rescale(),
             &self.kinds,
         );
-        let x_ticks: Vec<f64> = axis_ticks(&plot.x, style.x_ticks);
-        let y_ticks: Vec<f64> = axis_ticks(&plot.y, style.y_ticks);
+        let x_ticks: Vec<f64> = axis_ticks(&plot.x, style.x_ticks, &style.room_x())
+            .ticks()
+            .to_vec();
+        let y_ticks: Vec<f64> = axis_ticks(&plot.y, style.y_ticks, &style.room_y())
+            .ticks()
+            .to_vec();
         let steps = Steps {
             x: axis_format(&plot.x, &x_ticks),
             y: axis_format(&plot.y, &y_ticks),

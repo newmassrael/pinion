@@ -62,6 +62,7 @@ use crate::draw::{
     outline_box, plot_rect, polygon_node, stroke_path, to_f32, to_u32,
 };
 // R1626 — the crate's one f64 -> f32 narrowing, rather than a third copy of it.
+use crate::fit::Fitted;
 use crate::palette::CategoricalPalette;
 use crate::plot::{
     axis_domain, axis_format, axis_minor_ticks, axis_scale, axis_ticks, kind_extent, tick_pixels,
@@ -617,7 +618,7 @@ impl BoxPlotChart {
         }
 
         let frame = (g.left, g.right, g.top, g.bottom);
-        let y_pos = tick_pixels(&g.y, &g.y_ticks);
+        let y_pos = tick_pixels(&g.y, g.y_ticks.labelled());
         // A log value axis needs its per-decade subdivisions, for R1528's
         // reason: evenly spaced decade lines read as a linear axis without
         // them. A linear axis produces none, so this is one call either way.
@@ -640,8 +641,17 @@ impl BoxPlotChart {
 
         let size = style.label_size_px.max(1);
         let x_format = axis_format(&g.x_axis(), &[]);
+        // R1633 — the slot MARKS are drawn for every visible slot and the slot
+        // LABELS only for the ones that clear each other. The two were one loop
+        // before this round, which is why a dense category axis drew its names
+        // on top of one another.
+        let x_fit = axis_ticks(&g.x_axis(), style.x_ticks, &style.room_x());
+        let labelled = crate::fit::labelled_indices(&x_fit);
         for i in visible_indices(&g) {
             children.extend(self.marks_for(&g, i, style));
+            if !labelled.contains(&i) {
+                continue;
+            }
             children.push(category_label_node(
                 &g.x,
                 i,
@@ -659,7 +669,7 @@ impl BoxPlotChart {
         }
         children.extend(crate::draw::y_tick_labels(
             rect.x,
-            &g.y_ticks,
+            g.y_ticks.labelled(),
             &y_pos,
             &g.y_format(),
             style,
@@ -667,7 +677,16 @@ impl BoxPlotChart {
         ));
         children.extend(tooltip);
 
-        derivations::chart_root(children, self.tag_prefix.clone(), self.derivations())
+        // R1633 — the label fit is GEOMETRY, and `derivations()` is documented
+        // as answering without any. So the fit's reports join the set here,
+        // where the pixels are known, rather than making that method depend on
+        // a layout pass.
+        let fitted = self.derivations().stating_all(
+            [("x", &x_fit), ("y", &g.y_ticks)]
+                .into_iter()
+                .flat_map(|(axis, f)| derivations::fit_reports(axis, f)),
+        );
+        derivations::chart_root(children, self.tag_prefix.clone(), fitted)
     }
 
     /// Every mark of distribution `i`: the box, its median, the two whiskers
@@ -889,7 +908,7 @@ impl BoxPlotChart {
             .unwrap_or_else(|| kind_extent(&self.y_kind));
         let dom = axis_domain(self.y_domain, raw, style.y_ticks, &self.y_kind);
         let y = axis_scale(dom, (bottom, top), &self.y_kind);
-        let y_ticks = axis_ticks(&y, style.y_ticks);
+        let y_ticks = axis_ticks(&y, style.y_ticks, &style.room_y());
 
         let domain = self
             .x_window
@@ -1013,7 +1032,7 @@ impl BoxPlotChart {
         let g = self.geom(rect, style);
         let idx = self.resolve_focus(&g, rect)?;
         let d = self.distributions.get(idx)?;
-        Some(d.readout(tick_step(&g.y_ticks)))
+        Some(d.readout(tick_step(g.y_ticks.ticks())))
     }
 }
 
@@ -1026,7 +1045,7 @@ struct BoxGeom {
     top: f32,
     bottom: f32,
     y: ValueScale,
-    y_ticks: Vec<f64>,
+    y_ticks: Fitted,
     x: CategoryScale,
     box_w: f32,
 }
@@ -1041,7 +1060,7 @@ impl BoxGeom {
     /// The value axis's label format — per-magnitude on a log axis, the
     /// constant tick step on a linear one (R1528).
     fn y_format(&self) -> TickFormat {
-        axis_format(&self.y, &self.y_ticks)
+        axis_format(&self.y, self.y_ticks.ticks())
     }
 }
 

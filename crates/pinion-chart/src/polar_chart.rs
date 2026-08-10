@@ -364,22 +364,37 @@ impl PolarChart {
     /// entry points wrap.
     fn build_body(&self, rect: Rect, style: &ChartStyle) -> ContainerNode {
         let plot = self.plot(rect, style);
-        let radial_ticks = axis_ticks(&plot.radial, style.y_ticks);
+        let radial_ticks = axis_ticks(&plot.radial, style.y_ticks, &style.room_y());
         let angular_ticks = self.angular_ticks(style);
 
         let mut children: Vec<Scene> = Vec::new();
         if let Some(bg) = style.background {
             children.push(box_node(rect, bg, format!("{}.bg", self.tag_prefix)));
         }
-        children.extend(self.grid(&plot, &radial_ticks, &angular_ticks, style));
+        children.extend(self.grid(&plot, radial_ticks.ticks(), &angular_ticks, style));
         children.extend(self.marks(&plot, style));
-        children.extend(self.tick_labels(&plot, &radial_ticks, &angular_ticks, rect, style));
+        children.extend(self.tick_labels(
+            &plot,
+            radial_ticks.labelled(),
+            &angular_ticks,
+            rect,
+            style,
+        ));
         if style.legend {
             children.extend(self.legend(rect, style));
         }
-        children.extend(self.overlay(&plot, &radial_ticks, style));
+        children.extend(self.overlay(&plot, radial_ticks.ticks(), style));
 
-        derivations::chart_root(children, self.tag_prefix.clone(), self.derivations())
+        // R1633 — the label fit is GEOMETRY, and `derivations()` is documented
+        // as answering without any. So the fit's reports join the set here,
+        // where the pixels are known, rather than making that method depend on
+        // a layout pass.
+        let fitted = self.derivations().stating_all(
+            [("radial", &radial_ticks)]
+                .into_iter()
+                .flat_map(|(axis, f)| derivations::fit_reports(axis, f)),
+        );
+        derivations::chart_root(children, self.tag_prefix.clone(), fitted)
     }
 
     /// The rings, the spokes and the rim.
@@ -650,8 +665,8 @@ impl PolarChart {
     pub fn inspect_readout(&self, rect: Rect, style: &ChartStyle) -> Option<String> {
         let angular = self.inspect?;
         let plot = self.plot(rect, style);
-        let ticks = axis_ticks(&plot.radial, style.y_ticks);
-        let radial_format = axis_format(&plot.radial, &ticks);
+        let ticks = axis_ticks(&plot.radial, style.y_ticks, &style.room_y());
+        let radial_format = axis_format(&plot.radial, ticks.ticks());
         let fraction = self.angular.fraction(angular)?;
         let head = self
             .angular_format(&self.angular_ticks(style))

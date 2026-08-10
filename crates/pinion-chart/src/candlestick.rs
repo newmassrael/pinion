@@ -73,6 +73,7 @@ use crate::draw::{
     CalloutRow, absolute, box_node, callout, category_label_node, fill_parent, outline_box,
     plot_rect, polygon_node, stroke_path, to_f32, to_u32, x_tick_labels,
 };
+use crate::fit::Fitted;
 use crate::plot::{
     axis_domain, axis_format, axis_minor_ticks, axis_scale, axis_ticks, kind_extent, tick_pixels,
 };
@@ -527,7 +528,7 @@ impl CandlestickChart {
         }
 
         let frame = (g.left, g.right, g.top, g.bottom);
-        let y_pos = tick_pixels(&g.y, &g.y_ticks);
+        let y_pos = tick_pixels(&g.y, g.y_ticks.labelled());
         // A log value axis needs its per-decade subdivisions (R1528); a linear
         // one produces none, so this is one call either way.
         let minor_pos = tick_pixels(&g.y, &axis_minor_ticks(&g.y));
@@ -540,7 +541,7 @@ impl CandlestickChart {
         ));
         // The elapsed reading has numeric x-gridlines; the ordinal reading has
         // none, for the bar chart's reason — a slot boundary is not a value.
-        let x_pos = tick_pixels(&g.x, &g.x_ticks);
+        let x_pos = tick_pixels(&g.x, g.x_ticks.labelled());
         children.extend(crate::draw::gridlines(
             frame,
             &x_pos,
@@ -560,7 +561,7 @@ impl CandlestickChart {
         }
         children.extend(crate::draw::y_tick_labels(
             rect.x,
-            &g.y_ticks,
+            g.y_ticks.labelled(),
             &y_pos,
             &g.y_format(),
             style,
@@ -568,7 +569,16 @@ impl CandlestickChart {
         ));
         children.extend(tooltip);
 
-        derivations::chart_root(children, self.tag_prefix.clone(), self.derivations())
+        // R1633 — the label fit is GEOMETRY, and `derivations()` is documented
+        // as answering without any. So the fit's reports join the set here,
+        // where the pixels are known, rather than making that method depend on
+        // a layout pass.
+        let fitted = self.derivations().stating_all(
+            [("x", &g.x_ticks), ("y", &g.y_ticks)]
+                .into_iter()
+                .flat_map(|(axis, f)| derivations::fit_reports(axis, f)),
+        );
+        derivations::chart_root(children, self.tag_prefix.clone(), fitted)
     }
 
     /// The x-axis labels — one per drawn slot on the ordinal reading, one per
@@ -576,27 +586,33 @@ impl CandlestickChart {
     /// questions; see the module doc.
     fn x_labels(&self, g: &CandleGeom, rect: Rect, style: &ChartStyle) -> Vec<Scene> {
         let size = style.label_size_px.max(1);
-        let format = axis_format(&g.x, &g.x_ticks);
+        let format = axis_format(&g.x, g.x_ticks.ticks());
         match g.x.category() {
-            Some(cat) => self
-                .drawn_indices(g)
-                .into_iter()
-                .map(|i| {
-                    category_label_node(
-                        cat,
-                        i,
-                        g.left,
-                        g.bottom,
-                        &format,
-                        style.label,
-                        size,
-                        &self.tag_prefix,
-                    )
-                })
-                .collect(),
+            // R1633 — an ordinal session axis is a category axis, so its names
+            // thin the same way. Its ticks are not `g.x_ticks` (that field is
+            // empty on this arm by construction), so the fit is taken here over
+            // the axis itself.
+            Some(cat) => {
+                crate::fit::labelled_indices(&axis_ticks(&g.x, style.x_ticks, &style.room_x()))
+                    .into_iter()
+                    .filter(|i| self.drawn_indices(g).contains(i))
+                    .map(|i| {
+                        category_label_node(
+                            cat,
+                            i,
+                            g.left,
+                            g.bottom,
+                            &format,
+                            style.label,
+                            size,
+                            &self.tag_prefix,
+                        )
+                    })
+                    .collect()
+            }
             None => x_tick_labels(
                 &g.x,
-                &g.x_ticks,
+                g.x_ticks.labelled(),
                 g.bottom,
                 rect,
                 &format,
@@ -883,7 +899,7 @@ impl CandlestickChart {
             .unwrap_or_else(|| kind_extent(&self.y_kind));
         let dom = axis_domain(self.y_domain, raw, style.y_ticks, &self.y_kind);
         let y = axis_scale(dom, (bottom, top), &self.y_kind);
-        let y_ticks = axis_ticks(&y, style.y_ticks);
+        let y_ticks = axis_ticks(&y, style.y_ticks, &style.room_y());
 
         let (x, x_ticks, body_w) = match self.reading {
             SessionAxis::Ordinal => {
@@ -892,11 +908,11 @@ impl CandlestickChart {
                     .map_or_else(|| self.sessions.extent(), CategoryWindow::domain);
                 let cat = CategoryScale::new(self.sessions.clone(), domain, (left, right));
                 let w = (cat.band_width() * BODY_WIDTH_FRAC).max(1.0);
-                (ValueScale::Category(cat), Vec::new(), w)
+                (ValueScale::Category(cat), Fitted::empty(), w)
             }
             SessionAxis::Elapsed => {
                 let scale = self.elapsed_scale((left, right), style);
-                let ticks = axis_ticks(&scale, style.x_ticks);
+                let ticks = axis_ticks(&scale, style.x_ticks, &style.room_x());
                 let w = self.elapsed_body_width(&scale, (left, right));
                 (scale, ticks, w)
             }
@@ -1061,7 +1077,7 @@ impl CandlestickChart {
         let g = self.geom(rect, style);
         let idx = self.resolve_focus(&g, rect)?;
         let c = self.candles.get(idx)?;
-        Some(c.readout(tick_step(&g.y_ticks)))
+        Some(c.readout(tick_step(g.y_ticks.ticks())))
     }
 }
 
@@ -1098,14 +1114,14 @@ struct CandleGeom {
     top: f32,
     bottom: f32,
     y: ValueScale,
-    y_ticks: Vec<f64>,
+    y_ticks: Fitted,
     /// The x-axis: `Category` on the ordinal reading, `Time` on the elapsed
     /// one. Which arm it is *is* the reading, so nothing downstream carries a
     /// second copy of that choice.
     x: ValueScale,
     /// Empty on the ordinal reading, where labels are per-slot rather than
     /// per-tick.
-    x_ticks: Vec<f64>,
+    x_ticks: Fitted,
     body_w: f32,
 }
 
@@ -1113,7 +1129,7 @@ impl CandleGeom {
     /// The value axis's label format — per-magnitude on a log axis, the
     /// constant tick step on a linear one (R1528).
     fn y_format(&self) -> TickFormat {
-        axis_format(&self.y, &self.y_ticks)
+        axis_format(&self.y, self.y_ticks.ticks())
     }
 }
 

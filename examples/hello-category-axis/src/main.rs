@@ -85,6 +85,47 @@ const MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
 
+/// R1633 — the **dense** axis: thirty service endpoints, the shape an
+/// analyzer-class dashboard's category axis actually has.
+///
+/// Twelve three-letter months fit any window this example opens, so until this
+/// list existed nothing in the tree forced a category axis to have more labels
+/// than room — which is why `pinion_chart` drew every one of them on top of the
+/// next from R1374 until R1633. A forcing consumer that only exercises the easy
+/// arity is not forcing the axis.
+const ENDPOINTS: [&str; 30] = [
+    "/health",
+    "/login",
+    "/logout",
+    "/session",
+    "/refresh",
+    "/profile",
+    "/avatar",
+    "/settings",
+    "/search",
+    "/index",
+    "/upload",
+    "/download",
+    "/thumbnail",
+    "/transcode",
+    "/notify",
+    "/subscribe",
+    "/publish",
+    "/metrics",
+    "/trace",
+    "/audit",
+    "/billing",
+    "/invoice",
+    "/refund",
+    "/webhook",
+    "/callback",
+    "/export",
+    "/import",
+    "/purge",
+    "/status",
+    "/version",
+];
+
 /// Revenue per month (thousands) — the bar chart's values.
 const REVENUE: [f64; 12] = [
     182.0, 164.0, 219.0, 248.0, 231.0, 276.0, 198.0, 205.0, 262.0, 288.0, 301.0, 344.0,
@@ -120,10 +161,19 @@ const PRESETS: [Preset; 3] = [
 const BAR_RECT: Rect = Rect::new(16, 56, WIN_W - 32, 226);
 const LINE_RECT: Rect = Rect::new(16, 290, WIN_W - 32, 176);
 
+/// The axis's category names, dense or not (R1633).
+///
+/// One function, so the charts, the window resolution and the caption cannot
+/// disagree about which axis is on screen — the same reason `months` was one
+/// place before it took an argument.
+fn axis_names(dense: bool) -> &'static [&'static str] {
+    if dense { &ENDPOINTS } else { &MONTHS }
+}
+
 /// The one place the category list is built, so both charts and the window
 /// resolution read the same axis.
-fn months() -> Categories {
-    Categories::new(MONTHS)
+fn months(dense: bool) -> Categories {
+    Categories::new(axis_names(dense).iter().copied())
 }
 
 /// The categorical x-axis window, requested by category NAME (the toolkit's
@@ -137,6 +187,10 @@ fn months() -> Categories {
 struct CategoryWindowExternal {
     /// The requested `(from, to)` names. `None` = every category in view.
     request: Option<(String, String)>,
+    /// R1633 — whether the axis is the **dense** one. A window request is by
+    /// NAME, and the two lists share none, so switching clears the request
+    /// rather than leaving one that cannot resolve.
+    dense: bool,
 }
 
 impl CategoryWindowExternal {
@@ -146,7 +200,7 @@ impl CategoryWindowExternal {
     fn resolve(&self) -> Result<Option<CategoryWindow>, String> {
         match &self.request {
             None => Ok(None),
-            Some((from, to)) => months()
+            Some((from, to)) => months(self.dense)
                 .window(from, to)
                 .map(Some)
                 .map_err(|e| e.to_string()),
@@ -168,15 +222,16 @@ impl CategoryWindowExternal {
         let Ok(Some(w)) = self.resolve() else {
             return false;
         };
-        let last = index_i64(MONTHS.len() - 1);
+        let names = axis_names(self.dense);
+        let last = index_i64(names.len() - 1);
         let span = index_i64(w.hi()) - index_i64(w.lo());
         let lo = (index_i64(w.lo()) + delta).clamp(0, last - span);
         if lo == index_i64(w.lo()) {
             return false;
         }
         self.request = Some((
-            MONTHS[usize_of(lo)].to_string(),
-            MONTHS[usize_of(lo + span)].to_string(),
+            names[usize_of(lo)].to_string(),
+            names[usize_of(lo + span)].to_string(),
         ));
         true
     }
@@ -256,6 +311,7 @@ impl ExternalIntrospect for CategoryWindowExternal {
                     SchemaField::new("range", "string"),
                     SchemaField::new("reset", "bool"),
                     SchemaField::new("pan", "bool"),
+                    SchemaField::new("dense", "bool"),
                 ]
             },
         )
@@ -274,11 +330,14 @@ impl ExternalIntrospect for CategoryWindowExternal {
             // toolkit peer.
             "visible" => Some(IntrospectValue::Int(match self.resolve() {
                 Ok(Some(w)) => index_i64(w.len()),
-                _ => index_i64(MONTHS.len()),
+                _ => index_i64(axis_names(self.dense).len()),
             })),
             "error" => Some(IntrospectValue::Text(
                 self.resolve().err().unwrap_or_default(),
             )),
+            // R1633 — which axis is on. A bool and not a count, because the
+            // count is derivable and this is the request.
+            "dense" => Some(IntrospectValue::Bool(self.dense)),
             _ => None,
         }
     }
@@ -299,6 +358,19 @@ impl ExternalIntrospect for CategoryWindowExternal {
         args: IntrospectValue,
     ) -> Result<IntrospectValue, InvokeError> {
         match path {
+            // R1633 — swap the axis for the dense one. The request is by NAME
+            // and the two lists share none, so the window is CLEARED rather
+            // than left holding one that cannot resolve — the same refusal
+            // discipline the range verb has, applied to the state change that
+            // would invalidate it.
+            "dense" => {
+                let IntrospectValue::Bool(on) = args else {
+                    return Err(InvokeError::TypeMismatch);
+                };
+                self.dense = on;
+                self.request = None;
+                Ok(IntrospectValue::Int(index_i64(axis_names(on).len())))
+            }
             "range" => {
                 let IntrospectValue::Json(v) = args else {
                     return Err(InvokeError::TypeMismatch);
@@ -340,6 +412,8 @@ struct WindowState {
     unresolved: bool,
     /// Which [`PRESETS`] entry the current request matches.
     active_preset: Option<usize>,
+    /// R1633 — whether the dense axis is on.
+    dense: bool,
 }
 
 /// Read the window off the scene's external. An absent external shows every
@@ -353,6 +427,7 @@ fn read_window(scene: &Scene) -> WindowState {
             window: None,
             unresolved: false,
             active_preset: Some(0),
+            dense: false,
         };
     };
     let text = |field: &str| match intro.query(field) {
@@ -368,6 +443,7 @@ fn read_window(scene: &Scene) -> WindowState {
     WindowState {
         window: (lo >= 0 && hi >= 0).then(|| CategoryWindow::new(usize_of(lo), usize_of(hi))),
         unresolved: !text("error").is_empty(),
+        dense: matches!(intro.query("dense"), Some(IntrospectValue::Bool(true))),
         active_preset: PRESETS.iter().position(|(_, _, r)| match r {
             None => from.is_empty() && to.is_empty(),
             Some((f, t)) => from == *f && to == *t,
@@ -390,11 +466,14 @@ fn chart_style(theme: &Theme, legend: bool) -> ChartStyle {
 }
 
 /// The bar chart for a resolved window — the ONE place `x_window` is applied.
-fn bar_chart(window: Option<CategoryWindow>) -> BarChart {
-    let bars = MONTHS
+fn bar_chart(window: Option<CategoryWindow>, dense: bool) -> BarChart {
+    // The dense axis reuses the revenue figures cyclically: what it is here to
+    // force is the AXIS's arity, and inventing thirty more plausible numbers
+    // would say the data mattered when it does not.
+    let bars = axis_names(dense)
         .iter()
-        .zip(REVENUE)
-        .map(|(m, v)| Bar::new(*m, v))
+        .enumerate()
+        .map(|(i, m)| Bar::new(*m, REVENUE[i % REVENUE.len()]))
         .collect();
     let chart = BarChart::new(bars).with_tag_prefix("bars");
     match window {
@@ -409,10 +488,10 @@ fn bar_chart(window: Option<CategoryWindow>) -> BarChart {
 /// The window reaches it as a pinned x-domain
 /// ([`CategoryWindow::domain`]), the one path every axis kind is windowed
 /// through, so the two plots cannot show different months.
-fn line_chart(window: Option<CategoryWindow>) -> LineChart {
+fn line_chart(window: Option<CategoryWindow>, dense: bool) -> LineChart {
     // `Categories::positions` gives the x each slot sits at, so the binding
     // never casts an index into an axis coordinate itself.
-    let points = months()
+    let points = months(dense)
         .positions()
         .zip(ATTAINMENT)
         .map(|(x, y)| DataPoint::new(x, y))
@@ -439,11 +518,12 @@ fn line_chart(window: Option<CategoryWindow>) -> LineChart {
 /// rather than restating the window, so a caption that disagreed with the plot
 /// would be a bug in the crate and not in this string.
 fn caption(state: &WindowState) -> String {
+    let names = axis_names(state.dense);
     if state.unresolved {
         let detail = state
             .active_preset
             .and_then(|i| PRESETS[i].2)
-            .and_then(|(f, t)| months().window(f, t).err())
+            .and_then(|(f, t)| months(state.dense).window(f, t).err())
             .map_or_else(
                 || "the requested range names no category".to_string(),
                 |e| e.to_string(),
@@ -452,17 +532,17 @@ fn caption(state: &WindowState) -> String {
             "{detail} — the range was NOT applied, so all {} months are shown. \
              the toolkit's setRange(string, string) returns void: this request would \
              have been ignored with nothing said.",
-            MONTHS.len()
+            names.len()
         );
     }
-    let chart = bar_chart(state.window);
+    let chart = bar_chart(state.window, state.dense);
     match chart.visible_categories(BAR_RECT, &ChartStyle::default()) {
         Some(v) => format!(
             "showing {}-{} — {} of {} categories on one axis, both charts",
-            MONTHS[v.lo()],
-            MONTHS[v.hi()],
+            names[v.lo()],
+            names[v.hi()],
             v.len(),
-            MONTHS.len(),
+            names.len(),
         ),
         None => "no category is in view".to_string(),
     }
@@ -538,8 +618,8 @@ fn view(state: WindowState, _frame: &Frame) -> Scene {
         .with_layout(LayoutStyle::new().with_absolute_position(18, 20)),
     );
 
-    let bars = bar_chart(state.window).build(BAR_RECT, &chart_style(&theme, false));
-    let trend = line_chart(state.window).build(LINE_RECT, &chart_style(&theme, true));
+    let bars = bar_chart(state.window, state.dense).build(BAR_RECT, &chart_style(&theme, false));
+    let trend = line_chart(state.window, state.dense).build(LINE_RECT, &chart_style(&theme, true));
 
     let caption = Scene::Text(
         TextNode::styled(
@@ -690,6 +770,7 @@ mod tests {
             window,
             unresolved,
             active_preset: if unresolved { Some(2) } else { None },
+            dense: false,
         }
     }
 

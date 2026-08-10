@@ -309,6 +309,7 @@ mod derivations;
 mod distribution;
 mod donut;
 mod draw;
+mod fit;
 mod interpolate;
 mod line;
 mod model;
@@ -342,6 +343,7 @@ pub use distribution::{
     SummaryPosition, distribution_bounds, positive_distribution_bounds,
 };
 pub use donut::{DonutChart, Slice};
+pub use fit::{Along, FitRule, Fitted, Room};
 pub use interpolate::{CurveSegment, Interpolation, Overshoot, curve, is_graph, overshoot};
 pub use line::LineChart;
 pub use model::{CellTable, Field, Mapped, ModelMapper, Orientation, UnreadableCell, numeric};

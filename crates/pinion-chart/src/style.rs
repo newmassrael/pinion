@@ -8,7 +8,9 @@
 //! shared axis core from per-chart extras is deferred until a third chart type
 //! shows which knobs are truly common (YAGNI on a two-consumer split).
 
-use pinion_core::style::Color;
+use pinion_core::style::{Color, TextStyle};
+
+use crate::fit::{Along, Room};
 
 /// Pixel insets between the chart `rect` and its plotting area, leaving
 /// room for the axis tick labels and (top) the legend row.
@@ -65,6 +67,20 @@ pub struct ChartStyle {
     pub background: Option<Color>,
     /// Tick-label / legend font size in px.
     pub label_size_px: u32,
+    /// R1633 — the advance in pixels of the **widest** character a tick label
+    /// can hold, at [`Self::label_size_px`].
+    ///
+    /// The one font fact this crate needs and the one it cannot get: it is pure
+    /// data with no text engine, so a consumer that has measured its own face
+    /// writes this and a consumer that has not takes the default, which is a
+    /// conservative 0.6 em. Over-estimating is the safe direction — it thins one
+    /// label more than strictly necessary, where under-estimating draws two on
+    /// top of each other.
+    ///
+    /// Set together with [`Self::label_size_px`] through
+    /// [`Self::with_label_size`], because a size changed without this is a
+    /// silently wrong fit.
+    pub label_advance_px: u32,
     /// Series polyline stroke width in px.
     pub series_width: u32,
     /// Alpha (0-255) of the translucent area fill under a filled series.
@@ -88,12 +104,80 @@ pub struct ChartStyle {
     pub tooltip_fg: Color,
 }
 
+/// A conservative advance for the widest character at `size_px`.
+///
+/// Three fifths of the em: wider than the digits of every UI face this project
+/// has measured, and narrower than a full-width glyph no tick label holds. It
+/// is a *model*, which is why [`ChartStyle::label_advance_px`] can be
+/// overwritten by a consumer that has a real measurement.
+const fn advance_for(size_px: u32) -> u32 {
+    size_px * 3 / 5
+}
+
+/// The height of one line at `size_px`.
+///
+/// Not a field, unlike the advance, because a line's height is ~1.4 em in every
+/// UI face while a character's width is not — so this is a constant of
+/// typography where that one is a property of the font.
+const fn line_for(size_px: u32) -> u32 {
+    size_px * 7 / 5
+}
+
 impl ChartStyle {
     /// The default chart style (neutral greys that read on a mid
     /// surface). Alias for [`Default::default`].
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// The same style at a different label size, with the advance moved with
+    /// it (R1633).
+    ///
+    /// The pair exists so the common case cannot get the fit wrong: a caller
+    /// that only changes `label_size_px` leaves an advance measured for another
+    /// size behind, and nothing would say so.
+    #[must_use]
+    pub const fn with_label_size(mut self, size_px: u32) -> Self {
+        self.label_size_px = size_px;
+        self.label_advance_px = advance_for(size_px);
+        self
+    }
+
+    /// The [`TextStyle`] a tick label is measured in (R1633).
+    ///
+    /// The face and the size are what decide an advance, and both are this
+    /// struct's — so measuring with this and painting with the label nodes'
+    /// own style cannot disagree about how wide a label is. The alignment and
+    /// the overflow the paint additionally sets are deliberately absent: they
+    /// place a laid-out string, they do not change its width.
+    #[must_use]
+    pub fn label_text_style(&self) -> TextStyle {
+        TextStyle::new()
+            .with_size_px(self.label_size_px)
+            .with_fg(self.label)
+    }
+
+    /// The room a label has on the **horizontal** axis (R1633).
+    #[must_use]
+    pub fn room_x(&self) -> Room {
+        Room::new(
+            Along::Width {
+                advance_px: self.label_advance_px,
+            },
+            self.label_text_style(),
+        )
+    }
+
+    /// The room a label has on the **vertical** axis (R1633).
+    #[must_use]
+    pub fn room_y(&self) -> Room {
+        Room::new(
+            Along::Height {
+                line_px: line_for(self.label_size_px),
+            },
+            self.label_text_style(),
+        )
     }
 }
 
@@ -106,6 +190,7 @@ impl Default for ChartStyle {
             label: neutral,
             background: None,
             label_size_px: 11,
+            label_advance_px: advance_for(11),
             series_width: 2,
             area_alpha: 40,
             margin: Margin::default(),

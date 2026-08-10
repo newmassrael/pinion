@@ -20,6 +20,7 @@
 use pinion_core::scene::Rect;
 
 use crate::draw::{plot_rect, to_f32};
+use crate::fit::{Fitted, Room, fit};
 use crate::scale::{AxisKind, CategoryScale, LinearScale, LogScale, ValueScale, index_value};
 use crate::series::{
     Bounds, DataPoint, Series, bounds_in_x_window, data_bounds, in_domain, nearest_point_in,
@@ -328,7 +329,7 @@ pub(crate) fn domain_from_ticks(
 /// the scale means the tick set and the mapping that places it can never be
 /// resolved from different axes. Both kinds reach the domain clip here, so
 /// there is still one filter.
-pub(crate) fn axis_ticks(scale: &ValueScale, target: usize) -> Vec<f64> {
+fn raw_ticks(scale: &ValueScale, target: usize) -> Vec<f64> {
     let (lo, hi) = scale.domain();
     let raw = match scale {
         ValueScale::Log(s) => log_ticks(lo, hi, s.base(), target),
@@ -354,6 +355,18 @@ pub(crate) fn axis_ticks(scale: &ValueScale, target: usize) -> Vec<f64> {
             .unwrap_or_default(),
     };
     raw.into_iter().filter(|t| in_domain(*t, lo, hi)).collect()
+}
+
+/// The **fitted** ticks of one axis: what the grid draws, what gets a label,
+/// and what that cost (R1633).
+///
+/// The one entry point every chart takes, so no chart can draw an axis whose
+/// labels were never checked against the room they have. `along` is how much
+/// space one label occupies on this axis — a width for a horizontal one, a line
+/// height for a vertical one — and it is the caller's because this crate has no
+/// text engine and must not acquire one.
+pub(crate) fn axis_ticks(scale: &ValueScale, target: usize, room: &Room) -> Fitted {
+    fit(scale, target, room, raw_ticks, axis_format)
 }
 
 /// The pixel positions of `ticks` on one axis.
@@ -532,18 +545,21 @@ mod tests {
             Rescale::default(),
             &category_kinds(),
         );
-        let ticks = axis_ticks(&plot.x, style.x_ticks);
-        assert_eq!(ticks, vec![0.0, 1.0, 2.0, 3.0], "one tick per slot");
-        let format = axis_format(&plot.x, &ticks);
-        let labels: Vec<String> = ticks.iter().map(|&t| format.label(t)).collect();
+        let fitted = axis_ticks(&plot.x, style.x_ticks, &style.room_x());
+        assert_eq!(fitted.ticks(), [0.0, 1.0, 2.0, 3.0], "one tick per slot");
+        let format = axis_format(&plot.x, fitted.ticks());
+        let labels: Vec<String> = fitted.labelled().iter().map(|&t| format.label(t)).collect();
         assert_eq!(labels, vec!["a", "b", "c", "d"]);
         assert_eq!(format.readout(2.0), "c", "a name is already self-contained");
         // A category axis has no minor subdivisions — a slot has no interior.
         assert!(axis_minor_ticks(&plot.x).is_empty());
-        // The tick target is deliberately not applied: four slots survive a
-        // target of one, because thinning a category axis is a label-width
-        // decision the scale cannot make.
-        assert_eq!(axis_ticks(&plot.x, 1).len(), 4);
+        // R1633 — the tick TARGET is still not applied to a slot axis: four
+        // slots survive a target of one, because a category axis's ticks are
+        // its data. What the target does not do, the label FIT does — and here
+        // there is room, so it does nothing either.
+        assert_eq!(axis_ticks(&plot.x, 1, &style.room_x()).ticks().len(), 4);
+        assert_eq!(fitted.rule(), crate::FitRule::Fits);
+        assert!(fitted.is_clear());
 
         // Windowed: only the visible slots tick, and they keep their names.
         let windowed = CartesianPlot::resolve(
@@ -555,9 +571,9 @@ mod tests {
             Rescale::default(),
             &category_kinds(),
         );
-        let ticks = axis_ticks(&windowed.x, style.x_ticks);
-        assert_eq!(ticks, vec![1.0, 2.0]);
-        let format = axis_format(&windowed.x, &ticks);
+        let ticks = axis_ticks(&windowed.x, style.x_ticks, &style.room_x());
+        assert_eq!(ticks.ticks(), [1.0, 2.0]);
+        let format = axis_format(&windowed.x, ticks.ticks());
         assert_eq!(format.label(1.0), "b");
     }
 
