@@ -483,7 +483,9 @@ fn main() {
 #[cfg(test)]
 mod tests {
     use super::{MODEL_TAG, Model, PROBE_TAG, Probe, SIM_TAG, Sim};
-    use pinion_core::external::{ExternalIntrospect, IntrospectValue};
+    use pinion_core::external::{
+        ExternalIntrospect, IntrospectSchema, IntrospectValue, SchemaChannel,
+    };
     use pinion_core::scene::{
         ContainerNode, ExternalNode, ImmediateMode, ImmediateModeNode, Rect, Scene,
     };
@@ -707,24 +709,71 @@ mod tests {
         assert_eq!(sim.query("boosts"), Some(IntrospectValue::Int(1)));
     }
 
+    /// R1641.6 — every declared slot answers **on the channel it declares**.
+    ///
+    /// Before R1637 a schema field was a read path and nothing else, so
+    /// "declared" and "queryable" were the same word and this walked every
+    /// field through `query`. R1637 split the five names that carried both
+    /// channels at one address — `bump` here — into a tally that is read and a
+    /// verb that is called, and `SchemaChannel::Invoke`'s own doc states the
+    /// consequence: "probing it with `query` is expected to answer nothing".
+    /// The old oracle therefore failed on `model/bump` the moment the split
+    /// landed, and it was right to: the surface no longer answered what the
+    /// test asked, because the test was asking the wrong channel.
+    ///
+    /// Both halves are asserted, not just the one that broke. A read that
+    /// answers nothing publishes a contract that is not real (§2 #7); an
+    /// invoke that answers `query` means the split did not actually happen and
+    /// the address is still carrying two channels.
     #[test]
-    fn r1482_every_declared_slot_answers() {
-        // A schema that names a path the surface cannot answer would make the
-        // demo's discovery step report a contract that is not real (§2 #7).
+    fn r1641_6_every_declared_slot_answers_on_its_own_channel() {
+        fn check(
+            label: &str,
+            schema: &IntrospectSchema,
+            query: impl Fn(&str) -> Option<IntrospectValue>,
+        ) {
+            let mut reads = 0_u32;
+            let mut actions = 0_u32;
+            for f in schema.fields {
+                match f.channel {
+                    SchemaChannel::Read => {
+                        reads += 1;
+                        assert!(
+                            query(f.path).is_some(),
+                            "{label}/{} declared READ but answers nothing",
+                            f.path
+                        );
+                    }
+                    SchemaChannel::Invoke => {
+                        actions += 1;
+                        assert!(
+                            query(f.path).is_none(),
+                            "{label}/{} is declared an ACTION and must not be readable — \
+                             one address carrying two channels is what R1637 split apart",
+                            f.path,
+                        );
+                    }
+                    // `SchemaChannel` is `#[non_exhaustive]`; a channel added
+                    // without a decision here would otherwise be skipped in
+                    // silence, which is how a walk stops covering its own
+                    // population.
+                    other => panic!("{label}: unhandled channel {other:?}"),
+                }
+            }
+            // Non-vacuity, both halves: this surface is only evidence if it
+            // actually has one of each, and every surface here does.
+            assert!(reads > 0, "{label} declares at least one read");
+            assert!(actions > 0, "{label} declares at least one action");
+        }
+
         let model = Model::default();
-        for f in model.schema().fields {
-            assert!(model.query(f.path).is_some(), "model/{}", f.path);
-        }
+        check("model", &model.schema(), |p| model.query(p));
         let sim = Sim::default();
-        for f in sim.schema().fields {
-            assert!(sim.query(f.path).is_some(), "sim/{}", f.path);
-        }
+        check("sim", &sim.schema(), |p| sim.query(p));
         let probe = Probe {
             stamped: 0,
             restamps: 0,
         };
-        for f in probe.schema().fields {
-            assert!(probe.query(f.path).is_some(), "probe/{}", f.path);
-        }
+        check("probe", &probe.schema(), |p| probe.query(p));
     }
 }
