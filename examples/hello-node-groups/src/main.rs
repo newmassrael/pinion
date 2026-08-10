@@ -62,9 +62,9 @@ use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_node_graph::{
     Align, Axis, Conversion, Crossings, Definitions, Distribute, Document, Edge, EditPath,
-    Enframed, Extent, Fragment, Grow, Inserted, InterfaceSide, LinkId, Node, NodeBody, NodeId,
-    NodeKind, Orphaned, Port, PortChange, PortRef, ROOT, Reach, Repartitioned, Rewired, Severed,
-    Sharing, Socket, Stack, Straighten, TreeId,
+    Enframed, Extent, Fragment, Grow, Inserted, InterfaceSide, Item, LinkId, Node, NodeBody,
+    NodeId, NodeKind, Orphaned, Port, PortChange, PortRef, ROOT, Reach, Repartitioned, Rewired,
+    Severed, Sharing, Side, Socket, Stack, Straighten, TreeId, Variadic,
 };
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use serde::{Deserialize, Serialize};
@@ -200,6 +200,14 @@ enum Op {
     /// which reaches it unchanged. A rule that ranked position above the value
     /// would pass the grey of the strength through instead of the colour.
     Glaze,
+    /// R1632 — a LAYER STACK: `(Base: Colour, [Layer: Colour, Opacity: Amount] x n,
+    /// Gain: Amount) -> Colour`.
+    ///
+    /// The one kind here whose port count belongs to the **node**. Its run has
+    /// a fixed port on each side, and an item is a PAIR — which is the engine's
+    /// blend-list shape (two parallel arrays) and the case that tells a correct
+    /// re-index from one that shifts by a single port.
+    Layers,
     /// The sink: its resolved input is the material's result.
     Output,
 }
@@ -210,8 +218,8 @@ impl Op {
     /// One list, so the parser and the refusal that names the alternatives
     /// cannot drift — they did, before R1593: the message still read
     /// "swatch/level/mix/fade/output" long after `cap` was added.
-    const PALETTE: [&'static str; 8] = [
-        "swatch", "level", "mix", "fade", "cap", "tint", "glaze", "output",
+    const PALETTE: [&'static str; 9] = [
+        "swatch", "level", "mix", "fade", "cap", "tint", "glaze", "layers", "output",
     ];
 
     /// Parse the palette name a `add` verb takes.
@@ -224,6 +232,7 @@ impl Op {
             "cap" => Self::Cap,
             "tint" => Self::Tint,
             "glaze" => Self::Glaze,
+            "layers" => Self::Layers,
             "output" => Self::Output,
             _ => return None,
         })
@@ -243,6 +252,7 @@ impl NodeKind for Op {
             Self::Cap => "Cap",
             Self::Tint => "Tint",
             Self::Glaze => "Glaze",
+            Self::Layers => "Layers",
             Self::Output => "Output",
         }
         .to_owned()
@@ -271,13 +281,37 @@ impl NodeKind for Op {
                 Port::new("Strength", Ty::Amount).with_default(Val::Amount(0)),
                 Port::new("Colour", Ty::Colour).with_default(Val::Colour([0, 0, 0])),
             ],
+            // R1632 — the FIXED half. What repeats is declared once, below.
+            Self::Layers => vec![
+                Port::new("Base", Ty::Colour).with_default(Val::Colour([0, 0, 0])),
+                Port::new("Gain", Ty::Amount).with_default(Val::Amount(100)),
+            ],
             Self::Output => vec![Port::new("Surface", Ty::Colour)],
+        }
+    }
+
+    /// R1632 — which run of the ports above is the NODE's rather than the
+    /// kind's. Every other kind here writes nothing, which is the default.
+    fn variadic(&self, side: Side) -> Option<Variadic<Ty, Val>> {
+        match (self, side) {
+            (Self::Layers, Side::Input) => Some(
+                Variadic::at(
+                    1,
+                    vec![
+                        Port::new("Layer", Ty::Colour).with_default(Val::Colour([0, 0, 0])),
+                        Port::new("Opacity", Ty::Amount).with_default(Val::Amount(100)),
+                    ],
+                )
+                .at_least(1)
+                .at_most(6),
+            ),
+            _ => None,
         }
     }
 
     fn outputs(&self) -> Vec<Port<Ty, Val>> {
         match self {
-            Self::Mix | Self::Fade | Self::Tint | Self::Glaze => {
+            Self::Mix | Self::Fade | Self::Tint | Self::Glaze | Self::Layers => {
                 vec![Port::new("Colour", Ty::Colour)]
             }
             // R1594 — the resting value a fresh source emits is declared here,
@@ -350,6 +384,34 @@ impl NodeKind for Op {
                     c[0] * keep / 100,
                     c[1] * keep / 100,
                     c[2] * keep / 100,
+                ]))]
+            }
+            // R1632 — the payoff of a variadic kind: `inputs` is as long as
+            // THIS NODE's resolved signature, so the loop reads the run the
+            // node has rather than an arity compiled in here. Each layer is
+            // composited over what is under it at its own opacity, and the
+            // trailing `Gain` scales the result — a fixed port whose index
+            // depends on how many layers there are.
+            Self::Layers => {
+                let last = inputs.len() - 1;
+                let Some(mut under) = colour(0) else {
+                    return vec![None];
+                };
+                let mut slot = 1;
+                while slot + 1 < last {
+                    if let (Some(over), Some(alpha)) = (colour(slot), amount(slot + 1)) {
+                        let a = alpha.clamp(0, 100);
+                        for channel in 0..3 {
+                            under[channel] = (under[channel] * (100 - a) + over[channel] * a) / 100;
+                        }
+                    }
+                    slot += 2;
+                }
+                let gain = amount(last).unwrap_or(100).clamp(0, 200);
+                vec![Some(Val::Colour([
+                    (under[0] * gain / 100).min(255),
+                    (under[1] * gain / 100).min(255),
+                    (under[2] * gain / 100).min(255),
                 ]))]
             }
             Self::Output => Vec::new(),
@@ -684,6 +746,14 @@ fn port_scenes(
                 Rect::default(),
                 TextStyle::new().with_size_px(LABEL_FONT_PX).with_fg(label),
             )
+            // R1632 — the name a variadic port shows is DERIVED from its item's
+            // ordinal, so it is worth being able to read the painted one rather
+            // than the model's. Addressed like the pin beside it.
+            .with_tag(format!(
+                "{VIEW_TAG}.pinlabel.{}.{}.{port}",
+                node.0,
+                if output { "out" } else { "in" }
+            ))
             .with_layout(
                 LayoutStyle::new()
                     .with_absolute_position(
@@ -1384,6 +1454,13 @@ impl ExternalIntrospect for GroupsOracle {
                     SchemaField::action("clear_value", "string"),
                     SchemaField::action("nudge", "string"),
                     SchemaField::action("grow", "string"),
+                    // R1631 / R1632 — the two verbs whose whole point is that a
+                    // family of reference commands is parameters here. Declared
+                    // like every other, so a client discovers them the same way
+                    // (`arrange` was added in R1631 and this list was not, which
+                    // left it callable and undiscoverable).
+                    SchemaField::action("arrange", "string"),
+                    SchemaField::action("item", "string"),
                 ]
             },
         )
@@ -1912,6 +1989,107 @@ impl GroupsOracle {
         Ok(IntrospectValue::Text(format!("moved:{moved}{report}")))
     }
 
+    /// R1632 — add, remove or reorder one item of a node's variadic run.
+    ///
+    /// `add:<side>:<at>[:<label>]` / `remove:<side>:<at>` / `move:<side>:<from>:<to>`,
+    /// over the single selected node. The answer carries what the edit cost —
+    /// the ports it moved, the wires it cut and the authored values it handed
+    /// back — because that is the half the reference's own commands do not
+    /// publish: `RemoveExecutionPin` answers `void` after breaking the links.
+    fn item(&mut self, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+        let state = self.bound()?;
+        let tree = state.current();
+        let spec = Self::text(args)?;
+        let mut parts = spec.split(':');
+        let verb = parts.next().unwrap_or_default().to_owned();
+        let side = match parts.next() {
+            Some("in") => Side::Input,
+            Some("out") => Side::Output,
+            other => {
+                return Err(InvokeError::rejected(format!(
+                    "item side {other:?} is not \"in\" or \"out\""
+                )));
+            }
+        };
+        let index = |word: Option<&str>| -> Result<u32, InvokeError> {
+            word.and_then(|w| w.parse().ok()).ok_or_else(|| {
+                InvokeError::rejected(format!("item index {word:?} is not a number"))
+            })
+        };
+        let first = index(parts.next())?;
+        let tail = parts.next().map(str::to_owned);
+        let selection = state.selection.get();
+        let [node] = selection[..] else {
+            return Err(InvokeError::rejected(format!(
+                "item needs exactly one selected node, not {}",
+                selection.len()
+            )));
+        };
+
+        let change = match verb.as_str() {
+            "add" => {
+                let mut item = Item::plain();
+                if let Some(label) = tail {
+                    item = item.named(label);
+                }
+                state.edit(|document| {
+                    document
+                        .insert_item(tree, node, side, first, item)
+                        .map_err(|error| format!("{error:?}"))
+                })
+            }
+            "remove" => state.edit(|document| {
+                document
+                    .remove_item(tree, node, side, first)
+                    .map_err(|error| format!("{error:?}"))
+            }),
+            "move" => {
+                let to = index(tail.as_deref())?;
+                state.edit(|document| {
+                    document
+                        .move_item(tree, node, side, first, to)
+                        .map_err(|error| format!("{error:?}"))
+                })
+            }
+            other => {
+                return Err(InvokeError::rejected(format!(
+                    "item verb {other:?} is not \"add\", \"remove\" or \"move\""
+                )));
+            }
+        }
+        .map_err(InvokeError::rejected)?;
+
+        let addresses = |list: &[PortRef]| {
+            list.iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join(",")
+        };
+        Ok(IntrospectValue::Text(format!(
+            "items:{}|added:{}|moved:{}|severed:{}|discarded:{}",
+            change.items,
+            addresses(&change.added),
+            change
+                .moved
+                .iter()
+                .map(|(from, to)| format!("{from}>{to}"))
+                .collect::<Vec<_>>()
+                .join(","),
+            change
+                .severed
+                .iter()
+                .map(|link| format!("{}>{}", link.from, link.to))
+                .collect::<Vec<_>>()
+                .join(","),
+            change
+                .discarded
+                .iter()
+                .map(|(port, value)| format!("{port}={}", value.wire()))
+                .collect::<Vec<_>>()
+                .join(","),
+        )))
+    }
+
     fn verb(&mut self, path: &str, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
         let state = self.bound()?;
         let tree = state.current();
@@ -1939,6 +2117,14 @@ impl GroupsOracle {
             // and a surface that re-spelled them as eleven paths would throw
             // that away at the boundary.
             "arrange" => self.arrange(args),
+            // R1632 — the engine reference's ten variadic-pin commands and the
+            // DCC's four socket-item operators, driven as ONE verb:
+            // `item add:in:2`, `item add:in:2:Overlay`, `item remove:in:0`,
+            // `item move:in:2:0`. One verb for the same reason `arrange` is
+            // one: the crate's vocabulary is two operations and a position,
+            // and re-spelling them as fourteen paths would throw that away at
+            // the boundary.
+            "item" => self.item(args),
             "group" => {
                 let name = Self::text(args)?;
                 let selection = state.selection.get();

@@ -1387,10 +1387,10 @@
       "verdict": "instance"
     },
     "socket_items::make_add_item_operator": {
-      "covered_by": "a node whose SOCKET LIST is authored per node — `NodeKind::inputs`/`outputs` answer per kind, so every node of a kind has the same ports and an item cannot be added to one of them. The engine spells the same gap `AddOptionPin`",
+      "covered_by": "VARIADIC PORTS (R1632): `NodeKind::variadic` declares that one run of a kind's ports repeats, `Node::items` carries that node's, and `insert_item` / `remove_item` / `move_item` edit them — re-indexing every link and authored value through one correspondence, including the FIXED ports past the run. An `Item` carries its own name and its own socket type, which is what all but one of this reference's accessors declare (`has_type` / `has_name` at `8cf50599`).",
       "mechanism": "cpp-template",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_socket_items_make_add_item_operator",
+      "verdict": "have"
     },
     "socket_items::make_common_operators": {
       "covered_by": "calls the four makers above — covering the parts covers it",
@@ -1399,22 +1399,22 @@
       "verdict": "composition"
     },
     "socket_items::make_move_item_operator": {
-      "covered_by": "reordering a per-node socket list; the list does not exist",
+      "covered_by": "VARIADIC PORTS (R1632): `NodeKind::variadic` declares that one run of a kind's ports repeats, `Node::items` carries that node's, and `insert_item` / `remove_item` / `move_item` edit them — re-indexing every link and authored value through one correspondence, including the FIXED ports past the run. `move_item` — a permutation of the run, so nothing is severed and nothing discarded. The engine has no equivalent command.",
       "mechanism": "cpp-template",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_socket_items_make_move_item_operator",
+      "verdict": "have"
     },
     "socket_items::make_remove_active_item_operator": {
-      "covered_by": "removing the active item from a per-node socket list; the list does not exist",
+      "covered_by": "VARIADIC PORTS (R1632): `NodeKind::variadic` declares that one run of a kind's ports repeats, `Node::items` carries that node's, and `insert_item` / `remove_item` / `move_item` edit them — re-indexing every link and authored value through one correspondence, including the FIXED ports past the run. The same call with the index the editor is holding; this crate keeps no active item, so the MECHANISM is judged once at `make_remove_item_by_index_operator`.",
       "mechanism": "cpp-template",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_socket_items_make_remove_item_by_index_operator",
+      "verdict": "have"
     },
     "socket_items::make_remove_item_by_index_operator": {
-      "covered_by": "removing an item by index from a per-node socket list; the list does not exist",
+      "covered_by": "VARIADIC PORTS (R1632): `NodeKind::variadic` declares that one run of a kind's ports repeats, `Node::items` carries that node's, and `insert_item` / `remove_item` / `move_item` edit them — re-indexing every link and authored value through one correspondence, including the FIXED ports past the run. `remove_item(.., index)`, with the surviving items keeping their AUTHORED names and types at their new positions.",
       "mechanism": "cpp-template",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::dcc_socket_items_make_remove_item_by_index_operator",
+      "verdict": "have"
     },
     "sockets_sync": {
       "covered_by": "signature is DERIVED, so there is nothing to sync",
@@ -1515,10 +1515,10 @@
   },
   "engine": {
     "AnimGraph::AddBlendListPin": {
-      "covered_by": "adding a port to one node — the variadic-port gap, the DCC's `socket_items::make_add_item_operator`",
+      "covered_by": "VARIADIC PORTS (R1632): `NodeKind::variadic` declares that one run of a kind's ports repeats, `Node::items` carries that node's, and `insert_item` / `remove_item` / `move_item` edit them — re-indexing every link and authored value through one correspondence, including the FIXED ports past the run. One item, TWO ports — the reference appends to two parallel arrays (`FAnimNode_BlendListBase::AddPose`), and a multi-port item is what tells a correct re-index from one that shifts by a single port.",
       "mechanism": "AnimGraph",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_anim_graph_add_blend_list_pin",
+      "verdict": "have"
     },
     "AnimGraph::ConvertToAimOffsetGraph": {
       "covered_by": "converts a node to one of the engine's own animation node types; the MECHANISM is `Document::set_kind`, judged once at the DCC's `swap_node`",
@@ -1599,10 +1599,10 @@
       "verdict": "app-content"
     },
     "AnimGraph::RemoveBlendListPin": {
-      "covered_by": "removing a port from one node",
+      "covered_by": "VARIADIC PORTS (R1632): `NodeKind::variadic` declares that one run of a kind's ports repeats, `Node::items` carries that node's, and `insert_item` / `remove_item` / `move_item` edit them — re-indexing every link and authored value through one correspondence, including the FIXED ports past the run. The case the reference ships unhandled: `RemovePinFromBlendList` carries `//@TODO: ANIMREFACTOR: Need to handle moving pins below up correctly` at 5.8.1.",
       "mechanism": "AnimGraph",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_anim_graph_remove_blend_list_pin",
+      "verdict": "have"
     },
     "AnimGraph::ReverseTransition": {
       "covered_by": "reversing an edge in place. `disconnect` then `connect` is a different edit — it loses the link's identity and anything keyed by it",
@@ -1725,16 +1725,16 @@
       "verdict": "absent"
     },
     "GraphEditor::AddExecutionPin": {
-      "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE — Sequence gaining a Then, Select gaining an option",
+      "covered_by": "VARIADIC PORTS (R1632): `NodeKind::variadic` declares that one run of a kind's ports repeats, `Node::items` carries that node's, and `insert_item` / `remove_item` / `move_item` edit them — re-indexing every link and authored value through one correspondence, including the FIXED ports past the run. Appending is `insert_item` at the run's own length.",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_graph_editor_add_execution_pin",
+      "verdict": "have"
     },
     "GraphEditor::AddOptionPin": {
-      "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE — Sequence gaining a Then, Select gaining an option",
+      "covered_by": "VARIADIC PORTS (R1632): `NodeKind::variadic` declares that one run of a kind's ports repeats, `Node::items` carries that node's, and `insert_item` / `remove_item` / `move_item` edit them — re-indexing every link and authored value through one correspondence, including the FIXED ports past the run. The input-side case, where the selector's `Index` sits after the run so its own address moves with the run's length.",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_graph_editor_add_option_pin",
+      "verdict": "have"
     },
     "GraphEditor::AddParentNode": {
       "covered_by": "the engine's visual script/level subject matter",
@@ -1995,16 +1995,16 @@
       "verdict": "have"
     },
     "GraphEditor::InsertExecutionPinAfter": {
-      "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE — Sequence gaining a Then, Select gaining an option",
+      "covered_by": "VARIADIC PORTS (R1632): `NodeKind::variadic` declares that one run of a kind's ports repeats, `Node::items` carries that node's, and `insert_item` / `remove_item` / `move_item` edit them — re-indexing every link and authored value through one correspondence, including the FIXED ports past the run. `insert_item(.., i + 1)` — the branch at i stays; the two commands are one method and a number.",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_graph_editor_insert_execution_pin_after",
+      "verdict": "have"
     },
     "GraphEditor::InsertExecutionPinBefore": {
-      "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE — Sequence gaining a Then, Select gaining an option",
+      "covered_by": "VARIADIC PORTS (R1632): `NodeKind::variadic` declares that one run of a kind's ports repeats, `Node::items` carries that node's, and `insert_item` / `remove_item` / `move_item` edit them — re-indexing every link and authored value through one correspondence, including the FIXED ports past the run. `insert_item(.., i)` — the branch at i moves to i+1.",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_graph_editor_insert_execution_pin_before",
+      "verdict": "have"
     },
     "GraphEditor::OpenInNewTab": {
       "covered_by": "editor navigation over a viewport the crate does not hold",
@@ -2061,16 +2061,16 @@
       "verdict": "absent"
     },
     "GraphEditor::RemoveExecutionPin": {
-      "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE — Sequence gaining a Then, Select gaining an option",
+      "covered_by": "VARIADIC PORTS (R1632): `NodeKind::variadic` declares that one run of a kind's ports repeats, `Node::items` carries that node's, and `insert_item` / `remove_item` / `move_item` edit them — re-indexing every link and authored value through one correspondence, including the FIXED ports past the run. `remove_item(.., i)`, which additionally NAMES the wires it cut; the reference answers void after `BreakAllPinLinks()`, and states its floor of two only as a menu gate.",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_graph_editor_remove_execution_pin",
+      "verdict": "have"
     },
     "GraphEditor::RemoveOptionPin": {
-      "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE — Sequence gaining a Then, Select gaining an option",
+      "covered_by": "VARIADIC PORTS (R1632): `NodeKind::variadic` declares that one run of a kind's ports repeats, `Node::items` carries that node's, and `insert_item` / `remove_item` / `move_item` edit them — re-indexing every link and authored value through one correspondence, including the FIXED ports past the run. \"Removes the LAST option input pin\" = `remove_item(.., count - 1)`.",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_graph_editor_remove_option_pin",
+      "verdict": "have"
     },
     "GraphEditor::RemoveOtherStructVarPins": {
       "covered_by": "STRUCT PINS: a composite value port split into its members and recombined",
@@ -2313,10 +2313,10 @@
       "verdict": "have"
     },
     "MaterialEditor::DeletePin": {
-      "covered_by": "removing a port from one node; ports come from the kind, so a node cannot have one fewer than its kind declares",
+      "covered_by": "VARIADIC PORTS (R1632): `NodeKind::variadic` declares that one run of a kind's ports repeats, `Node::items` carries that node's, and `insert_item` / `remove_item` / `move_item` edit them — re-indexing every link and authored value through one correspondence, including the FIXED ports past the run. Removing a port from one node; the MECHANISM is `remove_item`, judged once at `SoundCueGraph::DeleteInput`.",
       "mechanism": "MaterialEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_sound_cue_graph_delete_input",
+      "verdict": "have"
     },
     "MaterialEditor::DisableRealtimePreviewNode": {
       "covered_by": "realtime shader preview of one node",
@@ -2619,10 +2619,10 @@
       "verdict": "app-content"
     },
     "SoundCueGraph::AddInput": {
-      "covered_by": "adding a port to one node — the variadic-port gap",
+      "covered_by": "VARIADIC PORTS (R1632): `NodeKind::variadic` declares that one run of a kind's ports repeats, `Node::items` carries that node's, and `insert_item` / `remove_item` / `move_item` edit them — re-indexing every link and authored value through one correspondence, including the FIXED ports past the run. The same input-side append; judged once at `GraphEditor::AddOptionPin`.",
       "mechanism": "SoundCueGraph",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_graph_editor_add_option_pin",
+      "verdict": "have"
     },
     "SoundCueGraph::BreakLink": {
       "covered_by": "`Document::disconnect` — one named link",
@@ -2637,10 +2637,10 @@
       "verdict": "app-content"
     },
     "SoundCueGraph::DeleteInput": {
-      "covered_by": "removing a port from one node",
+      "covered_by": "VARIADIC PORTS (R1632): `NodeKind::variadic` declares that one run of a kind's ports repeats, `Node::items` carries that node's, and `insert_item` / `remove_item` / `move_item` edit them — re-indexing every link and authored value through one correspondence, including the FIXED ports past the run. Removing an item from the middle of an input run, handing back the value authored on it — the arm that shows links and authored values move through ONE map.",
       "mechanism": "SoundCueGraph",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_sound_cue_graph_delete_input",
+      "verdict": "have"
     },
     "SoundCueGraph::PlayCue": {
       "covered_by": "plays the sound cue asset",
@@ -2757,10 +2757,10 @@
       "verdict": "app-content"
     },
     "node::CreateUniquePinName": {
-      "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE",
+      "covered_by": "VARIADIC PORTS (R1632): `NodeKind::variadic` declares that one run of a kind's ports repeats, `Node::items` carries that node's, and `insert_item` / `remove_item` / `move_item` edit them — re-indexing every link and authored value through one correspondence, including the FIXED ports past the run. The ordinal is applied to the template's name when the signature is RESOLVED, so names are compact by construction — no renaming loop after each edit, and no `'Z' - 'A'` arity ceiling.",
       "mechanism": "graph-node",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_node_create_unique_pin_name",
+      "verdict": "have"
     },
     "node::CreateVisualWidget": {
       "covered_by": "drawing; this crate deliberately holds no renderer",
@@ -3111,10 +3111,10 @@
       "verdict": "have"
     },
     "node::RemovePinAt": {
-      "covered_by": "VARIADIC PORTS: a kind whose port count is a property of the NODE",
+      "covered_by": "VARIADIC PORTS (R1632): `NodeKind::variadic` declares that one run of a kind's ports repeats, `Node::items` carries that node's, and `insert_item` / `remove_item` / `move_item` edit them — re-indexing every link and authored value through one correspondence, including the FIXED ports past the run. Removing the port at an index; the MECHANISM is `remove_item`, judged once at `GraphEditor::RemoveExecutionPin`.",
       "mechanism": "graph-node",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph::engine_graph_editor_remove_execution_pin",
+      "verdict": "have"
     },
     "node::ResizeNode": {
       "covered_by": "Appearance::width and height, where a frame's height is authored and an ordinary node's is derived",

@@ -1023,8 +1023,11 @@ fn copy_selection_into<K: NodeKind>(
                 appearance: node.appearance.clone(),
                 parent,
                 // R1594 — a port reference indexes the node's OWN signature,
-                // which the copy has too, so these travel unremapped.
+                // which the copy has too, so these travel unremapped. R1632's
+                // items are the reason that signature is the node's own, and
+                // travel for the same reason.
                 values: node.values.clone(),
+                items: node.items.clone(),
             },
         );
     }
@@ -1075,6 +1078,7 @@ fn copy_tree_body<K: NodeKind>(
                 // intact and needs no remapping.
                 parent: node.parent,
                 values: node.values.clone(),
+                items: node.items.clone(),
             },
         );
     }

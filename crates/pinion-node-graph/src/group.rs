@@ -1004,6 +1004,22 @@ pub enum Violation {
         /// would reach every consumer of every other variant.
         port: PortRef,
     },
+    /// A node's variadic run holds more items than its kind declared a ceiling
+    /// for (R1632).
+    ///
+    /// The floor needs no variant: an item list shorter than the minimum is
+    /// *topped up* when the signature is resolved, so a short list and a
+    /// minimum-length one are the same node. A list past the ceiling cannot be
+    /// answered that way — cutting it would take ports that links address —
+    /// so it is reported instead.
+    TooManyItems {
+        /// The tree it is in.
+        tree: TreeId,
+        /// The node holding them.
+        node: NodeId,
+        /// Which side's run is too long.
+        side: Side,
+    },
 }
 
 impl<K: NodeKind> Document<K> {
@@ -1018,6 +1034,33 @@ impl<K: NodeKind> Document<K> {
     /// coerced it and nothing flagged it, so the node silently evaluated to no
     /// value at all; a document that cannot be trusted must fail LOUD rather
     /// than be quietly repaired, which is why this reports rather than converts.
+    /// A node holding more items than its kind's run allows (R1632).
+    ///
+    /// Unreachable through [`Document::insert_item`], which refuses at the
+    /// ceiling, and reachable two ways from outside it: a document from a file,
+    /// and a taxonomy that *lowered* a ceiling between one release and the next.
+    /// Reported rather than clamped on read, because clamping would drop ports
+    /// that links still address — the honest answer is that the document says
+    /// something the kind does not allow, and to say which node.
+    fn over_long_runs(tree: &Tree<K>, node: &Node<K>) -> Vec<Violation> {
+        let NodeBody::Kind(kind) = &node.body else {
+            return Vec::new();
+        };
+        [Side::Input, Side::Output]
+            .into_iter()
+            .filter(|&side| {
+                kind.variadic(side)
+                    .and_then(|run| run.maximum())
+                    .is_some_and(|max| node.items.on(side).len() > max as usize)
+            })
+            .map(|side| Violation::TooManyItems {
+                tree: tree.id,
+                node: node.id,
+                side,
+            })
+            .collect()
+    }
+
     fn stray_port_values(&self, tree: &Tree<K>, node: &Node<K>) -> Vec<Violation> {
         let Some(signature) = self.signature(tree.id, node.id) else {
             // The node's body names a definition that is gone, which
@@ -1197,6 +1240,7 @@ impl<K: NodeKind> Document<K> {
                 }
                 found.extend(self.forest_violations(tree, node));
                 found.extend(self.stray_port_values(tree, node));
+                found.extend(Self::over_long_runs(tree, node));
             }
         }
         // `Nesting::cycle(_, t, t)` answers the question "may `t` be placed in

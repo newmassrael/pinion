@@ -11,10 +11,10 @@ use serde::{Deserialize, Serialize};
 use crate::{
     Align, Appearance, Axis, Carried, ConnectError, Control, Conversion, Crossings, Definitions,
     Distribute, Document, DuplicateError, Edge, EditError, EditPath, Extent, ExtractError,
-    ForceError, Fragment, GroupError, Grow, InsertError, Instance, InterfaceSide, Layered, Machine,
-    Multiplicity, NestError, Node, NodeBody, NodeId, NodeKind, Organic, Orphaned, ParentError,
-    PathError, Port, PortRef, PortValueError, ROOT, Reach, RepartitionError, Route, RunError,
-    SelectError, Severed, Sharing, Side, Socket, Stack, Stop, Straighten, Tick, TreeId,
+    ForceError, Fragment, GroupError, Grow, InsertError, Instance, InterfaceSide, Item, ItemError,
+    Layered, Machine, Multiplicity, NestError, Node, NodeBody, NodeId, NodeKind, Organic, Orphaned,
+    ParentError, PathError, Port, PortRef, PortValueError, ROOT, Reach, RepartitionError, Route,
+    RunError, SelectError, Severed, Sharing, Side, Socket, Stack, Stop, Straighten, Tick, TreeId,
     UngroupError, Violation, crossing,
 };
 
@@ -48,6 +48,21 @@ enum Op {
     /// by NAME and cannot cross into index 0, so only "the first port that will
     /// take it" reaches index 1.
     Stamp,
+    /// R1632 — `(Option 0, Option 1, .., Index: Number) -> Out: Number`.
+    ///
+    /// A VARIADIC run of single ports with a **fixed port after it**, which is
+    /// the shape the engine's selector has and the one that makes a re-index
+    /// bug visible: the `Index` input's own position depends on how many
+    /// options there are, and nothing about the node says so.
+    Choose,
+    /// R1632 — `(Base: Number, Pose 0, Weight 0, Pose 1, Weight 1, ..) -> Out`.
+    ///
+    /// A variadic run of **two** ports per item, with a fixed port *before*
+    /// it. The engine's blend list is the same shape (two parallel arrays,
+    /// its blend-list node's `AddPose`), and it is what tells a correct
+    /// re-index from one that shifts by a single port: with one port per item
+    /// the two arithmetics agree.
+    Blend,
     Sink,
 }
 
@@ -81,6 +96,8 @@ impl NodeKind for Op {
             Self::Gate => "Gate",
             Self::Swap => "Swap",
             Self::Stamp => "Stamp",
+            Self::Choose => "Choose",
+            Self::Blend => "Blend",
             Self::Sink => "Sink",
         }
         .to_owned()
@@ -104,13 +121,51 @@ impl NodeKind for Op {
                 Port::new("Right", Ty::Number).with_default(Val::Number(-2)),
             ],
             Self::Stamp => vec![Port::new("Count", Ty::Number), Port::new("Body", Ty::Text)],
+            // R1632 — the FIXED half only. The options are the node's, and the
+            // `Index` sits after them, so its resolved position moves with the
+            // run's length.
+            Self::Choose => vec![Port::new("Index", Ty::Number).with_default(Val::Number(0))],
+            // Fixed ports on BOTH sides of the run, which is what makes a
+            // shift-by-one bug and a shift-by-a-whole-item bug tell apart, and
+            // what makes the port with no visual cue — `Bias`, whose index
+            // depends on how many poses there are — reachable.
+            Self::Blend => vec![
+                Port::new("Base", Ty::Number).with_default(Val::Number(0)),
+                Port::new("Bias", Ty::Number).with_default(Val::Number(0)),
+            ],
             Self::Sink => vec![Port::new("Result", Ty::Number)],
+        }
+    }
+
+    /// R1632 — which run of the ports above repeats per node.
+    fn variadic(&self, side: Side) -> Option<crate::Variadic<Ty, Val>> {
+        match (self, side) {
+            (Self::Choose, Side::Input) => Some(
+                crate::Variadic::at(0, vec![Port::new("Option", Ty::Number)])
+                    .at_least(2)
+                    .at_most(4),
+            ),
+            (Self::Blend, Side::Input) => Some(
+                crate::Variadic::at(
+                    1,
+                    vec![
+                        Port::new("Pose", Ty::Number),
+                        Port::new("Weight", Ty::Number),
+                    ],
+                )
+                .at_least(1),
+            ),
+            // R1632 — a declaration that contributes NO port is not a run.
+            // Declared on purpose, so the arm that refuses it is reachable
+            // from a test rather than only from a reading of the code.
+            (Self::Blend, Side::Output) => Some(crate::Variadic::at(0, Vec::new())),
+            _ => None,
         }
     }
 
     fn outputs(&self) -> Vec<Port<Ty, Val>> {
         match self {
-            Self::Num(_) | Self::Add | Self::Measure | Self::Gate => {
+            Self::Num(_) | Self::Add | Self::Measure | Self::Gate | Self::Choose | Self::Blend => {
                 vec![Port::new("Out", Ty::Number)]
             }
             Self::Word(_) | Self::Shout | Self::Stamp => vec![Port::new("Out", Ty::Text)],
@@ -147,6 +202,30 @@ impl NodeKind for Op {
             Self::Gate => vec![number(0).zip(number(1)).map(|(l, v)| Val::Number(v.min(l)))],
             Self::Swap => vec![number(1).map(Val::Number), number(0).map(Val::Number)],
             Self::Stamp => vec![inputs.get(1).and_then(Option::as_ref).cloned()],
+            // R1632 — the point of a variadic kind: `inputs` is as long as the
+            // NODE's resolved signature, so the arithmetic reads the run it
+            // declared rather than a fixed arity.
+            Self::Choose => {
+                let index = number(inputs.len() - 1).unwrap_or(0);
+                let options = inputs.len() - 1;
+                vec![
+                    usize::try_from(index)
+                        .ok()
+                        .filter(|i| *i < options)
+                        .and_then(number)
+                        .map(Val::Number),
+                ]
+            }
+            Self::Blend => {
+                let last = inputs.len() - 1;
+                let mut total = number(0).unwrap_or(0) + number(last).unwrap_or(0);
+                let mut slot = 1;
+                while slot + 1 < last {
+                    total += number(slot).unwrap_or(0) * number(slot + 1).unwrap_or(0);
+                    slot += 2;
+                }
+                vec![Some(Val::Number(total))]
+            }
             Self::Sink => Vec::new(),
         }
     }
@@ -9457,5 +9536,629 @@ fn r1601_forcing_a_register_is_checked_by_the_thing_that_knows_the_document() {
         Ok(Some(Val::Number(4))),
         "and `Flo` declines to classify, so it is not held to a rule it cannot \
          state — the same answer R1594 gives an authored value"
+    );
+}
+
+// ============================================================ R1632 — items
+
+/// A `Blend` with `count` poses, its `Base`, its `Bias` and every pose fed by
+/// its own source, and a value authored on every port that has one.
+///
+/// The fixture exists to make a re-index bug **visible**: each source emits a
+/// distinct number and each authored value is distinct, so "the wires moved
+/// correctly" is a statement about which number arrives where rather than about
+/// how many links survived.
+fn blended(count: u32) -> (Document<Op>, NodeId, Vec<NodeId>) {
+    let mut document: Document<Op> = Document::new("root");
+    let blend = document
+        .add_node(ROOT, NodeBody::Kind(Op::Blend), 0, 0)
+        .unwrap();
+    for extra in 1..count {
+        document
+            .insert_item(ROOT, blend, Side::Input, extra, Item::plain())
+            .unwrap();
+    }
+    let arity = document.signature(ROOT, blend).unwrap().inputs.len();
+    assert_eq!(arity, 2 + 2 * count as usize);
+
+    let mut sources = Vec::new();
+    for port in 0..arity {
+        let source = document
+            .add_node(
+                ROOT,
+                NodeBody::Kind(Op::Num(100 + i64::try_from(port).unwrap())),
+                0,
+                0,
+            )
+            .unwrap();
+        document
+            .connect(
+                ROOT,
+                Socket::new(source, 0),
+                Socket::new(blend, u32::try_from(port).unwrap()),
+            )
+            .unwrap();
+        document
+            .set_port_value(
+                ROOT,
+                blend,
+                PortRef::input(u32::try_from(port).unwrap()),
+                Val::Number(200 + i64::try_from(port).unwrap()),
+            )
+            .unwrap();
+        sources.push(source);
+    }
+    // ★ And a consumer on the OTHER side. Without it a correspondence that
+    // dropped every output port would sever nothing observable, and the test
+    // that says "an insert costs the graph nothing" would be passing on a
+    // fixture where the untouched side has nothing to lose.
+    let sink = document
+        .add_node(ROOT, NodeBody::Kind(Op::Sink), 0, 0)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(blend, 0), Socket::new(sink, 0))
+        .unwrap();
+    (document, blend, sources)
+}
+
+/// Whether the blend's own output still reaches its sink — the side an item
+/// edit must not touch at all.
+fn still_drains(document: &Document<Op>, blend: NodeId) -> bool {
+    document
+        .tree(ROOT)
+        .unwrap()
+        .links()
+        .iter()
+        .any(|link| link.from == Socket::new(blend, 0))
+}
+
+/// Which source feeds each input of `node`, and what is authored there.
+fn feeds(document: &Document<Op>, node: NodeId) -> Vec<(Option<NodeId>, Option<i64>)> {
+    let arity = document.signature(ROOT, node).unwrap().inputs.len();
+    (0..arity)
+        .map(|port| {
+            let port = u32::try_from(port).unwrap();
+            (
+                document
+                    .tree(ROOT)
+                    .unwrap()
+                    .link_into(Socket::new(node, port))
+                    .map(|link| link.from.node),
+                document
+                    .tree(ROOT)
+                    .unwrap()
+                    .node(node)
+                    .unwrap()
+                    .port_value(PortRef::input(port))
+                    .and_then(Val::number),
+            )
+        })
+        .collect()
+}
+
+/// A node that stored no items and one that stored its minimum are the **same
+/// signature**, which is what makes the empty encoding safe.
+///
+/// Written because the two encodings are the one redundancy in this model: a
+/// resolved run tops the authored list up to the kind's floor, so `[]` and
+/// `[plain, plain]` describe one node. If they ever stopped resolving alike,
+/// every document written before a kind gained its floor would re-index itself
+/// on load.
+#[test]
+fn r1632_nothing_authored_and_the_minimum_authored_are_one_signature() {
+    let mut document: Document<Op> = Document::new("root");
+    let bare = document
+        .add_node(ROOT, NodeBody::Kind(Op::Choose), 0, 0)
+        .unwrap();
+    let spelled = document
+        .add_node(ROOT, NodeBody::Kind(Op::Choose), 0, 0)
+        .unwrap();
+    assert!(
+        document
+            .tree(ROOT)
+            .unwrap()
+            .node(bare)
+            .unwrap()
+            .items
+            .is_empty(),
+        "a fresh node stores nothing"
+    );
+    document
+        .tree_mut(ROOT)
+        .and_then(|t| t.node_mut(spelled))
+        .unwrap()
+        .items
+        .set(Side::Input, vec![Item::plain(), Item::plain()]);
+
+    let bare_ports: Vec<String> = document
+        .signature(ROOT, bare)
+        .unwrap()
+        .inputs
+        .iter()
+        .map(|p| p.name.clone())
+        .collect();
+    let spelled_ports: Vec<String> = document
+        .signature(ROOT, spelled)
+        .unwrap()
+        .inputs
+        .iter()
+        .map(|p| p.name.clone())
+        .collect();
+    assert_eq!(bare_ports, vec!["Option 0", "Option 1", "Index"]);
+    assert_eq!(bare_ports, spelled_ports);
+    assert_eq!(
+        document.items(ROOT, bare, Side::Input),
+        document.items(ROOT, spelled, Side::Input)
+    );
+}
+
+/// Removing an item pulls **everything after it** down by a whole item, and
+/// says what it could not keep.
+///
+/// The adversarial core of R1632. Four classes of address are exercised at
+/// once, because an implementation can get any one of them right on its own:
+/// the ports of an item *before* the removed one (unmoved), the removed item's
+/// own (severed), a *later* item's (down by the stride), and the FIXED port
+/// past the whole run (down by the stride too, with nothing on the node to
+/// suggest it should move).
+#[test]
+fn r1632_a_removed_item_pulls_every_later_port_down_by_a_whole_item() {
+    let (mut document, blend, sources) = blended(3);
+    // [Base, Pose 0, Weight 0, Pose 1, Weight 1, Pose 2, Weight 2, Bias]
+    let before = feeds(&document, blend);
+    assert_eq!(before.len(), 8);
+
+    let change = document.remove_item(ROOT, blend, Side::Input, 1).unwrap();
+
+    assert_eq!(change.items, 2, "two poses left");
+    assert_eq!(
+        change.severed.len(),
+        2,
+        "an item of TWO ports takes two wires with it, not one"
+    );
+    assert_eq!(
+        change
+            .severed
+            .iter()
+            .map(|link| link.from.node)
+            .collect::<BTreeSet<_>>(),
+        [sources[3], sources[4]].into_iter().collect(),
+        "and they are the removed item's own"
+    );
+    assert_eq!(
+        change.discarded,
+        vec![
+            (PortRef::input(3), Val::Number(203)),
+            (PortRef::input(4), Val::Number(204)),
+        ],
+        "the authored values on those ports are handed back, not dropped"
+    );
+    assert!(change.added.is_empty());
+
+    let after = feeds(&document, blend);
+    assert_eq!(after.len(), 6);
+    assert_eq!(
+        after,
+        vec![
+            (Some(sources[0]), Some(200)), // Base — before the run, unmoved
+            (Some(sources[1]), Some(201)), // Pose 0 — before the removal
+            (Some(sources[2]), Some(202)), // Weight 0
+            (Some(sources[5]), Some(205)), // Pose 2 arrived at Pose 1's index
+            (Some(sources[6]), Some(206)), // Weight 2 with it
+            (Some(sources[7]), Some(207)), // ★ Bias — the fixed port PAST the run
+        ],
+        "every survivor kept the wire and the value it had, at its new index"
+    );
+    assert!(
+        change
+            .moved
+            .contains(&(PortRef::input(7), PortRef::input(5))),
+        "and the change SAYS the trailing fixed port moved: {:?}",
+        change.moved
+    );
+    assert!(
+        still_drains(&document, blend),
+        "the side that was not edited is untouched"
+    );
+    assert!(document.validate().is_empty());
+}
+
+/// An insert is lossless, and it moves the same set the other way.
+///
+/// Stated as a property of the operation rather than of this fixture: an insert
+/// only ever grows the signature, so every old port has a new index and nothing
+/// can be cut. A fixture that happened to have no wires past the insertion
+/// point would pass this trivially, so this one wires every port first.
+#[test]
+fn r1632_an_insert_costs_the_graph_nothing() {
+    let (mut document, blend, _) = blended(2);
+    let before = feeds(&document, blend);
+
+    let change = document
+        .insert_item(ROOT, blend, Side::Input, 0, Item::plain())
+        .unwrap();
+
+    assert!(change.is_lossless(), "an insert severs nothing: {change:?}");
+    assert!(still_drains(&document, blend), "on either side");
+    assert_eq!(
+        change.added,
+        vec![PortRef::input(1), PortRef::input(2)],
+        "the new item's own two ports are named"
+    );
+    assert_eq!(change.items, 3);
+
+    let after = feeds(&document, blend);
+    assert_eq!(after.len(), before.len() + 2);
+    assert_eq!(
+        after[0], before[0],
+        "Base is before the run and did not move"
+    );
+    assert_eq!(
+        after[1..3],
+        [(None, None), (None, None)],
+        "the new item arrives unwired and unauthored"
+    );
+    assert_eq!(
+        after[3..],
+        before[1..],
+        "and everything that was there is intact, three places along"
+    );
+}
+
+/// A move is a **permutation**, so nothing is severed and nothing is discarded
+/// — the sharpest test the correspondence has, because every address must
+/// arrive somewhere.
+///
+/// The DCC has this operation (`socket_items::make_move_item_operator`) and the
+/// engine does not.
+#[test]
+fn r1632_a_move_carries_every_wire_and_every_value() {
+    let (mut document, blend, sources) = blended(3);
+    let before = feeds(&document, blend);
+
+    let change = document.move_item(ROOT, blend, Side::Input, 0, 2).unwrap();
+    assert!(
+        change.is_lossless(),
+        "a permutation loses nothing: {change:?}"
+    );
+    assert_eq!(change.items, 3, "and the run is the same length");
+
+    let after = feeds(&document, blend);
+    assert_eq!(after[0], before[0], "Base");
+    assert_eq!(after[7], before[7], "Bias");
+    assert_eq!(
+        &after[1..7],
+        &[
+            (Some(sources[3]), Some(203)),
+            (Some(sources[4]), Some(204)),
+            (Some(sources[5]), Some(205)),
+            (Some(sources[6]), Some(206)),
+            (Some(sources[1]), Some(201)),
+            (Some(sources[2]), Some(202)),
+        ],
+        "the first item is now last, with both of its ports and both values"
+    );
+
+    // And back again is the identity, which a shift-by-one would not be.
+    document.move_item(ROOT, blend, Side::Input, 2, 0).unwrap();
+    assert_eq!(feeds(&document, blend), before);
+}
+
+/// A run refuses every position and every count outside what its kind declared,
+/// and names which.
+#[test]
+fn r1632_a_run_refuses_outside_its_declaration() {
+    let mut document: Document<Op> = Document::new("root");
+    let choose = document
+        .add_node(ROOT, NodeBody::Kind(Op::Choose), 0, 0)
+        .unwrap();
+    let add = document
+        .add_node(ROOT, NodeBody::Kind(Op::Add), 0, 0)
+        .unwrap();
+
+    assert_eq!(
+        document.remove_item(ROOT, choose, Side::Input, 0),
+        Err(ItemError::AtMinimum {
+            side: Side::Input,
+            min: 2
+        }),
+        "the floor is the kind's, and the OPERATION enforces it — the engine \
+         only puts the same rule on the menu item"
+    );
+    for _ in 0..2 {
+        document
+            .insert_item(ROOT, choose, Side::Input, 0, Item::plain())
+            .unwrap();
+    }
+    assert_eq!(
+        document.insert_item(ROOT, choose, Side::Input, 0, Item::plain()),
+        Err(ItemError::AtMaximum {
+            side: Side::Input,
+            max: 4
+        })
+    );
+    assert_eq!(
+        document.remove_item(ROOT, choose, Side::Input, 9),
+        Err(ItemError::NoSuchItem {
+            side: Side::Input,
+            index: 9,
+            items: 4
+        })
+    );
+    assert_eq!(
+        document.insert_item(ROOT, choose, Side::Output, 0, Item::plain()),
+        Err(ItemError::NotVariadic {
+            tree: ROOT,
+            node: choose,
+            side: Side::Output
+        }),
+        "the OTHER side of a variadic kind is not variadic"
+    );
+    assert_eq!(
+        document.insert_item(ROOT, add, Side::Input, 0, Item::plain()),
+        Err(ItemError::NotVariadic {
+            tree: ROOT,
+            node: add,
+            side: Side::Input
+        })
+    );
+    assert_eq!(
+        document.items(ROOT, add, Side::Input),
+        None,
+        "and a kind with no run has no items to speak of"
+    );
+}
+
+/// An unlabelled item is named by its ordinal and a labelled one by its label,
+/// and the ordinal is **derived** — so a name cannot go stale after a move.
+///
+/// The engine renumbers its pins in a loop after every insert and every remove
+/// (its execution-sequence node's `InsertPinIntoExecutionNode`), and caps arity at
+/// `'Z' - 'A'` because the names are the letters. Neither is needed here.
+#[test]
+fn r1632_a_name_is_derived_from_the_ordinal_and_cannot_go_stale() {
+    let mut document: Document<Op> = Document::new("root");
+    let choose = document
+        .add_node(ROOT, NodeBody::Kind(Op::Choose), 0, 0)
+        .unwrap();
+    let names = |document: &Document<Op>| -> Vec<String> {
+        document
+            .signature(ROOT, choose)
+            .unwrap()
+            .inputs
+            .iter()
+            .map(|p| p.name.clone())
+            .collect()
+    };
+    assert_eq!(names(&document), ["Option 0", "Option 1", "Index"]);
+
+    document
+        .insert_item(
+            ROOT,
+            choose,
+            Side::Input,
+            0,
+            Item::plain().named("Fallback"),
+        )
+        .unwrap();
+    assert_eq!(
+        names(&document),
+        ["Fallback", "Option 1", "Option 2", "Index"],
+        "the labelled item keeps its name and the others RENUMBER themselves"
+    );
+
+    document.move_item(ROOT, choose, Side::Input, 0, 2).unwrap();
+    assert_eq!(
+        names(&document),
+        ["Option 0", "Option 1", "Fallback", "Index"],
+        "★ and after a move the ordinals are still compact, with no renaming \
+         pass anywhere — they were never stored"
+    );
+}
+
+/// An item may carry its **own** socket type, which is what the DCC's socket
+/// items are and what the engine cannot express at all.
+///
+/// The type is not decoration: a wire that would be refused against the
+/// template's type is accepted against the item's, so the authored type is what
+/// `connect` actually consults.
+#[test]
+fn r1632_an_item_may_carry_its_own_type() {
+    let mut document: Document<Op> = Document::new("root");
+    let choose = document
+        .add_node(ROOT, NodeBody::Kind(Op::Choose), 0, 0)
+        .unwrap();
+    let word = document
+        .add_node(ROOT, NodeBody::Kind(Op::Word("hi".into())), 0, 0)
+        .unwrap();
+
+    assert!(
+        document
+            .connect(ROOT, Socket::new(word, 0), Socket::new(choose, 0))
+            .is_err(),
+        "the template says Number, and Text does not cross into one"
+    );
+    document
+        .insert_item(
+            ROOT,
+            choose,
+            Side::Input,
+            0,
+            Item::plain().named("Caption").typed(0, Ty::Text),
+        )
+        .unwrap();
+    assert_eq!(
+        document.signature(ROOT, choose).unwrap().inputs[0].value_type(),
+        Some(&Ty::Text)
+    );
+    document
+        .connect(ROOT, Socket::new(word, 0), Socket::new(choose, 0))
+        .unwrap();
+    assert!(document.validate().is_empty());
+}
+
+/// Items travel with a duplicate and survive a round trip through JSON, and a
+/// document that stored nothing still resolves to the floor after one.
+#[test]
+fn r1632_items_travel_with_a_copy_and_through_a_file() {
+    let (mut document, blend, _) = blended(3);
+    document
+        .insert_item(ROOT, blend, Side::Input, 0, Item::plain().named("Underlay"))
+        .unwrap();
+    let before = document.signature(ROOT, blend).unwrap();
+
+    let copied = document
+        .duplicate(
+            ROOT,
+            &[blend],
+            (500, 500),
+            Crossings::Drop,
+            Definitions::Share,
+        )
+        .unwrap();
+    let twin = copied.nodes[0];
+    assert_eq!(
+        document.signature(ROOT, twin).unwrap(),
+        before,
+        "a duplicated four-pose blend is a four-pose blend"
+    );
+
+    let json = serde_json::to_string(&document).unwrap();
+    let back: Document<Op> = serde_json::from_str(&json).unwrap();
+    assert_eq!(back.signature(ROOT, blend).unwrap(), before);
+    assert_eq!(
+        back.items(ROOT, blend, Side::Input).unwrap()[0]
+            .label
+            .as_deref(),
+        Some("Underlay")
+    );
+    assert!(back.validate().is_empty());
+}
+
+/// Changing what a node IS clamps its items to what the new kind allows, and
+/// the wires and values that could not follow are reported by the swap.
+///
+/// The interaction R1632 owes R1598: a swap re-signatures a node, and the node
+/// now carries part of its own signature. Both halves go through one
+/// correspondence, which is why `set_kind` and the item edits share
+/// `remap_ports`.
+#[test]
+fn r1632_a_swap_clamps_the_items_it_inherits() {
+    let (mut document, blend, sources) = blended(6);
+    let swapped = document.set_kind(ROOT, blend, Op::Choose).unwrap();
+
+    assert_eq!(
+        document.items(ROOT, blend, Side::Input).unwrap().len(),
+        4,
+        "★ six poses meet a selector that declares a ceiling of four"
+    );
+    assert_eq!(
+        document.signature(ROOT, blend).unwrap().inputs.len(),
+        5,
+        "four options and the Index"
+    );
+    assert!(
+        !swapped.severed.is_empty(),
+        "the blend had fourteen inputs and the selector has five, so wires had to go"
+    );
+    assert!(
+        swapped
+            .severed
+            .iter()
+            .all(|link| sources.contains(&link.from.node)),
+        "and every one of them is named"
+    );
+    assert!(document.validate().is_empty(), "including the new ceiling");
+
+    // ★ And a kind with NO run keeps no items — which is only observable by
+    // swapping back, because a run that is not declared is not resolved
+    // either. A stale list surviving here would reappear the moment the node
+    // became variadic again, with links addressing ports nothing had drawn.
+    document.set_kind(ROOT, blend, Op::Sink).unwrap();
+    assert!(document.items(ROOT, blend, Side::Input).is_none());
+    document.set_kind(ROOT, blend, Op::Blend).unwrap();
+    assert_eq!(
+        document
+            .signature(ROOT, blend)
+            .unwrap()
+            .inputs
+            .iter()
+            .map(|p| p.name.clone())
+            .collect::<Vec<_>>(),
+        ["Base", "Pose 0", "Weight 0", "Bias"],
+        "a blend that came back through a non-variadic kind is at its floor"
+    );
+    assert!(document.validate().is_empty());
+}
+
+/// A run that contributes no port is **not a run**, and the refusal says so.
+///
+/// The alternative — treating it as a run of zero-width items — would give the
+/// node a length nothing could see and a position nothing could name. This is
+/// the one arm of the declaration whose behaviour is a refusal, so it is the
+/// one most likely to be documented and not implemented.
+#[test]
+fn r1632_a_declaration_that_contributes_no_port_is_no_run() {
+    let mut document: Document<Op> = Document::new("root");
+    let blend = document
+        .add_node(ROOT, NodeBody::Kind(Op::Blend), 0, 0)
+        .unwrap();
+
+    assert!(document.variadic(ROOT, blend, Side::Output).is_none());
+    assert!(document.items(ROOT, blend, Side::Output).is_none());
+    assert_eq!(
+        document.insert_item(ROOT, blend, Side::Output, 0, Item::plain()),
+        Err(ItemError::NotVariadic {
+            tree: ROOT,
+            node: blend,
+            side: Side::Output
+        })
+    );
+    assert_eq!(
+        document
+            .signature(ROOT, blend)
+            .unwrap()
+            .outputs
+            .iter()
+            .map(|p| p.name.clone())
+            .collect::<Vec<_>>(),
+        ["Out"],
+        "and the side is exactly what the kind declared"
+    );
+    assert!(document.validate().is_empty());
+}
+
+/// A document whose run is longer than its kind allows is **reported**, not
+/// silently cut.
+///
+/// Unreachable through the API — `insert_item` refuses at the ceiling — and
+/// reachable from a file, or from a taxonomy that lowered a ceiling between
+/// releases. Cutting on read would take ports that links still address, so the
+/// honest answer is to say which node.
+#[test]
+fn r1632_validate_names_a_run_past_its_ceiling() {
+    let mut document: Document<Op> = Document::new("root");
+    let choose = document
+        .add_node(ROOT, NodeBody::Kind(Op::Choose), 0, 0)
+        .unwrap();
+    document
+        .tree_mut(ROOT)
+        .and_then(|t| t.node_mut(choose))
+        .unwrap()
+        .items
+        .set(Side::Input, vec![Item::plain(); 5]);
+
+    assert_eq!(
+        document.validate(),
+        vec![Violation::TooManyItems {
+            tree: ROOT,
+            node: choose,
+            side: Side::Input
+        }]
+    );
+    assert_eq!(
+        document.signature(ROOT, choose).unwrap().inputs.len(),
+        6,
+        "and the ports are still all there, because a link may address them"
     );
 }

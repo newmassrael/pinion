@@ -104,6 +104,15 @@
 //!   [`Document::settle`] runs to a fixed point. A run *reads* the machine and
 //!   never advances it, so a tick's outcome is a function of the document and
 //!   the registers rather than of the walk.
+//! * **Ports that belong to the node** — a kind may declare that one run of
+//!   its ports repeats ([`Variadic`]), and then each node carries the
+//!   [`Item`]s of that run: a sequencer with four branches and one with two are
+//!   the same kind. [`Document::insert_item`], [`Document::remove_item`] and
+//!   [`Document::move_item`] are the reference's ten variadic-pin commands as
+//!   two verbs and a number, and each one re-points **every** link and
+//!   authored value that the change moved — including the fixed ports past the
+//!   run, which is where the engine ships a `//@TODO` instead. A removal
+//!   *names* the wires it had to cut, where the reference's returns `void`.
 //! * **A standing check** — [`Document::validate`], for documents that arrive
 //!   from a file or a peer and have promised nothing.
 //!
@@ -187,6 +196,7 @@ mod eval;
 mod fragment;
 mod frame;
 mod group;
+mod items;
 mod layout;
 mod machine;
 mod model;
@@ -210,6 +220,7 @@ pub use group::{
     EditPath, GroupError, Grouped, NestError, PathEntry, PathError, UngroupError, Ungrouped,
     Violation,
 };
+pub use items::{Item, ItemChange, ItemError, Items, Variadic};
 pub use layout::{Extent, Layered, Organic, Placement, Quality};
 pub use machine::{Committed, ForceError, Machine, Tick};
 pub use model::{

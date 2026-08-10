@@ -7,6 +7,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::appearance::Appearance;
+use crate::items::{Items, Variadic, resolve};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
@@ -568,15 +569,40 @@ pub trait NodeKind: Clone + PartialEq + fmt::Debug {
     /// multiplies.
     fn name(&self) -> String;
 
-    /// This kind's input ports, in order.
+    /// This kind's **fixed** input ports, in order.
+    ///
+    /// Fixed because a kind may also declare a run that repeats per node
+    /// ([`Self::variadic`]); the run is spliced into this list and the result
+    /// is [`Document::signature`]. A kind with no run — the overwhelming
+    /// majority — has this list *as* its inputs.
     fn inputs(&self) -> Vec<Port<Self::Type, Self::Value>>;
 
-    /// This kind's output ports, in order.
+    /// This kind's **fixed** output ports, in order.
     fn outputs(&self) -> Vec<Port<Self::Type, Self::Value>>;
+
+    /// Which run of this kind's ports repeats per **node**, if any (R1632).
+    ///
+    /// A method on `&self` rather than an associated function, because whether
+    /// a node is variadic can depend on what the kind is carrying — the
+    /// engine's selector stops accepting options once its index pin is a
+    /// boolean or an enumeration (its selector node's `CanAddPin`), and a taxonomy
+    /// that models the same thing puts that in its kind.
+    ///
+    /// The default is `None` on both sides, so a taxonomy with no variadic node
+    /// writes nothing. See [`Variadic`] for what the
+    /// declaration fixes and why it is one declaration rather than the
+    /// reference's four hooks.
+    fn variadic(&self, side: Side) -> Option<Variadic<Self::Type, Self::Value>> {
+        let _ = side;
+        None
+    }
 
     /// Compute every output from the already-resolved inputs.
     ///
-    /// `inputs` is exactly as long as [`Self::inputs`]; a `None` slot is an
+    /// `inputs` is exactly as long as the node's **resolved** input list —
+    /// [`Self::inputs`] for a kind with no variadic run, and that list with the
+    /// node's items spliced in for one with (R1632), which is what lets a
+    /// variadic kind read `inputs` as the run it declared. A `None` slot is an
     /// input that could not be resolved at all (no link, no default). The
     /// returned vector is truncated or padded with `None` to the output arity by
     /// the evaluator, so an implementor that returns the wrong length degrades
@@ -851,6 +877,20 @@ pub enum Side {
     Output,
 }
 
+impl Side {
+    /// The other one.
+    ///
+    /// Two arms and no default, so a third side — if a graph ever grows one —
+    /// fails to compile here rather than answering something.
+    #[must_use]
+    pub const fn other(self) -> Self {
+        match self {
+            Self::Input => Self::Output,
+            Self::Output => Self::Input,
+        }
+    }
+}
+
 /// One port of one node, named from inside that node (R1594).
 ///
 /// A [`Socket`] names a port of a *named* node, which is what a link needs. This
@@ -970,6 +1010,21 @@ pub struct Node<K: NodeKind> {
     /// does.
     #[serde(default, with = "port_values")]
     pub values: BTreeMap<PortRef, K::Value>,
+    /// The **items** of this node's variadic runs (R1632).
+    ///
+    /// A port's existence comes from the kind, for every node but the ones
+    /// whose kind says otherwise: a sequencer with four branches and one with
+    /// two are the same kind, and the difference is here. Empty means nothing
+    /// has been authored, which resolves to the kind's declared minimum — see
+    /// [`Items`].
+    ///
+    /// Edited through [`Document::insert_item`], [`Document::remove_item`] and
+    /// [`Document::move_item`], never in place: an item's position **is** a
+    /// range of port indices, so changing this field without moving the links
+    /// and the values that address those indices re-points wires at the wrong
+    /// sockets. That is the defect the engine ships with a `//@TODO` beside it.
+    #[serde(default, skip_serializing_if = "Items::is_empty")]
+    pub items: Items<K::Type>,
 }
 
 /// `serde` for [`Node::values`]: JSON has no map key but a string, and
@@ -1070,11 +1125,17 @@ impl<K: NodeKind> Node<K> {
             appearance,
             parent: _,
             values,
+            items,
         } = source;
         self.label.clone_from(label);
         self.bypassed = *bypassed;
         self.appearance.clone_from(appearance);
         self.values.clone_from(values);
+        // R1632 added `items`, and the answer for it is **yes**, for the same
+        // reason as `values` and not `parent`: an item names nothing outside
+        // this node, and a duplicated four-branch sequencer that came back with
+        // two branches would lose the wiring the copy was made to keep.
+        self.items.clone_from(items);
     }
 }
 
@@ -1385,10 +1446,10 @@ impl<K: NodeKind> Document<K> {
         let host = self.tree(tree)?;
         let node = host.node(node)?;
         Some(match &node.body {
-            NodeBody::Kind(kind) => Signature {
-                inputs: kind.inputs(),
-                outputs: kind.outputs(),
-            },
+            // R1632 — a kind's own lists are the FIXED part, and the node's
+            // items are spliced into them. A kind that declares no run splices
+            // nothing, which is why the ordinary case reads the same as before.
+            NodeBody::Kind(kind) => resolve(kind, &node.items),
             NodeBody::Group(inner) => {
                 let definition = self.tree(*inner)?;
                 Signature {
@@ -1486,6 +1547,10 @@ impl<K: NodeKind> Document<K> {
                 appearance: Appearance::default(),
                 parent: None,
                 values: BTreeMap::new(),
+                // R1632 — nothing authored, which resolves to whatever minimum
+                // the kind declared. A fresh sequencer therefore arrives with
+                // its two branches without this having to know that.
+                items: Items::default(),
             },
         );
         Ok(id)

@@ -45,8 +45,9 @@ use serde::{Deserialize, Serialize};
 
 use pinion_node_graph::{
     Align, Appearance, Axis, Conversion, Crossings, Definitions, Distribute, Document, Edge,
-    EditPath, Extent, Fragment, Grow, InterfaceSide, LinkId, Node, NodeBody, NodeId, NodeKind,
-    Port, PortRef, ROOT, Reach, Sharing, Socket, Stack, Straighten, TreeId,
+    EditPath, Extent, Fragment, Grow, InterfaceSide, Item, ItemError, LinkId, Node, NodeBody,
+    NodeId, NodeKind, Port, PortRef, ROOT, Reach, Sharing, Side, Socket, Stack, Straighten, TreeId,
+    Variadic,
 };
 
 // ---------------------------------------------------------------- taxonomy
@@ -81,6 +82,22 @@ enum Op {
     Shout,
     /// `(Result: Number) -> ()`. A sink, so a graph has an end.
     Sink,
+    /// R1632 — `Execute ->| Then 0, Then 1, ..`. The engine's execution
+    /// sequence: a variadic run of **control** outputs, floor two, no ceiling.
+    Sequence,
+    /// R1632 — `(Option 0, Option 1, .., Index) -> Out`. Its selector, whose
+    /// `Index` input sits **after** the run, so the run's length decides that
+    /// port's own address.
+    Choose,
+    /// R1632 — `(Base, Pose 0, Weight 0, Pose 1, Weight 1, .., Bias) -> Out`.
+    /// Its blend list: **two** ports per item, from two parallel arrays, with a
+    /// fixed port on each side of the run.
+    Blend,
+    /// R1632 — `(Member 0, Member 1, ..) -> Out: Text`. The DCC's socket
+    /// items: each item carries its **own** name and socket type, which is what
+    /// all but one of that reference's accessors declare and what the engine
+    /// cannot express.
+    Bundle,
 }
 
 #[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
@@ -111,13 +128,19 @@ impl NodeKind for Op {
             Self::Double => "Double",
             Self::Shout => "Shout",
             Self::Sink => "Sink",
+            Self::Sequence => "Sequence",
+            Self::Choose => "Choose",
+            Self::Blend => "Blend",
+            Self::Bundle => "Bundle",
         }
         .to_owned()
     }
 
     fn inputs(&self) -> Vec<Port<Ty, Val>> {
         match self {
-            Self::Num(_) | Self::Word(_) => Vec::new(),
+            // `Bundle` is here for the same reason the sources are: its members
+            // are the NODE's, so its kind declares no fixed input at all.
+            Self::Num(_) | Self::Word(_) | Self::Bundle => Vec::new(),
             Self::Add => vec![
                 Port::new("Augend", Ty::Number).with_default(Val::Number(0)),
                 Port::new("Addend", Ty::Number).with_default(Val::Number(1)),
@@ -129,6 +152,44 @@ impl NodeKind for Op {
             Self::Double => vec![Port::new("Value", Ty::Number)],
             Self::Shout => vec![Port::new("Phrase", Ty::Text)],
             Self::Sink => vec![Port::new("Result", Ty::Number)],
+            // R1632 — the FIXED half of a variadic kind. What repeats is
+            // declared once, in `variadic`, so these two can never disagree
+            // about where the run is.
+            Self::Sequence => vec![Port::control("Execute")],
+            Self::Choose => vec![Port::new("Index", Ty::Number).with_default(Val::Number(0))],
+            Self::Blend => vec![
+                Port::new("Base", Ty::Number).with_default(Val::Number(0)),
+                Port::new("Bias", Ty::Number).with_default(Val::Number(0)),
+            ],
+        }
+    }
+
+    /// R1632 — which run of the ports above is the node's rather than the
+    /// kind's.
+    fn variadic(&self, side: Side) -> Option<Variadic<Ty, Val>> {
+        match (self, side) {
+            (Self::Sequence, Side::Output) => {
+                Some(Variadic::at(0, vec![Port::control("Then")]).at_least(2))
+            }
+            (Self::Choose, Side::Input) => Some(
+                Variadic::at(0, vec![Port::new("Option", Ty::Number)])
+                    .at_least(2)
+                    .at_most(4),
+            ),
+            (Self::Blend, Side::Input) => Some(
+                Variadic::at(
+                    1,
+                    vec![
+                        Port::new("Pose", Ty::Number),
+                        Port::new("Weight", Ty::Number),
+                    ],
+                )
+                .at_least(1),
+            ),
+            (Self::Bundle, Side::Input) => {
+                Some(Variadic::at(0, vec![Port::new("Member", Ty::Number)]).at_least(1))
+            }
+            _ => None,
         }
     }
 
@@ -137,8 +198,9 @@ impl NodeKind for Op {
             Self::Num(_) | Self::Add | Self::Mul | Self::Double => {
                 vec![Port::new("Out", Ty::Number)]
             }
-            Self::Word(_) | Self::Shout => vec![Port::new("Out", Ty::Text)],
-            Self::Sink => Vec::new(),
+            Self::Word(_) | Self::Shout | Self::Bundle => vec![Port::new("Out", Ty::Text)],
+            Self::Choose | Self::Blend => vec![Port::new("Out", Ty::Number)],
+            Self::Sink | Self::Sequence => Vec::new(),
         }
     }
 
@@ -176,7 +238,43 @@ impl NodeKind for Op {
                 Val::Text(t) => Val::Text(t.to_uppercase()),
                 other @ Val::Number(_) => other.clone(),
             })],
-            Self::Sink => Vec::new(),
+            Self::Sink | Self::Sequence => Vec::new(),
+            // R1632 — `inputs` is as long as the NODE's resolved signature, so
+            // a variadic kind reads the run it declared instead of a fixed
+            // arity. That is the whole reason `evaluate` needed no new
+            // parameter.
+            Self::Choose => {
+                let options = inputs.len() - 1;
+                let index = number(options).unwrap_or(0);
+                vec![
+                    usize::try_from(index)
+                        .ok()
+                        .filter(|i| *i < options)
+                        .and_then(number)
+                        .map(Val::Number),
+                ]
+            }
+            Self::Blend => {
+                let last = inputs.len() - 1;
+                let mut total = number(0).unwrap_or(0) + number(last).unwrap_or(0);
+                let mut slot = 1;
+                while slot + 1 < last {
+                    total += number(slot).unwrap_or(0) * number(slot + 1).unwrap_or(0);
+                    slot += 2;
+                }
+                vec![Some(Val::Number(total))]
+            }
+            Self::Bundle => vec![Some(Val::Text(
+                inputs
+                    .iter()
+                    .map(|slot| match slot {
+                        Some(Val::Number(n)) => n.to_string(),
+                        Some(Val::Text(t)) => t.clone(),
+                        None => "-".to_owned(),
+                    })
+                    .collect::<Vec<_>>()
+                    .join("/"),
+            ))],
         }
     }
 }
@@ -315,7 +413,90 @@ fn proofs() -> Vec<Proof> {
     all.extend(engine_hook_proofs());
     all.extend(engine_arrangement_proofs());
     all.extend(engine_schema_hook_proofs());
+    all.extend(engine_variadic_proofs());
+    all.extend(dcc_item_proofs());
     all
+}
+
+/// R1632 — the VARIADIC-PORT cluster: the engine's ten commands for a node
+/// whose port count is its own. Its own registry for the reason the
+/// arrangement one has its own — the others are at the line ceiling, and these
+/// are one capability.
+fn engine_variadic_proofs() -> Vec<Proof> {
+    vec![
+        proof(
+            "engine",
+            "GraphEditor::AddExecutionPin",
+            engine_graph_editor_add_execution_pin,
+        ),
+        proof(
+            "engine",
+            "GraphEditor::InsertExecutionPinBefore",
+            engine_graph_editor_insert_execution_pin_before,
+        ),
+        proof(
+            "engine",
+            "GraphEditor::InsertExecutionPinAfter",
+            engine_graph_editor_insert_execution_pin_after,
+        ),
+        proof(
+            "engine",
+            "GraphEditor::RemoveExecutionPin",
+            engine_graph_editor_remove_execution_pin,
+        ),
+        proof(
+            "engine",
+            "GraphEditor::AddOptionPin",
+            engine_graph_editor_add_option_pin,
+        ),
+        proof(
+            "engine",
+            "GraphEditor::RemoveOptionPin",
+            engine_graph_editor_remove_option_pin,
+        ),
+        proof(
+            "engine",
+            "SoundCueGraph::DeleteInput",
+            engine_sound_cue_graph_delete_input,
+        ),
+        proof(
+            "engine",
+            "AnimGraph::AddBlendListPin",
+            engine_anim_graph_add_blend_list_pin,
+        ),
+        proof(
+            "engine",
+            "AnimGraph::RemoveBlendListPin",
+            engine_anim_graph_remove_blend_list_pin,
+        ),
+        proof(
+            "engine",
+            "node::CreateUniquePinName",
+            engine_node_create_unique_pin_name,
+        ),
+    ]
+}
+
+/// R1632 — and the DCC's half: its generic socket-item operators, which are a
+/// template over per-node socket lists rather than a per-node-type routine.
+fn dcc_item_proofs() -> Vec<Proof> {
+    vec![
+        proof(
+            "dcc",
+            "socket_items::make_add_item_operator",
+            dcc_socket_items_make_add_item_operator,
+        ),
+        proof(
+            "dcc",
+            "socket_items::make_remove_item_by_index_operator",
+            dcc_socket_items_make_remove_item_by_index_operator,
+        ),
+        proof(
+            "dcc",
+            "socket_items::make_move_item_operator",
+            dcc_socket_items_make_move_item_operator,
+        ),
+    ]
 }
 
 fn dcc_proofs() -> Vec<Proof> {
@@ -3906,5 +4087,660 @@ fn engine_graph_editor_straighten_connections() {
         done.placement().positions().get(&ids[2]).map(|p| p.1),
         Some(5),
         "the consumer met the producer that claimed it first"
+    );
+}
+
+// ======================================================= R1632 — variadic ports
+
+/// A `Sequence` with `count` branches, each wired to its own sink, plus the
+/// upstream that fires it.
+///
+/// Every branch reaches a *different* node, so "the wires moved correctly" is a
+/// statement about which sink each branch reaches rather than about how many
+/// wires survived — the distinction a re-index bug lives in.
+fn sequenced(count: u32) -> (Document<Op>, NodeId, Vec<NodeId>) {
+    let mut document: Document<Op> = Document::new("root");
+    let sequence = node(&mut document, Op::Sequence);
+    for extra in 2..count {
+        document
+            .insert_item(ROOT, sequence, Side::Output, extra, Item::plain())
+            .unwrap();
+    }
+    let branches = (0..count)
+        .map(|branch| {
+            let sink = node(&mut document, Op::Sequence);
+            document
+                .connect(ROOT, Socket::new(sequence, branch), Socket::new(sink, 0))
+                .unwrap();
+            sink
+        })
+        .collect();
+    (document, sequence, branches)
+}
+
+/// Which node each control output of `sequence` reaches.
+fn branches_of(document: &Document<Op>, sequence: NodeId) -> Vec<Option<NodeId>> {
+    let arity = document.signature(ROOT, sequence).unwrap().outputs.len();
+    (0..arity)
+        .map(|port| {
+            let port = u32::try_from(port).unwrap();
+            document
+                .tree(ROOT)
+                .unwrap()
+                .links()
+                .iter()
+                .find(|link| link.from == Socket::new(sequence, port))
+                .map(|link| link.to.node)
+        })
+        .collect()
+}
+
+/// The port names of one side, which is what an editor draws.
+fn port_names(document: &Document<Op>, target: NodeId, side: Side) -> Vec<String> {
+    let signature = document.signature(ROOT, target).unwrap();
+    match side {
+        Side::Input => signature.inputs,
+        Side::Output => signature.outputs,
+    }
+    .iter()
+    .map(|port| port.name.clone())
+    .collect()
+}
+
+/// The engine's "adds another execution output pin to an execution sequence or
+/// switch node". Appending is `insert_item` at the run's own length.
+///
+/// What it discriminates: the branch really is a **control** port and not a
+/// value one, so the arm added is the one the reference's exec pin is, and the
+/// engine's own floor of two (`CanRemoveExecutionPin`: `NumOutPins > 2`) is
+/// declared rather than checked at a menu.
+#[test]
+fn engine_graph_editor_add_execution_pin() {
+    let (mut document, sequence, branches) = sequenced(2);
+    let before = branches_of(&document, sequence);
+
+    let count = document.items(ROOT, sequence, Side::Output).unwrap().len();
+    let change = document
+        .insert_item(
+            ROOT,
+            sequence,
+            Side::Output,
+            u32::try_from(count).unwrap(),
+            Item::plain(),
+        )
+        .unwrap();
+
+    assert_eq!(change.items, 3);
+    assert_eq!(change.added, vec![PortRef::output(2)]);
+    assert!(change.is_lossless(), "appending cuts nothing");
+    assert_eq!(
+        port_names(&document, sequence, Side::Output),
+        ["Then 0", "Then 1", "Then 2"]
+    );
+    let signature = document.signature(ROOT, sequence).unwrap();
+    assert!(
+        signature.outputs.iter().all(Port::is_control),
+        "the pin added is an EXECUTION pin, which is a different plane from a value"
+    );
+    assert_eq!(
+        branches_of(&document, sequence)[..2],
+        before[..2],
+        "and the branches that were there still reach what they reached"
+    );
+    assert_eq!(branches_of(&document, sequence)[2], None);
+    assert_eq!(branches.len(), 2);
+    assert!(document.validate().is_empty());
+}
+
+/// The engine's "adds another execution output pin **before** this one".
+///
+/// What it discriminates against its `After` sibling: the branch that was at
+/// `i` must end up at `i + 1`, still reaching the same node. An implementation
+/// that inserted after would leave it at `i` and this would fail — which is why
+/// the two are separate proofs rather than one with a parameter.
+#[test]
+fn engine_graph_editor_insert_execution_pin_before() {
+    let (mut document, sequence, branches) = sequenced(3);
+
+    let change = document
+        .insert_item(ROOT, sequence, Side::Output, 1, Item::plain())
+        .unwrap();
+    assert!(change.is_lossless());
+    assert_eq!(
+        branches_of(&document, sequence),
+        vec![
+            Some(branches[0]),
+            None,
+            Some(branches[1]),
+            Some(branches[2])
+        ],
+        "the new pin took index 1 and pushed the branch that was there along"
+    );
+    assert!(
+        change
+            .moved
+            .contains(&(PortRef::output(1), PortRef::output(2))),
+        "and the change says so: {:?}",
+        change.moved
+    );
+}
+
+/// The engine's "adds another execution output pin **after** this one".
+///
+/// The mirror assertion: the branch at `i` stays at `i` and the gap opens
+/// below it. Together with the `Before` proof this is what makes "one method
+/// and a number" a real answer to the reference's two commands rather than a
+/// claim.
+#[test]
+fn engine_graph_editor_insert_execution_pin_after() {
+    let (mut document, sequence, branches) = sequenced(3);
+
+    document
+        .insert_item(ROOT, sequence, Side::Output, 1 + 1, Item::plain())
+        .unwrap();
+    assert_eq!(
+        branches_of(&document, sequence),
+        vec![
+            Some(branches[0]),
+            Some(branches[1]),
+            None,
+            Some(branches[2])
+        ],
+        "the branch at 1 stayed at 1 and the gap opened below it"
+    );
+}
+
+/// The engine's `RemoveExecutionPin`, and the half it does not do.
+///
+/// Its execution-sequence node's `RemovePinFromExecutionNode` calls
+/// `MarkAsGarbage`, which reaches the pin's own destructor and
+/// `BreakAllPinLinks()`; the command answers `void`, so what it disconnected is
+/// gone. Here the cut wire is handed back — and re-making it from the report is
+/// what proves the report is enough for an undo.
+#[test]
+fn engine_graph_editor_remove_execution_pin() {
+    let (mut document, sequence, branches) = sequenced(4);
+
+    let change = document
+        .remove_item(ROOT, sequence, Side::Output, 1)
+        .unwrap();
+
+    assert_eq!(change.items, 3);
+    assert_eq!(change.severed.len(), 1);
+    assert_eq!(
+        change.severed[0].to.node, branches[1],
+        "the wire it cut is NAMED, where the reference's returns void"
+    );
+    assert_eq!(
+        branches_of(&document, sequence),
+        vec![Some(branches[0]), Some(branches[2]), Some(branches[3])],
+        "and the branches below moved up, still reaching what they reached"
+    );
+
+    // The report is enough to put it back, which is the test of "enough".
+    document
+        .connect(ROOT, Socket::new(sequence, 2), Socket::new(branches[1], 0))
+        .unwrap();
+    assert_eq!(branches_of(&document, sequence)[2], Some(branches[1]));
+
+    // And the floor is the operation's, not a menu's.
+    document
+        .remove_item(ROOT, sequence, Side::Output, 0)
+        .unwrap();
+    assert_eq!(
+        document.remove_item(ROOT, sequence, Side::Output, 0),
+        Err(ItemError::AtMinimum {
+            side: Side::Output,
+            min: 2
+        })
+    );
+}
+
+/// The engine's `AddOptionPin` — the same operation on the INPUT side, and the
+/// case that makes re-indexing observable at all.
+///
+/// The selector's `Index` input sits **after** the options, so adding one moves
+/// a port that has nothing to do with the edit. Nothing on the node says so,
+/// and an implementation that only re-indexed within the run would silently
+/// re-point whatever was wired to `Index`.
+#[test]
+fn engine_graph_editor_add_option_pin() {
+    let mut document: Document<Op> = Document::new("root");
+    let choose = node(&mut document, Op::Choose);
+    let picker = num(&mut document, 1);
+    let first = num(&mut document, 10);
+    wire(&mut document, first, 0, choose, 0);
+    wire(&mut document, picker, 0, choose, 2);
+    assert_eq!(
+        arrives(&document, Socket::new(choose, 2)),
+        Some(Val::Number(1)),
+        "the Index is the third input while there are two options"
+    );
+
+    let change = document
+        .insert_item(ROOT, choose, Side::Input, 2, Item::plain())
+        .unwrap();
+
+    assert!(change.is_lossless());
+    assert_eq!(
+        port_names(&document, choose, Side::Input),
+        ["Option 0", "Option 1", "Option 2", "Index"]
+    );
+    assert!(
+        change
+            .moved
+            .contains(&(PortRef::input(2), PortRef::input(3))),
+        "★ the fixed port PAST the run moved: {:?}",
+        change.moved
+    );
+    assert_eq!(
+        document
+            .tree(ROOT)
+            .unwrap()
+            .link_into(Socket::new(choose, 3))
+            .map(|link| link.from.node),
+        Some(picker),
+        "and the wire that was on it came along"
+    );
+    assert_eq!(
+        arrives(&document, Socket::new(choose, 0)),
+        Some(Val::Number(10)),
+        "while the option that was already wired is where it was"
+    );
+}
+
+/// The engine's `RemoveOptionPin`, whose own description is "removes the
+/// **last** option input pin from the node" — so it is `remove_item` at one
+/// below the count, and the *last* is what has to go.
+///
+/// What it discriminates: a fixture wired on every option would pass an
+/// implementation that removed the first, so this asserts which wire was cut
+/// and which survived.
+#[test]
+fn engine_graph_editor_remove_option_pin() {
+    let mut document: Document<Op> = Document::new("root");
+    let choose = node(&mut document, Op::Choose);
+    document
+        .insert_item(ROOT, choose, Side::Input, 2, Item::plain())
+        .unwrap();
+    let feeds: Vec<NodeId> = (0..3).map(|n| num(&mut document, 10 + n)).collect();
+    for (option, feed) in feeds.iter().enumerate() {
+        wire(
+            &mut document,
+            *feed,
+            0,
+            choose,
+            u32::try_from(option).unwrap(),
+        );
+    }
+
+    let count = u32::try_from(document.items(ROOT, choose, Side::Input).unwrap().len()).unwrap();
+    let change = document
+        .remove_item(ROOT, choose, Side::Input, count - 1)
+        .unwrap();
+
+    assert_eq!(change.items, 2);
+    assert_eq!(change.severed.len(), 1);
+    assert_eq!(
+        change.severed[0].from.node, feeds[2],
+        "the LAST option's wire is the one cut"
+    );
+    assert_eq!(
+        arrives(&document, Socket::new(choose, 0)),
+        Some(Val::Number(10))
+    );
+    assert_eq!(
+        arrives(&document, Socket::new(choose, 1)),
+        Some(Val::Number(11)),
+        "and the two before it are untouched at their own indices"
+    );
+}
+
+/// The sound-cue editor's `DeleteInput` — removing an item from the middle of
+/// an INPUT run, and handing back the value authored on it.
+///
+/// Distinct from the execution-pin removal in the fact it asserts: an authored
+/// value is a thing only a *value* port has, so this is the arm that shows the
+/// two halves of `remap_ports` move together. A link kept while the value on
+/// the same port vanished is the corruption the shared map exists to rule out.
+#[test]
+fn engine_sound_cue_graph_delete_input() {
+    let mut document: Document<Op> = Document::new("root");
+    let choose = node(&mut document, Op::Choose);
+    document
+        .insert_item(ROOT, choose, Side::Input, 2, Item::plain())
+        .unwrap();
+    for option in 0..3u32 {
+        document
+            .set_port_value(
+                ROOT,
+                choose,
+                PortRef::input(option),
+                Val::Number(i64::from(70 + option)),
+            )
+            .unwrap();
+    }
+    document
+        .set_port_value(ROOT, choose, PortRef::input(3), Val::Number(2))
+        .unwrap();
+    assert_eq!(
+        document.evaluate(ROOT, choose),
+        vec![Some(Val::Number(72))],
+        "index 2 selects the third option"
+    );
+
+    let change = document.remove_item(ROOT, choose, Side::Input, 0).unwrap();
+
+    assert_eq!(
+        change.discarded,
+        vec![(PortRef::input(0), Val::Number(70))],
+        "the value authored on the removed port is HANDED BACK"
+    );
+    assert_eq!(
+        document
+            .tree(ROOT)
+            .unwrap()
+            .node(choose)
+            .unwrap()
+            .port_value(PortRef::input(2)),
+        Some(&Val::Number(2)),
+        "and the Index's own authored value followed the Index"
+    );
+    assert_eq!(
+        document.evaluate(ROOT, choose),
+        vec![None],
+        "which now points past the two options that are left, rather than at a \
+         value the author never put there"
+    );
+}
+
+/// The animation editor's `AddBlendListPin` — one item, **two** ports.
+///
+/// Its blend-list runtime node's `AddPose` appends to two parallel arrays
+/// (`BlendTime` and `BlendPose`), so an item there is a pair. This is the case
+/// that tells a correct re-index from one that shifts by a single port: with
+/// one port per item the two arithmetics agree and nothing can distinguish
+/// them.
+#[test]
+fn engine_anim_graph_add_blend_list_pin() {
+    let mut document: Document<Op> = Document::new("root");
+    let blend = node(&mut document, Op::Blend);
+    let bias = num(&mut document, 5);
+    wire(&mut document, bias, 0, blend, 3);
+    assert_eq!(
+        port_names(&document, blend, Side::Input),
+        ["Base", "Pose 0", "Weight 0", "Bias"]
+    );
+
+    let change = document
+        .insert_item(ROOT, blend, Side::Input, 1, Item::plain())
+        .unwrap();
+
+    assert_eq!(
+        change.added,
+        vec![PortRef::input(3), PortRef::input(4)],
+        "★ ONE item, TWO ports"
+    );
+    assert_eq!(
+        port_names(&document, blend, Side::Input),
+        ["Base", "Pose 0", "Weight 0", "Pose 1", "Weight 1", "Bias"]
+    );
+    assert!(
+        change
+            .moved
+            .contains(&(PortRef::input(3), PortRef::input(5))),
+        "★ and `Bias` moved by TWO, not by one: {:?}",
+        change.moved
+    );
+    assert_eq!(
+        document
+            .tree(ROOT)
+            .unwrap()
+            .link_into(Socket::new(blend, 5))
+            .map(|link| link.from.node),
+        Some(bias)
+    );
+}
+
+/// The animation editor's `RemoveBlendListPin` — the case its own source says
+/// it does not handle.
+///
+/// Its blend-list editor node's `RemovePinFromBlendList` at 5.8.1 carries
+/// `//@TODO: ANIMREFACTOR: Need to handle moving pins below up correctly`. This
+/// is that: a middle item removed out of three, with every remaining port
+/// wired, so "the pins below moved up correctly" is asserted per port rather
+/// than as a count.
+#[test]
+fn engine_anim_graph_remove_blend_list_pin() {
+    let mut document: Document<Op> = Document::new("root");
+    let blend = node(&mut document, Op::Blend);
+    for extra in 1..3 {
+        document
+            .insert_item(ROOT, blend, Side::Input, extra, Item::plain())
+            .unwrap();
+    }
+    let arity = document.signature(ROOT, blend).unwrap().inputs.len();
+    assert_eq!(arity, 8);
+    let feeds: Vec<NodeId> = (0..arity)
+        .map(|port| {
+            let feed = num(&mut document, i64::try_from(port).unwrap());
+            wire(&mut document, feed, 0, blend, u32::try_from(port).unwrap());
+            feed
+        })
+        .collect();
+
+    let change = document.remove_item(ROOT, blend, Side::Input, 1).unwrap();
+
+    assert_eq!(change.severed.len(), 2, "the pair went together");
+    let reached: Vec<Option<NodeId>> = (0..6)
+        .map(|port| {
+            document
+                .tree(ROOT)
+                .unwrap()
+                .link_into(Socket::new(blend, port))
+                .map(|link| link.from.node)
+        })
+        .collect();
+    assert_eq!(
+        reached,
+        vec![
+            Some(feeds[0]), // Base
+            Some(feeds[1]), // Pose 0
+            Some(feeds[2]), // Weight 0
+            Some(feeds[5]), // Pose 2 came up two
+            Some(feeds[6]), // Weight 2 with it
+            Some(feeds[7]), // ★ Bias, which the reference's TODO is about
+        ],
+        "every pin below the removed item moved up by a whole item"
+    );
+}
+
+/// The engine's `CreateUniquePinName`, and the ceiling it implies.
+///
+/// Its add-pin interface's `GetMaxInputPinsNum` is `'Z' - 'A'` — "the node is
+/// limited by the number of letters in the alphabet for display purposes" — and
+/// its execution-sequence node re-runs a renaming loop after every insert and
+/// every remove to keep `Then_0`… compact. Here the ordinal is applied when the
+/// signature is resolved, so the names are compact by construction and 26 is
+/// not a number this crate knows.
+#[test]
+fn engine_node_create_unique_pin_name() {
+    let (mut document, sequence, _) = sequenced(2);
+    for _ in 0..30 {
+        let count =
+            u32::try_from(document.items(ROOT, sequence, Side::Output).unwrap().len()).unwrap();
+        document
+            .insert_item(ROOT, sequence, Side::Output, count, Item::plain())
+            .unwrap();
+    }
+    let names = port_names(&document, sequence, Side::Output);
+    assert_eq!(
+        names.len(),
+        32,
+        "★ past the alphabet, with no ceiling to hit"
+    );
+    assert_eq!(names.last().map(String::as_str), Some("Then 31"));
+    assert_eq!(
+        names.iter().collect::<BTreeSet<_>>().len(),
+        names.len(),
+        "every name is unique, which is what the reference's loop is for"
+    );
+
+    document
+        .remove_item(ROOT, sequence, Side::Output, 0)
+        .unwrap();
+    let after = port_names(&document, sequence, Side::Output);
+    assert_eq!(
+        after,
+        (0..31).map(|n| format!("Then {n}")).collect::<Vec<_>>(),
+        "and after a removal they are still compact, with no renaming pass — \
+         they were never stored"
+    );
+}
+
+/// The DCC's `socket_items::make_add_item_operator`: an item carries its own
+/// **name** and its own **socket type**.
+///
+/// Measured at `8cf50599`: every socket-item accessor but the index switch's
+/// declares `has_type` or `has_name`, so an authored item is that reference's
+/// normal case. The type is not decoration — a wire refused against the
+/// template's type is accepted against the item's, which is what shows
+/// `connect` consults the resolved signature and not the kind.
+#[test]
+fn dcc_socket_items_make_add_item_operator() {
+    let mut document: Document<Op> = Document::new("root");
+    let bundle = node(&mut document, Op::Bundle);
+    let word = node(&mut document, Op::Word("hi".into()));
+    assert!(
+        document
+            .connect(ROOT, Socket::new(word, 0), Socket::new(bundle, 0))
+            .is_err(),
+        "the template's member is a Number and Text does not cross into one"
+    );
+
+    document
+        .insert_item(
+            ROOT,
+            bundle,
+            Side::Input,
+            1,
+            Item::plain().named("Caption").typed(0, Ty::Text),
+        )
+        .unwrap();
+
+    assert_eq!(
+        port_names(&document, bundle, Side::Input),
+        ["Member 0", "Caption"],
+        "the authored name IS the socket's name; the unnamed one keeps its ordinal"
+    );
+    document
+        .connect(ROOT, Socket::new(word, 0), Socket::new(bundle, 1))
+        .unwrap();
+    assert_eq!(
+        document.evaluate(ROOT, bundle),
+        vec![Some(Val::Text("-/hi".into()))],
+        "and the value that the authored type let through arrives"
+    );
+    assert!(document.validate().is_empty());
+}
+
+/// The DCC's `socket_items::make_remove_item_by_index_operator`, and what makes
+/// it more than the port re-index: **the remaining items keep their own names
+/// and types** at their new positions.
+///
+/// An implementation that re-indexed links and values but rebuilt the item list
+/// from the template would pass every wire assertion and quietly rename the
+/// author's sockets. Its `make_remove_active_item_operator` is the same call
+/// with the index the editor is holding, which is why that row cites this
+/// proof rather than owning one.
+#[test]
+fn dcc_socket_items_make_remove_item_by_index_operator() {
+    let mut document: Document<Op> = Document::new("root");
+    let bundle = node(&mut document, Op::Bundle);
+    for (at, name) in [(1, "Body"), (2, "Tail")] {
+        document
+            .insert_item(
+                ROOT,
+                bundle,
+                Side::Input,
+                at,
+                Item::plain().named(name).typed(0, Ty::Text),
+            )
+            .unwrap();
+    }
+    let word = node(&mut document, Op::Word("keep".into()));
+    wire(&mut document, word, 0, bundle, 2);
+    assert_eq!(
+        port_names(&document, bundle, Side::Input),
+        ["Member 0", "Body", "Tail"]
+    );
+
+    let change = document.remove_item(ROOT, bundle, Side::Input, 0).unwrap();
+
+    assert!(change.is_lossless(), "nothing was wired to Member 0");
+    assert_eq!(
+        port_names(&document, bundle, Side::Input),
+        ["Body", "Tail"],
+        "★ the surviving items kept their AUTHORED names at their new indices"
+    );
+    assert_eq!(
+        document.signature(ROOT, bundle).unwrap().inputs[1].value_type(),
+        Some(&Ty::Text),
+        "and their authored types"
+    );
+    assert_eq!(
+        document
+            .tree(ROOT)
+            .unwrap()
+            .link_into(Socket::new(bundle, 1))
+            .map(|link| link.from.node),
+        Some(word),
+        "with the wire that was on Tail"
+    );
+}
+
+/// The DCC's `socket_items::make_move_item_operator` — reordering a per-node
+/// socket list, which the engine has **no** command for at all.
+///
+/// A permutation is the sharpest test the correspondence has: every address
+/// must arrive somewhere, so `severed` and `discarded` both being empty is a
+/// claim about the arithmetic rather than about the fixture.
+#[test]
+fn dcc_socket_items_make_move_item_operator() {
+    let mut document: Document<Op> = Document::new("root");
+    let bundle = node(&mut document, Op::Bundle);
+    for (at, name) in [(1, "Body"), (2, "Tail")] {
+        document
+            .insert_item(ROOT, bundle, Side::Input, at, Item::plain().named(name))
+            .unwrap();
+    }
+    let feeds: Vec<NodeId> = (0..3).map(|n| num(&mut document, 40 + n)).collect();
+    for (port, feed) in feeds.iter().enumerate() {
+        wire(
+            &mut document,
+            *feed,
+            0,
+            bundle,
+            u32::try_from(port).unwrap(),
+        );
+    }
+    let before = document.evaluate(ROOT, bundle);
+    assert_eq!(before, vec![Some(Val::Text("40/41/42".into()))]);
+
+    let change = document.move_item(ROOT, bundle, Side::Input, 2, 0).unwrap();
+
+    assert!(
+        change.is_lossless(),
+        "a permutation loses nothing: {change:?}"
+    );
+    assert_eq!(
+        port_names(&document, bundle, Side::Input),
+        ["Tail", "Member 1", "Body"],
+        "the named items travelled and the unnamed one took the ordinal it now has"
+    );
+    assert_eq!(
+        document.evaluate(ROOT, bundle),
+        vec![Some(Val::Text("42/40/41".into()))],
+        "and every wire arrived at the port its item went to"
     );
 }

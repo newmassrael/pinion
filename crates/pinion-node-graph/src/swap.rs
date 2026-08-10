@@ -219,10 +219,20 @@ impl<K: NodeKind> Document<K> {
             return Err(EditError::NotAKind { tree, node });
         }
 
-        let after_signature: crate::model::Signature<K> = crate::model::Signature {
-            inputs: kind.inputs(),
-            outputs: kind.outputs(),
-        };
+        // R1632 — the new kind's signature is resolved against the node's own
+        // items, clamped to what that kind's declaration allows, because the
+        // ports the node is about to have are what the correspondence must be
+        // built from. A four-branch sequencer swapped for a two-branch-max kind
+        // loses two branches, and losing them HERE means the correspondence
+        // reports the wires and the values that went with them, instead of the
+        // signature and the model disagreeing afterwards.
+        let held = self
+            .tree(tree)
+            .and_then(|t| t.node(node))
+            .map(|held| held.items.clone())
+            .unwrap_or_default();
+        let items = crate::items::clamp(&kind, held);
+        let after_signature = crate::items::resolve(&kind, &items);
         let crosses = |from: &KindPort<K>, to: &KindPort<K>| crossing::<K>(from, to).is_allowed();
         let inputs = Correspondence::build(&before.inputs, &after_signature.inputs, &crosses);
         let outputs = Correspondence::build(&before.outputs, &after_signature.outputs, &crosses);
@@ -245,26 +255,18 @@ impl<K: NodeKind> Document<K> {
             }
         }
 
-        // The links: a link on a carried port MOVES to where that port went, and
-        // one on a dropped port is severed and named.
+        // A link on a carried port MOVES to where that port went, and one on a
+        // dropped port is severed and named — and the authored values follow
+        // the same map, which is why one call does both (R1632).
         let moved: BTreeMap<PortRef, PortRef> =
             swapped.carried.iter().map(|c| (c.from, c.to)).collect();
-        swapped.severed = self.remap_node_ports(tree, node, &moved);
-
-        // The authored values: the same rule, and the same reporting.
         if let Some(slot) = self.tree_mut(tree).and_then(|t| t.node_mut(node)) {
             slot.body = NodeBody::Kind(kind);
-            let was = std::mem::take(&mut slot.values);
-            for (port, value) in was {
-                match moved.get(&port) {
-                    Some(to) => {
-                        slot.values.insert(*to, value);
-                    }
-                    None => swapped.discarded.push((port, value)),
-                }
-            }
+            slot.items = items;
         }
-        swapped.discarded.sort_by_key(|(port, _)| *port);
+        let (severed, discarded) = self.remap_ports(tree, node, &moved);
+        swapped.severed = severed;
+        swapped.discarded = discarded;
         Ok(swapped)
     }
 }
