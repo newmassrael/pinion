@@ -45,7 +45,8 @@ use pinion_core::scene::{PathCommand, PathPoint};
 
 /// How a line chart joins consecutive samples.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, pinion_derive::VariantCensus)]
+#[variant_census(all)]
 pub enum Interpolation {
     /// Straight segments — the only join that draws no value the data lacks.
     /// The default, and what every chart here did before R1625.

@@ -70,7 +70,8 @@ pub const MAX_PATH_ARGS: usize = 6;
 /// out-of-crate consumer that switches on a command switches on this
 /// instead — so a new command breaks those consumers loudly rather
 /// than falling into a wildcard.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, pinion_derive::VariantCensus)]
+#[variant_census(all)]
 pub enum PathCommandKind {
     /// [`PathCommand::MoveTo`] — SVG `M`.
     MoveTo,
@@ -1383,6 +1384,37 @@ mod tests {
         seen.sort_unstable_by_key(|k| k.name());
         seen.dedup();
         assert_eq!(seen.len(), PathCommandKind::ALL.len(), "ALL repeats a kind");
+    }
+
+    /// R1630 — **no two commands can share a kind**, which is what the wire's
+    /// `type` field needs and what R1623 could not promise.
+    ///
+    /// The map `PathCommand -> PathCommandKind` is TOTAL by the compiler:
+    /// `kind()` matches exhaustively inside this crate, so a new arm cannot
+    /// avoid answering. The test above proves it SURJECTIVE: every kind has a
+    /// command that answers with it, read off a fixture whose own match is
+    /// exhaustive. A total, surjective map between finite sets of EQUAL SIZE
+    /// is injective — so the only thing left to check is the size, and that is
+    /// the one fact a hand-written census could not state about a
+    /// `#[non_exhaustive]` enum whose arms cannot be enumerated from outside.
+    /// `#[derive(VariantCensus)]` reads it off the definition.
+    ///
+    /// An arm added here that reuses a kind makes `PathCommand::ARMS` one
+    /// larger than `PathCommandKind::ARMS`, and this fails. An arm added with
+    /// its own kind moves both, and the surjectivity test above demands a
+    /// fixture for it.
+    #[test]
+    fn r1630_the_kind_of_a_command_is_its_own() {
+        assert_eq!(
+            crate::scene::PathCommand::ARMS,
+            PathCommandKind::ARMS,
+            "one command, one kind: a reused kind would give two commands the \
+             same `type` on the wire, and both would compile"
+        );
+        // ...and the hand-written vocabulary list is the same size, which the
+        // derive also asserts at compile time. Restated here so a reader of
+        // this argument can see all three cardinalities in one place.
+        assert_eq!(PathCommandKind::ALL.len(), PathCommandKind::ARMS);
     }
 
     #[test]

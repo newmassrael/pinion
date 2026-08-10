@@ -6040,6 +6040,7 @@ name = "pinion-chart"
 version = "0.0.1"
 dependencies = [
  "pinion-core",
+ "pinion-derive",
  "pinion-runtime",
  "pinion-text",
 ]
@@ -6194,6 +6195,7 @@ version = "0.0.1"
 dependencies = [
  "pinion-a11y",
  "pinion-core",
+ "pinion-derive",
  "pinion-pdf",
  "pinion-runtime",
  "pinion-text",

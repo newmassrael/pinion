@@ -17,6 +17,9 @@ workspace = true
 # walks / builds the same tree in pinion-core's coordinate system
 # (Rect u32, Color sRGB u8, PathCommand f32 sub-pixel).
 pinion-core = { path = "../pinion-core", version = "0.0.1" }
+# R1630 — `#[derive(VariantCensus)]`: the compile-time check that a
+# hand-written `ALL` vocabulary list still has one entry per variant.
+pinion-derive = { path = "../pinion-derive" }
 
 [dev-dependencies]
 # R1360 — TEST-ONLY. `build_fill` is layout-native: its root fills its slot

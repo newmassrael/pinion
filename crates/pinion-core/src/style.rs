@@ -1697,7 +1697,8 @@ impl BoxStyle {
 /// Deliberately **not** `#[non_exhaustive]`, against the prevailing habit in
 /// this module: link 2 *is* the point, and `#[non_exhaustive]` would force
 /// downstream wildcards that swallow exactly what this exists to surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, pinion_derive::VariantCensus)]
+#[variant_census(all)]
 pub enum BoxFacet {
     /// [`BoxStyle::fill`] — the solid background colour.
     Fill,

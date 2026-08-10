@@ -73,7 +73,8 @@ use std::fmt;
 /// `#[non_exhaustive]`: the product of {data, request} × {picture has more,
 /// picture has less} has exactly four cells, so a client's match on this is
 /// exhaustive and stays exhaustive.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, pinion_derive::VariantCensus)]
+#[variant_census(all)]
 pub enum DerivationKind {
     /// **The picture shows a value the data does not contain.** A spline
     /// through a plateau and then a rise dips below the plateau; a Gaussian
@@ -180,7 +181,8 @@ impl fmt::Display for DerivationKind {
 }
 
 /// Which of a picture's two sources a [`DerivationKind`] compares it against.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, pinion_derive::VariantCensus)]
+#[variant_census(all)]
 pub enum DerivationSource {
     /// The values the drawing was given.
     Data,
@@ -217,8 +219,15 @@ impl fmt::Display for DerivationSource {
 /// reports actually take; a fifth would be a new *shape* of answer, not a new
 /// subject, which is why this one **is** `#[non_exhaustive]` where
 /// [`DerivationKind`] is not.
+///
+/// R1630 — and growing it is now a compile-time obligation rather than a hope.
+/// [`describe`](Self::describe) projects every arm onto [`EvidenceForm`], a
+/// **closed** type obtainable no other way, so the serializer one crate over
+/// matches exhaustively instead of ending in a wildcard that would send a new
+/// shape's discriminator with its payload silently dropped. R1623's recipe,
+/// applied to the enum that needed it next.
 #[non_exhaustive]
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, pinion_derive::VariantCensus)]
 pub enum Evidence {
     /// A name a client matches, not a number: the kernel that was used, the
     /// mark that made a setting meaningless, the source a distribution came
@@ -232,16 +241,98 @@ pub enum Evidence {
     Flag(bool),
 }
 
-impl Evidence {
+/// R1630 — the closed projection of an [`Evidence`], and the only way to read
+/// one generically from outside this crate.
+///
+/// # Why a second type
+///
+/// [`Evidence`] is `#[non_exhaustive]` on purpose: the shapes an answer can
+/// take are open. That openness has a cost R1623 named and R1629 then paid
+/// again — every out-of-crate match on it ends in a wildcard, so a fifth arm
+/// reaches the wire as a discriminator with **no payload**, and neither the
+/// compiler nor any test notices.
+///
+/// So the borrowing projection is a type that is deliberately **not**
+/// `#[non_exhaustive]`, obtainable only through
+/// [`Evidence::describe`], whose match is exhaustive inside this crate. Adding
+/// an `Evidence` arm therefore forces a decision: map it onto a form that
+/// already exists (a duration is a [`Real`](Self::Real)) or add a form — and
+/// adding a form breaks every consumer LOUDLY, which is the outcome worth
+/// having.
+///
+/// The map is deliberately **not injective**. A form is the shape of the
+/// value, not the identity of the measurement, so two evidences legitimately
+/// share one — which is the opposite of
+/// [`PathCommandKind`](crate::path_data::PathCommandKind), where the kind IS
+/// the command's identity on the wire and sharing one is a defect.
+#[derive(Debug, Clone, Copy, PartialEq, pinion_derive::VariantCensus)]
+#[variant_census(all)]
+pub enum EvidenceForm<'a> {
+    /// A name a client matches, not a number.
+    Text(&'a str),
+    /// A real quantity, in the derivation's [`unit`](Derivation::unit).
+    Real(f64),
+    /// A whole count of things.
+    Count(usize),
+    /// Yes or no.
+    Flag(bool),
+}
+
+impl EvidenceForm<'_> {
+    /// One form of each shape, for a consumer that must cover the vocabulary —
+    /// and for the wire census, which is why the values are placeholders and
+    /// only the shapes matter.
+    pub const ALL: [Self; 4] = [
+        Self::Text(""),
+        Self::Real(0.0),
+        Self::Count(0),
+        Self::Flag(false),
+    ];
+
     /// The wire discriminator for this shape of answer.
     #[must_use]
     pub const fn wire_name(&self) -> &'static str {
         match self {
-            Self::Name(_) => "name",
+            Self::Text(_) => "name",
             Self::Real(_) => "real",
             Self::Count(_) => "count",
             Self::Flag(_) => "flag",
         }
+    }
+
+    /// Every wire discriminator, in `ALL`'s order — the vocabulary a client is
+    /// told to expect, derived from the closed type rather than retyped.
+    pub const WIRE_NAMES: [&'static str; 4] = {
+        let mut names = [""; 4];
+        let mut i = 0;
+        while i < Self::ALL.len() {
+            names[i] = Self::ALL[i].wire_name();
+            i += 1;
+        }
+        names
+    };
+}
+
+impl Evidence {
+    /// R1630 — this evidence as its closed [`EvidenceForm`].
+    ///
+    /// The ONE derivation every out-of-crate reader goes through, so a shape
+    /// added here cannot reach a serializer that has not been taught about it.
+    #[must_use]
+    pub fn describe(&self) -> EvidenceForm<'_> {
+        match self {
+            Self::Name(n) => EvidenceForm::Text(n),
+            Self::Real(v) => EvidenceForm::Real(*v),
+            Self::Count(c) => EvidenceForm::Count(*c),
+            Self::Flag(f) => EvidenceForm::Flag(*f),
+        }
+    }
+
+    /// The wire discriminator for this shape of answer, via
+    /// [`describe`](Self::describe) so the two cannot disagree.
+    #[must_use]
+    pub fn wire_name(&self) -> &'static str {
+        self.describe().wire_name()
     }
 
     /// The quantity when this is a number, or `None`.
@@ -482,7 +573,8 @@ impl DerivationSet {
 /// Exhaustive on [`SceneNodeKind`](crate::scene::SceneNodeKind), for the
 /// reason [`MarksChannel`](crate::marks::MarksChannel) is: a kind added later
 /// has to decide, rather than inheriting "no derivations" from a `_ =>` arm.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, pinion_derive::VariantCensus)]
+#[variant_census(all)]
 pub enum DerivesChannel {
     /// The kind assembles a drawing out of data, so there is a production step
     /// for it to describe. A chart's root is one of these.
@@ -671,6 +763,75 @@ mod tests {
         .map(Evidence::wire_name)
         .collect();
         assert_eq!(names, vec!["name", "real", "count", "flag"]);
+    }
+
+    #[test]
+    fn r1630_every_evidence_arm_projects_and_every_form_is_reached() {
+        // ★ The two halves that make `EvidenceForm` load-bearing.
+        //
+        // TOTAL is the compiler's: `describe` matches exhaustively inside this
+        // crate, so a new `Evidence` arm cannot avoid answering.
+        //
+        // SURJECTIVE is this test's: every form has an evidence that projects
+        // to it, so `EvidenceForm::WIRE_NAMES` — the vocabulary the wire
+        // publishes — names nothing unreachable and omits nothing reachable.
+        //
+        // The hand-written fixture list is held to `Evidence::ARMS`, which the
+        // derive reads off the definition. That is what stops this test from
+        // being the very thing it is checking: a list that quietly covers one
+        // fewer arm than the enum has.
+        let every: Vec<Evidence> = vec![
+            Evidence::Name("gaussian".into()),
+            Evidence::Real(1.5),
+            Evidence::Count(7),
+            Evidence::Flag(true),
+        ];
+        assert_eq!(
+            every.len(),
+            Evidence::ARMS,
+            "the fixture must build every arm the definition has"
+        );
+
+        let reached: Vec<&'static str> = every.iter().map(Evidence::wire_name).collect();
+        for name in EvidenceForm::WIRE_NAMES {
+            assert!(
+                reached.contains(&name),
+                "no evidence projects to the published form {name:?}"
+            );
+        }
+        assert_eq!(
+            EvidenceForm::WIRE_NAMES.len(),
+            EvidenceForm::ARMS,
+            "the published vocabulary is the closed type's own size"
+        );
+
+        // ...and the projection keeps the value, which is the whole reason the
+        // serializer can stop matching on `Evidence` itself.
+        assert_eq!(every[1].describe(), EvidenceForm::Real(1.5));
+        assert_eq!(every[2].describe(), EvidenceForm::Count(7));
+        assert_eq!(every[3].describe(), EvidenceForm::Flag(true));
+        assert_eq!(every[0].describe(), EvidenceForm::Text("gaussian"));
+    }
+
+    #[test]
+    fn r1630_the_form_map_is_deliberately_not_injective() {
+        // Stated as a test because the ASYMMETRY with `PathCommandKind` is a
+        // design decision a reader will otherwise assume away. There, the kind
+        // IS the command's identity on the wire and two commands sharing one is
+        // a defect the cardinality check forbids. Here a form is the SHAPE of
+        // the value, so two evidences sharing one is correct — a duration and a
+        // fraction are both reals — and nothing should forbid it.
+        //
+        // Today the map happens to be one-to-one, so what this pins is that
+        // nothing DEPENDS on that: the wire name is read off the form, never
+        // off the arm.
+        assert_eq!(Evidence::Real(1.0).wire_name(), "real");
+        assert_eq!(Evidence::Real(2.0).wire_name(), "real");
+        assert_eq!(
+            Evidence::Real(1.0).describe().wire_name(),
+            Evidence::Real(1.0).wire_name(),
+            "one spelling, read through the projection"
+        );
     }
 
     #[test]

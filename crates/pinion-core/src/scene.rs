@@ -141,7 +141,8 @@ pub enum Scene {
 /// [`BoxFacet`](crate::style::BoxFacet) is not: link 2 *is* the point, and
 /// `#[non_exhaustive]` would force downstream wildcards that swallow
 /// exactly what this exists to surface.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, pinion_derive::VariantCensus)]
+#[variant_census(all)]
 pub enum SceneNodeKind {
     /// [`Scene::Box`].
     Box,
@@ -3155,8 +3156,15 @@ impl EllipticalArc {
 /// [`path_data::for_each_segment`](crate::path_data::for_each_segment)
 /// both match it exhaustively from inside this crate, and every
 /// out-of-crate consumer reads one of those two derivations.
+///
+/// R1630 — and the obligation now covers the one hole R1623 left: an arm
+/// added here could REUSE an existing
+/// [`PathCommandKind`](crate::path_data::PathCommandKind), giving two
+/// different commands the same `type` on the wire, and both would compile.
+/// [`ARMS`](Self::ARMS) closes it — see
+/// `path_data::tests::r1630_the_kind_of_a_command_is_its_own`.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, pinion_derive::VariantCensus)]
 pub enum PathCommand {
     /// Start a new subpath.
     MoveTo(PathPoint),

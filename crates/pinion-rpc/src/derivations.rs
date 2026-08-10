@@ -50,7 +50,7 @@
 
 use pinion_core::derivation::{
     Derivation, DerivationKind, DerivationLookup, DerivationSet, DerivationSource, DerivesChannel,
-    Evidence,
+    Evidence, EvidenceForm,
 };
 use pinion_core::scene::Scene;
 
@@ -98,13 +98,11 @@ pub const CHANNEL_WIRE_NAMES: [&str; DerivesChannel::ALL.len()] = {
 
 /// R1629 — every wire spelling an `evidence.type` can carry.
 ///
-/// Hand-listed where the other three are derived, and the reason is the type
-/// system: [`Evidence`] carries a payload per arm, so it has no `ALL` const to
-/// project — a value is needed to spell one. The census test below is what
-/// stands in for the derivation, matching this list against a fixture of every
-/// arm, so a shape added upstream fails here rather than reaching a client
-/// undocumented.
-pub const EVIDENCE_WIRE_NAMES: [&str; 4] = ["name", "real", "count", "flag"];
+/// R1630 — derived like the other three now, from the CLOSED projection
+/// [`EvidenceForm`] rather than from `Evidence` itself. `Evidence` carries a
+/// payload per arm and so has no value list to project; its form does, and the
+/// form is the thing the wire actually names.
+pub const EVIDENCE_WIRE_NAMES: [&str; EvidenceForm::ALL.len()] = EvidenceForm::WIRE_NAMES;
 
 /// R1629 — where a localized derivation applies, in the set's `domain`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -140,24 +138,29 @@ pub struct EvidenceWire {
 }
 
 impl From<&Evidence> for EvidenceWire {
+    /// R1630 — built from the **closed** [`EvidenceForm`] rather than from
+    /// [`Evidence`] itself, so this match is exhaustive across the crate
+    /// boundary and has no wildcard.
+    ///
+    /// It used to end in `_ => {}`, because `Evidence` is `#[non_exhaustive]`
+    /// and an out-of-crate match on it cannot be total. A fifth shape would
+    /// then have reached a client as a discriminator with **no payload** —
+    /// compiling, passing, and lying. The projection makes adding a shape a
+    /// build failure here instead.
     fn from(evidence: &Evidence) -> Self {
+        let form = evidence.describe();
         let mut wire = Self {
-            kind: evidence.wire_name().to_owned(),
+            kind: form.wire_name().to_owned(),
             name: None,
             value: None,
             count: None,
             flag: None,
         };
-        match evidence {
-            Evidence::Name(n) => wire.name = Some(n.to_string()),
-            Evidence::Real(v) => wire.value = Some(*v),
-            Evidence::Count(c) => wire.count = Some(*c),
-            Evidence::Flag(f) => wire.flag = Some(*f),
-            // `Evidence` is `#[non_exhaustive]`: a shape added upstream lands
-            // here with its discriminator on the wire and no payload, which is
-            // a client reading "I do not know this shape" rather than a
-            // mis-typed value.
-            _ => {}
+        match form {
+            EvidenceForm::Text(n) => wire.name = Some(n.to_owned()),
+            EvidenceForm::Real(v) => wire.value = Some(v),
+            EvidenceForm::Count(c) => wire.count = Some(c),
+            EvidenceForm::Flag(f) => wire.flag = Some(f),
         }
         wire
     }

@@ -9,6 +9,9 @@ description = "JSON-RPC 2.0 server with typed-hybrid method shape"
 
 [dependencies]
 pinion-core = { path = "../pinion-core", version = "0.0.1" }
+# R1630 — `#[derive(VariantCensus)]`: the compile-time check that a
+# hand-written `ALL` vocabulary list still has one entry per variant.
+pinion-derive = { path = "../pinion-derive" }
 pinion-runtime = { path = "../pinion-runtime", version = "0.0.1" }
 # R979 §5.40 §2 #7 — `scene/access` serializes the WAI-ARIA `AccessNode`
 # tree (built by `pinion-a11y`) so the AI-first JSON-RPC path can

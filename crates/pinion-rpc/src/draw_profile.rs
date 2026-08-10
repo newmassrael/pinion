@@ -269,7 +269,8 @@ impl std::fmt::Display for DrawProfileError {
 /// The census of them, so `heaviest_by`'s valid set is derived from the type
 /// rather than hand-listed beside it: a field added to [`DrawWork`] fails
 /// [`Unit::of_wire`]'s match here, where it must be given a name.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, pinion_derive::VariantCensus)]
+#[variant_census(all)]
 pub enum Unit {
     /// [`DrawWork::draws`].
     Draws,

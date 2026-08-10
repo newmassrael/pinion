@@ -77,9 +77,19 @@
 /// `Normal` is the [`Default`] and every pre-R1610 window, so a binding that
 /// never mentions a level behaves exactly as before.
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    pinion_derive::VariantCensus,
 )]
 #[serde(rename_all = "snake_case")]
+#[variant_census(all)]
 pub enum WindowLevel {
     /// Below ordinary windows. The desktop-widget position: a system monitor
     /// that sits on the wallpaper and never covers real work.
@@ -143,8 +153,19 @@ impl WindowLevel {
 /// either X11 or Wayland, and that is precisely the pair whose level support
 /// differs. `pinion-shell` reads it from the live event loop.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    serde::Serialize,
+    serde::Deserialize,
+    pinion_derive::VariantCensus,
+)]
 #[serde(rename_all = "snake_case")]
+#[variant_census(all)]
 pub enum WindowingBackend {
     /// X11, through the `_NET_WM_STATE_ABOVE` / `_NET_WM_STATE_BELOW` hints.
     X11,

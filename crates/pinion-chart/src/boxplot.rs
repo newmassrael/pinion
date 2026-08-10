@@ -127,7 +127,8 @@ pub struct OffScaleLandmark {
 /// every one that did, rather than leaving a reader to wonder why one
 /// category looks different.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, pinion_derive::VariantCensus)]
+#[variant_census(all)]
 pub enum DistributionMark {
     /// The box, its median, whiskers, caps and outliers. The default.
     #[default]
@@ -177,7 +178,8 @@ impl DistributionMark {
 /// that one rests on four thousand", which the outline otherwise hides
 /// completely.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, pinion_derive::VariantCensus)]
+#[variant_census(all)]
 pub enum ViolinScale {
     /// Each violin fills its slot — its own peak is the full half-width.
     /// The common default, and the one that makes a five-sample violin look

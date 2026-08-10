@@ -230,7 +230,10 @@ impl Tile {
 /// line and the opposite edge stays put, which is what makes dragging a card's
 /// left side change both its column *and* its width without those being two
 /// decisions that can disagree.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, pinion_derive::VariantCensus,
+)]
+#[variant_census(all)]
 pub enum TileEdge {
     /// The left side — moving it changes `col` and `w`.
     Left,
@@ -289,7 +292,10 @@ impl TileEdge {
 /// toolkit's enum is in a `_p.h` and its region map is private, and the
 /// [cursor](Self::cursor) follows from which axes the handle moves where `initOperationMap`
 /// writes one per row by hand.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, pinion_derive::VariantCensus,
+)]
+#[variant_census(all)]
 pub enum TileHandle {
     /// The left side alone.
     Left,
@@ -424,7 +430,10 @@ impl TileHandle {
 }
 
 /// (R1609) The four directions a keyboard edit works in.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, pinion_derive::VariantCensus,
+)]
+#[variant_census(all)]
 pub enum TileDirection {
     /// Toward column zero.
     Left,

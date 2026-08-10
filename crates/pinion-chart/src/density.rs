@@ -27,7 +27,8 @@
 
 /// The kernel a [`Density`] smooths its samples with.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, pinion_derive::VariantCensus)]
+#[variant_census(all)]
 pub enum Kernel {
     /// The standard normal kernel. Smooth everywhere, and its infinite
     /// support is why [`Density::spill`] is never zero unbounded.

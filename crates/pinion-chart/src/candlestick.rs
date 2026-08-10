@@ -157,7 +157,8 @@ impl SessionAxis {
 /// [`off_scale`](CandlestickChart::off_scale) names what went missing either
 /// way.
 #[non_exhaustive]
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, pinion_derive::VariantCensus)]
+#[variant_census(all)]
 pub enum SessionMark {
     /// The Japanese candlestick: a body between open and close with a wick to
     /// each extreme. The default, and what R1567 built.

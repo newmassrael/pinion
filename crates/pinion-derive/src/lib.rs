@@ -64,6 +64,192 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{Data, DeriveInput, Fields, Lit, Meta, Variant, spanned::Spanned};
 
+/// Derive an enum's own **arm census**: how many variants it has, and their
+/// idents.
+///
+/// R1630 — the answer to a shape this tree carries eighteen times. An enum that
+/// publishes a vocabulary writes a hand-maintained `pub const ALL: [Self; N]`
+/// beside itself, and every consumer that must "cover the vocabulary" iterates
+/// it. Nothing connects that list to the enum's definition: add a variant,
+/// forget the const, and every such consumer silently covers one fewer case
+/// while the code compiles and every test passes. It is the same failure the
+/// `#[non_exhaustive]` wildcard has, moved one line down.
+///
+/// The list cannot be replaced — `ALL` is a value list and the derive cannot
+/// build values for variants with payloads — so instead the derive publishes
+/// the one fact only the definition knows, and the author asserts against it:
+///
+/// ```ignore
+/// #[derive(VariantCensus)]
+/// #[variant_census(all)]      // also assert `Self::ALL.len() == Self::ARMS`
+/// pub enum Kernel { Gaussian, Epanechnikov }
+/// ```
+///
+/// * `ARMS` — how many variants the definition has.
+/// * `ARM_NAMES` — their idents, in declaration order.
+/// * `#[variant_census(all)]` — additionally emits a **compile-time** assertion
+///   that a hand-written `ALL` is the same length. Opt-in because not every
+///   censused enum has one: a variant carrying a payload cannot appear in a
+///   value list at all, and `PathCommand` is censused precisely so its
+///   projection onto a *kind* enum can be checked.
+///
+/// The assertion is `const`, so a stale `ALL` is a build failure rather than a
+/// test failure — there is no run to forget. Unit variants are not required:
+/// counting arms is well defined whatever they carry.
+#[proc_macro_derive(VariantCensus, attributes(variant_census))]
+pub fn derive_variant_census(input: TokenStream) -> TokenStream {
+    let input = syn::parse_macro_input!(input as DeriveInput);
+    match expand_variant_census(&input) {
+        Ok(tokens) => tokens.into(),
+        Err(err) => err.to_compile_error().into(),
+    }
+}
+
+fn expand_variant_census(input: &DeriveInput) -> syn::Result<TokenStream2> {
+    let name = &input.ident;
+    let Data::Enum(data) = &input.data else {
+        return Err(syn::Error::new(
+            input.span(),
+            "VariantCensus can only be derived on enums — it counts variants,              and a struct has none",
+        ));
+    };
+    if data.variants.is_empty() {
+        return Err(syn::Error::new(
+            input.span(),
+            "VariantCensus requires at least one variant — an empty census              would let every `ALL` of length zero pass",
+        ));
+    }
+    let arm_names: Vec<String> = data
+        .variants
+        .iter()
+        .map(|variant| variant.ident.to_string())
+        .collect();
+    let arms = arm_names.len();
+    let assert_all = census_asserts_all(input)?;
+    let all_assertion = if assert_all {
+        // A `const` block rather than a test: a stale `ALL` must fail the
+        // BUILD, because a check that needs someone to run it is the shape
+        // this derive exists to replace.
+        quote! {
+            const _: () = assert!(
+                #name::ALL.len() == #name::ARMS,
+                concat!(
+                    "the hand-written `",
+                    stringify!(#name),
+                    "::ALL` has a different length than the enum has variants: \
+                     a consumer covering the vocabulary through `ALL` is \
+                     missing one, or naming one twice"
+                ),
+            );
+        }
+    } else {
+        quote! {}
+    };
+    let (impl_generics, ty_generics, where_clause) = input.generics.split_for_impl();
+    Ok(quote! {
+        impl #impl_generics #name #ty_generics #where_clause {
+            /// R1630 — how many variants this enum's DEFINITION has, emitted by
+            /// `#[derive(VariantCensus)]`.
+            ///
+            /// The one fact a hand-written vocabulary list cannot state about
+            /// itself.
+            pub const ARMS: usize = #arms;
+
+            /// R1630 — every variant's ident, in declaration order, emitted by
+            /// `#[derive(VariantCensus)]`.
+            ///
+            /// The ident rather than any wire spelling: a wire name is a
+            /// decision the type makes and this is the definition reporting
+            /// itself, so the two stay distinguishable.
+            pub const ARM_NAMES: [&'static str; #arms] = [#(#arm_names),*];
+        }
+        #all_assertion
+    })
+}
+
+/// Whether `#[variant_census(all)]` asked for the `ALL`-length assertion.
+///
+/// Any other word inside the attribute is refused by name rather than ignored:
+/// a misspelled opt-in that silently did nothing would leave the author
+/// believing a gate exists.
+fn census_asserts_all(input: &DeriveInput) -> syn::Result<bool> {
+    let mut asserts = false;
+    for attr in &input.attrs {
+        if !attr.path().is_ident("variant_census") {
+            continue;
+        }
+        attr.parse_nested_meta(|meta| {
+            if meta.path.is_ident("all") {
+                asserts = true;
+                Ok(())
+            } else {
+                Err(meta.error(
+                    "unknown `variant_census` option — the only one is `all`, \
+                     which asserts `Self::ALL.len() == Self::ARMS`",
+                ))
+            }
+        })?;
+    }
+    Ok(asserts)
+}
+
+#[cfg(test)]
+mod variant_census_tests {
+    use super::*;
+
+    fn asks_for_all(input: &syn::DeriveInput) -> syn::Result<bool> {
+        census_asserts_all(input)
+    }
+
+    /// R1630 — ★ found by a counterfactual. The derive's own doc claims an
+    /// unknown option is "refused by name rather than ignored", and nothing
+    /// held it to that: making the `else` arm return `Ok(())` left the whole
+    /// suite green. A misspelled opt-in that silently did nothing is the worst
+    /// outcome available here — the author believes a build gate exists and
+    /// there is none.
+    ///
+    /// Tested through the parser function rather than through a compile
+    /// failure, because a refusal IS a compile error and this tree has no
+    /// harness that can assert one (see
+    /// `debt-counterfactual-cannot-score-a-build-gate`).
+    #[test]
+    fn r1630_the_census_opt_in_is_a_closed_option_set() {
+        let asked: syn::DeriveInput = syn::parse_quote! {
+            #[variant_census(all)]
+            enum Fixture { One }
+        };
+        assert!(asks_for_all(&asked).expect("`all` is the option"));
+
+        let bare: syn::DeriveInput = syn::parse_quote! {
+            enum Fixture { One }
+        };
+        assert!(!asks_for_all(&bare).expect("no attribute, no assertion"));
+
+        let empty: syn::DeriveInput = syn::parse_quote! {
+            #[variant_census()]
+            enum Fixture { One }
+        };
+        assert!(
+            !asks_for_all(&empty).expect("an empty option list asks for nothing"),
+            "an empty list must not imply the opt-in"
+        );
+
+        for typo in ["al", "alls", "ALL", "always"] {
+            let word = syn::Ident::new(typo, proc_macro2::Span::call_site());
+            let mistyped: syn::DeriveInput = syn::parse_quote! {
+                #[variant_census(#word)]
+                enum Fixture { One }
+            };
+            let err = asks_for_all(&mistyped)
+                .expect_err(&format!("`{typo}` is not an option and must be refused"));
+            assert!(
+                err.to_string().contains("`all`"),
+                "the refusal names the one option there is: {err}"
+            );
+        }
+    }
+}
+
 /// Derive `IntentTag` on an enum.
 ///
 /// See module docs for the supported variant shapes and the payload

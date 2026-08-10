@@ -38,7 +38,8 @@ use crate::footprint::Footprint;
 /// deliberate act that should have to be written down here, so that the
 /// census's coverage is a property of the type rather than of whoever
 /// remembered to publish a row.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, pinion_derive::VariantCensus)]
+#[variant_census(all)]
 pub enum Arena {
     /// The §5.16 paint fragment cache — encoded scene fragments, one per
     /// cacheable container. Per window.
