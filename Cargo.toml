@@ -282,8 +282,8 @@ authors = ["pinion contributors"]
 # an earlier version of this comment also named the SHA in prose and had drifted
 # two bumps behind, which is what a duplicated constant does. Check the pair with
 #   test "$(git -C vendor/sce rev-parse HEAD)" = "$(grep -m1 -oP 'rev = "\K[0-9a-f]{40}' Cargo.toml)"
-sce-rust-runtime = { git = "https://github.com/newmassrael/scxml-core-engine.git", rev = "201783c44baa5fb0ca242af7907249ad747a5a78", default-features = false }
-sce-build = { git = "https://github.com/newmassrael/scxml-core-engine.git", rev = "201783c44baa5fb0ca242af7907249ad747a5a78" }
+sce-rust-runtime = { git = "https://github.com/newmassrael/scxml-core-engine.git", rev = "8597e6929a772d6fe56202b5566d8fe86fd76b2e", default-features = false }
+sce-build = { git = "https://github.com/newmassrael/scxml-core-engine.git", rev = "8597e6929a772d6fe56202b5566d8fe86fd76b2e" }
 
 # §5.7 JSON-RPC 2.0 transport realized at the pinion-rpc envelope.
 serde = { version = "1", features = ["derive"] }

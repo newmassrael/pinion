@@ -33638,6 +33638,50 @@
         "carry 0. debt-a-line-chart-has-no-per-sample-mark is narrowed to line / timeline, where the obstacle is real: samples are drawn as one path, so a cell would have no rectangle to point at. Its file now records that half of it was never a carry and why the payment validated ChartColumn"
       ]
     },
+    "R1635": {
+      "decision_summary": "the SCE pin moves and the gate can see it. `vendor/sce` goes 287 commits forward to `8597e6929a`, and the `[workspace.dependencies]` revs move with it in the same commit, which is the dual-pin discipline the workspace manifest states: the built SCE and the vendored checkout must not drift, because the C++ side and the canon sync track the submodule while cargo builds from the rev. AND THE BUMP EXPOSED A GATE DEFECT, which is the half worth recording. `tools/blast_radius.py` -- the tool R1582 built so a round computes which packages a change can break instead of remembering the rule, and which the standing verification instruction now names by hand -- reported a radius of **ZERO** for this change. Its `owning_packages` maps a changed path to the member package whose DIRECTORY contains it, and the workspace root `Cargo.toml`, the lockfile and `vendor/` sit under no member at all. Its docstring said so approvingly: a path under no package \"cannot break a cargo test\". That is true of `tools/` and `docs/` and false of exactly these three, since the root manifest holds the `rev` half the tree links against, the lockfile is the resolved answer to it, and `vendor/` is the checkout those pins name. A gate that answers \"nothing is affected\" to the change class with the WIDEST reach is worse than having no gate, because the zero reads as a clean bill rather than as an absence -- the same failure shape R1495 recorded for a check that silently stopped happening. The fix is a named `WORKSPACE_WIDE` set and an `is_workspace_wide` predicate, with the root manifest and lockfile matched EXACTLY so a member's own `crates/x/Cargo.toml` still owns only that member: widening everything would be the same uselessness as zero with the opposite sign, and there is a selftest case for that direction too. Verified locally against the crates that actually embed SCE -- pinion-core, pinion-forge, pinion-runtime, pinion-rpc, pinion-shell, 30 test targets green -- and pushed for the full sweep, which is the standing instruction rather than a shortcut: the radius is now 251 packages and running that here is the local full sweep the owner banned.",
+      "changes_bullets": [
+        "vendor/sce 201783c44 -> 8597e6929a (287 commits), with both workspace rev pins moved in the same commit",
+        "tools/blast_radius.py: WORKSPACE_WIDE / is_workspace_wide — the root manifest, the lockfile and vendor/ own every member",
+        "four selftest cases, including that a MEMBER's own manifest still owns only itself"
+      ],
+      "verification_bullets": [
+        "dual-pin check passes: the submodule HEAD and the Cargo.toml rev are the same SHA",
+        "cargo test -p pinion-core -p pinion-forge -p pinion-runtime: 9 targets green",
+        "cargo test -p pinion-rpc -p pinion-shell: 21 targets green",
+        "blast_radius selftest: PASS, and the radius for this change is 251 packages where it was 0",
+        "counterfactual: removing the widening fails 3 of the new selftest cases"
+      ],
+      "impact_refs": [
+        "5.4",
+        "6"
+      ],
+      "carry_forward_bullets": [
+        "the workspace-wide sweep is CI's, per the standing instruction not to run a local full sweep; a red is repaid as its own round",
+        "seven pre-existing debts promoted to files this round (memory only, untracked): no atomic multi-pass read, the wire cannot stop the clock, a mutating invoke delays the next RPC, the TUI ignores eight deferred inputs, Scene has no general walk, locate's OutOfBounds is one word, intents are empty at RPC cadence. Two of them were UNDERSTATED in the index and the promotion measured them: the TUI gap is eight arms rather than one, and the ad-hoc scene walkers are 78 files rather than 40"
+      ],
+      "publishable_decision_summary": "the SCE pin moves and the gate can see it. `vendor/sce` goes 287 commits forward to `8597e6929a`, and the `[workspace.dependencies]` revs move with it in the same commit, which is the dual-pin discipline the workspace manifest states: the built SCE and the vendored checkout must not drift, because the C++ side and the canon sync track the submodule while cargo builds from the rev. AND THE BUMP EXPOSED A GATE DEFECT, which is the half worth recording. `tools/blast_radius.py` -- the tool R1582 built so a round computes which packages a change can break instead of remembering the rule, and which the standing verification instruction now names by hand -- reported a radius of **ZERO** for this change. Its `owning_packages` maps a changed path to the member package whose DIRECTORY contains it, and the workspace root `Cargo.toml`, the lockfile and `vendor/` sit under no member at all. Its docstring said so approvingly: a path under no package \"cannot break a cargo test\". That is true of `tools/` and `docs/` and false of exactly these three, since the root manifest holds the `rev` half the tree links against, the lockfile is the resolved answer to it, and `vendor/` is the checkout those pins name. A gate that answers \"nothing is affected\" to the change class with the WIDEST reach is worse than having no gate, because the zero reads as a clean bill rather than as an absence -- the same failure shape R1495 recorded for a check that silently stopped happening. The fix is a named `WORKSPACE_WIDE` set and an `is_workspace_wide` predicate, with the root manifest and lockfile matched EXACTLY so a member's own `crates/x/Cargo.toml` still owns only that member: widening everything would be the same uselessness as zero with the opposite sign, and there is a selftest case for that direction too. Verified locally against the crates that actually embed SCE -- pinion-core, pinion-forge, pinion-runtime, pinion-rpc, pinion-shell, 30 test targets green -- and pushed for the full sweep, which is the standing instruction rather than a shortcut: the radius is now 251 packages and running that here is the local full sweep the owner banned.",
+      "publishable_changes_bullets": [
+        "vendor/sce 201783c44 -> 8597e6929a (287 commits), with both workspace rev pins moved in the same commit",
+        "tools/blast_radius.py: WORKSPACE_WIDE / is_workspace_wide — the root manifest, the lockfile and vendor/ own every member",
+        "four selftest cases, including that a MEMBER's own manifest still owns only itself"
+      ],
+      "publishable_verification_bullets": [
+        "dual-pin check passes: the submodule HEAD and the Cargo.toml rev are the same SHA",
+        "cargo test -p pinion-core -p pinion-forge -p pinion-runtime: 9 targets green",
+        "cargo test -p pinion-rpc -p pinion-shell: 21 targets green",
+        "blast_radius selftest: PASS, and the radius for this change is 251 packages where it was 0",
+        "counterfactual: removing the widening fails 3 of the new selftest cases"
+      ],
+      "publishable_impact_refs": [
+        "5.4",
+        "6"
+      ],
+      "publishable_carry_forward_bullets": [
+        "the workspace-wide sweep is CI's, per the standing instruction not to run a local full sweep; a red is repaid as its own round",
+        "seven pre-existing debts promoted to files this round (memory only, untracked): no atomic multi-pass read, the wire cannot stop the clock, a mutating invoke delays the next RPC, the TUI ignores eight deferred inputs, Scene has no general walk, locate's OutOfBounds is one word, intents are empty at RPC cadence. Two of them were UNDERSTATED in the index and the promotion measured them: the TUI gap is eight arms rather than one, and the ad-hoc scene walkers are 78 files rather than 40"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

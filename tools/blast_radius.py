@@ -82,15 +82,45 @@ def package_dirs(metadata: dict, root: Path) -> list[tuple[str, str]]:
     return sorted(pairs, key=lambda p: len(p[1]), reverse=True)
 
 
+#: Paths that belong to no member package and yet decide what EVERY member
+#: compiles against (R1635).
+#:
+#: The workspace manifest holds `[workspace.dependencies]`, so moving a `rev`
+#: there changes the source of a crate half the tree links; the lockfile is the
+#: resolved answer to it; and `vendor/` holds the submodules those pins name.
+#: A change to any of the three owns the whole workspace.
+#:
+#: Found by an SCE pin bump that this tool reported a radius of **zero** for --
+#: the docstring below used to say a path under no package "cannot break a
+#: cargo test", which is true of `tools/` and `docs/` and false of exactly
+#: these. A gate that answers "nothing" to the change class with the widest
+#: reach is worse than no gate, because the zero reads as a clean bill.
+WORKSPACE_WIDE: tuple[str, ...] = ("Cargo.toml", "Cargo.lock", "vendor")
+
+
+def is_workspace_wide(path: str) -> bool:
+    """Whether `path` is one of the workspace-wide inputs.
+
+    The root manifest and lockfile are matched EXACTLY -- a member's own
+    `crates/x/Cargo.toml` is owned by that member and must not widen to the
+    tree -- while `vendor/` matches as a directory.
+    """
+    return path in ("Cargo.toml", "Cargo.lock") or path == "vendor" or path.startswith("vendor/")
+
+
 def owning_packages(changed: list[str], dirs: list[tuple[str, str]]) -> set[str]:
     """The packages that own `changed`.
 
     A path under no package — `tools/`, `docs/`, a hook — owns nothing, which
     is the right answer rather than an error: those cannot break a cargo test.
+    The exception is [`WORKSPACE_WIDE`], which owns every member instead.
     """
     owners: set[str] = set()
     for path in changed:
         if not path:
+            continue
+        if is_workspace_wide(path):
+            owners.update(name for name, _ in dirs)
             continue
         for name, directory in dirs:
             if path == directory or path.startswith(directory + "/"):
@@ -202,6 +232,40 @@ def selftest() -> int:
         "a leaf change reaches everything above it",
         radius(["crates/leaf/src/lib.rs"], FIXTURE, root),
         ["app", "app-tests-only", "leaf", "mid"],
+    )
+
+    # R1635 — the change class this tool answered ZERO for until an SCE pin
+    # bump exposed it. The workspace manifest holds the `rev` half the tree
+    # links against, so it owns every member; the lockfile is the resolved
+    # answer to it; `vendor/` is the checkout those pins name.
+    ok(
+        "the workspace manifest owns every member",
+        radius(["Cargo.toml"], FIXTURE, root),
+        ["app", "app-tests-only", "leaf", "mid", "nested", "unrelated"],
+    )
+    ok(
+        "and so does the lockfile",
+        radius(["Cargo.lock"], FIXTURE, root),
+        ["app", "app-tests-only", "leaf", "mid", "nested", "unrelated"],
+    )
+    ok(
+        "and so does a vendored submodule",
+        radius(["vendor/sce"], FIXTURE, root),
+        ["app", "app-tests-only", "leaf", "mid", "nested", "unrelated"],
+    )
+    # ★ And a MEMBER's own manifest still owns only that member and its
+    # consumers. Without this the widening would swallow every package
+    # manifest in the tree and the radius would be "everything" forever,
+    # which is the same uselessness as zero with the opposite sign.
+    ok(
+        "a member's own manifest does not widen to the tree",
+        radius(["crates/leaf/Cargo.toml"], FIXTURE, root),
+        ["app", "app-tests-only", "leaf", "mid"],
+    )
+    ok(
+        "and a path under no package still owns nothing",
+        radius(["tools/blast_radius.py", "docs/SEED_PROMPT.md"], FIXTURE, root),
+        [],
     )
     ok(
         "a dev-dependency is a consumer",
