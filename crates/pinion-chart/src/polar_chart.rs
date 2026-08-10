@@ -53,9 +53,11 @@
 //! on TUI, and a polar chart is entirely paths.
 
 use pinion_core::Scene;
+use pinion_core::derivation::{DerivationKind, DerivationSet};
 use pinion_core::scene::{ContainerNode, PathNode, Rect};
 use pinion_core::style::{Color, PathStyle, Stroke, TextAlign};
 
+use crate::derivations;
 use crate::draw::{
     CalloutRow, absolute, box_node, callout, circle_commands, fill_parent, label_node, legend_row,
     marker_node, plot_rect, polygon_node, stroke_path, to_f32, to_u32,
@@ -306,6 +308,35 @@ impl PolarChart {
         out
     }
 
+    /// R1629 §2 #7 — what this drawing did that the drawing cannot give back.
+    ///
+    /// A polar chart is the one place in this crate where a datum can be
+    /// **placed at a bearing it was not given**: a periodic axis carries 370°
+    /// at 10°, and the drawing then shows an angle no sample took. That is an
+    /// [`Invented`](pinion_core::derivation::DerivationKind::Invented) value
+    /// in the strict sense — the mark is real, its position is not the datum's
+    /// — and [`wrapped`](Self::wrapped) is the report it comes from.
+    ///
+    /// [`off_scale`](Self::off_scale) supplies the omissions: a non-positive
+    /// radius on a log axis, or a bearing outside a sector.
+    #[must_use]
+    pub fn derivations(&self) -> DerivationSet {
+        DerivationSet::over(derivations::domain::SAMPLE)
+            .stating_all(derivations::omitted_counts(
+                derivations::name::OFF_SCALE,
+                self.off_scale()
+                    .into_iter()
+                    .map(|off| derivations::series_subject(off.series)),
+            ))
+            .stating_all(derivations::counts_by_subject(
+                DerivationKind::Invented,
+                derivations::name::WRAPPED,
+                self.wrapped()
+                    .into_iter()
+                    .map(|off| derivations::series_subject(off.series)),
+            ))
+    }
+
     /// Build the chart PINNED to `rect`. See
     /// [`LineChart::build`](crate::LineChart::build) — same contract; prefer
     /// [`build_fill`](Self::build_fill) for anything layout-placed.
@@ -348,7 +379,7 @@ impl PolarChart {
         }
         children.extend(self.overlay(&plot, &radial_ticks, style));
 
-        ContainerNode::new(children).with_tag(self.tag_prefix.clone())
+        derivations::chart_root(children, self.tag_prefix.clone(), self.derivations())
     }
 
     /// The rings, the spokes and the rim.

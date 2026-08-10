@@ -19,6 +19,7 @@ pub mod caret_state;
 pub mod cell_editors;
 pub mod commands;
 pub mod cross_window_drop;
+pub mod derivations;
 pub mod disabled;
 pub mod dispatch;
 pub mod displays;

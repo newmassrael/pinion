@@ -493,6 +493,42 @@ pub fn scene_of_kind_containing(kind: SceneNodeKind, child: Scene) -> Option<Sce
     }
 }
 
+/// R1629 — a node of `kind` offered `children`, and how many of them it could
+/// actually take.
+///
+/// The structural fact [`scene_of_kind_containing`] cannot state: a kind that
+/// descends may hold a **list** it assembled, or exactly **one** subtree it
+/// shows through a viewport, and that arity is the difference between a
+/// composition and a window onto one. It is not a restatement of any
+/// declaration — it is the arity of the node constructors themselves
+/// ([`ContainerNode::new`] takes a `Vec`, [`ScrollNode::new`] takes a single
+/// [`Scene`]), which is why a test can hold
+/// [`SceneNodeKind::derives_channel`](crate::scene::SceneNodeKind::derives_channel)
+/// to it.
+///
+/// Exhaustive, for [`scene_of_kind_containing`]'s reason.
+#[must_use]
+pub fn scene_of_kind_holding(kind: SceneNodeKind, children: Vec<Scene>) -> Option<Scene> {
+    let rect = Rect::new(1, 2, 30, 40);
+    match kind {
+        SceneNodeKind::Container => Some(Scene::Container(ContainerNode::new(children))),
+        // Takes one, by type. The rest are dropped because there is nowhere
+        // for them to go, which is the fact being observed.
+        SceneNodeKind::Scroll => children
+            .into_iter()
+            .next()
+            .map(|one| Scene::Scroll(ScrollNode::new(rect, one))),
+        SceneNodeKind::Box
+        | SceneNodeKind::Text
+        | SceneNodeKind::Path
+        | SceneNodeKind::Image
+        | SceneNodeKind::Effect
+        | SceneNodeKind::External
+        | SceneNodeKind::ImmediateModeNode
+        | SceneNodeKind::TextGrid => None,
+    }
+}
+
 /// Minimal Button binding for substrate-level tests.
 ///
 /// Carries a [`ButtonExternal`] so the SCXML statechart stays

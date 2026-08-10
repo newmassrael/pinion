@@ -73,10 +73,12 @@
 //! `build_fill` reactive seam stays GUI-only.)
 
 use pinion_core::Scene;
+use pinion_core::derivation::DerivationSet;
 use pinion_core::scene::{ContainerNode, Rect};
 use pinion_core::style::{Color, TextAlign};
 
 use crate::color_scale::{ColorScale, ValueEncoding, readable_ink};
+use crate::derivations;
 use crate::draw::{
     BarAxis, CalloutRow, absolute, box_node, callout, color_bar, fill_parent, label_box_h,
     label_node, outline_box, to_f32, to_u32, vertical_bar_width,
@@ -356,6 +358,24 @@ impl Treemap {
         Scene::Container(body.with_layout(fill_parent()))
     }
 
+    /// R1629 §2 #7 — what this drawing did that the drawing cannot give back:
+    /// **nothing**, and the empty set is how it says so.
+    ///
+    /// Every setting [`Treemap`] takes is either visible in the drawing it
+    /// produces (a colour, a fill, a marker) or an explicit domain the caller
+    /// asked for and can see the edges of. It joins nothing between points,
+    /// estimates nothing, and drops no datum an axis could not carry — so
+    /// there is no disagreement between the picture and its two sources to
+    /// report.
+    ///
+    /// Published rather than withheld, because "I ran my reports and found
+    /// nothing" and "I do not answer this question" are different facts and a
+    /// client acts differently on each.
+    #[must_use]
+    pub fn derivations(&self) -> DerivationSet {
+        DerivationSet::over(derivations::domain::SLOT)
+    }
+
     /// The chart body, authored in `rect`'s frame — the ONE builder both entry
     /// points wrap.
     fn build_body(&self, rect: Rect, style: &ChartStyle) -> ContainerNode {
@@ -407,7 +427,7 @@ impl Treemap {
             children.push(highlight);
         }
         children.extend(tooltip);
-        ContainerNode::new(children).with_tag(self.tag_prefix.clone())
+        derivations::chart_root(children, self.tag_prefix.clone(), self.derivations())
     }
 
     /// R1439 — the active colour domain: pinned, else measured off the tiles,

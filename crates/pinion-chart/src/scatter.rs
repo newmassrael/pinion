@@ -43,10 +43,12 @@
 use core::fmt::Write as _;
 
 use pinion_core::Scene;
+use pinion_core::derivation::DerivationSet;
 use pinion_core::scene::{ContainerNode, PathNode, Rect};
 use pinion_core::style::{Color, PathStyle, Stroke};
 
 use crate::color_scale::{ColorScale, ValueEncoding};
+use crate::derivations;
 use crate::draw::{
     CalloutRow, MUTED_ALPHA, absolute, box_node, callout, circle_commands, fill_parent,
     legend_band_color_bar, marker_node, stroke_path, to_f32, to_u32,
@@ -334,6 +336,24 @@ impl ScatterChart {
         off_scale_points(&self.series, &self.kinds)
     }
 
+    /// R1629 §2 #7 — what this drawing did that the drawing cannot give back.
+    ///
+    /// A scatter draws one mark per datum and joins nothing, so it invents
+    /// nothing and discards nothing: the only disagreement it can have with
+    /// its sources is the data an axis could not place
+    /// ([`off_scale`](Self::off_scale)). Silence on the other three kinds is
+    /// therefore a fact about this mark rather than a gap — which is why the
+    /// set is published even when it is empty.
+    #[must_use]
+    pub fn derivations(&self) -> DerivationSet {
+        DerivationSet::over(derivations::domain::SAMPLE).stating_all(derivations::omitted_counts(
+            derivations::name::OFF_SCALE,
+            self.off_scale()
+                .into_iter()
+                .map(|off| derivations::series_subject(off.series)),
+        ))
+    }
+
     /// The chart body, authored in the frame `rect` describes — the ONE builder
     /// both entry points wrap (the R1360.4 shape the line chart also uses).
     fn build_body(&self, rect: Rect, style: &ChartStyle) -> ContainerNode {
@@ -404,7 +424,7 @@ impl ScatterChart {
         }
         children.extend(tooltip);
 
-        ContainerNode::new(children).with_tag(self.tag_prefix.clone())
+        derivations::chart_root(children, self.tag_prefix.clone(), self.derivations())
     }
 
     /// One filled circle per finite, in-domain point of every series. A point

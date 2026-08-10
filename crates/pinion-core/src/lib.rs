@@ -34,6 +34,7 @@ pub mod clipboard;
 pub mod command;
 pub mod composite_tag;
 pub mod contrast;
+pub mod derivation;
 pub mod directory;
 pub mod display;
 pub mod event;

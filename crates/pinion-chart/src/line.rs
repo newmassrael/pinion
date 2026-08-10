@@ -87,12 +87,15 @@
 //! tags as present-if-visible rather than one-per-series.
 
 use core::fmt::Write as _;
+use std::collections::BTreeMap;
 
 use pinion_core::Scene;
+use pinion_core::derivation::{Derivation, DerivationKind, DerivationSet, Evidence};
 use pinion_core::scene::{ContainerNode, Rect};
 use pinion_core::style::{Color, Stroke, StrokeCap};
 
 use crate::color_scale::{ColorScale, ValueEncoding};
+use crate::derivations;
 use crate::draw::{
     CalloutRow, MUTED_ALPHA, absolute, area_path, area_path_along_x, box_node, callout,
     curve_stroke_path, fill_parent, legend_band_color_bar, marker_node, stroke_path,
@@ -773,7 +776,76 @@ impl LineChart {
         }
         children.extend(tooltip);
 
-        ContainerNode::new(children).with_tag(self.tag_prefix.clone())
+        derivations::chart_root(children, self.tag_prefix.clone(), self.derivations())
+    }
+
+    /// R1629 §2 #7 — everything this chart's drawing did that the drawing
+    /// cannot give back, as a value the scene carries and
+    /// `scene/derivations` publishes.
+    ///
+    /// Three of the four kinds are reachable here and the fourth is not, which
+    /// is a fact about a line chart rather than an omission: it discards
+    /// nothing a caller asked for.
+    ///
+    /// * [`Chosen`](DerivationKind::Chosen) — the
+    ///   [`interpolation`](Self::interpolation), always, because the join
+    ///   between samples decides the whole shape of the line and no reader can
+    ///   recover it from the drawing.
+    /// * [`Invented`](DerivationKind::Invented) — the worst
+    ///   [`overshoot`](Self::overshoot) of each series, localized to the
+    ///   segment that made it, and how many segments overshot.
+    /// * [`Omitted`](DerivationKind::Omitted) — how many points of each series
+    ///   the axes could not place ([`off_scale`](Self::off_scale)).
+    ///
+    /// Depends on nothing but the data and the settings — not on the geometry
+    /// — which is the contract the reports it is built from already have, so
+    /// this answers before a layout pass and answers the same afterwards.
+    #[must_use]
+    pub fn derivations(&self) -> DerivationSet {
+        let mut set = DerivationSet::over(derivations::domain::SAMPLE).stating(
+            derivations::chosen_name(derivations::name::INTERPOLATION, self.interpolation.name()),
+        );
+        // One entry per series, not per segment: a spline over ten thousand
+        // samples can overshoot on thousands of them, and the excursion a
+        // reader must be warned about is the largest one.
+        let mut worst: BTreeMap<usize, (Overshoot, usize)> = BTreeMap::new();
+        for (series, shoot) in self.overshoot() {
+            let slot = worst.entry(series).or_insert((shoot, 0));
+            if shoot.beyond > slot.0.beyond {
+                slot.0 = shoot;
+            }
+            slot.1 += 1;
+        }
+        for (series, (shoot, count)) in worst {
+            let subject = derivations::series_subject(series);
+            set = set
+                .stating(
+                    Derivation::new(
+                        DerivationKind::Invented,
+                        derivations::name::OVERSHOOT,
+                        Evidence::Real(f64::from(shoot.beyond)),
+                    )
+                    .about(subject.clone())
+                    .in_units(derivations::unit::VALUE)
+                    // The gap is between `points[segment]` and its successor,
+                    // so the excursion covers both.
+                    .spanning(shoot.segment, shoot.segment + 2),
+                )
+                .stating(
+                    Derivation::new(
+                        DerivationKind::Invented,
+                        derivations::name::OVERSHOOT_SEGMENTS,
+                        Evidence::Count(count),
+                    )
+                    .about(subject),
+                );
+        }
+        set.stating_all(derivations::omitted_counts(
+            derivations::name::OFF_SCALE,
+            self.off_scale()
+                .into_iter()
+                .map(|off| derivations::series_subject(off.series)),
+        ))
     }
 
     /// Horizontal (per y-tick) and vertical (per x-tick) gridlines. Maps the

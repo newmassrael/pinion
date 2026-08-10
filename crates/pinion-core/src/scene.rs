@@ -28,6 +28,7 @@ use std::rc::Rc;
 use std::time::Duration;
 
 use crate::cell_metric::CellMetric;
+use crate::derivation::{DerivationLookup, DerivationSet, DerivesChannel};
 use crate::external::ExternalIntrospect;
 use crate::marks::{MarkRun, MarkedRuns, MarksChannel, MarksLookup};
 use crate::mnemonic::Mnemonic;
@@ -225,6 +226,33 @@ impl SceneNodeKind {
             Self::Box | Self::Path | Self::Image => MarksChannel::Uniform,
             Self::Container | Self::Scroll => MarksChannel::Structural,
             Self::Effect | Self::External | Self::ImmediateModeNode => MarksChannel::Opaque,
+        }
+    }
+
+    /// R1629 §2 #7 — whether this kind can state **how its drawing was
+    /// produced**, and when it cannot, why not.
+    ///
+    /// Exhaustive for the reason [`marks_channel`](Self::marks_channel) is: a
+    /// kind added later has to decide rather than inherit an absence.
+    ///
+    /// The split is not the same as the marks one, and the difference is the
+    /// question. Marks attribute a *position* to a declaration, so the kinds
+    /// that paint content made of parts carry them. A derivation attributes a
+    /// *whole drawing* to the data and the request behind it, so the kind that
+    /// carries it is the one that assembles a drawing —
+    /// [`Container`](Self::Container). A [`Path`](Self::Path) holding a
+    /// violin's outline was handed its points; the bandwidth that shaped them
+    /// is a fact about the chart, and stating it on every path would publish
+    /// one fact once per stroke.
+    #[must_use]
+    pub const fn derives_channel(self) -> DerivesChannel {
+        match self {
+            Self::Container => DerivesChannel::Composes,
+            Self::Box | Self::Text | Self::Path | Self::Image | Self::TextGrid => {
+                DerivesChannel::Painted
+            }
+            Self::Scroll => DerivesChannel::Deferred,
+            Self::Effect | Self::External | Self::ImmediateModeNode => DerivesChannel::Opaque,
         }
     }
 
@@ -769,6 +797,34 @@ impl Scene {
                 marks: Some(set), ..
             }) => MarksLookup::Published(MarkedRuns::from(set)),
             other => MarksLookup::NoChannel(other.node_kind().marks_channel()),
+        }
+    }
+
+    /// R1629 §2 #7 — **how the drawing tagged `target` was produced**: what it
+    /// invented, what it left out, what it chose, and what it discarded.
+    ///
+    /// The sibling of [`marks_for_tag`](Self::marks_for_tag), and the
+    /// distinction between them is the question, not the mechanism. Marks say
+    /// *why a position looks like that*; derivations say *how the drawing as a
+    /// whole relates to the data and the request that produced it* — facts
+    /// with no position, because "this bandwidth decided the outline" is not
+    /// about any one pixel of it.
+    ///
+    /// Ask the **paint** scene, for the reason marks are asked of it: a
+    /// derivation is a statement about what was drawn.
+    ///
+    /// The four outcomes are four different facts — see [`DerivationLookup`].
+    #[must_use]
+    pub fn derivations_for_tag(&self, target: &str) -> DerivationLookup<'_> {
+        let Some(node) = self.find_with_tag(target) else {
+            return DerivationLookup::NoSuchTag;
+        };
+        match node {
+            Scene::Container(n) => n
+                .derivations
+                .as_deref()
+                .map_or(DerivationLookup::Silent, DerivationLookup::Published),
+            other => DerivationLookup::NoChannel(other.node_kind().derives_channel()),
         }
     }
 
@@ -3420,6 +3476,22 @@ pub struct ContainerNode {
     ///
     /// `None` / `Some(empty)` carry [`BoxNode::marks`]'s distinction.
     pub marks: Option<crate::marks::MarkSet>,
+    /// R1629 §5.11 §2 #7 — **how the drawing this container assembles was
+    /// produced**: what it invented, omitted, chose and discarded.
+    ///
+    /// The container is the carrier because a derivation is a statement about
+    /// a whole composition — see
+    /// [`SceneNodeKind::derives_channel`]. `None` means the composition stated
+    /// nothing, which
+    /// [`derivations_for_tag`](Scene::derivations_for_tag) reports as
+    /// [`Silent`](crate::derivation::DerivationLookup::Silent) rather than as
+    /// an absent channel.
+    ///
+    /// Boxed because it is `None` on essentially every container in a tree and
+    /// [`ContainerNode`] is the node the paint walk allocates most of; the set
+    /// itself owns two heap allocations, so inlining it would widen every
+    /// container by them for the sake of the rare chart root.
+    pub derivations: Option<Box<DerivationSet>>,
 }
 
 impl ContainerNode {
@@ -3435,7 +3507,22 @@ impl ContainerNode {
             no_primary_head: false,
             paint_hash: Cell::new(None),
             marks: None,
+            derivations: None,
         }
+    }
+
+    /// R1629 — publish **how this container's drawing was produced**.
+    ///
+    /// An empty set is kept rather than dropped: a composition that ran its
+    /// reports and found nothing to say is a different fact from one that
+    /// never ran them, and only the first is
+    /// [`Published`](crate::derivation::DerivationLookup::Published) with no
+    /// entries. Collapsing the two would make "this chart invented nothing"
+    /// indistinguishable from "this chart does not answer".
+    #[must_use]
+    pub fn with_derivations(mut self, derivations: DerivationSet) -> Self {
+        self.derivations = Some(Box::new(derivations));
+        self
     }
 
     /// R1618 — publish **why this container's own fill** looks the way it
@@ -8112,6 +8199,114 @@ mod tests {
         assert_eq!(answer.names_at(12), vec!["frame", "header"]);
         assert_eq!(answer.names_at(40), vec!["frame"]);
         assert!(answer.names_at(999).is_empty());
+    }
+
+    /// R1629 — the derivations classification held to what a node of that kind
+    /// STRUCTURALLY is, never to itself. Every expectation below is read off a
+    /// different mechanism than `derives_channel`:
+    ///
+    ///   * how many children the kind's own constructor accepts (a list, one,
+    ///     or none) — the composition/viewport split
+    ///   * whether an opaque-handle walk resolves it — `External`,
+    ///     `ImmediateModeNode`
+    ///   * whether the kind has a tag field at all — `Effect`, the one kind
+    ///     with no address, which is exactly why the framework can state
+    ///     nothing about what it contributed
+    ///
+    /// The marks sibling of this test records why that matters: its first
+    /// draft compared the declaration to the declaration and a counterfactual
+    /// retagging a kind passed.
+    #[test]
+    fn r1629_every_kind_answers_the_derivations_channel_it_declares() {
+        use crate::derivation::{DerivationLookup, DerivesChannel};
+        const TAG: &str = "subject";
+        for kind in SceneNodeKind::ALL {
+            let scene = crate::test_fixtures::tagged_scene_of_kind(kind, TAG);
+            let answer = scene.derivations_for_tag(TAG);
+            let untagged = scene.tag().is_none();
+            if untagged {
+                assert_eq!(
+                    answer,
+                    DerivationLookup::NoSuchTag,
+                    "{} carries no tag, so nothing can address it",
+                    kind.name()
+                );
+            }
+
+            // How many of two offered children survive construction. Two is a
+            // list the node assembled; one is a subtree it shows.
+            let held = crate::test_fixtures::scene_of_kind_holding(
+                kind,
+                vec![
+                    Scene::Box(BoxNode::new(rect_a(), BoxStyle::default()).with_tag("first")),
+                    Scene::Box(BoxNode::new(rect_a(), BoxStyle::default()).with_tag("second")),
+                ],
+            )
+            .map_or(0, |holder| {
+                usize::from(holder.find_with_tag("first").is_some())
+                    + usize::from(holder.find_with_tag("second").is_some())
+            });
+            let opaque = scene.find_external_with_tag(TAG).is_some()
+                || scene.find_immediate_with_tag(TAG).is_some();
+
+            let expected = if held > 1 {
+                DerivesChannel::Composes
+            } else if held == 1 {
+                DerivesChannel::Deferred
+            } else if opaque || untagged {
+                DerivesChannel::Opaque
+            } else {
+                DerivesChannel::Painted
+            };
+            assert_eq!(
+                kind.derives_channel(),
+                expected,
+                "{} declares {} and is structurally {expected} (holds {held} \
+                 children, opaque = {opaque}, untagged = {untagged})",
+                kind.name(),
+                kind.derives_channel(),
+            );
+
+            // ...and the lookup carries the declaration, so the wire and the
+            // census cannot say different things about one node.
+            if !untagged {
+                match kind.derives_channel() {
+                    DerivesChannel::Composes => assert_eq!(
+                        answer,
+                        DerivationLookup::Silent,
+                        "a composition that stated nothing is silent, not channel-less"
+                    ),
+                    other => assert_eq!(answer, DerivationLookup::NoChannel(other)),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn r1629_a_composition_that_states_nothing_is_not_one_that_cannot() {
+        // The same distinction `TextGridNode::marks` keeps and that a
+        // counterfactual once erased there: an empty published set says "I ran
+        // my reports and there was nothing to say", and `None` says "I was
+        // never taught to answer". A client acting on the first would caption
+        // "nothing invented"; on the second it must not.
+        use crate::derivation::{DerivationLookup, DerivationSet};
+        const TAG: &str = "chart";
+        let silent = Scene::Container(
+            ContainerNode::new(vec![box_a()]).with_tag(std::borrow::Cow::from(TAG)),
+        );
+        assert_eq!(silent.derivations_for_tag(TAG), DerivationLookup::Silent);
+
+        let declared = Scene::Container(
+            ContainerNode::new(vec![box_a()])
+                .with_tag(std::borrow::Cow::from(TAG))
+                .with_derivations(DerivationSet::over("sample")),
+        );
+        let set = declared
+            .derivations_for_tag(TAG)
+            .published()
+            .expect("an empty set is still a published set");
+        assert!(set.is_empty(), "it states nothing");
+        assert_eq!(set.domain(), "sample", "and still states its index space");
     }
 
     #[test]

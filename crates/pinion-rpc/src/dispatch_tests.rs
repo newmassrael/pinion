@@ -5403,6 +5403,159 @@ fn r1615_scene_marks_separates_silent_from_no_channel_from_no_tag() {
     assert_eq!(err.code, -32602);
 }
 
+// ---- R1629: scene/derivations JSON-RPC wire ----
+
+/// A paint scene shaped like a chart beside its ink: a composition that states
+/// how its drawing was produced, a composition that states nothing, and a
+/// painted node whose kind has no production step.
+fn derived_paint_scene() -> Scene {
+    use pinion_core::derivation::{Derivation, DerivationKind, DerivationSet, Evidence};
+    use pinion_core::scene::{BoxNode, ContainerNode, Rect};
+    use pinion_core::style::BoxStyle;
+    let set = DerivationSet::over("sample")
+        .stating(Derivation::new(
+            DerivationKind::Chosen,
+            "interpolation",
+            Evidence::Name("catmull-rom".into()),
+        ))
+        .stating(
+            Derivation::new(DerivationKind::Invented, "overshoot", Evidence::Real(-3.25))
+                .about("series.0")
+                .in_units("value")
+                .spanning(3, 5),
+        );
+    Scene::Container(ContainerNode::new(vec![
+        Scene::Container(
+            ContainerNode::new(vec![Scene::Box(
+                BoxNode::new(Rect::new(0, 0, 8, 8), BoxStyle::default()).with_tag("ink"),
+            )])
+            .with_tag("chart")
+            .with_derivations(set),
+        ),
+        Scene::Container(ContainerNode::new(Vec::new()).with_tag("quiet")),
+    ]))
+}
+
+/// Dispatch one request against a fresh context painting [`derived_paint_scene`].
+fn derivations_dispatch(req: &str) -> Response {
+    let mut state = box_scene(0, 0, 10, 10);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut produce = |_w: u32, _h: u32| -> Scene { derived_paint_scene() };
+    let mut ctx =
+        DispatchContext::new(&mut state, &previews, &revision).with_paint_producer(&mut produce);
+    parse_response(&dispatch(&mut ctx, req).expect("dispatch answered"))
+}
+
+#[test]
+fn r1629_scene_derivations_answers_from_the_painted_frame() {
+    let req = r#"{"jsonrpc":"2.0","method":"scene/derivations","params":{"tag":"chart"},"id":720}"#;
+    let resp = derivations_dispatch(req);
+    assert!(resp.error.is_none(), "{:?}", resp.error);
+    let result = resp.result.expect("result");
+    assert_eq!(result.get("published"), Some(&Value::Bool(true)));
+    assert_eq!(
+        result.get("channel"),
+        Some(&Value::String("composes".into()))
+    );
+    assert_eq!(result.get("domain"), Some(&Value::String("sample".into())));
+    let list = result
+        .get("derivations")
+        .and_then(Value::as_array)
+        .expect("entries");
+    assert_eq!(list.len(), 2, "declaration order, both kinds");
+    assert_eq!(list[0]["kind"], Value::String("chosen".into()));
+    assert_eq!(list[1]["kind"], Value::String("invented".into()));
+    assert_eq!(list[1]["source"], Value::String("data".into()));
+    assert_eq!(list[1]["span"]["start"], Value::from(3));
+    assert_eq!(list[1]["unit"], Value::String("value".into()));
+}
+
+#[test]
+fn r1629_scene_derivations_narrows_by_kind_and_refuses_a_kind_it_does_not_have() {
+    let narrowed = derivations_dispatch(
+        r#"{"jsonrpc":"2.0","method":"scene/derivations","params":{"tag":"chart","kind":"invented"},"id":721}"#,
+    )
+    .result
+    .expect("result");
+    assert_eq!(
+        narrowed.get("filter"),
+        Some(&Value::String("invented".into()))
+    );
+    assert_eq!(
+        narrowed
+            .get("derivations")
+            .and_then(Value::as_array)
+            .expect("entries")
+            .len(),
+        1
+    );
+
+    // ★ A typo must not read as "this picture invented nothing". The refusal
+    // names the accepted set, and the set is derived from the enum so it
+    // cannot go stale against the answers.
+    let err = derivations_dispatch(
+        r#"{"jsonrpc":"2.0","method":"scene/derivations","params":{"tag":"chart","kind":"inventing"},"id":722}"#,
+    )
+    .error
+    .expect("an unknown kind is not a filter");
+    assert_eq!(err.code, -32602);
+    let said = format!("{err:?}");
+    for accepted in ["invented", "omitted", "chosen", "discarded"] {
+        assert!(
+            said.contains(accepted),
+            "the refusal names {accepted}: {said}"
+        );
+    }
+}
+
+#[test]
+fn r1629_scene_derivations_separates_silent_from_no_channel_from_no_tag() {
+    let silent = derivations_dispatch(
+        r#"{"jsonrpc":"2.0","method":"scene/derivations","params":{"tag":"quiet"},"id":723}"#,
+    )
+    .result
+    .expect("a real node answers");
+    assert_eq!(silent.get("published"), Some(&Value::Bool(false)));
+    assert_eq!(
+        silent.get("channel"),
+        Some(&Value::String("composes".into()))
+    );
+
+    let painted = derivations_dispatch(
+        r#"{"jsonrpc":"2.0","method":"scene/derivations","params":{"tag":"ink"},"id":724}"#,
+    )
+    .result
+    .expect("a real node answers");
+    assert_eq!(painted.get("published"), Some(&Value::Bool(false)));
+    assert_eq!(
+        painted.get("channel"),
+        Some(&Value::String("painted".into())),
+        "the wire says WHY, so an agent need not read our source"
+    );
+
+    let err = derivations_dispatch(
+        r#"{"jsonrpc":"2.0","method":"scene/derivations","params":{"tag":"nobody"},"id":725}"#,
+    )
+    .error
+    .expect("an unknown tag is not an answer");
+    assert_eq!(err.code, -32602);
+}
+
+#[test]
+fn r1629_scene_derivations_refuses_a_missing_tag_and_a_non_string_kind() {
+    let mut scene = box_scene(0, 0, 10, 10);
+    for req in [
+        r#"{"jsonrpc":"2.0","method":"scene/derivations","params":{"from":"state"},"id":726}"#,
+        r#"{"jsonrpc":"2.0","method":"scene/derivations","params":{"tag":"x","kind":7,"from":"state"},"id":727}"#,
+        r#"{"jsonrpc":"2.0","method":"scene/derivations","params":{"tag":"x","from":"sideways"},"id":728}"#,
+    ] {
+        let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+        let err = resp.error.expect("expected a refusal");
+        assert_eq!(err.code, -32602, "req: {req}");
+    }
+}
+
 #[test]
 fn r1615_scene_marks_refuses_a_missing_tag_and_a_non_integer_index() {
     let mut scene = box_scene(0, 0, 10, 10);

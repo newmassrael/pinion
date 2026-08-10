@@ -2991,6 +2991,22 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                         HandlerKind::Read,
                     )
                 }
+                "scene/derivations" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let producer = paint_producer.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_derivations(
+                            scene,
+                            producer,
+                            last_paint_scene,
+                            request.params.as_ref(),
+                        ),
+                        HandlerKind::Read,
+                    )
+                }
                 "scene/bbox" => (
                     handle_scene_bbox(scene, request.params.as_ref()),
                     HandlerKind::Read,
@@ -7846,36 +7862,84 @@ where
     // view-fn binding's STATE scene carries no geometry, so a region query
     // against it would answer with the zero rect for every node. Preferring the
     // displayed frame over a fresh render is §2 #7 parity.
-    let painted;
-    let target = match params
-        .get("from")
-        .and_then(Value::as_str)
-        .unwrap_or("state")
-    {
-        "state" => scene,
-        "paint" => {
-            if let Some(frame) = last_paint_scene {
-                frame
-            } else if let Some(producer) = paint_producer {
-                let (w, h) = parse_snapshot_viewport(params)?;
-                painted = (producer)(w, h);
-                &painted
-            } else {
-                return Err(RpcError::invalid_params(
-                    "params.from \"paint\" needs a paint producer or a stored frame",
-                ));
-            }
-        }
-        other => {
-            return Err(RpcError::invalid_params(format!(
-                "params.from {other:?} is not \"state\" or \"paint\""
-            )));
-        }
-    };
+    let basis = resolve_scene_basis(scene, paint_producer, last_paint_scene, params, "state")?;
+    let target = basis.scene();
 
     match locate_shape(target, &region, fit) {
         Ok(outcome) => Ok(locate_region_outcome_to_json(&outcome)),
         Err(err) => Err(RpcError::invalid_params(err.to_string())),
+    }
+}
+
+/// R1629 §5.12 — which of the two scenes a read method answers from, resolved
+/// once for all three that offer the choice.
+///
+/// `params.from` is `"state"` (the view-fn binding's value tree) or `"paint"`
+/// (the last displayed frame, else one produced at `params.viewport`).
+/// `default_from` is the caller's own opinion about which is meaningful for the
+/// question it answers, and it is the ONLY thing that differed between the
+/// three copies this replaces: `scene/locate_region` asks a geometry question
+/// and defaults to `"state"` only because its neighbours do, while marks and
+/// derivations are facts about what was DRAWN and default to `"paint"`.
+///
+/// Lifted at the third copy (R727 / R732 obligation 3b). The resolution itself
+/// carries no opinion — prefer a stored frame over rendering a fresh one, refuse
+/// when neither exists, name the two accepted words in the refusal — and the
+/// third copy is where mechanical duplication becomes substrate.
+///
+/// Returns an owning enum rather than a `&Scene` because a produced frame has
+/// to live somewhere: the caller binds the result and borrows through it, which
+/// is what the three `let painted;` declarations were doing by hand.
+enum SceneBasis<'a> {
+    /// The state tree, or a frame the shell already displayed.
+    Borrowed(&'a Scene),
+    /// A frame rendered for this request. Boxed because a `Scene` is two
+    /// orders of magnitude wider than a reference and this enum is returned by
+    /// value on every call, including the common one that borrows.
+    Produced(Box<Scene>),
+}
+
+impl SceneBasis<'_> {
+    /// The scene, whichever way it was obtained.
+    fn scene(&self) -> &Scene {
+        match self {
+            Self::Borrowed(scene) => scene,
+            Self::Produced(scene) => scene,
+        }
+    }
+}
+
+fn resolve_scene_basis<'a, F>(
+    scene: &'a Scene,
+    paint_producer: Option<&mut F>,
+    last_paint_scene: Option<&'a Scene>,
+    params: &Value,
+    default_from: &str,
+) -> Result<SceneBasis<'a>, RpcError>
+where
+    F: FnMut(u32, u32) -> Scene + ?Sized,
+{
+    match params
+        .get("from")
+        .and_then(Value::as_str)
+        .unwrap_or(default_from)
+    {
+        "state" => Ok(SceneBasis::Borrowed(scene)),
+        "paint" => {
+            if let Some(frame) = last_paint_scene {
+                Ok(SceneBasis::Borrowed(frame))
+            } else if let Some(producer) = paint_producer {
+                let (w, h) = parse_snapshot_viewport(params)?;
+                Ok(SceneBasis::Produced(Box::new((producer)(w, h))))
+            } else {
+                Err(RpcError::invalid_params(
+                    "params.from \"paint\" needs a paint producer or a stored frame",
+                ))
+            }
+        }
+        other => Err(RpcError::invalid_params(format!(
+            "params.from {other:?} is not \"state\" or \"paint\""
+        ))),
     }
 }
 
@@ -7916,32 +7980,8 @@ where
         ),
     };
 
-    let painted;
-    let target = match params
-        .get("from")
-        .and_then(Value::as_str)
-        .unwrap_or("paint")
-    {
-        "paint" => {
-            if let Some(frame) = last_paint_scene {
-                frame
-            } else if let Some(producer) = paint_producer {
-                let (w, h) = parse_snapshot_viewport(params)?;
-                painted = (producer)(w, h);
-                &painted
-            } else {
-                return Err(RpcError::invalid_params(
-                    "params.from \"paint\" needs a paint producer or a stored frame",
-                ));
-            }
-        }
-        "state" => scene,
-        other => {
-            return Err(RpcError::invalid_params(format!(
-                "params.from {other:?} is not \"paint\" or \"state\""
-            )));
-        }
-    };
+    let basis = resolve_scene_basis(scene, paint_producer, last_paint_scene, params, "paint")?;
+    let target = basis.scene();
 
     // R1615 — a matchable word, not prose. A node that EXISTS and cannot be
     // attributed answers instead (`published: false` plus the channel saying
@@ -7949,6 +7989,70 @@ where
     let outcome = crate::marks::marks_outcome(target, tag, index).ok_or_else(|| {
         RpcError::invalid_params(String::new()).with_data_string(format!("UnknownTag: {tag}"))
     })?;
+    serde_json::to_value(outcome).map_err(RpcError::internal_error)
+}
+
+/// `scene/derivations` — R1629 §5.12 §2 #7: **how** the drawing tagged
+/// `params.tag` was produced — what it invented, omitted, chose and discarded.
+///
+/// `params.kind` is the optional narrower, one of `invented` / `omitted` /
+/// `chosen` / `discarded`. An unrecognised one is refused with the accepted
+/// set named: silently answering with everything would let a client's typo
+/// read as "this picture invented nothing".
+///
+/// Reads the **paint** scene by default, for `scene/marks`' reason — a
+/// derivation is a statement about what was drawn, and a view-fn binding's
+/// state scene holds none of the nodes the view emits. See
+/// [`crate::derivations`] for the four outcomes.
+fn handle_scene_derivations<F>(
+    scene: &Scene,
+    paint_producer: Option<&mut F>,
+    last_paint_scene: Option<&Scene>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError>
+where
+    F: FnMut(u32, u32) -> Scene + ?Sized,
+{
+    use pinion_core::derivation::DerivationKind;
+
+    let params = require_params(params)?;
+    let tag = params
+        .get("tag")
+        .and_then(Value::as_str)
+        .ok_or_else(|| RpcError::invalid_params("params.tag missing or not a string"))?;
+    let filter = match params.get("kind") {
+        None | Some(Value::Null) => None,
+        Some(raw) => {
+            let spelled = raw
+                .as_str()
+                .ok_or_else(|| RpcError::invalid_params("params.kind is not a string"))?;
+            Some(DerivationKind::from_wire_name(spelled).ok_or_else(|| {
+                // `UnknownDerivationKind: <asked> is not one of <the set>` —
+                // the variant word first, for the closed vocabulary
+                // `rpc/errors` publishes, then the whole accepted set, so a
+                // client learns the filter vocabulary from the refusal rather
+                // than from our source. The set is derived from the enum, so
+                // it cannot go stale against what the answers carry.
+                let accepted: Vec<&str> =
+                    DerivationKind::ALL.iter().map(|k| k.wire_name()).collect();
+                RpcError::invalid_params(format!(
+                    "UnknownDerivationKind: {spelled:?} is not one of {}",
+                    accepted.join(", ")
+                ))
+            })?)
+        }
+    };
+
+    let basis = resolve_scene_basis(scene, paint_producer, last_paint_scene, params, "paint")?;
+    let target = basis.scene();
+
+    // A node that EXISTS and cannot describe a production step answers instead
+    // (`published: false` plus the channel saying why), so this refusal means
+    // exactly one thing: nothing carries that tag.
+    let outcome =
+        crate::derivations::derivations_outcome(target, tag, filter).ok_or_else(|| {
+            RpcError::invalid_params(String::new()).with_data_string(format!("UnknownTag: {tag}"))
+        })?;
     serde_json::to_value(outcome).map_err(RpcError::internal_error)
 }
 

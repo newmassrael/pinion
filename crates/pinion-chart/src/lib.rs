@@ -305,6 +305,7 @@ mod candlestick;
 mod civil;
 mod color_scale;
 mod density;
+mod derivations;
 mod distribution;
 mod donut;
 mod draw;

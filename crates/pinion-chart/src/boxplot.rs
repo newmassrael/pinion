@@ -47,10 +47,12 @@
 //! on TUI, and a box plot is almost entirely paths.
 
 use pinion_core::Scene;
+use pinion_core::derivation::{Derivation, DerivationKind, DerivationSet, Evidence};
 use pinion_core::scene::{ContainerNode, Rect};
 use pinion_core::style::{Color, PathStyle, Stroke};
 
 use crate::density::{Density, count_as_f64};
+use crate::derivations;
 use crate::distribution::{
     Distribution, DistributionSource, SummaryPosition, distribution_bounds,
     positive_distribution_bounds,
@@ -381,6 +383,123 @@ impl BoxPlotChart {
         out
     }
 
+    /// R1629 §2 #7 — what this drawing did that the drawing cannot give back.
+    ///
+    /// The richest set in the crate, because a violin's outline is the one
+    /// mark here that is **not** a set of order statistics: every number a box
+    /// draws is a value some sample took, and not one point of a density curve
+    /// is.
+    ///
+    /// * [`Chosen`](DerivationKind::Chosen) — the [`mark`](Self::mark) and the
+    ///   [`violin_scale`](Self::violin_scale) always; and per drawn violin its
+    ///   [`Kernel`](crate::Kernel), its resolved bandwidth, the
+    ///   [`Bandwidth`](crate::Bandwidth) rule that resolved it, and whether it
+    ///   was bounded. Four choices decide the whole outline and the picture
+    ///   reveals none of them.
+    /// * [`Invented`](DerivationKind::Invented) — the estimate's
+    ///   [`spill`](crate::Density::spill), the share of its mass outside the
+    ///   range the samples actually spanned. Published only when it is
+    ///   non-zero: a bounded estimate invents nothing, and saying so as an
+    ///   `Invented` entry would make "did this chart invent anything" answer
+    ///   yes for every violin.
+    /// * [`Omitted`](DerivationKind::Omitted) — the sample count behind each
+    ///   outline, because a density curve shows the *shape* of those
+    ///   measurements and not one of them; plus the landmarks the value axis
+    ///   cannot place ([`off_scale`](Self::off_scale)).
+    /// * [`Discarded`](DerivationKind::Discarded) — a violin asked for and not
+    ///   estimable ([`without_density`](Self::without_density)), evidenced by
+    ///   the [`crate::DistributionSource`] that has no
+    ///   samples. **Only under a mark that draws violins**: under
+    ///   [`DistributionMark::Box`] nothing was asked for, so nothing was
+    ///   discarded.
+    #[must_use]
+    pub fn derivations(&self) -> DerivationSet {
+        let mut set = DerivationSet::over(derivations::domain::SLOT)
+            .stating(derivations::chosen_name(
+                derivations::name::MARK,
+                self.mark.name(),
+            ))
+            .stating(derivations::chosen_name(
+                derivations::name::VIOLIN_SCALE,
+                self.violin_scale.name(),
+            ));
+        if self.mark.draws_violin() {
+            for (i, d) in self.distributions.iter().enumerate() {
+                let subject = derivations::slot_subject(i);
+                let Some(density) = d.density() else {
+                    set = set.stating(
+                        Derivation::new(
+                            DerivationKind::Discarded,
+                            derivations::name::DENSITY,
+                            Evidence::Name("summary".into()),
+                        )
+                        .about(subject),
+                    );
+                    continue;
+                };
+                set = set
+                    .stating(
+                        Derivation::new(
+                            DerivationKind::Chosen,
+                            derivations::name::KERNEL,
+                            Evidence::Name(density.kernel().name().into()),
+                        )
+                        .about(subject.clone()),
+                    )
+                    .stating(
+                        Derivation::new(
+                            DerivationKind::Chosen,
+                            derivations::name::BANDWIDTH,
+                            Evidence::Real(density.bandwidth()),
+                        )
+                        .about(subject.clone())
+                        .in_units(derivations::unit::VALUE),
+                    )
+                    .stating(
+                        Derivation::new(
+                            DerivationKind::Chosen,
+                            derivations::name::BANDWIDTH_RULE,
+                            Evidence::Name(density.rule().name().into()),
+                        )
+                        .about(subject.clone()),
+                    )
+                    .stating(
+                        Derivation::new(
+                            DerivationKind::Chosen,
+                            derivations::name::BOUNDED,
+                            Evidence::Flag(density.is_bounded()),
+                        )
+                        .about(subject.clone()),
+                    )
+                    .stating(
+                        Derivation::new(
+                            DerivationKind::Omitted,
+                            derivations::name::SAMPLES,
+                            Evidence::Count(density.count()),
+                        )
+                        .about(subject.clone()),
+                    );
+                if density.spill() > 0.0 {
+                    set = set.stating(
+                        Derivation::new(
+                            DerivationKind::Invented,
+                            derivations::name::SPILL,
+                            Evidence::Real(density.spill()),
+                        )
+                        .about(subject)
+                        .in_units(derivations::unit::FRACTION),
+                    );
+                }
+            }
+        }
+        set.stating_all(derivations::omitted_counts(
+            derivations::name::OFF_SCALE,
+            self.off_scale()
+                .into_iter()
+                .map(|off| derivations::slot_subject(off.distribution)),
+        ))
+    }
+
     /// Build the chart PINNED to `rect`. See
     /// [`LineChart::build`](crate::LineChart::build) — same contract; prefer
     /// [`build_fill`](Self::build_fill) for anything layout-placed.
@@ -546,7 +665,7 @@ impl BoxPlotChart {
         ));
         children.extend(tooltip);
 
-        ContainerNode::new(children).with_tag(self.tag_prefix.clone())
+        derivations::chart_root(children, self.tag_prefix.clone(), self.derivations())
     }
 
     /// Every mark of distribution `i`: the box, its median, the two whiskers

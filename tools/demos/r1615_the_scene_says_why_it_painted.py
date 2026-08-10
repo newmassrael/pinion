@@ -250,9 +250,14 @@ def checks(ed: RpcSubprocess) -> None:
         lambda: ed.request("scene/marks", {"index": 0}),
         data="params.tag missing or not a string",
     )
+    # R1629 — one wording, because `params.from` is now resolved in one place
+    # for the three methods that offer the choice. The two words are the same
+    # two; only their order in the sentence moved, to the order the parameter
+    # itself is documented in. A refusal spelled three times is a refusal that
+    # can drift three ways, which is why the lift is worth this edit.
     assert_rpc_error(
         lambda: ed.request("scene/marks", {"tag": TEXT_TAG, "from": "sideways"}),
-        data='params.from "sideways" is not "paint" or "state"',
+        data='params.from "sideways" is not "state" or "paint"',
     )
 
 

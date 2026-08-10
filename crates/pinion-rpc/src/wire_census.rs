@@ -607,6 +607,52 @@ pub const WIRE_TYPES: &[WireType] = &[
             ],
         },
     },
+    // R1629 — `scene/derivations`. The four kinds ride as an `accepting` set
+    // derived from `DerivationKind::ALL`, so the census cannot promise a
+    // vocabulary the answers do not carry.
+    WireType {
+        name: "DerivationSpanWire",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("start", WireTy::Integer, None),
+                WireField::new("end", WireTy::Integer, None),
+            ],
+        },
+    },
+    WireType {
+        name: "DerivationWire",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("kind", WireTy::String, None)
+                    .accepting(&crate::derivations::KIND_WIRE_NAMES),
+                WireField::new("source", WireTy::String, None)
+                    .accepting(&crate::derivations::SOURCE_WIRE_NAMES),
+                WireField::new("picture_has_more", WireTy::Boolean, None),
+                WireField::new("name", WireTy::String, None),
+                WireField::new("subject", WireTy::String, None).optional(),
+                WireField::new("evidence", WireTy::Object, Some("EvidenceWire")),
+                WireField::new("unit", WireTy::String, None).optional(),
+                WireField::new("span", WireTy::Object, Some("DerivationSpanWire")).optional(),
+            ],
+        },
+    },
+    WireType {
+        name: "DerivationsOutcome",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("tag", WireTy::String, None),
+                WireField::new("kind", WireTy::String, None),
+                WireField::new("channel", WireTy::String, None)
+                    .accepting(&crate::derivations::CHANNEL_WIRE_NAMES),
+                WireField::new("published", WireTy::Boolean, None),
+                WireField::new("domain", WireTy::String, None).optional(),
+                WireField::new("derivations", WireTy::Array, Some("DerivationWire")).optional(),
+                WireField::new("filter", WireTy::String, None)
+                    .accepting(&crate::derivations::KIND_WIRE_NAMES)
+                    .optional(),
+            ],
+        },
+    },
     WireType {
         name: "DisabledEntry",
         shape: WireShape::Object {
@@ -769,6 +815,19 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("data_is_prose", WireTy::Boolean, None),
                 WireField::new("standard", WireTy::Boolean, None),
                 WireField::new("data_vocabulary", WireTy::Array, None),
+            ],
+        },
+    },
+    WireType {
+        name: "EvidenceWire",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("type", WireTy::String, None)
+                    .accepting(&crate::derivations::EVIDENCE_WIRE_NAMES),
+                WireField::new("name", WireTy::String, None).optional(),
+                WireField::new("value", WireTy::Number, None).optional(),
+                WireField::new("count", WireTy::Integer, None).optional(),
+                WireField::new("flag", WireTy::Boolean, None).optional(),
             ],
         },
     },

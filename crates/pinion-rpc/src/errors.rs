@@ -142,6 +142,11 @@ const VOCABULARY_32602: &[&str] = &[
     "RetainedNodeNotWritable",
     "RollbackFailed",
     "SnapshotFailed",
+    // R1629 — the `scene/derivations` filter vocabulary. Appends the word the
+    // caller asked for AND the whole accepted set after the colon, so a client
+    // that mistyped `invented` learns the four kinds from the refusal instead
+    // of from this source file.
+    "UnknownDerivationKind",
     "UnknownIntervenePath",
     "UnknownIntrospectPath",
     "UnknownInvokePath",

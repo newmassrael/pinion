@@ -63,10 +63,12 @@
 
 use pinion_core::Scene;
 use pinion_core::contrast::contrast_ratio;
+use pinion_core::derivation::{Derivation, DerivationKind, DerivationSet, Evidence};
 use pinion_core::scene::{ContainerNode, Rect};
 use pinion_core::style::{Color, PathStyle, Stroke};
 
 use crate::candle::{Candle, CandlePosition, Direction, candle_bounds, positive_candle_bounds};
+use crate::derivations;
 use crate::draw::{
     CalloutRow, absolute, box_node, callout, category_label_node, fill_parent, outline_box,
     plot_rect, polygon_node, stroke_path, to_f32, to_u32, x_tick_labels,
@@ -434,6 +436,50 @@ impl CandlestickChart {
         out
     }
 
+    /// R1629 §2 #7 — what this drawing did that the drawing cannot give back.
+    ///
+    /// * [`Chosen`](DerivationKind::Chosen) — the
+    ///   [`mark`](Self::with_mark), always. Candle and bar encode the same
+    ///   four numbers with different geometry, and which one a reader is
+    ///   looking at decides how they read it.
+    /// * [`Omitted`](DerivationKind::Omitted) — how many of each session's
+    ///   four values the value axis could not place
+    ///   ([`off_scale`](Self::off_scale)).
+    /// * [`Discarded`](DerivationKind::Discarded) — **caps asked for under a
+    ///   mark that has none.** [`with_caps`](Self::with_caps) is read only
+    ///   where candle wicks are drawn, so `with_caps(true).with_mark(Ohlc)`
+    ///   used to add nothing and say nothing; the bar's open and close ticks
+    ///   already play the caps' role, so there is no counterpart to draw and
+    ///   the honest answer is to report the combination. The evidence names
+    ///   the mark that made the setting meaningless.
+    ///
+    /// The reference toolkit has no bar mark at all, so it never reaches this
+    /// combination — and its meta-object protocol would in any case only read
+    /// `capsVisible` back, which says what was asked and not what the drawing
+    /// did with it.
+    #[must_use]
+    pub fn derivations(&self) -> DerivationSet {
+        let mut set = DerivationSet::over(derivations::domain::SLOT).stating(
+            derivations::chosen_name(derivations::name::MARK, self.mark.tag_stem()),
+        );
+        if self.caps && self.mark == SessionMark::Ohlc {
+            set = set.stating(
+                Derivation::new(
+                    DerivationKind::Discarded,
+                    derivations::name::CAPS,
+                    Evidence::Name(self.mark.tag_stem().into()),
+                )
+                .about(derivations::name::MARK),
+            );
+        }
+        set.stating_all(derivations::omitted_counts(
+            derivations::name::OFF_SCALE,
+            self.off_scale()
+                .into_iter()
+                .map(|off| derivations::slot_subject(off.candle)),
+        ))
+    }
+
     /// The sessions currently in view in a chart of `rect` under `style`.
     #[must_use]
     pub fn visible_sessions(&self, rect: Rect, style: &ChartStyle) -> Option<CategoryWindow> {
@@ -521,7 +567,7 @@ impl CandlestickChart {
         ));
         children.extend(tooltip);
 
-        ContainerNode::new(children).with_tag(self.tag_prefix.clone())
+        derivations::chart_root(children, self.tag_prefix.clone(), self.derivations())
     }
 
     /// The x-axis labels — one per drawn slot on the ordinal reading, one per

@@ -1303,9 +1303,58 @@ AXES = [
         # no `AccessNode` anywhere, so it is one accessibility question rather
         # than three chart-shaped ones, and it now has its own debt file. An
         # axis should not be judged short for a defect that is not its own.
-        "judged_at": 1625,
-        "completion": 95,
-        "evidence_snapshot": {"example-name": 28, "round-axis": 9},
+        # R1629 re-judged 95 -> 96, and the tool demanded it: `round-axis`
+        # went 9 -> 12 across R1626, R1628 and this round, past the band.
+        #
+        # +1, and the small size is the finding rather than a shrug. Two of
+        # the three rounds absorbed here move the numerator by less than they
+        # look like they should:
+        #
+        #   * R1626 closed the VIOLIN — one of the six buildable items the
+        #     R1625 audit left, and closed it past what that audit asked for:
+        #     `Density` publishes the kernel, the resolved bandwidth, the
+        #     sample count and `spill` (the share of estimated mass outside
+        #     the range the samples spanned), `ViolinScale` states what the
+        #     widths CLAIM, and `Density::bounded` makes spill exactly zero by
+        #     reflecting rather than by clipping a picture that was already
+        #     wrong. The reference has no violin at all.
+        #   * R1628 closed two debts THIS SERIES CREATED (an area fill that
+        #     ignored the interpolation its own stroke used; a density
+        #     `bounded` that re-took its samples). Repayment restores what the
+        #     axis was already credited for; it does not add capability.
+        #   * R1629 put every chart's derivations ON THE WIRE. New surface,
+        #     and not on any gap list this axis has ever kept — which by the
+        #     R1528 rule is why it is worth only a point: naming a dimension
+        #     reveals more absent surface than the round that named it filled.
+        #
+        # Audited at R1629, and the list is now SHORTER IN ITEMS AND LONGER IN
+        # WHAT IS ACTIONABLE:
+        #
+        #   * Drag pan / rubber-band zoom is NO LONGER BLOCKED. R1534, R1545,
+        #     R1553 and R1568 all recorded it as waiting on a pointer wire
+        #     that could not report a held button; R1619 put
+        #     `held_pointer_buttons` on every pointer event and R1620 added
+        #     the autoscroll substrate. Four judgments called this
+        #     unbuildable and it is buildable now.
+        #   * The y-window, the plot zoom's a11y and its second consumer —
+        #     unchanged since R1534.
+        #   * The polar chart still has no cross-filter leg and no legend
+        #     interaction, unchanged since R1568.
+        #   * 3D-surface waits on a 3D renderer and is Phase C's.
+        #   * NEW, and revealed by the round that closed the wire gap: only
+        #     FIVE of the ten chart builders have anything to derive. Bar,
+        #     donut, sparkline, timeline and treemap publish empty sets, which
+        #     is honest — every setting they take is visible in the drawing or
+        #     an explicit domain — but a treemap's TILING and a timeline's
+        #     lane packing are layout decisions a reader cannot recover, and
+        #     neither is modelled as a choice anywhere. That is a real gap
+        #     this axis had never named.
+        #   * PER-MARK a11y is not counted against this axis (R1622): the
+        #     whole crate has no `AccessNode`, so it is one accessibility
+        #     question with its own debt file rather than a charting one.
+        "judged_at": 1629,
+        "completion": 96,
+        "evidence_snapshot": {"example-name": 28, "round-axis": 13},
     },
     {
         "key": "text",

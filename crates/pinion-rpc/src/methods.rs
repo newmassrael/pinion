@@ -176,6 +176,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc, MethodWindow)] = &[
         MethodOcc::Read,
         MethodWindow::Scope,
     ),
+    ("scene/derivations", MethodOcc::Read, MethodWindow::Scope),
     ("scene/disabled", MethodOcc::Read, MethodWindow::Scope),
     ("scene/displays", MethodOcc::Read, MethodWindow::Scope),
     ("scene/double_click", MethodOcc::Mutate, MethodWindow::Scope),
