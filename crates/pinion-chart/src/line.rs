@@ -98,15 +98,9 @@ use crate::draw::{
     curve_stroke_path, fill_parent, legend_band_color_bar, marker_node, stroke_path,
 };
 use crate::interpolate::{Interpolation, Overshoot};
+// R1626 — one narrowing for the crate; R1625 had made a private second copy.
+use crate::scale::to_f32 as narrow_value;
 
-/// R1625 — a data-space value as the `f32` the interpolation works in.
-#[allow(
-    clippy::cast_possible_truncation,
-    reason = "the overshoot report is a geometric question, answered in the coordinate space the curve is built in"
-)]
-fn narrow(v: f64) -> f32 {
-    v as f32
-}
 use crate::palette::CategoricalPalette;
 use crate::plot::{
     AxisKinds, CartesianPlot, OffScale, Rescale, axis_format, axis_minor_ticks, axis_ticks,
@@ -316,7 +310,7 @@ impl LineChart {
                 .points
                 .iter()
                 .filter(|p| p.x.is_finite() && p.y.is_finite())
-                .map(|p| (narrow(p.x), narrow(p.y)))
+                .map(|p| (narrow_value(p.x), narrow_value(p.y)))
                 .collect();
             out.extend(
                 crate::interpolate::overshoot(&pts, self.interpolation)

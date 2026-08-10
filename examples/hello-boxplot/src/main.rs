@@ -54,7 +54,10 @@ use pinion_a11y::{
     AccessFocus, AccessNode, AriaRole, RadioCell, ToggleSegment, WidgetA11y,
     radiogroup_radio_nodes, toggle_button_group_nodes,
 };
-use pinion_chart::{BoxPlotChart, ChartStyle, Distribution, LandmarkKind, QuantileMethod};
+use pinion_chart::{
+    Bandwidth, BoxPlotChart, ChartStyle, Distribution, DistributionMark, Kernel, LandmarkKind,
+    QuantileMethod,
+};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, LayoutStyle, Size, TextStyle};
@@ -85,6 +88,14 @@ const METHOD_TAG: &str = "method";
 /// own Tab stop, unlike the radio group's single roving stop.
 const NOTCH_TAG: &str = "notch";
 const LOG_TAG: &str = "logscale";
+/// R1626 — draw the distributions as VIOLINS (the density estimate) with the
+/// box inside, instead of the box alone.
+const VIOLIN_TAG: &str = "violin";
+
+/// Every option toggle, in chip order — declared once, because R1625 learned
+/// what a hand-written second copy costs.
+const OPTION_TAGS: [&str; 3] = [NOTCH_TAG, LOG_TAG, VIOLIN_TAG];
+const OPTION_BOOT: [bool; 3] = [BOOT_NOTCH, BOOT_LOG, BOOT_VIOLIN];
 
 /// The WAI-ARIA `group` label parent for the two option toggles.
 const OPTIONS_GROUP_TAG: &str = "options";
@@ -107,6 +118,7 @@ const METHOD_LABELS: [&str; 3] = ["Tukey hinges", "Linear (HF-7)", "Exclusive (H
 const BOOT_METHOD: usize = 0;
 const BOOT_NOTCH: bool = false;
 const BOOT_LOG: bool = false;
+const BOOT_VIOLIN: bool = false;
 
 const TITLE_FONT_PX: u32 = 17;
 const CAPTION_FONT_PX: u32 = 12;
@@ -172,8 +184,18 @@ fn summarise(method: QuantileMethod) -> Vec<Distribution> {
     ENDPOINTS
         .iter()
         .map(|(name, samples)| {
-            Distribution::from_samples(*name, samples, method)
-                .expect("every endpoint has finite samples")
+            // R1626 — one call, one sample slice, both derivations. The
+            // summary and the density describe the same data by
+            // construction; composing the two constructors would take the
+            // slice twice and nothing would notice a mismatch.
+            Distribution::from_samples_with_density(
+                *name,
+                samples,
+                method,
+                Kernel::Gaussian,
+                Bandwidth::Silverman,
+            )
+            .expect("every endpoint has finite, spread samples")
         })
         .collect()
 }
@@ -181,7 +203,16 @@ fn summarise(method: QuantileMethod) -> Vec<Distribution> {
 /// The chart for one set of options — the ONE place the method, the notch and
 /// the axis kind are applied.
 fn chart_for(state: &Options) -> BoxPlotChart {
-    let chart = BoxPlotChart::new(summarise(state.method())).notched(state.notch);
+    let chart = BoxPlotChart::new(summarise(state.method()))
+        .notched(state.notch)
+        .with_mark(if state.violin {
+            // With the box INSIDE: the outline is an estimate, the box is
+            // made of numbers the data actually took, and a reader wants
+            // both at once.
+            DistributionMark::ViolinWithBox
+        } else {
+            DistributionMark::Box
+        });
     if state.log { chart.y_log() } else { chart }
 }
 
@@ -284,16 +315,25 @@ fn option_row(state: &Options, theme: &Theme) -> Scene {
         state.log_row.0,
         theme,
     );
+    let violin = option_chip(
+        VIOLIN_TAG.to_string(),
+        "violin",
+        state.violin,
+        true,
+        96,
+        state.violin_row.0,
+        theme,
+    );
     Scene::Container(
-        ContainerNode::new(vec![notch, log])
+        ContainerNode::new(vec![notch, log, violin])
             .with_tag(OPTIONS_GROUP_TAG.to_string())
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
                     .with_align_items(AlignItems::Center)
                     .with_gap(8)
-                    .with_absolute_position(WIN_W - 224, 48)
-                    .with_size(Size::px(208, CHIP_HEIGHT)),
+                    .with_absolute_position(WIN_W - 328, 48)
+                    .with_size(Size::px(312, CHIP_HEIGHT)),
             ),
     )
 }
@@ -363,8 +403,10 @@ struct Options {
     method_focused: Option<usize>,
     notch_row: (ToggleState, bool),
     log_row: (ToggleState, bool),
+    violin_row: (ToggleState, bool),
     notch: bool,
     log: bool,
+    violin: bool,
 }
 
 impl Options {
@@ -375,8 +417,10 @@ impl Options {
             method_focused: None,
             notch_row: (ToggleState::Idle, BOOT_NOTCH),
             log_row: (ToggleState::Idle, BOOT_LOG),
+            violin_row: (ToggleState::Idle, BOOT_VIOLIN),
             notch: BOOT_NOTCH,
             log: BOOT_LOG,
+            violin: BOOT_VIOLIN,
         }
     }
 
@@ -409,21 +453,15 @@ impl WidgetCore for BoxPlotView {
         Box::new(group)
     }
 
-    /// The two option toggles. Built by hand rather than through
-    /// `toggle_group::extra_toggles`, which skips index 0 on the assumption
-    /// that the first toggle is the primary external — here the primary is
-    /// the method radio group.
+    /// The option toggles.
+    ///
+    /// R1626 — `toggle_group::toggles`, which R1625 added for exactly this
+    /// shape: the primary external here is the method radio group, so no
+    /// option tag is the primary and the form that drops the first one would
+    /// leave `notch` wired to nothing. This binding had hand-rolled around
+    /// that; it is the third consumer, so the hand-rolling goes.
     fn create_extra_externals() -> Vec<ExtraExternal> {
-        vec![
-            ExtraExternal::new(
-                NOTCH_TAG,
-                Box::new(toggle_group::boot_toggle(BOOT_NOTCH)) as Box<dyn External>,
-            ),
-            ExtraExternal::new(
-                LOG_TAG,
-                Box::new(toggle_group::boot_toggle(BOOT_LOG)) as Box<dyn External>,
-            ),
-        ]
+        toggle_group::toggles(&OPTION_TAGS, &OPTION_BOOT)
     }
 
     fn tag() -> &'static str {
@@ -441,8 +479,10 @@ impl WidgetCore for BoxPlotView {
         }
         out.notch_row = toggle_group::read_toggle(scene, NOTCH_TAG);
         out.log_row = toggle_group::read_toggle(scene, LOG_TAG);
+        out.violin_row = toggle_group::read_toggle(scene, VIOLIN_TAG);
         out.notch = out.notch_row.1;
         out.log = out.log_row.1;
+        out.violin = out.violin_row.1;
         out
     }
 
@@ -468,7 +508,7 @@ impl WidgetCore for BoxPlotView {
         key: &str,
         _modifiers: pinion_core::Modifiers,
     ) -> bool {
-        if toggle_group::apply_key(scene, focused, key, &[NOTCH_TAG, LOG_TAG]) {
+        if toggle_group::apply_key(scene, focused, key, &OPTION_TAGS) {
             return true;
         }
         if focused != Some(METHOD_TAG) {
@@ -547,6 +587,12 @@ impl WidgetA11y for BoxPlotView {
                 state: state.log_row.0,
                 on: state.log,
             },
+            ToggleSegment {
+                tag: VIOLIN_TAG,
+                label: "violin",
+                state: state.violin_row.0,
+                on: state.violin,
+            },
         ];
         nodes.extend(toggle_button_group_nodes(
             OPTIONS_GROUP_TAG,
@@ -604,6 +650,77 @@ mod tests {
 
     fn render(method: usize, notch: bool, log: bool) -> Scene {
         Owner::new().run(|| view(options(method, notch, log), &Frame::new()))
+    }
+
+    fn render_violin(method: usize, log: bool) -> Scene {
+        let mut opts = options(method, false, log);
+        opts.violin = true;
+        opts.violin_row = (ToggleState::Idle, true);
+        Owner::new().run(|| view(opts, &Frame::new()))
+    }
+
+    /// R1626 — the violin chip swaps the mark and keeps the numbers.
+    #[test]
+    fn r1626_the_violin_chip_adds_the_estimate_and_keeps_the_box() {
+        let plain = render(0, false, false);
+        let violin = render_violin(0, false);
+        let n = ENDPOINTS.len();
+
+        assert_eq!(count_prefix(&plain, "chart.violin."), 0);
+        assert_eq!(
+            count_prefix(&violin, "chart.violin."),
+            n,
+            "one per endpoint"
+        );
+        assert_eq!(
+            count_prefix(&violin, "chart.box."),
+            n,
+            "the box stays: the outline is an estimate, the box is the data",
+        );
+        assert_eq!(count_prefix(&violin, "chart.median."), n);
+    }
+
+    /// R1626 — every endpoint's density is estimable, so `without_density`
+    /// is empty. The report exists for a summary-sourced category, and this
+    /// binding has none; the assertion is what keeps that true if one is
+    /// added.
+    #[test]
+    fn r1626_every_endpoint_can_be_a_violin() {
+        let chart = chart_for(&options(0, false, false));
+        assert!(
+            chart.without_density().is_empty(),
+            "every endpoint carries a density: {:?}",
+            chart.without_density(),
+        );
+        for (i, d) in chart.distributions().iter().enumerate() {
+            let density = d.density().unwrap_or_else(|| panic!("endpoint {i}"));
+            assert_eq!(density.count(), ENDPOINTS[i].1.len());
+            assert!(density.bandwidth() > 0.0);
+            assert!(
+                density.spill() > 0.0,
+                "an unbounded gaussian estimate always reaches past the data",
+            );
+        }
+    }
+
+    /// R1626 — the violin still respects the value axis: a log axis that
+    /// cannot place a landmark reports it, and the estimate is not clamped
+    /// onto the plot floor to compensate.
+    #[test]
+    fn r1626_the_violin_respects_the_value_axis() {
+        let violin = render_violin(0, true);
+        assert!(
+            count_prefix(&violin, "chart.violin.") > 0,
+            "a log axis still draws violins",
+        );
+        let chart = chart_for(&{
+            let mut o = options(0, false, true);
+            o.violin = true;
+            o
+        });
+        // The report is the axis's, and the mark does not change it.
+        let boxed = chart_for(&options(0, false, true));
+        assert_eq!(chart.off_scale().len(), boxed.off_scale().len());
     }
 
     fn find<'a>(scene: &'a Scene, tag: &str) -> Option<&'a Scene> {
@@ -804,7 +921,17 @@ mod tests {
             .iter()
             .filter(|n| matches!(n.role, AriaRole::Button))
             .count();
-        assert_eq!(buttons, 2, "one aria-pressed button per option");
+        assert_eq!(
+            buttons,
+            OPTION_TAGS.len(),
+            "one aria-pressed button per option",
+        );
+        // R1626 — and every option tag announces itself. A focusable chip
+        // with no node is a keyboard stop a screen reader cannot name, which
+        // is exactly what adding a control row risks.
+        for tag in OPTION_TAGS {
+            assert!(nodes.iter().any(|n| n.tag == tag), "{tag} announces itself",);
+        }
         let status = nodes
             .iter()
             .find(|n| matches!(n.role, AriaRole::Status))

@@ -50,6 +50,7 @@
 
 use std::fmt::Write as _;
 
+use crate::density::Density;
 use crate::ticks::format_axis_tick;
 
 /// Tukey's conventional fence multiplier: a whisker reaches the most extreme
@@ -297,6 +298,12 @@ pub enum DistributionError {
         /// What the position below it held.
         previous: f64,
     },
+    /// R1626 — a density was attached to a summary-sourced distribution.
+    /// Five pre-computed numbers cannot have produced one, so the estimate
+    /// describes some other sample set.
+    DensityWithoutSamples,
+    /// R1626 — the samples summarised fine but could not support a density.
+    Density(crate::DensityError),
 }
 
 impl std::fmt::Display for DistributionError {
@@ -311,6 +318,10 @@ impl std::fmt::Display for DistributionError {
                 value,
                 previous,
             } => write!(f, "summary position {at} is {value}, below {previous}"),
+            Self::DensityWithoutSamples => f.write_str(
+                "a pre-computed summary carries no samples, so no density can belong to it",
+            ),
+            Self::Density(e) => write!(f, "the samples support no density estimate: {e}"),
         }
     }
 }
@@ -370,6 +381,12 @@ pub struct Distribution {
     upper_whisker: f64,
     outliers: Vec<f64>,
     source: DistributionSource,
+    /// R1626 — the kernel density estimate behind a violin, when the caller
+    /// attached one. An **attachment** rather than a field the constructors
+    /// fill, for two reasons: a summary-sourced distribution has no samples
+    /// to estimate from and so can never have one, and a box plot that never
+    /// draws a violin should not pay for a density it will not use.
+    density: Option<Density>,
 }
 
 impl Distribution {
@@ -513,6 +530,7 @@ impl Distribution {
                 method,
                 fence,
             },
+            density: None,
         })
     }
 
@@ -572,7 +590,61 @@ impl Distribution {
             upper_whisker: upper_extreme,
             outliers: Vec::new(),
             source: DistributionSource::Summary,
+            density: None,
         })
+    }
+
+    /// R1626 — attach the kernel density estimate a violin is drawn from.
+    ///
+    /// Refused for a summary-sourced distribution: five pre-computed numbers
+    /// cannot have produced a density, so an estimate arriving beside them
+    /// describes *some other* sample set and the two would disagree about the
+    /// same category with nothing to say so. That is the one error this
+    /// attachment can make, so it is the one it rejects.
+    ///
+    /// # Errors
+    ///
+    /// [`DistributionError::DensityWithoutSamples`] when this distribution
+    /// was built by [`from_summary`](Self::from_summary).
+    pub fn with_density(mut self, density: Density) -> Result<Self, DistributionError> {
+        if matches!(self.source, DistributionSource::Summary) {
+            return Err(DistributionError::DensityWithoutSamples);
+        }
+        self.density = Some(density);
+        Ok(self)
+    }
+
+    /// The attached density, when there is one.
+    #[must_use]
+    pub const fn density(&self) -> Option<&Density> {
+        self.density.as_ref()
+    }
+
+    /// R1626 — summarise `samples` **and** estimate their density in one
+    /// call, so the two derivations cannot describe different data.
+    ///
+    /// The reason this exists rather than leaving the caller to compose
+    /// [`from_samples`](Self::from_samples) with
+    /// [`Density::from_samples`](crate::Density::from_samples) and
+    /// [`with_density`](Self::with_density): that composition takes the
+    /// sample slice twice, and nothing would notice if the second one were a
+    /// different slice.
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`from_samples`](Self::from_samples) raises, or
+    /// [`DistributionError::Density`] carrying the estimate's own refusal.
+    pub fn from_samples_with_density(
+        label: impl Into<String>,
+        samples: &[f64],
+        method: QuantileMethod,
+        kernel: crate::Kernel,
+        rule: crate::Bandwidth,
+    ) -> Result<Self, DistributionError> {
+        let summary = Self::from_samples(label, samples, method)?;
+        let density = Density::from_samples(samples, kernel, rule, crate::DEFAULT_RESOLUTION)
+            .map_err(DistributionError::Density)?;
+        summary.with_density(density)
     }
 
     /// The interquartile range `q3 - q1` — the height of the box, and the

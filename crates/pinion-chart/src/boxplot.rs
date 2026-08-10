@@ -50,6 +50,7 @@ use pinion_core::Scene;
 use pinion_core::scene::{ContainerNode, Rect};
 use pinion_core::style::{Color, PathStyle, Stroke};
 
+use crate::density::{Density, count_as_f64};
 use crate::distribution::{
     Distribution, DistributionSource, SummaryPosition, distribution_bounds,
     positive_distribution_bounds,
@@ -58,10 +59,12 @@ use crate::draw::{
     CalloutRow, absolute, box_node, callout, category_label_node, fill_parent, marker_node,
     outline_box, plot_rect, polygon_node, stroke_path, to_f32, to_u32,
 };
+// R1626 — the crate's one f64 -> f32 narrowing, rather than a third copy of it.
 use crate::palette::CategoricalPalette;
 use crate::plot::{
     axis_domain, axis_format, axis_minor_ticks, axis_scale, axis_ticks, kind_extent, tick_pixels,
 };
+use crate::scale::to_f32 as narrow_value;
 use crate::scale::{
     AxisKind, Categories, CategoryScale, CategoryWindow, DEFAULT_LOG_BASE, ValueScale,
 };
@@ -108,6 +111,101 @@ pub struct OffScaleLandmark {
 }
 
 /// A vertical box plot over labelled [`Distribution`]s.
+/// R1626 — which **mark** a distribution is drawn as.
+///
+/// A box plot and a violin are two readings of one sample set, so this is a
+/// property of the chart and the category axis, the value axis and its
+/// [`off_scale`](BoxPlotChart::off_scale) report, the window, the palette and
+/// the inspect readout are all shared. The reference toolkit has a box plot
+/// series and no violin at all.
+///
+/// **A violin needs a density, and a density needs samples.** A distribution
+/// built from a pre-computed summary has none, so it keeps its box whatever
+/// this says — and [`without_density`](BoxPlotChart::without_density) names
+/// every one that did, rather than leaving a reader to wonder why one
+/// category looks different.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum DistributionMark {
+    /// The box, its median, whiskers, caps and outliers. The default.
+    #[default]
+    Box,
+    /// The mirrored density outline alone.
+    Violin,
+    /// The density outline with the box drawn inside it — the conventional
+    /// form, and the one that answers both questions at once: the shape is
+    /// the estimate, the box inside it is made of numbers the data actually
+    /// took.
+    ViolinWithBox,
+}
+
+impl DistributionMark {
+    /// Every mark, for a consumer that must cover the vocabulary.
+    pub const ALL: [Self; 3] = [Self::Box, Self::Violin, Self::ViolinWithBox];
+
+    /// Stable name, for a caption or a wire form.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Box => "box",
+            Self::Violin => "violin",
+            Self::ViolinWithBox => "violin+box",
+        }
+    }
+
+    /// Whether this mark draws the density outline.
+    #[must_use]
+    pub const fn draws_violin(self) -> bool {
+        matches!(self, Self::Violin | Self::ViolinWithBox)
+    }
+
+    /// Whether this mark draws the box, median, whiskers and outliers.
+    #[must_use]
+    pub const fn draws_box(self) -> bool {
+        matches!(self, Self::Box | Self::ViolinWithBox)
+    }
+}
+
+/// R1626 — how a violin's width is scaled against its neighbours.
+///
+/// Not cosmetic: it decides what the picture *claims*. Every density
+/// integrates to one, so drawing each at its own full width says "compare the
+/// shapes"; drawing them on one scale says "compare the distributions"; and
+/// weighting by sample count says "and this one rests on forty samples while
+/// that one rests on four thousand", which the outline otherwise hides
+/// completely.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ViolinScale {
+    /// Each violin fills its slot — its own peak is the full half-width.
+    /// The common default, and the one that makes a five-sample violin look
+    /// exactly as authoritative as a five-thousand-sample one.
+    #[default]
+    Width,
+    /// One scale for every violin, so equal areas read as equal areas. The
+    /// densities already integrate to one, so this is the honest comparison
+    /// of shapes.
+    Area,
+    /// [`Area`](Self::Area) weighted by sample count, so a violin's width
+    /// says how much data is behind it.
+    Count,
+}
+
+impl ViolinScale {
+    /// Every scaling, for a consumer that must cover the vocabulary.
+    pub const ALL: [Self; 3] = [Self::Width, Self::Area, Self::Count];
+
+    /// Stable name, for a caption or a wire form.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Width => "width",
+            Self::Area => "area",
+            Self::Count => "count",
+        }
+    }
+}
+
 pub struct BoxPlotChart {
     distributions: Vec<Distribution>,
     palette: CategoricalPalette,
@@ -121,6 +219,8 @@ pub struct BoxPlotChart {
     /// every paint.
     categories: Categories,
     x_window: Option<CategoryWindow>,
+    mark: DistributionMark,
+    violin_scale: ViolinScale,
     tag_prefix: String,
 }
 
@@ -140,6 +240,8 @@ impl BoxPlotChart {
             inspect: None,
             categories,
             x_window: None,
+            mark: DistributionMark::default(),
+            violin_scale: ViolinScale::default(),
             tag_prefix: "chart".to_string(),
         }
     }
@@ -304,6 +406,83 @@ impl BoxPlotChart {
 
     /// The chart body, authored in `rect`'s frame — the ONE builder both
     /// entry points wrap.
+    /// R1626 — draw the distributions as `mark`. See [`DistributionMark`].
+    #[must_use]
+    pub const fn with_mark(mut self, mark: DistributionMark) -> Self {
+        self.mark = mark;
+        self
+    }
+
+    /// Which mark the distributions are drawn as.
+    #[must_use]
+    pub const fn mark(&self) -> DistributionMark {
+        self.mark
+    }
+
+    /// R1626 — how the violins' widths are scaled against each other.
+    #[must_use]
+    pub const fn with_violin_scale(mut self, scale: ViolinScale) -> Self {
+        self.violin_scale = scale;
+        self
+    }
+
+    /// The violin width scaling in force.
+    #[must_use]
+    pub const fn violin_scale(&self) -> ViolinScale {
+        self.violin_scale
+    }
+
+    /// R1626 — every distribution that cannot be drawn as a violin, by index,
+    /// because it carries no density.
+    ///
+    /// A summary-sourced distribution is the ordinary case: five pre-computed
+    /// numbers were never samples, so no estimate belongs to them. Such a
+    /// category keeps its box under a violin mark, and this is what lets a
+    /// caller caption that rather than leaving the odd one out unexplained.
+    ///
+    /// Depends only on the data, so it answers without a layout — the same
+    /// contract [`off_scale`](Self::off_scale) has.
+    #[must_use]
+    pub fn without_density(&self) -> Vec<usize> {
+        self.distributions
+            .iter()
+            .enumerate()
+            .filter(|(_, d)| d.density().is_none())
+            .map(|(i, _)| i)
+            .collect()
+    }
+
+    /// R1626 — the largest density any drawn violin reaches, which is the
+    /// denominator [`ViolinScale::Area`] and [`ViolinScale::Count`] share.
+    ///
+    /// `None` when no distribution carries a density.
+    fn shared_peak(&self) -> Option<f64> {
+        let mut peak: Option<f64> = None;
+        for d in &self.distributions {
+            if let Some(density) = d.density() {
+                let p = density.peak() * self.count_weight(density);
+                peak = Some(peak.map_or(p, |cur: f64| cur.max(p)));
+            }
+        }
+        peak
+    }
+
+    /// The weight `scale` gives a density's peak.
+    fn count_weight(&self, density: &Density) -> f64 {
+        match self.violin_scale {
+            ViolinScale::Count => {
+                let biggest = self
+                    .distributions
+                    .iter()
+                    .filter_map(Distribution::density)
+                    .map(|d| count_as_f64(d.count()))
+                    .fold(1.0, f64::max);
+                count_as_f64(density.count()) / biggest
+            }
+            _ => 1.0,
+        }
+    }
+
     fn build_body(&self, rect: Rect, style: &ChartStyle) -> ContainerNode {
         let g = self.geom(rect, style);
         let (highlight, tooltip) = match self.resolve_inspect(&g, rect, style) {
@@ -380,12 +559,29 @@ impl BoxPlotChart {
         let Some(dist) = self.distributions.get(i) else {
             return Vec::new();
         };
-        let Some(bx) = self.box_geometry(g, i) else {
-            return Vec::new();
-        };
         let color = self.palette.color(i);
         let stroke = Stroke::new(color, style.series_width.max(1));
         let mut out = Vec::new();
+
+        // R1626 — the violin outline first, so the box (when both are drawn)
+        // sits on top of it. A distribution with no density draws no violin
+        // and keeps its box; `without_density` names it.
+        if self.mark.draws_violin()
+            && let Some(outline) = self.violin_outline(g, i)
+        {
+            out.push(polygon_node(
+                &outline,
+                PathStyle::filled(color.with_alpha(style.area_alpha)).with_stroke(stroke),
+                format!("{}.violin.{i}", self.tag_prefix),
+            ));
+        }
+        if !self.draws_box_for(i) {
+            return out;
+        }
+
+        let Some(bx) = self.box_geometry(g, i) else {
+            return out;
+        };
 
         out.push(polygon_node(
             &bx.outline,
@@ -438,6 +634,59 @@ impl BoxPlotChart {
     /// carries no category there, or cannot place the box's own edges (a
     /// non-positive quartile on a log axis), which is the one landmark the
     /// rest of the mark is measured from.
+    /// R1626 — whether distribution `i` draws its box.
+    ///
+    /// Under a violin-only mark, a distribution that HAS no density still
+    /// does: the alternative is a blank slot, which reads as "no data" when
+    /// the truth is "this category was summarised upstream". The blank is the
+    /// one answer certainly wrong, the same judgement R1621 made about an
+    /// unmeasurable display.
+    fn draws_box_for(&self, i: usize) -> bool {
+        if self.mark.draws_box() {
+            return true;
+        }
+        self.distributions
+            .get(i)
+            .is_some_and(|d| d.density().is_none())
+    }
+
+    /// R1626 — the mirrored density outline of distribution `i`, in pixels.
+    ///
+    /// Walks the density grid up the left side and back down the right, so
+    /// the ring closes without a seam. A grid point the value axis cannot
+    /// place is skipped rather than clamped — a logarithmic axis has no pixel
+    /// for a density estimated below zero, and drawing one at the plot floor
+    /// would put mass where the axis says none can be.
+    fn violin_outline(&self, g: &BoxGeom, i: usize) -> Option<Vec<(f32, f32)>> {
+        let density = self.distributions.get(i)?.density()?;
+        let (slot_lo, slot_hi) = g.x.band(i)?;
+        let center = f32::midpoint(slot_lo, slot_hi);
+        let half = g.box_w / 2.0;
+        let peak = match self.violin_scale {
+            ViolinScale::Width => density.peak(),
+            _ => self.shared_peak()?,
+        };
+        if peak <= 0.0 {
+            return None;
+        }
+        let weight = self.count_weight(density);
+
+        let mut left: Vec<(f32, f32)> = Vec::with_capacity(density.grid().len());
+        let mut right: Vec<(f32, f32)> = Vec::with_capacity(density.grid().len());
+        for &(value, d) in density.grid() {
+            let Some(y) = g.y.map(value) else { continue };
+            let w = narrow_value(d * weight / peak) * half;
+            left.push((center - w, y));
+            right.push((center + w, y));
+        }
+        if left.len() < 2 {
+            return None;
+        }
+        right.reverse();
+        left.extend(right);
+        Some(left)
+    }
+
     fn box_geometry(&self, g: &BoxGeom, i: usize) -> Option<BoxRect> {
         let d = self.distributions.get(i)?;
         let (slot_lo, slot_hi) = g.x.band(i)?;
@@ -706,7 +955,7 @@ fn visible_indices(g: &BoxGeom) -> impl Iterator<Item = usize> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::distribution::QuantileMethod;
+    use crate::distribution::{DistributionError, QuantileMethod};
     use crate::scene_probe::{count_prefix, find, has, tags};
 
     const RECT: Rect = Rect::new(0, 0, 640, 360);
@@ -729,6 +978,319 @@ mod tests {
                     .expect("twelve finite samples")
             })
             .collect()
+    }
+
+    fn dense(name: &str, base: f64, n: usize) -> Distribution {
+        // A bimodal set, so the violin has a shape a box cannot show.
+        let mut s = 999u64;
+        let samples: Vec<f64> = (0..n)
+            .map(|i| {
+                s = s.wrapping_mul(6_364_136_223_846_793_005).wrapping_add(1);
+                let jitter = f64::from(u32::try_from((s >> 40) % 100).expect("below 100")) / 50.0;
+                base + if i % 2 == 0 { jitter } else { 20.0 + jitter }
+            })
+            .collect();
+        Distribution::from_samples_with_density(
+            name,
+            &samples,
+            QuantileMethod::Tukey,
+            crate::Kernel::Gaussian,
+            crate::Bandwidth::Silverman,
+        )
+        .expect("a dense fixture is estimable")
+    }
+
+    /// R1626 — a violin is drawn from the density, mirrored about the slot
+    /// centre, and it is a DIFFERENT shape from the box.
+    #[test]
+    fn r1626_a_violin_is_the_mirrored_density_and_not_the_box() {
+        let style = ChartStyle::default();
+        let chart = BoxPlotChart::new(vec![dense("a", 0.0, 200), dense("b", 5.0, 200)])
+            .with_mark(DistributionMark::Violin);
+        let scene = chart.build(RECT, &style);
+        assert_eq!(chart.mark(), DistributionMark::Violin);
+        assert_eq!(count_prefix(&scene, "chart.violin."), 2);
+        assert_eq!(count_prefix(&scene, "chart.box."), 0, "violin only");
+
+        for i in 0..2 {
+            let Some(Scene::Path(p)) = find(&scene, &format!("chart.violin.{i}")) else {
+                panic!("violin {i} is a path");
+            };
+            let b = pinion_core::path_data::bounds(&p.commands).expect("has bounds");
+            assert!(b.width() > 0.0 && b.height() > 0.0, "violin {i}: {b:?}");
+            // Mirrored: the outline is symmetric about its own centre, which
+            // a one-sided density plot would not be.
+            let mid = f32::midpoint(b.min_x, b.max_x);
+            let xs: Vec<f32> = p
+                .commands
+                .iter()
+                .filter_map(|c| match c {
+                    pinion_core::scene::PathCommand::MoveTo(q)
+                    | pinion_core::scene::PathCommand::LineTo(q) => Some(q.x),
+                    _ => None,
+                })
+                .collect();
+            for x in &xs {
+                let mirrored = 2.0f32.mul_add(mid, -x);
+                assert!(
+                    xs.iter().any(|o| (o - mirrored).abs() < 1.0),
+                    "violin {i} is symmetric: {x} has no mirror",
+                );
+            }
+        }
+    }
+
+    /// ★ R1626 — the outline's width IS the density, which is the whole
+    /// difference between a violin and a bar.
+    ///
+    /// FOUND BY A COUNTERFACTUAL: replacing the per-point width with a
+    /// constant was caught by nothing. Symmetry survives it, containment
+    /// survives it, and the scaling comparison survives it, because all
+    /// three ask about the outline's extremes rather than its profile. This
+    /// asks about the profile: a density has a peak and two tails, so the
+    /// half-width must be largest somewhere in the middle and smallest at
+    /// the ends.
+    #[test]
+    fn r1626_the_outline_narrows_where_the_density_does() {
+        let style = ChartStyle::default();
+        let dist = dense("a", 0.0, 400);
+        let density = dist.density().expect("dense fixture").clone();
+        let scene = BoxPlotChart::new(vec![dist])
+            .with_mark(DistributionMark::Violin)
+            .build(RECT, &style);
+        let Some(Scene::Path(p)) = find(&scene, "chart.violin.0") else {
+            panic!("violin 0 is a path");
+        };
+        let pts: Vec<(f32, f32)> = p
+            .commands
+            .iter()
+            .filter_map(|c| match c {
+                pinion_core::scene::PathCommand::MoveTo(q)
+                | pinion_core::scene::PathCommand::LineTo(q) => Some((q.x, q.y)),
+                _ => None,
+            })
+            .collect();
+        let b = pinion_core::path_data::bounds(&p.commands).expect("bounds");
+        let centre = f32::midpoint(b.min_x, b.max_x);
+
+        // The half-width at each y, taken from the left half of the ring.
+        let half = pts.len() / 2;
+        let widths: Vec<f32> = pts[..half].iter().map(|&(x, _)| centre - x).collect();
+        assert!(widths.len() > 8, "a real profile, not two points");
+        let peak = widths.iter().copied().fold(f32::MIN, f32::max);
+        let tail = widths
+            .first()
+            .copied()
+            .unwrap_or(0.0)
+            .max(widths.last().copied().unwrap_or(0.0));
+        assert!(
+            peak > tail * 3.0,
+            "the outline is far wider at its peak than at its tails: {peak} vs {tail}",
+        );
+        // ...and a constant-width outline would have exactly one width.
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "a quarter-pixel bucket of a plot-width fraction"
+        )]
+        let bucket = |w: &f32| (w * 4.0).round() as i64;
+        let distinct = widths
+            .iter()
+            .map(bucket)
+            .collect::<std::collections::BTreeSet<_>>();
+        assert!(
+            distinct.len() > 5,
+            "the width varies along the outline: {} distinct values",
+            distinct.len(),
+        );
+        // The widest point sits where the density peaks, not at the middle
+        // of the value range — which is what makes it an estimate rather
+        // than an ornament.
+        let peak_at = widths
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.total_cmp(b.1))
+            .map(|(i, _)| i)
+            .expect("non-empty");
+        let expected = density
+            .grid()
+            .iter()
+            .enumerate()
+            .max_by(|a, b| a.1.1.total_cmp(&b.1.1))
+            .map(|(i, _)| i)
+            .expect("non-empty");
+        let slack = density.grid().len() / 10;
+        assert!(
+            peak_at.abs_diff(expected) <= slack.max(2),
+            "the widest point is where the density peaks: {peak_at} vs {expected}",
+        );
+    }
+
+    /// R1626 — the combined mark draws BOTH, and the box on top.
+    #[test]
+    fn r1626_the_combined_mark_keeps_the_numbers_inside_the_estimate() {
+        let style = ChartStyle::default();
+        let scene = BoxPlotChart::new(vec![dense("a", 0.0, 200)])
+            .with_mark(DistributionMark::ViolinWithBox)
+            .build(RECT, &style);
+        assert!(has(&scene, "chart.violin.0"), "the estimate");
+        assert!(has(&scene, "chart.box.0"), "and the numbers");
+        assert!(has(&scene, "chart.median.0"));
+        let painted = tags(&scene);
+        let vi = painted.iter().position(|t| t == "chart.violin.0");
+        let bi = painted.iter().position(|t| t == "chart.box.0");
+        assert!(vi < bi, "the box paints over the violin: {vi:?} {bi:?}");
+    }
+
+    /// ★ R1626 — a distribution with no samples cannot be a violin, keeps its
+    /// box, and is REPORTED.
+    ///
+    /// The blank slot is the one answer certainly wrong: it reads as "no
+    /// data" when the truth is "summarised upstream".
+    #[test]
+    fn r1626_a_summary_cannot_be_a_violin_and_says_so() {
+        let style = ChartStyle::default();
+        let summary = Distribution::from_summary("upstream", 1.0, 3.0, 5.0, 7.0, 9.0)
+            .expect("ordered summary");
+        assert!(summary.density().is_none());
+        assert_eq!(
+            summary.clone().with_density(
+                crate::Density::from_samples(
+                    &[1.0, 2.0, 3.0],
+                    crate::Kernel::Gaussian,
+                    crate::Bandwidth::Silverman,
+                    64,
+                )
+                .expect("estimable"),
+            ),
+            Err(DistributionError::DensityWithoutSamples),
+            "an estimate beside five pre-computed numbers describes other data",
+        );
+
+        let chart = BoxPlotChart::new(vec![dense("a", 0.0, 200), summary])
+            .with_mark(DistributionMark::Violin);
+        assert_eq!(chart.without_density(), vec![1], "the report names it");
+        let scene = chart.build(RECT, &style);
+        assert!(has(&scene, "chart.violin.0"), "the sampled one is a violin");
+        assert!(!has(&scene, "chart.violin.1"), "the summary is not");
+        assert!(
+            has(&scene, "chart.box.1"),
+            "and it keeps its box rather than leaving a blank slot",
+        );
+        assert!(
+            !has(&scene, "chart.box.0"),
+            "while the violin-drawn one does not gain one",
+        );
+    }
+
+    /// ★ R1626 — the width scaling decides what the picture CLAIMS, and the
+    /// three readings differ measurably.
+    #[test]
+    fn r1626_the_width_scaling_changes_what_the_picture_claims() {
+        let style = ChartStyle::default();
+        // Two categories, one with far fewer samples than the other.
+        let dists = vec![dense("many", 0.0, 400), dense("few", 0.0, 20)];
+        let widths = |scale| {
+            let scene = BoxPlotChart::new(dists.clone())
+                .with_mark(DistributionMark::Violin)
+                .with_violin_scale(scale)
+                .build(RECT, &style);
+            (0..2)
+                .map(|i| {
+                    let Some(Scene::Path(p)) = find(&scene, &format!("chart.violin.{i}")) else {
+                        panic!("violin {i}");
+                    };
+                    pinion_core::path_data::bounds(&p.commands)
+                        .expect("has bounds")
+                        .width()
+                })
+                .collect::<Vec<f32>>()
+        };
+
+        let w = widths(ViolinScale::Width);
+        assert!(
+            (w[0] - w[1]).abs() < 1.0,
+            "Width fills every slot, whatever is behind it: {w:?}",
+        );
+        let c = widths(ViolinScale::Count);
+        assert!(
+            c[1] < c[0] * 0.5,
+            "Count says how much data is behind each: {c:?}",
+        );
+        // Area sits between: equal areas, so the peaks differ but not by n.
+        let a = widths(ViolinScale::Area);
+        assert!(a.iter().all(|v| *v > 0.0), "{a:?}");
+        assert!(
+            c[1] < a[1],
+            "Count is narrower than Area for the small sample: {a:?} vs {c:?}",
+        );
+    }
+
+    /// R1626 — every mark and every scaling in the census paints, so a new
+    /// one cannot be added and left unpainted.
+    #[test]
+    fn r1626_every_mark_and_scaling_in_the_census_paints() {
+        let style = ChartStyle::default();
+        let dists = vec![dense("a", 0.0, 200), dense("b", 5.0, 200)];
+        for mark in DistributionMark::ALL {
+            let scene = BoxPlotChart::new(dists.clone())
+                .with_mark(mark)
+                .build(RECT, &style);
+            assert_eq!(
+                count_prefix(&scene, "chart.violin.") > 0,
+                mark.draws_violin(),
+                "{mark:?} draws its violin exactly when it says it does",
+            );
+            assert_eq!(
+                count_prefix(&scene, "chart.box.") > 0,
+                mark.draws_box(),
+                "{mark:?} draws its box exactly when it says it does",
+            );
+        }
+        for scale in ViolinScale::ALL {
+            let scene = BoxPlotChart::new(dists.clone())
+                .with_mark(DistributionMark::Violin)
+                .with_violin_scale(scale)
+                .build(RECT, &style);
+            assert_eq!(count_prefix(&scene, "chart.violin."), 2, "{scale:?}");
+        }
+        let mut names: Vec<&str> = DistributionMark::ALL.iter().map(|m| m.name()).collect();
+        names.sort_unstable();
+        names.dedup();
+        assert_eq!(names.len(), DistributionMark::ALL.len());
+        let mut scales: Vec<&str> = ViolinScale::ALL.iter().map(|s| s.name()).collect();
+        scales.sort_unstable();
+        scales.dedup();
+        assert_eq!(scales.len(), ViolinScale::ALL.len());
+    }
+
+    /// R1626 — the mark is a rendering: it does not move the categories.
+    #[test]
+    fn r1626_the_mark_does_not_move_the_categories() {
+        let style = ChartStyle::default();
+        let dists = vec![dense("a", 0.0, 200), dense("b", 5.0, 200)];
+        let centres = |mark: DistributionMark| {
+            let chart = BoxPlotChart::new(dists.clone()).with_mark(mark);
+            let scene = chart.build(RECT, &style);
+            (0..2)
+                .map(|i| {
+                    let tag = if mark.draws_violin() {
+                        format!("chart.violin.{i}")
+                    } else {
+                        format!("chart.box.{i}")
+                    };
+                    let Some(Scene::Path(p)) = find(&scene, &tag) else {
+                        panic!("{tag}");
+                    };
+                    let b = pinion_core::path_data::bounds(&p.commands).expect("bounds");
+                    f32::midpoint(b.min_x, b.max_x) + crate::draw::to_f32(p.rect.x)
+                })
+                .collect::<Vec<f32>>()
+        };
+        let boxes = centres(DistributionMark::Box);
+        let violins = centres(DistributionMark::Violin);
+        for (i, (a, b)) in boxes.iter().zip(violins.iter()).enumerate() {
+            assert!((a - b).abs() < 1.0, "category {i} moved: {a} vs {b}");
+        }
     }
 
     /// ★ One datum emits a whole schema — box, median, two whiskers, two

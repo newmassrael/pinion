@@ -821,7 +821,7 @@ pub(crate) fn log_base(v: f64, base: f64) -> f64 {
     clippy::cast_possible_truncation,
     reason = "f64 pixel arithmetic narrowed to the f32 PathPoint coordinate space; sub-pixel loss is expected and bounded by the device resolution"
 )]
-fn to_f32(v: f64) -> f32 {
+pub(crate) fn to_f32(v: f64) -> f32 {
     v as f32
 }
 

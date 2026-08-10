@@ -304,6 +304,7 @@ mod candle;
 mod candlestick;
 mod civil;
 mod color_scale;
+mod density;
 mod distribution;
 mod donut;
 mod draw;
@@ -327,13 +328,14 @@ mod treemap;
 mod window;
 
 pub use bar::{Bar, BarChart};
-pub use boxplot::{BoxPlotChart, LandmarkKind, OffScaleLandmark};
+pub use boxplot::{BoxPlotChart, DistributionMark, LandmarkKind, OffScaleLandmark, ViolinScale};
 pub use brush::{Brush, BrushStripColors};
 pub use candle::{
     BodyFill, Candle, CandleError, CandlePosition, Direction, candle_bounds, positive_candle_bounds,
 };
 pub use candlestick::{CandlestickChart, OffScaleCandle, SessionAxis, SessionMark};
 pub use color_scale::{ColorScale, contrast_ratio, readable_ink, relative_luminance};
+pub use density::{Bandwidth, DEFAULT_RESOLUTION, Density, DensityError, Kernel};
 pub use distribution::{
     DEFAULT_FENCE, Distribution, DistributionError, DistributionSource, QuantileMethod,
     SummaryPosition, distribution_bounds, positive_distribution_bounds,

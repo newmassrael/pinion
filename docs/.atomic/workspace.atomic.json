@@ -33062,6 +33062,66 @@
         "no chart publishes its marks to assistive tech — its own debt file"
       ]
     },
+    "R1626": {
+      "decision_summary": "R1626 the outline is an estimate, the box is the data: pinion_chart::Density plus DistributionMark and ViolinScale add the violin as a mark on the box plot, with the kernel, the bandwidth, the sample count and the mass the smoothing invented all published",
+      "changes_bullets": [
+        "pinion_chart::density — Kernel, Bandwidth, Density, DensityError, spill",
+        "Density::bounded reflects at the observed extremes; spill becomes zero",
+        "Distribution::with_density refuses a summary; from_samples_with_density",
+        "BoxPlotChart::with_mark {Box, Violin, ViolinWithBox} + without_density",
+        "ViolinScale {Width, Area, Count} — what the picture claims",
+        "toggle_group::toggles finds its 3rd consumer; hello-boxplot drops its",
+        "one f64 -> f32 narrowing for the crate instead of three",
+        "hello-boxplot gains a violin chip; tools/demos/r1626_the_outline...py"
+      ],
+      "verification_bullets": [
+        "10 density tests, 7 chart tests, 3 binding tests; 412 + 11 green",
+        "8 counterfactuals, 8 caught, from a verified-green baseline",
+        "CF-2 PASSED: a constant-width bar survived every existing assertion",
+        "CF-6 PASSED: the robust-spread rule was untested, only the constant factor",
+        "the demo's first draft demanded a bulge a tight cluster cannot have",
+        "demo PASS; r1553, r1624 and r1625 demos re-pass unchanged",
+        "clippy pedantic clean; cargo doc clean; cargo fmt --all --check clean"
+      ],
+      "impact_refs": [
+        "5.28",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "the chart residue's buildable items are now closed",
+        "3D surface charting waits on the Phase C renderer (external)",
+        "no chart publishes its marks to assistive tech — its own debt file"
+      ],
+      "publishable_decision_summary": "R1626 the outline is an estimate, the box is the data: pinion_chart::Density plus DistributionMark and ViolinScale add the violin as a mark on the box plot, with the kernel, the bandwidth, the sample count and the mass the smoothing invented all published",
+      "publishable_changes_bullets": [
+        "pinion_chart::density — Kernel, Bandwidth, Density, DensityError, spill",
+        "Density::bounded reflects at the observed extremes; spill becomes zero",
+        "Distribution::with_density refuses a summary; from_samples_with_density",
+        "BoxPlotChart::with_mark {Box, Violin, ViolinWithBox} + without_density",
+        "ViolinScale {Width, Area, Count} — what the picture claims",
+        "toggle_group::toggles finds its 3rd consumer; hello-boxplot drops its",
+        "one f64 -> f32 narrowing for the crate instead of three",
+        "hello-boxplot gains a violin chip; tools/demos/r1626_the_outline...py"
+      ],
+      "publishable_verification_bullets": [
+        "10 density tests, 7 chart tests, 3 binding tests; 412 + 11 green",
+        "8 counterfactuals, 8 caught, from a verified-green baseline",
+        "CF-2 PASSED: a constant-width bar survived every existing assertion",
+        "CF-6 PASSED: the robust-spread rule was untested, only the constant factor",
+        "the demo's first draft demanded a bulge a tight cluster cannot have",
+        "demo PASS; r1553, r1624 and r1625 demos re-pass unchanged",
+        "clippy pedantic clean; cargo doc clean; cargo fmt --all --check clean"
+      ],
+      "publishable_impact_refs": [
+        "5.28",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "the chart residue's buildable items are now closed",
+        "3D surface charting waits on the Phase C renderer (external)",
+        "no chart publishes its marks to assistive tech — its own debt file"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
