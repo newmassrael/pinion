@@ -33682,6 +33682,48 @@
         "seven pre-existing debts promoted to files this round (memory only, untracked): no atomic multi-pass read, the wire cannot stop the clock, a mutating invoke delays the next RPC, the TUI ignores eight deferred inputs, Scene has no general walk, locate's OutOfBounds is one word, intents are empty at RPC cadence. Two of them were UNDERSTATED in the index and the promotion measured them: the TUI gap is eight arms rather than one, and the ad-hoc scene walkers are 78 files rather than 40"
       ]
     },
+    "R1636": {
+      "decision_summary": "a field that outlived its reason, deleted. `ChartStyle::label_advance_px` went in with R1633 as the number the label fit modelled a width from, back when that model was the fit's primary answer. By the time R1633 landed the primary answer was `pinion_core::measured_text_extent` -- the user's question in that round is what moved it -- and the field was only what a headless caller falls back to. It kept the shape of the design it no longer served, and that cost something measurable: TEN examples set `label_size_px` through `..ChartStyle::default()`, which leaves the advance at the default's, so every one of them fits 12-to-14-pixel labels against an advance derived from 11. Meanwhile NOTHING in the tree ever set the field -- the consumer it existed for never arrived -- and `with_label_size`, the builder added specifically to keep the pair from drifting, had no callers either. So the fix is not a gate on the pair but the removal of the pair: the fallback is derived from the label size and the two cannot disagree. A consumer that really has measured its face states that the way every measurement in this framework is stated, by seeding a `TextMetrics` provider, which the fit consults first anyway. HOW IT WAS FOUND MATTERS AS MUCH AS WHAT IT WAS. The user asked whether every new debt from this session had been registered in memory. The honest answer was no; the audit that followed turned up this one, and the right response was not to register it but to delete the thing. The general form: **a field whose only reason was to let a consumer override a default is a liability the moment the default stops being the primary answer**, and the way to notice is to count who sets it -- zero setters and ten silent mismatches is not a feature with no consumer, it is a defect with ten. AND ONE COUNTERFACTUAL PASSES, WHICH IS RECORDED RATHER THAN PAPERED OVER: widening the three-fifths ratio to four-fifths breaks no test. That is structural rather than a hole. The constant is consulted ONLY when nothing can measure, so any assertion about how close it sits to a real advance would need the measurement whose absence is the sole condition for reaching it. What can be pinned is pinned -- that the fallback follows the label size, and that a seeded provider wins over it whatever it says -- and the reason the rest cannot is written where the constant is.",
+      "changes_bullets": [
+        "ChartStyle::label_advance_px and with_label_size removed; the fallback advance is derived from label_size_px",
+        "a test that the fallback follows the size, written in the struct-update form the ten examples use",
+        "the reason no test pins the ratio is documented beside the constant rather than left as a gap",
+        "debt-counterfactual-cannot-score-a-build-gate gains its second instance: R1634's CF-2 was a build failure scored as PASSED"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-chart: 443 pass (1 new); blast radius 37 packages / 38 targets all pass",
+        "clippy / doc / fmt: clean",
+        "demos r1633 and r1634 PASS",
+        "two counterfactuals: ignoring the size is CAUGHT; widening the ratio PASSES, and why is documented"
+      ],
+      "impact_refs": [
+        "5.11",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "carry 0. The session's debt audit is what produced this round; the two other candidates it raised were judged and not registered, with the reasons: hello-boxplot's fixed CHART_RECT is a tree-wide convention already recorded as the reason debt-a-ladder-coarsen-has-no-wire-proof exists, and the CF-scoring gap already had a file and gained an instance instead of a second one"
+      ],
+      "publishable_decision_summary": "a field that outlived its reason, deleted. `ChartStyle::label_advance_px` went in with R1633 as the number the label fit modelled a width from, back when that model was the fit's primary answer. By the time R1633 landed the primary answer was `pinion_core::measured_text_extent` -- the user's question in that round is what moved it -- and the field was only what a headless caller falls back to. It kept the shape of the design it no longer served, and that cost something measurable: TEN examples set `label_size_px` through `..ChartStyle::default()`, which leaves the advance at the default's, so every one of them fits 12-to-14-pixel labels against an advance derived from 11. Meanwhile NOTHING in the tree ever set the field -- the consumer it existed for never arrived -- and `with_label_size`, the builder added specifically to keep the pair from drifting, had no callers either. So the fix is not a gate on the pair but the removal of the pair: the fallback is derived from the label size and the two cannot disagree. A consumer that really has measured its face states that the way every measurement in this framework is stated, by seeding a `TextMetrics` provider, which the fit consults first anyway. HOW IT WAS FOUND MATTERS AS MUCH AS WHAT IT WAS. The user asked whether every new debt from this session had been registered in memory. The honest answer was no; the audit that followed turned up this one, and the right response was not to register it but to delete the thing. The general form: **a field whose only reason was to let a consumer override a default is a liability the moment the default stops being the primary answer**, and the way to notice is to count who sets it -- zero setters and ten silent mismatches is not a feature with no consumer, it is a defect with ten. AND ONE COUNTERFACTUAL PASSES, WHICH IS RECORDED RATHER THAN PAPERED OVER: widening the three-fifths ratio to four-fifths breaks no test. That is structural rather than a hole. The constant is consulted ONLY when nothing can measure, so any assertion about how close it sits to a real advance would need the measurement whose absence is the sole condition for reaching it. What can be pinned is pinned -- that the fallback follows the label size, and that a seeded provider wins over it whatever it says -- and the reason the rest cannot is written where the constant is.",
+      "publishable_changes_bullets": [
+        "ChartStyle::label_advance_px and with_label_size removed; the fallback advance is derived from label_size_px",
+        "a test that the fallback follows the size, written in the struct-update form the ten examples use",
+        "the reason no test pins the ratio is documented beside the constant rather than left as a gap",
+        "debt-counterfactual-cannot-score-a-build-gate gains its second instance: R1634's CF-2 was a build failure scored as PASSED"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-chart: 443 pass (1 new); blast radius 37 packages / 38 targets all pass",
+        "clippy / doc / fmt: clean",
+        "demos r1633 and r1634 PASS",
+        "two counterfactuals: ignoring the size is CAUGHT; widening the ratio PASSES, and why is documented"
+      ],
+      "publishable_impact_refs": [
+        "5.11",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "carry 0. The session's debt audit is what produced this round; the two other candidates it raised were judged and not registered, with the reasons: hello-boxplot's fixed CHART_RECT is a tree-wide convention already recorded as the reason debt-a-ladder-coarsen-has-no-wire-proof exists, and the CF-scoring gap already had a file and gained an instance instead of a second one"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

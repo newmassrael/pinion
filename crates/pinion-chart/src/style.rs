@@ -67,20 +67,6 @@ pub struct ChartStyle {
     pub background: Option<Color>,
     /// Tick-label / legend font size in px.
     pub label_size_px: u32,
-    /// R1633 — the advance in pixels of the **widest** character a tick label
-    /// can hold, at [`Self::label_size_px`].
-    ///
-    /// The one font fact this crate needs and the one it cannot get: it is pure
-    /// data with no text engine, so a consumer that has measured its own face
-    /// writes this and a consumer that has not takes the default, which is a
-    /// conservative 0.6 em. Over-estimating is the safe direction — it thins one
-    /// label more than strictly necessary, where under-estimating draws two on
-    /// top of each other.
-    ///
-    /// Set together with [`Self::label_size_px`] through
-    /// [`Self::with_label_size`], because a size changed without this is a
-    /// silently wrong fit.
-    pub label_advance_px: u32,
     /// Series polyline stroke width in px.
     pub series_width: u32,
     /// Alpha (0-255) of the translucent area fill under a filled series.
@@ -104,12 +90,41 @@ pub struct ChartStyle {
     pub tooltip_fg: Color,
 }
 
-/// A conservative advance for the widest character at `size_px`.
+/// A conservative advance for the widest character at `size_px` — the label
+/// fit's **headless fallback** (R1633, made a derivation R1636).
 ///
 /// Three fifths of the em: wider than the digits of every UI face this project
-/// has measured, and narrower than a full-width glyph no tick label holds. It
-/// is a *model*, which is why [`ChartStyle::label_advance_px`] can be
-/// overwritten by a consumer that has a real measurement.
+/// has measured, and narrower than a full-width glyph no tick label holds.
+///
+/// It was a FIELD for one round, so a consumer with a measured face could
+/// overwrite it. That was the shape of R1633's first draft, where the model was
+/// the primary answer; by the time that round landed the primary answer was
+/// [`pinion_core::measured_text_extent`] and this was only what a headless
+/// caller falls back to. The field outlived its reason and cost something for
+/// it: **ten examples set `label_size_px` through `..ChartStyle::default()`**,
+/// which left every one of them fitting 12-to-14-pixel labels against an
+/// advance derived from 11, and **nothing anywhere set the field** — the
+/// consumer it existed for never arrived. A `with_label_size` builder existed
+/// to keep the pair together and had no callers either.
+///
+/// Derived, the two cannot disagree. A consumer that really has measured its
+/// face states it the way every other measurement in this framework is stated:
+/// by seeding a [`TextMetrics`](pinion_core::TextMetrics) provider, which the
+/// fit consults first.
+///
+/// # No test pins the ratio, and that is not an omission
+///
+/// A counterfactual widening it to four fifths breaks nothing, which was
+/// checked rather than assumed. The reason is structural: this constant is
+/// consulted **only when nothing can measure**, so any assertion about how
+/// close it is to a real advance would need the measurement whose absence is
+/// the sole condition for reaching it. What IS pinned is everything that can
+/// be: that the fallback follows the label size
+/// (`r1636_the_fallback_advance_follows_the_label_size`), and that a seeded
+/// provider wins over it whatever it says
+/// (`r1633_the_fit_measures_where_it_can_and_models_where_it_cannot`). The
+/// value itself is a judgement, and a tautological test asserting it equals
+/// itself would read as coverage of one.
 const fn advance_for(size_px: u32) -> u32 {
     size_px * 3 / 5
 }
@@ -131,19 +146,6 @@ impl ChartStyle {
         Self::default()
     }
 
-    /// The same style at a different label size, with the advance moved with
-    /// it (R1633).
-    ///
-    /// The pair exists so the common case cannot get the fit wrong: a caller
-    /// that only changes `label_size_px` leaves an advance measured for another
-    /// size behind, and nothing would say so.
-    #[must_use]
-    pub const fn with_label_size(mut self, size_px: u32) -> Self {
-        self.label_size_px = size_px;
-        self.label_advance_px = advance_for(size_px);
-        self
-    }
-
     /// The [`TextStyle`] a tick label is measured in (R1633).
     ///
     /// The face and the size are what decide an advance, and both are this
@@ -163,7 +165,7 @@ impl ChartStyle {
     pub fn room_x(&self) -> Room {
         Room::new(
             Along::Width {
-                advance_px: self.label_advance_px,
+                advance_px: advance_for(self.label_size_px),
             },
             self.label_text_style(),
         )
@@ -190,7 +192,6 @@ impl Default for ChartStyle {
             label: neutral,
             background: None,
             label_size_px: 11,
-            label_advance_px: advance_for(11),
             series_width: 2,
             area_alpha: 40,
             margin: Margin::default(),

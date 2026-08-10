@@ -633,6 +633,38 @@ mod tests {
         assert_eq!(same.ticks(), short.ticks());
     }
 
+    /// ★ R1636 — the headless fallback follows the label **size**, so a chart
+    /// that changes its size cannot be fitted against another size's advance.
+    ///
+    /// It could until this round: the advance was a `ChartStyle` field, ten
+    /// examples set `label_size_px` through `..Default::default()` and left the
+    /// advance behind, and nothing anywhere set the field the drift existed to
+    /// allow. A rule stated in a doc — "set them together" — is not a gate; a
+    /// derivation is.
+    #[test]
+    fn r1636_the_fallback_advance_follows_the_label_size() {
+        let small = crate::ChartStyle::default();
+        let large = crate::ChartStyle {
+            label_size_px: small.label_size_px * 2,
+            ..crate::ChartStyle::default()
+        };
+        // The struct-update form is exactly how the ten examples write it, and
+        // it is what used to leave the advance stale.
+        let scale = categories(12, 300.0);
+        let tight = axis_ticks(&scale, 6, &small.room_x());
+        let tighter = axis_ticks(&scale, 6, &large.room_x());
+        assert!(
+            tighter.labelled().len() <= tight.labelled().len(),
+            "★ bigger labels cannot fit MORE of them: {} vs {}",
+            tighter.labelled().len(),
+            tight.labelled().len()
+        );
+        assert!(
+            tighter.labelled().len() < tight.labelled().len(),
+            "and here they fit strictly fewer, so the size really reached the fit"
+        );
+    }
+
     /// ★ The fit **measures** where a shell has seeded a provider, and only
     /// models where nothing can.
     ///
