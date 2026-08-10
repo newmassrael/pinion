@@ -6120,6 +6120,7 @@ dependencies = [
 name = "pinion-node-graph"
 version = "0.0.1"
 dependencies = [
+ "pinion-derive",
  "pinion-graph",
  "serde",
  "serde_json",

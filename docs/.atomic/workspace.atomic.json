@@ -33368,6 +33368,56 @@
         "one new debt, and it is about the tooling rather than the tree: debt-counterfactual-cannot-score-a-build-gate. counterfactual.py's oracle is the test suite, so a case that breaks a const assertion is reported BROKEN rather than CAUGHT, and a case that DELETES the assertion is reported PASSED. Both directions wrong for this class. The fix is a declared expectation per case, which would also remove any need for a separate compile-fail harness"
       ]
     },
+    "R1631": {
+      "decision_summary": "eleven commands are three parameters: pinion_node_graph::arrange (Align / Distribute / Stack / Straighten over Axis x Edge) closes the ALIGNMENT cluster, the largest single block the node-graph campaign had open and the one its entry file named as the next round's first candidate. Declared `dcc`: the node graph is one of that axis's three named families and this is a capability it did not have. THE REFERENCE SPELLS ITS ARGUMENTS INTO ELEVEN NAMES -- AlignNodesLeft, AlignNodesTop, DistributeNodesHorizontally -- so the set cannot be enumerated, stored, or offered by a generic control, and every consumer writes the eleven-way match again. Here they are an axis (2), an edge (3) and a gap: six aligns, two distributes, two stacks and a straighten. TWELVE, not eleven -- ours takes the axis on Straighten too, so a top-to-bottom editor gets the command the reference's one-way graphs never needed. THREE PLACES PAST THE REFERENCE. (1) The result is a VALUE: every pass answers the same `Placement` the Sugiyama and organic passes answer, so an arrangement can be previewed, diffed or refused before anything moves, where the reference's commands write straight into the graph. (2) The stack's padding is a PARAMETER; the reference compiles a constant into the editor, so an application whose cards are twice as tall cannot ask for a proportionate gap -- the demo drives three gaps through one command and reads the clear space back off the painted scene. (3) STRAIGHTEN SAYS WHAT IT COULD NOT STRAIGHTEN: a fan-in cannot be made straight (two producers both want the consumer's free-axis coordinate) and the reference moves what it can, silently. `Straightened::bent` names every leftover link, which is the difference between 'this is as straight as it goes' and 'this tool is unreliable' -- and it is a fact about the GRAPH, so a caller can split the selection instead of pressing again. A PLACEMENT COULD NOT BE APPLIED, which the round found by needing to: the signature example wrote the write-back loop twice and this crate's own tests were about to write a third, so `Document::apply` is the rule-of-three lift. It counts only the nodes that actually moved, which is what lets an undo stack skip an empty entry -- and that count is what the wire verb answers. THE CENSUS PIN MOVED WITH PROOFS: eleven engine verdicts go absent -> have, each naming the test that exercises it through the public API (R1602's standing rule), taking GraphEditor 20/51 -> 31/51 and the engine tree 40% -> 45%. AND THE DEMO'S OWN DISTRIBUTE FIXTURE COULD NOT DISCRIMINATE at first: packing to a constant gap and then distributing reproduces the same gaps whatever the pass does, so the check would have passed against a no-op. Made uneven first, with a guard asserting it IS uneven -- the third consecutive round in which a fixture failed to distinguish the thing it was written to distinguish. 33-assertion demo reading positions off the painted scene rather than the model.",
+      "changes_bullets": [
+        "pinion_node_graph::arrange — Align / Distribute / Stack / Straighten over closed Axis and Edge vocabularies, each answering a Placement",
+        "Straightened reports the links a fan-in left bent, which the reference's StraightenConnections does not publish",
+        "Document::apply writes a Placement back and counts only what moved (rule-of-three lift; the signature example had two copies)",
+        "hello-node-groups gains one `arrange` verb driving all twelve spellings over the wire",
+        "docs/reference-census.json: eleven engine verdicts absent -> have, each with a proven_by test",
+        "tools/demos/r1631_eleven_commands_are_three_parameters.py — 33 assertions, positions read off the painted scene"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-node-graph -p hello-node-groups: all pass (7 new arrange tests)",
+        "cargo clippy -p pinion-node-graph -p hello-node-groups --all-targets: clean",
+        "cargo doc -p pinion-node-graph --no-deps --document-private-items: clean",
+        "demo r1631 PASS",
+        "reference_census: GraphEditor 20/51 -> 31/51, engine 85/211 -> 96/211"
+      ],
+      "impact_refs": [
+        "5.16",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "carry 0 for this round; no new debt registered",
+        "the campaign's remaining engine clusters are unchanged and named in its entry file: variable ports (6), struct pins (5), breakpoints (5), watches (2), ChangePinType and FindReferences"
+      ],
+      "publishable_decision_summary": "eleven commands are three parameters: pinion_node_graph::arrange (Align / Distribute / Stack / Straighten over Axis x Edge) closes the ALIGNMENT cluster, the largest single block the node-graph campaign had open and the one its entry file named as the next round's first candidate. Declared `dcc`: the node graph is one of that axis's three named families and this is a capability it did not have. THE REFERENCE SPELLS ITS ARGUMENTS INTO ELEVEN NAMES -- AlignNodesLeft, AlignNodesTop, DistributeNodesHorizontally -- so the set cannot be enumerated, stored, or offered by a generic control, and every consumer writes the eleven-way match again. Here they are an axis (2), an edge (3) and a gap: six aligns, two distributes, two stacks and a straighten. TWELVE, not eleven -- ours takes the axis on Straighten too, so a top-to-bottom editor gets the command the reference's one-way graphs never needed. THREE PLACES PAST THE REFERENCE. (1) The result is a VALUE: every pass answers the same `Placement` the Sugiyama and organic passes answer, so an arrangement can be previewed, diffed or refused before anything moves, where the reference's commands write straight into the graph. (2) The stack's padding is a PARAMETER; the reference compiles a constant into the editor, so an application whose cards are twice as tall cannot ask for a proportionate gap -- the demo drives three gaps through one command and reads the clear space back off the painted scene. (3) STRAIGHTEN SAYS WHAT IT COULD NOT STRAIGHTEN: a fan-in cannot be made straight (two producers both want the consumer's free-axis coordinate) and the reference moves what it can, silently. `Straightened::bent` names every leftover link, which is the difference between 'this is as straight as it goes' and 'this tool is unreliable' -- and it is a fact about the GRAPH, so a caller can split the selection instead of pressing again. A PLACEMENT COULD NOT BE APPLIED, which the round found by needing to: the signature example wrote the write-back loop twice and this crate's own tests were about to write a third, so `Document::apply` is the rule-of-three lift. It counts only the nodes that actually moved, which is what lets an undo stack skip an empty entry -- and that count is what the wire verb answers. THE CENSUS PIN MOVED WITH PROOFS: eleven engine verdicts go absent -> have, each naming the test that exercises it through the public API (R1602's standing rule), taking GraphEditor 20/51 -> 31/51 and the engine tree 40% -> 45%. AND THE DEMO'S OWN DISTRIBUTE FIXTURE COULD NOT DISCRIMINATE at first: packing to a constant gap and then distributing reproduces the same gaps whatever the pass does, so the check would have passed against a no-op. Made uneven first, with a guard asserting it IS uneven -- the third consecutive round in which a fixture failed to distinguish the thing it was written to distinguish. 33-assertion demo reading positions off the painted scene rather than the model.",
+      "publishable_changes_bullets": [
+        "pinion_node_graph::arrange — Align / Distribute / Stack / Straighten over closed Axis and Edge vocabularies, each answering a Placement",
+        "Straightened reports the links a fan-in left bent, which the reference's StraightenConnections does not publish",
+        "Document::apply writes a Placement back and counts only what moved (rule-of-three lift; the signature example had two copies)",
+        "hello-node-groups gains one `arrange` verb driving all twelve spellings over the wire",
+        "docs/reference-census.json: eleven engine verdicts absent -> have, each with a proven_by test",
+        "tools/demos/r1631_eleven_commands_are_three_parameters.py — 33 assertions, positions read off the painted scene"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-node-graph -p hello-node-groups: all pass (7 new arrange tests)",
+        "cargo clippy -p pinion-node-graph -p hello-node-groups --all-targets: clean",
+        "cargo doc -p pinion-node-graph --no-deps --document-private-items: clean",
+        "demo r1631 PASS",
+        "reference_census: GraphEditor 20/51 -> 31/51, engine 85/211 -> 96/211"
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "carry 0 for this round; no new debt registered",
+        "the campaign's remaining engine clusters are unchanged and named in its entry file: variable ports (6), struct pins (5), breakpoints (5), watches (2), ChangePinType and FindReferences"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

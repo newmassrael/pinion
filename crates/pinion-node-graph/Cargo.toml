@@ -10,6 +10,9 @@ publish = false
 
 [dependencies]
 pinion-graph = { path = "../pinion-graph", version = "0.0.1" }
+# R1630 — `#[derive(VariantCensus)]`: the compile-time check that a
+# hand-written `ALL` vocabulary list still has one entry per variant.
+pinion-derive = { path = "../pinion-derive" }
 # A node system saves its document, and a `Signal<T>` payload must be
 # serializable, so the model derives serde rather than leaving every consumer to
 # mirror it.

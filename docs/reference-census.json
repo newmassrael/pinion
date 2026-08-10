@@ -1743,40 +1743,40 @@
       "verdict": "app-content"
     },
     "GraphEditor::AlignNodesBottom": {
-      "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
+      "covered_by": "pinion_node_graph::arrange — Align::to(Axis::Vertical, Edge::End). R1631.",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph tests::r1631_an_align_meets_one_edge_and_moves_on_one_axis_only",
+      "verdict": "have"
     },
     "GraphEditor::AlignNodesCenter": {
-      "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
+      "covered_by": "pinion_node_graph::arrange — Align::to(Axis::Horizontal, Edge::Center). R1631.",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph tests::r1631_an_align_is_idempotent_including_the_centre",
+      "verdict": "have"
     },
     "GraphEditor::AlignNodesLeft": {
-      "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
+      "covered_by": "pinion_node_graph::arrange — Align::to(Axis::Horizontal, Edge::Start). R1631.",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph tests::r1631_an_align_meets_one_edge_and_moves_on_one_axis_only",
+      "verdict": "have"
     },
     "GraphEditor::AlignNodesMiddle": {
-      "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
+      "covered_by": "pinion_node_graph::arrange — Align::to(Axis::Vertical, Edge::Center). R1631.",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph tests::r1631_an_align_is_idempotent_including_the_centre",
+      "verdict": "have"
     },
     "GraphEditor::AlignNodesRight": {
-      "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
+      "covered_by": "pinion_node_graph::arrange — Align::to(Axis::Horizontal, Edge::End). R1631.",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph tests::r1631_an_align_meets_one_edge_and_moves_on_one_axis_only",
+      "verdict": "have"
     },
     "GraphEditor::AlignNodesTop": {
-      "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
+      "covered_by": "pinion_node_graph::arrange — Align::to(Axis::Vertical, Edge::Start). R1631.",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph tests::r1631_an_align_meets_one_edge_and_moves_on_one_axis_only",
+      "verdict": "have"
     },
     "GraphEditor::AssignReferencedActor": {
       "covered_by": "the engine's visual script/level subject matter",
@@ -1887,16 +1887,16 @@
       "verdict": "have"
     },
     "GraphEditor::DistributeNodesHorizontally": {
-      "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
+      "covered_by": "pinion_node_graph::arrange — Distribute::along(Axis::Horizontal). R1631.",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph tests::r1631_distribute_equalises_the_gaps_and_pins_the_extremes",
+      "verdict": "have"
     },
     "GraphEditor::DistributeNodesVertically": {
-      "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
+      "covered_by": "pinion_node_graph::arrange — Distribute::along(Axis::Vertical). R1631.",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph tests::r1631_distribute_equalises_the_gaps_and_pins_the_extremes",
+      "verdict": "have"
     },
     "GraphEditor::EnableBreakpoint": {
       "covered_by": "BREAKPOINTS: R1600 gave the run a trace and the machine its registers; stopping at a node is the next thing",
@@ -2133,16 +2133,16 @@
       "verdict": "absent"
     },
     "GraphEditor::StackNodesHorizontally": {
-      "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
+      "covered_by": "pinion_node_graph::arrange — Stack::along(Axis::Horizontal, gap). R1631.",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph tests::r1631_a_stack_packs_with_the_gap_it_was_given",
+      "verdict": "have"
     },
     "GraphEditor::StackNodesVertically": {
-      "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
+      "covered_by": "pinion_node_graph::arrange — Stack::along(Axis::Vertical, gap). R1631.",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph tests::r1631_a_stack_packs_with_the_gap_it_was_given",
+      "verdict": "have"
     },
     "GraphEditor::StartWatchingPin": {
       "covered_by": "WATCHES: a named port whose value is reported every step",
@@ -2157,10 +2157,10 @@
       "verdict": "absent"
     },
     "GraphEditor::StraightenConnections": {
-      "covered_by": "ALIGNMENT: pinion-node-graph::layout does Sugiyama and organic placement and has no align / distribute / stack / straighten family at all",
+      "covered_by": "pinion_node_graph::arrange — Straighten::along(axis), which also REPORTS the links it could not straighten (Straightened::bent) where the reference moves what it can silently. R1631.",
       "mechanism": "GraphEditor",
-      "proven_by": "",
-      "verdict": "absent"
+      "proven_by": "pinion-node-graph tests::r1631_straighten_reports_the_links_it_could_not_straighten",
+      "verdict": "have"
     },
     "GraphEditor::SummonCreateNodeMenu": {
       "covered_by": "editor navigation over a viewport the crate does not hold",

@@ -56,12 +56,15 @@ use pinion_core::scene::{
 use pinion_core::style::{
     Border, BoxStyle, Color, Dash, LayoutStyle, PathStyle, Size, Stroke, TextStyle,
 };
+use std::collections::BTreeSet;
+
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_node_graph::{
-    Conversion, Crossings, Definitions, Document, EditPath, Enframed, Fragment, Grow, Inserted,
-    InterfaceSide, LinkId, Node, NodeBody, NodeId, NodeKind, Orphaned, Port, PortChange, PortRef,
-    ROOT, Reach, Repartitioned, Rewired, Severed, Sharing, Socket, TreeId,
+    Align, Axis, Conversion, Crossings, Definitions, Distribute, Document, Edge, EditPath,
+    Enframed, Extent, Fragment, Grow, Inserted, InterfaceSide, LinkId, Node, NodeBody, NodeId,
+    NodeKind, Orphaned, Port, PortChange, PortRef, ROOT, Reach, Repartitioned, Rewired, Severed,
+    Sharing, Socket, Stack, Straighten, TreeId,
 };
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use serde::{Deserialize, Serialize};
@@ -1820,6 +1823,95 @@ impl GroupsOracle {
 
     /// The verbs. Each one is a call into the substrate plus the bookkeeping
     /// this application actually owns: what is selected, and where the user is.
+    /// R1631 — run one arrangement pass over the current selection and apply
+    /// it, answering how many nodes moved.
+    ///
+    /// The answer carries the count rather than a bare "ok" because a
+    /// placement that changes nothing is a real outcome — an author pressing
+    /// align twice should see `0`, and an undo stack keyed off this should
+    /// record nothing. `straighten` additionally reports the links it could
+    /// not straighten, which is the fact the reference's command does not
+    /// publish at all.
+    fn arrange(&mut self, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
+        let state = self.bound()?;
+        let tree = state.current();
+        let spec = Self::text(args)?;
+        let mut parts = spec.split(':');
+        let pass = parts.next().unwrap_or_default();
+        let axis = match parts.next() {
+            Some("horizontal") => Axis::Horizontal,
+            Some("vertical") => Axis::Vertical,
+            other => {
+                return Err(InvokeError::rejected(format!(
+                    "arrange axis {other:?} is not \"horizontal\" or \"vertical\""
+                )));
+            }
+        };
+        let tail = parts.next();
+        let selection: BTreeSet<NodeId> = state.selection.get().into_iter().collect();
+        let document = state.document.get();
+        // The card's own geometry, which is the application's to know: the
+        // crate asks for an extent precisely so it never has to guess one.
+        let extent = |node: &Node<Op>| {
+            let shown = document.visible_ports(tree, node.id).unwrap_or_default();
+            Extent::new(
+                CARD_W,
+                card_height((shown.inputs.len(), shown.outputs.len())),
+            )
+        };
+        let edge = |word: Option<&str>| match word {
+            Some("start") => Ok(Edge::Start),
+            Some("center") => Ok(Edge::Center),
+            Some("end") => Ok(Edge::End),
+            other => Err(InvokeError::rejected(format!(
+                "arrange edge {other:?} is not \"start\", \"center\" or \"end\""
+            ))),
+        };
+        let (placement, report) = match pass {
+            "align" => (
+                Align::to(axis, edge(tail)?).run(&document, tree, &selection, extent),
+                String::new(),
+            ),
+            "distribute" => (
+                Distribute::along(axis).run(&document, tree, &selection, extent),
+                String::new(),
+            ),
+            "stack" => {
+                let gap: i32 = tail
+                    .unwrap_or("0")
+                    .parse()
+                    .map_err(|_| InvokeError::rejected("arrange stack gap is not an integer"))?;
+                (
+                    Stack::along(axis, gap).run(&document, tree, &selection, extent),
+                    String::new(),
+                )
+            }
+            "straighten" => {
+                let done = Straighten::along(axis).run(&document, tree, &selection);
+                let bent = done
+                    .bent()
+                    .iter()
+                    .map(|l| l.0.to_string())
+                    .collect::<Vec<_>>()
+                    .join(",");
+                (
+                    done.placement().clone(),
+                    format!("|straight:{}|bent:{bent}", done.straight().len()),
+                )
+            }
+            other => {
+                return Err(InvokeError::rejected(format!(
+                    "arrange pass {other:?} is not align / distribute / stack / straighten"
+                )));
+            }
+        };
+        drop(document);
+        let moved = state
+            .edit(|document| Ok::<usize, String>(document.apply(tree, &placement)))
+            .map_err(InvokeError::rejected)?;
+        Ok(IntrospectValue::Text(format!("moved:{moved}{report}")))
+    }
+
     fn verb(&mut self, path: &str, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
         let state = self.bound()?;
         let tree = state.current();
@@ -1839,6 +1931,14 @@ impl GroupsOracle {
             "bypass" | "collapse" | "hide_ports" | "mute_link" | "dissolve" | "detach" => {
                 self.participation(path, args)
             }
+            // R1631 — the engine reference's eleven align / distribute / stack /
+            // straighten commands, driven as ONE verb over the current
+            // selection: `align:horizontal:start`, `distribute:vertical`,
+            // `stack:horizontal:24`, `straighten:horizontal`. One verb because
+            // the crate's vocabulary is parameters rather than eleven names,
+            // and a surface that re-spelled them as eleven paths would throw
+            // that away at the boundary.
+            "arrange" => self.arrange(args),
             "group" => {
                 let name = Self::text(args)?;
                 let selection = state.selection.get();

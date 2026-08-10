@@ -9,12 +9,13 @@ use pinion_graph::Sugiyama;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Appearance, Carried, ConnectError, Control, Conversion, Crossings, Definitions, Document,
-    DuplicateError, EditError, EditPath, Extent, ExtractError, ForceError, Fragment, GroupError,
-    Grow, InsertError, Instance, InterfaceSide, Layered, Machine, Multiplicity, NestError, Node,
-    NodeBody, NodeId, NodeKind, Organic, Orphaned, ParentError, PathError, Port, PortRef,
-    PortValueError, ROOT, Reach, RepartitionError, Route, RunError, SelectError, Severed, Sharing,
-    Side, Socket, Stop, Tick, TreeId, UngroupError, Violation, crossing,
+    Align, Appearance, Axis, Carried, ConnectError, Control, Conversion, Crossings, Definitions,
+    Distribute, Document, DuplicateError, Edge, EditError, EditPath, Extent, ExtractError,
+    ForceError, Fragment, GroupError, Grow, InsertError, Instance, InterfaceSide, Layered, Machine,
+    Multiplicity, NestError, Node, NodeBody, NodeId, NodeKind, Organic, Orphaned, ParentError,
+    PathError, Port, PortRef, PortValueError, ROOT, Reach, RepartitionError, Route, RunError,
+    SelectError, Severed, Sharing, Side, Socket, Stack, Stop, Straighten, Tick, TreeId,
+    UngroupError, Violation, crossing,
 };
 
 /// The test taxonomy: two socket types, so type disagreement is reachable.
@@ -6256,6 +6257,284 @@ fn an_output_falls_back_the_same_three_ways_an_input_does() {
         vec![Some(LVal::Vector([128, 128, 128]))],
         "cleared, the kind's is reached again"
     );
+}
+
+// ── R1631 arrange: a SELECTION moved into order ───────────────────
+
+/// Four cards scattered on the canvas, returned with their ids in placement
+/// order. `Split` chains, so the shape type-checks and links can be added.
+fn scattered() -> (Document<Op>, Vec<NodeId>) {
+    let mut document = Document::new("root");
+    let ids: Vec<NodeId> = [
+        (Op::Num(1), 10, 5),
+        (Op::Split, 40, 90),
+        (Op::Split, 200, 30),
+        // `Add` rather than a one-input sink: the fan-IN case needs a node
+        // that can take two producers, and that case is the one the reference
+        // handles silently.
+        (Op::Add, 260, 140),
+    ]
+    .into_iter()
+    .map(|(op, x, y)| {
+        document
+            .add_node(ROOT, NodeBody::Kind(op), x, y)
+            .expect("root tree")
+    })
+    .collect();
+    (document, ids)
+}
+
+fn all_of(ids: &[NodeId]) -> BTreeSet<NodeId> {
+    ids.iter().copied().collect()
+}
+
+#[test]
+fn r1631_an_align_meets_one_edge_and_moves_on_one_axis_only() {
+    let (document, ids) = scattered();
+    let picked = all_of(&ids);
+    let before: Vec<(i32, i32)> = ids
+        .iter()
+        .map(|&id| {
+            let n = document.tree(ROOT).unwrap().node(id).unwrap();
+            (n.x, n.y)
+        })
+        .collect();
+
+    let left = Align::to(Axis::Horizontal, Edge::Start).run(&document, ROOT, &picked, |_| CARD);
+    let xs: Vec<i32> = ids.iter().map(|&id| left.positions()[&id].0).collect();
+    assert_eq!(xs, vec![10; 4], "every card meets the selection's own left");
+    // ★ The other axis is untouched, which is the whole reason the reference
+    // has six commands rather than one: an align that also tidied `y` would
+    // undo the placement the author is aligning around.
+    let ys: Vec<i32> = ids.iter().map(|&id| left.positions()[&id].1).collect();
+    assert_eq!(ys, before.iter().map(|p| p.1).collect::<Vec<_>>());
+
+    let right = Align::to(Axis::Horizontal, Edge::End).run(&document, ROOT, &picked, |_| CARD);
+    let rights: Vec<i32> = ids
+        .iter()
+        .map(|&id| right.positions()[&id].0 + CARD.width)
+        .collect();
+    assert_eq!(
+        rights,
+        vec![260 + CARD.width; 4],
+        "and the right edges meet"
+    );
+
+    let top = Align::to(Axis::Vertical, Edge::Start).run(&document, ROOT, &picked, |_| CARD);
+    assert_eq!(
+        ids.iter()
+            .map(|&id| top.positions()[&id].1)
+            .collect::<Vec<_>>(),
+        vec![5; 4]
+    );
+    assert_eq!(
+        ids.iter()
+            .map(|&id| top.positions()[&id].0)
+            .collect::<Vec<_>>(),
+        before.iter().map(|p| p.0).collect::<Vec<_>>(),
+        "a vertical align never changes an x"
+    );
+}
+
+#[test]
+fn r1631_an_align_is_idempotent_including_the_centre() {
+    // ★ The centre is the arm that can drift: a rule rounding away from the
+    // leading edge walks the whole selection one unit per press, and an author
+    // who pressed twice never agreed to that. Applied twice here, against
+    // cards of DIFFERENT sizes so the half-unit case is reachable.
+    let (mut document, ids) = scattered();
+    let odd = ids[1];
+    let extent = |node: &Node<Op>| {
+        if node.id == odd {
+            Extent::new(45, 40)
+        } else {
+            CARD
+        }
+    };
+    let picked = all_of(&ids);
+    for edge in Edge::ALL {
+        let mut doc = document.clone();
+        let once = Align::to(Axis::Horizontal, edge).run(&doc, ROOT, &picked, extent);
+        doc.apply(ROOT, &once);
+        let twice = Align::to(Axis::Horizontal, edge).run(&doc, ROOT, &picked, extent);
+        for (&id, &(x, y)) in twice.positions() {
+            assert_eq!(
+                (x, y),
+                *once.positions().get(&id).expect("the same node"),
+                "{} drifts on a second press",
+                edge.name()
+            );
+        }
+    }
+    // A one-node selection is already aligned with itself, and reporting a
+    // move that is not one would make an undo stack record an empty edit.
+    let single: BTreeSet<NodeId> = [ids[0]].into_iter().collect();
+    assert!(
+        Align::to(Axis::Horizontal, Edge::Center)
+            .run(&document, ROOT, &single, extent)
+            .positions()
+            .is_empty()
+    );
+    // ...and applying an arrangement that changes nothing moves nothing, which
+    // is what lets an undo stack skip an empty entry.
+    let settled = Align::to(Axis::Horizontal, Edge::Start).run(&document, ROOT, &picked, extent);
+    document.apply(ROOT, &settled);
+    assert_eq!(
+        document.apply(ROOT, &settled),
+        0,
+        "a second application of the same placement is not a move"
+    );
+}
+
+#[test]
+fn r1631_distribute_equalises_the_gaps_and_pins_the_extremes() {
+    let (document, ids) = scattered();
+    let picked = all_of(&ids);
+    // Cards of three sizes, so equal GAPS and equal PITCHES differ — a pass
+    // that spread the leading edges evenly would pass on uniform cards.
+    let widths = [40, 100, 20, 60];
+    let extent = |node: &Node<Op>| {
+        let i = ids.iter().position(|&id| id == node.id).unwrap_or(0);
+        Extent::new(widths[i], 40)
+    };
+    let placed = Distribute::along(Axis::Horizontal).run(&document, ROOT, &picked, extent);
+
+    let mut spans: Vec<(i32, i32)> = ids
+        .iter()
+        .enumerate()
+        .map(|(i, &id)| {
+            let x = placed.positions()[&id].0;
+            (x, x + widths[i])
+        })
+        .collect();
+    spans.sort_unstable();
+    assert_eq!(spans[0].0, 10, "the leading extreme is pinned");
+    assert_eq!(spans[3].1, 260 + 60, "and so is the trailing one");
+    let gaps: Vec<i32> = spans.windows(2).map(|p| p[1].0 - p[0].1).collect();
+    let (lo, hi) = (
+        *gaps.iter().min().expect("gaps"),
+        *gaps.iter().max().expect("gaps"),
+    );
+    assert!(
+        hi - lo <= 1,
+        "gaps differ by at most the integer remainder: {gaps:?}"
+    );
+
+    // Two nodes have one gap and it is already the only one it can be.
+    let pair: BTreeSet<NodeId> = [ids[0], ids[3]].into_iter().collect();
+    assert!(
+        Distribute::along(Axis::Horizontal)
+            .run(&document, ROOT, &pair, extent)
+            .positions()
+            .is_empty()
+    );
+}
+
+#[test]
+fn r1631_a_stack_packs_with_the_gap_it_was_given() {
+    let (document, ids) = scattered();
+    let picked = all_of(&ids);
+    for gap in [0, 12, 50] {
+        let placed = Stack::along(Axis::Vertical, gap).run(&document, ROOT, &picked, |_| CARD);
+        let mut ys: Vec<i32> = ids.iter().map(|&id| placed.positions()[&id].1).collect();
+        ys.sort_unstable();
+        assert_eq!(ys[0], 5, "the run starts where its leading node was");
+        for pair in ys.windows(2) {
+            assert_eq!(pair[1] - pair[0], CARD.height + gap, "gap {gap}");
+        }
+    }
+    // ★ The parameter is what the reference does not have. A negative gap is
+    // an overlap, which is not a stack, so it clamps rather than being obeyed.
+    let clamped = Stack::along(Axis::Vertical, -30).run(&document, ROOT, &picked, |_| CARD);
+    let mut ys: Vec<i32> = ids.iter().map(|&id| clamped.positions()[&id].1).collect();
+    ys.sort_unstable();
+    assert_eq!(ys[1] - ys[0], CARD.height, "clamped to touching");
+}
+
+#[test]
+fn r1631_straighten_reports_the_links_it_could_not_straighten() {
+    // A branch: one producer feeding TWO consumers. Both want the producer's
+    // free-axis coordinate and only one can have it, so this is the case the
+    // reference handles silently.
+    let (mut document, ids) = scattered();
+    document
+        .connect(ROOT, Socket::new(ids[0], 0), Socket::new(ids[1], 0))
+        .expect("first consumer");
+    document
+        .connect(ROOT, Socket::new(ids[0], 0), Socket::new(ids[2], 0))
+        .expect("second consumer");
+    let picked = all_of(&ids);
+
+    let done = Straighten::along(Axis::Horizontal).run(&document, ROOT, &picked);
+    assert_eq!(done.straight().len(), 2, "both links found a coordinate");
+    assert!(
+        done.bent().is_empty(),
+        "a fan-out from ONE producer is fine"
+    );
+    let y = |id: NodeId| done.placement().positions().get(&id).map(|p| p.1);
+    assert_eq!(y(ids[1]), Some(5), "the first consumer meets its producer");
+    assert_eq!(y(ids[2]), Some(5), "and so does the second");
+    assert_eq!(y(ids[0]), None, "the producer itself did not move");
+
+    // ★ The reportable case: a consumer with TWO producers. The second link
+    // cannot be straightened without bending the first, and the difference
+    // between saying so and moving silently is the round's point.
+    let (mut fan_in, ids) = scattered();
+    fan_in
+        .connect(ROOT, Socket::new(ids[0], 0), Socket::new(ids[3], 0))
+        .expect("first producer");
+    fan_in
+        .connect(ROOT, Socket::new(ids[1], 1), Socket::new(ids[3], 1))
+        .expect("second producer");
+    let picked = all_of(&ids);
+    let partial = Straighten::along(Axis::Horizontal).run(&fan_in, ROOT, &picked);
+    assert_eq!(partial.straight().len(), 1);
+    assert_eq!(partial.bent().len(), 1, "the second producer is reported");
+    assert!(!partial.is_complete(), "and the report says so as one bit");
+    assert_eq!(
+        partial.placement().positions().get(&ids[3]).map(|p| p.1),
+        Some(5),
+        "the consumer met the producer that claimed it first"
+    );
+}
+
+#[test]
+fn r1631_an_arrangement_moves_only_what_was_named() {
+    let (document, ids) = scattered();
+    let two: BTreeSet<NodeId> = [ids[0], ids[3]].into_iter().collect();
+    let placed = Align::to(Axis::Horizontal, Edge::Start).run(&document, ROOT, &two, |_| CARD);
+    assert_eq!(placed.positions().len(), 2, "only the selection");
+    assert!(!placed.positions().contains_key(&ids[1]));
+    assert!(!placed.positions().contains_key(&ids[2]));
+    // ...and the box is the SELECTION's, not the tree's: node 1 sits at x=40,
+    // which would be the tree's leading edge only if it took part.
+    assert_eq!(placed.positions()[&ids[0]].0, 10);
+    assert_eq!(placed.positions()[&ids[3]].0, 10);
+
+    // A name that is not in the tree is not an error, it simply does not take
+    // part — a selection outlives the nodes in it.
+    let ghost: BTreeSet<NodeId> = [ids[0], ids[3], NodeId(9999)].into_iter().collect();
+    let with_ghost =
+        Align::to(Axis::Horizontal, Edge::Start).run(&document, ROOT, &ghost, |_| CARD);
+    assert_eq!(with_ghost.positions().len(), 2);
+}
+
+#[test]
+fn r1631_the_eleven_reference_commands_are_three_parameters() {
+    // The claim the module doc makes, as arithmetic: six aligns, two
+    // distributes, two stacks and a straighten is eleven, and every one of them
+    // is reachable from the closed vocabularies rather than from a name.
+    assert_eq!(Axis::ALL.len() * Edge::ALL.len(), 6, "the align family");
+    assert_eq!(Axis::ALL.len(), 2, "distribute, and stack");
+    assert_eq!(Axis::ALL.len() * Edge::ALL.len() + Axis::ALL.len() * 3, 12);
+    // Twelve, not eleven: the reference has no vertical/horizontal split on
+    // `StraightenConnections` because its graphs flow one way. Ours takes the
+    // axis, so a top-to-bottom editor gets the same command — one MORE than the
+    // reference, from the same parameters.
+    let names: Vec<&str> = Axis::ALL.iter().map(|a| a.name()).collect();
+    assert_eq!(names, vec!["horizontal", "vertical"]);
+    let edges: Vec<&str> = Edge::ALL.iter().map(|e| e.name()).collect();
+    assert_eq!(edges, vec!["start", "center", "end"]);
 }
 
 // ── R1597 layout: a document arranged on a canvas ─────────────────

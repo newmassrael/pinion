@@ -86,6 +86,21 @@ impl Placement {
         &self.positions
     }
 
+    /// R1631 — a placement of exactly these positions, with no quality to
+    /// report.
+    ///
+    /// The constructor [`crate::arrange`] builds through: an alignment is not a
+    /// layering, so [`quality`](Self::quality) is `None` for the same reason it
+    /// is `None` for [`Organic`] — crossings and inner segments are properties
+    /// of a layering and there is none here. Crate-internal, so `Placement`
+    /// stays a type only this crate's passes can mint.
+    pub(crate) const fn at(positions: BTreeMap<NodeId, (i32, i32)>) -> Self {
+        Self {
+            positions,
+            quality: None,
+        }
+    }
+
     /// How well the arrangement reads, when the pass is one that can say.
     ///
     /// `None` for [`Organic`], and that is the honest answer rather than a zero:
@@ -94,6 +109,43 @@ impl Placement {
     #[must_use]
     pub const fn quality(&self) -> Option<Quality> {
         self.quality
+    }
+}
+
+impl<K: NodeKind> Document<K> {
+    /// R1631 — write a [`Placement`] back into `tree`, and answer how many
+    /// nodes moved.
+    ///
+    /// Every pass in this crate ANSWERS a placement rather than applying one,
+    /// which is what makes an arrangement previewable — but the answer then has
+    /// to be applied, and until now that loop lived in the consumer. The
+    /// signature example wrote it twice; a third copy was about to be written
+    /// in this crate's own tests, which is the rule-of-three line.
+    ///
+    /// A node the placement names and this tree does not hold is skipped rather
+    /// than refused: a placement outlives the document it was computed from,
+    /// and a caller that deleted a node between computing and applying wants
+    /// the rest of the arrangement, not an error. The count is how a caller
+    /// tells the difference.
+    ///
+    /// A node already at its placed position is NOT counted, so the answer is
+    /// "how much did this change", which is what an undo stack needs to decide
+    /// whether to record an entry at all.
+    pub fn apply(&mut self, tree: TreeId, placement: &Placement) -> usize {
+        let Some(host) = self.tree_mut(tree) else {
+            return 0;
+        };
+        let mut moved = 0;
+        for (&id, &(x, y)) in placement.positions() {
+            if let Some(node) = host.node_mut(id)
+                && (node.x, node.y) != (x, y)
+            {
+                node.x = x;
+                node.y = y;
+                moved += 1;
+            }
+        }
+        moved
     }
 }
 
