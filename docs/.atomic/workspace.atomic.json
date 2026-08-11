@@ -34410,6 +34410,44 @@
         "The write probe is not run against `invoke` paths and that deferral still stands with its original reason: invoking an action fires it."
       ]
     },
+    "R1644.2": {
+      "decision_summary": "the fourth cell, and the row the push gate refused. Two channels and two directions is a 2x2, and the walk R1644.1 widened checked THREE of its cells: a read answers a query, an invoke path refuses one as PathIsAnAction, and a read does not take an ill-typed write. Writing to a declared ACTION was the cell nobody asked, and it is as cheap and as safe as the others -- measured before turning it on: all four of hello-node-flow's probed actions refuse before dispatch and the session's position is unmoved afterwards, so nothing fires. A counterfactual confirms it discriminates: telling a client that an action is a read-only slot is caught. AND THE PUSH GATE FOUND A DEFECT THIS SESSION HAD COMMITTED. `docs/phase-b-rounds.tsv` keys by INTEGER round on purpose -- its own tool says a round occasionally lands as R1481 and R1481.1 and is one round either way -- so the `1644.1` row R1644.1 appended is malformed, and `phase_b_tally.py --selftest` raised on it inside `tools/test_hooks.sh`, which `pre-push` runs before trusting its own libraries. The row is folded into R1644's, whose note is free text, so nothing is lost. What IS lost is the axis: R1644 advanced `dcc` and R1644.1 advanced `api`, and a sub-round has nowhere to say that -- which is the R1526 blindness this ledger exists to remove, reappearing one level down. Registered rather than fixed here, because the fix is a change to how the ledger keys and that is the tally's model, not this round's.",
+      "changes_bullets": [
+        "`assert_declared_channels_are_true` closes the fourth cell of its 2x2: a path declared on the INVOKE channel must refuse a WRITE with `PathIsAnAction`, not only a read. Verified safe before it was turned on — the refusal happens before dispatch, so the action does not fire.",
+        "`docs/phase-b-rounds.tsv`: the malformed `1644.1` row is folded into R1644's note. The ledger keys by integer round by design, and the tally's own `rounds_in` says so.",
+        "`pinion-node-graph::debug`'s header states the recompute cadence: the timeline is rebuilt once per COMMAND, not once per session, because the document and the registers may have moved between two commands and a cached run would be a claim that they had not."
+      ],
+      "verification_bullets": [
+        "Measured before enabling the new cell: intervening on `resume`, `step`, `arm` and `tick` all answer PathIsAnAction and the session's position is 0 afterwards — nothing fired.",
+        "1 counterfactual, 1/1 caught: mapping a write to a declared action to `ReadOnly` instead of `PathIsAnAction` is caught by this round's demo.",
+        "python3 tools/phase_b_tally.py --selftest: PASS (it raised on the malformed row before the fold). tools/test_hooks.sh: 118 pass. r1566 and r1644 demos re-pass. cargo doc clean."
+      ],
+      "impact_refs": [
+        "5.22",
+        "5.15"
+      ],
+      "carry_forward_bullets": [
+        "A sub-round cannot declare its own Phase B axis: debt-a-sub-round-cannot-declare-its-own-axis. How often that has bitten is NOT counted, and the debt file carries the one-line census for the round that takes it rather than a guess."
+      ],
+      "publishable_decision_summary": "the fourth cell, and the row the push gate refused. Two channels and two directions is a 2x2, and the walk R1644.1 widened checked THREE of its cells: a read answers a query, an invoke path refuses one as PathIsAnAction, and a read does not take an ill-typed write. Writing to a declared ACTION was the cell nobody asked, and it is as cheap and as safe as the others -- measured before turning it on: all four of hello-node-flow's probed actions refuse before dispatch and the session's position is unmoved afterwards, so nothing fires. A counterfactual confirms it discriminates: telling a client that an action is a read-only slot is caught. AND THE PUSH GATE FOUND A DEFECT THIS SESSION HAD COMMITTED. `docs/phase-b-rounds.tsv` keys by INTEGER round on purpose -- its own tool says a round occasionally lands as R1481 and R1481.1 and is one round either way -- so the `1644.1` row R1644.1 appended is malformed, and `phase_b_tally.py --selftest` raised on it inside `tools/test_hooks.sh`, which `pre-push` runs before trusting its own libraries. The row is folded into R1644's, whose note is free text, so nothing is lost. What IS lost is the axis: R1644 advanced `dcc` and R1644.1 advanced `api`, and a sub-round has nowhere to say that -- which is the R1526 blindness this ledger exists to remove, reappearing one level down. Registered rather than fixed here, because the fix is a change to how the ledger keys and that is the tally's model, not this round's.",
+      "publishable_changes_bullets": [
+        "`assert_declared_channels_are_true` closes the fourth cell of its 2x2: a path declared on the INVOKE channel must refuse a WRITE with `PathIsAnAction`, not only a read. Verified safe before it was turned on — the refusal happens before dispatch, so the action does not fire.",
+        "`docs/phase-b-rounds.tsv`: the malformed `1644.1` row is folded into R1644's note. The ledger keys by integer round by design, and the tally's own `rounds_in` says so.",
+        "`pinion-node-graph::debug`'s header states the recompute cadence: the timeline is rebuilt once per COMMAND, not once per session, because the document and the registers may have moved between two commands and a cached run would be a claim that they had not."
+      ],
+      "publishable_verification_bullets": [
+        "Measured before enabling the new cell: intervening on `resume`, `step`, `arm` and `tick` all answer PathIsAnAction and the session's position is 0 afterwards — nothing fired.",
+        "1 counterfactual, 1/1 caught: mapping a write to a declared action to `ReadOnly` instead of `PathIsAnAction` is caught by this round's demo.",
+        "python3 tools/phase_b_tally.py --selftest: PASS (it raised on the malformed row before the fold). tools/test_hooks.sh: 118 pass. r1566 and r1644 demos re-pass. cargo doc clean."
+      ],
+      "publishable_impact_refs": [
+        "5.22",
+        "5.15"
+      ],
+      "publishable_carry_forward_bullets": [
+        "A sub-round cannot declare its own Phase B axis: debt-a-sub-round-cannot-declare-its-own-axis. How often that has bitten is NOT counted, and the debt file carries the one-line census for the round that takes it rather than a guess."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

@@ -15,10 +15,16 @@
 //! That is the whole design, and it is bought by a decision two rounds older.
 //! Because state is a delay and nothing else (R1600), a run is a **pure
 //! function** of the document and the registers — so the debugger never
-//! suspends anything. It computes the entire run, once, and then *moves about
-//! inside it*: a [`Timeline`] is the run plus the watched values, and every
-//! debugger command is arithmetic over that timeline. The breakpoints are not
-//! an argument to the walk.
+//! suspends anything. It computes the entire run and then *moves about inside
+//! it*: a [`Timeline`] is the run plus the watched values, and every debugger
+//! command is arithmetic over that timeline. The breakpoints are not an
+//! argument to the walk.
+//!
+//! Once **per command**, not once per session — [`Document::debug`] rebuilds
+//! the timeline every time, because the document and the registers may have
+//! moved between two commands and a cached run would be a claim that they had
+//! not. That is the same cost the view already pays: a
+//! [`Run`] has been recomputed per frame since R1599.
 //!
 //! Nothing weaker would do. A debugger that halts a running machine is a
 //! debugger whose observations are of a *different* execution from the one the

@@ -2081,10 +2081,14 @@ def assert_declared_channels_are_true(tf, external: str = "/external") -> dict:
 
     # It cannot mutate
 
-    `query` is used on every path, and `intervene` on the READ ones. A `read`
-    path must answer the query, and must refuse the write **as a path that
-    exists** — not necessarily as `ReadOnly`, see below; an `invoke` path must
-    refuse the query with `PathIsAnAction`.
+    `query` is used on every path and `intervene` on every path. A `read` path
+    must answer the query and must not TAKE an ill-typed write; an `invoke` path
+    must refuse both with `PathIsAnAction`.
+
+    That is the 2x2 — two channels, two directions — and until R1644.1 the walk
+    checked three of its four cells. The fourth (writing to a declared action)
+    is as cheap and as safe as the others: it is refused before anything is
+    dispatched, so nothing fires.
 
     Probing the write direction of an *action* is deliberately still not done:
     `invoke` on a path that is an action fires the action, and a gate that can
@@ -2143,6 +2147,7 @@ def assert_declared_channels_are_true(tf, external: str = "/external") -> dict:
     unreadable: list[str] = []
     readable_actions: list[str] = []
     took_the_probe: list[str] = []
+    writable_actions: list[str] = []
     # The negative control: a name this surface cannot have published. If
     # writing to it is refused as `ReadOnly`, the surface is answering by habit
     # rather than from its declaration and the write probe below proves nothing.
@@ -2197,6 +2202,14 @@ def assert_declared_channels_are_true(tf, external: str = "/external") -> dict:
             except RpcError as exc:
                 if exc.data != "PathIsAnAction":
                     readable_actions.append(f"{path} (refused {exc.data!r})")
+            # The fourth cell. Refused before dispatch, so the action does not
+            # fire — measured, not assumed, before this was turned on.
+            try:
+                tf.intervene(f"{external}/{path}", 0)
+                writable_actions.append(f"{path} (accepted a write)")
+            except RpcError as exc:
+                if exc.data != "PathIsAnAction":
+                    writable_actions.append(f"{path} (refused {exc.data!r})")
     assert not unreadable, (
         f"{external}: {len(unreadable)} path(s) declared on the READ channel "
         f"that query does not answer — the surface publishes a name and then "
@@ -2205,6 +2218,12 @@ def assert_declared_channels_are_true(tf, external: str = "/external") -> dict:
     assert not readable_actions, (
         f"{external}: {len(readable_actions)} path(s) declared on the INVOKE "
         f"channel that do not refuse a read as PathIsAnAction: {readable_actions}"
+    )
+    assert not writable_actions, (
+        f"{external}: {len(writable_actions)} path(s) declared on the INVOKE "
+        f"channel that do not refuse a WRITE as PathIsAnAction — an action is "
+        f"not a slot, and a client told otherwise will address it as one: "
+        f"{writable_actions}"
     )
     assert not took_the_probe, (
         f"{external}: {len(took_the_probe)} path(s) ACCEPTED a deliberately "
