@@ -3430,6 +3430,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-node-lab"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-gpu",
+ "pinion-node-graph",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "serde",
+ "serde_json",
+ "vello",
+]
+
+[[package]]
 name = "hello-number-input"
 version = "0.0.1"
 dependencies = [
@@ -6334,6 +6350,7 @@ version = "0.0.1"
 dependencies = [
  "pinion-a11y",
  "pinion-core",
+ "pinion-derive",
  "pinion-runtime",
  "pinion-text",
  "serde",

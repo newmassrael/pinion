@@ -81,6 +81,7 @@ pub mod button;
 pub mod checkbox;
 pub mod chip;
 pub mod column_header;
+pub mod config_form;
 pub mod coord;
 pub mod datepicker;
 pub mod devtools;

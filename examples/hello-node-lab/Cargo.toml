@@ -1,0 +1,40 @@
+[package]
+name = "hello-node-lab"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1651 Phase-B plane-A integration consumer — the analysis-tool node graph lab assembled as ONE app against a written-down specification of the reference screen: a role-grouped node palette, a canvas of host frames and node cards with dial/accept pins, a pre-launch validation gate, and a node inspector that IS the settings editor (pinion_widget_paint::config_form over pinion_core::widgets::config_form). The graph is a pinion_node_graph::Document, so connect refusals, the determinism switch and reachability are the crate's rather than the example's. The specification is a value the demo asserts the painted scene against in both directions."
+publish = false
+
+[[bin]]
+name = "hello-node-lab"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# §5.40 AccessKit substrate for `WidgetA11y::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R1651 §5.21 — the node inspector's painter. The whole reason this example
+# exists is that the settings form is a framework widget rather than a copy.
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+# §5.16 paint-side AppShell (winit + Vello + RPC).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R1537 §5.16 — the emitted renderer owns its wgpu device through pinion-gpu.
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
+# The graph itself: `Document` holds the nodes, the frames and the links, and
+# `connect` is what refuses a wire the model cannot hold.
+pinion-node-graph = { path = "../../crates/pinion-node-graph", version = "0.0.1" }
+vello = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

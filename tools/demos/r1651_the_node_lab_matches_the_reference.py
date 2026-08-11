@@ -1,0 +1,470 @@
+#!/usr/bin/env python3
+"""R1651 §5.21 §5.51 §2 #7 — the node graph lab, against the reference screen
+it was written from, in both directions.
+
+The standing instruction for this axis is to reproduce the reference tool's
+screen A exactly. A round can claim that; what makes the claim checkable is
+that the screen is a **value** the application publishes (`spec`) and this
+script compares the painted scene against it — an element the screen is missing
+and an element the screen invented are both failures.
+
+What is new in the framework, and what this therefore checks hardest: the node
+inspector is now a widget with a crate home (`pinion_widget_paint::config_form`
+over `pinion_core::widgets::config_form`), which is the analysis-tool census's
+must-have row that had scored `gap` since R1646 for want of anywhere to live.
+So every claim about it is a claim about framework code:
+
+* a row per configuration path, and the **key is the path** — not a label;
+* a per-row applies badge, and exactly one row on this node is live;
+* a defect shown **on the row it is about**, with the launch verdict derived
+  from the rows rather than set beside them;
+* a **deployable document** derived from the same rows, and read back.
+
+Run from the workspace root:
+    cargo build -p hello-node-lab --release
+    python3 tools/demos/r1651_the_node_lab_matches_the_reference.py
+"""
+
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from rpc_verify import (  # noqa: E402
+    RpcSubprocess,
+    assert_declared_channels_are_true,
+    assert_eq,
+    find_by_tag,
+    run_demo,
+    walk_nodes,
+)
+
+EXT = "/external"
+WIN = (1440, 900)
+
+
+def q(tf: RpcSubprocess, path: str):
+    return tf.query(f"{EXT}/{path}")
+
+
+def inv(tf: RpcSubprocess, path: str, args):
+    return tf.invoke(f"{EXT}/{path}", args)
+
+
+def refused(tf: RpcSubprocess, path: str, args) -> str:
+    try:
+        inv(tf, path, args)
+    except Exception as why:  # noqa: BLE001 - any refusal shape is fine here
+        return str(why)
+    raise AssertionError(f"{path}({args!r}) was expected to be refused")
+
+
+def paint(tf: RpcSubprocess):
+    return tf.snapshot(source="paint", viewport=WIN)
+
+
+def tags(snap) -> dict:
+    """Every painted tag, with the rectangle it was painted in."""
+    found = {}
+    for _path, node in walk_nodes(snap):
+        tag = node.get("tag")
+        if tag:
+            found[tag] = node.get("rect")
+    return found
+
+
+def centre(rect: dict) -> str:
+    return f"{rect['x'] + rect['w'] // 2},{rect['y'] + rect['h'] // 2}"
+
+
+def at(tf: RpcSubprocess, tag: str) -> str:
+    """The point at the centre of the rectangle `tag` was PAINTED in.
+
+    Asking the scene rather than recomputing the screen's layout here: a demo
+    carrying a second copy of the geometry could not notice a drift between the
+    painter and the hit test, which is the property section (H) holds.
+    """
+    node = find_by_tag(paint(tf), tag)
+    assert node is not None and isinstance(node.get("rect"), dict), f"{tag} is painted"
+    return centre(node["rect"])
+
+
+def click(tf: RpcSubprocess, where: str) -> str:
+    inv(tf, "point", where)
+    inv(tf, "send", "PointerDown")
+    return inv(tf, "send", "PointerUp")
+
+
+def body() -> None:
+    with RpcSubprocess("hello-node-lab", boot_grace=1.5) as tf:
+        counted = assert_declared_channels_are_true(tf)
+        print(f"[A] {counted['read']} declared read(s) answer, "
+              f"{counted['invoke']} declared action(s) dispatch")
+
+        # ── (B) The specification is on the wire, and it is what was built ──
+        spec = json.loads(q(tf, "spec"))
+        assert_eq(q(tf, "graph"), spec["graph"], "the graph is the one declared")
+        assert_eq(q(tf, "zoom"), spec["zoom"], "and it opens at the declared zoom")
+        assert_eq(
+            q(tf, "selected"),
+            spec["selected_node"],
+            "on the node the reference opens on",
+        )
+        assert_eq(
+            q(tf, "discovery"),
+            False,
+            "★ auto-discovery is OFF by default — a graph whose links are all "
+            "authored is the one whose behaviour is a function of the canvas",
+        )
+        painted = tags(paint(tf))
+        print(f"[B] the specification declares {len(spec['nodes'])} node(s), "
+              f"{len(spec['links'])} link(s), {len(spec['roles'])} role(s); "
+              f"{len(painted)} tag(s) painted")
+
+        # ── (C) FORWARD: every declared element is on the screen ────────────
+        missing = []
+        for pane in spec["panes"]:
+            if pane["tag"] not in painted:
+                missing.append(pane["tag"])
+        for seat in spec["rail"]:
+            tag = f"lab.rail.{seat['name']}"
+            if tag not in painted:
+                missing.append(tag)
+        for role in spec["roles"]:
+            for tag in (
+                f"lab.palette.role.{role['name']}",
+                f"lab.palette.swatch.{role['name']}",
+            ):
+                if tag not in painted:
+                    missing.append(tag)
+        for kind in spec["pin_legend"]:
+            tag = f"lab.palette.pin.{kind['kind']}"
+            if tag not in painted:
+                missing.append(tag)
+        for word in spec["protocols"]:
+            tag = f"lab.palette.protocol.{word}"
+            if tag not in painted:
+                missing.append(tag)
+        for frame in spec["frames"]:
+            for tag in (f"lab.frame.{frame['name']}", f"lab.frame.{frame['name']}.name"):
+                if tag not in painted:
+                    missing.append(tag)
+        for node in spec["nodes"]:
+            for tag in (
+                f"lab.node.{node['id']}",
+                f"lab.node.{node['id']}.id",
+                f"lab.node.{node['id']}.badge",
+                f"lab.pin.{node['id']}.dial",
+            ):
+                if tag not in painted:
+                    missing.append(tag)
+        for field in spec["fields"]:
+            for tag in (
+                f"lab.form.control.{field['key']}",
+                f"lab.form.applies.{field['key']}",
+            ):
+                if tag not in painted:
+                    missing.append(tag)
+        for key in spec["addable"]:
+            tag = f"lab.form.add.{key}"
+            if tag not in painted:
+                missing.append(tag)
+        for tag in (
+            "lab.toolbar.title",
+            "lab.toolbar.meta",
+            "lab.toolbar.gate",
+            "lab.toolbar.zoom",
+            "lab.toolbar.run",
+            "lab.gate",
+            "lab.gate.verdict",
+            "lab.hint",
+            "lab.hint.text",
+            "lab.link.label",
+            "lab.inspector.id",
+            "lab.inspector.degree",
+        ):
+            if tag not in painted:
+                missing.append(tag)
+        assert not missing, f"the specification declares {len(missing)} element(s) the screen does not paint: {missing}"
+        print(f"[C] FORWARD — every declared element is painted "
+              f"({len(spec['nodes']) * 4 + len(spec['fields']) * 2 + len(spec['addable'])}+ checked)")
+
+        # ── (D) BACKWARD: the screen invented nothing ───────────────────────
+        # Every painted tag has to be accounted for by the specification or by
+        # one of the named structural families below. A screen free to add
+        # chrome nobody declared is a screen that has stopped being a
+        # reproduction, and a forward-only check cannot see that.
+        declared = set()
+        for pane in spec["panes"]:
+            declared.add(pane["tag"])
+        for seat in spec["rail"]:
+            declared.add(f"lab.rail.{seat['name']}")
+        for role in spec["roles"]:
+            declared.add(f"lab.palette.role.{role['name']}")
+            declared.add(f"lab.palette.swatch.{role['name']}")
+        for kind in spec["pin_legend"]:
+            declared.add(f"lab.palette.pin.{kind['kind']}")
+        for word in spec["protocols"]:
+            declared.add(f"lab.palette.protocol.{word}")
+        for frame in spec["frames"]:
+            declared.add(f"lab.frame.{frame['name']}")
+            declared.add(f"lab.frame.{frame['name']}.name")
+        for node in spec["nodes"]:
+            for suffix in ("", ".id", ".badge"):
+                declared.add(f"lab.node.{node['id']}{suffix}")
+            declared.add(f"lab.pin.{node['id']}.dial")
+            declared.add(f"lab.pin.{node['id']}.accept")
+        for field in spec["fields"]:
+            declared.add(f"lab.form.control.{field['key']}")
+            declared.add(f"lab.form.applies.{field['key']}")
+            declared.add(f"lab.form.defect.{field['key']}")
+            for word in ("read", "write"):
+                declared.add(f"lab.form.option.{field['key']}.{word}")
+        for key in spec["addable"]:
+            declared.add(f"lab.form.add.{key}")
+        # The families the specification names as a whole rather than per item.
+        FAMILIES = (
+            "node_lab",
+            "lab.appbar", "lab.toolbar", "lab.gate", "lab.hint", "lab.link",
+            "lab.inspector", "lab.palette.discovery",
+        )
+        undeclared = [
+            tag
+            for tag in painted
+            if tag not in declared
+            and not any(tag == f or tag.startswith(f + ".") for f in FAMILIES)
+        ]
+        assert not undeclared, (
+            f"the screen paints {len(undeclared)} element(s) the specification does "
+            f"not declare: {undeclared}"
+        )
+        print(f"[D] BACKWARD — every one of {len(painted)} painted tag(s) is declared "
+              f"or in a named family")
+
+        # ── (E) The inspector IS the settings editor ────────────────────────
+        form = json.loads(q(tf, "form"))
+        assert_eq(
+            [f["key"] for f in form],
+            [f["key"] for f in spec["fields"]],
+            "the same rows the reference shows, in the same order",
+        )
+        for want, held in zip(spec["fields"], form):
+            assert_eq(held["ty"], want["ty"], f"{want['key']} type")
+            assert_eq(held["applies"], want["applies"], f"{want['key']} applies")
+            assert_eq(held["value"], want["value"], f"{want['key']} value")
+        hot = [f["key"] for f in form if f["applies"] == "hot"]
+        assert_eq(
+            len(hot), 1,
+            "★ exactly one row reaches a running node, which is why the badge "
+            f"exists at all: {hot}",
+        )
+        print(f"[E] the inspector holds {len(form)} row(s) keyed by configuration "
+              f"path; {hot[0]} is the one that applies live")
+
+        # ── (F) The document is derived from those rows, and reads back ─────
+        document = json.loads(q(tf, "document"))
+        assert "refused" not in document, document
+        assert_eq(
+            document["transport"]["link"]["tx"]["batch_size"],
+            65535,
+            "★ the dotted key IS the path and the declared type IS the type — a "
+            "form and a settings file mapped by hand are mapped twice",
+        )
+        assert_eq(
+            document["control"]["permissions"],
+            ["read", "write"],
+            "and a set of flags is an array",
+        )
+        assert isinstance(document["listen"]["endpoints"], list)
+        print(f"[F] the form derives a deployable document: "
+              f"{len(json.dumps(document))} bytes, nested from its own paths")
+
+        # ── (G) The gate is derived, and warns without blocking ─────────────
+        verdict = json.loads(q(tf, "verdict"))
+        gate = json.loads(q(tf, "gate"))
+        assert verdict["may_launch"], verdict
+        assert_eq(verdict["blocking"], 0)
+        assert verdict["warning"] >= 2, gate
+        assert any("listening" in line["sentence"] for line in gate), gate
+        assert any("discovery" in line["sentence"] for line in gate), gate
+        assert all(not line["blocks"] for line in gate), gate
+        assert "warning" in verdict["sentence"], (
+            "★ the gate SAYS the warnings stand even while it opens: "
+            "'nothing is stopping you' and 'nothing is wrong' are different "
+            f"statements: {verdict['sentence']}"
+        )
+        print(f"[G] the gate opens with {verdict['warning']} warning(s) and says so: "
+              f"{verdict['sentence']!r}")
+
+        # A value that would fail at start-up closes it, and the refusal names
+        # what would be accepted rather than saying 'invalid'.
+        inv(tf, "set_field", "transport.link.tx.batch_size=70000")
+        verdict = json.loads(q(tf, "verdict"))
+        assert not verdict["may_launch"], verdict
+        assert_eq(verdict["blocking"], 1)
+        why = refused(tf, "run", True)
+        assert "gate is closed" in why, why
+        painted = tags(paint(tf))
+        assert "lab.form.defect.transport.link.tx.batch_size" in painted, (
+            "★ and the defect is painted ON the row it is about, not only in a "
+            "list at the bottom"
+        )
+        assert not any(
+            t.startswith("lab.form.defect.") and "batch_size" not in t for t in painted
+        ), "and on no other row"
+        document = json.loads(q(tf, "document"))
+        assert "refused" in document, (
+            "★ and no document is emitted — a file the tool called fine that "
+            f"fails at start-up is the failure this prevents: {document}"
+        )
+        assert "0..=65535" in document["refused"], document
+        print(f"[G] out of range closes it and names the range: {document['refused']!r}")
+
+        inv(tf, "set_field", "transport.link.tx.batch_size=65535")
+        assert json.loads(q(tf, "verdict"))["may_launch"], "and repairing it reopens"
+
+        # ── (H) Paint and gesture read ONE geometry, both directions ────────
+        # Forward: every painted control answers a press at the centre of the
+        # rectangle it was painted in. Backward: the press lands on THAT
+        # control and not on a neighbour.
+        probes = []
+        for node in spec["nodes"]:
+            probes.append((f"lab.node.{node['id']}", f"node:{node['id']}"))
+            probes.append((f"lab.pin.{node['id']}.dial", f"pin:{node['id']}:dial"))
+        for role in spec["roles"]:
+            probes.append((f"lab.palette.role.{role['name']}", f"role:{role['name']}"))
+        for field in spec["fields"]:
+            probes.append((f"lab.form.control.{field['key']}", f"field:{field['key']}"))
+        for key in spec["addable"]:
+            probes.append((f"lab.form.add.{key}", f"add:{key}"))
+        probes += [
+            ("lab.toolbar.zoom.in", "zoom:in"),
+            ("lab.toolbar.zoom.out", "zoom:out"),
+            ("lab.toolbar.config", "config"),
+            ("lab.toolbar.run", "run"),
+            ("lab.palette.discovery", "discovery"),
+        ]
+        wrong = []
+        for tag, expect in probes:
+            answered = inv(tf, "point", at(tf, tag))
+            if answered != expect:
+                wrong.append((tag, expect, answered))
+        assert not wrong, f"{len(wrong)} control(s) are painted where a press does not reach them: {wrong}"
+        print(f"[H] {len(probes)} painted control(s) each answer a press at the "
+              f"centre of the rectangle they were painted in")
+
+        # ── (I) The gestures the hint strip advertises ──────────────────────
+        # Every gesture the screen tells a person about has to work, or the
+        # hint is a lie. There are four, and this drives all four.
+        assert_eq(len(spec["gestures"]), 4)
+
+        # 1. drag empty space = pan
+        before = q(tf, "pan")
+        inv(tf, "point", "700,700")
+        inv(tf, "send", "PointerDown")
+        inv(tf, "point", "760,730")
+        inv(tf, "send", "PointerUp")
+        after = q(tf, "pan")
+        assert after != before, f"a drag on empty canvas pans: {before} -> {after}"
+
+        # 2. wheel = zoom
+        was = q(tf, "zoom")
+        inv(tf, "send", "WheelUp")
+        assert q(tf, "zoom") > was, "the wheel zooms in"
+        inv(tf, "send", "WheelDown")
+        assert_eq(q(tf, "zoom"), was, "and back")
+
+        # 3. drag a node = place it
+        held = find_by_tag(paint(tf), "lab.node.T-01")["rect"]
+        inv(tf, "point", centre(held))
+        inv(tf, "send", "PointerDown")
+        inv(tf, "point", f"{held['x'] + held['w'] // 2 + 40},{held['y'] + held['h'] // 2 + 30}")
+        inv(tf, "send", "PointerUp")
+        moved = find_by_tag(paint(tf), "lab.node.T-01")["rect"]
+        assert moved != held, f"a node drag places it: {held} -> {moved}"
+
+        # 4. drag a pin = author a link
+        links_before = len(json.loads(q(tf, "links")))
+        inv(tf, "point", at(tf, "lab.pin.T-01.dial"))
+        inv(tf, "send", "PointerDown")
+        inv(tf, "point", at(tf, "lab.pin.P-03.accept"))
+        inv(tf, "send", "PointerUp")
+        links_after = json.loads(q(tf, "links"))
+        assert_eq(
+            len(links_after), links_before + 1,
+            "a drag from a dial pin to an accept pin authors a link",
+        )
+        assert any(l["from"] == "T-01" and l["to"] == "P-03" for l in links_after), links_after
+        print(f"[I] all {len(spec['gestures'])} advertised gesture(s) answer: pan, "
+              f"zoom, place, and author")
+
+        # ── (J) A link the model cannot hold is refused BY NAME ─────────────
+        # The crate refuses it, not this screen: `Document::connect` is the one
+        # authority, so the canvas, the wire and the gate cannot disagree.
+        why = refused(tf, "connect", "R-01,T-01")
+        assert "T-01" in why, why
+        assert "listen" in why or "dial" in why, (
+            f"and the refusal says WHY rather than 'invalid': {why}"
+        )
+        # And a listening node takes as many dials as reach it: the reference's
+        # router shows four inbound links on one pin, which a dataflow input
+        # could not hold.
+        inbound = sum(1 for l in json.loads(q(tf, "links")) if l["to"] == "R-01")
+        assert inbound >= 3, f"the router is dialled by {inbound} node(s)"
+        print(f"[J] an impossible link is refused by name; the router's one pin "
+              f"holds {inbound} inbound link(s)")
+
+        # ── (K) Adding a key moves it out of the offered set ────────────────
+        offered = spec["addable"][0]
+        click(tf, at(tf, f"lab.form.add.{offered}"))
+        form = json.loads(q(tf, "form"))
+        assert offered in [f["key"] for f in form], f"{offered} is now a row"
+        painted = tags(paint(tf))
+        assert f"lab.form.add.{offered}" not in painted, (
+            "★ and it is no longer offered — two rows for one path is a "
+            "configuration with no single value"
+        )
+        assert f"lab.form.applies.{offered}" in painted, "with its own applies badge"
+        print(f"[K] adding {offered!r} made it a row and retired its chip")
+
+        # ── (L) A declared read cannot be written ───────────────────────────
+        for path in ("running", "zoom", "selected"):
+            try:
+                tf.intervene(f"{EXT}/{path}", 1)
+            except Exception as why:  # noqa: BLE001
+                assert "read" in str(why).lower() or "only" in str(why).lower(), (
+                    f"{path} refuses a write as read-only: {why}"
+                )
+            else:
+                raise AssertionError(f"a write to {path} was expected to be refused")
+        print("[L] the three derived reads refuse a write as read-only")
+
+        # ── (M) Selecting another node re-derives the whole inspector ───────
+        click(tf, at(tf, "lab.node.P-01"))
+        assert_eq(q(tf, "selected"), "P-01")
+        form = json.loads(q(tf, "form"))
+        assert any(f["key"] == "discovery.multicast" for f in form), (
+            "the peer the gate warned about holds the key it warned about"
+        )
+        painted = tags(paint(tf))
+        assert "lab.form.control.discovery.multicast" in painted
+        assert find_by_tag(paint(tf), "lab.inspector.id") is not None
+        print("[M] selecting another node re-derives its rows, badges and degree")
+
+        # ── (N) Running settles the form ────────────────────────────────────
+        click(tf, at(tf, "lab.node.R-01"))
+        inv(tf, "set_field", "connect.endpoints=tcp/10.0.0.99:7449")
+        assert any(f["edited"] for f in json.loads(q(tf, "form"))), "the row is edited"
+        assert_eq(inv(tf, "run", True), True, "and the gate is open, so it runs")
+        assert not any(f["edited"] for f in json.loads(q(tf, "form"))), (
+            "★ a launch settles every row: what is running now IS what the "
+            "screen shows, so nothing is pending a restart"
+        )
+        inv(tf, "run", False)
+        print("[N] a launch settles the form, so nothing is left pending a restart")
+
+
+if __name__ == "__main__":
+    run_demo("R1651 the node lab matches the reference", body)

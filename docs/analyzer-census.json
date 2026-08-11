@@ -149,15 +149,17 @@
     "tier": "t0",
     "capability": "a node palette organised by role",
     "verdict": "app",
-    "covered_by": "the node model plus list widgets; which roles exist is the application's taxonomy"
+    "covered_by": "the node model plus list widgets; which roles exist is the application's taxonomy",
+    "assembled_by": "examples/hello-node-lab"
   },
   {
     "id": "lab.t0.2",
     "plane": "lab",
     "tier": "t0",
     "capability": "a node inspector that is the settings editor: every field, text round-trip, and a per-field applies-live versus needs-restart badge",
-    "verdict": "gap",
-    "covered_by": "MEASURED R1646: there is NO property grid in any crate — `grep` over `crates/*/src` finds it only in `hello-property-grid` and `hello-data-grid`. So the node inspector this tier needs is an example an application copies, which is the same shape R1645 just closed for the two-layer diff. The per-field applies-live badge is unanswerable until the widget has a home"
+    "verdict": "have",
+    "covered_by": "R1651: `pinion_core::widgets::config_form` is the model (every field keyed by its configuration path, a per-field `Applies` badge, three defect kinds whose blocking-ness is derived, a `document`/`adopt` pair with a round-trip law) and `pinion_widget_paint::config_form` is the painter (rows, badges, the defect on the row it is about, the offered-key chips, and one geometry both the paint and a hit test read). R1646 measured the gap as `there is NO property grid in any crate`; there is now, and the text round-trip this tier names is the document law rather than a claim",
+    "proven_by": "pinion-core::widgets::config_form::tests::r1651_a_document_round_trips_through_the_form_it_came_from; pinion-widget-paint::config_form::tests::r1651_a_defective_row_says_so_on_the_row_and_the_reader_is_told_why"
   },
   {
     "id": "lab.t0.3",
@@ -181,7 +183,8 @@
     "tier": "t0",
     "capability": "run and stop, with a per-node lifecycle state",
     "verdict": "app",
-    "covered_by": "`Document::run` derives the order; a node's lifecycle is the application's own state"
+    "covered_by": "`Document::run` derives the order; a node's lifecycle is the application's own state",
+    "assembled_by": "examples/hello-node-lab"
   },
   {
     "id": "lab.t0.6",
@@ -198,7 +201,8 @@
     "tier": "t0",
     "capability": "a pre-launch configuration gate, because the target keeps starting with the bad setting discarded",
     "verdict": "app",
-    "covered_by": "`Document::validate` gates the graph; the three failure kinds the field notes record are the application's schema to check"
+    "covered_by": "`Document::validate` gates the graph; the three failure kinds the field notes record are the application's schema to check",
+    "assembled_by": "examples/hello-node-lab"
   },
   {
     "id": "lab.t1.8",
@@ -238,7 +242,7 @@
     "tier": "t1",
     "capability": "saving a scenario and exporting a deployable configuration",
     "verdict": "gap",
-    "covered_by": "the document is serde; the EXPORT half is the same missing derivation as capture.t1.12"
+    "covered_by": "R1651 closed HALF and the half is named: `ConfigForm::document` derives a deployable configuration for ONE node from its own rows, with `adopt` reading one back and a round-trip law over the pair. What is still missing is the SCENARIO level — a whole graph, its frames and its run plan as one saved artifact — which is the same missing derivation as capture.t1.12"
   },
   {
     "id": "lab.t2.13",

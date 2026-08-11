@@ -366,6 +366,22 @@ pub enum ColorRole {
     /// [`Self::InverseSurface`] fill — e.g. a snackbar's action label.
     /// Material 3 `inversePrimary`.
     InversePrimary,
+    /// R1651 — a state that is wrong and does **not** stop the user.
+    ///
+    /// Material 3's role set has an error tier and no warning tier, and this
+    /// project follows it everywhere else; the divergence is argued rather
+    /// than assumed. `pinion_core::widgets::config_form::ConfigDefect` is a
+    /// vocabulary whose arms differ in exactly one way — whether the defect
+    /// blocks — and a palette with one alarm tone can only paint half of it.
+    /// A gate that showed a non-blocking defect in the error tone would say
+    /// "you cannot start" about the one case where you can, and the mature
+    /// toolkit's palette has no warning role either, so there is nothing to
+    /// borrow. Two roles, not four: nothing here fills a warning *container*
+    /// yet, and a role no surface resolves is a token nobody can be wrong
+    /// about.
+    Warning,
+    /// Foreground drawn on a [`Self::Warning`] fill.
+    OnWarning,
 }
 
 impl ColorRole {
@@ -405,6 +421,8 @@ impl ColorRole {
             ColorRole::InverseSurface,
             ColorRole::InverseOnSurface,
             ColorRole::InversePrimary,
+            ColorRole::Warning,
+            ColorRole::OnWarning,
         ]
     }
 
@@ -442,6 +460,8 @@ impl ColorRole {
             ColorRole::InverseSurface => "inverse_surface",
             ColorRole::InverseOnSurface => "inverse_on_surface",
             ColorRole::InversePrimary => "inverse_primary",
+            ColorRole::Warning => "warning",
+            ColorRole::OnWarning => "on_warning",
         }
     }
 
@@ -516,6 +536,8 @@ impl ColorRole {
             ColorRole::InverseSurface => Color::rgb(0x32, 0x2f, 0x35),
             ColorRole::InverseOnSurface => Color::rgb(0xf5, 0xef, 0xf7),
             ColorRole::InversePrimary => Color::rgb(0x9e, 0xca, 0xff),
+            ColorRole::Warning => Color::rgb(0x7a, 0x53, 0x00),
+            ColorRole::OnWarning => Color::rgb(0xff, 0xff, 0xff),
         }
     }
 }
@@ -576,6 +598,10 @@ pub struct Theme {
     pub inverse_on_surface: Color,
     /// Resolves [`ColorRole::InversePrimary`].
     pub inverse_primary: Color,
+    /// Resolves [`ColorRole::Warning`].
+    pub warning: Color,
+    /// Resolves [`ColorRole::OnWarning`].
+    pub on_warning: Color,
 }
 
 impl Theme {
@@ -633,6 +659,8 @@ impl Theme {
             inverse_surface: Color::rgb(0x32, 0x2f, 0x35),
             inverse_on_surface: Color::rgb(0xf5, 0xef, 0xf7),
             inverse_primary: Color::rgb(0x9e, 0xca, 0xff),
+            warning: Color::rgb(0x7a, 0x53, 0x00),
+            on_warning: Color::rgb(0xff, 0xff, 0xff),
         }
     }
 
@@ -691,6 +719,8 @@ impl Theme {
             inverse_surface: Color::rgb(0xe6, 0xe1, 0xe5),
             inverse_on_surface: Color::rgb(0x32, 0x2f, 0x35),
             inverse_primary: Color::rgb(0x19, 0x76, 0xd2),
+            warning: Color::rgb(0xe8, 0xc0, 0x77),
+            on_warning: Color::rgb(0x41, 0x2d, 0x00),
         }
     }
 
@@ -719,6 +749,8 @@ impl Theme {
             ColorRole::InverseSurface => self.inverse_surface,
             ColorRole::InverseOnSurface => self.inverse_on_surface,
             ColorRole::InversePrimary => self.inverse_primary,
+            ColorRole::Warning => self.warning,
+            ColorRole::OnWarning => self.on_warning,
         }
     }
 }
@@ -767,6 +799,8 @@ struct ThemeLinear {
     inverse_surface: AnimVec4,
     inverse_on_surface: AnimVec4,
     inverse_primary: AnimVec4,
+    warning: AnimVec4,
+    on_warning: AnimVec4,
 }
 
 impl ThemeLinear {
@@ -794,6 +828,8 @@ impl ThemeLinear {
             inverse_surface: t.inverse_surface.to_linear(),
             inverse_on_surface: t.inverse_on_surface.to_linear(),
             inverse_primary: t.inverse_primary.to_linear(),
+            warning: t.warning.to_linear(),
+            on_warning: t.on_warning.to_linear(),
         }
     }
 
@@ -823,6 +859,8 @@ impl ThemeLinear {
             inverse_surface: Color::from_linear(self.inverse_surface),
             inverse_on_surface: Color::from_linear(self.inverse_on_surface),
             inverse_primary: Color::from_linear(self.inverse_primary),
+            warning: Color::from_linear(self.warning),
+            on_warning: Color::from_linear(self.on_warning),
         }
     }
 }
@@ -847,6 +885,8 @@ impl Animatable for ThemeLinear {
             inverse_surface: AnimVec4::zero(),
             inverse_on_surface: AnimVec4::zero(),
             inverse_primary: AnimVec4::zero(),
+            warning: AnimVec4::zero(),
+            on_warning: AnimVec4::zero(),
         }
     }
 
@@ -873,6 +913,8 @@ impl Animatable for ThemeLinear {
             inverse_surface: self.inverse_surface.add(other.inverse_surface),
             inverse_on_surface: self.inverse_on_surface.add(other.inverse_on_surface),
             inverse_primary: self.inverse_primary.add(other.inverse_primary),
+            warning: self.warning.add(other.warning),
+            on_warning: self.on_warning.add(other.on_warning),
         }
     }
 
@@ -899,6 +941,8 @@ impl Animatable for ThemeLinear {
             inverse_surface: self.inverse_surface.sub(other.inverse_surface),
             inverse_on_surface: self.inverse_on_surface.sub(other.inverse_on_surface),
             inverse_primary: self.inverse_primary.sub(other.inverse_primary),
+            warning: self.warning.sub(other.warning),
+            on_warning: self.on_warning.sub(other.on_warning),
         }
     }
 
@@ -921,6 +965,8 @@ impl Animatable for ThemeLinear {
             inverse_surface: self.inverse_surface.scale(factor),
             inverse_on_surface: self.inverse_on_surface.scale(factor),
             inverse_primary: self.inverse_primary.scale(factor),
+            warning: self.warning.scale(factor),
+            on_warning: self.on_warning.scale(factor),
         }
     }
 
@@ -1706,16 +1752,49 @@ mod tests {
                 | ColorRole::OnErrorContainer
                 | ColorRole::InverseSurface
                 | ColorRole::InverseOnSurface
-                | ColorRole::InversePrimary => (),
+                | ColorRole::InversePrimary
+                | ColorRole::Warning
+                | ColorRole::OnWarning => (),
             };
         }
-        // Variant count = Tier 1 + R590 error tier + R723 inverse tier (17).
-        assert_eq!(ColorRole::all().len(), 17);
+        // Variant count = Tier 1 + R590 error tier + R723 inverse tier
+        // + R1651 warning pair (19).
+        assert_eq!(ColorRole::all().len(), 19);
         // No duplicates — pure-set semantics.
         let mut names: Vec<_> = ColorRole::all().iter().map(|r| r.name()).collect();
         names.sort_unstable();
         names.dedup();
-        assert_eq!(names.len(), 17, "names must be unique");
+        assert_eq!(names.len(), 19, "names must be unique");
+    }
+
+    /// (R1651 §5.50) The warning tier reads **apart** from the error
+    /// tier in both palettes, which is the entire reason it exists:
+    /// `ConfigDefect`'s arms differ in whether they block, and a palette
+    /// with one alarm tone can only paint half of that vocabulary.
+    #[test]
+    fn r1651_warning_is_a_distinct_tone_from_error_in_both_palettes() {
+        for palette in [Theme::light(), Theme::dark()] {
+            assert_ne!(
+                palette.resolve(ColorRole::Warning),
+                palette.resolve(ColorRole::Error),
+                "a defect that warns must not be painted as one that blocks"
+            );
+            assert_ne!(
+                palette.resolve(ColorRole::Warning),
+                palette.resolve(ColorRole::OnSurface),
+                "nor as ordinary text"
+            );
+            assert_ne!(
+                palette.resolve(ColorRole::OnWarning),
+                palette.resolve(ColorRole::Warning),
+                "and its foreground has to be legible on it"
+            );
+        }
+        assert_ne!(
+            Theme::light().resolve(ColorRole::Warning),
+            Theme::dark().resolve(ColorRole::Warning),
+            "the two schemes tone it differently, like every other role"
+        );
     }
 
     /// (R595 §5.50) `ColorRole::name()` returns the canonical

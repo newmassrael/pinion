@@ -226,6 +226,16 @@ AXES = [
                 # was a widget-catalogue vocabulary (`widgets::card`).
                 "analyzer-shell",
                 "analyzer-lab",
+                # R1651, added WITH the round rather than after it — the census
+                # has caught four artifacts arriving with no axis and the
+                # remedy each time was this list, so the fifth is written here
+                # before the push rather than by the next round's audit.
+                # `hello-node-lab` is a node-graph binding whose right-hand
+                # pane is a property grid, which is two of this axis's three
+                # named families in one screen; `node-editor` above is an
+                # exact-ish name rather than a prefix, so it needs its own
+                # entry the way `node-groups` and `node-flow` did.
+                "node-lab",
             ]),
         ],
         # R1532 re-judgment, demanded by this axis's round count going 0 -> 1

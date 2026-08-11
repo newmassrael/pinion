@@ -21,6 +21,11 @@ pinion-text = { path = "../pinion-text" }
 # widget paint helpers produce Scene with the right `with_aria_label`
 # overrides so the a11y enrich pass downstream wires them.
 pinion-a11y = { path = "../pinion-a11y" }
+# R1651 — `#[derive(VariantCensus)]` publishes an enum's arm count as a
+# `const`, so a hand-written `ALL` list is checked against the definition by
+# the build rather than by whoever remembers (R1630). `config_form`'s two
+# layout policies are closed vocabularies a consumer enumerates.
+pinion-derive = { path = "../pinion-derive" }
 # (R685 §5.16 §5.49) `DockTopology` + `DockNode` + `DockSlot` +
 # `SplitterOrientation` derive `Serialize + Deserialize` so the dock
 # topology tree round-trips through JSON for AI-introspection
