@@ -1,63 +1,53 @@
 // R1412 §5.49 — example bindings tolerate looser doc-markdown lints.
 #![allow(clippy::doc_markdown)]
 
-//! `hello-analyzer-shell` — R1648 §5.21 §5.51 §2 #7 — the analysis-tool
-//! **dashboard shell**, assembled as one application.
+//! `hello-analyzer-shell` — R1648/R1649 §5.21 §5.51 §2 #7 — the analysis-tool
+//! **dashboard shell**, assembled as one application and operated by hand.
 //!
 //! ## Why an assembly is the deliverable
 //!
 //! `tools/analyzer_census.py` classifies every capability of this tool class
 //! with one of five verdicts, and the largest bin is `app`: *the substrate is
-//! here, the domain logic is the application's*. Twenty-six rows say that, and
-//! until this file existed **nobody had ever assembled one**. A `have` verdict
-//! is proven by a test that exercises the capability through the public API
-//! (R1602); an `app` verdict is a claim about composition, and the only thing
-//! that proves composition is a composite. This is that composite, and the
-//! census now names it.
+//! here, the domain logic is the application's*. A `have` verdict is proven by
+//! a test that exercises the capability through the public API (R1602); an
+//! `app` verdict is a claim about composition, and the only thing that proves
+//! composition is a composite. This is that composite, and the census names it.
 //!
-//! It is deliberately ONE binary rather than twelve. The dashboard's own
-//! capability list is a *shell* — an app bar, a rail, a board of cards, named
-//! layout presets — and a shell is exactly the part that cannot be demonstrated
-//! by a page of separate examples each showing one widget. The existing tree
-//! had `hello-tile-dashboard` (the board), `hello-dock-presets` (named
-//! layouts), `hello-stat-tiles` (a KPI tile), `hello-row-dissect` and
-//! `hello-hex-dump` (the decode panes) and no place where they meet.
+//! ## R1649 — the shell matches the reference tool's, screen and gesture
 //!
-//! ## What it assembles, against the capability list
+//! R1648 assembled the *capabilities* and laid them out in the plainest
+//! arrangement that could hold them. R1649 rebuilds the chrome and the
+//! placement gestures against the tool this axis is judged by, because a shell
+//! is exactly the part where "the substrate can express it" is not the same
+//! claim as "the substrate can express it the way a professional tool does".
+//! The differences that cost real work were all the second claim:
 //!
-//! * **The app bar** — source selection, a capture toggle, a global search box
-//!   and a theme toggle. Four writable slots, all on the wire.
-//! * **The navigation rail** — the thin left strip, one entry per board
-//!   section.
-//! * **The board** — twelve cards on
-//!   [`TileGrid`], which is where
-//!   placement, drag-snapping and reflow already live.
-//! * **The card** — [`Card`], new in R1648: a title, the header affordances it
-//!   offers, and what its body is showing. A card that offers **both** tear-off
-//!   and maximise is one value here; the toolkit splits those across two class
-//!   hierarchies that cannot be combined.
-//! * **Named layout presets** — a preset is a stored
-//!   [`TileGrid`], which is serde, so
-//!   saving one is a clone and applying one is a `Signal::set` — the shape
-//!   `hello-dock-presets` established for dock topologies.
-//! * **The transport** — live / paused / replaying, on the existing
-//!   [`TransportClock`], with a scrub. Not a fourth clock.
+//! * **A three-column shell**, not a board with a strip: an icon rail, a
+//!   sub-header carrying the layout preset and the two board verbs, the canvas,
+//!   and a **widget palette** the board is populated *from*. Twelve widget
+//!   kinds exist as a catalogue; three are placed.
+//! * **A card is added, not seeded.** The palette's `+` places one at the
+//!   bottom of the board, so what is on the board is a decision somebody made
+//!   and the count in two places has to agree.
+//! * **A drag shows where it will land** — a snap-preview slot and a brighter
+//!   grid — rather than displacing cards live. The reference commits on
+//!   release; so does this.
+//! * **Layout-edit mode** puts per-card size steppers on the cards, so a board
+//!   is rearranged without a pointer drag at all.
+//! * **Detaching REMOVES the card from the board** and opens a floating panel
+//!   with a re-dock control; re-docking appends it at the bottom. R1648 kept
+//!   the tile in place and argued for it — the reference does not, and on this
+//!   axis the reference is the specification rather than a data point.
 //!
-//! ## The state vocabulary is exercised, not described
+//! ## The state vocabulary is a value, not paint
 //!
-//! The twelve cards are seeded so that **every arm of [`CardState`] is on the
-//! board at once**: a loading series, an empty alarm feed, a failed latency
-//! collector, a denied injection console, and a report card whose link is
-//! encrypted. That is the assembly's real finding — the capability list asks
-//! for loading, empty, error, no-permission and encrypted states, and a shell
-//! that has to paint five of those per card kind is where twelve widget kinds
-//! becomes sixty hand-written explanations that disagree with each other about
-//! whether an encrypted link deserves a retry button.
-//!
-//! Here each card publishes `state`, `detail` and the **derived**
-//! [`Remedy`], and the shell paints the remedy from the derivation rather than
-//! from the card kind. So `console` (denied) offers an action and `report`
-//! (opaque) does not, and neither card decided that.
+//! Every card carries a [`Card`]: its header affordances as a set, and what its
+//! body is showing as a [`CardState`] whose [`Remedy`] is **derived**. The pair
+//! that justifies six arms rather than one `Error` is denied/opaque — both
+//! render as "no content" and they are opposite in what a person can do, so a
+//! shell with one arm offers "request access" on a link no permission can open.
+//! Measured on the toolkit at 6.11: no content-state concept exists on any
+//! panel or view class, and its item views have no placeholder at all.
 //!
 //! ## It is operated by hand, and by the wire, through one set of handlers
 //!
@@ -65,44 +55,22 @@
 //! cargo run -p hello-analyzer-shell --release
 //! ```
 //!
-//! Click a card to select it and drag it to rearrange the board; press the
-//! affordances in its header; press the app bar's chips; press an actionable
-//! remedy. The keyboard is [`KEYMAP`] — arrows move the selection, `Shift` and
-//! `Alt` move and resize the selected card, `Enter` maximises, `Escape`
-//! restores, `/` types into the global search — and the window prints a
-//! condensed version of it along the bottom, so it teaches itself.
+//! Add a widget from the palette, drag a card by its header, press the header
+//! controls, toggle layout-edit mode and use the size steppers, detach a card
+//! and re-dock it, switch a saved layout. The keyboard is [`KEYMAP`].
 //!
-//! The part worth stating: **a real press and a scripted one reach the same
-//! code**. The framework's router calls `pointer_move` and sends `PointerDown`
-//! / `PointerUp` through `invoke("send", …)`; the wire's `point` moves the same
-//! cursor and `key` takes the chord the platform spells. There is no parallel
-//! automation surface that can drift from what a hand does.
+//! A real press and a scripted one reach the same code: the framework's router
+//! calls `pointer_move` and sends `PointerDown` / `PointerUp` through
+//! `invoke("send", …)`, and the wire's `point` moves the same cursor. There is
+//! no parallel automation surface that can drift from what a hand does.
 //!
-//! The geometry is likewise one thing. Every rectangle is computed by the
-//! helpers above [`Hit::at`], and both the painter and the hit test read them,
-//! because a surface that computes them twice ends up with a control drawn
-//! where it cannot be pressed — the open
-//! `debt-paint-and-gesture-read-two-facts` in this project. The demo sweeps the
-//! window in both directions to keep it that way: every name the hit test can
-//! produce must be a tag the scene painted, and every control the scene painted
-//! must be pressable at the centre of the rectangle it was painted in. The
-//! second direction is not decoration — it is what caught this file painting
-//! every card's contents at twice their intended offset, because children of an
-//! absolutely-positioned container are placed relative to *it*.
-//!
-//! ## The AI-first witness (§2 #7)
-//!
-//! Everything above is a read or a verb, so an agent drives the whole shell
-//! with no pixel:
-//!
-//! ```text
-//! scene/query  /external/cards                 -> the board, in order
-//! scene/query  /external/state?...             -> per-card, via `state` (an action)
-//! scene/invoke /external/act "console,settings"
-//! scene/invoke /external/act "report,tear_off" -> REFUSED: not offered
-//! scene/invoke /external/maximize "topology"
-//! scene/query  /external/restore_to            -> the arrangement waiting
-//! ```
+//! The geometry is likewise one thing — every rectangle comes from the helpers
+//! above [`Hit::at`], read by both the painter and the hit test. The demo
+//! sweeps the window in both directions to keep it so, and the second direction
+//! (every painted control must be pressable at the centre of the rectangle it
+//! was painted in) is what caught R1648 painting every card's contents at twice
+//! their intended offset: children of an absolutely-positioned container are
+//! placed relative to *it*.
 //!
 //! See `tools/demos/r1648_the_analyzer_shell_is_assembled.py`.
 
@@ -118,12 +86,12 @@ use pinion_core::external::{
     SchemaField, ThreadOwnership,
 };
 use pinion_core::reactive::{Owner, Signal};
-use pinion_core::scene::{ContainerNode, Rect, TextNode};
-use pinion_core::style::{Border, BoxStyle, Color, LayoutStyle, Size, TextStyle};
-use pinion_core::theme::{ColorRole, ThemeMode, ThemeProvider, use_theme};
-use pinion_core::widgets::Widget;
+use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect, TextNode};
+use pinion_core::style::{
+    Border, BoxStyle, Color, LayoutStyle, PathStyle, Size, Stroke, TextStyle,
+};
+use pinion_core::theme::{ColorRole, Theme, ThemeMode, ThemeProvider, use_theme};
 use pinion_core::widgets::card::{Card, CardAffordance, CardChrome, CardState, Remedy};
-use pinion_core::widgets::dock_panel::{DockPanelEvent, DockPanelPolicy, DockPanelState};
 use pinion_core::widgets::tile_grid::{
     Maximized, Tile, TileDirection, TileGrid, TileId, TileNudge,
 };
@@ -137,8 +105,8 @@ include!(concat!(env!("OUT_DIR"), "/app.rs"));
 
 vello_renderer_impl!(HelloAnalyzerShellRenderer, HelloAnalyzerShellRendererError);
 
-const WIN_W: u32 = 1040;
-const WIN_H: u32 = 566;
+const WIN_W: u32 = 1440;
+const WIN_H: u32 = 900;
 
 const VIEW_TAG: &str = "analyzer_shell";
 const THEME_TAG: &str = "app";
@@ -148,331 +116,452 @@ const TRANSPORT_KEY: &str = "hello-analyzer-shell/transport";
 /// The replay window a scrub moves through, in seconds.
 const REPLAY_SECS: f32 = 12.0;
 
-const APP_BAR_H: u32 = 40;
+// --- Shell metrics -----------------------------------------------------------
+//
+// The three the reference tool states as constants — twelve columns, a fixed
+// row height and a gutter — are the same here, because a board's arrangement is
+// only portable between two tools that agree on what a cell is.
+
+const APP_BAR_H: u32 = 52;
+const SUB_BAR_H: u32 = 46;
 const RAIL_W: u32 = 52;
-const STATUS_H: u32 = 26;
-const ROW_H: u32 = 96;
-const COLUMNS: u32 = 12;
-/// The gap between a card's cell and its painted box, on every side.
-const CARD_PAD: u32 = 4;
-const HEADER_H: u32 = 20;
+const PALETTE_W: u32 = 292;
+const GRID_COLS: u32 = 12;
+const ROW_H: u32 = 174;
+const GAP: u32 = 16;
+/// A card's header strip.
+const CARD_HDR: u32 = 34;
+/// The size-stepper strip layout-edit mode adds to the foot of every card.
+const EDIT_BAR_H: u32 = 26;
+/// A detached panel's opening size, and the cascade between successive ones.
+const FLOAT_W: u32 = 520;
+const FLOAT_H: u32 = 380;
+const FLOAT_STEP: u32 = 30;
 
-const TITLE_FONT_PX: u32 = 13;
-const BODY_FONT_PX: u32 = 11;
+const FONT_TITLE: u32 = 13;
+const FONT_BODY: u32 = 12;
+const FONT_SMALL: u32 = 11;
+const FONT_TINY: u32 = 10;
 
-/// The sources the app bar offers. The first is the one a session opens on.
-const SOURCES: [&str; 3] = ["live-capture", "session-2.pcapng", "lab-replay"];
+/// The canvas rectangle: everything between the rail and the palette, under
+/// both bars.
+const fn canvas_rect() -> Rect {
+    Rect::new(
+        RAIL_W,
+        APP_BAR_H + SUB_BAR_H,
+        WIN_W - RAIL_W - PALETTE_W,
+        WIN_H - APP_BAR_H - SUB_BAR_H,
+    )
+}
 
-/// The rail's entries — the sections the board is grouped into.
-const RAIL: [&str; 4] = ["capture", "topology", "metrics", "operate"];
+/// One grid column's pitch, gutters included.
+fn col_pitch() -> u32 {
+    (canvas_rect().w.saturating_sub(GAP)) / GRID_COLS
+}
 
-/// One card the shell assembles: its identity, its title, the header it
-/// offers, where it sits on the board, and what its body starts out showing.
+// --- The widget catalogue ----------------------------------------------------
+
+/// One kind of widget the palette offers.
 ///
-/// A `const` table rather than a builder chain, so the *whole* shell is one
-/// value a reader can check against the capability list's twelve widget kinds —
-/// and so that the seeded states below can be read off as a set.
-struct Seed {
-    id: &'static str,
-    title: &'static str,
-    /// Which rail section the card belongs to.
+/// The reference tool's own table, restated: a three-letter code, a label, a
+/// one-line description, an identifying colour, and the cell size it is placed
+/// at. **The descriptions are deliberately domain-neutral** — this file is
+/// about a tool *class*, and nothing about any particular protocol, product or
+/// deployment belongs in a repository.
+struct WidgetDef {
+    kind: &'static str,
+    code: &'static str,
+    label: &'static str,
+    desc: &'static str,
+    color: Color,
     section: &'static str,
+    cols: u32,
+    rows: u32,
     chrome: &'static [CardAffordance],
-    cell: (u32, u32, u32, u32),
-    state: CardState,
 }
 
 use CardAffordance::{Close, Maximize, Settings, TearOff};
 
-/// The twelve widget kinds the capability list names, seeded so that every arm
-/// of [`CardState`] is on the board at once.
-///
-/// The states are not decoration. A shell whose cards are all `Ready` never
-/// exercises the half of this design that matters, and the failure it hides is
-/// the one the capability list warns about: an encrypted link and a permission
-/// denial look identical on screen and are opposite in what the person can do.
-static SEEDS: &[Seed] = &[
-    Seed {
-        id: "stream",
-        title: "Packet stream",
-        section: "capture",
-        chrome: &[Settings, TearOff, Maximize, Close],
-        cell: (0, 0, 5, 2),
-        state: CardState::Ready,
-    },
-    Seed {
-        id: "inspector",
-        title: "Decode inspector",
-        section: "capture",
-        chrome: &[Settings, TearOff, Maximize],
-        cell: (5, 0, 4, 2),
-        state: CardState::Ready,
-    },
-    Seed {
-        id: "topology",
-        title: "Topology map",
-        section: "topology",
-        chrome: &[Settings, TearOff, Maximize, Close],
-        cell: (9, 0, 3, 2),
-        state: CardState::Ready,
-    },
-    Seed {
-        id: "throughput",
-        title: "Throughput",
-        section: "metrics",
-        chrome: &[Settings, Maximize, Close],
-        cell: (0, 2, 4, 1),
-        state: CardState::Loading,
-    },
-    Seed {
-        id: "share",
-        title: "Share by endpoint",
-        section: "metrics",
-        chrome: &[Settings, Maximize, Close],
-        cell: (4, 2, 4, 1),
-        state: CardState::Ready,
-    },
-    Seed {
-        id: "latency",
-        title: "Latency distribution",
-        section: "metrics",
-        chrome: &[Settings, Maximize, Close],
-        cell: (8, 2, 4, 1),
-        state: CardState::Failed(std::borrow::Cow::Borrowed("collector unreachable")),
-    },
-    Seed {
-        id: "loss",
-        title: "Loss timeline",
-        section: "metrics",
-        chrome: &[Settings, Maximize, Close],
-        cell: (0, 3, 4, 1),
-        state: CardState::Empty,
-    },
-    Seed {
-        id: "kpi",
-        title: "KPI",
-        section: "metrics",
-        chrome: &[Settings, Close],
-        cell: (4, 3, 4, 1),
-        state: CardState::Ready,
-    },
-    Seed {
-        id: "alarms",
-        title: "Alarm feed",
-        section: "operate",
-        chrome: &[Settings, TearOff, Close],
-        cell: (8, 3, 4, 1),
-        state: CardState::Empty,
-    },
-    Seed {
-        id: "search",
-        title: "Search and filter",
-        section: "capture",
-        // No settings: this card IS the configuration surface, so a settings
-        // affordance on it would open a panel for a panel. It is also the one
-        // card on the board that withholds `Settings`, which is what gives the
-        // wire's refusal path a case to demonstrate — a board where every card
-        // offers an affordance can never show it being refused.
-        chrome: &[Close],
-        cell: (0, 4, 4, 1),
-        state: CardState::Ready,
-    },
-    Seed {
-        id: "console",
-        title: "Replay and injection",
-        section: "operate",
-        chrome: &[Settings, Maximize, Close],
-        cell: (4, 4, 4, 1),
-        state: CardState::Denied(std::borrow::Cow::Borrowed("operator role")),
-    },
-    Seed {
-        id: "report",
-        title: "Report export",
-        section: "operate",
-        // No tear-off: an export card whose link cannot be read has nothing to
-        // show in a window of its own.
-        chrome: &[Settings, Close],
-        cell: (8, 4, 4, 1),
-        state: CardState::Opaque,
-    },
+/// The palette's sections, in the order the panel lists them.
+const SECTIONS: [(&str, &str); 3] = [
+    ("capture", "CAPTURE & DECODE"),
+    ("visual", "VISUALIZATION"),
+    ("operate", "DIAGNOSE & OPERATE"),
 ];
 
-/// The chords this shell claims, and what each does.
-///
-/// A table rather than prose, because it is **published** (`scene/query
-/// /external/keymap`) as well as painted: a person reads the strip at the
-/// bottom of the window and an agent reads the same list, so neither has to
-/// open this file to find out what the keyboard does. Both then send the same
-/// chord to the same handler.
-const KEYMAP: [(&str, &str); 11] = [
-    ("/", "type into the global search; Enter or Escape leaves"),
-    ("Arrow", "move the selection to the neighbouring card"),
-    ("Shift+Arrow", "move the selected card one cell"),
-    ("Alt+Arrow", "grow that side of the card"),
-    ("Alt+Shift+Arrow", "shrink that side"),
-    ("Enter", "maximise the selection, or restore"),
-    ("Escape", "restore a maximised board"),
-    ("Delete", "close the selected card"),
-    ("o", "tear the selected card off, or dock it back"),
-    ("r", "act on the selected card's remedy"),
-    ("c / t / s", "capture / theme / source"),
-];
-
-/// The keymap, condensed for the strip along the bottom of the window.
-///
-/// Short enough to fit and long enough to get someone started; the full table
-/// is [`KEYMAP`], published on the wire. Written out rather than derived from
-/// it because the two audiences want different densities, and a strip that
-/// listed all eleven rows would be unreadable at 11px.
-const HELP_STRIP: &str = "click a card, drag to move · arrows select · Shift/Alt+arrow move/resize · \
-     Enter maximise · Esc restore · Del close · o tear off · r remedy · / search · c/t/s bar";
-
-/// One hit, named, for the wire and for the status strip.
-///
-/// A word rather than a JSON object: what a caller needs before pressing is
-/// *what is there*, and a name is what both a person and an agent compare.
-///
-/// ★ Every name here is the **scene tag** of the thing that was hit, not a
-/// description of it. R1614's lesson — a name that has to survive is an address
-/// and not a quotation — and the demo enforces it by sweeping the window and
-/// requiring every name this returns to be a tag the paint actually emitted.
-/// The first draft spelled the rail's hits `rail.<name>` while the painter
-/// tagged them `shell.rail.<name>`, and the sweep found it on its first probe.
-fn hit_word(hit: &Hit) -> String {
-    match hit {
-        Hit::Chip(chip) => chip.tag().to_string(),
-        Hit::Rail(name) => format!("shell.rail.{name}"),
-        Hit::Affordance(id, affordance) => format!("card.{id}.{}", affordance.wire()),
-        Hit::Remedy(id) => format!("card.{id}.remedy"),
-        Hit::Card(id) => format!("card.{id}"),
-        Hit::Nothing => "nothing".to_string(),
-    }
+/// A colour from a packed `0xRRGGBB`, so the reference's token table can be
+/// transcribed exactly as it is written rather than as three decimals each.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "each mask isolates one byte, which is what the cast takes"
+)]
+const fn rgb(hex: u32) -> Color {
+    Color::rgb(
+        ((hex >> 16) & 0xFF) as u8,
+        ((hex >> 8) & 0xFF) as u8,
+        (hex & 0xFF) as u8,
+    )
 }
 
-/// The sparkline the KPI card draws — the capability list's own example of a
-/// widget that is a box, a label and a chart primitive rather than a widget the
-/// framework ships.
+/// Twelve widget kinds — the count the palette's footer states.
+static DEFS: &[WidgetDef] = &[
+    WidgetDef {
+        kind: "packet",
+        code: "PKT",
+        label: "Packet Stream",
+        desc: "colour-coded live message list",
+        color: rgb(0x2D_6C_DF),
+        section: "capture",
+        cols: 5,
+        rows: 2,
+        chrome: &[Settings, TearOff, Maximize, Close],
+    },
+    WidgetDef {
+        kind: "decode",
+        code: "DEC",
+        label: "Decode Inspector",
+        desc: "layer tree with hex and fields",
+        color: rgb(0x8A_5C_F6),
+        section: "capture",
+        cols: 4,
+        rows: 2,
+        chrome: &[Settings, TearOff, Maximize, Close],
+    },
+    WidgetDef {
+        kind: "filter",
+        code: "FLT",
+        label: "Search & Filter",
+        desc: "query bar, saved filter chips",
+        color: rgb(0x6B_72_80),
+        section: "capture",
+        cols: 4,
+        rows: 1,
+        chrome: &[Close],
+    },
+    WidgetDef {
+        kind: "topology",
+        code: "TOP",
+        label: "Session / Peer Topology",
+        desc: "endpoint connection graph",
+        color: rgb(0x9A_00_4F),
+        section: "visual",
+        cols: 7,
+        rows: 2,
+        chrome: &[Settings, TearOff, Maximize, Close],
+    },
+    WidgetDef {
+        kind: "throughput",
+        code: "THR",
+        label: "Throughput",
+        desc: "live time series per stream",
+        color: rgb(0x1F_8A_4C),
+        section: "visual",
+        cols: 5,
+        rows: 2,
+        chrome: &[Settings, TearOff, Maximize, Close],
+    },
+    WidgetDef {
+        kind: "share",
+        code: "SHR",
+        label: "Traffic Share",
+        desc: "share of volume by endpoint",
+        color: rgb(0x0E_9A_A7),
+        section: "visual",
+        cols: 4,
+        rows: 2,
+        chrome: &[Settings, Maximize, Close],
+    },
+    WidgetDef {
+        kind: "latency",
+        code: "LAT",
+        label: "Latency",
+        desc: "round-trip distribution",
+        color: rgb(0xC7_78_00),
+        section: "visual",
+        cols: 4,
+        rows: 2,
+        chrome: &[Settings, Maximize, Close],
+    },
+    WidgetDef {
+        kind: "loss",
+        code: "LOS",
+        label: "Loss Tracker",
+        desc: "sequence-gap timeline in lanes",
+        color: rgb(0xB0_33_5B),
+        section: "visual",
+        cols: 5,
+        rows: 1,
+        chrome: &[Settings, Maximize, Close],
+    },
+    WidgetDef {
+        kind: "health",
+        code: "HLT",
+        label: "Health Tiles",
+        desc: "KPI stats with sparklines",
+        color: rgb(0x35_C0_8B),
+        section: "operate",
+        cols: 6,
+        rows: 1,
+        chrome: &[Settings, Close],
+    },
+    WidgetDef {
+        kind: "alarms",
+        code: "ALM",
+        label: "Alarms",
+        desc: "event feed by severity",
+        color: rgb(0xD3_3A_2C),
+        section: "operate",
+        cols: 4,
+        rows: 2,
+        chrome: &[Settings, TearOff, Close],
+    },
+    WidgetDef {
+        kind: "replay",
+        code: "RPL",
+        label: "Replay / Injection",
+        desc: "active injection console",
+        color: rgb(0x8A_5C_F6),
+        section: "operate",
+        cols: 4,
+        rows: 2,
+        chrome: &[Settings, Maximize, Close],
+    },
+    WidgetDef {
+        kind: "report",
+        code: "RPT",
+        label: "Report",
+        desc: "summary and statistics export",
+        color: rgb(0x6B_72_80),
+        section: "operate",
+        cols: 3,
+        rows: 1,
+        chrome: &[Settings, Close],
+    },
+];
+
+/// The kinds the "Overview" layout opens with.
+///
+/// Three placed of twelve offered, which is the state the reference tool opens
+/// in — and the reason the palette exists at all: a board is populated by a
+/// person, so "how many are placed" is a number two parts of the screen have to
+/// agree about.
+const OVERVIEW: [(&str, u32, u32); 3] =
+    [("topology", 0, 0), ("throughput", 7, 0), ("packet", 0, 2)];
+
+fn def_of(kind: &str) -> Option<&'static WidgetDef> {
+    DEFS.iter().find(|d| d.kind == kind)
+}
+
+/// A card's id is `<kind>#<n>` — the kind so the definition is recoverable
+/// without a side table, the ordinal so a kind can be placed more than once.
+fn kind_of(id: &str) -> &str {
+    id.split_once('#').map_or(id, |(kind, _)| kind)
+}
+
+fn def_for_card(id: &str) -> Option<&'static WidgetDef> {
+    def_of(kind_of(id))
+}
+
+fn label_of(id: &str) -> String {
+    def_for_card(id).map_or_else(|| id.to_string(), |d| d.label.to_string())
+}
+
+/// The KPI card's sparkline series.
 const KPI_SERIES: [f64; 12] = [
     4.0, 6.0, 5.0, 9.0, 7.0, 12.0, 10.0, 14.0, 11.0, 15.0, 13.0, 17.0,
 ];
 
-/// Which rail section a card belongs to.
+/// The sources the app bar offers, spelled as a capture tool spells them: an
+/// interface and an endpoint. No real address belongs in a repository, so these
+/// are documentation addresses (RFC 5737 TEST-NET-1).
+const SOURCES: [&str; 3] = [
+    "eth0 \u{00B7} 192.0.2.10:7447",
+    "lo \u{00B7} 127.0.0.1:7447",
+    "file \u{00B7} session-2.capture",
+];
+
+/// The rail's entries: the section key and its name.
+const RAIL: [(&str, &str); 6] = [
+    ("dashboard", "Dashboard"),
+    ("topology", "Topology"),
+    ("stream", "Stream"),
+    ("decode", "Decode"),
+    ("catalog", "Catalog"),
+    ("settings", "Settings"),
+];
+
+/// The two view tabs the app bar carries.
+const TABS: [&str; 2] = ["Dashboard", "Design System"];
+
+/// The reference tool's own dark and light token sets, mapped onto this
+/// framework's roles.
 ///
-/// One map, read by the rail (which counts its section's cards) and by the
-/// wire (which publishes a card's section). Two lookups over one table rather
-/// than a table each, because a card's section is one fact (R1631).
-fn section_of(id: &str) -> &'static str {
-    SEEDS.iter().find(|s| s.id == id).map_or("", |s| s.section)
+/// A tool of this class is looked at for hours in a dim room, so its palette is
+/// a decision rather than a default, and matching it is most of what makes two
+/// screens look like the same product. The mapping is one-way and explicit:
+/// the canvas is the darkest ground, panels sit on it, the raised chrome is one
+/// step lighter again, and one accent serves every affirmative control.
+fn reference_palettes() -> (Theme, Theme) {
+    let dark = Theme {
+        surface: rgb(0x0E_0F_12),
+        on_surface: rgb(0xE8_EB_EF),
+        on_surface_muted: rgb(0x98_A2_AD),
+        accent: rgb(0x9A_00_4F),
+        on_accent: rgb(0xFF_FF_FF),
+        outline: rgb(0x2A_2E_36),
+        surface_container_low: rgb(0x16_18_1D),
+        surface_container: rgb(0x1E_21_27),
+        surface_container_high: rgb(0x25_2A_33),
+        surface_container_highest: rgb(0x3A_40_4B),
+        error: rgb(0xF0_70_5E),
+        inverse_primary: rgb(0xEC_5A_A0),
+        ..Theme::dark()
+    };
+    let light = Theme {
+        surface: rgb(0xF6_F7_F9),
+        on_surface: rgb(0x14_17_1C),
+        on_surface_muted: rgb(0x5B_65_70),
+        accent: rgb(0x9A_00_4F),
+        on_accent: rgb(0xFF_FF_FF),
+        outline: rgb(0xE1_E5_EA),
+        surface_container_low: rgb(0xFF_FF_FF),
+        surface_container: rgb(0xEE_F0_F3),
+        surface_container_high: rgb(0xE7_EA_EF),
+        surface_container_highest: rgb(0xCD_D3_DB),
+        error: rgb(0xD3_3A_2C),
+        inverse_primary: rgb(0x9A_00_4F),
+        ..Theme::light()
+    };
+    (light, dark)
 }
 
-/// How many of a section's cards are still on the board.
-fn section_count(state: &ShellState, section: &str) -> usize {
-    state
-        .cards
-        .get()
-        .iter()
-        .filter(|c| section_of(c.id().as_str()) == section)
-        .count()
+/// The canvas's dot-grid colour, which is not a theme role: it is a hairline
+/// that must read as *below* the surface rather than on it.
+fn grid_ink(dark: bool) -> Color {
+    if dark {
+        rgb(0x20_24_2C)
+    } else {
+        rgb(0xE4_E8_ED)
+    }
 }
 
-// --- State --------------------------------------------------------------------
+// --- State -------------------------------------------------------------------
 
-/// Everything the shell holds. The board and the cards are separate signals
-/// because they answer separate questions — *where* a card is and *what* it is
-/// showing — and a maximise changes only the first.
+/// A detached panel: a card that has left the board and floats over it.
+///
+/// Serialisable because it lives in a `Signal`, and because a session saved
+/// with a panel torn off must reopen with it torn off — the same reason the
+/// arrangement is serialisable.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct Float {
+    id: String,
+    x: u32,
+    y: u32,
+}
+
+/// A drag in flight: which card, where inside it the grab landed, and the cell
+/// a release would put it in.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct Drag {
+    id: TileId,
+    dx: u32,
+    dy: u32,
+    snap: (u32, u32),
+}
+
+/// A saved layout: the arrangement AND which cards were on it.
+///
+/// Both, because a board is two facts — where the cells are and what is in
+/// them — and a preset restoring only the first would put the previous board's
+/// cards into the new layout's holes.
+#[derive(Debug, Clone)]
+struct Preset {
+    board: TileGrid,
+    cards: Vec<Card>,
+}
+
 struct ShellState {
-    /// The replay clock, resolved once inside the owner scope and held.
-    ///
-    /// `use_transport_clock` panics outside an owner scope, and an External's
-    /// `query` / `invoke` run outside one — so resolving it per call would put
-    /// a panic on the wire. Holding the `Rc` is also what makes "live" a
-    /// *derived* word rather than a fourth clock state (see `transport_word`).
     clock: Rc<TransportClock>,
-    /// The theme provider, held for the same reason as the clock: the app
-    /// bar's theme toggle is a wire slot, and `use_theme` panics off the owner
-    /// scope an External's `query` runs on.
     theme: Rc<ThemeProvider>,
     board: Signal<TileGrid>,
     cards: Signal<Vec<Card>>,
-    /// `Some` exactly while a card is maximised. The token IS the way home:
-    /// there is no second copy of the arrangement anywhere in this file, which
-    /// is the property [`Maximized`] exists to make checkable.
+    /// `Some` exactly while a card is maximised. The token IS the way home.
     maximized: Signal<Option<Maximized>>,
-    /// The dock lifecycle of each card that has ever been torn off. The
-    /// statechart is the authority on floating; `floating` below is a
-    /// projection of it for the wire and for repaint.
-    dock: RefCell<BTreeMap<String, Widget<DockPanelPolicy>>>,
-    floating: Signal<String>,
-    presets: RefCell<BTreeMap<String, TileGrid>>,
+    floats: Signal<Vec<Float>>,
+    presets: RefCell<BTreeMap<String, Preset>>,
     preset: Signal<String>,
-    /// The card the keyboard acts on. One roving selection rather than twelve
-    /// tab stops — the pattern `hello-tile-dashboard` established in R1609,
-    /// and the reason a pointer press also sets it: the two entry points must
-    /// share one current card or they drift.
-    selected: Signal<Option<String>>,
-    /// Which rail section is highlighted. A view filter would be a second
-    /// board, so the rail only *marks* a section; the cards stay put.
-    rail_focus: Signal<Option<String>>,
-    /// Where the cursor is, in view pixels, and what the press latched.
-    cursor: Signal<(u32, u32)>,
-    pressed: RefCell<Option<Hit>>,
-    /// A press on a card body opens a board drag: the card, and where inside
-    /// it the grab happened, so the card stays under the finger rather than
-    /// teleporting its corner to the cursor.
-    grab: RefCell<Option<(TileId, u32, u32)>>,
+    preset_open: Signal<bool>,
+    /// Layout-edit mode: the size steppers appear and the grid brightens.
+    editing: Signal<bool>,
+    /// Which card's settings strip is open, if any.
+    config_open: Signal<Option<String>>,
     source: Signal<String>,
     capturing: Signal<bool>,
     search: Signal<String>,
-    /// Whether keystrokes are going into the global search box.
-    ///
-    /// A mode, and modes are usually a smell — this one earns its place
-    /// because the alternative is giving up the single-letter shortcuts, and a
-    /// dashboard that needs a modifier to toggle capture is worse than one that
-    /// needs a slash to search. It is also the convention every tool with a
-    /// filter bar already uses, so it costs a person nothing to learn.
     searching: Signal<bool>,
-    last_event: Signal<String>,
+    tab: Signal<String>,
+    nav: Signal<String>,
+    selected: Signal<Option<String>>,
+    cursor: Signal<(u32, u32)>,
+    pressed: RefCell<Option<Hit>>,
+    drag: Signal<Option<Drag>>,
+    /// The last thing that happened, shown as the reference's toast.
+    toast: Signal<String>,
+    /// The ordinal the next placed card takes.
+    next_id: RefCell<u32>,
 }
 
 impl ShellState {
     fn new(clock: Rc<TransportClock>, theme: Rc<ThemeProvider>) -> Self {
-        let mut board = TileGrid::new(COLUMNS);
-        for spec in SEEDS {
-            let (col, row, w, h) = spec.cell;
+        let (light, dark) = reference_palettes();
+        theme.set_palettes(light, dark);
+        theme.set_mode(ThemeMode::Dark);
+        let mut board = TileGrid::new(GRID_COLS);
+        let mut cards = Vec::new();
+        for (n, (kind, col, row)) in OVERVIEW.iter().enumerate() {
+            let def = def_of(kind).expect("the overview names catalogue kinds");
+            let id = format!("{kind}#{n}");
             board
-                .place(Tile::new(spec.id, col, row, w, h))
-                .expect("the seeded board is a legal arrangement");
+                .place(Tile::new(id.clone(), *col, *row, def.cols, def.rows))
+                .expect("the overview is a legal arrangement");
+            cards.push(
+                Card::new(id, def.label)
+                    .with_chrome(CardChrome::of(def.chrome.iter().copied()))
+                    .with_state(CardState::Ready),
+            );
         }
-        let cards = SEEDS
-            .iter()
-            .map(|spec| {
-                Card::new(spec.id, spec.title)
-                    .with_chrome(CardChrome::of(spec.chrome.iter().copied()))
-                    .with_state(spec.state.clone())
-            })
-            .collect();
         let mut presets = BTreeMap::new();
-        presets.insert("default".to_string(), board.clone());
+        presets.insert(
+            "Overview".to_string(),
+            Preset {
+                board: board.clone(),
+                cards: cards.clone(),
+            },
+        );
         Self {
             clock,
             theme,
             board: Signal::new(board),
             cards: Signal::new(cards),
             maximized: Signal::new(None),
-            dock: RefCell::new(BTreeMap::new()),
-            floating: Signal::new(String::new()),
+            floats: Signal::new(Vec::new()),
             presets: RefCell::new(presets),
-            preset: Signal::new("default".to_string()),
-            selected: Signal::new(None),
-            rail_focus: Signal::new(None),
-            cursor: Signal::new((0, 0)),
-            pressed: RefCell::new(None),
-            grab: RefCell::new(None),
+            preset: Signal::new("Overview".to_string()),
+            preset_open: Signal::new(false),
+            editing: Signal::new(false),
+            config_open: Signal::new(None),
             source: Signal::new(SOURCES[0].to_string()),
             capturing: Signal::new(true),
             search: Signal::new(String::new()),
             searching: Signal::new(false),
-            last_event: Signal::new("assembled".to_string()),
+            tab: Signal::new(TABS[0].to_string()),
+            nav: Signal::new("dashboard".to_string()),
+            selected: Signal::new(None),
+            cursor: Signal::new((0, 0)),
+            pressed: RefCell::new(None),
+            drag: Signal::new(None),
+            toast: Signal::new("Overview loaded".to_string()),
+            next_id: RefCell::new(u(OVERVIEW.len())),
         }
     }
 
@@ -480,7 +569,6 @@ impl ShellState {
         self.cards.get().into_iter().find(|c| c.id().as_str() == id)
     }
 
-    /// Replace one card, leaving the rest and the board alone.
     fn update_card(&self, id: &str, edit: impl FnOnce(&mut Card)) -> bool {
         let mut cards = self.cards.get();
         let Some(found) = cards.iter_mut().find(|c| c.id().as_str() == id) else {
@@ -500,33 +588,18 @@ impl ShellState {
             .join(",")
     }
 
-    /// Whether a card is currently torn off, per its statechart.
-    fn is_floating(&self, id: &str) -> bool {
-        self.dock
-            .borrow()
-            .get(id)
-            .is_some_and(|w| !matches!(w.state(), DockPanelState::Docked))
+    /// The cards actually on the board — a detached one is not.
+    fn placed(&self) -> Vec<Card> {
+        let floating = self.floats.get();
+        self.cards
+            .get()
+            .into_iter()
+            .filter(|c| !floating.iter().any(|f| f.id == c.id().as_str()))
+            .collect()
     }
 
-    /// Send a dock event to one card's lifecycle and re-project `floating`.
-    ///
-    /// The projection is recomputed from the statecharts rather than edited
-    /// alongside them: two writers on one fact is how a "floating" list and the
-    /// panels that are actually floating drift apart.
-    fn dock_send(&self, id: &str, event: DockPanelEvent) {
-        {
-            let mut dock = self.dock.borrow_mut();
-            dock.entry(id.to_string()).or_default().send(event);
-        }
-        let mut floating: Vec<String> = self
-            .dock
-            .borrow()
-            .iter()
-            .filter(|(_, w)| !matches!(w.state(), DockPanelState::Docked))
-            .map(|(id, _)| id.clone())
-            .collect();
-        floating.sort();
-        self.floating.set(floating.join(","));
+    fn is_floating(&self, id: &str) -> bool {
+        self.floats.get().iter().any(|f| f.id == id)
     }
 
     fn preset_names(&self) -> String {
@@ -537,13 +610,13 @@ impl ShellState {
             .collect::<Vec<_>>()
             .join(",")
     }
+
+    fn say(&self, what: impl Into<String>) {
+        self.toast.set(what.into());
+    }
 }
 
 fn use_shell_state() -> Rc<ShellState> {
-    // Resolved BEFORE the cache call rather than inside the factory: the clock
-    // registers itself with the §5.28 animation driver through the same owner,
-    // and doing that while the cache is mid-insert is a re-entrancy this file
-    // has no reason to rely on.
     let clock = use_transport_clock(TRANSPORT_KEY, REPLAY_SECS);
     let theme = use_theme(THEME_TAG);
     Owner::current()
@@ -551,10 +624,449 @@ fn use_shell_state() -> Rc<ShellState> {
         .cache(STATE_KEY, move || ShellState::new(clock, theme))
 }
 
-// --- The oracle (primary External) --------------------------------------------
+// --- Geometry: ONE source, read by the paint and by the gesture --------------
+//
+// debt-paint-and-gesture-read-two-facts is open in this project because a
+// surface whose painter and hit test compute their rectangles separately drifts
+// into a control drawn where it cannot be clicked. Every rectangle below is
+// computed once and used by BOTH the `*_scene` painters and `Hit::at`.
 
-/// Publishes the shell — the app bar's four slots, the rail, the board, and
-/// every card's header and body state — and owns the verbs that change them.
+/// A container's own coordinate space: its size at the origin.
+///
+/// ★ Children of an absolutely-positioned container are placed RELATIVE TO IT,
+/// so a child written in window coordinates lands at the parent's origin plus
+/// its own. R1648 shipped exactly that bug and only a two-direction sweep of
+/// the painted rectangles found it. The sub-rectangles below are **local**; the
+/// painter passes `local(rect)` and the hit test subtracts the origin.
+const fn local(rect: Rect) -> Rect {
+    Rect::new(0, 0, rect.w, rect.h)
+}
+
+const fn contains(rect: Rect, px: u32, py: u32) -> bool {
+    px >= rect.x && px < rect.x + rect.w && py >= rect.y && py < rect.y + rect.h
+}
+
+fn u(n: usize) -> u32 {
+    u32::try_from(n).unwrap_or(u32::MAX)
+}
+
+/// Where a tile sits on the canvas, in the canvas's own space.
+fn cell_rect(tile: &Tile) -> Rect {
+    let pitch = col_pitch();
+    Rect::new(
+        GAP + tile.col * pitch,
+        GAP + tile.row * ROW_H,
+        (tile.w * pitch).saturating_sub(GAP).max(1),
+        (tile.h * ROW_H).saturating_sub(GAP).max(1),
+    )
+}
+
+/// The board cell a canvas-local pixel lands on — the inverse of [`cell_rect`],
+/// and the only place the two directions meet.
+fn cell_at(lx: u32, ly: u32) -> (u32, u32) {
+    let pitch = col_pitch().max(1);
+    let col = lx.saturating_sub(GAP) / pitch;
+    let row = ly.saturating_sub(GAP) / ROW_H;
+    (col.min(GRID_COLS - 1), row)
+}
+
+const fn header_rect(card: Rect) -> Rect {
+    Rect::new(card.x, card.y, card.w, CARD_HDR)
+}
+
+const fn body_rect(card: Rect, editing: bool) -> Rect {
+    let foot = if editing { EDIT_BAR_H } else { 0 };
+    Rect::new(
+        card.x,
+        card.y + CARD_HDR,
+        card.w,
+        card.h.saturating_sub(CARD_HDR + foot),
+    )
+}
+
+/// The size-stepper strip at the foot of a card in layout-edit mode.
+const fn edit_bar_rect(card: Rect) -> Rect {
+    Rect::new(
+        card.x,
+        (card.y + card.h).saturating_sub(EDIT_BAR_H),
+        card.w,
+        EDIT_BAR_H,
+    )
+}
+
+/// One header control slot. Right-aligned, in declaration order, so the
+/// rightmost is the last affordance the vocabulary declares.
+const SLOT_W: u32 = 28;
+
+const fn affordance_rect(header: Rect, count: u32, n: u32) -> Rect {
+    let from_right = count.saturating_sub(n);
+    Rect::new(
+        (header.x + header.w).saturating_sub(from_right * SLOT_W + 6),
+        header.y + 4,
+        SLOT_W,
+        CARD_HDR - 8,
+    )
+}
+
+/// The drag handle at the left of a header — the reference's six-dot grip.
+const fn grip_rect(header: Rect) -> Rect {
+    Rect::new(header.x + 4, header.y + 4, 18, CARD_HDR - 8)
+}
+
+/// Where a not-ready card's remedy control sits.
+const fn remedy_rect(body: Rect) -> Rect {
+    Rect::new(body.x + 10, body.y + 32, 150, 22)
+}
+
+/// The size steppers, left to right: `− W + − H +`.
+const STEPPERS: [(&str, &str); 4] = [
+    ("narrow", "\u{2212}"),
+    ("widen", "+"),
+    ("shorter", "\u{2212}"),
+    ("taller", "+"),
+];
+
+/// Where the `n`th stepper button sits in a card's edit bar: two groups of two,
+/// with the axis letter between them.
+const fn stepper_rect(bar: Rect, n: u32) -> Rect {
+    let group = n / 2;
+    let within = n % 2;
+    Rect::new(
+        bar.x + 8 + group * 78 + within * 46,
+        bar.y + 3,
+        20,
+        EDIT_BAR_H - 6,
+    )
+}
+
+/// The app bar's pressable regions, left to right.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum BarChip {
+    Tab0,
+    Tab1,
+    Source,
+    Capture,
+    Search,
+}
+
+impl BarChip {
+    const ALL: [Self; 5] = [
+        Self::Tab0,
+        Self::Tab1,
+        Self::Source,
+        Self::Capture,
+        Self::Search,
+    ];
+
+    const fn tag(self) -> &'static str {
+        match self {
+            Self::Tab0 => "shell.appbar.tab.dashboard",
+            Self::Tab1 => "shell.appbar.tab.design",
+            Self::Source => "shell.appbar.source",
+            Self::Capture => "shell.appbar.capture",
+            Self::Search => "shell.appbar.search",
+        }
+    }
+
+    const fn rect(self) -> Rect {
+        match self {
+            Self::Tab0 => Rect::new(168, 10, 108, 32),
+            Self::Tab1 => Rect::new(280, 10, 118, 32),
+            Self::Source => Rect::new(416, 10, 268, 32),
+            Self::Capture => Rect::new(696, 10, 132, 32),
+            Self::Search => Rect::new(WIN_W - 300, 10, 288, 32),
+        }
+    }
+}
+
+/// The sub bar's pressable regions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SubChip {
+    Preset,
+    EditLayout,
+    AddWidget,
+}
+
+impl SubChip {
+    const ALL: [Self; 3] = [Self::Preset, Self::EditLayout, Self::AddWidget];
+
+    const fn tag(self) -> &'static str {
+        match self {
+            Self::Preset => "shell.subbar.preset",
+            Self::EditLayout => "shell.subbar.edit",
+            Self::AddWidget => "shell.subbar.add",
+        }
+    }
+
+    /// In the sub bar's own space, whose origin is `(RAIL_W, APP_BAR_H)`.
+    const fn rect(self) -> Rect {
+        let bar_w = WIN_W - RAIL_W - PALETTE_W;
+        match self {
+            Self::Preset => Rect::new(16, 7, 178, 32),
+            Self::EditLayout => Rect::new(bar_w - 330, 7, 140, 32),
+            Self::AddWidget => Rect::new(bar_w - 180, 7, 164, 32),
+        }
+    }
+}
+
+/// One entry of the open preset menu, in the sub bar's own space.
+const fn preset_item_rect(n: u32) -> Rect {
+    let anchor = SubChip::Preset.rect();
+    Rect::new(anchor.x + 8, anchor.y + 44 + n * 34, 210, 30)
+}
+
+/// Where the `n`th rail entry sits, in the rail container's own space.
+const fn rail_rect(n: u32) -> Rect {
+    Rect::new(8, 14 + n * 44, RAIL_W - 16, 36)
+}
+
+/// One palette entry's height.
+///
+/// Sized so that the whole catalogue FITS the panel: the reference scrolls its
+/// palette and this shell does not, so a row height that overflowed would put
+/// the last widget kinds under the footer where nothing can reach them. That is
+/// a real difference from the reference and it is spent here rather than
+/// hidden — see the module docs' list of what is not matched.
+const PALETTE_ROW_H: u32 = 46;
+
+/// The palette panel's rectangle.
+const fn palette_rect() -> Rect {
+    Rect::new(WIN_W - PALETTE_W, APP_BAR_H, PALETTE_W, WIN_H - APP_BAR_H)
+}
+
+/// The palette's rows — section headers interleaved with entries, in the
+/// panel's own space.
+///
+/// Returned rather than recomputed at each site: the painter walks it to draw
+/// and the hit test walks it to resolve, which is the discipline the card
+/// rectangles follow.
+fn palette_rows() -> Vec<(Option<&'static WidgetDef>, &'static str, Rect)> {
+    let mut out = Vec::new();
+    let mut y = 76_u32;
+    for (key, title) in SECTIONS {
+        out.push((None, title, Rect::new(16, y, PALETTE_W - 32, 20)));
+        y += 26;
+        for def in DEFS.iter().filter(|d| d.section == key) {
+            out.push((
+                Some(def),
+                def.label,
+                Rect::new(10, y, PALETTE_W - 30, PALETTE_ROW_H),
+            ));
+            y += PALETTE_ROW_H + 4;
+        }
+        y += 8;
+    }
+    out
+}
+
+// --- What is under a point ---------------------------------------------------
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Hit {
+    Chip(BarChip),
+    Sub(SubChip),
+    PresetItem(usize),
+    Rail(&'static str),
+    Palette(&'static str),
+    Grip(String),
+    Affordance(String, CardAffordance),
+    Stepper(String, &'static str),
+    Remedy(String),
+    Card(String),
+    FloatRedock(String),
+    FloatClose(String),
+    Float(String),
+    Nothing,
+}
+
+impl Hit {
+    /// Front to back: the preset menu is over the sub bar, floats are over the
+    /// canvas, and a card's own controls are over its body.
+    fn at(state: &ShellState, px: u32, py: u32) -> Self {
+        let sub_origin = (RAIL_W, APP_BAR_H);
+        if state.preset_open.get() && px >= sub_origin.0 && py >= sub_origin.1 {
+            let (lx, ly) = (px - sub_origin.0, py - sub_origin.1);
+            let rows = state.presets.borrow().len();
+            for n in 0..=rows {
+                if contains(preset_item_rect(u(n)), lx, ly) {
+                    return Self::PresetItem(n);
+                }
+            }
+        }
+        if py < APP_BAR_H {
+            for chip in BarChip::ALL {
+                if contains(chip.rect(), px, py) {
+                    return Self::Chip(chip);
+                }
+            }
+            return Self::Nothing;
+        }
+        if px >= palette_rect().x {
+            let panel = palette_rect();
+            let (lx, ly) = (px - panel.x, py - panel.y);
+            for (def, _title, rect) in palette_rows() {
+                if let Some(def) = def
+                    && contains(rect, lx, ly)
+                {
+                    return Self::Palette(def.kind);
+                }
+            }
+            return Self::Nothing;
+        }
+        if px < RAIL_W {
+            for (n, (key, _)) in RAIL.iter().enumerate() {
+                if contains(rail_rect(u(n)), px, py - APP_BAR_H) {
+                    return Self::Rail(key);
+                }
+            }
+            return Self::Nothing;
+        }
+        if py < APP_BAR_H + SUB_BAR_H {
+            let (lx, ly) = (px - sub_origin.0, py - sub_origin.1);
+            for chip in SubChip::ALL {
+                if contains(chip.rect(), lx, ly) {
+                    return Self::Sub(chip);
+                }
+            }
+            return Self::Nothing;
+        }
+        let canvas = canvas_rect();
+        Self::in_canvas(state, px - canvas.x, py - canvas.y)
+    }
+
+    /// What is under a point in the canvas's own space.
+    ///
+    /// Split out of [`Self::at`] because the canvas is the one region with a
+    /// stacking order of its own — floats over cards, a card's controls over
+    /// its body — and reading that order should not mean scrolling past the
+    /// four chrome regions first.
+    fn in_canvas(state: &ShellState, cx: u32, cy: u32) -> Self {
+        // Floats are over the canvas, newest first.
+        for float in state.floats.get().iter().rev() {
+            let rect = float_rect(float);
+            if !contains(rect, cx, cy) {
+                continue;
+            }
+            let (lx, ly) = (cx - rect.x, cy - rect.y);
+            let header = header_rect(local(rect));
+            if contains(header, lx, ly) {
+                if contains(affordance_rect(header, 2, 1), lx, ly) {
+                    return Self::FloatClose(float.id.clone());
+                }
+                if contains(affordance_rect(header, 2, 0), lx, ly) {
+                    return Self::FloatRedock(float.id.clone());
+                }
+            }
+            return Self::Float(float.id.clone());
+        }
+        let board = state.board.get();
+        let editing = state.editing.get();
+        for card in &state.placed() {
+            let Some(tile) = board.tile(card.id()) else {
+                continue;
+            };
+            let rect = cell_rect(tile);
+            if !contains(rect, cx, cy) {
+                continue;
+            }
+            let (lx, ly) = (cx - rect.x, cy - rect.y);
+            let inside = local(rect);
+            let id = card.id().as_str().to_string();
+            let header = header_rect(inside);
+            if contains(header, lx, ly) {
+                let offered = card.chrome().offered();
+                for (n, affordance) in offered.iter().enumerate() {
+                    if contains(affordance_rect(header, u(offered.len()), u(n)), lx, ly) {
+                        return Self::Affordance(id, *affordance);
+                    }
+                }
+                // The whole header drags, as it does in the reference; the grip
+                // is where it SAYS so.
+                return Self::Grip(id);
+            }
+            if editing {
+                let bar = edit_bar_rect(inside);
+                if contains(bar, lx, ly) {
+                    for (n, (verb, _)) in STEPPERS.iter().enumerate() {
+                        if contains(stepper_rect(bar, u(n)), lx, ly) {
+                            return Self::Stepper(id, verb);
+                        }
+                    }
+                    return Self::Card(id);
+                }
+            }
+            if card.remedy().is_some_and(Remedy::is_actionable)
+                && contains(remedy_rect(body_rect(inside, editing)), lx, ly)
+            {
+                return Self::Remedy(id);
+            }
+            return Self::Card(id);
+        }
+        Self::Nothing
+    }
+
+    fn card_id(&self) -> Option<&str> {
+        match self {
+            Self::Affordance(id, _)
+            | Self::Remedy(id)
+            | Self::Card(id)
+            | Self::Grip(id)
+            | Self::Stepper(id, _) => Some(id),
+            _ => None,
+        }
+    }
+}
+
+/// A detached panel's rectangle, in the canvas's own space.
+const fn float_rect(float: &Float) -> Rect {
+    Rect::new(float.x, float.y, FLOAT_W, FLOAT_H)
+}
+
+/// One hit, named by the **scene tag** of the thing that was hit.
+///
+/// R1614's lesson — a name that has to survive is an address, not a
+/// description — and the demo enforces it by sweeping the window and requiring
+/// every name this returns to be a tag the paint actually emitted.
+fn hit_word(hit: &Hit) -> String {
+    match hit {
+        Hit::Chip(chip) => chip.tag().to_string(),
+        Hit::Sub(chip) => chip.tag().to_string(),
+        Hit::PresetItem(n) => format!("shell.preset.item.{n}"),
+        Hit::Rail(name) => format!("shell.rail.{name}"),
+        Hit::Palette(kind) => format!("shell.palette.{kind}"),
+        Hit::Grip(id) => format!("card.{id}.grip"),
+        Hit::Affordance(id, affordance) => format!("card.{id}.{}", affordance.wire()),
+        Hit::Stepper(id, verb) => format!("card.{id}.{verb}"),
+        Hit::Remedy(id) => format!("card.{id}.remedy"),
+        Hit::Card(id) => format!("card.{id}"),
+        Hit::FloatRedock(id) => format!("float.{id}.redock"),
+        Hit::FloatClose(id) => format!("float.{id}.close"),
+        Hit::Float(id) => format!("float.{id}"),
+        Hit::Nothing => "nothing".to_string(),
+    }
+}
+
+/// The chords this shell claims, published as well as painted.
+const KEYMAP: [(&str, &str); 12] = [
+    ("/", "type into the global search; Enter or Escape leaves"),
+    ("Arrow", "move the selection to the neighbouring card"),
+    ("Shift+Arrow", "move the selected card one cell"),
+    ("Alt+Arrow", "grow that side of the card"),
+    ("Alt+Shift+Arrow", "shrink that side"),
+    ("Enter", "maximise the selection, or restore"),
+    ("Escape", "restore a maximised board"),
+    ("Delete", "close the selected card"),
+    ("e", "toggle layout edit mode"),
+    ("o", "detach the selected card, or re-dock it"),
+    ("r", "act on the selected card's remedy"),
+    ("c / t / s", "capture / theme / source"),
+];
+
+const HELP_STRIP: &str = "drag a header to move \u{00B7} e edit \u{00B7} o detach \u{00B7} Enter max \u{00B7} \
+     Esc restore \u{00B7} Del close \u{00B7} / search";
+
+// --- The oracle (primary External) ------------------------------------------
+
 struct ShellOracle {
     state: Option<Rc<ShellState>>,
 }
@@ -568,7 +1080,6 @@ impl core::fmt::Debug for ShellOracle {
 }
 
 impl ShellOracle {
-    /// R1564 §5.15 — the one sentence for "not wired to a model yet".
     const NO_STATE: &str = "this shell surface is not bound to a model yet";
 
     const fn new() -> Self {
@@ -594,9 +1105,6 @@ impl ShellOracle {
         }
     }
 
-    /// The card an argument names, or a refusal that says the id is unknown —
-    /// distinct from a malformed argument, because "you spelled a card that is
-    /// not on this board" is a different fact from "that is not a card id".
     fn card_of(state: &ShellState, id: &str) -> Result<Card, InvokeError> {
         state.card(id).ok_or_else(|| {
             InvokeError::rejected(format!(
@@ -606,12 +1114,7 @@ impl ShellOracle {
         })
     }
 
-    /// The six reads that take a card id, answered together.
-    ///
-    /// `None` when `path` is not one of them, so the dispatcher below stays a
-    /// list of verbs. They are grouped because they share one argument shape
-    /// and one refusal — a card id that is not on this board — and a reader
-    /// checking that refusal should find it once.
+    /// The reads that take a card id, answered together.
     fn card_read(
         state: &Rc<ShellState>,
         path: &str,
@@ -619,7 +1122,7 @@ impl ShellOracle {
     ) -> Option<Result<IntrospectValue, InvokeError>> {
         let wanted = matches!(
             path,
-            "title" | "chrome" | "section" | "state" | "detail" | "remedy" | "actionable"
+            "title" | "chrome" | "section" | "state" | "detail" | "remedy" | "actionable" | "cell"
         );
         if !wanted {
             return None;
@@ -628,16 +1131,19 @@ impl ShellOracle {
             Ok(card) => card,
             Err(why) => return Some(Err(why)),
         };
+        let id = card.id().as_str().to_string();
         let answer = match path {
             "title" => card.title().to_string(),
             "chrome" => offered_words(&card),
-            "section" => section_of(card.id().as_str()).to_string(),
+            "section" => def_for_card(&id).map_or_else(String::new, |d| d.section.to_string()),
             "state" => card.state().wire().to_string(),
-            // `""` for the four arms that carry nothing — the absence is the
-            // answer, and it differs from a carried reason that happens to be
-            // empty only in that the arms which carry one always have one.
             "detail" => card.state().detail().unwrap_or("").to_string(),
             "remedy" => remedy_word(card.remedy()).to_string(),
+            // Where it is, or that it is nowhere on the board.
+            "cell" => state.board.get().tile(card.id()).map_or_else(
+                || "detached".to_string(),
+                |t| format!("{},{},{},{}", t.col, t.row, t.w, t.h),
+            ),
             _ => if card.remedy().is_some_and(Remedy::is_actionable) {
                 "yes"
             } else {
@@ -650,11 +1156,10 @@ impl ShellOracle {
 
     /// `act` — perform one header affordance on one card.
     ///
-    /// The whole point of the header being a *set* rather than four booleans a
-    /// painter reads: an affordance the card does not offer is refused **by
-    /// name**, before anything happens, and the refusal says what the card does
-    /// offer. A shell that only hides the button leaves the wire able to do
-    /// what the screen says is impossible.
+    /// The whole point of the header being a *set*: an affordance the card does
+    /// not offer is refused **by name**, before anything happens. A shell that
+    /// only hides the button leaves the wire able to do what the screen says is
+    /// impossible.
     fn act(state: &Rc<ShellState>, args: &IntrospectValue) -> Result<IntrospectValue, InvokeError> {
         let raw = Self::text(args)?;
         let (id, word) = raw
@@ -676,35 +1181,142 @@ impl ShellOracle {
         }
         match affordance {
             CardAffordance::Settings => {
-                state.last_event.set(format!("settings opened for {id}"));
+                let open = state.config_open.get().as_deref() == Some(id);
+                state
+                    .config_open
+                    .set(if open { None } else { Some(id.to_string()) });
+                state.say(format!(
+                    "{} settings {}",
+                    label_of(id),
+                    if open { "closed" } else { "opened" }
+                ));
             }
-            CardAffordance::TearOff => {
-                // Not a second float model: the existing dock lifecycle is what
-                // says whether a panel is floating, and this sends it the event
-                // it already understands.
-                state.dock_send(id, DockPanelEvent::Escaped);
-                state.last_event.set(format!("{id} torn off"));
-            }
+            CardAffordance::TearOff => return Self::detach(state, id),
             CardAffordance::Maximize => return Self::maximize(state, id),
             CardAffordance::Close => {
-                let mut board = state.board.get();
-                board.remove(&TileId::new(id)).ok();
-                state.board.set(board);
-                let cards = state
-                    .cards
-                    .get()
-                    .into_iter()
-                    .filter(|c| c.id().as_str() != id)
-                    .collect();
-                state.cards.set(cards);
-                state.last_event.set(format!("{id} closed"));
+                Self::remove(state, id);
+                state.say(format!("{} removed", label_of(id)));
             }
         }
         Ok(IntrospectValue::Text(format!("{id} {word}")))
     }
 
-    /// Fill the board with one card, keeping the way home in the one place it
-    /// lives.
+    /// Take a card off the board and out of the deck.
+    fn remove(state: &Rc<ShellState>, id: &str) {
+        let mut board = state.board.get();
+        board.remove(&TileId::new(id)).ok();
+        state.board.set(board);
+        state.cards.set(
+            state
+                .cards
+                .get()
+                .into_iter()
+                .filter(|c| c.id().as_str() != id)
+                .collect(),
+        );
+        state.floats.set(
+            state
+                .floats
+                .get()
+                .into_iter()
+                .filter(|f| f.id != id)
+                .collect(),
+        );
+        if state.selected.get().as_deref() == Some(id) {
+            state.selected.set(None);
+        }
+    }
+
+    /// ★ Detach REMOVES the card from the board and opens a floating panel.
+    ///
+    /// R1648 kept the tile in place and argued that a temporary gesture should
+    /// not reflow a layout. The reference tool does remove it, and re-docking
+    /// appends at the bottom — so a detach IS a layout edit there, and on this
+    /// axis the reference is the specification rather than a data point.
+    fn detach(state: &Rc<ShellState>, id: &str) -> Result<IntrospectValue, InvokeError> {
+        if state.is_floating(id) {
+            return Err(InvokeError::rejected(format!(
+                "card {id:?} is already detached"
+            )));
+        }
+        Self::card_of(state, id)?;
+        let mut board = state.board.get();
+        board.remove(&TileId::new(id)).ok();
+        state.board.set(board);
+        let n = u(state.floats.get().len());
+        let mut floats = state.floats.get();
+        floats.push(Float {
+            id: id.to_string(),
+            x: 120 + n * FLOAT_STEP,
+            y: 40 + n * FLOAT_STEP,
+        });
+        state.floats.set(floats);
+        state.say(format!("{} \u{2192} detached window", label_of(id)));
+        Ok(IntrospectValue::Text(format!("{id} tear_off")))
+    }
+
+    /// Put a detached card back — at the bottom of the board, as the reference
+    /// does. The card lost its cell when it left, and inventing one back would
+    /// be a third placement rule nobody asked for.
+    fn redock(state: &Rc<ShellState>, id: &str) -> Result<IntrospectValue, InvokeError> {
+        if !state.is_floating(id) {
+            return Err(InvokeError::rejected(format!(
+                "card {id:?} is not detached"
+            )));
+        }
+        let def = def_for_card(id)
+            .ok_or_else(|| InvokeError::rejected(format!("no catalogue entry for {id:?}")))?;
+        let mut board = state.board.get();
+        let row = board.rows();
+        board
+            .place(Tile::new(id, 0, row, def.cols, def.rows))
+            .map_err(|why| InvokeError::rejected(why.to_string()))?;
+        state.board.set(board);
+        state.floats.set(
+            state
+                .floats
+                .get()
+                .into_iter()
+                .filter(|f| f.id != id)
+                .collect(),
+        );
+        state.say(format!("{} re-docked", label_of(id)));
+        Ok(IntrospectValue::Text(format!("{id} redock")))
+    }
+
+    /// Place a new card of that kind at the bottom of the board.
+    fn add(state: &Rc<ShellState>, kind: &str) -> Result<IntrospectValue, InvokeError> {
+        let def = def_of(kind.trim()).ok_or_else(|| {
+            InvokeError::rejected(format!(
+                "{kind:?} is not a widget kind; the palette offers {}",
+                DEFS.iter().map(|d| d.kind).collect::<Vec<_>>().join(", ")
+            ))
+        })?;
+        let ordinal = {
+            let mut next = state.next_id.borrow_mut();
+            let now = *next;
+            *next += 1;
+            now
+        };
+        let id = format!("{}#{ordinal}", def.kind);
+        let mut board = state.board.get();
+        let row = board.rows();
+        board
+            .place(Tile::new(id.clone(), 0, row, def.cols, def.rows))
+            .map_err(|why| InvokeError::rejected(why.to_string()))?;
+        state.board.set(board);
+        let mut cards = state.cards.get();
+        cards.push(
+            Card::new(id.clone(), def.label)
+                .with_chrome(CardChrome::of(def.chrome.iter().copied()))
+                .with_state(CardState::Ready),
+        );
+        state.cards.set(cards);
+        state.selected.set(Some(id.clone()));
+        state.say(format!("{} added", def.label));
+        Ok(IntrospectValue::Text(id))
+    }
+
     fn maximize(state: &Rc<ShellState>, id: &str) -> Result<IntrospectValue, InvokeError> {
         if state.maximized.get().is_some() {
             return Err(InvokeError::rejected(
@@ -717,11 +1329,10 @@ impl ShellOracle {
             .map_err(|why| InvokeError::rejected(why.to_string()))?;
         state.board.set(board);
         state.maximized.set(Some(token));
-        state.last_event.set(format!("{id} maximised"));
+        state.say(format!("{} maximised", label_of(id)));
         Ok(IntrospectValue::Text(format!("{id} maximize")))
     }
 
-    /// Put the board back the way it was before the maximise.
     fn restore(state: &Rc<ShellState>) -> Result<IntrospectValue, InvokeError> {
         let token = state
             .maximized
@@ -730,16 +1341,37 @@ impl ShellOracle {
         let id = token.id().as_str().to_string();
         state.board.set(token.restore());
         state.maximized.set(None);
-        state.last_event.set(format!("{id} restored"));
+        state.say(format!("{} restored", label_of(&id)));
         Ok(IntrospectValue::Text(id))
     }
 
-    /// Drive one card's body state — the input a real collector would provide.
-    ///
-    /// `<card>,<state>[,<detail>]`. The detail segment is required by exactly
-    /// the two arms that carry one and refused on the four that do not: an
-    /// explanation attached to `empty` would be an explanation nothing reads,
-    /// and a `failed` without one is a failure whose reason was lost.
+    /// A size stepper: one cell wider, narrower, taller or shorter.
+    fn step(state: &Rc<ShellState>, id: &str, verb: &str) -> Result<IntrospectValue, InvokeError> {
+        let tile_id = TileId::new(id);
+        let mut board = state.board.get();
+        let tile = board
+            .tile(&tile_id)
+            .ok_or_else(|| InvokeError::rejected(format!("card {id:?} is not on the board")))?;
+        let (w, h) = match verb {
+            "widen" => (tile.w + 1, tile.h),
+            "narrow" => (tile.w.saturating_sub(1).max(1), tile.h),
+            "taller" => (tile.w, tile.h + 1),
+            "shorter" => (tile.w, tile.h.saturating_sub(1).max(1)),
+            other => {
+                return Err(InvokeError::rejected(format!(
+                    "{other:?} is not a size step; they are {}",
+                    STEPPERS.map(|(verb, _)| verb).join(" / ")
+                )));
+            }
+        };
+        board
+            .resize(&tile_id, w, h)
+            .map_err(|why| InvokeError::rejected(why.to_string()))?;
+        state.board.set(board);
+        state.say(format!("{} \u{2192} {w}\u{00D7}{h}", label_of(id)));
+        Ok(IntrospectValue::Text(format!("{w}x{h}")))
+    }
+
     fn set_state(
         state: &Rc<ShellState>,
         args: &IntrospectValue,
@@ -756,20 +1388,104 @@ impl ShellOracle {
         let next = parse_state(word, detail).map_err(InvokeError::rejected)?;
         let remedy = next.remedy();
         state.update_card(id, |card| card.set_state(next.clone()));
-        state.last_event.set(format!("{id} is {}", next.wire()));
+        state.say(format!("{} is {}", label_of(id), next.wire()));
         Ok(IntrospectValue::Text(format!(
             "{id} {} {}",
             next.wire(),
             remedy_word(remedy)
         )))
     }
+
+    /// The app bar's own writable slots — source, capture, theme.
+    ///
+    /// `None` when `path` is not one of them, so the dispatcher stays a list.
+    /// They are grouped because they are one region of the screen and each one
+    /// refuses the same way: by naming what it does accept.
+    fn write_bar(
+        state: &Rc<ShellState>,
+        path: &str,
+        value: &IntrospectValue,
+    ) -> Option<Result<(), InterveneError>> {
+        let word = |value: &IntrospectValue| match value {
+            IntrospectValue::Text(s) => Ok(s.trim().to_string()),
+            _ => Err(InterveneError::TypeMismatch),
+        };
+        Some(match path {
+            "source" => word(value).and_then(|name| {
+                let chosen = SOURCES.iter().find(|s| **s == name).ok_or_else(|| {
+                    InterveneError::out_of_range(format!(
+                        "{name:?} is not a source; they are {}",
+                        SOURCES.join(", ")
+                    ))
+                })?;
+                state.source.set((*chosen).to_string());
+                state.say(format!("source {chosen}"));
+                Ok(())
+            }),
+            "capturing" => match value {
+                IntrospectValue::Bool(on) => {
+                    state.capturing.set(*on);
+                    state.say(format!("capture {}", if *on { "on" } else { "off" }));
+                    Ok(())
+                }
+                _ => Err(InterveneError::TypeMismatch),
+            },
+            "theme" => word(value).and_then(|name| {
+                let mode = match name.as_str() {
+                    "light" => ThemeMode::Light,
+                    "dark" => ThemeMode::Dark,
+                    "system" => ThemeMode::System,
+                    other => {
+                        return Err(InterveneError::out_of_range(format!(
+                            "{other:?} is not a theme; they are light / dark / system"
+                        )));
+                    }
+                };
+                state.theme.set_mode(mode);
+                state.say(format!("theme {name}"));
+                Ok(())
+            }),
+            _ => return None,
+        })
+    }
+
+    fn apply_preset(state: &Rc<ShellState>, name: &str) -> Result<(), InterveneError> {
+        let stored = state.presets.borrow().get(name).cloned();
+        let preset = stored.ok_or_else(|| {
+            InterveneError::out_of_range(format!(
+                "{name:?} is not a saved layout; they are {}",
+                state.preset_names()
+            ))
+        })?;
+        // A preset restores BOTH facts. Restoring only the arrangement would
+        // put the previous board's cards into the new layout's holes.
+        state.maximized.set(None);
+        state.floats.set(Vec::new());
+        state.board.set(preset.board);
+        state.cards.set(preset.cards);
+        state.preset.set(name.to_string());
+        state.preset_open.set(false);
+        state.say(format!("layout \u{201C}{name}\u{201D}"));
+        Ok(())
+    }
+
+    fn save_preset(state: &Rc<ShellState>, name: &str) -> Result<IntrospectValue, InvokeError> {
+        if name.is_empty() {
+            return Err(InvokeError::rejected("a layout preset needs a name"));
+        }
+        state.presets.borrow_mut().insert(
+            name.to_string(),
+            Preset {
+                board: state.board.get(),
+                cards: state.cards.get(),
+            },
+        );
+        state.preset.set(name.to_string());
+        state.say(format!("layout saved \u{00B7} {name}"));
+        Ok(IntrospectValue::Text(state.preset_names()))
+    }
 }
 
-/// The wire word for a card's remedy, with the absence spelled out.
-///
-/// `"none"` is the answer for a ready card and it is NOT one of
-/// [`Remedy::ALL`] — a reader that treats every answer here as a remedy would
-/// otherwise invent a seventh one.
 fn remedy_word(remedy: Option<Remedy>) -> &'static str {
     remedy.map_or("none", Remedy::wire)
 }
@@ -785,8 +1501,8 @@ fn offered_words(card: &Card) -> String {
 
 /// Parse `<state>` plus its optional detail into a [`CardState`].
 ///
-/// The arity check is here rather than at each call site because it is a fact
-/// about the vocabulary: two arms take a reason and four do not.
+/// The arity check is a fact about the vocabulary: two arms take a reason and
+/// four do not.
 fn parse_state(word: &str, detail: Option<&str>) -> Result<CardState, String> {
     let carried = |what: &str| -> Result<std::borrow::Cow<'static, str>, String> {
         detail
@@ -821,41 +1537,50 @@ fn parse_state(word: &str, detail: Option<&str>) -> Result<CardState, String> {
 }
 
 /// Everything this surface publishes.
-///
-/// Lifted out of `schema()` so the function is its name and this is its
-/// content: a `const` table is a value, and reading it should not mean
-/// scrolling past a hundred lines to find where the method ends.
 const FIELDS: &[SchemaField] = const {
     &[
-        // --- the app bar: four writable slots -----------------------
+        // the app bar
         SchemaField::new("source", "string"),
         SchemaField::new("sources", "string"),
         SchemaField::new("capturing", "bool"),
         SchemaField::new("search", "string"),
         SchemaField::new("theme", "string"),
-        // --- the rail and the board ---------------------------------
+        SchemaField::new("tab", "string"),
+        SchemaField::new("tabs", "string"),
+        // the rail and the sub bar
         SchemaField::new("rail", "string"),
+        SchemaField::new("nav", "string"),
+        SchemaField::new("editing", "bool"),
+        SchemaField::new("config_open", "string"),
+        // the catalogue and the board
+        SchemaField::new("catalogue", "string"),
         SchemaField::new("cards", "string"),
         SchemaField::new("card_count", "int"),
+        SchemaField::new("placed_count", "int"),
         SchemaField::new("layout", "string"),
         SchemaField::new("maximized", "string"),
         SchemaField::new("restore_to", "string"),
         SchemaField::new("floating", "string"),
-        // --- named layout presets -----------------------------------
+        // named layouts
         SchemaField::new("preset", "string"),
         SchemaField::new("presets", "string"),
-        // --- the transport ------------------------------------------
+        SchemaField::new("preset_open", "bool"),
+        // the transport
         SchemaField::new("transport", "string"),
         SchemaField::new("playhead", "int"),
-        // --- the published vocabularies -----------------------------
-        // Published so a client can enumerate rather than hard-code
-        // them, and so `act` / `set_state` accept exactly what is
-        // advertised (R1616).
+        // the published vocabularies
         SchemaField::new("affordances", "string"),
         SchemaField::new("states", "string"),
         SchemaField::new("remedies", "string"),
-        SchemaField::new("last_event", "string"),
-        // --- per-card reads, each taking the card's id --------------
+        SchemaField::new("steppers", "string"),
+        SchemaField::new("toast", "string"),
+        // direct manipulation
+        SchemaField::new("cursor", "string"),
+        SchemaField::new("selected", "string"),
+        SchemaField::new("hit", "string"),
+        SchemaField::new("keymap", "string"),
+        SchemaField::new("drag", "string"),
+        // per-card reads
         SchemaField::action_with(
             "title",
             "string",
@@ -864,6 +1589,12 @@ const FIELDS: &[SchemaField] = const {
         ),
         SchemaField::action_with(
             "chrome",
+            "string",
+            ArgForm::Scalar,
+            const { &[SchemaArg::key("card", "string", "cards")] },
+        ),
+        SchemaField::action_with(
+            "section",
             "string",
             ArgForm::Scalar,
             const { &[SchemaArg::key("card", "string", "cards")] },
@@ -881,12 +1612,6 @@ const FIELDS: &[SchemaField] = const {
             const { &[SchemaArg::key("card", "string", "cards")] },
         ),
         SchemaField::action_with(
-            "section",
-            "string",
-            ArgForm::Scalar,
-            const { &[SchemaArg::key("card", "string", "cards")] },
-        ),
-        SchemaField::action_with(
             "remedy",
             "string",
             ArgForm::Scalar,
@@ -898,7 +1623,13 @@ const FIELDS: &[SchemaField] = const {
             ArgForm::Scalar,
             const { &[SchemaArg::key("card", "string", "cards")] },
         ),
-        // --- the verbs ----------------------------------------------
+        SchemaField::action_with(
+            "cell",
+            "string",
+            ArgForm::Scalar,
+            const { &[SchemaArg::key("card", "string", "cards")] },
+        ),
+        // the verbs
         SchemaField::action_with(
             "act",
             "string",
@@ -922,12 +1653,23 @@ const FIELDS: &[SchemaField] = const {
                 ]
             },
         ),
+        SchemaField::action_with(
+            "resize",
+            "string",
+            ArgForm::Delimited(','),
+            const {
+                &[
+                    SchemaArg::key("card", "string", "cards"),
+                    SchemaArg::key("step", "string", "steppers"),
+                ]
+            },
+        ),
+        SchemaField::action("add", "string"),
         SchemaField::action("maximize", "string"),
-        SchemaField::action("dock_back", "string"),
-        // --- the direct-manipulation surface ------------------------
-        // The pointer and the keyboard the person uses ARE these, so
-        // an agent drives the same handlers rather than a parallel set
-        // that can disagree with what a hand does.
+        SchemaField::action("restore", "string"),
+        SchemaField::action("redock", "string"),
+        SchemaField::action("save_preset", "string"),
+        SchemaField::action("seek", "string"),
         SchemaField::action_with(
             "point",
             "string",
@@ -941,14 +1683,6 @@ const FIELDS: &[SchemaField] = const {
         ),
         SchemaField::action("send", "string"),
         SchemaField::action("key", "string"),
-        SchemaField::new("cursor", "string"),
-        SchemaField::new("selected", "string"),
-        SchemaField::new("rail_focus", "string"),
-        SchemaField::new("hit", "string"),
-        SchemaField::new("keymap", "string"),
-        SchemaField::action("restore", "string"),
-        SchemaField::action("save_preset", "string"),
-        SchemaField::action("seek", "string"),
     ]
 };
 
@@ -967,18 +1701,17 @@ impl ExternalIntrospect for ShellOracle {
             "capturing" => Some(IntrospectValue::Bool(state.capturing.get())),
             "search" => text(state.search.get()),
             "theme" => text(theme_word(&state.theme)),
-            // Each entry with the number of its cards still on the board, so
-            // the rail's own claim is checkable without a pixel.
-            "rail" => text(
-                RAIL.iter()
-                    .map(|name| format!("{name}:{}", section_count(state, name)))
-                    .collect::<Vec<_>>()
-                    .join(","),
-            ),
+            "tab" => text(state.tab.get()),
+            "tabs" => text(TABS.join(",")),
+            "rail" => text(RAIL.map(|(key, _)| key).join(",")),
+            "nav" => text(state.nav.get()),
+            "editing" => Some(IntrospectValue::Bool(state.editing.get())),
+            "config_open" => text(state.config_open.get().unwrap_or_default()),
+            // The palette's twelve, so a client picks from what is offered.
+            "catalogue" => text(DEFS.iter().map(|d| d.kind).collect::<Vec<_>>().join(",")),
             "cards" => text(state.card_ids()),
-            "card_count" => Some(IntrospectValue::Int(
-                i64::try_from(state.cards.get().len()).unwrap_or(i64::MAX),
-            )),
+            "card_count" => Some(IntrospectValue::Int(i64::from(u(state.cards.get().len())))),
+            "placed_count" => Some(IntrospectValue::Int(i64::from(u(state.placed().len())))),
             "layout" => text(
                 serde_json::to_string(&state.board.get()).unwrap_or_else(|why| why.to_string()),
             ),
@@ -988,15 +1721,21 @@ impl ExternalIntrospect for ShellOracle {
                     .get()
                     .map_or_else(String::new, |m| m.id().as_str().to_string()),
             ),
-            // The arrangement the way home holds, so a client can SEE what a
-            // restore will do without doing it. Empty when nothing is
-            // maximised, which is a different answer from an empty board.
             "restore_to" => text(state.maximized.get().map_or_else(String::new, |m| {
                 serde_json::to_string(m.peek()).unwrap_or_else(|why| why.to_string())
             })),
-            "floating" => text(state.floating.get()),
+            "floating" => text(
+                state
+                    .floats
+                    .get()
+                    .iter()
+                    .map(|f| f.id.clone())
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
             "preset" => text(state.preset.get()),
             "presets" => text(state.preset_names()),
+            "preset_open" => Some(IntrospectValue::Bool(state.preset_open.get())),
             "transport" => text(transport_word(clock.status(), state.capturing.get())),
             #[allow(
                 clippy::cast_possible_truncation,
@@ -1006,30 +1745,6 @@ impl ExternalIntrospect for ShellOracle {
             "playhead" => Some(IntrospectValue::Int(i64::from(
                 (clock.position() * 1000.0).round() as i32,
             ))),
-            "cursor" => {
-                let (x, y) = state.cursor.get();
-                text(format!("{x},{y}"))
-            }
-            "selected" => text(state.selected.get().unwrap_or_default()),
-            "rail_focus" => text(state.rail_focus.get().unwrap_or_default()),
-            // What is under the cursor RIGHT NOW, named. The one read that
-            // makes the hit test checkable without pixels — and the thing an
-            // agent needs before it presses, for the same reason a person
-            // needs to see the button before clicking it.
-            "hit" => {
-                let (x, y) = state.cursor.get();
-                text(hit_word(&Hit::at(state, x, y)))
-            }
-            // The keymap, published rather than only documented: a chord a
-            // person can press is a chord an agent can send, and neither
-            // should have to read this file to find out which.
-            "keymap" => text(
-                KEYMAP
-                    .iter()
-                    .map(|(chord, what)| format!("{chord}={what}"))
-                    .collect::<Vec<_>>()
-                    .join(","),
-            ),
             "affordances" => text(CardAffordance::ALL.map(CardAffordance::wire).join(",")),
             "states" => text(
                 CardState::ALL
@@ -1039,7 +1754,30 @@ impl ExternalIntrospect for ShellOracle {
                     .join(","),
             ),
             "remedies" => text(Remedy::ALL.map(Remedy::wire).join(",")),
-            "last_event" => text(state.last_event.get()),
+            "steppers" => text(STEPPERS.map(|(verb, _)| verb).join(",")),
+            "toast" => text(state.toast.get()),
+            "cursor" => {
+                let (x, y) = state.cursor.get();
+                text(format!("{x},{y}"))
+            }
+            "selected" => text(state.selected.get().unwrap_or_default()),
+            "hit" => {
+                let (x, y) = state.cursor.get();
+                text(hit_word(&Hit::at(state, x, y)))
+            }
+            // Where a release would put the dragged card — the snap preview, as
+            // a value. Empty when nothing is being dragged, which is a
+            // different answer from a drag hovering over cell 0,0.
+            "drag" => text(state.drag.get().map_or_else(String::new, |d| {
+                format!("{},{},{}", d.id, d.snap.0, d.snap.1)
+            })),
+            "keymap" => text(
+                KEYMAP
+                    .iter()
+                    .map(|(chord, what)| format!("{chord}={what}"))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
             _ => None,
         }
     }
@@ -1050,29 +1788,31 @@ impl ExternalIntrospect for ShellOracle {
             .as_ref()
             .ok_or(InterveneError::UnknownPath)?
             .clone();
+        let word = |value: &IntrospectValue| match value {
+            IntrospectValue::Text(s) => Ok(s.trim().to_string()),
+            _ => Err(InterveneError::TypeMismatch),
+        };
+        if let Some(done) = Self::write_bar(&state, path, &value) {
+            return done;
+        }
         match path {
-            "source" => {
-                let IntrospectValue::Text(name) = value else {
-                    return Err(InterveneError::TypeMismatch);
-                };
-                let chosen = SOURCES.iter().find(|s| **s == name.trim()).ok_or_else(|| {
-                    InterveneError::out_of_range(format!(
-                        "{name:?} is not a source; they are {}",
-                        SOURCES.join(", ")
-                    ))
-                })?;
-                state.source.set((*chosen).to_string());
-                state.last_event.set(format!("source {chosen}"));
-                Ok(())
-            }
-            "capturing" => {
+            "editing" => {
                 let IntrospectValue::Bool(on) = value else {
                     return Err(InterveneError::TypeMismatch);
                 };
-                state.capturing.set(on);
-                state
-                    .last_event
-                    .set(format!("capture {}", if on { "on" } else { "off" }));
+                state.editing.set(on);
+                state.say(if on {
+                    "layout edit mode"
+                } else {
+                    "layout locked"
+                });
+                Ok(())
+            }
+            "preset_open" => {
+                let IntrospectValue::Bool(on) = value else {
+                    return Err(InterveneError::TypeMismatch);
+                };
+                state.preset_open.set(on);
                 Ok(())
             }
             "search" => {
@@ -1080,50 +1820,40 @@ impl ExternalIntrospect for ShellOracle {
                     return Err(InterveneError::TypeMismatch);
                 };
                 state.search.set(needle.clone());
-                state.last_event.set(format!("search {needle:?}"));
+                state.say(format!("search {needle:?}"));
                 Ok(())
             }
-            "theme" => {
-                let IntrospectValue::Text(word) = value else {
-                    return Err(InterveneError::TypeMismatch);
-                };
-                let mode = match word.trim() {
-                    "light" => ThemeMode::Light,
-                    "dark" => ThemeMode::Dark,
-                    "system" => ThemeMode::System,
-                    other => {
-                        return Err(InterveneError::out_of_range(format!(
-                            "{other:?} is not a theme; they are light / dark / system"
-                        )));
-                    }
-                };
-                state.theme.set_mode(mode);
-                state.last_event.set(format!("theme {}", word.trim()));
-                Ok(())
-            }
-            "preset" => {
-                let IntrospectValue::Text(name) = value else {
-                    return Err(InterveneError::TypeMismatch);
-                };
-                let stored = state.presets.borrow().get(name.trim()).cloned();
-                let board = stored.ok_or_else(|| {
+            "tab" => {
+                let name = word(&value)?;
+                let chosen = TABS.iter().find(|t| **t == name).ok_or_else(|| {
                     InterveneError::out_of_range(format!(
-                        "{name:?} is not a saved layout; they are {}",
-                        state.preset_names()
+                        "{name:?} is not a tab; they are {}",
+                        TABS.join(", ")
                     ))
                 })?;
-                // Applying a preset while maximised would leave a token whose
-                // way home is an arrangement nobody is on any more.
-                state.maximized.set(None);
-                state.board.set(board);
-                state.preset.set(name.trim().to_string());
-                state.last_event.set(format!("preset {}", name.trim()));
+                state.tab.set((*chosen).to_string());
+                state.say(format!("view {chosen}"));
                 Ok(())
             }
-            "sources" | "cards" | "card_count" | "layout" | "maximized" | "restore_to"
-            | "floating" | "presets" | "transport" | "playhead" | "affordances" | "states"
-            | "remedies" | "last_event" | "rail" | "cursor" | "selected" | "rail_focus" | "hit"
-            | "keymap" => Err(InterveneError::ReadOnly),
+            "nav" => {
+                let name = word(&value)?;
+                let chosen = RAIL.iter().find(|(key, _)| *key == name).ok_or_else(|| {
+                    InterveneError::out_of_range(format!(
+                        "{name:?} is not a rail section; they are {}",
+                        RAIL.map(|(key, _)| key).join(", ")
+                    ))
+                })?;
+                state.nav.set(chosen.0.to_string());
+                state.say(format!("{} section", chosen.1));
+                Ok(())
+            }
+            "preset" => ShellOracle::apply_preset(&state, &word(&value)?),
+            "sources" | "cards" | "card_count" | "placed_count" | "layout" | "maximized"
+            | "restore_to" | "floating" | "presets" | "transport" | "playhead" | "affordances"
+            | "states" | "remedies" | "steppers" | "toast" | "cursor" | "selected" | "hit"
+            | "keymap" | "rail" | "tabs" | "catalogue" | "config_open" | "drag" => {
+                Err(InterveneError::ReadOnly)
+            }
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -1140,39 +1870,37 @@ impl ExternalIntrospect for ShellOracle {
         match path {
             "act" => Self::act(&state, &args),
             "set_state" => Self::set_state(&state, &args),
+            "add" => Self::add(&state, &Self::text(&args)?),
             "maximize" => Self::maximize(&state, Self::text(&args)?.trim()),
             "restore" => Self::restore(&state),
-            // The other half of tear-off. A lifecycle with no way back is half
-            // a feature, and the event is the dock chart's own `dock_back`
-            // rather than a flag this file clears.
-            "dock_back" => {
-                let id = Self::text(&args)?.trim().to_string();
-                Self::card_of(&state, &id)?;
-                if !state.is_floating(&id) {
+            "redock" => Self::redock(&state, Self::text(&args)?.trim()),
+            "resize" => {
+                let raw = Self::text(&args)?;
+                let (id, verb) = raw.split_once(',').ok_or_else(|| {
+                    InvokeError::rejected(format!("{raw:?} is not <card>,<step>"))
+                })?;
+                Self::step(&state, id.trim(), verb.trim())
+            }
+            "save_preset" => Self::save_preset(&state, Self::text(&args)?.trim()),
+            "seek" => {
+                let raw = Self::text(&args)?;
+                let per_mille: i32 = raw
+                    .trim()
+                    .parse()
+                    .map_err(|_| InvokeError::rejected(format!("{raw:?} is not 0..=1000")))?;
+                if !(0..=1000).contains(&per_mille) {
                     return Err(InvokeError::rejected(format!(
-                        "card {id:?} is not torn off"
+                        "a playhead is 0..=1000 per mille, got {per_mille}"
                     )));
                 }
-                state.dock_send(&id, DockPanelEvent::DockBack);
-                state.last_event.set(format!("{id} docked back"));
-                Ok(IntrospectValue::Text(state.floating.get()))
-            }
-            "save_preset" => {
-                let name = Self::text(&args)?.trim().to_string();
-                if name.is_empty() {
-                    return Err(InvokeError::rejected("a layout preset needs a name"));
-                }
+                state.clock.pause();
                 state
-                    .presets
-                    .borrow_mut()
-                    .insert(name.clone(), state.board.get());
-                state.preset.set(name.clone());
-                state.last_event.set(format!("saved preset {name}"));
-                Ok(IntrospectValue::Text(state.preset_names()))
+                    .clock
+                    .seek(f32::from(i16::try_from(per_mille).unwrap_or(0)) / 1000.0);
+                state.capturing.set(false);
+                state.say(format!("seek {per_mille}"));
+                Ok(IntrospectValue::Int(i64::from(per_mille)))
             }
-            // Put the cursor somewhere, in view pixels. The framework's own
-            // pointer path calls the same `pointer_move`, so a scripted press
-            // and a real one land on one code path.
             "point" => {
                 let raw = Self::text(&args)?;
                 let (x, y) = raw
@@ -1189,11 +1917,9 @@ impl ExternalIntrospect for ShellOracle {
                         "({x},{y}) is outside the {WIN_W}x{WIN_H} shell"
                     )));
                 }
-                state.cursor.set((x, y));
+                Self::move_cursor(&state, x, y);
                 Ok(IntrospectValue::Text(hit_word(&Hit::at(&state, x, y))))
             }
-            // The symbolic pointer events the framework's router sends on a
-            // real press and release.
             "send" => {
                 let event = Self::text(&args)?;
                 match event.trim() {
@@ -1203,7 +1929,7 @@ impl ExternalIntrospect for ShellOracle {
                     // difference between letting go and being interrupted.
                     "PointerLeave" | "PointerCancel" => {
                         state.pressed.borrow_mut().take();
-                        state.grab.borrow_mut().take();
+                        state.drag.set(None);
                     }
                     other => {
                         return Err(InvokeError::rejected(format!(
@@ -1212,158 +1938,216 @@ impl ExternalIntrospect for ShellOracle {
                         )));
                     }
                 }
-                Ok(IntrospectValue::Text(state.last_event.get()))
+                Ok(IntrospectValue::Text(state.toast.get()))
             }
             "key" => {
                 let chord = Self::text(&args)?;
                 Ok(IntrospectValue::Bool(Self::key(&state, chord.trim())))
-            }
-            "seek" => {
-                let raw = Self::text(&args)?;
-                let per_mille: i32 = raw
-                    .trim()
-                    .parse()
-                    .map_err(|_| InvokeError::rejected(format!("{raw:?} is not 0..=1000")))?;
-                if !(0..=1000).contains(&per_mille) {
-                    return Err(InvokeError::rejected(format!(
-                        "a playhead is 0..=1000 per mille, got {per_mille}"
-                    )));
-                }
-                let clock = &state.clock;
-                clock.pause();
-                clock.seek(f32::from(i16::try_from(per_mille).unwrap_or(0)) / 1000.0);
-                state.capturing.set(false);
-                state.last_event.set(format!("seek {per_mille}"));
-                Ok(IntrospectValue::Int(i64::from(per_mille)))
             }
             _ => Err(InvokeError::UnknownPath),
         }
     }
 }
 
-// --- Direct manipulation: the same verbs, driven by a hand -------------------
+// --- Direct manipulation -----------------------------------------------------
 
 impl ShellOracle {
-    /// A press: latch what is under the cursor, and open a board drag if it
-    /// was a card body.
-    ///
-    /// Nothing is *performed* here. A control fires on release over the same
-    /// target it was pressed on, which is what lets a person press a close
-    /// button, think better of it, slide off and let go — the behaviour every
-    /// desktop toolkit has and the reason a press-to-fire button feels wrong.
+    /// Move the cursor, and update the snap preview if a drag is in flight.
+    fn move_cursor(state: &Rc<ShellState>, px: u32, py: u32) {
+        state.cursor.set((px, py));
+        let Some(mut drag) = state.drag.get() else {
+            return;
+        };
+        let canvas = canvas_rect();
+        let (col, row) = cell_at(px.saturating_sub(canvas.x), py.saturating_sub(canvas.y));
+        let snap = (col.saturating_sub(drag.dx), row.saturating_sub(drag.dy));
+        if snap != drag.snap {
+            drag.snap = snap;
+            state.drag.set(Some(drag));
+        }
+    }
+
+    /// A press latches what is under the cursor; a press on a card header opens
+    /// a drag that **previews** rather than moving, because the reference
+    /// commits on release and a board reflowing under the finger would make the
+    /// preview a lie.
     fn press(state: &Rc<ShellState>) {
         let (px, py) = state.cursor.get();
         let hit = Hit::at(state, px, py);
         if let Some(id) = hit.card_id() {
             state.selected.set(Some(id.to_string()));
-            state.rail_focus.set(Some(section_of(id).to_string()));
         }
-        if let Hit::Card(id) = &hit {
+        if let Hit::Grip(id) = &hit {
             let board = state.board.get();
             let tile_id = TileId::new(id.clone());
             if let Some(tile) = board.tile(&tile_id) {
-                let (col, row) = cell_at(&board, px, py);
-                *state.grab.borrow_mut() = Some((
-                    tile_id,
-                    col.saturating_sub(tile.col),
-                    row.saturating_sub(tile.row),
-                ));
+                let canvas = canvas_rect();
+                let (col, row) = cell_at(px.saturating_sub(canvas.x), py.saturating_sub(canvas.y));
+                state.drag.set(Some(Drag {
+                    id: tile_id,
+                    dx: col.saturating_sub(tile.col),
+                    dy: row.saturating_sub(tile.row),
+                    snap: (tile.col, tile.row),
+                }));
             }
         }
         *state.pressed.borrow_mut() = Some(hit);
     }
 
-    /// A release: perform the latched control if the cursor is still on it.
+    /// A release performs the latched control if the cursor is still on it, and
+    /// commits a drag wherever the preview ended up.
     fn release(state: &Rc<ShellState>) {
         let latched = state.pressed.borrow_mut().take();
-        let dragged = state.grab.borrow_mut().take().is_some();
+        if let Some(drag) = state.drag.get() {
+            state.drag.set(None);
+            let mut board = state.board.get();
+            if let Ok(reflow) = board.move_to(&drag.id, drag.snap.0, drag.snap.1) {
+                state.board.set(board);
+                state.say(if reflow.is_clean() {
+                    format!("{} moved", label_of(drag.id.as_str()))
+                } else {
+                    format!(
+                        "{} moved, displacing {}",
+                        label_of(drag.id.as_str()),
+                        reflow
+                            .displaced()
+                            .iter()
+                            .map(|d| label_of(d.id.as_str()))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    )
+                });
+            }
+            return;
+        }
         let (px, py) = state.cursor.get();
         let Some(latched) = latched else { return };
-        // A drag that actually moved a card is not also a click on it: the
-        // release lands wherever the card ended up, and firing "select" again
-        // there is harmless, but firing an affordance would not be.
         if Hit::at(state, px, py) != latched {
             return;
         }
         match latched {
-            Hit::Chip(chip) => Self::toggle_chip(state, chip),
-            Hit::Rail(name) => {
-                state.rail_focus.set(Some(name.to_string()));
-                state.last_event.set(format!(
-                    "rail {name} ({} cards)",
-                    section_count(state, name)
-                ));
+            Hit::Chip(chip) => Self::press_chip(state, chip),
+            Hit::Sub(chip) => Self::press_sub(state, chip),
+            Hit::PresetItem(n) => Self::press_preset_item(state, n),
+            Hit::Rail(key) => {
+                state.nav.set(key.to_string());
+                let name = RAIL
+                    .iter()
+                    .find(|(k, _)| *k == key)
+                    .map_or(key, |(_, name)| name);
+                state.say(format!("{name} section"));
+            }
+            Hit::Palette(kind) => {
+                if let Err(why) = Self::add(state, kind) {
+                    state.say(format!("refused: {why:?}"));
+                }
             }
             Hit::Affordance(id, affordance) => {
-                let outcome = Self::act(
-                    state,
-                    &IntrospectValue::Text(format!("{id},{}", affordance.wire())),
-                );
-                if let Err(why) = outcome {
+                let call = IntrospectValue::Text(format!("{id},{}", affordance.wire()));
+                if let Err(why) = Self::act(state, &call) {
                     // A refusal a person triggered has to be visible to that
                     // person, not only to the wire that would have read it.
-                    state.last_event.set(format!("refused: {why:?}"));
+                    state.say(format!("refused: {why:?}"));
+                }
+            }
+            Hit::Stepper(id, verb) => {
+                if let Err(why) = Self::step(state, &id, verb) {
+                    state.say(format!("refused: {why:?}"));
                 }
             }
             Hit::Remedy(id) => Self::apply_remedy(state, &id),
-            Hit::Card(id) => {
-                if !dragged {
-                    state.last_event.set(format!("{id} selected"));
+            Hit::FloatRedock(id) => {
+                if let Err(why) = Self::redock(state, &id) {
+                    state.say(format!("refused: {why:?}"));
                 }
             }
-            Hit::Nothing => {}
+            Hit::FloatClose(id) => {
+                Self::remove(state, &id);
+                state.say(format!("{} closed", label_of(&id)));
+            }
+            Hit::Card(id) | Hit::Grip(id) => state.say(format!("{} selected", label_of(&id))),
+            Hit::Float(_) | Hit::Nothing => {}
         }
     }
 
-    /// One app-bar chip, pressed.
-    fn toggle_chip(state: &Rc<ShellState>, chip: BarChip) {
+    fn press_chip(state: &Rc<ShellState>, chip: BarChip) {
         match chip {
+            BarChip::Tab0 | BarChip::Tab1 => {
+                let name = if chip == BarChip::Tab0 {
+                    TABS[0]
+                } else {
+                    TABS[1]
+                };
+                state.tab.set(name.to_string());
+                state.say(format!("view {name}"));
+            }
             BarChip::Source => {
-                // A cycle rather than a menu: three sources and a 40px bar, and
-                // the menu widget belongs to a round about menus.
                 let now = state.source.get();
                 let at = SOURCES.iter().position(|s| *s == now).unwrap_or(0);
                 let next = SOURCES[(at + 1) % SOURCES.len()];
                 state.source.set(next.to_string());
-                state.last_event.set(format!("source {next}"));
+                state.say(format!("source {next}"));
             }
             BarChip::Capture => {
                 let on = !state.capturing.get();
                 state.capturing.set(on);
-                state
-                    .last_event
-                    .set(format!("capture {}", if on { "on" } else { "off" }));
+                state.say(format!("capture {}", if on { "on" } else { "off" }));
             }
-            BarChip::Theme => {
-                let dark = theme_word(&state.theme) != "dark";
-                state.theme.set_mode(if dark {
-                    ThemeMode::Dark
-                } else {
-                    ThemeMode::Light
-                });
-                state
-                    .last_event
-                    .set(format!("theme {}", if dark { "dark" } else { "light" }));
+            BarChip::Search => {
+                state.searching.set(true);
+                state.say("searching (Enter or Escape leaves)");
             }
         }
     }
 
+    fn press_sub(state: &Rc<ShellState>, chip: SubChip) {
+        match chip {
+            SubChip::Preset => {
+                let open = !state.preset_open.get();
+                state.preset_open.set(open);
+            }
+            SubChip::EditLayout => {
+                let on = !state.editing.get();
+                state.editing.set(on);
+                state.say(if on {
+                    "layout edit mode"
+                } else {
+                    "layout locked"
+                });
+            }
+            SubChip::AddWidget => {
+                // The palette is always open in this shell, so the button is
+                // what SAYS where widgets come from: it selects the catalogue
+                // section rather than opening a second chooser.
+                state.nav.set("catalog".to_string());
+                state.say("pick a widget from the palette \u{2192}");
+            }
+        }
+    }
+
+    /// The preset menu's rows: every saved layout, then "Save current layout".
+    fn press_preset_item(state: &Rc<ShellState>, n: usize) {
+        let names: Vec<String> = state.presets.borrow().keys().cloned().collect();
+        if let Some(name) = names.get(n) {
+            ShellOracle::apply_preset(state, name).ok();
+            return;
+        }
+        // The last row saves. The name is derived rather than typed, because a
+        // text prompt is a modal this shell has no business inventing.
+        let name = format!("Layout {}", names.len() + 1);
+        Self::save_preset(state, &name).ok();
+        state.preset_open.set(false);
+    }
+
     /// What pressing an actionable remedy does.
     ///
-    /// The framework decides *which* remedy a state has; what a remedy MEANS
-    /// for this data is the application's, which is why this lives here and
-    /// `Remedy` has no `perform`. Each one is the smallest honest response:
-    /// a retry goes back to loading, widening clears the filter that excluded
-    /// everything, and authorising is what a grant would look like arriving.
+    /// The framework decides WHICH remedy a state has; what a remedy MEANS for
+    /// this data is the application's, which is why this lives here and
+    /// `Remedy` has no `perform`.
     fn apply_remedy(state: &Rc<ShellState>, id: &str) {
         let Some(card) = state.card(id) else { return };
         let Some(remedy) = card.remedy().filter(|r| r.is_actionable()) else {
-            // Unreachable through the pointer — `Hit::at` only resolves a
-            // remedy control on an actionable one — and stated rather than
-            // assumed, because the wire can call this path too.
-            state
-                .last_event
-                .set(format!("{id}: nothing to do about this"));
+            state.say(format!("{}: nothing to do about this", label_of(id)));
             return;
         };
         let next = match remedy {
@@ -1376,25 +2160,23 @@ impl ShellOracle {
             Remedy::Wait | Remedy::Nothing => return,
         };
         state.update_card(id, |card| card.set_state(next.clone()));
-        state
-            .last_event
-            .set(format!("{id}: {} -> {}", remedy.wire(), next.wire()));
+        state.say(format!(
+            "{}: {} \u{2192} {}",
+            label_of(id),
+            remedy.wire(),
+            next.wire()
+        ));
     }
 
     /// The keymap, as one function so the wire and a real keyboard drive the
     /// same one rather than two that drift.
-    ///
-    /// Returns whether the chord meant something here, which is what a key
-    /// handler owes its caller: an unclaimed chord must stay unclaimed.
     fn key(state: &Rc<ShellState>, chord: &str) -> bool {
         if state.searching.get() {
             return Self::search_key(state, chord);
         }
         if chord == "/" {
             state.searching.set(true);
-            state
-                .last_event
-                .set("searching (Enter or Escape leaves)".to_string());
+            state.say("searching (Enter or Escape leaves)");
             return true;
         }
         let selected = state.selected.get();
@@ -1412,23 +2194,30 @@ impl ShellOracle {
             return Self::arrow(state, direction, shift, alt);
         }
         match base {
-            "Enter" => {
-                let Some(id) = selected else { return false };
+            "Enter" => selected.is_some_and(|id| {
                 if state.maximized.get().is_some() {
                     Self::restore(state).is_ok()
                 } else {
                     Self::maximize(state, &id).is_ok()
                 }
+            }),
+            "Escape" => {
+                if state.preset_open.get() {
+                    state.preset_open.set(false);
+                    return true;
+                }
+                Self::restore(state).is_ok()
             }
-            "Escape" => Self::restore(state).is_ok(),
             "Delete" | "Backspace" => selected.is_some_and(|id| {
                 Self::act(state, &IntrospectValue::Text(format!("{id},close"))).is_ok()
             }),
+            "e" | "E" => {
+                Self::press_sub(state, SubChip::EditLayout);
+                true
+            }
             "o" | "O" => selected.is_some_and(|id| {
                 if state.is_floating(&id) {
-                    state.dock_send(&id, DockPanelEvent::DockBack);
-                    state.last_event.set(format!("{id} docked back"));
-                    true
+                    Self::redock(state, &id).is_ok()
                 } else {
                     Self::act(state, &IntrospectValue::Text(format!("{id},tear_off"))).is_ok()
                 }
@@ -1438,34 +2227,36 @@ impl ShellOracle {
                 true
             }),
             "c" | "C" => {
-                Self::toggle_chip(state, BarChip::Capture);
+                Self::press_chip(state, BarChip::Capture);
                 true
             }
             "t" | "T" => {
-                Self::toggle_chip(state, BarChip::Theme);
+                let dark = theme_word(&state.theme) != "dark";
+                state.theme.set_mode(if dark {
+                    ThemeMode::Dark
+                } else {
+                    ThemeMode::Light
+                });
+                state.say(format!("theme {}", if dark { "dark" } else { "light" }));
                 true
             }
             "s" | "S" => {
-                Self::toggle_chip(state, BarChip::Source);
+                Self::press_chip(state, BarChip::Source);
                 true
             }
             _ => false,
         }
     }
 
-    /// Keystrokes while the search box has them.
-    ///
-    /// Deliberately narrow: text, backspace, and two ways out. Everything else
-    /// is REFUSED rather than falling through to the board, because a chord
-    /// that quietly did something else while the caret was in a text box is the
-    /// worst thing a mode can do.
+    /// Keystrokes while the search box has them. Deliberately narrow, and
+    /// everything else is REFUSED rather than falling through to the board,
+    /// because a chord that quietly did something else while the caret was in a
+    /// text box is the worst thing a mode can do.
     fn search_key(state: &Rc<ShellState>, chord: &str) -> bool {
         match chord {
             "Enter" | "Escape" => {
                 state.searching.set(false);
-                state
-                    .last_event
-                    .set(format!("search {:?}", state.search.get()));
+                state.say(format!("search {:?}", state.search.get()));
                 true
             }
             "Backspace" => {
@@ -1487,35 +2278,23 @@ impl ShellOracle {
     }
 
     /// The four arrows, and the three things a modifier makes them mean.
-    ///
-    /// Plain moves the selection; `Shift` moves the card; `Alt` resizes it —
-    /// the same twelve chords `TileNudge` already spells, reused rather than
-    /// re-invented, so a person who learned the board in one application knows
-    /// it in this one.
     fn arrow(state: &Rc<ShellState>, direction: TileDirection, shift: bool, alt: bool) -> bool {
         let Some(id) = state.selected.get() else {
-            // Nothing selected: the first arrow picks the first card, so the
-            // keyboard has a way in that does not require a click.
-            let first = state
-                .cards
-                .get()
-                .first()
-                .map(|c| c.id().as_str().to_string());
+            // Nothing selected: the first arrow picks a card, so the keyboard
+            // has a way in that does not require a click.
+            let first = state.placed().first().map(|c| c.id().as_str().to_string());
             let had = first.is_some();
             state.selected.set(first);
             return had;
         };
         let tile = TileId::new(id.clone());
         if !shift && !alt {
-            let mut board = state.board.get();
-            let next = board.neighbour(&tile, direction).map(|t| t.id.clone());
-            let Some(next) = next else { return false };
-            let _ = &mut board;
+            let board = state.board.get();
+            let Some(next) = board.neighbour(&tile, direction).map(|t| t.id.clone()) else {
+                return false;
+            };
             state.selected.set(Some(next.as_str().to_string()));
-            state
-                .rail_focus
-                .set(Some(section_of(next.as_str()).to_string()));
-            state.last_event.set(format!("{next} selected"));
+            state.say(format!("{} selected", label_of(next.as_str())));
             return true;
         }
         let nudge = match (shift, alt) {
@@ -1525,42 +2304,17 @@ impl ShellOracle {
         };
         let mut board = state.board.get();
         match board.nudge(&tile, nudge) {
-            Ok(reflow) => {
+            Ok(_) => {
                 state.board.set(board);
-                state.last_event.set(if reflow.is_clean() {
-                    format!("{id} {nudge:?}")
-                } else {
-                    format!(
-                        "{id} {nudge:?}, displacing {}",
-                        reflow
-                            .displaced()
-                            .iter()
-                            .map(|d| d.id.as_str().to_string())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    )
-                });
+                state.say(format!("{} {nudge:?}", label_of(&id)));
                 true
             }
             Err(why) => {
-                state.last_event.set(format!("refused: {why}"));
+                state.say(format!("refused: {why}"));
                 false
             }
         }
     }
-}
-
-/// The board cell a view pixel lands on.
-///
-/// The inverse of [`cell_rect`], and the only place the two directions meet —
-/// so a drag snaps to the cell a card is drawn in rather than to one computed
-/// from a second copy of the column arithmetic.
-fn cell_at(board: &TileGrid, px: u32, py: u32) -> (u32, u32) {
-    let usable = WIN_W.saturating_sub(RAIL_W);
-    let col_w = (usable / board.columns().max(1)).max(1);
-    let col = px.saturating_sub(RAIL_W) / col_w;
-    let row = py.saturating_sub(APP_BAR_H) / ROW_H;
-    (col.min(board.columns().saturating_sub(1)), row)
 }
 
 impl External for ShellOracle {
@@ -1577,7 +2331,7 @@ impl External for ShellOracle {
     }
 
     /// Keep the cursor while a press is held, so a drag that strays off a card
-    /// keeps moving it rather than being cancelled by a stray pixel.
+    /// keeps previewing rather than being cancelled by a stray pixel.
     fn wants_pointer_capture(&self) -> bool {
         true
     }
@@ -1588,7 +2342,6 @@ impl External for ShellOracle {
         true
     }
 
-    /// Track the cursor, and drag the grabbed card.
     #[allow(
         clippy::cast_precision_loss,
         clippy::cast_possible_truncation,
@@ -1601,31 +2354,7 @@ impl External for ShellOracle {
         };
         let px = (x_rel.clamp(0.0, 1.0) * WIN_W as f32) as u32;
         let py = (y_rel.clamp(0.0, 1.0) * WIN_H as f32) as u32;
-        state.cursor.set((px, py));
-        let grab = state.grab.borrow().clone();
-        let Some((id, dx, dy)) = grab else { return };
-        let mut board = state.board.get();
-        let (col, row) = cell_at(&board, px, py);
-        let target = (col.saturating_sub(dx), row.saturating_sub(dy));
-        if board.tile(&id).is_some_and(|t| (t.col, t.row) == target) {
-            return;
-        }
-        if let Ok(reflow) = board.move_to(&id, target.0, target.1) {
-            state.board.set(board);
-            state.last_event.set(if reflow.is_clean() {
-                format!("{id} moved to {},{}", target.0, target.1)
-            } else {
-                format!(
-                    "{id} moved, displacing {}",
-                    reflow
-                        .displaced()
-                        .iter()
-                        .map(|d| d.id.as_str().to_string())
-                        .collect::<Vec<_>>()
-                        .join(", ")
-                )
-            });
-        }
+        Self::move_cursor(&state, px, py);
     }
 
     fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
@@ -1637,7 +2366,6 @@ impl External for ShellOracle {
     }
 }
 
-/// Which theme the shell is showing, as the app bar's toggle reads it.
 fn theme_word(theme: &ThemeProvider) -> String {
     match theme.mode() {
         ThemeMode::Light => "light",
@@ -1651,287 +2379,48 @@ fn theme_word(theme: &ThemeProvider) -> String {
     .to_string()
 }
 
-/// The three transport words the capability list names.
-///
-/// Derived from the clock and the capture toggle rather than stored: "live" is
-/// not a fourth clock state, it is the absence of a replay while capture is on.
+/// The three transport words, derived rather than stored: "live" is not a
+/// fourth clock state, it is the absence of a replay while capture is on.
 fn transport_word(status: TransportStatus, capturing: bool) -> String {
     match status {
         TransportStatus::Playing => "replaying",
-        // Stopped while capturing is "live": nothing is replaying and packets
-        // are arriving. Stopped while capture is off and Paused are the SAME
-        // word on purpose — the board is frozen either way, and the capability
-        // list names three states, not four.
         TransportStatus::Stopped if capturing => "live",
         TransportStatus::Paused | TransportStatus::Stopped => "paused",
     }
     .to_string()
 }
 
-// --- Geometry: ONE source, read by the paint and by the gesture ---------------
-//
-// [[debt-paint-and-gesture-read-two-facts]] is an open debt in this project
-// because a surface whose painter and hit test compute their rectangles
-// separately can drift into a control that is drawn where it cannot be clicked.
-// Every rectangle below is therefore computed once here and used by BOTH
-// `*_scene` and `Hit::at`. A change to a slot's width moves the paint and the
-// gesture together or it does not compile.
+// --- The view ----------------------------------------------------------------
 
-/// The pixel rectangle of a board cell rectangle.
-fn cell_rect(board: &TileGrid, tile: &Tile) -> Rect {
-    let usable = WIN_W.saturating_sub(RAIL_W);
-    let col_w = usable / board.columns().max(1);
-    Rect::new(
-        RAIL_W + tile.col * col_w + CARD_PAD,
-        APP_BAR_H + tile.row * ROW_H + CARD_PAD,
-        (tile.w * col_w).saturating_sub(CARD_PAD * 2).max(1),
-        (tile.h * ROW_H).saturating_sub(CARD_PAD * 2).max(1),
-    )
-}
-
-/// A container's own coordinate space: its size at the origin.
-///
-/// ★ Everything inside an absolutely-positioned container is placed RELATIVE TO
-/// IT, so a child written in window coordinates lands at the parent's origin
-/// plus its own — twice as far along both axes as intended. This shell's first
-/// draft did exactly that and nothing noticed, because the demo compared tags
-/// and text and never a rectangle. The counterfactual that broke the hit test's
-/// geometry is what surfaced it: the hit test was computing window coordinates
-/// correctly while the paint was not, so the two really were reading different
-/// facts and neither the tests nor the eye had said so.
-///
-/// The fix is this function plus the rule it names: **the sub-rectangles below
-/// are local**, the painter passes `local(rect)`, and the hit test subtracts
-/// the container's origin before asking. One space, one set of helpers.
-const fn local(rect: Rect) -> Rect {
-    Rect::new(0, 0, rect.w, rect.h)
-}
-
-/// One card's header strip, in the card's own space.
-const fn header_rect(card: Rect) -> Rect {
-    Rect::new(card.x, card.y, card.w, HEADER_H)
-}
-
-/// One card's body, in the card's own space.
-const fn body_rect(card: Rect) -> Rect {
-    Rect::new(
-        card.x,
-        card.y + HEADER_H,
-        card.w,
-        card.h.saturating_sub(HEADER_H),
-    )
-}
-
-/// How wide one header affordance's hit slot is.
-const SLOT_W: u32 = 26;
-
-/// Where the `n`th of `count` affordances sits in a header.
-///
-/// Right-aligned, in declaration order, so the rightmost slot is the last
-/// affordance the vocabulary declares — `Close`, wherever a card offers it.
-const fn affordance_rect(header: Rect, count: u32, n: u32) -> Rect {
-    let from_right = count.saturating_sub(n);
-    Rect::new(
-        (header.x + header.w).saturating_sub(from_right * SLOT_W),
-        header.y,
-        SLOT_W,
-        HEADER_H,
-    )
-}
-
-/// Where a not-ready card's remedy control sits in its body.
-const fn remedy_rect(body: Rect) -> Rect {
-    Rect::new(body.x + 6, body.y + 24, body.w.saturating_sub(12), REMEDY_H)
-}
-
-const REMEDY_H: u32 = 20;
-
-/// The app bar's clickable chips, left to right after the title.
-///
-/// Three, because three of the bar's four parts are toggles a pointer can
-/// operate; the fourth (global search) is text, and typing goes through the
-/// keyboard rather than a chip.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum BarChip {
-    Source,
-    Capture,
-    Theme,
-}
-
-impl BarChip {
-    const ALL: [Self; 3] = [Self::Source, Self::Capture, Self::Theme];
-
-    const fn tag(self) -> &'static str {
-        match self {
-            Self::Source => "shell.appbar.source",
-            Self::Capture => "shell.appbar.capture",
-            Self::Theme => "shell.appbar.theme",
-        }
-    }
-
-    /// How wide this chip is.
-    ///
-    /// The source chip is wider because it shows a file name; the two toggles
-    /// share a width, and saying so once is the difference between a table and
-    /// a coincidence that would drift the first time one of them changed.
-    const fn width(self) -> u32 {
-        const TOGGLE_W: u32 = 120;
-        match self {
-            Self::Source => 210,
-            Self::Capture | Self::Theme => TOGGLE_W,
-        }
-    }
-
-    /// Where this chip sits. Derived by summing the widths of the chips before
-    /// it, so inserting one shifts the rest without a second table.
-    fn rect(self) -> Rect {
-        let mut x = BAR_CHIPS_X;
-        for chip in Self::ALL {
-            if chip == self {
-                break;
-            }
-            x += chip.width() + 6;
-        }
-        Rect::new(x, 6, self.width(), APP_BAR_H - 12)
-    }
-}
-
-/// Where the app bar's chips start — after the shell's name.
-const BAR_CHIPS_X: u32 = 92;
-
-/// Where the `n`th rail entry sits.
-const fn rail_rect(n: u32) -> Rect {
-    Rect::new(4, APP_BAR_H + 10 + n * 32, RAIL_W.saturating_sub(8), 24)
-}
-
-/// How many slots a header has, as the geometry counts them.
-///
-/// The conversion is here rather than at four call sites, and it saturates:
-/// a vocabulary with more than `u32::MAX` arms is not a thing, and the
-/// alternative (a cast) is the lint this exists to answer honestly.
-fn slots(offered: &[CardAffordance]) -> u32 {
-    u32::try_from(offered.len()).unwrap_or(u32::MAX)
-}
-
-/// One slot index, likewise.
-fn slot_n(n: usize) -> u32 {
-    u32::try_from(n).unwrap_or(u32::MAX)
-}
-
-const fn contains(rect: Rect, px: u32, py: u32) -> bool {
-    px >= rect.x && px < rect.x + rect.w && py >= rect.y && py < rect.y + rect.h
-}
-
-/// What is under a point.
-///
-/// Resolved from the rectangles above — the same ones the painter uses — so a
-/// control that is drawn is a control that can be clicked, by construction
-/// rather than by agreement.
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Hit {
-    /// One of the app bar's three toggles.
-    Chip(BarChip),
-    /// A rail section.
-    Rail(&'static str),
-    /// One header affordance of one card.
-    Affordance(String, CardAffordance),
-    /// A not-ready card's remedy control. Only ever an *actionable* remedy —
-    /// `Wait` and `Nothing` are painted as prose and resolve to the card body,
-    /// so there is nothing to press where nothing can be done.
-    Remedy(String),
-    /// A card's body or title: press to select, drag to move.
-    Card(String),
-    Nothing,
-}
-
-impl Hit {
-    /// What a point lands on, front to back: chips and rail sit above the
-    /// board, and a card's affordances sit above its own body.
-    fn at(state: &ShellState, px: u32, py: u32) -> Self {
-        if py < APP_BAR_H {
-            for chip in BarChip::ALL {
-                if contains(chip.rect(), px, py) {
-                    return Self::Chip(chip);
-                }
-            }
-            return Self::Nothing;
-        }
-        if px < RAIL_W {
-            for (n, name) in RAIL.iter().enumerate() {
-                if contains(rail_rect(slot_n(n)), px, py - APP_BAR_H) {
-                    return Self::Rail(name);
-                }
-            }
-            return Self::Nothing;
-        }
-        let board = state.board.get();
-        for card in &state.cards.get() {
-            if state.is_floating(card.id().as_str()) {
-                continue;
-            }
-            let Some(tile) = board.tile(card.id()) else {
-                continue;
-            };
-            let rect = cell_rect(&board, tile);
-            if !contains(rect, px, py) {
-                continue;
-            }
-            // Into the card's own space, which is the space the painter placed
-            // its children in.
-            let (lx, ly) = (px - rect.x, py - rect.y);
-            let inside = local(rect);
-            let id = card.id().as_str().to_string();
-            let header = header_rect(inside);
-            if contains(header, lx, ly) {
-                let offered = card.chrome().offered();
-                for (n, affordance) in offered.iter().enumerate() {
-                    if contains(affordance_rect(header, slots(&offered), slot_n(n)), lx, ly) {
-                        return Self::Affordance(id, *affordance);
-                    }
-                }
-                return Self::Card(id);
-            }
-            if card.remedy().is_some_and(Remedy::is_actionable)
-                && contains(remedy_rect(body_rect(inside)), lx, ly)
-            {
-                return Self::Remedy(id);
-            }
-            return Self::Card(id);
-        }
-        Self::Nothing
-    }
-
-    /// The card this hit is on, if it is on one.
-    fn card_id(&self) -> Option<&str> {
-        match self {
-            Self::Affordance(id, _) | Self::Remedy(id) | Self::Card(id) => Some(id),
-            Self::Chip(_) | Self::Rail(_) | Self::Nothing => None,
-        }
-    }
-}
-
-/// The colours every painter in this file reads.
-///
-/// One value rather than five parameters. `card_scene` had eight arguments and
-/// clippy said so, which is the lint working as a design signal: five of them
-/// were always the same five theme roles resolved at the same moment, so they
-/// were one thing arriving as five.
+/// The colours every painter here reads.
 #[derive(Debug, Clone, Copy)]
 struct Palette {
     ink: Color,
     muted: Color,
     accent: Color,
-    surface: Color,
-    bar: Color,
+    on_accent: Color,
+    accent_fg: Color,
+    canvas: Color,
+    panel: Color,
+    raised: Color,
+    high: Color,
     outline: Color,
+    grid: Color,
 }
 
+/// A text run at an exact place in its container.
+///
+/// ★ The `with_layout` is not optional. A `TextNode` carries a rect, but
+/// without a layout style it is laid out **in flow** by the parent — so a set
+/// of labels written at deliberate coordinates stacks vertically instead, and
+/// the screen reads as a list of everything the container holds. This shell's
+/// first draft omitted it and every card painted its title, badge and
+/// description down the left edge.
 fn label(text: &str, rect: Rect, px: u32, fg: Color) -> Scene {
-    Scene::Text(TextNode::styled(
-        text,
-        rect,
-        TextStyle::new().with_size_px(px).with_fg(fg),
-    ))
+    Scene::Text(
+        TextNode::styled(text, rect, TextStyle::new().with_size_px(px).with_fg(fg))
+            .with_layout(absolute(rect)),
+    )
 }
 
 fn absolute(rect: Rect) -> LayoutStyle {
@@ -1940,137 +2429,698 @@ fn absolute(rect: Rect) -> LayoutStyle {
         .with_size(Size::px(rect.w, rect.h))
 }
 
-/// One card's header: its title, and one tagged label per affordance it offers.
-///
-/// The order comes from [`CardChrome::offered`], which is the enum's
-/// declaration order — so every card on this board, and every card in any other
-/// application, lays its header out the same way.
-fn header_scene(card: &Card, rect: Rect, ink: Color, muted: Color) -> Vec<Scene> {
-    let mut out = vec![label(
-        card.title(),
-        Rect::new(rect.x + 6, rect.y + 3, rect.w.saturating_sub(120), 15),
-        TITLE_FONT_PX,
+/// A small square dot — a grid pip, a status light, a grip dot.
+fn dot(x: u32, y: u32, size: u32, fill: Color) -> Scene {
+    Scene::Container(
+        ContainerNode::new(Vec::new())
+            .with_style(BoxStyle::filled(fill).with_corner_radius(size / 2))
+            .with_layout(absolute(Rect::new(x, y, size, size))),
+    )
+}
+
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "shell coordinates are < 2^13, exactly representable in f32"
+)]
+fn ppt(x: u32, y: u32) -> PathPoint {
+    PathPoint::new(x as f32, y as f32)
+}
+
+/// A stroked polyline set, in `rect`-local coordinates.
+fn strokes(rect: Rect, runs: &[Vec<(u32, u32)>], ink: Color, width: u32) -> Scene {
+    let mut commands = Vec::new();
+    for run in runs {
+        for (n, (x, y)) in run.iter().enumerate() {
+            let point = ppt(*x, *y);
+            commands.push(if n == 0 {
+                PathCommand::MoveTo(point)
+            } else {
+                PathCommand::LineTo(point)
+            });
+        }
+    }
+    Scene::Path(
+        PathNode::new(rect, commands, PathStyle::stroked(Stroke::new(ink, width)))
+            .with_layout(absolute(rect)),
+    )
+}
+
+fn close_mark(rect: Rect, ink: Color) -> Scene {
+    let (w, h) = (rect.w, rect.h);
+    let (x0, y0, x1, y1) = (w / 2 - 4, h / 2 - 4, w / 2 + 4, h / 2 + 4);
+    strokes(
+        rect,
+        &[vec![(x0, y0), (x1, y1)], vec![(x1, y0), (x0, y1)]],
         ink,
-    )];
-    let offered = card.chrome().offered();
-    for (n, affordance) in offered.iter().enumerate() {
-        let slot = affordance_rect(rect, slots(&offered), slot_n(n));
-        out.push(Scene::Container(
+        1,
+    )
+}
+
+/// The detach mark: a square lifting out of another.
+fn detach_mark(rect: Rect, ink: Color) -> Scene {
+    let (cx, cy) = (rect.w / 2, rect.h / 2);
+    strokes(
+        rect,
+        &[
+            vec![
+                (cx - 5, cy - 1),
+                (cx - 5, cy + 5),
+                (cx + 1, cy + 5),
+                (cx + 1, cy - 1),
+                (cx - 5, cy - 1),
+            ],
+            vec![(cx - 1, cy - 5), (cx + 5, cy - 5), (cx + 5, cy + 1)],
+        ],
+        ink,
+        1,
+    )
+}
+
+/// The re-dock mark: a box with a bar along its foot.
+fn redock_mark(rect: Rect, ink: Color) -> Scene {
+    let (cx, cy) = (rect.w / 2, rect.h / 2);
+    strokes(
+        rect,
+        &[
+            vec![
+                (cx - 5, cy - 5),
+                (cx + 5, cy - 5),
+                (cx + 5, cy + 5),
+                (cx - 5, cy + 5),
+                (cx - 5, cy - 5),
+            ],
+            vec![(cx - 5, cy + 2), (cx + 5, cy + 2)],
+        ],
+        ink,
+        1,
+    )
+}
+
+/// One header control's mark.
+fn affordance_mark(affordance: CardAffordance, rect: Rect, ink: Color) -> Vec<Scene> {
+    let (cx, cy) = (rect.w / 2, rect.h / 2);
+    match affordance {
+        CardAffordance::Settings => (0..3)
+            .map(|n| dot(cx - 1, cy - 5 + n * 5, 2, ink))
+            .collect(),
+        CardAffordance::TearOff => vec![detach_mark(rect, ink)],
+        CardAffordance::Maximize => vec![strokes(
+            rect,
+            &[vec![
+                (cx - 5, cy - 5),
+                (cx + 5, cy - 5),
+                (cx + 5, cy + 5),
+                (cx - 5, cy + 5),
+                (cx - 5, cy - 5),
+            ]],
+            ink,
+            1,
+        )],
+        CardAffordance::Close => vec![close_mark(rect, ink)],
+    }
+}
+
+/// The rail's icon for one section, drawn rather than set in a font — a glyph
+/// this project does not ship is a box, and a box is not an icon.
+fn rail_mark(key: &str, rect: Rect, ink: Color) -> Vec<Scene> {
+    let (cx, cy) = (rect.w / 2, rect.h / 2);
+    match key {
+        "dashboard" => vec![
+            dot(cx - 6, cy - 6, 5, ink),
+            dot(cx + 1, cy - 6, 5, ink),
+            dot(cx - 6, cy + 1, 5, ink),
+            dot(cx + 1, cy + 1, 5, ink),
+        ],
+        "topology" => vec![
+            strokes(
+                rect,
+                &[
+                    vec![(cx, cy - 4), (cx, cy + 1)],
+                    vec![
+                        (cx - 5, cy + 5),
+                        (cx - 5, cy + 1),
+                        (cx + 5, cy + 1),
+                        (cx + 5, cy + 5),
+                    ],
+                ],
+                ink,
+                1,
+            ),
+            dot(cx - 2, cy - 8, 4, ink),
+        ],
+        "stream" => vec![strokes(
+            rect,
+            &[
+                vec![(cx - 7, cy - 4), (cx + 7, cy - 4)],
+                vec![(cx - 7, cy), (cx + 3, cy)],
+                vec![(cx - 7, cy + 4), (cx + 6, cy + 4)],
+            ],
+            ink,
+            1,
+        )],
+        "decode" => vec![strokes(
+            rect,
+            &[
+                vec![(cx - 2, cy - 5), (cx - 7, cy), (cx - 2, cy + 5)],
+                vec![(cx + 2, cy - 5), (cx + 7, cy), (cx + 2, cy + 5)],
+            ],
+            ink,
+            1,
+        )],
+        "catalog" => vec![
+            dot(cx - 7, cy - 5, 3, ink),
+            dot(cx - 7, cy - 1, 3, ink),
+            dot(cx - 7, cy + 3, 3, ink),
+            strokes(
+                rect,
+                &[
+                    vec![(cx - 2, cy - 4), (cx + 7, cy - 4)],
+                    vec![(cx - 2, cy), (cx + 7, cy)],
+                    vec![(cx - 2, cy + 4), (cx + 7, cy + 4)],
+                ],
+                ink,
+                1,
+            ),
+        ],
+        _ => vec![
+            strokes(
+                rect,
+                &[
+                    vec![(cx - 7, cy - 4), (cx + 7, cy - 4)],
+                    vec![(cx - 7, cy + 3), (cx + 7, cy + 3)],
+                ],
+                ink,
+                1,
+            ),
+            dot(cx - 2, cy - 6, 4, ink),
+            dot(cx + 2, cy + 1, 4, ink),
+        ],
+    }
+}
+
+/// A pill: a rounded box with a status light and a label.
+fn pill(rect: Rect, tag: &str, light: Color, text: &str, palette: Palette) -> Scene {
+    Scene::Container(
+        ContainerNode::new(vec![
+            dot(12, rect.h / 2 - 3, 7, light),
+            label(
+                text,
+                Rect::new(28, rect.h / 2 - 8, rect.w.saturating_sub(38), 16),
+                FONT_BODY,
+                palette.ink,
+            ),
+        ])
+        .with_tag(tag.to_string())
+        .with_style(
+            BoxStyle::filled(palette.raised)
+                .with_corner_radius(8)
+                .with_border(Border::new(palette.outline, 1)),
+        )
+        .with_layout(absolute(rect)),
+    )
+}
+
+/// A button: filled when it is the affirmative one, outlined otherwise.
+fn button(rect: Rect, tag: &str, text: &str, filled: bool, palette: Palette) -> Scene {
+    let (fill, ink, border) = if filled {
+        (palette.accent, palette.on_accent, palette.accent)
+    } else {
+        (palette.panel, palette.ink, palette.outline)
+    };
+    Scene::Container(
+        ContainerNode::new(vec![label(
+            text,
+            Rect::new(14, rect.h / 2 - 8, rect.w.saturating_sub(24), 16),
+            FONT_BODY,
+            ink,
+        )])
+        .with_tag(tag.to_string())
+        .with_style(
+            BoxStyle::filled(fill)
+                .with_corner_radius(8)
+                .with_border(Border::new(border, 1)),
+        )
+        .with_layout(absolute(rect)),
+    )
+}
+
+fn app_bar_scene(state: &ShellState, palette: Palette) -> Scene {
+    let mut children = vec![
+        dot(16, 18, 16, palette.accent),
+        label(
+            "Analyzer",
+            Rect::new(42, 17, 118, 18),
+            FONT_TITLE,
+            palette.ink,
+        ),
+    ];
+    for (n, name) in TABS.iter().enumerate() {
+        let chip = if n == 0 { BarChip::Tab0 } else { BarChip::Tab1 };
+        let on = state.tab.get() == *name;
+        children.push(Scene::Container(
             ContainerNode::new(vec![label(
-                affordance_glyph(*affordance),
-                Rect::new(slot.x + 6, slot.y + 4, slot.w - 8, 13),
-                BODY_FONT_PX,
-                muted,
+                name,
+                Rect::new(14, 8, chip.rect().w.saturating_sub(20), 16),
+                FONT_BODY,
+                if on { palette.ink } else { palette.muted },
             )])
-            .with_tag(format!("card.{}.{}", card.id().as_str(), affordance.wire()))
-            .with_layout(absolute(slot)),
+            .with_tag(chip.tag())
+            .with_style(
+                BoxStyle::filled(if on { palette.high } else { palette.panel })
+                    .with_corner_radius(8),
+            )
+            .with_layout(absolute(chip.rect())),
+        ));
+    }
+    children.push(pill(
+        BarChip::Source.rect(),
+        BarChip::Source.tag(),
+        rgb(0x35_C0_8B),
+        &state.source.get(),
+        palette,
+    ));
+    let capturing = state.capturing.get();
+    children.push(pill(
+        BarChip::Capture.rect(),
+        BarChip::Capture.tag(),
+        if capturing {
+            palette.accent_fg
+        } else {
+            palette.muted
+        },
+        if capturing { "Capturing" } else { "Paused" },
+        palette,
+    ));
+    children.push(label(
+        &transport_word(state.clock.status(), capturing),
+        Rect::new(842, 19, 120, 16),
+        FONT_SMALL,
+        palette.muted,
+    ));
+    // The search box says which of its two states it is in; a box that looked
+    // the same either way would leave a person typing into the board.
+    let searching = state.searching.get();
+    let search = state.search.get();
+    children.push(Scene::Container(
+        ContainerNode::new(vec![label(
+            &if searching {
+                format!("{search}|")
+            } else if search.is_empty() {
+                "press / to search".to_string()
+            } else {
+                search
+            },
+            Rect::new(12, 8, BarChip::Search.rect().w.saturating_sub(20), 16),
+            FONT_BODY,
+            if searching {
+                palette.ink
+            } else {
+                palette.muted
+            },
+        )])
+        .with_tag(BarChip::Search.tag())
+        .with_style(
+            BoxStyle::filled(palette.raised)
+                .with_corner_radius(8)
+                .with_border(Border::new(
+                    if searching {
+                        palette.accent_fg
+                    } else {
+                        palette.outline
+                    },
+                    1,
+                )),
+        )
+        .with_layout(absolute(BarChip::Search.rect())),
+    ));
+    Scene::Container(
+        ContainerNode::new(children)
+            .with_tag("shell.appbar")
+            .with_style(BoxStyle::filled(palette.panel))
+            .with_layout(absolute(Rect::new(0, 0, WIN_W, APP_BAR_H))),
+    )
+}
+
+fn sub_bar_scene(state: &ShellState, palette: Palette) -> Scene {
+    let placed = state.placed().len();
+    let preset = SubChip::Preset.rect();
+    let mut children = vec![
+        Scene::Container(
+            ContainerNode::new(vec![
+                label(
+                    &state.preset.get(),
+                    Rect::new(12, 8, preset.w.saturating_sub(38), 16),
+                    FONT_TITLE,
+                    palette.ink,
+                ),
+                strokes(
+                    Rect::new(preset.w - 26, 13, 12, 8),
+                    &[vec![(0, 0), (5, 5), (10, 0)]],
+                    palette.muted,
+                    1,
+                ),
+            ])
+            .with_tag(SubChip::Preset.tag())
+            .with_style(BoxStyle::filled(palette.panel).with_corner_radius(8))
+            .with_layout(absolute(preset)),
+        ),
+        label(
+            &format!("{placed} widget(s) placed"),
+            Rect::new(preset.x + preset.w + 14, preset.y + 8, 220, 16),
+            FONT_BODY,
+            palette.muted,
+        ),
+        button(
+            SubChip::EditLayout.rect(),
+            SubChip::EditLayout.tag(),
+            if state.editing.get() {
+                "Done"
+            } else {
+                "Edit Layout"
+            },
+            state.editing.get(),
+            palette,
+        ),
+        button(
+            SubChip::AddWidget.rect(),
+            SubChip::AddWidget.tag(),
+            "+  Add Widget",
+            true,
+            palette,
+        ),
+    ];
+    if state.preset_open.get() {
+        children.push(preset_menu_scene(state, palette));
+    }
+    Scene::Container(
+        ContainerNode::new(children)
+            .with_tag("shell.subbar")
+            .with_style(BoxStyle::filled(palette.canvas))
+            .with_layout(absolute(Rect::new(
+                RAIL_W,
+                APP_BAR_H,
+                WIN_W - RAIL_W - PALETTE_W,
+                SUB_BAR_H,
+            ))),
+    )
+}
+
+/// The saved-layout menu, painted in the sub bar's own space — the same space
+/// the hit test resolves its rows in.
+fn preset_menu_scene(state: &ShellState, palette: Palette) -> Scene {
+    let names: Vec<String> = state.presets.borrow().keys().cloned().collect();
+    let rows = u(names.len()) + 1;
+    let first = preset_item_rect(0);
+    let panel = Rect::new(first.x - 8, first.y - 30, first.w + 16, rows * 34 + 38);
+    let mut children = vec![label(
+        "SAVED LAYOUTS",
+        Rect::new(14, 10, panel.w - 24, 14),
+        FONT_TINY,
+        palette.muted,
+    )];
+    let row_local = |row: Rect| Rect::new(row.x - panel.x, row.y - panel.y, row.w, row.h);
+    for (n, name) in names.iter().enumerate() {
+        let row = preset_item_rect(u(n));
+        let on = &state.preset.get() == name;
+        children.push(Scene::Container(
+            ContainerNode::new(vec![label(
+                name,
+                Rect::new(12, 7, row.w.saturating_sub(20), 16),
+                FONT_BODY,
+                if on { palette.accent_fg } else { palette.ink },
+            )])
+            .with_tag(format!("shell.preset.item.{n}"))
+            .with_style(
+                BoxStyle::filled(if on { palette.high } else { palette.raised })
+                    .with_corner_radius(6),
+            )
+            .with_layout(absolute(row_local(row))),
+        ));
+    }
+    let save = preset_item_rect(u(names.len()));
+    children.push(Scene::Container(
+        ContainerNode::new(vec![label(
+            "+  Save current layout",
+            Rect::new(12, 7, save.w.saturating_sub(20), 16),
+            FONT_BODY,
+            palette.accent_fg,
+        )])
+        .with_tag(format!("shell.preset.item.{}", names.len()))
+        .with_style(BoxStyle::filled(palette.raised).with_corner_radius(6))
+        .with_layout(absolute(row_local(save))),
+    ));
+    Scene::Container(
+        ContainerNode::new(children)
+            .with_tag("shell.preset.menu")
+            .with_style(
+                BoxStyle::filled(palette.panel)
+                    .with_corner_radius(10)
+                    .with_border(Border::new(palette.outline, 1)),
+            )
+            .with_layout(absolute(panel)),
+    )
+}
+
+fn rail_scene(state: &ShellState, palette: Palette) -> Scene {
+    let mut entries = Vec::new();
+    let nav = state.nav.get();
+    for (n, (key, _name)) in RAIL.iter().enumerate() {
+        let rect = rail_rect(u(n));
+        let on = nav == *key;
+        let ink = if on { palette.accent_fg } else { palette.muted };
+        entries.push(Scene::Container(
+            ContainerNode::new(rail_mark(key, local(rect), ink))
+                .with_tag(format!("shell.rail.{key}"))
+                .with_style(
+                    BoxStyle::filled(if on { palette.high } else { palette.panel })
+                        .with_corner_radius(8),
+                )
+                .with_layout(absolute(rect)),
+        ));
+    }
+    entries.push(Scene::Container(
+        ContainerNode::new(vec![label(
+            "NE",
+            Rect::new(8, 9, 24, 14),
+            FONT_TINY,
+            palette.on_accent,
+        )])
+        .with_tag("shell.rail.account")
+        .with_style(BoxStyle::filled(palette.accent).with_corner_radius(16))
+        .with_layout(absolute(Rect::new(10, WIN_H - APP_BAR_H - 46, 32, 32))),
+    ));
+    Scene::Container(
+        ContainerNode::new(entries)
+            .with_tag("shell.rail")
+            .with_style(BoxStyle::filled(palette.panel))
+            .with_layout(absolute(Rect::new(
+                0,
+                APP_BAR_H,
+                RAIL_W,
+                WIN_H.saturating_sub(APP_BAR_H),
+            ))),
+    )
+}
+
+/// The canvas's dot grid: one pip per cell corner.
+///
+/// Painted always, faintly — an empty board that looked like an empty panel
+/// would not say that things can be placed on it — and brighter while a drag or
+/// layout-edit is in flight, which is the reference's aligned overlay.
+fn grid_scene(rows: u32, palette: Palette, bright: bool) -> Vec<Scene> {
+    let pitch = col_pitch();
+    let ink = if bright {
+        palette.outline
+    } else {
+        palette.grid
+    };
+    let size = if bright { 3 } else { 2 };
+    let mut out = Vec::new();
+    for row in 0..=rows.max(1) {
+        for col in 0..=GRID_COLS {
+            out.push(dot(
+                GAP + col * pitch - size / 2,
+                GAP + row * ROW_H - size / 2,
+                size,
+                ink,
+            ));
+        }
+    }
+    out
+}
+
+/// A card's header: grip, status light, title, LIVE badge, controls.
+fn header_scene(card: &Card, rect: Rect, palette: Palette) -> Vec<Scene> {
+    let id = card.id().as_str();
+    let colour = def_for_card(id).map_or(palette.accent, |d| d.color);
+    let grip = grip_rect(rect);
+    let mut out = vec![Scene::Container(
+        ContainerNode::new(
+            (0..3)
+                .flat_map(|r| (0..2).map(move |c| dot(4 + c * 5, 8 + r * 5, 2, palette.muted)))
+                .collect(),
+        )
+        .with_tag(format!("card.{id}.grip"))
+        .with_layout(absolute(grip)),
+    )];
+    out.push(dot(
+        grip.x + grip.w + 4,
+        rect.y + CARD_HDR / 2 - 4,
+        9,
+        colour,
+    ));
+    let offered = card.chrome().offered();
+    let title_w = rect
+        .w
+        .saturating_sub(grip.w + 32 + u(offered.len()) * SLOT_W + 56)
+        .max(40);
+    out.push(label(
+        card.title(),
+        Rect::new(grip.x + grip.w + 20, rect.y + 9, title_w, 16),
+        FONT_BODY,
+        palette.ink,
+    ));
+    if card.state().is_ready() {
+        let badge_x = grip.x + grip.w + 24 + title_w;
+        out.push(dot(
+            badge_x,
+            rect.y + CARD_HDR / 2 - 3,
+            6,
+            palette.accent_fg,
+        ));
+        out.push(label(
+            "LIVE",
+            Rect::new(badge_x + 10, rect.y + 10, 40, 14),
+            FONT_TINY,
+            palette.accent_fg,
+        ));
+    }
+    for (n, affordance) in offered.iter().enumerate() {
+        let slot = affordance_rect(rect, u(offered.len()), u(n));
+        out.push(Scene::Container(
+            ContainerNode::new(affordance_mark(*affordance, local(slot), palette.muted))
+                .with_tag(format!("card.{id}.{}", affordance.wire()))
+                .with_layout(absolute(slot)),
         ));
     }
     out
 }
 
-/// The word a header affordance shows. Short because a card header is 20px
-/// tall; distinct because a person has to tell them apart without a tooltip.
-const fn affordance_glyph(affordance: CardAffordance) -> &'static str {
-    match affordance {
-        CardAffordance::Settings => "set",
-        CardAffordance::TearOff => "out",
-        CardAffordance::Maximize => "max",
-        CardAffordance::Close => "x",
-    }
-}
-
-/// What a card's body paints.
-///
-/// The two branches are the design: a ready card paints its own content, and
-/// **every** not-ready card paints the same two things — the state's sentence
-/// and its derived remedy — so the twelve kinds cannot disagree about what an
-/// encrypted link offers.
-fn body_scene(card: &Card, rect: Rect, ink: Color, muted: Color, accent: Color) -> Vec<Scene> {
+/// What a card's body paints: its content, or — for **every** not-ready
+/// state — the same two things, the sentence and its derived remedy, so the
+/// twelve kinds cannot disagree about what an encrypted link offers.
+fn body_scene(card: &Card, rect: Rect, palette: Palette) -> Vec<Scene> {
     if card.state().is_ready() {
-        return ready_body(card, rect, ink, accent);
+        return ready_body(card, rect, palette);
     }
     let mut out = vec![label(
         &state_sentence(card.state()),
-        Rect::new(rect.x + 8, rect.y + 8, rect.w.saturating_sub(16), 14),
-        BODY_FONT_PX,
-        muted,
+        Rect::new(rect.x + 12, rect.y + 10, rect.w.saturating_sub(24), 16),
+        FONT_BODY,
+        palette.muted,
     )];
     if let Some(remedy) = card.remedy() {
-        // The remedy is painted as a control only when the person is the one
+        // A remedy is painted as a control only when the person is the one
         // expected to act. `Wait` is the card's own job and `Nothing` is
-        // nobody's, and neither gets a button — which is the derivation doing
-        // the deciding rather than this function.
-        let text = if remedy.is_actionable() {
-            format!("[ {} ]", remedy_label(remedy))
-        } else {
-            remedy_label(remedy).to_string()
-        };
+        // nobody's, and neither gets a button — the derivation doing the
+        // deciding rather than this function.
         let slot = remedy_rect(rect);
+        let actionable = remedy.is_actionable();
         out.push(Scene::Container(
             ContainerNode::new(vec![label(
-                &text,
-                Rect::new(slot.x + 4, slot.y + 4, slot.w.saturating_sub(8), 14),
-                BODY_FONT_PX,
-                if remedy.is_actionable() {
-                    accent
+                remedy_label(remedy),
+                Rect::new(12, 3, slot.w.saturating_sub(20), 16),
+                FONT_BODY,
+                if actionable {
+                    palette.on_accent
                 } else {
-                    muted
+                    palette.muted
                 },
             )])
             .with_tag(format!("card.{}.remedy", card.id().as_str()))
+            .with_style(
+                BoxStyle::filled(if actionable {
+                    palette.accent
+                } else {
+                    palette.raised
+                })
+                .with_corner_radius(6),
+            )
             .with_layout(absolute(slot)),
         ));
     }
     out
 }
 
-/// A ready card's own content. Small on purpose — what this file demonstrates
-/// is the shell, and the panes themselves have their own examples.
-fn ready_body(card: &Card, rect: Rect, ink: Color, accent: Color) -> Vec<Scene> {
-    if card.id().as_str() == "kpi" {
-        // The capability list's KPI stat tile: a box, a label and a sparkline.
-        // Assembled here rather than shipped by the framework, which is exactly
-        // what that row's verdict claims — so this is the claim, executed.
-        let spark = Rect::new(
-            rect.x + 8,
-            rect.y + 26,
-            rect.w.saturating_sub(16).max(8),
-            rect.h.saturating_sub(34).max(8),
-        );
+/// A ready card's content. Deliberately small — this file demonstrates the
+/// shell, and the panes have their own examples.
+fn ready_body(card: &Card, rect: Rect, palette: Palette) -> Vec<Scene> {
+    let id = card.id().as_str();
+    let def = def_for_card(id);
+    let colour = def.map_or(palette.accent, |d| d.color);
+    if def.map(|d| d.kind) == Some("health") {
+        // The capability list's KPI stat tile: a box, a label and a chart
+        // primitive, assembled here rather than shipped by the framework —
+        // which is exactly what that row's verdict claims.
         return vec![
             label(
                 "17.3 Mb/s",
-                Rect::new(rect.x + 8, rect.y + 6, rect.w.saturating_sub(16), 16),
-                TITLE_FONT_PX,
-                ink,
+                Rect::new(rect.x + 12, rect.y + 8, 160, 20),
+                FONT_TITLE,
+                palette.ink,
             ),
             Scene::Container(
                 ContainerNode::new(vec![
                     Sparkline::new(KPI_SERIES.to_vec())
-                        .with_color(accent)
+                        .with_color(colour)
                         .with_tag_prefix("kpi.spark")
-                        .build(Rect::new(0, 0, spark.w, spark.h), &ChartStyle::default()),
+                        .build(
+                            Rect::new(
+                                0,
+                                0,
+                                rect.w.saturating_sub(24).max(8),
+                                rect.h.saturating_sub(44).max(8),
+                            ),
+                            &ChartStyle::default(),
+                        ),
                 ])
-                .with_tag("card.kpi.sparkline")
-                .with_layout(absolute(spark)),
+                .with_tag(format!("card.{id}.sparkline"))
+                .with_layout(absolute(Rect::new(
+                    rect.x + 12,
+                    rect.y + 32,
+                    rect.w.saturating_sub(24).max(8),
+                    rect.h.saturating_sub(44).max(8),
+                ))),
             ),
         ];
     }
-    vec![label(
-        &format!("{} content", card.title().to_lowercase()),
-        Rect::new(rect.x + 8, rect.y + 10, rect.w.saturating_sub(16), 14),
-        BODY_FONT_PX,
-        ink,
-    )]
+    vec![
+        // A placeholder that reads as content rather than as a gap: the
+        // widget's own colour, its code, and its one-line description.
+        Scene::Container(
+            ContainerNode::new(vec![label(
+                def.map_or("", |d| d.code),
+                Rect::new(9, 9, 34, 14),
+                FONT_TINY,
+                palette.on_accent,
+            )])
+            .with_tag(format!("card.{id}.code"))
+            .with_style(BoxStyle::filled(colour).with_corner_radius(6))
+            .with_layout(absolute(Rect::new(rect.x + 12, rect.y + 10, 40, 32))),
+        ),
+        label(
+            def.map_or("", |d| d.desc),
+            Rect::new(rect.x + 62, rect.y + 18, rect.w.saturating_sub(74), 16),
+            FONT_BODY,
+            palette.muted,
+        ),
+    ]
 }
 
-/// The sentence a not-ready card shows. One per arm, and the two that carry a
-/// reason say it.
 fn state_sentence(state: &CardState) -> String {
     match state {
         CardState::Ready => "showing content".to_string(),
-        CardState::Loading => "loading...".to_string(),
+        CardState::Loading => "loading\u{2026}".to_string(),
         CardState::Empty => "nothing matched this filter".to_string(),
         CardState::Failed(why) => format!("could not load: {why}"),
         CardState::Denied(what) => format!("not permitted: {what}"),
@@ -2078,7 +3128,6 @@ fn state_sentence(state: &CardState) -> String {
     }
 }
 
-/// What the remedy reads as to a person.
 const fn remedy_label(remedy: Remedy) -> &'static str {
     match remedy {
         Remedy::Wait => "waiting",
@@ -2089,221 +3138,362 @@ const fn remedy_label(remedy: Remedy) -> &'static str {
     }
 }
 
-/// What one app-bar chip reads as. The chip is the control, so its label has to
-/// say both the setting's name and its current value — a chip reading only
-/// "dark" leaves a person guessing what pressing it does.
-fn chip_label(state: &ShellState, chip: BarChip) -> String {
-    match chip {
-        BarChip::Source => format!("source: {}", state.source.get()),
-        BarChip::Capture => format!(
-            "capture: {}",
-            if state.capturing.get() { "on" } else { "off" }
-        ),
-        BarChip::Theme => format!("theme: {}", theme_word(&state.theme)),
-    }
-}
-
-fn app_bar_scene(state: &ShellState, palette: Palette) -> Scene {
-    let Palette {
-        ink,
-        muted,
-        surface: chip_fill,
-        bar: fill,
-        outline,
-        ..
-    } = palette;
-    let clock = &state.clock;
-    let mut children = vec![label(
-        "Analyzer",
-        Rect::new(12, 11, 76, 16),
-        TITLE_FONT_PX,
-        ink,
-    )];
-    // Three pressable chips, drawn at the rectangles the hit test resolves —
-    // one geometry, so a chip cannot be painted where it cannot be pressed.
-    for chip in BarChip::ALL {
-        let rect = chip.rect();
+/// The size-stepper strip layout-edit mode puts on every card.
+fn edit_bar_scene(card_id: &str, bar: Rect, cell: (u32, u32), palette: Palette) -> Scene {
+    let mut children = Vec::new();
+    for (n, (verb, glyph)) in STEPPERS.iter().enumerate() {
+        let slot = stepper_rect(bar, u(n));
         children.push(Scene::Container(
             ContainerNode::new(vec![label(
-                &chip_label(state, chip),
-                Rect::new(rect.x + 8, rect.y + 6, rect.w.saturating_sub(12), 14),
-                BODY_FONT_PX,
-                ink,
+                glyph,
+                Rect::new(6, 2, 14, 14),
+                FONT_BODY,
+                palette.ink,
             )])
-            .with_tag(chip.tag())
+            .with_tag(format!("card.{card_id}.{verb}"))
             .with_style(
-                BoxStyle::filled(chip_fill)
+                BoxStyle::filled(palette.high)
                     .with_corner_radius(4)
-                    .with_border(Border::new(outline, 1)),
+                    .with_border(Border::new(palette.outline, 1)),
             )
-            .with_layout(absolute(rect)),
+            .with_layout(absolute(Rect::new(
+                slot.x - bar.x,
+                slot.y - bar.y,
+                slot.w,
+                slot.h,
+            ))),
         ));
     }
-    // The search box says which of its two states it is in: a caret when it is
-    // taking keystrokes, and how to get there when it is not. A box that looked
-    // the same either way would leave a person typing into the board.
-    let tail = format!(
-        "search: {}   |   {}",
-        if state.searching.get() {
-            format!("{}|", state.search.get())
-        } else if state.search.get().is_empty() {
-            "(press / to search)".to_string()
-        } else {
-            state.search.get()
-        },
-        transport_word(clock.status(), state.capturing.get()),
-    );
-    let tail_x = BarChip::Theme.rect().x + BarChip::Theme.width() + 14;
     children.push(label(
-        &tail,
-        Rect::new(tail_x, 13, WIN_W.saturating_sub(tail_x + 8), 14),
-        BODY_FONT_PX,
-        muted,
+        "W",
+        Rect::new(58, 6, 12, 14),
+        FONT_SMALL,
+        palette.muted,
+    ));
+    children.push(label(
+        "H",
+        Rect::new(136, 6, 12, 14),
+        FONT_SMALL,
+        palette.muted,
+    ));
+    children.push(label(
+        &format!("{}\u{00D7}{}", cell.0, cell.1),
+        Rect::new(bar.w.saturating_sub(48), 6, 40, 14),
+        FONT_SMALL,
+        palette.accent_fg,
     ));
     Scene::Container(
         ContainerNode::new(children)
-            .with_tag("shell.appbar")
-            .with_style(BoxStyle::filled(fill))
-            .with_layout(absolute(Rect::new(0, 0, WIN_W, APP_BAR_H))),
+            .with_tag(format!("card.{card_id}.editbar"))
+            .with_style(BoxStyle::filled(palette.raised))
+            .with_layout(absolute(bar)),
     )
 }
 
-fn rail_scene(state: &ShellState, palette: Palette) -> Scene {
-    let (fill, muted, ink) = (palette.bar, palette.muted, palette.ink);
-    let mut entries = Vec::new();
-    let focus = state.rail_focus.get();
-    for (n, name) in RAIL.iter().enumerate() {
-        let rect = rail_rect(slot_n(n));
-        // The count is of the cards still ON the board: closing one is
-        // supposed to move this number, which is what makes the rail a
-        // navigation aid rather than a static list of words.
-        let here = section_count(state, name);
-        let on = focus.as_deref() == Some(*name);
-        entries.push(Scene::Container(
-            ContainerNode::new(vec![label(
-                &format!("{} {here}", &name[..3.min(name.len())]),
-                Rect::new(rect.x + 4, rect.y + 5, rect.w.saturating_sub(6), 13),
-                BODY_FONT_PX,
-                if on { ink } else { muted },
-            )])
-            .with_tag(format!("shell.rail.{name}"))
-            .with_style(if on {
-                BoxStyle::filled(fill).with_border(Border::new(ink, 1))
-            } else {
-                BoxStyle::filled(fill)
-            })
-            .with_layout(absolute(rect)),
+fn card_scene(
+    card: &Card,
+    rect: Rect,
+    selected: bool,
+    editing: bool,
+    cell: (u32, u32),
+    palette: Palette,
+) -> Scene {
+    let inside = local(rect);
+    let mut children = header_scene(card, header_rect(inside), palette);
+    children.extend(body_scene(card, body_rect(inside, editing), palette));
+    if editing {
+        children.push(edit_bar_scene(
+            card.id().as_str(),
+            edit_bar_rect(inside),
+            cell,
+            palette,
         ));
     }
-    Scene::Container(
-        ContainerNode::new(entries)
-            .with_tag("shell.rail")
-            .with_style(BoxStyle::filled(fill))
-            .with_layout(absolute(Rect::new(
-                0,
-                APP_BAR_H,
-                RAIL_W,
-                WIN_H.saturating_sub(APP_BAR_H),
-            ))),
-    )
-}
-
-fn card_scene(card: &Card, rect: Rect, selected: bool, palette: Palette) -> Scene {
-    let Palette {
-        ink,
-        muted,
-        accent,
-        surface,
-        outline,
-        ..
-    } = palette;
-    let inside = local(rect);
-    let mut children = header_scene(card, header_rect(inside), ink, muted);
-    children.extend(body_scene(card, body_rect(inside), ink, muted, accent));
     Scene::Container(
         ContainerNode::new(children)
             .with_tag(format!("card.{}", card.id().as_str()))
             .with_style(
-                BoxStyle::filled(surface)
-                    .with_corner_radius(6)
-                    // The selection ring: one card is the keyboard's subject and
-                    // a person has to be able to see which. Two pixels of accent
+                BoxStyle::filled(palette.panel)
+                    .with_corner_radius(10)
+                    // The selection ring: one card is the keyboard's subject
+                    // and a person has to see which. Accent on the border
                     // rather than a different fill, so a selected card that is
                     // also failing still reads as failing.
                     .with_border(if selected {
-                        Border::new(accent, 2)
+                        Border::new(palette.accent_fg, 2)
                     } else {
-                        Border::new(outline, 1)
+                        Border::new(palette.outline, 1)
                     }),
             )
             .with_layout(absolute(rect)),
     )
 }
 
+/// A detached panel, floating over the canvas.
+fn float_scene(state: &ShellState, float: &Float, palette: Palette) -> Option<Scene> {
+    let card = state.card(&float.id)?;
+    let rect = float_rect(float);
+    let inside = local(rect);
+    let header = header_rect(inside);
+    let colour = def_for_card(&float.id).map_or(palette.accent, |d| d.color);
+    let mut children = vec![
+        dot(14, header.y + CARD_HDR / 2 - 4, 9, colour),
+        label(
+            card.title(),
+            Rect::new(30, header.y + 9, header.w.saturating_sub(200), 16),
+            FONT_BODY,
+            palette.ink,
+        ),
+        // The badge that says this panel is not on the board.
+        Scene::Container(
+            ContainerNode::new(vec![label(
+                "DETACHED",
+                Rect::new(9, 4, 66, 12),
+                FONT_TINY,
+                palette.muted,
+            )])
+            .with_tag(format!("float.{}.badge", float.id))
+            .with_style(
+                BoxStyle::filled(palette.raised)
+                    .with_corner_radius(4)
+                    .with_border(Border::new(palette.outline, 1)),
+            )
+            .with_layout(absolute(Rect::new(
+                header.w.saturating_sub(160),
+                header.y + 8,
+                84,
+                20,
+            ))),
+        ),
+        Scene::Container(
+            ContainerNode::new(vec![redock_mark(
+                local(affordance_rect(header, 2, 0)),
+                palette.muted,
+            )])
+            .with_tag(format!("float.{}.redock", float.id))
+            .with_layout(absolute(affordance_rect(header, 2, 0))),
+        ),
+        Scene::Container(
+            ContainerNode::new(vec![close_mark(
+                local(affordance_rect(header, 2, 1)),
+                palette.muted,
+            )])
+            .with_tag(format!("float.{}.close", float.id))
+            .with_layout(absolute(affordance_rect(header, 2, 1))),
+        ),
+    ];
+    children.extend(body_scene(&card, body_rect(inside, false), palette));
+    Some(Scene::Container(
+        ContainerNode::new(children)
+            .with_tag(format!("float.{}", float.id))
+            .with_style(
+                BoxStyle::filled(palette.panel)
+                    .with_corner_radius(10)
+                    .with_border(Border::new(palette.accent_fg, 1)),
+            )
+            .with_layout(absolute(rect)),
+    ))
+}
+
+/// The palette panel: the catalogue, grouped, with a count at the foot.
+fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
+    let panel = palette_rect();
+    let mut children = vec![
+        label(
+            "Widget Palette",
+            Rect::new(16, 18, 220, 20),
+            FONT_TITLE,
+            palette.ink,
+        ),
+        label(
+            "Press one to place it on the board",
+            Rect::new(16, 42, 250, 16),
+            FONT_SMALL,
+            palette.muted,
+        ),
+    ];
+    for (def, title, rect) in palette_rows() {
+        let Some(def) = def else {
+            children.push(label(title, rect, FONT_TINY, palette.muted));
+            continue;
+        };
+        let placed = state
+            .cards
+            .get()
+            .iter()
+            .filter(|c| kind_of(c.id().as_str()) == def.kind)
+            .count();
+        children.push(Scene::Container(
+            ContainerNode::new(vec![
+                Scene::Container(
+                    ContainerNode::new(vec![label(
+                        def.code,
+                        Rect::new(5, 9, 30, 14),
+                        FONT_TINY,
+                        palette.on_accent,
+                    )])
+                    .with_style(BoxStyle::filled(def.color).with_corner_radius(8))
+                    .with_layout(absolute(Rect::new(8, 7, 32, 32))),
+                ),
+                label(
+                    def.label,
+                    Rect::new(50, 8, rect.w.saturating_sub(84), 16),
+                    FONT_BODY,
+                    palette.ink,
+                ),
+                label(
+                    def.desc,
+                    Rect::new(50, 26, rect.w.saturating_sub(84), 14),
+                    FONT_SMALL,
+                    palette.muted,
+                ),
+                label(
+                    &if placed == 0 {
+                        "+".to_string()
+                    } else {
+                        format!("+ {placed}")
+                    },
+                    Rect::new(rect.w.saturating_sub(30), 15, 26, 16),
+                    FONT_BODY,
+                    palette.accent_fg,
+                ),
+            ])
+            .with_tag(format!("shell.palette.{}", def.kind))
+            .with_style(
+                BoxStyle::filled(palette.raised)
+                    .with_corner_radius(10)
+                    .with_border(Border::new(palette.outline, 1)),
+            )
+            .with_layout(absolute(rect)),
+        ));
+    }
+    children.push(label(
+        &format!(
+            "{} widgets \u{00B7} {} placed",
+            DEFS.len(),
+            state.placed().len()
+        ),
+        Rect::new(16, panel.h.saturating_sub(30), 240, 16),
+        FONT_SMALL,
+        palette.muted,
+    ));
+    Scene::Container(
+        ContainerNode::new(children)
+            .with_tag("shell.palette")
+            .with_style(BoxStyle::filled(palette.panel))
+            .with_layout(absolute(panel)),
+    )
+}
+
+/// The toast: what just happened, floating at the foot of the canvas.
+fn toast_scene(state: &ShellState, palette: Palette) -> Scene {
+    let canvas = canvas_rect();
+    let rect = Rect::new(canvas.x + 24, WIN_H - 58, 560, 34);
+    Scene::Container(
+        ContainerNode::new(vec![
+            dot(14, 13, 8, palette.accent_fg),
+            label(
+                &state.toast.get(),
+                Rect::new(32, 9, rect.w.saturating_sub(44), 16),
+                FONT_BODY,
+                palette.ink,
+            ),
+        ])
+        .with_tag("shell.toast")
+        .with_style(
+            BoxStyle::filled(palette.raised)
+                .with_corner_radius(10)
+                .with_border(Border::new(palette.outline, 1)),
+        )
+        .with_layout(absolute(rect)),
+    )
+}
+
 fn view(_state: (), _frame: Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let state = use_shell_state();
+    let dark = theme_word(&state.theme) == "dark";
     let palette = Palette {
         ink: theme.resolve(ColorRole::OnSurface),
         muted: theme.resolve(ColorRole::OnSurfaceMuted),
         accent: theme.resolve(ColorRole::Accent),
-        surface: theme.resolve(ColorRole::SurfaceContainerHigh),
-        bar: theme.resolve(ColorRole::SurfaceContainer),
+        on_accent: theme.resolve(ColorRole::OnAccent),
+        accent_fg: theme.resolve(ColorRole::InversePrimary),
+        canvas: theme.resolve(ColorRole::Surface),
+        panel: theme.resolve(ColorRole::SurfaceContainerLow),
+        raised: theme.resolve(ColorRole::SurfaceContainer),
+        high: theme.resolve(ColorRole::SurfaceContainerHigh),
         outline: theme.resolve(ColorRole::Outline),
+        grid: grid_ink(dark),
     };
 
     let board = state.board.get();
     let selected = state.selected.get();
-    let mut children = vec![app_bar_scene(&state, palette), rail_scene(&state, palette)];
+    let editing = state.editing.get();
+    let drag = state.drag.get();
 
-    for card in &state.cards.get() {
-        // A torn-off card KEEPS ITS PLACE. The board is the arrangement the
-        // user made — where a card belongs — and the statechart says where it
-        // is being shown; reflowing the board on tear-off and again on
-        // dock-back is how a dashboard loses a layout to a gesture that was
-        // meant to be temporary. So the tile stays and only the paint moves,
-        // which is also why `dock_back` needs no way-home token the way
-        // `maximize` does.
-        if state.is_floating(card.id().as_str()) {
+    let mut canvas_children = grid_scene(board.rows() + 1, palette, editing || drag.is_some());
+    for card in &state.placed() {
+        let Some(tile) = board.tile(card.id()) else {
             continue;
-        }
-        if let Some(tile) = board.tile(card.id()) {
-            children.push(card_scene(
-                card,
-                cell_rect(&board, tile),
-                selected.as_deref() == Some(card.id().as_str()),
-                palette,
-            ));
+        };
+        canvas_children.push(card_scene(
+            card,
+            cell_rect(tile),
+            selected.as_deref() == Some(card.id().as_str()),
+            editing,
+            (tile.w, tile.h),
+            palette,
+        ));
+    }
+    // ★ The snap preview: where a release would put the dragged card. Drawn
+    // rather than moving the card, because the reference commits on release and
+    // a board reflowing under the finger would make the preview a lie.
+    if let Some(drag) = &drag
+        && let Some(tile) = board.tile(&drag.id)
+    {
+        let ghost = Tile::new(drag.id.as_str(), drag.snap.0, drag.snap.1, tile.w, tile.h);
+        canvas_children.push(Scene::Container(
+            ContainerNode::new(Vec::new())
+                .with_tag("shell.dropslot")
+                .with_style(
+                    BoxStyle::filled(palette.high)
+                        .with_corner_radius(10)
+                        .with_border(Border::new(palette.accent_fg, 2)),
+                )
+                .with_layout(absolute(cell_rect(&ghost))),
+        ));
+    }
+    for float in &state.floats.get() {
+        if let Some(scene) = float_scene(&state, float, palette) {
+            canvas_children.push(scene);
         }
     }
 
-    children.push(Scene::Container(
-        ContainerNode::new(vec![label(
-            &format!(
-                "{} — {} card(s), layout \"{}\", selection {}   ·   {}",
-                state.last_event.get(),
-                state.cards.get().len(),
-                state.preset.get(),
-                selected.as_deref().unwrap_or("none"),
-                HELP_STRIP,
-            ),
-            Rect::new(8, 6, WIN_W.saturating_sub(RAIL_W + 16), 14),
-            BODY_FONT_PX,
+    let children = vec![
+        Scene::Container(
+            ContainerNode::new(canvas_children)
+                .with_tag("shell.canvas")
+                .with_style(BoxStyle::filled(palette.canvas))
+                .with_layout(absolute(canvas_rect())),
+        ),
+        app_bar_scene(&state, palette),
+        sub_bar_scene(&state, palette),
+        rail_scene(&state, palette),
+        palette_scene(&state, palette),
+        toast_scene(&state, palette),
+        label(
+            HELP_STRIP,
+            Rect::new(canvas_rect().x + 610, WIN_H - 47, 470, 14),
+            FONT_SMALL,
             palette.muted,
-        )])
-        .with_tag("shell.status")
-        .with_layout(absolute(Rect::new(
-            RAIL_W,
-            WIN_H.saturating_sub(STATUS_H),
-            WIN_W.saturating_sub(RAIL_W),
-            STATUS_H,
-        ))),
-    ));
+        ),
+    ];
 
     Scene::Container(
         ContainerNode::new(children)
             .with_tag(VIEW_TAG)
-            .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
+            .with_style(BoxStyle::filled(palette.canvas))
             .with_layout(LayoutStyle::new().with_size(Size::px(WIN_W, WIN_H))),
     )
 }
@@ -2335,7 +3525,7 @@ impl WidgetCore for AnalyzerShellView {
     }
 
     fn title() -> &'static str {
-        "pinion hello-analyzer-shell (R1648 §5.21 analysis-tool dashboard shell)"
+        "pinion hello-analyzer-shell (R1649 §5.21 analysis-tool dashboard shell)"
     }
 }
 
@@ -2343,34 +3533,40 @@ impl WidgetA11y for AnalyzerShellView {
     /// The board is a group, and **every card is a node that says what it is
     /// showing**.
     ///
-    /// This is the half a paint cannot carry, and the reason the state had to
-    /// be a value rather than a rendered sentence: a card that failed announces
-    /// its failure and its remedy, so a screen-reader user learns that the
-    /// latency collector is unreachable and that a retry exists. Measured on
-    /// the toolkit at 6.11, no panel or view class has a content-state concept
-    /// at all, so this is not something an assistive technology can be told
-    /// there.
+    /// The half a paint cannot carry, and the reason the state is a value: a
+    /// card that failed announces its failure and its remedy. Measured on the
+    /// toolkit at 6.11, no panel or view class has a content-state concept, so
+    /// this is not something an assistive technology can be told there.
     fn access_node(_state: &(), _focused: Option<&str>) -> Vec<AccessNode> {
         let state = use_shell_state();
         let mut nodes = vec![
             AccessNode::new(VIEW_TAG, AriaRole::Group)
                 .with_name("Analyzer dashboard")
                 .with_value(AccessValue::Text(format!(
-                    "{} cards on layout \"{}\", source {}",
-                    state.cards.get().len(),
+                    "{} of {} widgets placed on layout \"{}\", source {}",
+                    state.placed().len(),
+                    DEFS.len(),
                     state.preset.get(),
                     state.source.get(),
                 ))),
         ];
         for card in &state.cards.get() {
+            let id = card.id().as_str();
+            let where_it_is = if state.is_floating(id) {
+                "detached; "
+            } else {
+                ""
+            };
             let announce = match card.remedy() {
-                None => state_sentence(card.state()),
-                Some(remedy) => {
-                    format!("{}; {}", state_sentence(card.state()), remedy_label(remedy))
-                }
+                None => format!("{where_it_is}{}", state_sentence(card.state())),
+                Some(remedy) => format!(
+                    "{where_it_is}{}; {}",
+                    state_sentence(card.state()),
+                    remedy_label(remedy)
+                ),
             };
             nodes.push(
-                AccessNode::new(format!("card.{}", card.id().as_str()), AriaRole::Group)
+                AccessNode::new(format!("card.{id}"), AriaRole::Group)
                     .with_name(card.title())
                     .with_value(AccessValue::Text(announce))
                     .with_state(AccessState::default()),

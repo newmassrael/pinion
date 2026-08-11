@@ -1794,6 +1794,7 @@ dependencies = [
  "pinion-forge",
  "pinion-gpu",
  "pinion-shell",
+ "serde",
  "serde_json",
  "vello",
 ]

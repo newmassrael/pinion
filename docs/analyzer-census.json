@@ -305,7 +305,7 @@
     "capability": "an app bar: source selection, a capture toggle, global search, a theme toggle",
     "verdict": "app",
     "covered_by": "every part is a widget the catalog has; R1648 assembled by examples/hello-analyzer-shell and driven on the wire by tools/demos/r1648_the_analyzer_shell_is_assembled.py — the four parts are four writable wire slots",
-    "assembled_by": "assembled by examples/hello-analyzer-shell and driven on the wire by tools/demos/r1648_the_analyzer_shell_is_assembled.py"
+    "assembled_by": "assembled by examples/hello-analyzer-shell and driven on the wire by tools/demos/r1649_the_analyzer_shell_matches_the_reference.py"
   },
   {
     "id": "dashboard.t0.2",
@@ -314,7 +314,7 @@
     "capability": "a thin left palette and navigation rail",
     "verdict": "app",
     "covered_by": "a list and a toolbar; R1648 assembles it as a rail whose per-section count is DERIVED from the board, so closing a card moves it",
-    "assembled_by": "assembled by examples/hello-analyzer-shell and driven on the wire by tools/demos/r1648_the_analyzer_shell_is_assembled.py"
+    "assembled_by": "assembled by examples/hello-analyzer-shell and driven on the wire by tools/demos/r1649_the_analyzer_shell_matches_the_reference.py"
   },
   {
     "id": "dashboard.t0.3",
@@ -331,7 +331,7 @@
     "capability": "a widget card with a title, settings, tear-off, maximise and close",
     "verdict": "app",
     "covered_by": "R1648 moved most of this into the framework: `pinion_core::widgets::card::CardChrome` is the closed four-affordance set (settings / tear-off / maximise / close) in one canonical layout order, `TileGrid::maximize` returns the `Maximized` way home, and tear-off drives the existing `DockPanelPolicy`. WHAT IS STILL THE APPLICATION'S IS THE PAINTER: `pinion-widget-paint` has no card header, so every consumer draws the five affordances itself. That remainder is registered as debt rather than left in this sentence",
-    "assembled_by": "assembled by examples/hello-analyzer-shell and driven on the wire by tools/demos/r1648_the_analyzer_shell_is_assembled.py"
+    "assembled_by": "assembled by examples/hello-analyzer-shell and driven on the wire by tools/demos/r1649_the_analyzer_shell_matches_the_reference.py"
   },
   {
     "id": "dashboard.t0.5",
@@ -428,7 +428,8 @@
     "tier": "t1",
     "capability": "a search and filter widget",
     "verdict": "app",
-    "covered_by": "`GridFilter` plus a text field"
+    "covered_by": "`GridFilter` plus a text field; R1649 assembles the shell-level half -- a global search box with a typing mode of its own, so the letter shortcuts and the query cannot eat each other",
+    "assembled_by": "assembled by examples/hello-analyzer-shell and driven on the wire by tools/demos/r1649_the_analyzer_shell_matches_the_reference.py"
   },
   {
     "id": "dashboard.t1.11",
@@ -436,7 +437,8 @@
     "tier": "t1",
     "capability": "a replay and injection console",
     "verdict": "app",
-    "covered_by": "a form plus the lab's own verbs"
+    "covered_by": "a form plus the lab's own verbs; R1649 assembles the transport half -- live / paused / replaying DERIVED from the existing TransportClock and the capture toggle, with a scrub, rather than a fourth clock state",
+    "assembled_by": "assembled by examples/hello-analyzer-shell and driven on the wire by tools/demos/r1649_the_analyzer_shell_matches_the_reference.py"
   },
   {
     "id": "dashboard.t1.12",

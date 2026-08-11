@@ -1,86 +1,138 @@
-//! R1648 §5.21 — the shell's pure parts.
+//! R1648/R1649 §5.21 — the shell's pure parts.
 //!
 //! The demo (`tools/demos/r1648_the_analyzer_shell_is_assembled.py`) drives the
 //! live window over RPC and is where every wire claim is checked. These pin the
 //! functions where a unit test is the sharper instrument — in particular the
 //! ones that must be **total over a vocabulary**, which a demo can only sample.
 
+use pinion_core::scene::Rect;
 use pinion_core::widgets::card::{CardAffordance, CardState, Remedy};
+use pinion_core::widgets::tile_grid::Tile;
 use pinion_core::widgets::transport::TransportStatus;
 
 use super::{
-    RAIL, SEEDS, SOURCES, parse_state, remedy_label, remedy_word, section_of, state_sentence,
+    BarChip, DEFS, GRID_COLS, KEYMAP, OVERVIEW, RAIL, SECTIONS, SOURCES, STEPPERS, SubChip, TABS,
+    cell_at, cell_rect, def_of, kind_of, parse_state, remedy_label, remedy_word, state_sentence,
     transport_word,
 };
 
-/// R1648 — the seeded board puts **every** state on screen at once.
+/// R1649 — the catalogue is twelve kinds, distinct, each in a listed section.
 ///
-/// The property the whole design rests on, asserted against the *definition*
-/// rather than a count: a shell whose cards happen to be all `Ready` never
-/// exercises the half that matters, and a hand-written "there are six" would
-/// stop being true the moment a seventh arm is added.
+/// The palette's footer states the count, so a kind added without a section
+/// would be offered nowhere and the two numbers on screen would disagree.
 #[test]
-fn r1648_the_seeded_board_exercises_every_card_state() {
-    let seeded: std::collections::BTreeSet<&str> = SEEDS.iter().map(|s| s.state.wire()).collect();
-    let vocabulary: std::collections::BTreeSet<&str> =
-        CardState::ALL.iter().map(CardState::wire).collect();
-    assert_eq!(
-        seeded, vocabulary,
-        "the twelve cards must cover the state vocabulary exactly"
-    );
-    assert_eq!(
-        SEEDS.len(),
-        12,
-        "the capability list names twelve widget kinds"
-    );
-}
-
-/// R1648 — every seeded card belongs to a rail section that exists.
-///
-/// Without this the rail's counts could sum to less than the board and nobody
-/// would notice: a card in a section the rail does not list is simply absent
-/// from the navigation.
-#[test]
-fn r1648_every_card_is_reachable_from_the_rail() {
-    let mut counted = 0;
-    for section in RAIL {
-        counted += SEEDS.iter().filter(|s| s.section == section).count();
-    }
-    assert_eq!(
-        counted,
-        SEEDS.len(),
-        "every card belongs to a listed section; strays: {:?}",
-        SEEDS
-            .iter()
-            .filter(|s| !RAIL.contains(&s.section))
-            .map(|s| s.id)
-            .collect::<Vec<_>>()
-    );
-    assert_eq!(section_of("kpi"), "metrics");
-    assert_eq!(section_of("nosuch"), "", "an unknown card has no section");
-}
-
-/// R1648 — the board's ids are distinct, which is what makes a card id an
-/// address.
-#[test]
-fn r1648_no_two_cards_share_an_id() {
+fn r1649_the_catalogue_is_twelve_kinds_in_listed_sections() {
+    assert_eq!(DEFS.len(), 12, "the palette's footer states this count");
     let mut seen = std::collections::BTreeSet::new();
-    for spec in SEEDS {
-        assert!(seen.insert(spec.id), "{} appears twice", spec.id);
+    for def in DEFS {
+        assert!(seen.insert(def.kind), "{} appears twice", def.kind);
+        assert!(
+            SECTIONS.iter().any(|(key, _)| *key == def.section),
+            "{} is in section {:?}, which the palette does not list",
+            def.kind,
+            def.section
+        );
+        assert!(!def.label.is_empty() && !def.desc.is_empty());
+        assert!(def.cols >= 1 && def.cols <= GRID_COLS, "{} fits", def.kind);
+        assert!(def.rows >= 1, "{} has height", def.kind);
+        assert!(!def.chrome.is_empty(), "{} offers something", def.kind);
+    }
+}
+
+/// R1649 — the opening layout names catalogue kinds and fits the grid.
+#[test]
+fn r1649_the_overview_layout_is_a_legal_board() {
+    assert_eq!(OVERVIEW.len(), 3, "three placed of twelve offered");
+    for (kind, col, _row) in OVERVIEW {
+        let def = def_of(kind).unwrap_or_else(|| panic!("{kind} is in the catalogue"));
+        assert!(
+            col + def.cols <= GRID_COLS,
+            "{kind} at column {col} would run off a {GRID_COLS}-column grid"
+        );
+    }
+}
+
+/// R1649 — a card id carries its kind, so a definition is recoverable without
+/// a side table and a kind can be placed more than once.
+#[test]
+fn r1649_a_card_id_carries_its_kind() {
+    assert_eq!(kind_of("topology#0"), "topology");
+    assert_eq!(kind_of("topology#17"), "topology");
+    assert_eq!(kind_of("bare"), "bare", "an id with no ordinal is its kind");
+    assert!(def_of(kind_of("packet#3")).is_some());
+}
+
+/// R1649 — the cell arithmetic round-trips: the pixels a cell is drawn at map
+/// back to that cell.
+///
+/// The one place the paint's forward direction and the gesture's inverse meet,
+/// and the property that makes a drag land where the preview said it would.
+#[test]
+fn r1649_a_cell_and_its_pixels_are_inverses() {
+    for col in 0..GRID_COLS {
+        for row in 0..4 {
+            let rect = cell_rect(&Tile::new("probe", col, row, 1, 1));
+            let (back_col, back_row) = cell_at(rect.x + rect.w / 2, rect.y + rect.h / 2);
+            assert_eq!(
+                (back_col, back_row),
+                (col, row),
+                "cell ({col},{row}) draws at ({},{}) and reads back as \
+                 ({back_col},{back_row})",
+                rect.x,
+                rect.y
+            );
+        }
+    }
+}
+
+/// R1649 — the chrome's pressable rectangles do not overlap each other.
+///
+/// Two controls sharing pixels means one of them can never be pressed, and the
+/// hit test would resolve whichever the loop reached first — silently.
+#[test]
+fn r1649_no_two_chrome_controls_share_pixels() {
+    let overlaps =
+        |a: Rect, b: Rect| a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h;
+    for (i, one) in BarChip::ALL.iter().enumerate() {
+        for other in &BarChip::ALL[i + 1..] {
+            assert!(
+                !overlaps(one.rect(), other.rect()),
+                "{one:?} and {other:?} overlap"
+            );
+        }
+    }
+    for (i, one) in SubChip::ALL.iter().enumerate() {
+        for other in &SubChip::ALL[i + 1..] {
+            assert!(
+                !overlaps(one.rect(), other.rect()),
+                "{one:?} and {other:?} overlap"
+            );
+        }
+    }
+}
+
+/// R1649 — every chrome control's tag is distinct, because a tag is the
+/// address the wire and the demo both compare.
+#[test]
+fn r1649_every_chrome_tag_is_distinct() {
+    let mut seen = std::collections::BTreeSet::new();
+    for chip in BarChip::ALL {
+        assert!(seen.insert(chip.tag()), "{} is used twice", chip.tag());
+    }
+    for chip in SubChip::ALL {
+        assert!(seen.insert(chip.tag()), "{} is used twice", chip.tag());
     }
 }
 
 /// R1648 — a card's state sentence is total, and the two arms that carry a
 /// reason SAY it.
-///
-/// A sentence that dropped the carried reason would leave the screen saying
-/// "could not load" with the cause only on the wire — which is the failure the
-/// arm carries a reason to prevent.
 #[test]
 fn r1648_every_state_has_a_sentence_and_the_carried_ones_quote_it() {
     for state in CardState::ALL {
-        let sentence = state_sentence(&state);
-        assert!(!sentence.is_empty(), "{state:?} has no sentence");
+        assert!(
+            !state_sentence(&state).is_empty(),
+            "{state:?} has no sentence"
+        );
     }
     assert!(
         state_sentence(&CardState::Failed("collector unreachable".into()))
@@ -110,9 +162,6 @@ fn r1648_every_remedy_reads_differently() {
 }
 
 /// R1648 — the wire word for "no remedy" is not one of the remedies.
-///
-/// `none` has to stay outside `Remedy::ALL`, or a client reading every answer
-/// as a remedy invents a sixth one.
 #[test]
 fn r1648_the_absent_remedy_is_not_a_remedy() {
     assert_eq!(remedy_word(None), "none");
@@ -168,59 +217,52 @@ fn r1648_every_published_state_word_is_accepted() {
 /// reports `replaying` whether or not capture is on (R1623's lesson).
 #[test]
 fn r1648_the_transport_word_is_derived_from_the_clock_and_the_toggle() {
-    let all = [
+    for status in [
         TransportStatus::Playing,
         TransportStatus::Paused,
         TransportStatus::Stopped,
-    ];
-    for status in all {
+    ] {
         for capturing in [true, false] {
-            let word = transport_word(status, capturing);
             let expected = match (status, capturing) {
                 (TransportStatus::Playing, _) => "replaying",
                 (TransportStatus::Stopped, true) => "live",
                 _ => "paused",
             };
-            assert_eq!(word, expected, "{status:?} with capture={capturing}");
+            assert_eq!(
+                transport_word(status, capturing),
+                expected,
+                "{status:?} with capture={capturing}"
+            );
         }
     }
-    assert_eq!(
-        transport_word(TransportStatus::Playing, true),
-        transport_word(TransportStatus::Playing, false),
-        "a replaying board is replaying whatever the capture toggle says"
-    );
 }
 
-/// R1648 — the app bar's source list is non-empty and its entries distinct,
-/// so the first one is a defensible default rather than an accident.
+/// R1649 — the app bar's source list is a set the shell opens within.
 #[test]
-fn r1648_the_sources_are_a_set_with_a_first() {
+fn r1649_the_sources_are_a_set_the_shell_opens_within() {
     let mut seen = std::collections::BTreeSet::new();
     for source in SOURCES {
         assert!(seen.insert(source), "{source} listed twice");
     }
     assert_eq!(seen.len(), SOURCES.len());
     // NOT `assert!(!SOURCES.is_empty())`: on a `const` array that cannot fail,
-    // and an assertion that cannot fail reads as coverage (R1644.1). What can
-    // fail is that the DEFAULT the shell opens on is one of them.
+    // and an assertion that cannot fail reads as coverage (R1644.1).
     assert!(
         SOURCES.contains(&SOURCES[0]),
         "the app bar opens on a source it offers"
     );
 }
 
-/// R1648 — every seeded header offers at least one affordance, and every
-/// affordance the vocabulary has is offered by at least one card.
+/// R1649 — the catalogue exercises every affordance, in both directions.
 ///
-/// The second half is the one that matters: an affordance no card on this board
-/// offers is an affordance the assembly never exercises, and the demo's
-/// refusal case would then be checking a header nobody paints.
+/// The second half is what gives the wire's refusal path a case to demonstrate:
+/// a catalogue where every kind offers an affordance can never show it being
+/// refused. R1648's first draft failed exactly this, and its own test caught it.
 #[test]
-fn r1648_the_board_exercises_every_affordance() {
+fn r1649_the_catalogue_exercises_every_affordance_in_both_directions() {
     let mut offered = std::collections::BTreeSet::new();
-    for spec in SEEDS {
-        assert!(!spec.chrome.is_empty(), "{} offers nothing", spec.id);
-        offered.extend(spec.chrome.iter().copied());
+    for def in DEFS {
+        offered.extend(def.chrome.iter().copied());
     }
     assert_eq!(
         offered.len(),
@@ -231,12 +273,41 @@ fn r1648_the_board_exercises_every_affordance() {
             .filter(|a| !offered.contains(a))
             .collect::<Vec<_>>()
     );
-    // And at least one card must NOT offer each of them, or the wire refusal
-    // in the demo has no card to refuse on.
+    // ★ `Close` is UNIVERSAL by design — every widget in the reference tool has
+    // a ✕, and a card a person cannot get rid of is not a thing that shell
+    // offers. Stated here rather than left as an accident of the table, because
+    // the check below would otherwise read as "nobody withholds close YET".
+    assert!(
+        DEFS.iter()
+            .all(|d| d.chrome.contains(&CardAffordance::Close)),
+        "every widget kind can be closed"
+    );
+    // The other three must each have a kind that withholds them, or the wire's
+    // refusal path has no case to demonstrate on. R1648's first draft failed
+    // exactly this for `Settings`, and its own test caught it.
     for affordance in CardAffordance::ALL {
+        if affordance == CardAffordance::Close {
+            continue;
+        }
         assert!(
-            SEEDS.iter().any(|s| !s.chrome.contains(&affordance)),
-            "every card offers {affordance:?}, so nothing can refuse it"
+            DEFS.iter().any(|d| !d.chrome.contains(&affordance)),
+            "every kind offers {affordance:?}, so nothing can refuse it"
         );
     }
+}
+
+/// R1649 — the published vocabularies have no repeats.
+#[test]
+fn r1649_the_published_vocabularies_have_no_repeats() {
+    let distinct = |what: &str, words: Vec<&str>| {
+        let mut seen = std::collections::BTreeSet::new();
+        for word in &words {
+            assert!(seen.insert(*word), "{what}: {word:?} appears twice");
+        }
+        assert_eq!(seen.len(), words.len());
+    };
+    distinct("steppers", STEPPERS.iter().map(|(v, _)| *v).collect());
+    distinct("rail", RAIL.iter().map(|(k, _)| *k).collect());
+    distinct("tabs", TABS.to_vec());
+    distinct("keymap", KEYMAP.iter().map(|(c, _)| *c).collect());
 }

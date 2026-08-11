@@ -24,6 +24,7 @@ pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
 # widget assembled from a box, a label and a chart primitive.
 pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
 vello = { workspace = true }
+serde = { workspace = true }
 serde_json = { workspace = true }
 
 [dev-dependencies]
