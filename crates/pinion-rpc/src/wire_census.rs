@@ -1395,6 +1395,25 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "PaintedTextReport",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("tag", WireTy::String, None).nullable(),
+                WireField::new("owner", WireTy::String, None).nullable(),
+                WireField::new("x", WireTy::Integer, None),
+                WireField::new("y", WireTy::Integer, None),
+                WireField::new("w", WireTy::Integer, None),
+                WireField::new("h", WireTy::Integer, None),
+                WireField::new("content", WireTy::String, None),
+                WireField::new("painted", WireTy::String, None).nullable(),
+                WireField::new("ink_w", WireTy::Integer, None),
+                WireField::new("ink_h", WireTy::Integer, None),
+                WireField::new("lines", WireTy::Integer, None),
+                WireField::new("overflows", WireTy::Boolean, None),
+            ],
+        },
+    },
+    WireType {
         name: "PaletteCatalogue",
         shape: WireShape::Object {
             fields: &[
@@ -1839,6 +1858,16 @@ pub const WIRE_TYPES: &[WireType] = &[
         name: "TextListsOutcome",
         shape: WireShape::Object {
             fields: &[WireField::new("lists", WireTy::Array, Some("TextListWire"))],
+        },
+    },
+    WireType {
+        name: "TextPaintedOutcome",
+        shape: WireShape::Object {
+            fields: &[WireField::new(
+                "runs",
+                WireTy::Array,
+                Some("PaintedTextReport"),
+            )],
         },
     },
     WireType {

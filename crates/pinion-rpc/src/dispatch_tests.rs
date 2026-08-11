@@ -5754,6 +5754,65 @@ fn r1653_scene_bbox_refuses_two_locators_and_an_unknown_tag() {
     );
 }
 
+/// R1654 — the last of the three spatial queries gets the two-scene basis.
+///
+/// A view-fn binding's STATE scene has not been through the layout pass, so
+/// asking it where a point lands answers about a tree with no geometry. Its two
+/// siblings could already be pointed at the painted frame; this one could not,
+/// and the asymmetry was `debt-locate-and-bbox-are-state-only`.
+#[test]
+fn r1654_scene_locate_can_be_asked_of_the_painted_frame() {
+    use pinion_core::scene::{BoxNode, ContainerNode, Rect};
+    // The state tree holds one box; the painted frame holds a different one,
+    // somewhere the state tree has nothing.
+    let framed = |child: Scene| {
+        let mut node = ContainerNode::new(vec![child]);
+        node.rect = Rect::new(0, 0, 400, 400);
+        Scene::Container(node)
+    };
+    let mut state = framed(Scene::Box(
+        BoxNode::filled(
+            Rect::new(0, 0, 10, 10),
+            pinion_core::style::Color::default(),
+        )
+        .with_tag("in_state"),
+    ));
+    let painted = framed(Scene::Box(
+        BoxNode::filled(
+            Rect::new(100, 100, 40, 40),
+            pinion_core::style::Color::default(),
+        )
+        .with_tag("in_paint"),
+    ));
+
+    let ask = |scene: &mut Scene, from: &str| {
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/locate","params":{{"x":110,"y":110,"from":"{from}"}},"id":1}}"#
+        );
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut ctx =
+            DispatchContext::new(scene, &previews, &revision).with_last_paint_scene(&painted);
+        let reply = dispatch(&mut ctx, &req).expect("a reply");
+        parse_response(&reply)
+    };
+    let from_state = ask(&mut state, "state");
+    let state_path = from_state.result.expect("the root contains the point")["path"]
+        .as_str()
+        .expect("a path")
+        .to_owned();
+    assert!(
+        !state_path.contains("in_paint"),
+        "the state tree cannot answer with a node it does not hold: {state_path}"
+    );
+    let from_paint = ask(&mut state, "paint");
+    let path = from_paint.result.expect("the frame does")["path"]
+        .as_str()
+        .expect("a path")
+        .to_owned();
+    assert!(path.ends_with("/in_paint"), "{path}");
+}
+
 // ---- R40.2: scene/cancel_preview JSON-RPC wire ----
 
 #[derive(Debug)]

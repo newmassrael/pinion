@@ -2227,24 +2227,77 @@ impl TextDecoration {
     }
 }
 
-/// Behaviour when text content exceeds the layout box (§5.36 R47.5).
+/// Behaviour when text content exceeds the layout box (§5.36 R47.5, R1654).
 ///
-/// `Visible` (default) — glyphs render beyond the rect. `Clip` — paint
-/// adapter scissors against the box edge. `Ellipsis` — parley
-/// truncates the last line and appends "…". R47.6 wires `Clip` /
-/// `Ellipsis` at the `paint_text` + parley line-break interaction.
+/// Three of the five keep every character and differ in what the reader sees
+/// of it; two shorten the string and say so with a `\u{2026}`. Which end gives
+/// way is the caller's decision because it depends on where the information is
+/// — a file path disambiguates at its tail, an identifier at its head, and a
+/// configuration key at both.
+///
+/// # It is a property of the text, which is where the reference differs
+///
+/// Measured on the mature toolkit at 6.11: eliding lives on its *metrics*
+/// class as `elidedText(text, mode, width)`, a helper the caller has to
+/// remember; its label class carries no elide property at all (only its item
+/// views do), so a label handed a string too wide for it clips, and its size
+/// hint still reports the full natural width. Here every run has the property,
+/// and [`crate::text_elide`] is the one policy both painters read.
 #[non_exhaustive]
 #[derive(
-    Debug, Clone, Copy, PartialEq, Eq, Hash, Default, serde::Serialize, serde::Deserialize,
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    Hash,
+    Default,
+    serde::Serialize,
+    serde::Deserialize,
+    pinion_derive::VariantCensus,
 )]
+#[variant_census(all)]
 pub enum TextOverflow {
     /// Paint glyphs beyond `rect` edge (default — legacy R47.3 behaviour).
     #[default]
     Visible,
-    /// Scissor paint to `rect` edge.
+    /// Scissor paint to `rect` edge. Every character is kept and the ones past
+    /// the edge are not drawn, so nothing on screen says anything was cut.
     Clip,
-    /// Truncate to fit + append `…` on the last line.
+    /// Keep the head, mark the cut with `\u{2026}` at the END.
     Ellipsis,
+    /// (R1654) Keep the tail, mark the cut with `\u{2026}` at the START — a
+    /// path whose leaf is what identifies it.
+    EllipsisStart,
+    /// (R1654) Keep both ends, mark the cut with `\u{2026}` in the MIDDLE.
+    EllipsisMiddle,
+}
+
+impl TextOverflow {
+    /// Every arm, so a consumer covers the vocabulary by enumerating rather
+    /// than by remembering. Length asserted against the definition by
+    /// `#[variant_census(all)]`.
+    pub const ALL: [Self; 5] = [
+        Self::Visible,
+        Self::Clip,
+        Self::Ellipsis,
+        Self::EllipsisStart,
+        Self::EllipsisMiddle,
+    ];
+
+    /// Whether this arm shortens the string rather than only changing what is
+    /// drawn of it.
+    ///
+    /// The distinction a painter needs: a shortening arm changes the *content*
+    /// and therefore what introspection has to report, while `Clip` changes
+    /// only the pixels.
+    #[must_use]
+    pub const fn shortens(self) -> bool {
+        matches!(
+            self,
+            Self::Ellipsis | Self::EllipsisStart | Self::EllipsisMiddle
+        )
+    }
 }
 
 /// R1551 §5.36 — CSS `text-indent`: how far the *first* line of a paragraph

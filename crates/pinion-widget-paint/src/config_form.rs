@@ -46,13 +46,32 @@ use pinion_a11y::{AccessNode, AccessValue, AriaRole, describedby_region};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size,
-    TextStyle,
+    TextOverflow, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::config_form::{
     Applies, ConfigDefect, ConfigField, ConfigForm, FieldType,
 };
 use pinion_core::{Scene, measured_text_extent};
+
+/// R1654 §5.36 — the base style every run in this form carries.
+///
+/// ★ The overflow policy is the load-bearing part. Every run here is placed in
+/// an exact rectangle derived from the row geometry, which fixes its WIDTH, and
+/// every string in it is user data: a configuration path, an endpoint, a
+/// permission list. Without a policy the ones that outgrow their box wrap to a
+/// second line and land on the row below — the smear R1653's box-measuring
+/// sweep could not see and R1654's `TextOverflow` arms exist to prevent.
+///
+/// `EllipsisMiddle`, not end-elision, because both ends of these strings carry
+/// information: `transport.link.tx.batch_size` and `transport.link.tx.queue`
+/// share a 24-character prefix, and `tcp/10.0.0.21:7449` differs from its
+/// neighbour in the port. The doc on [`RowWrap::Beside`] has claimed since
+/// R1651 that "a key wider than the column is elided rather than moving" — this
+/// is the round that makes that sentence true.
+fn form_run_style() -> TextStyle {
+    TextStyle::new().with_overflow(TextOverflow::EllipsisMiddle)
+}
 
 /// Where a row's control sits relative to its key.
 ///
@@ -260,7 +279,7 @@ impl FormGeometry {
 /// real measurement is unavailable, and it is stated here rather than buried:
 /// keys are shown in the monospace face, whose advance is close to `0.6 em`.
 fn key_column_width(form: &ConfigForm, style: &FormStyle) -> u32 {
-    let text_style = TextStyle::new().with_size_px(style.key_px);
+    let text_style = form_run_style().with_size_px(style.key_px);
     form.fields()
         .iter()
         .filter(|f| !f.hidden())
@@ -304,7 +323,7 @@ const fn control_is_hungry(shape: &FieldType) -> bool {
 fn control_hint(field: &ConfigField, style: &FormStyle) -> u32 {
     match field.shape() {
         FieldType::Choice { of } | FieldType::Flags { of } => {
-            let text_style = TextStyle::new().with_size_px(style.key_px);
+            let text_style = form_run_style().with_size_px(style.key_px);
             let chips: u32 = of
                 .iter()
                 .map(|word| measured_key_width(word, &text_style, style.key_px) + CHIP_PAD * 2)
@@ -368,7 +387,7 @@ fn lay_row(field: &ConfigField, at: (u32, u32), key_col: u32, style: &FormStyle)
             RowWrap::WrapLong => {
                 let key_w = measured_key_width(
                     field.key(),
-                    &TextStyle::new().with_size_px(style.key_px),
+                    &form_run_style().with_size_px(style.key_px),
                     style.key_px,
                 );
                 key_w + style.beside_gap + hint > style.width
@@ -433,7 +452,7 @@ fn lay_row(field: &ConfigField, at: (u32, u32), key_col: u32, style: &FormStyle)
 /// | [`FieldType::List`] | `item.<key>.<n>` each, then `item.<key>.add` |
 fn lay_parts(field: &ConfigField, control: Rect, style: &FormStyle) -> Vec<(String, Rect)> {
     let key = field.key();
-    let text_style = TextStyle::new().with_size_px(style.key_px);
+    let text_style = form_run_style().with_size_px(style.key_px);
     match field.shape() {
         FieldType::Text => Vec::new(),
         FieldType::Integer { .. } => {
@@ -499,7 +518,7 @@ fn lay_chips(form: &ConfigForm, at: (u32, u32), style: &FormStyle) -> (Vec<(Stri
     let (x0, mut y) = at;
     let mut chips = Vec::new();
     let mut chip_x = x0;
-    let text_style = TextStyle::new().with_size_px(style.key_px);
+    let text_style = form_run_style().with_size_px(style.key_px);
     for offered in form.addable() {
         let w = measured_key_width(offered.key(), &text_style, style.key_px) + CHIP_PAD * 2 + 12;
         if chip_x + w > x0 + style.width && chip_x > x0 {
@@ -566,7 +585,7 @@ fn badge(text: &str, ink: Color, theme: &Theme, tag: Option<String>) -> Scene {
     let label = Scene::Text(TextNode::styled(
         text.to_owned(),
         Rect::default(),
-        TextStyle::new().with_size_px(9).with_fg(ink),
+        form_run_style().with_size_px(9).with_fg(ink),
     ));
     let mut node = ContainerNode::new(vec![label])
         .with_style(
@@ -671,7 +690,7 @@ fn view_header(
         let mut header: Vec<Scene> = vec![Scene::Text(TextNode::styled(
             field.key().to_owned(),
             Rect::default(),
-            TextStyle::new()
+            form_run_style()
                 .with_size_px(11)
                 .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
         ))];
@@ -776,7 +795,7 @@ fn part_pill(
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
             label.to_owned(),
             Rect::default(),
-            TextStyle::new().with_size_px(10).with_fg(ink),
+            form_run_style().with_size_px(10).with_fg(ink),
         ))])
         .with_tag(tag)
         .with_style(
@@ -865,7 +884,7 @@ fn boolean_control(
             Scene::Text(TextNode::styled(
                 if on { "true" } else { "false" }.to_owned(),
                 Rect::new(seat.w + 10, 8, 80, 14),
-                TextStyle::new()
+                form_run_style()
                     .with_size_px(12)
                     .with_fg(theme.resolve(ColorRole::OnSurface)),
             )),
@@ -895,7 +914,7 @@ fn number_control(
     let mut children = vec![Scene::Text(TextNode::styled(
         field.value().to_owned(),
         Rect::new(10, 8, row.control.w.saturating_sub(STEP_W * 2 + 16), 14),
-        TextStyle::new()
+        form_run_style()
             .with_size_px(12)
             .with_fg(theme.resolve(ColorRole::OnSurface)),
     ))];
@@ -943,7 +962,7 @@ fn list_control(
             ContainerNode::new(vec![Scene::Text(TextNode::styled(
                 (*element).to_owned(),
                 Rect::new(10, 8, seat.w.saturating_sub(20), 14),
-                TextStyle::new()
+                form_run_style()
                     .with_size_px(12)
                     .with_fg(theme.resolve(ColorRole::OnSurface)),
             ))])
@@ -989,7 +1008,7 @@ fn text_control(
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
             field.value().to_owned(),
             Rect::default(),
-            TextStyle::new()
+            form_run_style()
                 .with_size_px(12)
                 .with_fg(theme.resolve(ColorRole::OnSurface)),
         ))])
@@ -1020,7 +1039,7 @@ fn view_add_chip(
             ContainerNode::new(vec![Scene::Text(TextNode::styled(
                 format!("+ {key}"),
                 Rect::default(),
-                TextStyle::new()
+                form_run_style()
                     .with_size_px(10)
                     .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
             ))])

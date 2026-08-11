@@ -480,6 +480,33 @@ def _pointer_reach_budget() -> dict[str, frozenset[str]]:
     return _POINTER_REACH_BUDGET
 
 
+_TEXT_SMEAR_BUDGET: Optional[dict[str, int]] = None
+
+
+def _text_smear_budget() -> dict[str, int]:
+    """R1654 — the measured backlog of screens whose runs land on each other.
+
+    A COUNT per example rather than a list of pairs, because the identity of an
+    overlapping pair is a rectangle and rectangles move: pinning the pairs would
+    make an unrelated layout change look like a new defect. The count is the
+    ratchet — it may fall and never rise — and the same shape
+    `docs/pointer-reach-budget.tsv` uses for the same reason.
+    """
+    global _TEXT_SMEAR_BUDGET
+    if _TEXT_SMEAR_BUDGET is None:
+        budget: dict[str, int] = {}
+        path = WORKSPACE_ROOT / "docs" / "text-smear-budget.tsv"
+        if path.is_file():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip() or line.lstrip().startswith("#"):
+                    continue
+                example, _, count = line.partition("\t")
+                if count.strip().isdigit():
+                    budget[example.strip()] = int(count.strip())
+        _TEXT_SMEAR_BUDGET = budget
+    return _TEXT_SMEAR_BUDGET
+
+
 class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
     """Spawn a pinion example, drive it over JSON-RPC 2.0 stdin/stdout."""
 
@@ -680,6 +707,7 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         # "Not enough memory left" instead of its own verdict.
         try:
             self._gate_pointer_reach()
+            self._gate_text_smear()
         except BaseException:
             self.shutdown()
             raise
@@ -755,6 +783,67 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             f"[pointer-reach] {self.example}: "
             f"deliverable={reach.get('deliverable', 0)} inert={reach.get('inert', 0)}{note}"
         )
+
+    def _gate_text_smear(self) -> None:
+        """R1654 §5.36 — refuse a screen whose text is painted over itself.
+
+        Two runs of ONE widget landing on each other is the signature of a run
+        that flowed instead of being placed, and of a box too small for the
+        string it promised. Both shipped: R1649 stacked a whole shell's card
+        text down the left edge with 118 wire assertions passing, and R1653
+        found the same thing in a screen four rounds had called a reproduction.
+        Neither was visible to anything else, because **a text run carries no
+        tag** and every other gate in this tree is tag-keyed.
+
+        Grouped by the run's OWNER — its nearest tagged ancestor — because a
+        floating annotation over a diagram is a design and two labels of one row
+        on top of each other is a defect. The read is `scene/text_painted`,
+        which is the only surface that reports a run's window rectangle at all.
+
+        A binary too old to answer the method is driven without the gate, the
+        same tolerance the boot baseline gives.
+        """
+        try:
+            resp = self.request("scene/text_painted")
+        except RpcError as exc:
+            if exc.code in (-32601, -32602):
+                return  # stale binary, or an embedder that cannot shape
+            raise
+        assert resp is not None
+        runs = resp.result.get("runs", [])
+        by_owner: dict[str, list[dict]] = {}
+        for run in runs:
+            by_owner.setdefault(run.get("owner") or "", []).append(run)
+        smeared = []
+        for owner, group in by_owner.items():
+            for i, a in enumerate(group):
+                for b in group[i + 1:]:
+                    if (
+                        a["x"] < b["x"] + b["w"]
+                        and b["x"] < a["x"] + a["w"]
+                        and a["y"] < b["y"] + b["h"]
+                        and b["y"] < a["y"] + a["h"]
+                    ):
+                        smeared.append((owner, a["content"], b["content"]))
+        allowed = _text_smear_budget().get(self.example, 0)
+        if len(smeared) > allowed:
+            rows = "; ".join(f"{o or '<root>'}: {a!r} over {b!r}" for o, a, b in smeared[:6])
+            raise AssertionError(
+                f"{self.example}: {len(smeared)} pair(s) of text runs are "
+                f"painted on top of each other and the budget allows "
+                f"{allowed} — {rows}. A run with no `LayoutStyle` FLOWS (its "
+                f"rect reads like a position and is not one), and a run whose "
+                f"box is narrower than its string wraps onto the row below "
+                f"unless its style declares a `TextOverflow` that shortens it. "
+                f"`docs/text-smear-budget.tsv` carries the measured backlog; "
+                f"raising a number there to silence this is the one use that "
+                f"turns the ratchet back into a suggestion."
+            )
+        if smeared or allowed:
+            print(
+                f"[text-smear] {self.example}: {len(smeared)} overlapping "
+                f"pair(s), budget {allowed}"
+            )
 
     def __exit__(self, exc_type, exc, tb) -> None:
         leak = self.shutdown()

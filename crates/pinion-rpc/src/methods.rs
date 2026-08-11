@@ -305,6 +305,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc, MethodWindow)] = &[
         MethodWindow::Scope,
     ),
     ("scene/text_lists", MethodOcc::Read, MethodWindow::Scope),
+    ("scene/text_painted", MethodOcc::Read, MethodWindow::Scope),
     ("scene/text_state", MethodOcc::Read, MethodWindow::Scope),
     ("scene/text_tables", MethodOcc::Read, MethodWindow::Scope),
     ("scene/theme_tokens", MethodOcc::Read, MethodWindow::Scope),

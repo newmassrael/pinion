@@ -372,3 +372,149 @@ fn r1653_the_two_canvas_conversions_invert_each_other() {
         }
     });
 }
+
+/// R1654 — a node can be dragged ABOVE and LEFT of where the graph opened.
+///
+/// Reported from the running window: a card stopped dead partway up the canvas.
+/// The cause was two clamps for one fact — `clamp_to_world` bounds the position
+/// to the world surface, and a `.max(0)` on the next line pinned it at the
+/// origin, so the world's negative half was unreachable by the gesture that
+/// exists to reach it.
+#[test]
+fn r1654_a_node_drags_above_and_left_of_the_opening_graph() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = std::rc::Rc::new(state());
+        let node = state.node_of("R-01").expect("on the canvas");
+        let before = super::card_rect(&state, node).expect("a card");
+        let start = super::content_to_window(
+            &state,
+            i64::from(before.x + before.w / 2),
+            i64::from(before.y + before.h / 2),
+        )
+        .expect("on screen");
+
+        super::move_cursor(&state, start.0, start.1);
+        super::press(&state);
+        // Up and to the left, far enough to pass the canvas origin.
+        super::move_cursor(
+            &state,
+            start.0.saturating_sub(260),
+            start.1.saturating_sub(240),
+        );
+        super::release(&state);
+
+        let (x, y) = state
+            .doc
+            .borrow()
+            .tree(super::ROOT)
+            .and_then(|t| t.node(node).map(|n| (n.x, n.y)))
+            .expect("the node");
+        assert!(
+            y < 0,
+            "the drag reached above the opening graph's origin: y = {y}"
+        );
+        assert!(x < 100, "and left of where it started: x = {x}");
+    });
+}
+
+/// R1654 — the group behaviour the reference has: a frame's box is DERIVED from
+/// what it holds, a card dropped inside joins it, and dragging the frame takes
+/// its members along.
+///
+/// Reported from the running window as "the group behaviour does not match".
+/// The frames were rectangles out of the specification table: they did not grow
+/// when a card was dragged in, did not shrink when one left, and could not be
+/// moved. Three of the reference's nine frame verbs are exactly these.
+#[test]
+fn r1654_a_frame_is_derived_from_its_members_and_moves_them() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = std::rc::Rc::new(state());
+        let frames = super::frames_of(&state);
+        let (host_a, _) = frames
+            .iter()
+            .find(|(_, name)| name == "host-a")
+            .cloned()
+            .expect("declared");
+        let (host_b, _) = frames
+            .iter()
+            .find(|(_, name)| name == "host-b")
+            .cloned()
+            .expect("declared");
+
+        // (1) DERIVED: the box holds every one of its cards.
+        let before = super::frame_rect_of(&state, host_a);
+        for member in super::members_of(&state, host_a) {
+            let card = super::card_rect(&state, member).expect("a card");
+            assert!(
+                card.x >= before.x
+                    && card.y >= before.y
+                    && card.x + card.w <= before.x + before.w
+                    && card.y + card.h <= before.y + before.h,
+                "{} is outside the frame that holds it",
+                state.name_of(member)
+            );
+        }
+
+        // (2) MEMBERSHIP FOLLOWS THE DROP: drag a card from one host to the
+        // other and the two boxes re-derive.
+        let moving = state.node_of("T-01").expect("on host-b");
+        assert!(super::members_of(&state, host_b).contains(&moving));
+        let target =
+            super::card_rect(&state, state.node_of("P-02").expect("on host-a")).expect("a card");
+        let from = super::card_rect(&state, moving).expect("a card");
+        let start = super::content_to_window(
+            &state,
+            i64::from(from.x + from.w / 2),
+            i64::from(from.y + from.h / 2),
+        )
+        .expect("on screen");
+        let onto = super::content_to_window(
+            &state,
+            i64::from(target.x + target.w / 2),
+            i64::from(target.y + target.h + 30),
+        )
+        .expect("on screen");
+        super::move_cursor(&state, start.0, start.1);
+        super::press(&state);
+        super::move_cursor(&state, onto.0, onto.1);
+        super::release(&state);
+        assert!(
+            super::members_of(&state, host_a).contains(&moving),
+            "the card joined the host it was dropped on"
+        );
+        assert!(
+            !super::members_of(&state, host_b).contains(&moving),
+            "and left the one it came from"
+        );
+
+        // (3) THE FRAME IS A HANDLE: dragging its tab moves every member.
+        let tab = super::frame_rect_of(&state, host_a);
+        let grip = super::content_to_window(&state, i64::from(tab.x + 40), i64::from(tab.y + 4))
+            .expect("on screen");
+        let positions = |state: &LabState| -> Vec<(i32, i32)> {
+            super::members_of(state, host_a)
+                .into_iter()
+                .filter_map(|n| {
+                    state
+                        .doc
+                        .borrow()
+                        .tree(super::ROOT)
+                        .and_then(|t| t.node(n).map(|s| (s.x, s.y)))
+                })
+                .collect()
+        };
+        let was = positions(&state);
+        super::move_cursor(&state, grip.0, grip.1);
+        super::press(&state);
+        super::move_cursor(&state, grip.0 + 40, grip.1 + 25);
+        super::release(&state);
+        let now = positions(&state);
+        assert_eq!(was.len(), now.len(), "the same members");
+        assert!(
+            was.iter().zip(&now).all(|(a, b)| b.0 > a.0 && b.1 > a.1),
+            "every member moved with the frame: {was:?} -> {now:?}"
+        );
+    });
+}

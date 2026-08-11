@@ -68,7 +68,7 @@ use pinion_core::scene::{
     ContainerNode, PathCommand, PathNode, PathPoint, Rect, ScrollAxis, ScrollNode, TextNode,
 };
 use pinion_core::style::{
-    Border, BoxStyle, Color, LayoutStyle, PathStyle, Size, Stroke, TextStyle,
+    Border, BoxStyle, Color, LayoutStyle, PathStyle, Size, Stroke, TextOverflow, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::config_form::{
@@ -109,32 +109,70 @@ const FONT_SMALL: u32 = 11;
 const FONT_TINY: u32 = 9;
 
 /// The canvas: what is left between the palette and the inspector.
-const fn canvas_rect() -> Rect {
+/// The window this frame is being painted into.
+///
+/// ★ R1654 — read from the shell rather than assumed. The screen used to be
+/// [`WIN_W`] x [`WIN_H`] constants everywhere, so enlarging the window left the
+/// content in the top-left corner with the rest of the surface black, and
+/// shrinking it painted the inspector off the edge. Reported from the running
+/// window; invisible to every test here, because a test that calls
+/// `compute_layout(scene, WIN_W, WIN_H)` has assumed the very thing that was
+/// wrong.
+///
+/// `use_viewport_size` is a tracked read, so the view re-runs on a resize. It
+/// answers `(0, 0)` where no shell has published one — a headless probe, a unit
+/// test — and the declared design size is the honest fallback there: it is what
+/// the specification's rectangles were measured against.
+fn window_size() -> (u32, u32) {
+    // The hook is strict about the owner scope by design. Off a scope entirely
+    // (a bare unit call) the design size is the answer, and asking politely is
+    // how this stays callable from both.
+    let live =
+        pinion_core::reactive::Owner::current().map(|_| pinion_core::reactive::use_viewport_size());
+    match live {
+        Some((w, h)) if w >= MIN_W && h >= MIN_H => (w, h),
+        _ => (WIN_W, WIN_H),
+    }
+}
+
+/// The smallest window this screen lays out in.
+///
+/// Below it the panes would overlap, so the layout stops shrinking and the
+/// window clips instead — the same choice a fixed minimum size makes, stated
+/// here rather than left to arithmetic that would produce negative widths.
+const MIN_W: u32 = RAIL_W + PALETTE_W + 240 + INSP_W;
+/// The smallest height, likewise.
+const MIN_H: u32 = APP_BAR_H + TOOLBAR_H + 200;
+
+fn canvas_rect() -> Rect {
+    let (w, h) = window_size();
     Rect::new(
         RAIL_W + PALETTE_W,
         APP_BAR_H + TOOLBAR_H,
-        WIN_W - RAIL_W - PALETTE_W - INSP_W,
-        WIN_H - APP_BAR_H - TOOLBAR_H,
+        w - RAIL_W - PALETTE_W - INSP_W,
+        h - APP_BAR_H - TOOLBAR_H,
     )
 }
 
-const fn palette_rect() -> Rect {
-    Rect::new(RAIL_W, APP_BAR_H, PALETTE_W, WIN_H - APP_BAR_H)
+fn palette_rect() -> Rect {
+    Rect::new(RAIL_W, APP_BAR_H, PALETTE_W, window_size().1 - APP_BAR_H)
 }
 
-const fn inspector_rect() -> Rect {
-    Rect::new(WIN_W - INSP_W, APP_BAR_H, INSP_W, WIN_H - APP_BAR_H)
+fn inspector_rect() -> Rect {
+    let (w, h) = window_size();
+    Rect::new(w - INSP_W, APP_BAR_H, INSP_W, h - APP_BAR_H)
 }
 
-const fn rail_rect() -> Rect {
-    Rect::new(0, APP_BAR_H, RAIL_W, WIN_H - APP_BAR_H)
+fn rail_rect() -> Rect {
+    Rect::new(0, APP_BAR_H, RAIL_W, window_size().1 - APP_BAR_H)
 }
 
-const fn toolbar_rect() -> Rect {
+fn toolbar_rect() -> Rect {
+    let (w, _) = window_size();
     Rect::new(
         RAIL_W + PALETTE_W,
         APP_BAR_H,
-        WIN_W - RAIL_W - PALETTE_W - INSP_W,
+        w - RAIL_W - PALETTE_W - INSP_W,
         TOOLBAR_H,
     )
 }
@@ -259,6 +297,8 @@ enum Drag {
     },
     /// A link is being authored out of this node's dial pin.
     Wire { from: NodeId },
+    /// A host frame is being moved, and every card it holds moves with it.
+    Frame { frame: NodeId, from: (i32, i32) },
 }
 
 /// Everything the screen is.
@@ -904,18 +944,88 @@ fn pin_rect(state: &LabState, card: Rect, dial: bool) -> Rect {
     }
 }
 
-fn frame_rect(state: &LabState, frame: &spec::FrameSpec) -> Rect {
-    let (x, y) = to_content(
-        state,
-        i32::try_from(frame.rect.0).unwrap_or(0),
-        i32::try_from(frame.rect.1).unwrap_or(0),
-    );
+/// The frames the document holds, in declaration order.
+fn frames_of(state: &LabState) -> Vec<(NodeId, String)> {
+    let frames = state.frames.borrow();
+    let doc = state.doc.borrow();
+    let Some(tree) = doc.tree(ROOT) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(NodeId, String)> = tree
+        .nodes()
+        .filter(|n| matches!(n.body, NodeBody::Frame))
+        .filter_map(|n| frames.get(&n.id).map(|name| (n.id, name.clone())))
+        .collect();
+    out.sort_by(|a, b| a.1.cmp(&b.1));
+    out
+}
+
+/// The nodes inside `frame`.
+fn members_of(state: &LabState, frame: NodeId) -> Vec<NodeId> {
+    let doc = state.doc.borrow();
+    doc.tree(ROOT).map_or_else(Vec::new, |tree| {
+        tree.nodes()
+            .filter(|n| n.parent == Some(frame) && !matches!(n.body, NodeBody::Frame))
+            .map(|n| n.id)
+            .collect()
+    })
+}
+
+/// The tab strip at the top of a frame — its name, and its drag handle.
+const FRAME_TAB: u32 = 18;
+/// How much room a frame leaves around the cards it holds.
+const FRAME_PAD: u32 = 14;
+
+/// A host frame's rectangle, **derived from the cards it holds**.
+///
+/// ★ R1654 — the reference derives this (`the frame rect`, `apply frame`, `drag
+/// the frame` are three of its nine frame verbs) and this screen had it as a
+/// constant out of the specification table, so a frame did not grow when a card
+/// was dragged into it, did not shrink when one left, and could not be moved at
+/// all. Reported as "the group behaviour does not match".
+///
+/// A frame with no members keeps its own stored position and paints an empty
+/// box, because a group you cannot see is a group you cannot drop anything into.
+fn frame_rect_of(state: &LabState, frame: NodeId) -> Rect {
+    let members = members_of(state, frame);
+    let boxes: Vec<Rect> = members
+        .iter()
+        .filter_map(|n| card_rect(state, *n))
+        .collect();
+    if boxes.is_empty() {
+        let (x, y) = state
+            .doc
+            .borrow()
+            .tree(ROOT)
+            .and_then(|t| t.node(frame).map(|n| (n.x, n.y)))
+            .unwrap_or((0, 0));
+        let (cx, cy) = to_content(state, x, y);
+        return Rect::new(cx, cy, scaled(state, 150), scaled(state, 90).max(FRAME_TAB));
+    }
+    let pad = scaled(state, FRAME_PAD).max(4);
+    let tab = scaled(state, FRAME_TAB).max(10);
+    let left = boxes.iter().map(|r| r.x).min().unwrap_or(0);
+    let top = boxes.iter().map(|r| r.y).min().unwrap_or(0);
+    let right = boxes.iter().map(|r| r.x + r.w).max().unwrap_or(0);
+    let bottom = boxes.iter().map(|r| r.y + r.h).max().unwrap_or(0);
     Rect::new(
-        x,
-        y,
-        scaled(state, frame.rect.2),
-        scaled(state, frame.rect.3),
+        left.saturating_sub(pad),
+        top.saturating_sub(pad + tab),
+        right - left + pad * 2,
+        bottom - top + pad * 2 + tab,
     )
+}
+
+/// The frame whose box holds this content-space point, innermost first.
+fn frame_at(state: &LabState, cx: i64, cy: i64) -> Option<NodeId> {
+    frames_of(state)
+        .into_iter()
+        .filter(|(id, _)| holds(frame_rect_of(state, *id), cx, cy))
+        .min_by_key(|(id, _)| {
+            let r = frame_rect_of(state, *id);
+            u64::from(r.w) * u64::from(r.h)
+        })
+        .map(|(id, _)| id)
 }
 
 const fn contains(rect: Rect, px: u32, py: u32) -> bool {
@@ -948,6 +1058,8 @@ enum Hit {
         dial: bool,
     },
     Link(LinkId),
+    /// A host frame's tab strip — its handle.
+    Frame(NodeId),
     Field(String),
     AddField(String),
     /// An affordance inside a control: an option, a stepper, a checkbox, a list
@@ -1050,6 +1162,16 @@ impl Hit {
             if let Some(link) = link_at(state, cx, cy) {
                 return Self::Link(link);
             }
+            // The frame's TAB, not its interior: the interior is where the
+            // cards are, and a group that swallowed presses over its own
+            // members would make a node undraggable the moment it joined one.
+            for (id, _) in frames_of(state) {
+                let r = frame_rect_of(state, id);
+                let tab = Rect::new(r.x, r.y, r.w, scaled(state, FRAME_TAB).max(10));
+                if holds(tab, cx, cy) {
+                    return Self::Frame(id);
+                }
+            }
             return Self::Canvas;
         }
         Self::Nothing
@@ -1072,6 +1194,10 @@ impl Hit {
                 if *dial { "dial" } else { "accept" }
             ),
             Self::Link(id) => format!("link:{}", id.0),
+            Self::Frame(id) => format!(
+                "frame:{}",
+                state.frames.borrow().get(id).cloned().unwrap_or_default()
+            ),
             Self::Field(key) => format!("field:{key}"),
             Self::AddField(key) => format!("add:{key}"),
             Self::Part { part, .. } => part.clone(),
@@ -1263,26 +1389,45 @@ fn absolute(rect: Rect) -> LayoutStyle {
 /// the canvas's card text landed in one stripe, and six rounds of gates passed
 /// anyway because a run carries no tag and every gate was tag-keyed.
 fn label(text: impl Into<String>, rect: Rect, px: u32, fg: Color) -> Scene {
-    Scene::Text(
-        TextNode::styled(
-            text.into(),
-            rect,
-            TextStyle::new().with_size_px(px).with_fg(fg),
-        )
-        .with_layout(absolute(rect)),
-    )
+    Scene::Text(TextNode::styled(text.into(), rect, run_style(px, fg)).with_layout(absolute(rect)))
 }
 
 fn tagged_label(tag: &str, text: impl Into<String>, rect: Rect, px: u32, fg: Color) -> Scene {
     Scene::Text(
-        TextNode::styled(
-            text.into(),
-            rect,
-            TextStyle::new().with_size_px(px).with_fg(fg),
-        )
-        .with_tag(tag.to_owned())
-        .with_layout(absolute(rect)),
+        TextNode::styled(text.into(), rect, run_style(px, fg))
+            .with_tag(tag.to_owned())
+            .with_layout(absolute(rect)),
     )
+}
+
+/// The style every run on this screen carries.
+///
+/// ★ R1654 — including an overflow policy, because the box is exact and the
+/// content is not: an endpoint, a key expression and a node identifier are all
+/// user data, and a run wider than the box it was given wraps to a second line
+/// that lands on the row below. Two rounds of this screen shipped that smear —
+/// R1653 gave every run its exact box and could not see the overflow, because
+/// its check measures boxes and this is about glyphs.
+///
+/// `Ellipsis` rather than `Clip` for the same reason a person reads it: a hard
+/// cut leaves no evidence that anything was removed, so `tcp/0.0.0.0:744` and
+/// `tcp/0.0.0.0:7447` are indistinguishable on screen.
+fn run_style(px: u32, fg: Color) -> TextStyle {
+    TextStyle::new()
+        .with_size_px(px)
+        .with_fg(fg)
+        .with_overflow(TextOverflow::Ellipsis)
+}
+
+/// A run whose content is a PATH, where the tail is what distinguishes one from
+/// another — so the middle gives way rather than the end.
+fn path_style(px: u32, fg: Color) -> TextStyle {
+    run_style(px, fg).with_overflow(TextOverflow::EllipsisMiddle)
+}
+
+/// A value cell on a node card: the right-hand column of a digest row.
+fn value_label(text: impl Into<String>, rect: Rect, px: u32, fg: Color) -> Scene {
+    Scene::Text(TextNode::styled(text.into(), rect, path_style(px, fg)).with_layout(absolute(rect)))
 }
 
 fn panel(tag: &str, rect: Rect, fill: Color, border: Option<Color>, children: Vec<Scene>) -> Scene {
@@ -1349,7 +1494,7 @@ fn app_bar(state: &LabState, ink: Ink) -> Scene {
     let running = state.running.get();
     panel(
         "lab.appbar",
-        Rect::new(0, 0, WIN_W, APP_BAR_H),
+        Rect::new(0, 0, window_size().0, APP_BAR_H),
         ink.surface,
         Some(ink.outline),
         vec![
@@ -1364,7 +1509,7 @@ fn app_bar(state: &LabState, ink: Ink) -> Scene {
             tagged_label(
                 "lab.appbar.state",
                 if running { "running" } else { "stopped" },
-                Rect::new(WIN_W - 120, 20, 100, 14),
+                Rect::new(window_size().0 - 120, 20, 100, 14),
                 FONT_SMALL,
                 if running { ink.ok } else { ink.text_3 },
             ),
@@ -1391,10 +1536,9 @@ fn rail(ink: Ink) -> Scene {
             Some(if active { ink.accent_line } else { ink.surface }),
             10,
         ));
-        children.push(label(
-            if *locked { "·" } else { "•" },
-            Rect::new(seat.x + 15, seat.y + 12, 12, 14),
-            FONT_SMALL,
+        children.extend(rail_icon(
+            name,
+            seat,
             if active {
                 ink.accent
             } else if *locked {
@@ -1405,6 +1549,68 @@ fn rail(ink: Ink) -> Scene {
         ));
     }
     panel("lab.rail", rect, ink.surface, Some(ink.outline), children)
+}
+
+/// A rail seat's icon, drawn as marks rather than written as a character.
+///
+/// ★ R1654 — these were a `\u{2022}` and a `\u{00B7}` in a 12px face, which is
+/// a dot and a smaller dot: seven destinations that a reader cannot tell apart,
+/// reported from the running window as "the icons are not visible". A glyph
+/// font is not an option here (vendoring one is forbidden in this tree), so the
+/// marks are composed from the primitives the scene already has, and each one
+/// says what its destination IS: a board of tiles, a stack of messages, a key,
+/// lines of a log, two joined nodes, a hub with spokes, a session's two panes.
+fn rail_icon(name: &str, seat: Rect, ink: Color) -> Vec<Scene> {
+    let (ox, oy) = (seat.x + 11, seat.y + 11);
+    let pip = |x: u32, y: u32, w: u32, h: u32| {
+        Scene::Container(
+            ContainerNode::new(Vec::new())
+                .with_style(BoxStyle::filled(ink).with_corner_radius(1))
+                .with_layout(absolute(Rect::new(ox + x, oy + y, w, h))),
+        )
+    };
+    let ring = |x: u32, y: u32, d: u32| {
+        Scene::Container(
+            ContainerNode::new(Vec::new())
+                .with_style(
+                    BoxStyle::filled(Color::rgba(0, 0, 0, 0))
+                        .with_border(Border::new(ink, 1))
+                        .with_corner_radius(d / 2),
+                )
+                .with_layout(absolute(Rect::new(ox + x, oy + y, d, d))),
+        )
+    };
+    match name {
+        // A board of tiles.
+        "dashboard" => vec![
+            pip(0, 0, 7, 7),
+            pip(9, 0, 7, 7),
+            pip(0, 9, 7, 7),
+            pip(9, 9, 7, 7),
+        ],
+        // A stack of messages, the top one shorter because it is the newest.
+        "packets" => vec![pip(0, 1, 10, 3), pip(0, 7, 16, 3), pip(0, 13, 13, 3)],
+        // A key: the bow, the shaft, two teeth.
+        "keys" => vec![
+            ring(0, 4, 8),
+            pip(8, 7, 8, 2),
+            pip(12, 9, 2, 4),
+            pip(15, 9, 1, 3),
+        ],
+        // Lines of a log, ragged as text is.
+        "logs" => vec![pip(0, 1, 16, 2), pip(0, 6, 11, 2), pip(0, 11, 14, 2)],
+        // Two nodes and the link between them — this screen.
+        "lab" => vec![ring(0, 0, 7), ring(9, 9, 7), pip(6, 6, 5, 2)],
+        // A hub with three spokes.
+        "topology" => vec![
+            ring(5, 5, 7),
+            pip(0, 8, 5, 1),
+            pip(12, 8, 4, 1),
+            pip(8, 12, 1, 4),
+        ],
+        // Two panes of one session.
+        _ => vec![pip(0, 0, 7, 16), pip(9, 0, 7, 16)],
+    }
 }
 
 fn palette(state: &LabState, ink: Ink) -> Scene {
@@ -1728,21 +1934,39 @@ fn canvas_world(state: &LabState, ink: Ink) -> Vec<Scene> {
 
     children.extend(canvas_grid(state, ink));
 
-    for frame in spec::FRAMES {
-        let box_rect = frame_rect(state, frame);
+    let dragged_frame = match state.drag.get() {
+        Some(Drag::Frame { frame, .. }) => Some(frame),
+        _ => None,
+    };
+    for (id, name) in frames_of(state) {
+        let box_rect = frame_rect_of(state, id);
+        let gist = spec::FRAMES
+            .iter()
+            .find(|f| f.name == name)
+            .map_or("", |f| f.gist);
         children.push(box_at(
-            &format!("lab.frame.{}", frame.name),
+            &format!("lab.frame.{name}"),
             box_rect,
             Color::rgba(0x16, 0x18, 0x1D, 0x6b),
-            Some(ink.outline_2),
+            Some(if dragged_frame == Some(id) {
+                ink.accent
+            } else {
+                ink.outline_2
+            }),
             12,
         ));
+        // The tab is the frame's handle: the interior belongs to the cards, so
+        // a group can be moved without a press inside it stealing a node drag.
         children.push(tagged_label(
-            &format!("lab.frame.{}.name", frame.name),
-            format!("{} · {}", frame.name, frame.gist),
+            &format!("lab.frame.{name}.name"),
+            if gist.is_empty() {
+                name.clone()
+            } else {
+                format!("{name} · {gist}")
+            },
             Rect::new(
                 box_rect.x + 12,
-                box_rect.y.saturating_sub(6),
+                box_rect.y + 3,
                 box_rect.w.saturating_sub(24).max(40),
                 13,
             ),
@@ -1923,7 +2147,10 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
                 FONT_TINY,
                 ink.text_3,
             ));
-            children.push(label(
+            // The value column holds user data — an endpoint, a key
+            // expression — and its TAIL is what distinguishes one from another,
+            // so the middle gives way rather than the end.
+            children.push(value_label(
                 value.clone(),
                 Rect::new(card_local.x + 52, y, card_local.w.saturating_sub(60), 11),
                 FONT_TINY,
@@ -2223,6 +2450,7 @@ fn view(_state: (), _frame: Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let state = use_lab_state();
     let ink = ink(&theme);
+    let win = window_size();
 
     Scene::Container(
         ContainerNode::new(vec![
@@ -2235,7 +2463,9 @@ fn view(_state: (), _frame: Frame) -> Scene {
         ])
         .with_tag(VIEW_TAG)
         .with_style(BoxStyle::filled(ink.bg))
-        .with_layout(LayoutStyle::new().with_size(Size::px(WIN_W, WIN_H))),
+        // The root fills the surface the shell gave it, so a resize reflows
+        // instead of leaving the rest of the window unpainted.
+        .with_layout(LayoutStyle::new().with_size(Size::px(win.0, win.1))),
     )
 }
 
@@ -2638,9 +2868,10 @@ impl ExternalIntrospect for LabOracle {
                         .map_err(|_| InvokeError::rejected(format!("{what} is a pixel, got {s:?}")))
                 };
                 let (x, y) = (parse("x", x)?, parse("y", y)?);
-                if x >= WIN_W || y >= WIN_H {
+                let (win_w, win_h) = window_size();
+                if x >= win_w || y >= win_h {
                     return Err(InvokeError::rejected(format!(
-                        "({x},{y}) is outside the {WIN_W}x{WIN_H} window"
+                        "({x},{y}) is outside the {win_w}x{win_h} window"
                     )));
                 }
                 move_cursor(&state, x, y);
@@ -2826,6 +3057,27 @@ fn move_cursor(state: &Rc<LabState>, px: u32, py: u32) {
                 start.1 + i32::try_from(dy).unwrap_or(0),
             ));
         }
+        Drag::Frame { frame, from } => {
+            let (ux, uy) = to_canvas(state, px, py);
+            let (dx, dy) = (ux - from.0, uy - from.1);
+            if dx != 0 || dy != 0 {
+                let members = members_of(state, frame);
+                let mut doc = state.doc.borrow_mut();
+                if let Some(tree) = doc.tree_mut(ROOT) {
+                    for id in members.iter().copied().chain(std::iter::once(frame)) {
+                        if let Some(slot) = tree.node_mut(id) {
+                            slot.x = clamp_to_world(slot.x + dx);
+                            slot.y = clamp_to_world(slot.y + dy);
+                        }
+                    }
+                }
+                drop(doc);
+                state.drag.set(Some(Drag::Frame {
+                    frame,
+                    from: (ux, uy),
+                }));
+            }
+        }
         Drag::Node { node, grab, snap } => {
             let (ux, uy) = to_canvas(state, px, py);
             let mut cx = ux - grab.0;
@@ -2844,8 +3096,14 @@ fn move_cursor(state: &Rc<LabState>, px: u32, py: u32) {
                 .tree_mut(ROOT)
                 .and_then(|t| t.node_mut(node))
             {
-                slot.x = cx.max(0);
-                slot.y = cy.max(0);
+                // ★ R1654 — no second clamp here. `clamp_to_world` above is the
+                // bound, and a `.max(0)` beside it silently won: the world's
+                // negative half exists so a node can be dragged UP and LEFT of
+                // where the graph opened, and pinning the position at zero made
+                // the card stop dead partway up the canvas. Two clamps for one
+                // fact, and the tighter one decided.
+                slot.x = cx;
+                slot.y = cy;
             }
         }
         Drag::Wire { .. } => {}
@@ -2874,6 +3132,12 @@ fn press(state: &Rc<LabState>) {
         Hit::Pin { node, dial: true } => {
             state.drag.set(Some(Drag::Wire { from: *node }));
         }
+        Hit::Frame(frame) => {
+            state.drag.set(Some(Drag::Frame {
+                frame: *frame,
+                from: to_canvas(state, px, py),
+            }));
+        }
         Hit::Canvas => {
             state.drag.set(Some(Drag::Pan {
                 from: (px, py),
@@ -2883,6 +3147,37 @@ fn press(state: &Rc<LabState>) {
         _ => {}
     }
     *state.pressed.borrow_mut() = Some(hit);
+}
+
+/// ★ R1654 — a card dropped inside a frame JOINS it, and one dropped outside
+/// every frame leaves the one it was in.
+///
+/// Membership is what a frame's rectangle is derived from, so this is the whole
+/// group gesture: the box follows the drop, rather than the drop being checked
+/// against a box somebody typed into a table.
+fn apply_frame(state: &Rc<LabState>, node: NodeId) {
+    let landed = card_rect(state, node)
+        .and_then(|r| frame_at(state, i64::from(r.x + r.w / 2), i64::from(r.y + r.h / 2)));
+    let held = state
+        .doc
+        .borrow()
+        .tree(ROOT)
+        .and_then(|t| t.node(node).and_then(|n| n.parent));
+    if landed == held {
+        return;
+    }
+    if state
+        .doc
+        .borrow_mut()
+        .set_parent(ROOT, node, landed)
+        .is_ok()
+    {
+        let name = state.name_of(node);
+        match landed.and_then(|f| state.frames.borrow().get(&f).cloned()) {
+            Some(frame) => state.say(format!("{name} now starts on {frame}")),
+            None => state.say(format!("{name} is not on any host")),
+        }
+    }
 }
 
 fn release(state: &Rc<LabState>) {
@@ -2903,7 +3198,11 @@ fn release(state: &Rc<LabState>) {
         state.say("a link needs an accept pin");
         return;
     }
-    if matches!(drag, Some(Drag::Node { .. } | Drag::Pan { .. })) {
+    if let Some(Drag::Node { node, .. }) = drag {
+        apply_frame(state, node);
+        return;
+    }
+    if matches!(drag, Some(Drag::Pan { .. } | Drag::Frame { .. })) {
         return;
     }
 
@@ -3196,7 +3495,7 @@ impl External for LabOracle {
         let Some(state) = self.state.clone() else {
             return;
         };
-        let px = (x_rel.clamp(0.0, 1.0) * WIN_W as f32) as u32;
+        let px = (x_rel.clamp(0.0, 1.0) * window_size().0 as f32) as u32;
         let py = (y_rel.clamp(0.0, 1.0) * WIN_H as f32) as u32;
         move_cursor(&state, px, py);
     }
@@ -3285,10 +3584,19 @@ impl WidgetA11y for NodeLabView {
 impl WidgetView for NodeLabView {
     type Renderer = HelloNodeLabRenderer;
 
+    /// The window OPENS at the design size — the one the specification's
+    /// rectangles were measured against — and can be dragged to any size from
+    /// there, down to [`MIN_W`] x [`MIN_H`].
+    ///
+    /// ★ R1654 — it was `Fixed`, which pins the OS-resize FLOOR at the open
+    /// size: the window could be enlarged and never shrunk. Together with the
+    /// pane rectangles being constants, that made the screen the one size it
+    /// was written at. Both halves had to move — a layout that follows the
+    /// window is no use if the window cannot be resized.
     fn initial_size_strategy() -> SizeStrategy {
-        SizeStrategy::Fixed {
-            width: WIN_W,
-            height: WIN_H,
+        SizeStrategy::OpenResizable {
+            size: (WIN_W, WIN_H),
+            min: Some((MIN_W, MIN_H)),
         }
     }
 }

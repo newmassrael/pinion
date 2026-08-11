@@ -1,0 +1,66 @@
+# R1654 — the text-smear ratchet's budget. One row per example whose painted
+# text runs land on each other: two runs of ONE widget overlapping is the
+# signature of a run that FLOWED instead of being placed (a TextNode's rect
+# reads like a position and is not one), or of a box narrower than the string
+# it promised, where the second line lands on the row below.
+#
+# The gate (tools/rpc_verify.py, at every demo's boot) reads `scene/text_painted`
+# — the only surface that reports a run's window rectangle, because a run carries
+# no tag and every other read in this tree is tag-keyed. A COUNT per example
+# rather than a list of pairs: the identity of a pair is a rectangle and
+# rectangles move, so pinning the pairs would make an unrelated layout change
+# look like a new defect.
+#
+# A number may be LOWERED by the round that repairs the screen and must never be
+# raised to make a failure go away — that is the one use that turns a ratchet
+# back into a suggestion.
+#
+# Measured 31 example(s) carrying 71 pair(s), over
+# 40 of 223 packages: 9 cannot boot
+# headless here at all (terminal arms, an audio-device demo, a couple that exit
+# at boot) and are unmeasured rather than clean. Taken BEFORE the settings-form
+# painter gained its overflow policy in the same round, so a handful of these
+# numbers are an upper bound on what the tree does now — which is the safe
+# direction for a ratchet.
+hello-autoscale-y	1
+hello-candlestick	2
+hello-category-axis	15
+hello-chart	1
+hello-chart-fill	1
+hello-column-reorder	1
+hello-cross-filter	1
+hello-crosshair	1
+hello-dock-chart	2
+hello-elevation-trace	2
+hello-floating-chart	1
+hello-frame-profiler	1
+hello-histogram-brush	1
+hello-legend-toggle	1
+hello-linked-brush	1
+hello-linked-legend	2
+hello-live-chart	1
+hello-log-chart	1
+hello-model-chart	8
+hello-node-flow	1
+hello-node-groups	2
+hello-polar	2
+hello-replay	1
+hello-rescale-toggle	1
+hello-scatter	1
+hello-series-toggle	3
+hello-stat-tiles	8
+hello-tabbed-chart	1
+hello-time-chart	3
+hello-treemap	2
+hello-value-scatter	2
+#
+# Unmeasured — these never reached the gate:
+#   ai-introspect-demo: RpcError: [-32099] timeout waiting for response to id=1 method=scene/pointer_leave
+#   forge-counter: RpcError: [-32099] subprocess exited during boot (rc=0)
+#   hello-audio: RpcError: [-32099] subprocess exited during boot (rc=1) — 'hello-audio: shell error: No su
+#   hello-button-tui: RpcError: [-32099] subprocess exited during boot (rc=1) — 'hello-button-tui: shell error: 
+#   hello-commands-tui: RpcError: [-32099] subprocess exited during boot (rc=1) — 'hello-commands-tui: shell error
+#   hello-narrative-walk: RpcError: [-32099] subprocess exited during boot (rc=1) — 'hello-narrative-walk: shell err
+#   hello-place-map: RpcError: [-32099] subprocess exited during boot (rc=1) — 'hello-place-map: shell error: N
+#   hello-textfield-tui: RpcError: [-32099] subprocess exited during boot (rc=1) — 'hello-textfield-tui: shell erro
+#   hello-toggle-tui: RpcError: [-32099] subprocess exited during boot (rc=1) — 'hello-toggle-tui: shell error: 

@@ -582,6 +582,10 @@ pub struct DispatchContext<'a> {
     /// R1551 §5.36 §5.12 — the paragraph reports the embedder collected for
     /// `scene/text_blocks`.
     pub text_blocks: Option<Vec<crate::text_blocks::TextBlockReport>>,
+    /// R1654 §5.36 — the runs this frame painted as something other than what
+    /// they hold, collected with `text_painted::collect_painted`.
+    /// `scene/text_painted` reads it.
+    pub text_painted: Option<Vec<crate::text_painted::PaintedTextReport>>,
 
     /// R907 §5.16 §5.7 — per-window frame-timing profiler snapshot.
     /// Resolved by the embedder before dispatch (the
@@ -1684,6 +1688,7 @@ impl<'a> DispatchContext<'a> {
             subscriber: None,
             text_backgrounds: None,
             text_blocks: None,
+            text_painted: None,
             frame_timings: None,
             render_fidelity: None,
             screenshot: None,
@@ -1963,6 +1968,13 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub fn with_text_blocks(mut self, blocks: Vec<crate::text_blocks::TextBlockReport>) -> Self {
         self.text_blocks = Some(blocks);
+        self
+    }
+
+    /// R1654 §5.36 — install the shortened-run list `scene/text_painted` reads.
+    #[must_use]
+    pub fn with_text_painted(mut self, runs: Vec<crate::text_painted::PaintedTextReport>) -> Self {
+        self.text_painted = Some(runs);
         self
     }
 
@@ -2271,6 +2283,8 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     let text_backgrounds = ctx.text_backgrounds.take();
     // R1551 §5.36 — the same shape: `scene/text_blocks` reads it.
     let text_blocks = ctx.text_blocks.take();
+    // R1654 §5.36 — the same shape: `scene/text_painted` reads it.
+    let text_painted = ctx.text_painted.take();
     // R907 §5.16 — per-window frame-timing profiler snapshot the
     // embedder pre-resolved from `ShellCore::frame_timings_for_window`.
     // Copy out for the dispatch lifetime; `scene/frame_timings` reads
@@ -2823,6 +2837,10 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                     crate::text_blocks::handle_scene_text_blocks(text_blocks.as_deref()),
                     HandlerKind::Read,
                 ),
+                "scene/text_painted" => (
+                    crate::text_painted::handle_scene_text_painted(text_painted.as_deref()),
+                    HandlerKind::Read,
+                ),
                 "scene/text_backgrounds" => (
                     crate::text_backgrounds::handle_scene_text_backgrounds(
                         text_backgrounds.as_deref(),
@@ -2963,10 +2981,22 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                     handle_scene_caret_state(runtime_owner, request.params.as_ref()),
                     HandlerKind::Read,
                 ),
-                "scene/locate" => (
-                    handle_scene_locate(scene, request.params.as_ref()),
-                    HandlerKind::Read,
-                ),
+                "scene/locate" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let producer = paint_producer.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_locate(
+                            scene,
+                            producer,
+                            last_paint_scene,
+                            request.params.as_ref(),
+                        ),
+                        HandlerKind::Read,
+                    )
+                }
                 "scene/locate_region" => {
                     #[allow(
                         clippy::option_as_ref_deref,
@@ -7830,7 +7860,15 @@ fn introspect_error_to_rpc(err: &SubstrateIntrospectError) -> RpcError {
 /// R890) or `scene/snapshot {from: "paint"}`; a paint-scene point-query
 /// sibling is a candidate future method — a deliberate spec fork not taken
 /// in R1188.
-fn handle_scene_locate(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
+fn handle_scene_locate<F>(
+    scene: &Scene,
+    paint_producer: Option<&mut F>,
+    last_paint_scene: Option<&Scene>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError>
+where
+    F: FnMut(u32, u32) -> Scene + ?Sized,
+{
     let params = require_params(params)?;
     let Some(x) = params.get("x").and_then(Value::as_u64) else {
         return Err(RpcError::invalid_params(
@@ -7847,7 +7885,15 @@ fn handle_scene_locate(scene: &Scene, params: Option<&Value>) -> Result<Value, R
     let y32 =
         u32::try_from(y).map_err(|_| RpcError::invalid_params("params.y exceeds u32 range"))?;
 
-    match locate(scene, x32, y32) {
+    // R1654 §5.12 §5.45 — the two-scene basis its two siblings already take.
+    // `scene/locate_region` has had it since R1591 and `scene/bbox` since
+    // R1653, and this was the last of the three spatial queries that could only
+    // read the STATE tree — which, for a view-fn binding, has not been through
+    // the layout pass at all, so every node in it answers the zero rect. Three
+    // questions about where things are, under one roof, are now asked of
+    // whichever tree the caller names.
+    let basis = resolve_scene_basis(scene, paint_producer, last_paint_scene, params, "state")?;
+    match locate(basis.scene(), x32, y32) {
         Ok(outcome) => Ok(locate_outcome_to_json(&outcome)),
         Err(err) => Err(locate_error_to_rpc(err)),
     }

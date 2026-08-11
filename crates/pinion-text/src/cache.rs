@@ -37,6 +37,7 @@ use pinion_core::style::{
     TextStyle,
 };
 use pinion_core::text_cache_stats::TextCacheStats;
+use pinion_core::text_elide::{ELLIPSIS, ElideRequest, Elision, elide_to_fit};
 use std::borrow::Cow;
 use std::num::NonZeroUsize;
 
@@ -127,6 +128,17 @@ struct LayoutKey {
 /// for bands without painting, and every measure-only caller asks for neither.
 struct CachedLayout {
     layout: Layout,
+    /// R1654 §5.36 §2 #7 — the string this entry was SHAPED from, when the
+    /// overflow policy shortened it, and `None` when the authored string is
+    /// what gets painted.
+    ///
+    /// Held here rather than recomputed because the shaped layout indexes into
+    /// it: a caller reading cluster byte ranges against the authored string
+    /// after an elision reads the wrong characters, which is how the first
+    /// version of this test suite failed. It is also the answer
+    /// `scene/text_painted` publishes, so what a reader sees is on the wire
+    /// instead of only in a frame buffer.
+    painted: Option<String>,
     runs: Option<Vec<PositionedRun>>,
     backgrounds: Option<Vec<TextBackground>>,
 }
@@ -589,6 +601,100 @@ impl LayoutCache {
             .layout
     }
 
+    /// R1654 §5.36 §2 #7 — the string that is actually painted for `text`
+    /// under `style` at `max_width`, or `None` when it is the authored one.
+    ///
+    /// The read that keeps an eliding screen honest. Without it a scene reports
+    /// `demo/units/1/pose` while the reader sees `demo/uni\u{2026}`, and §2 #7
+    /// says the scene is the description of what is on screen. Measured on the
+    /// reference toolkit: nothing there can answer this — its label returns the
+    /// authored string and the elided form exists only inside the paint call.
+    ///
+    /// Shapes on a miss, exactly as [`Self::layout`] does, and shares the
+    /// entry: asking what is painted and then painting it costs one shape.
+    ///
+    /// # Panics
+    ///
+    /// Never panics in practice — same `LruCache` invariant as
+    /// [`Self::layout`].
+    pub fn painted_text(
+        &mut self,
+        text: &str,
+        style: &TextStyle,
+        runs: &[StyleRun],
+        max_width: Option<u32>,
+    ) -> Option<&str> {
+        let key = LayoutKey {
+            text: text.to_owned(),
+            style: style.clone(),
+            runs: runs.to_vec(),
+            max_width,
+        };
+        self.ensure_entry(&key, text, style, runs, max_width);
+        self.inner
+            .get(&key)
+            .expect("entry just inserted on cache miss")
+            .painted
+            .as_deref()
+    }
+
+    /// R1654 §5.36 §2 #7 — the INK extent of `text` under `style` at
+    /// `max_width`: how wide and tall the glyphs actually are.
+    ///
+    /// The other half of [`Self::painted_text`], and the one that answers "does
+    /// this run fit the box it was given". A rectangle in a scene is what the
+    /// author PROMISED a run; this is what the shaper produced, and the two are
+    /// different numbers whenever the promise was too small. Published by
+    /// `scene/text_painted`, because an agent that can read a scene but cannot
+    /// see pixels has no other way to know a label is spilling over its
+    /// neighbour.
+    ///
+    /// Rounded UP: a fractional advance that a caller compared against an
+    /// integer box would report a run as fitting when its last glyph is half
+    /// outside.
+    ///
+    /// # Panics
+    ///
+    /// Never panics in practice — same `LruCache` invariant as
+    /// [`Self::layout`].
+    pub fn ink_size(
+        &mut self,
+        text: &str,
+        style: &TextStyle,
+        runs: &[StyleRun],
+        max_width: Option<u32>,
+    ) -> (u32, u32) {
+        let layout = self.layout_with_runs(text, style, runs, max_width);
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a shaped extent is a non-negative bounded pixel count"
+        )]
+        let size = (layout.width().ceil() as u32, layout.height().ceil() as u32);
+        size
+    }
+
+    /// R1654 §5.36 — how many lines the shaper produced for `text`.
+    ///
+    /// Two is the number that matters: a run that wrapped put a second line
+    /// where the author reserved room for one, and that line lands on whatever
+    /// is below it. Published beside the ink extent so a reader can tell a
+    /// wrapped run from one that is merely a pixel taller than a tight box.
+    ///
+    /// # Panics
+    ///
+    /// Never panics in practice — same `LruCache` invariant as
+    /// [`Self::layout`].
+    pub fn line_count(
+        &mut self,
+        text: &str,
+        style: &TextStyle,
+        runs: &[StyleRun],
+        max_width: Option<u32>,
+    ) -> u32 {
+        u32::try_from(self.layout_with_runs(text, style, runs, max_width).len()).unwrap_or(u32::MAX)
+    }
+
     /// R1531 §5.36 — the **draw list** for `text`: its shaped glyph runs,
     /// positioned, with every decoration resolved. What a painter replays.
     ///
@@ -683,11 +789,12 @@ impl LayoutCache {
             if self.ghosts.pop(&ghost_hash(key)).is_some() {
                 self.grow();
             }
-            let layout = self.shape(text, style, runs, max_width);
+            let (layout, painted) = self.shape(text, style, runs, max_width);
             // `push` reports what left. Reached only on a miss, so a returned
             // pair is always an eviction rather than a same-key replacement.
             let entry = CachedLayout {
                 layout,
+                painted,
                 runs: None,
                 backgrounds: None,
             };
@@ -1132,7 +1239,7 @@ impl LayoutCache {
         style: &TextStyle,
         runs: &[StyleRun],
         max_width: Option<u32>,
-    ) -> Layout {
+    ) -> (Layout, Option<String>) {
         // R51.31 §5.37.4 — UAX #9 L4 mirroring is applied here, at the
         // cache boundary, so paint_adapter sees `cache.layout(raw)` and
         // the single LRU entry covers both the mirror substitution and
@@ -1145,15 +1252,101 @@ impl LayoutCache {
         // the BIDI pipeline and the shape engine.
         let mirrored = pinion_text_unicode::bidi::mirror_paired_brackets(text);
         let shape_input = mirrored.as_ref();
-        // R1447 §5.36 — the one place the system-font scan happens. Every
-        // shaping entry point funnels through here, so deferring the build
-        // to this line defers it for the whole surface; a caller that never
-        // reaches `shape` never enumerates a font. `get_or_insert_with`
-        // borrows `font_cx` and `layout_cx` as disjoint fields, so the
-        // builder still takes both without a second pass over `self`.
+        // R1654 §5.36 — **an eliding arm is single-line by construction.** A
+        // paragraph that wraps has no horizontal overflow to elide: the words
+        // that did not fit went to the next line rather than off the end. That
+        // is CSS's rule (`text-overflow` needs `white-space: nowrap`) and the
+        // reference's (its metrics helper elides one string, not a paragraph),
+        // and it is why the break width is dropped here rather than honoured.
+        let shortens = style.overflow.shortens();
+        let break_width = if shortens { None } else { max_width };
+        let layout = self.shape_plain(shape_input, style, runs, break_width);
+        // The shaped layout has to be the SHORTENED one: every painter reads
+        // its glyphs from here, so a policy applied at paint time would be
+        // applied once per backend and once per frame.
+        if let Some(cut) = self.elided_form(shape_input, style, max_width, &layout) {
+            let moved = remap_runs(runs, shape_input.len(), &cut);
+            let mirrored = pinion_text_unicode::bidi::mirror_paired_brackets(&cut.text);
+            let shaped = self.shape_plain(mirrored.as_ref(), style, &moved, None);
+            return (shaped, Some(cut.text));
+        }
+        (layout, None)
+    }
+
+    /// R1654 §5.36 — the string this text is painted as, when the policy
+    /// shortens it and it does not fit.
+    ///
+    /// `None` means "paint what was authored": the policy keeps every
+    /// character, or the string already fits, or there is no width to fit it
+    /// into. The decision itself is [`pinion_core::text_elide::elide_to_fit`],
+    /// shared with the terminal backend; what belongs here is the two things
+    /// only this crate can answer — where a cut may land (parley's cluster
+    /// edges, so a combining mark never leaves its base) and how wide a
+    /// candidate is.
+    ///
+    /// The measure reads advances off `laid`, the already-shaped unwrapped
+    /// line, rather than re-shaping per candidate: the search is `O(log n)`
+    /// candidates and each would otherwise be a full shape.
+    fn elided_form(
+        &mut self,
+        text: &str,
+        style: &TextStyle,
+        max_width: Option<u32>,
+        laid: &Layout,
+    ) -> Option<Elision> {
+        let budget = max_width?;
+        if !style.overflow.shortens() {
+            return None;
+        }
+        let boundaries = cluster_boundaries(laid, text);
+        // The ellipsis costs width of its own, and the budget the policy
+        // searches against is the whole answer's, so the measure has to include
+        // it — which it does, because the policy measures CANDIDATES and a
+        // candidate carries the ellipsis.
+        let ellipsis_px = self.advance_of(ELLIPSIS, style);
+        let mut measure = |candidate: &str| {
+            let marks = candidate.matches(ELLIPSIS).count();
+            let body: String = candidate.replace(ELLIPSIS, "");
+            let body_px = advance_between(laid, text, &body);
+            body_px.saturating_add(ellipsis_px.saturating_mul(u32::try_from(marks).unwrap_or(0)))
+        };
+        elide_to_fit(
+            &ElideRequest {
+                content: text,
+                boundaries: &boundaries,
+                budget,
+            },
+            style.overflow,
+            &mut measure,
+        )
+    }
+
+    /// The shaped width of `piece`, in pixels, shaped on its own.
+    ///
+    /// Used only for the ellipsis, which is one cluster and cached by the
+    /// caller's own entry the moment it is shaped.
+    fn advance_of(&mut self, piece: &str, style: &TextStyle) -> u32 {
+        let layout = self.shape_plain(piece, style, &[], None);
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a shaped advance is a non-negative bounded pixel count"
+        )]
+        let width = layout.width().ceil() as u32;
+        width
+    }
+
+    /// The shaping half of [`Self::shape`], without the elision pass — the
+    /// recursion's base case, and the only place two shapes could disagree if
+    /// they were written twice.
+    fn shape_plain(
+        &mut self,
+        shape_input: &str,
+        style: &TextStyle,
+        runs: &[StyleRun],
+        max_width: Option<u32>,
+    ) -> Layout {
         self.shapes += 1;
-        // Bound before the `&mut` field borrows below; disjoint fields, so the
-        // resolved default rides alongside them without a second pass.
         let default_family = self.default_family.as_ref();
         let font_cx = ensure_font_context(
             &mut self.font_cx,
@@ -1164,17 +1357,6 @@ impl LayoutCache {
         let mut builder = self
             .layout_cx
             .ranged_builder(font_cx, shape_input, 1.0, true);
-        // R47.6 §5.36 — the base style is pushed as the run default
-        // (the whole-string style). R713 §5.36 — each StyleRun then
-        // pushes its fully-resolved style over its UTF-8 byte range;
-        // parley resolves overlaps last-push-wins, so list order is the
-        // run priority. `runs.is_empty()` collapses to the pre-R713
-        // default-only path.
-        // R1472 §5.36 — the application default reaches the base style AND
-        // every styled run: a run that overrides weight while leaving the
-        // family unset is as unset as the base, and resolving only the base
-        // would make a bolded span of an application-font paragraph fall back
-        // to the platform stack mid-line.
         for prop in style_properties(style, default_family) {
             builder.push_default(prop);
         }
@@ -1185,13 +1367,6 @@ impl LayoutCache {
             }
         }
         let mut layout = builder.build(shape_input);
-        // R1551 §5.36 — the paragraph's CSS `text-indent`, set before line
-        // breaking because it *is* a breaking input: an indented first line
-        // has less room, so where it breaks depends on the indent. parley
-        // documents the ordering requirement (`set_text_indent` before
-        // `break_all_lines` and before `align`), and its `IndentOptions` carry
-        // the same two CSS keywords `TextIndent` does — this is a rename, not
-        // a re-derivation, so the two cannot disagree about which lines move.
         #[allow(
             clippy::cast_precision_loss,
             reason = "text-indent |v| <= 2^24 px in practice"
@@ -1216,6 +1391,119 @@ impl LayoutCache {
         );
         layout
     }
+}
+
+/// R1654 — the styled spans of `runs`, moved onto the elided string.
+///
+/// A span whose bytes were all removed is dropped rather than clamped to an
+/// empty range: an empty run would push a style over no text, which parley
+/// accepts and nothing can observe, so the drop is the honest encoding.
+fn remap_runs(runs: &[StyleRun], original_len: usize, cut: &Elision) -> Vec<StyleRun> {
+    runs.iter()
+        .filter_map(|run| {
+            let (start, end) = cut.remap(original_len, run.start as usize, run.end as usize)?;
+            let mut moved = run.clone();
+            moved.start = u32::try_from(start).unwrap_or(u32::MAX);
+            moved.end = u32::try_from(end).unwrap_or(u32::MAX);
+            Some(moved)
+        })
+        .collect()
+}
+
+/// R1654 — the byte offsets a cut may land on: parley's cluster edges.
+///
+/// A cluster is what the shaper treats as indivisible, which is exactly the
+/// grain a cut must respect — splitting one separates a combining mark from its
+/// base, or half of a ligature from the other half.
+fn cluster_boundaries(laid: &Layout, text: &str) -> Vec<usize> {
+    let mut cuts = vec![0usize, text.len()];
+    for line in laid.lines() {
+        for item in line.items() {
+            if let parley::PositionedLayoutItem::GlyphRun(run) = item {
+                let range = run.run().text_range();
+                cuts.push(range.start);
+                cuts.push(range.end);
+                for cluster in run.run().clusters() {
+                    cuts.push(cluster.text_range().start);
+                    cuts.push(cluster.text_range().end);
+                }
+            }
+        }
+    }
+    cuts.retain(|b| *b <= text.len() && text.is_char_boundary(*b));
+    cuts.sort_unstable();
+    cuts.dedup();
+    cuts
+}
+
+/// R1654 — how wide `body` is, measured against the advances of the line
+/// `whole` was shaped into.
+///
+/// `body` is always a prefix, a suffix, or a prefix plus a suffix of `whole`,
+/// because that is all an eliding policy can produce. Summing the advances of
+/// the clusters it covers reuses one shape for the whole search.
+fn advance_between(laid: &Layout, whole: &str, body: &str) -> u32 {
+    if body.is_empty() {
+        return 0;
+    }
+    let head = common_prefix_len(whole, body);
+    let tail = common_suffix_len(&whole[head..], &body[head..]);
+    let kept_start = head;
+    let kept_end = whole.len() - tail;
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a shaped advance is a non-negative bounded pixel count"
+    )]
+    let width = {
+        let mut sum = 0.0f32;
+        for line in laid.lines() {
+            for item in line.items() {
+                if let parley::PositionedLayoutItem::GlyphRun(run) = item {
+                    for cluster in run.run().clusters() {
+                        let r = cluster.text_range();
+                        // A cluster counts when it is inside the kept head or
+                        // the kept tail.
+                        let in_head = r.end <= kept_start;
+                        let in_tail = r.start >= kept_end;
+                        if in_head || in_tail {
+                            sum += cluster.advance();
+                        }
+                    }
+                }
+            }
+        }
+        sum.ceil() as u32
+    };
+    width
+}
+
+fn common_prefix_len(a: &str, b: &str) -> usize {
+    let mut n = 0;
+    for (x, y) in a.bytes().zip(b.bytes()) {
+        if x != y {
+            break;
+        }
+        n += 1;
+    }
+    while n > 0 && !a.is_char_boundary(n) {
+        n -= 1;
+    }
+    n
+}
+
+fn common_suffix_len(a: &str, b: &str) -> usize {
+    let mut n = 0;
+    for (x, y) in a.bytes().rev().zip(b.bytes().rev()) {
+        if x != y {
+            break;
+        }
+        n += 1;
+    }
+    while n > 0 && !a.is_char_boundary(a.len() - n) {
+        n -= 1;
+    }
+    n
 }
 
 /// R1521 §5.36 — the ghost-list identity of a [`LayoutKey`].
@@ -1404,6 +1692,139 @@ mod tests {
         let mut s = TextStyle::new();
         s.font_size_px = size;
         s
+    }
+
+    // ---------------------------------------------------------------
+    // R1654 §5.36 — the ellipsis arms shape the SHORTENED string.
+    // ---------------------------------------------------------------
+
+    /// The characters a layout actually holds, read back off its clusters'
+    /// byte ranges against the string it was shaped from.
+    fn shaped_text(layout: &Layout, source: &str) -> String {
+        let mut ranges: Vec<(usize, usize)> = Vec::new();
+        for line in layout.lines() {
+            for item in line.items() {
+                if let parley::PositionedLayoutItem::GlyphRun(run) = item {
+                    for cluster in run.run().clusters() {
+                        let r = cluster.text_range();
+                        ranges.push((r.start, r.end));
+                    }
+                }
+            }
+        }
+        ranges.sort_unstable();
+        ranges.dedup();
+        ranges
+            .into_iter()
+            .filter(|(a, b)| *b <= source.len() && a < b)
+            .map(|(a, b)| &source[a..b])
+            .collect()
+    }
+
+    /// ★ The arm that was declared, published on the wire and readable back
+    /// off a text field since R47.5, and implemented by nobody: both painters
+    /// carried a note saying they fell back to a hard cut. This is the
+    /// assertion that makes the declaration true.
+    #[test]
+    fn r1654_an_ellipsis_arm_shapes_the_shortened_string() {
+        let mut cache = crate::test_font::own_font_cache();
+        let mut elided = style(12);
+        elided.overflow = pinion_core::style::TextOverflow::Ellipsis;
+        let content = "demo/units/1/pose";
+
+        let full = shaped_text(cache.layout(content, &style(12), Some(60)), content);
+        assert_eq!(cache.painted_text(content, &style(12), &[], Some(60)), None);
+        assert_eq!(
+            full, content,
+            "the default arm keeps every character (and wraps them)"
+        );
+
+        let cut = cache
+            .painted_text(content, &elided, &[], Some(60))
+            .expect("the policy shortened it")
+            .to_owned();
+        assert_ne!(cut, content, "the eliding arm did something");
+        assert!(cut.ends_with('\u{2026}'), "and marked the cut: {cut:?}");
+        assert!(
+            content.starts_with(cut.trim_end_matches('\u{2026}')),
+            "what survived is a prefix of what was authored: {cut:?}"
+        );
+        let width = cache.layout(content, &elided, Some(60)).width();
+        assert!(width <= 60.0, "and it fits its box: {width}");
+    }
+
+    /// The three eliding arms differ in which characters survive, shaped.
+    #[test]
+    fn r1654_the_three_arms_keep_different_ends() {
+        use pinion_core::style::TextOverflow;
+        let mut cache = crate::test_font::own_font_cache();
+        let content = "demo/units/1/pose";
+        let shaped = |cache: &mut LayoutCache, overflow| {
+            let mut st = style(12);
+            st.overflow = overflow;
+            cache
+                .painted_text(content, &st, &[], Some(70))
+                .expect("all three shorten this")
+                .to_owned()
+        };
+        let end = shaped(&mut cache, TextOverflow::Ellipsis);
+        let start = shaped(&mut cache, TextOverflow::EllipsisStart);
+        let middle = shaped(&mut cache, TextOverflow::EllipsisMiddle);
+        assert!(
+            end.ends_with('\u{2026}') && !end.starts_with('\u{2026}'),
+            "{end:?}"
+        );
+        assert!(
+            start.starts_with('\u{2026}') && !start.ends_with('\u{2026}'),
+            "{start:?}"
+        );
+        assert!(
+            middle.contains('\u{2026}')
+                && !middle.starts_with('\u{2026}')
+                && !middle.ends_with('\u{2026}'),
+            "{middle:?}"
+        );
+        assert!(
+            end != start && start != middle && end != middle,
+            "three arms, three answers: {end:?} {start:?} {middle:?}"
+        );
+    }
+
+    /// A string that fits is untouched whatever the arm — so turning the
+    /// policy on costs nothing to text that never overflows.
+    #[test]
+    fn r1654_a_string_that_fits_is_shaped_as_authored() {
+        use pinion_core::style::TextOverflow;
+        let mut cache = crate::test_font::own_font_cache();
+        for overflow in TextOverflow::ALL {
+            let mut st = style(12);
+            st.overflow = overflow;
+            assert_eq!(
+                shaped_text(cache.layout("ok", &st, Some(400)), "ok"),
+                "ok",
+                "{overflow:?}"
+            );
+            assert_eq!(
+                cache.painted_text("ok", &st, &[], Some(400)),
+                None,
+                "{overflow:?}: nothing was shortened, and the answer says so"
+            );
+        }
+    }
+
+    /// ★ An eliding arm is single-line: the words that would have wrapped are
+    /// elided instead, because a paragraph that wraps has no horizontal
+    /// overflow to elide.
+    #[test]
+    fn r1654_an_eliding_arm_does_not_wrap() {
+        let mut cache = crate::test_font::own_font_cache();
+        let content = "one two three four five six seven eight";
+        let wrapped = cache.layout(content, &style(12), Some(60)).len();
+        let mut elided = style(12);
+        elided.overflow = pinion_core::style::TextOverflow::Ellipsis;
+        let lines = cache.layout(content, &elided, Some(60)).len();
+        assert!(wrapped > 1, "the default arm wraps into {wrapped} lines");
+        assert_eq!(lines, 1, "and the eliding arm keeps one");
     }
 
     // ---------------------------------------------------------------
@@ -2942,10 +3363,14 @@ mod footprint {
         fn footprint(&self) -> usize {
             let Self {
                 layout,
+                painted,
                 runs,
                 backgrounds,
             } = self;
-            parley_reachable_bytes(layout) + runs.footprint() + backgrounds.footprint()
+            parley_reachable_bytes(layout)
+                + painted.footprint()
+                + runs.footprint()
+                + backgrounds.footprint()
         }
     }
 

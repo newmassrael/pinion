@@ -60,6 +60,7 @@ pub mod text_backgrounds;
 pub mod text_blocks;
 pub mod text_cache_stats;
 pub mod text_lists;
+pub mod text_painted;
 pub mod text_state;
 pub mod text_tables;
 pub mod theme;

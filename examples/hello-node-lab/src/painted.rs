@@ -40,16 +40,21 @@
 //! population makes "40 controls pass" read as coverage when it is a sample,
 //! and the three controls that round's list did not name were all broken.
 //!
-//! # What it does not see, stated rather than implied
+//! # The box is the promise, and R1654 is what makes it keepable
 //!
 //! Every rectangle here is the box the view **gave** a run, not the extent of
-//! the glyphs inside it. A string wider than its box still wraps to a second
-//! line and paints over whatever is below, and this module reports the screen
-//! as clean — visible in the render as a smeared card row. The box is the only
-//! contract available: a run cannot be told to elide, so there is nothing for a
-//! painter to do about a string that does not fit and nothing here can hold it
-//! to. That is a framework gap with its own note
-//! (`debt-a-text-run-cannot-be-elided`), not an oversight in the sweep.
+//! its glyphs, so a string wider than its box would smear over the row below
+//! and this module would still report the screen as clean. R1653 wrote that
+//! down as a gap because a run could not be told to elide; R1654 implemented
+//! the arm that had been declared since R47.5 and never honoured, and the sweep
+//! now holds the screen to the rule that closes it: **every run declares a
+//! policy that shortens it.**
+//!
+//! That is asserted rather than measured, and deliberately: a measurement
+//! depends on which fonts the host has, so a gate built on one is green here
+//! and red on a machine with different metrics. The declaration is
+//! font-independent, and `pinion-text`'s own tests are where "an eliding arm
+//! produces something that fits" is proven.
 
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -159,18 +164,31 @@ impl Painted {
 }
 
 /// Paint the screen as the window would: the view function, then the layout
-/// pass, at the window's own size.
-fn painted(state: &std::rc::Rc<LabState>) -> Painted {
-    // Reading the state through the same accessor the view uses keeps this from
-    // painting a *different* screen from the one under test.
+/// pass, at whatever size the shell has published.
+fn painted_at(state: &std::rc::Rc<LabState>, size: (u32, u32)) -> Painted {
+    // ★ R1654 — publishing the size the way the shell does, so the sweep can
+    // ask the screen to lay out at a size other than the one it was designed
+    // for. Every earlier check here passed `WIN_W, WIN_H` to the layout pass,
+    // which ASSUMES the thing that was wrong: the screen ignored the window and
+    // painted its design size into the corner of it.
+    let owner = Owner::current().expect("the sweep runs inside a scope");
+    pinion_core::reactive::VIEWPORT_SIZE
+        .resolve(&owner)
+        .set(size);
+    let mut scene = super::view((), Frame::default());
+    let mut cache = pinion_runtime::LayoutCache::new();
+    pinion_runtime::compute_layout(&mut scene, &mut cache, size.0, size.1);
+    let shot = Painted::of(&scene);
     assert!(
         std::rc::Rc::ptr_eq(state, &use_lab_state()),
         "the sweep must drive the state the view reads"
     );
-    let mut scene = super::view((), Frame::default());
-    let mut cache = pinion_runtime::LayoutCache::new();
-    pinion_runtime::compute_layout(&mut scene, &mut cache, WIN_W, WIN_H);
-    Painted::of(&scene)
+    shot
+}
+
+/// Paint the screen as the window would, at the design size.
+fn painted(state: &std::rc::Rc<LabState>) -> Painted {
+    painted_at(state, (WIN_W, WIN_H))
 }
 
 /// The centre of a rectangle, which is where a press is aimed.
@@ -652,6 +670,113 @@ fn r1653_a_pan_past_the_edge_stops_painting_the_graph() {
         // Panning back brings every one of them back, at its original place.
         state.pan.set((0, 0));
         assert_eq!(visible(&painted(&state)), spec::NODES.len());
+    });
+}
+
+/// ★ R1654 — the screen fills the window it is given, at every size.
+///
+/// Reported from the running window: enlarging it left the content in the
+/// top-left corner and the rest of the surface black. The screen had its design
+/// size written into every pane rectangle, and — the reason no test here saw
+/// it — every check ran the layout pass at that same size, so the assumption
+/// and the defect were the same number.
+///
+/// Three sizes, and the properties are relations rather than pixels: the panes
+/// tile the window with no gap and no overlap, the fixed-width ones keep their
+/// width, and the canvas takes what is left.
+#[test]
+fn r1654_the_screen_fills_whatever_window_it_is_given() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        for size in [(WIN_W, WIN_H), (1920, 1200), (900, 620)] {
+            let shot = painted_at(&state, size);
+            let rail = shot.tags["lab.rail"];
+            let palette = shot.tags["lab.palette"];
+            let canvas = shot.tags["lab.canvas"];
+            let inspector = shot.tags["lab.inspector"];
+            let appbar = shot.tags["lab.appbar"];
+
+            assert_eq!(appbar.w, size.0, "{size:?}: the bar spans the window");
+            assert_eq!(rail.x, 0, "{size:?}");
+            assert_eq!(rail.x + rail.w, palette.x, "{size:?}: no gap at the rail");
+            assert_eq!(
+                palette.x + palette.w,
+                canvas.x,
+                "{size:?}: no gap at the palette"
+            );
+            assert_eq!(
+                canvas.x + canvas.w,
+                inspector.x,
+                "{size:?}: the canvas ends where the inspector starts"
+            );
+            assert_eq!(
+                inspector.x + inspector.w,
+                size.0,
+                "{size:?}: and the inspector reaches the right edge"
+            );
+            for (name, pane) in [
+                ("rail", rail),
+                ("palette", palette),
+                ("inspector", inspector),
+            ] {
+                assert_eq!(
+                    pane.y + pane.h,
+                    size.1,
+                    "{size:?}: {name} reaches the bottom"
+                );
+            }
+            assert_eq!(palette.w, super::PALETTE_W, "{size:?}: fixed width");
+            assert_eq!(inspector.w, super::INSP_W, "{size:?}: fixed width");
+        }
+        // And the canvas is the one that absorbs the difference.
+        let narrow = painted_at(&state, (900, 620)).tags["lab.canvas"];
+        let wide = painted_at(&state, (1920, 1200)).tags["lab.canvas"];
+        assert!(
+            wide.w > narrow.w && wide.h > narrow.h,
+            "the canvas takes the room the window gained: {narrow:?} -> {wide:?}"
+        );
+    });
+}
+
+/// ★ R1654 — every run on this screen declares a policy for not fitting.
+///
+/// The rule that makes "the box is the promise" keepable. A run is given an
+/// exact rectangle so it does not flow (R1653), which fixes its WIDTH too — and
+/// the strings here are user data: an endpoint, a key expression, a node
+/// identifier. Without a shortening policy the ones that outgrow their box wrap
+/// to a second line that lands on the row below, which is what two rounds of
+/// this screen shipped and what no box-measuring check can see.
+///
+/// Font-independent on purpose. Asserting a measured width would make this gate
+/// depend on the host's font metrics, and a gate that is green on one machine
+/// and red on another is the flake this project does not accept.
+#[test]
+fn r1654_every_painted_run_declares_what_happens_when_it_does_not_fit() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let mut scene = super::view((), Frame::default());
+        let mut cache = pinion_runtime::LayoutCache::new();
+        pinion_runtime::compute_layout(&mut scene, &mut cache, WIN_W, WIN_H);
+        let _ = &state;
+        let mut unguarded = Vec::new();
+        let mut checked = 0;
+        scene.for_each_node(&mut |visit| {
+            let Scene::Text(text) = visit.node else {
+                return;
+            };
+            checked += 1;
+            if !text.style.overflow.shortens() {
+                unguarded.push((text.content.clone(), text.style.overflow));
+            }
+        });
+        assert!(checked > 60, "the screen paints text: {checked} run(s)");
+        assert!(
+            unguarded.is_empty(),
+            "{} run(s) have an exact box and no policy for outgrowing it: {unguarded:?}",
+            unguarded.len()
+        );
     });
 }
 

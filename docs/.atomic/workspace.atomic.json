@@ -35264,6 +35264,100 @@
         "launches every example rather than copied into each of them."
       ]
     },
+    "R1654": {
+      "decision_summary": "Five defects reported from the running window, and every one of them was\ninvisible to the tests: the screen ignored the window it was given, its text\nescaped its boxes with no way to ask about it, its host frames were rectangles\nout of a table rather than groups, its rail icons were two sizes of dot, and a\nnode could not be dragged above where the graph opened. Four are repairs; the\none that is a capability is the one the report asked for as a question -- why\ncan the wire not diagnose text leaving its rectangle -- and the answer was that\nevery read published the box the author PROMISED and none published what the\nshaper produced.",
+      "changes_bullets": [
+        "pinion-core: `text_elide` -- one elision policy, the metric supplied by the",
+        "caller, because shaped pixels and terminal cells cannot be reconciled and the",
+        "decision must not be made twice. `TextOverflow` gains EllipsisStart and",
+        "EllipsisMiddle (five arms, censused).",
+        "pinion-text: the shaper honours the eliding arms, so every painter inherits",
+        "them; styled spans are moved onto the shortened string; `painted_text`,",
+        "`ink_size` and `line_count` publish what the entry actually holds.",
+        "pinion-rpc: `scene/text_painted` reports every run -- its window rect, what the",
+        "scene holds, what the frame drew, the ink extent, the line count, and whether",
+        "the ink left the box. `scene/locate` takes the two-scene basis its two siblings",
+        "already had.",
+        "pinion-widget-paint: the settings form's runs declare an overflow policy.",
+        "tools: the boot gate every demo pays refuses a screen whose runs land on each",
+        "other, with `docs/text-smear-budget.tsv` as the measured ratchet.",
+        "examples/hello-node-lab: panes derived from `use_viewport_size` and the window",
+        "made resizable; frames derived from their members, draggable, and joined by a",
+        "drop; rail icons drawn as marks; the second clamp on a node drag removed."
+      ],
+      "verification_bullets": [
+        "cargo test: 3383 core, 105 text, 1208 rpc, 840 widget-paint, 24 hello-node-lab,",
+        "17 hello-analyzer-shell. clippy -D pedantic clean on all seven.",
+        "6 counterfactuals, 6 caught.",
+        "The running app driven over the wire: resized 1440 -> 1800 and the panes",
+        "followed (canvas 844 -> 1204, inspector to 1488, palette unchanged at 230).",
+        "Both analyzer demos re-passed unchanged.",
+        "The text-smear backlog measured over all 223 example packages: 31 carry 71",
+        "overlapping pairs, 9 cannot boot headless and are recorded as unmeasured rather",
+        "than clean.",
+        "Measured on the reference toolkit (probe outside the repository): four elide",
+        "modes live on its METRICS class, its label has no elide property at all (only",
+        "its item views do), a label handed a string too wide for it clips while its size",
+        "hint still reports the full natural width, and `text()` returns the authored",
+        "string -- so nothing there can report what a reader actually saw."
+      ],
+      "impact_refs": [
+        "5.12",
+        "5.36",
+        "5.45"
+      ],
+      "carry_forward_bullets": [
+        "The smear ratchet's numbers were measured before the settings-form painter",
+        "gained its policy in the same round, so a handful are an upper bound on what the",
+        "tree does now -- the safe direction for a ratchet, and stated in the file."
+      ],
+      "publishable_decision_summary": "Five defects reported from the running window, and every one of them was\ninvisible to the tests: the screen ignored the window it was given, its text\nescaped its boxes with no way to ask about it, its host frames were rectangles\nout of a table rather than groups, its rail icons were two sizes of dot, and a\nnode could not be dragged above where the graph opened. Four are repairs; the\none that is a capability is the one the report asked for as a question -- why\ncan the wire not diagnose text leaving its rectangle -- and the answer was that\nevery read published the box the author PROMISED and none published what the\nshaper produced.",
+      "publishable_changes_bullets": [
+        "pinion-core: `text_elide` -- one elision policy, the metric supplied by the",
+        "caller, because shaped pixels and terminal cells cannot be reconciled and the",
+        "decision must not be made twice. `TextOverflow` gains EllipsisStart and",
+        "EllipsisMiddle (five arms, censused).",
+        "pinion-text: the shaper honours the eliding arms, so every painter inherits",
+        "them; styled spans are moved onto the shortened string; `painted_text`,",
+        "`ink_size` and `line_count` publish what the entry actually holds.",
+        "pinion-rpc: `scene/text_painted` reports every run -- its window rect, what the",
+        "scene holds, what the frame drew, the ink extent, the line count, and whether",
+        "the ink left the box. `scene/locate` takes the two-scene basis its two siblings",
+        "already had.",
+        "pinion-widget-paint: the settings form's runs declare an overflow policy.",
+        "tools: the boot gate every demo pays refuses a screen whose runs land on each",
+        "other, with `docs/text-smear-budget.tsv` as the measured ratchet.",
+        "examples/hello-node-lab: panes derived from `use_viewport_size` and the window",
+        "made resizable; frames derived from their members, draggable, and joined by a",
+        "drop; rail icons drawn as marks; the second clamp on a node drag removed."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test: 3383 core, 105 text, 1208 rpc, 840 widget-paint, 24 hello-node-lab,",
+        "17 hello-analyzer-shell. clippy -D pedantic clean on all seven.",
+        "6 counterfactuals, 6 caught.",
+        "The running app driven over the wire: resized 1440 -> 1800 and the panes",
+        "followed (canvas 844 -> 1204, inspector to 1488, palette unchanged at 230).",
+        "Both analyzer demos re-passed unchanged.",
+        "The text-smear backlog measured over all 223 example packages: 31 carry 71",
+        "overlapping pairs, 9 cannot boot headless and are recorded as unmeasured rather",
+        "than clean.",
+        "Measured on the reference toolkit (probe outside the repository): four elide",
+        "modes live on its METRICS class, its label has no elide property at all (only",
+        "its item views do), a label handed a string too wide for it clips while its size",
+        "hint still reports the full natural width, and `text()` returns the authored",
+        "string -- so nothing there can report what a reader actually saw."
+      ],
+      "publishable_impact_refs": [
+        "5.12",
+        "5.36",
+        "5.45"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The smear ratchet's numbers were measured before the settings-form painter",
+        "gained its policy in the same round, so a handful are an upper bound on what the",
+        "tree does now -- the safe direction for a ratchet, and stated in the file."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

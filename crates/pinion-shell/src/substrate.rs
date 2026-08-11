@@ -6287,6 +6287,14 @@ impl<V: WidgetView> ShellCore<V> {
                     pinion_rpc::text_blocks::collect_blocks(paint, text_cache_ptr)
                 })
             });
+            // R1654 §5.36 §2 #7 — the same shape again: what this frame painted
+            // where the policy shortened it, so an elided label is legible to
+            // an agent as the thing the reader actually sees.
+            let text_painted = (request.method == "scene/text_painted").then(|| {
+                last_paint_scene_ref.map_or_else(Vec::new, |paint| {
+                    pinion_rpc::text_painted::collect_painted(paint, text_cache_ptr)
+                })
+            });
             let produce_work_ptr = &mut self.produce_work;
             // R1072 §5.37 — the opt-in engine measure for the RPC-side producer,
             // so a `scene/snapshot from: paint` (and the post-dispatch
@@ -6419,6 +6427,9 @@ impl<V: WidgetView> ShellCore<V> {
             }
             // R1551 §5.36 §5.12 — the paragraphs collected above, for
             // `scene/text_blocks` only.
+            if let Some(runs) = text_painted {
+                ctx = ctx.with_text_painted(runs);
+            }
             if let Some(blocks) = text_blocks {
                 ctx = ctx.with_text_blocks(blocks);
             }
