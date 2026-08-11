@@ -267,6 +267,43 @@ mod tests {
     }
 
     #[test]
+    fn the_resolver_is_alive_in_a_checkout_and_honest_without_one() {
+        // `a_record_names_the_build_that_emitted_it` accepts `unknown`,
+        // because a checkout-less build legitimately reports it — which
+        // means a resolver that DIED (git absent from the build script's
+        // path, the `--short=12` invocation changed, the env var never
+        // emitted) would satisfy that test forever while the stamp
+        // identified nothing. This is the assertion that can tell those
+        // two apart, and it is the one the round's own close audit added.
+        //
+        // Not compared against `git rev-parse HEAD`: the build script
+        // watches HEAD, so the values do agree, but a commit landing
+        // between the build and this assertion would make the test fail
+        // for a reason that is not a defect. Aliveness is the property
+        // worth gating; the exact value is verified once, by hand, in
+        // the built artefact.
+        //
+        // Both branches assert. A guard that silently skips is an
+        // assertion that does not run, and reads like coverage.
+        let in_a_checkout = std::process::Command::new("git")
+            .args(["rev-parse", "--git-dir"])
+            .output()
+            .is_ok_and(|out| out.status.success());
+
+        if in_a_checkout {
+            assert_ne!(
+                GENERATOR_COMMIT, "unknown",
+                "a build with a git checkout to read must name its commit"
+            );
+        } else {
+            assert_eq!(
+                GENERATOR_COMMIT, "unknown",
+                "a build with no checkout must say so rather than guess"
+            );
+        }
+    }
+
+    #[test]
     fn every_record_names_the_same_build() {
         // Per-record, not per-stream — but every record in a stream comes
         // from one build, so two records disagreeing would mean the stamp

@@ -35732,6 +35732,36 @@
         "no SCE-side residue from this bump: the upstream debt register (all cleared, one misfiled and retired) is unchanged by these 74 commits, and the Rust runtime's only new public surface (published_origin, session_id_from_scxml_location) has no pinion consumer — pinion drives Engine<P> per widget and runs no SCXML sessions that send to each other"
       ]
     },
+    "R1657.1": {
+      "decision_summary": "The round's own close audit found a failure mode its new test accepted.\n\n`a_record_names_the_build_that_emitted_it` gates the SHAPE of the stamp — a\nshort-or-full lowercase hex commit, or the `unknown` a checkout-less build\nlegitimately reports. That is the schema's own pattern, and it is right. But it\nmeans a resolver that DIED — git absent from the build script's environment, the\nrev-parse invocation changed, the env var never emitted — would satisfy it\nforever while the stamp identified nothing. The two cases are indistinguishable\nto every assertion the round shipped, and the one that matters is silent.\n\nThis is the class the previous round named: an implementation exists and nobody\nasks whether it is still alive. Registering it as debt would have been the wrong\nanswer when the test is six lines.\n\nWHAT IT DOES NOT DO, DELIBERATELY. It does not compare against `git rev-parse\nHEAD`. The build script watches HEAD and the values do agree — that was verified\nby hand, once, in the built artefact — but a commit landing between the build and\nthe assertion would turn the test red for a reason that is not a defect, and this\ntree's zero-flake rule makes a small race a real cost. Aliveness is the property\nworth gating.\n\nBOTH BRANCHES ASSERT. In a checkout the stamp must not be `unknown`; without one\nit must be exactly `unknown`, because a build that cannot read a commit has to\nsay so rather than guess. A guard that silently skips is an assertion that does\nnot run, and it reads like coverage.",
+      "changes_bullets": [
+        "crates/pinion-forge/src/wire.rs: the_resolver_is_alive_in_a_checkout_and_honest_without_one — asks git whether this is a checkout, then requires a named commit in one case and exactly `unknown` in the other"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-forge: 95 pass, 0 fail (94 before); clippy clean; fmt clean",
+        "counterfactual 1/1 CAUGHT: make the build script discard git_commit() and always emit `unknown`, which is precisely the dead resolver a checkout-less build is indistinguishable from under the shape assertion alone"
+      ],
+      "impact_refs": [
+        "5.22"
+      ],
+      "carry_forward_bullets": [
+        "none — the audit finding this pays was the only one, and the round's registered debt is unchanged"
+      ],
+      "publishable_decision_summary": "The round's own close audit found a failure mode its new test accepted.\n\n`a_record_names_the_build_that_emitted_it` gates the SHAPE of the stamp — a\nshort-or-full lowercase hex commit, or the `unknown` a checkout-less build\nlegitimately reports. That is the schema's own pattern, and it is right. But it\nmeans a resolver that DIED — git absent from the build script's environment, the\nrev-parse invocation changed, the env var never emitted — would satisfy it\nforever while the stamp identified nothing. The two cases are indistinguishable\nto every assertion the round shipped, and the one that matters is silent.\n\nThis is the class the previous round named: an implementation exists and nobody\nasks whether it is still alive. Registering it as debt would have been the wrong\nanswer when the test is six lines.\n\nWHAT IT DOES NOT DO, DELIBERATELY. It does not compare against `git rev-parse\nHEAD`. The build script watches HEAD and the values do agree — that was verified\nby hand, once, in the built artefact — but a commit landing between the build and\nthe assertion would turn the test red for a reason that is not a defect, and this\ntree's zero-flake rule makes a small race a real cost. Aliveness is the property\nworth gating.\n\nBOTH BRANCHES ASSERT. In a checkout the stamp must not be `unknown`; without one\nit must be exactly `unknown`, because a build that cannot read a commit has to\nsay so rather than guess. A guard that silently skips is an assertion that does\nnot run, and it reads like coverage.",
+      "publishable_changes_bullets": [
+        "crates/pinion-forge/src/wire.rs: the_resolver_is_alive_in_a_checkout_and_honest_without_one — asks git whether this is a checkout, then requires a named commit in one case and exactly `unknown` in the other"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-forge: 95 pass, 0 fail (94 before); clippy clean; fmt clean",
+        "counterfactual 1/1 CAUGHT: make the build script discard git_commit() and always emit `unknown`, which is precisely the dead resolver a checkout-less build is indistinguishable from under the shape assertion alone"
+      ],
+      "publishable_impact_refs": [
+        "5.22"
+      ],
+      "publishable_carry_forward_bullets": [
+        "none — the audit finding this pays was the only one, and the round's registered debt is unchanged"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
