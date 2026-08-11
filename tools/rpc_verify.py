@@ -153,6 +153,104 @@ class HostObservation:
     __hash__ = None  # type: ignore[assignment]
 
 
+
+#: R1660 — the faces every measurement in this tree shapes against.
+#:
+#: EXACTLY ONE, and that is load-bearing rather than minimal. Measured: adding
+#: the sibling `NanumGothic-Regular.ttf` to the pinned set takes
+#: `hello-tabbed-chart` from 6 escapes to 7, and the marks that move are LATIN
+#: tick labels. The app's styles name families neither face provides, so with
+#: two faces fontconfig's own ordering decides the fallback and the ink follows
+#: it. With one face there is nothing to decide.
+#:
+#: Adding a face here is therefore a re-measurement of both budget files, not a
+#: convenience — which is why the set is a named constant and not a directory.
+PINNED_FACES: tuple[str, ...] = (
+    "crates/pinion-text-font/tests/fonts/NotoSans-Regular.ttf",
+)
+
+_PINNED_FONTCONFIG: Path | None = None
+
+
+def pinned_fontconfig() -> Path | None:
+    """R1660 — a fontconfig exposing exactly [`PINNED_FACES`], or `None`.
+
+    # The defect this exists for
+
+    R1656 built a ratchet on painted INK: `scene/containment` reports which
+    marks left the box that owns them, every demo pays it at boot against a
+    per-example budget, and `scene/text_painted` feeds the text-smear peer. Ink
+    is a function of the shaped face; the face is a function of the host's font
+    database; the budgets were measured on one machine. So the ratchet gave a
+    different verdict on CI, and 33 sweep runs went red on 8 examples that pass
+    locally — a green local gate saying nothing about CI, which is the exact
+    shape [[zero-flake-policy]] forbids.
+
+    Reproduced rather than argued: pointing `FONTCONFIG_FILE` at a config
+    exposing only DejaVu reproduces the CI failure on this machine
+    (`hello-tabbed-chart` 6 escapes -> 7, and the marks that move are the
+    chart's tick labels — pure ink extent).
+
+    R1573 measured the same class one layer down — **40 of 94** unit tests read
+    the host — and closed it with `LayoutCache::with_own_fonts`. R1656 then
+    built the demo gate on a host-reading cache, which reopened it.
+
+    # Why the font DATABASE and not the cache
+
+    Tried first, and measured wrong: pinning the shell's `LayoutCache` to an
+    own-fonts cache made three different hosts agree, and made
+    `scene/text_painted` report **zero runs** — the screen had no text on it at
+    all. `0 escapes` earned that way is green for the wrong reason, which is
+    worse than the red it replaces. An own-fonts cache has no fallback, so a
+    style naming a family the registered face does not provide resolves to
+    nothing.
+
+    Replacing the DATABASE keeps every fallback path intact and simply gives it
+    one thing to find, so text still shapes (measured: 16/16 and 63/63 runs
+    inked, and the numbers equal to this host's own).
+
+    # What it does not cover
+
+    fontconfig is the Linux font path. macOS and Windows resolve through Core
+    Text / DirectWrite and ignore this, so a measurement taken there is still
+    host-dependent. The sweep this gates is Linux-only; a second platform
+    needs the cache-level pin above, done properly.
+
+    Returns `None` when a caller has already set `FONTCONFIG_FILE` — the
+    font-source demos (`r1447_font_free_tui`, `r1448_app_font`,
+    `r1473_app_default_font`, `r1474_*`) drive that variable themselves and
+    are ABOUT what the host has; pinning it under them would test nothing.
+    """
+    global _PINNED_FONTCONFIG
+    if "FONTCONFIG_FILE" in os.environ:
+        return None
+    if _PINNED_FONTCONFIG is not None:
+        return _PINNED_FONTCONFIG
+    root = Path(tempfile.mkdtemp(prefix="pinion-pinned-fonts-"))
+    faces = root / "faces"
+    faces.mkdir()
+    for rel in PINNED_FACES:
+        src = WORKSPACE_ROOT / rel
+        if not src.is_file():
+            raise AssertionError(
+                f"pinned face {rel} is missing — refusing to fall through to "
+                "the host, which is what the pin exists to prevent"
+            )
+        shutil.copy2(src, faces / src.name)
+    conf = root / "fonts.conf"
+    conf.write_text(
+        "<?xml version='1.0'?>\n"
+        "<!DOCTYPE fontconfig SYSTEM 'fonts.dtd'>\n"
+        "<fontconfig>\n"
+        f"  <dir>{faces}</dir>\n"
+        f"  <cachedir>{root / 'cache'}</cachedir>\n"
+        "</fontconfig>\n",
+        encoding="utf-8",
+    )
+    _PINNED_FONTCONFIG = conf
+    return conf
+
+
 def _fc_list(fontconfig: Path | None, pattern: str | None) -> int:
     """Faces `fc-list` reports under `fontconfig` (`None` = the host's own)."""
     env = dict(os.environ)
@@ -630,6 +728,13 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             env.pop("PINION_HIDDEN_WINDOW", None)
         elif "PINION_HIDDEN_WINDOW" not in env:
             env["PINION_HIDDEN_WINDOW"] = "1"
+        # R1660 — every measurement in this tree shapes against ONE pinned face,
+        # so a budget measured here means the same thing on CI. See
+        # `pinned_fontconfig` for the defect and for why this replaces the font
+        # DATABASE rather than the shell's cache.
+        pinned = pinned_fontconfig()
+        if pinned is not None:
+            env["FONTCONFIG_FILE"] = str(pinned)
         # R1319 — demo-supplied env wins (e.g. `PINION_LOG`), so a demo can observe a
         # level-gated `tracing` line the default `warn` filter would drop.
         env.update(self.extra_env)
