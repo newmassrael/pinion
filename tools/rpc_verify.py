@@ -2051,6 +2051,14 @@ def declared_read_paths(fields: Any) -> list[str]:
     ]
 
 
+#: What the wire says when an `intervene` names a path the surface does not
+#: have. Two spellings because the refusal is worded by whoever noticed first:
+#: the framework's own dispatch answers `UnknownIntervenePath` and an
+#: `External` answers `InterveneError::UnknownPath`. Named here rather than
+#: matched at three call sites, so a third spelling is one edit.
+UNKNOWN_INTERVENE_PATH = ("UnknownIntervenePath", "UnknownPath")
+
+
 def assert_declared_channels_are_true(tf, external: str = "/external") -> dict:
     """Assert every scalar path in `external`'s `$schema` answers on the channel
     it declares. Returns `{"read": n, "invoke": n}`, the counts it checked.
@@ -2073,11 +2081,56 @@ def assert_declared_channels_are_true(tf, external: str = "/external") -> dict:
 
     # It cannot mutate
 
-    Only `query` is used. A `read` path must answer it; an `invoke` path must
-    refuse it with `PathIsAnAction`. Probing the *write* directions would be a
-    stronger check and is deliberately not done here: `invoke` on a path that is
-    an action fires the action, and a gate that can change the thing it is
-    inspecting is a gate no demo can afford to run mid-scenario.
+    `query` is used on every path, and `intervene` on the READ ones. A `read`
+    path must answer the query, and must refuse the write **as a path that
+    exists** — not necessarily as `ReadOnly`, see below; an `invoke` path must
+    refuse the query with `PathIsAnAction`.
+
+    Probing the write direction of an *action* is deliberately still not done:
+    `invoke` on a path that is an action fires the action, and a gate that can
+    change the thing it is inspecting is a gate no demo can afford to run
+    mid-scenario.
+
+    R1644 — that sentence used to cover both write directions, and it is only
+    true of one. Intervening on a path the surface declares as a READ is
+    refused by definition and changes nothing, so the stated danger does not
+    apply to it; one sentence bundling two directions deferred the safe one
+    along with the unsafe one.
+
+    ★ What the probe then found is not what it was written for. The guess was
+    that a read declared in `$schema` and missing from the surface's own
+    `intervene` match arm would answer "no such path". It cannot: `intervene.rs`
+    derives `ReadOnly` for any declared **scalar** the impl declines, so the
+    refusal has **two independent sources and either alone suffices**. Two
+    counterfactuals say so — removing a path from the surface's arm is not
+    observable (the framework answers), and breaking the framework's derivation
+    is not observable either (the arm answers). So there is no assertion to make
+    about that path being *known*, and none is made; the debt registered on the
+    first guess was withdrawn and re-registered as what it is
+    ([[debt-a-read-only-refusal-has-two-unguarded-sources]]).
+
+    # The write probe cannot ask for `ReadOnly`, and finding out why was the
+    # finding
+
+    A declared read is not necessarily read-**only**: some are writable, and
+    `SchemaChannel` has no way to say which ([[debt-a-schema-channel-cannot-say-a-slot-is-writable]],
+    open since R1566). So the strongest thing this can assert is that the
+    surface **knows the path** on the write channel — anything but
+    `UnknownPath`. The first draft demanded `ReadOnly` and its first run
+    reported `hello-text-field`'s `mode`, which is writable and answered a type
+    refusal; that is the standing debt showing up rather than a defect, and the
+    check is written to what the declaration can express.
+
+    Nothing mutates. The value sent is deliberately of the **wrong declared
+    type** — `Text` at a field the schema calls `int`, an `Int` at anything
+    else — so a writable slot refuses on the type and a read-only one refuses
+    on the channel, and neither takes the value. A probe that sent a plausible
+    value would fire the write it was inspecting.
+
+    A **negative control** runs first, for R1640's reason: a surface that
+    refuses every name with one stated sentence would satisfy any refusal
+    check, so an invented path is probed and a surface that does not call it
+    unknown is reported rather than trusted.
 
     Parametric families (`cell.<row>.<col>`) are skipped — the placeholder is not
     an address, so there is nothing to ask for. `SchemaField::EMPTY`'s blank path
@@ -2089,6 +2142,22 @@ def assert_declared_channels_are_true(tf, external: str = "/external") -> dict:
     checked = {"read": 0, "invoke": 0}
     unreadable: list[str] = []
     readable_actions: list[str] = []
+    took_the_probe: list[str] = []
+    # The negative control: a name this surface cannot have published. If
+    # writing to it is refused as `ReadOnly`, the surface is answering by habit
+    # rather than from its declaration and the write probe below proves nothing.
+    absent_probe = "r1644_no_such_path"
+    try:
+        tf.intervene(f"{external}/{absent_probe}", 0)
+        knows_everything = True
+    except RpcError as exc:
+        knows_everything = exc.data not in UNKNOWN_INTERVENE_PATH
+    assert not knows_everything, (
+        f"{external}: writing to {absent_probe!r}, a path it cannot have "
+        f"declared, was not refused as an unknown path — so this surface answers "
+        f"the write channel by habit, and the check below would pass whatever "
+        f"its declaration said"
+    )
     for field in fields:
         path = field.get("path") or ""
         if not path or "<" in path:
@@ -2100,6 +2169,26 @@ def assert_declared_channels_are_true(tf, external: str = "/external") -> dict:
                 tf.query(f"{external}/{path}")
             except RpcError as exc:
                 unreadable.append(f"{path} ({exc.data!r})")
+            # Deliberately the wrong declared type, so a writable slot refuses
+            # on the type and a read-only one on the channel: nothing moves.
+            # `type`, the key the WIRE uses. The first draft read `ty`, the
+            # name on the Rust struct, so every probe fell through to the
+            # integer and a writable int slot TOOK it — the gate mutated what
+            # it was inspecting, which is the one thing it must not do. Read
+            # the wire's own spelling; do not guess it from the type that
+            # produces it.
+            wrong = "" if field.get("type") == "int" else 0
+            try:
+                tf.intervene(f"{external}/{path}", wrong)
+                took_the_probe.append(f"{path} ({wrong!r})")
+            except RpcError:
+                # Any refusal is fine. `ReadOnly` and a type refusal are both
+                # correct answers and the declaration cannot say which to
+                # expect — a declared read is not necessarily read-ONLY, and
+                # `SchemaChannel` has no word for writable
+                # ([[debt-a-schema-channel-cannot-say-a-slot-is-writable]]).
+                # What matters is that the value was not taken.
+                pass
         else:
             checked["invoke"] += 1
             try:
@@ -2116,6 +2205,12 @@ def assert_declared_channels_are_true(tf, external: str = "/external") -> dict:
     assert not readable_actions, (
         f"{external}: {len(readable_actions)} path(s) declared on the INVOKE "
         f"channel that do not refuse a read as PathIsAnAction: {readable_actions}"
+    )
+    assert not took_the_probe, (
+        f"{external}: {len(took_the_probe)} path(s) ACCEPTED a deliberately "
+        f"ill-typed write, so this gate changed the surface it was inspecting "
+        f"— the probe's type is wrong, or the slot takes anything: "
+        f"{took_the_probe}"
     )
     return checked
 

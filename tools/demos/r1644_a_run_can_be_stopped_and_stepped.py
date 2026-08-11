@@ -60,6 +60,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
+    assert_declared_channels_are_true,
     assert_eq,
     run_demo,
 )
@@ -127,6 +128,19 @@ def body() -> None:
             "once per instance. This is the axis a breakpoint can be narrowed "
             "to, and the reference has none: it expands a macro into a copy "
             "per use before anything runs",
+        )
+
+        # ── (A2) every declared path answers on the channel it declares ───
+        # R1644 added ten reads and fourteen actions to this surface, and the
+        # walk that holds a declaration to its channel is what keeps that from
+        # being twenty-four claims nobody checked. It now probes the WRITE
+        # channel of each read too: a read declared in `$schema` and missing
+        # from the surface's `intervene` arm answers "no such path", which is a
+        # surface reporting a name it publishes as one it does not have.
+        counted = assert_declared_channels_are_true(tf)
+        assert counted["read"] >= 20 and counted["invoke"] >= 14, (
+            f"A2: the walk must reach the whole surface, not the easy half: "
+            f"{counted}"
         )
 
         # ── (B) settle, so there is a finite run to debug ─────────────────
