@@ -364,3 +364,68 @@ fn r1649_the_published_vocabularies_have_no_repeats() {
     distinct("tabs", TABS.to_vec());
     distinct("keymap", KEYMAP.iter().map(|(c, _)| *c).collect());
 }
+
+/// R1653 — ★ the second surface, asked the question that found five defects on
+/// the first.
+///
+/// A text run carries no tag, so every tag-keyed assertion in this file is
+/// blind to where one is painted — and this shell is where that class was first
+/// measured (R1649 stacked every card's text down the left edge with 118 wire
+/// assertions passing). Two runs of one widget landing on each other is the
+/// signature: it is what flow does, and it is what an over-wide box does.
+///
+/// The rectangles are the boxes the view GAVE the runs, not the extent of their
+/// glyphs — a string wider than its box still wraps over what is below it, and
+/// nothing here can see that (`debt-a-text-run-cannot-be-elided`).
+#[test]
+fn r1653_no_two_text_runs_of_one_widget_are_painted_on_top_of_each_other() {
+    use std::collections::BTreeMap;
+    let owner = Owner::new();
+    owner.run(|| {
+        let mut scene = super::view((), pinion_core::Frame::default());
+        let mut cache = pinion_runtime::LayoutCache::new();
+        pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
+
+        let mut by_owner: BTreeMap<String, Vec<(String, pinion_core::scene::Rect)>> =
+            BTreeMap::new();
+        let mut runs = 0;
+        scene.for_each_node(&mut |visit| {
+            let (pinion_core::Scene::Text(text), Some(rect)) = (visit.node, visit.absolute_rect())
+            else {
+                return;
+            };
+            runs += 1;
+            let owner_tag = visit
+                .ancestors
+                .iter()
+                .rev()
+                .find_map(|a| a.tag())
+                .unwrap_or("<root>")
+                .to_owned();
+            by_owner
+                .entry(owner_tag)
+                .or_default()
+                .push((text.content.clone(), rect));
+        });
+        assert!(runs > 40, "the shell paints text: {runs} run(s)");
+
+        let overlaps = |a: pinion_core::scene::Rect, b: pinion_core::scene::Rect| {
+            a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+        };
+        let mut smeared = Vec::new();
+        for (owner_tag, group) in &by_owner {
+            for (i, (a_text, a)) in group.iter().enumerate() {
+                for (b_text, b) in &group[i + 1..] {
+                    if overlaps(*a, *b) {
+                        smeared.push((owner_tag, a_text, *a, b_text, *b));
+                    }
+                }
+            }
+        }
+        assert!(
+            smeared.is_empty(),
+            "{} pair(s) of text runs are painted over each other: {smeared:?}",
+            smeared.len()
+        );
+    });
+}

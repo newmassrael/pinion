@@ -29,6 +29,8 @@ serde_json = { workspace = true }
 
 [dev-dependencies]
 pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+# R1653 — the painted-geometry check runs the real view -> layout pipeline.
+pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }
 
 [build-dependencies]
 pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }

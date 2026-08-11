@@ -1793,6 +1793,7 @@ dependencies = [
  "pinion-core",
  "pinion-forge",
  "pinion-gpu",
+ "pinion-runtime",
  "pinion-shell",
  "serde",
  "serde_json",
