@@ -1441,6 +1441,17 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "PointerReachReport",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("deliverable", WireTy::Integer, None),
+                WireField::new("inert", WireTy::Integer, None),
+                WireField::new("shadows", WireTy::Array, Some("ShadowEntry")),
+                WireField::new("unreachable", WireTy::Array, Some("UnreachableEntry")),
+            ],
+        },
+    },
+    WireType {
         name: "PostscriptNameOutcome",
         shape: WireShape::Object {
             fields: &[WireField::new("name", WireTy::String, None).nullable()],
@@ -1611,6 +1622,16 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("mode", WireTy::String, None),
                 WireField::new("system_scheme", WireTy::String, None),
                 WireField::new("active", WireTy::String, None),
+            ],
+        },
+    },
+    WireType {
+        name: "ShadowEntry",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("tag", WireTy::String, None),
+                WireField::new("path", WireTy::String, None),
+                WireField::new("shadowed", WireTy::String, None),
             ],
         },
     },
@@ -1896,6 +1917,19 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("system_scheme", WireTy::String, None),
                 WireField::new("active", WireTy::String, None),
                 WireField::new("palettes", WireTy::Object, Some("PaletteCatalogue")),
+            ],
+        },
+    },
+    WireType {
+        name: "UnreachableEntry",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("tag", WireTy::String, None),
+                WireField::new("path", WireTy::String, None),
+                // `null` is a DIFFERENT fact from a tag: the centre resolves to
+                // nothing at all (the widget is painted off-window), and the
+                // repair is a scroll region rather than a declaration.
+                WireField::new("blocked_by", WireTy::String, None).nullable(),
             ],
         },
     },

@@ -85,8 +85,9 @@ use pinion_a11y::{
     AccessFocus, AccessLive, AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y,
 };
 use pinion_core::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    Backend, BackendFallback, BackendSupport, CaptureNormalize, External, ExternalIntrospect,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use pinion_core::input::Modifiers;
 use pinion_core::reactive::{Owner, Signal};
@@ -108,6 +109,29 @@ vello_renderer_impl!(HelloTileDashboardRenderer, HelloTileDashboardRendererError
 const WIN_W: u32 = 760;
 const WIN_H: u32 = 420;
 const ROOT_TAG: &str = "dashboard";
+/// (R1650 §5.35) Every painted sub-region of the board is addressed as a
+/// **composite** tag of the board's own — `dashboard#card.loss`, not
+/// `card.loss`.
+///
+/// Not cosmetic. The §5.35 router resolves the deepest *tagged* node under the
+/// cursor and then looks the **primary half** of that tag up as an `External`;
+/// a top-level `card.loss` resolves to nothing, so the press was dropped in
+/// silence and this board was **dead to a real mouse** from R1608 until here —
+/// while its demos passed, because `invoke` reaches the handler by name and
+/// never asks the router. `pinion_runtime::pointer_reach` found it, and
+/// `scene/drag` confirmed it: the arrangement did not change under a
+/// router-driven drag and did under the wire verb.
+///
+/// The other repair — declaring the cards
+/// [`pointer_transparent`](pinion_core::style::LayoutStyle::with_pointer_transparent)
+/// — is the right one for pure decoration and the WRONG one here: it takes the
+/// whole subtree out of the hit test, and the grip ring's eight resize cursors
+/// are declared on nodes inside it. A composite tag keeps them hit-testable
+/// *and* delivers the press, which is what makes it the idiom the data grid
+/// (`data_grid#0_4`) and the node editor already use.
+fn sub_tag(sub: &str) -> String {
+    format!("{ROOT_TAG}#{sub}")
+}
 const THEME_TAG: &str = "app";
 /// (R1609) The live region that announces what an edit displaced.
 const REFLOW_TAG: &str = "dashboard.reflow";
@@ -626,6 +650,19 @@ impl External for DashboardOracle {
         true
     }
 
+    /// (R1650 §5.35) Normalise against the **board**, not the grabbed card.
+    ///
+    /// The pair to [`sub_tag`]: once a card is `dashboard#card.loss`, the
+    /// router's default would hand [`pointer_move`](Self::pointer_move) the
+    /// cursor relative to that CARD's rect, and
+    /// [`cell_at`](DashboardOracle::cell_at) reads a fraction of the whole
+    /// grid — so every drag would land in the wrong cell, deterministically and
+    /// silently. The declaration says which rect the value spans, which is the
+    /// same reason the range slider grabs a thumb and measures the track.
+    fn capture_normalize(&self) -> CaptureNormalize<'_> {
+        CaptureNormalize::Primary
+    }
+
     /// Snap to a cell, then either latch (a fresh press) or move the latched
     /// card so the grabbed cell stays under the cursor.
     fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
@@ -908,8 +945,19 @@ impl ExternalIntrospect for DashboardOracle {
                 }
             }
             "send" => {
-                if let IntrospectValue::Text(event) = &args {
-                    match event.as_str() {
+                if let IntrospectValue::Text(raw) = &args {
+                    // R1650 §5.35 — the router composes the R51.42 payload
+                    // `"<sub>:<EventName>"` when the pressed tag is composite,
+                    // and a bare `"<EventName>"` when it is not. Both arrive
+                    // here now that a card is `dashboard#card.loss`, so this
+                    // decodes through the `:` grammar SSOT and falls back to the
+                    // raw string — the shape the widget catalog already uses.
+                    // Matching the raw string alone silently ignored every press
+                    // the router delivered, which is how a board that finally
+                    // received its input still did nothing with it.
+                    let event = pinion_core::composite_tag::split_send_payload(raw)
+                        .map_or(raw.as_str(), |sent| sent.event);
+                    match event {
                         "PointerDown" => state.pending.set(true),
                         "PointerUp" | "PointerLeave" | "PointerCancel" => {
                             state.pending.set(false);
@@ -997,7 +1045,7 @@ fn view(
                 Rect::default(),
                 TextStyle::new().with_size_px(CARD_FONT_PX).with_fg(ink),
             )
-            .with_tag(format!("card.{}.label", tile.id)),
+            .with_tag(sub_tag(&format!("card.{}.label", tile.id))),
         )];
         // R1609 — the handle ring, painted by iterating `TileHandle::ALL` rather
         // than spelling eight positions out. Each one carries the cursor its own
@@ -1010,7 +1058,7 @@ fn view(
         }
         children.push(Scene::Container(
             ContainerNode::new(card_children)
-                .with_tag(format!("card.{}", tile.id))
+                .with_tag(sub_tag(&format!("card.{}", tile.id)))
                 .with_style(
                     BoxStyle::filled(if held { accent } else { card }).with_corner_radius(6),
                 )
@@ -1095,7 +1143,7 @@ fn handle_ring(id: &TileId, ink: pinion_core::style::Color) -> Scene {
         .map(|handle| {
             Scene::Container(
                 ContainerNode::new(Vec::new())
-                    .with_tag(format!("card.{id}.handle.{handle:?}"))
+                    .with_tag(sub_tag(&format!("card.{id}.handle.{handle:?}")))
                     .with_style(BoxStyle::filled(ink).with_corner_radius(2))
                     .with_layout(
                         LayoutStyle::new()
@@ -1122,7 +1170,7 @@ fn handle_ring(id: &TileId, ink: pinion_core::style::Color) -> Scene {
     };
     Scene::Container(
         ContainerNode::new(grips)
-            .with_tag(format!("card.{id}.handles"))
+            .with_tag(sub_tag(&format!("card.{id}.handles")))
             .with_layout(
                 LayoutStyle::new()
                     // `Auto` size on an absolute child resolves to the parent's
@@ -1229,11 +1277,11 @@ impl WidgetA11y for DashboardView {
                     focused: focused == Some(ROOT_TAG),
                     ..AccessState::default()
                 }),
-            |node, tile| node.with_child(format!("card.{}", tile.id)),
+            |node, tile| node.with_child(sub_tag(&format!("card.{}", tile.id))),
         );
         let mut nodes = vec![board];
         for tile in grid.tiles() {
-            let mut node = AccessNode::new(format!("card.{}", tile.id), AriaRole::Group)
+            let mut node = AccessNode::new(sub_tag(&format!("card.{}", tile.id)), AriaRole::Group)
                 .with_name(tile.id.to_string())
                 .with_value(AccessValue::Text(format!(
                     "column {}, row {}, {} by {}",
@@ -1278,7 +1326,8 @@ impl WidgetA11y for DashboardView {
         let state = use_board_state();
         Some(AccessFocus {
             focus_tag: ROOT_TAG.to_owned(),
-            active_descendant: DashboardOracle::current_id(&state).map(|id| format!("card.{id}")),
+            active_descendant: DashboardOracle::current_id(&state)
+                .map(|id| sub_tag(&format!("card.{id}"))),
         })
     }
 }
@@ -1530,7 +1579,7 @@ mod tests {
             );
             let alarms = nodes
                 .iter()
-                .find(|n| n.tag == "card.alarms")
+                .find(|n| n.tag == sub_tag("card.alarms"))
                 .expect("a node per card");
             assert_eq!(
                 alarms.value,
@@ -1935,13 +1984,20 @@ mod tests {
             let focus = DashboardView::access_focus_target(&(), Some(ROOT_TAG))
                 .expect("the board owns the focus");
             assert_eq!(focus.focus_tag, ROOT_TAG);
-            assert_eq!(focus.active_descendant.as_deref(), Some("card.topology"));
+            assert_eq!(
+                focus.active_descendant.as_deref(),
+                Some(sub_tag("card.topology").as_str())
+            );
             let selected: Vec<&str> = nodes
                 .iter()
                 .filter(|n| n.selected == Some(true))
                 .map(|n| n.tag.as_str())
                 .collect();
-            assert_eq!(selected, vec!["card.topology"], "exactly one current card");
+            assert_eq!(
+                selected,
+                vec![sub_tag("card.topology")],
+                "exactly one current card"
+            );
             assert!(
                 nodes
                     .iter()
@@ -1998,7 +2054,7 @@ mod tests {
             assert!(
                 found
                     .iter()
-                    .all(|(tag, ..)| tag.starts_with("card.throughput.handle."))
+                    .all(|(tag, ..)| tag.starts_with(&sub_tag("card.throughput.handle.")))
             );
 
             let grip = |name: &str| {
@@ -2046,7 +2102,8 @@ mod tests {
 
             // The ring is ONE overlay node pinned to the card's content rect,
             // which is what lets it track a card of any size with no arithmetic.
-            let overlay = ring(&scene, "card.throughput.handles").expect("the ring is tagged");
+            let overlay =
+                ring(&scene, &sub_tag("card.throughput.handles")).expect("the ring is tagged");
             assert_eq!(overlay.layout.absolute_position, Some((0, 0)));
             // ★ The TRACK KINDS, not just their count: a broken counterfactual
             // exposed this gap — replacing all three with `Px(HANDLE_PX)` kept
@@ -2102,6 +2159,44 @@ mod tests {
             );
             assert_eq!(container.children.len(), 5);
             assert_eq!(container.layout.grid_template_columns.len(), 12);
+        });
+    }
+
+    /// R1650 — every painted tag under the board is a COMPOSITE of the board's
+    /// own, which is what makes a press on a card reach the board at all.
+    ///
+    /// It is a test rather than a convention because a counterfactual proved
+    /// nothing else could fail: reverting `sub_tag` to a bare name left the
+    /// whole suite green while the board went dead to a real mouse, which is
+    /// precisely the state R1608 shipped in. The demo's boot gate catches it
+    /// too, and demos do not gate a push.
+    #[test]
+    fn r1650_every_painted_tag_resolves_to_the_board() {
+        fn tags_of(scene: &Scene, out: &mut Vec<String>) {
+            if let Some(tag) = scene.tag() {
+                out.push(tag.to_owned());
+            }
+            for child in scene.child_nodes() {
+                tags_of(child, out);
+            }
+        }
+        Owner::new().run(|| {
+            let scene = DashboardView::view((), &Frame::new());
+            let mut tags = Vec::new();
+            tags_of(&scene, &mut tags);
+            let inside: Vec<&String> = tags.iter().filter(|t| t.contains("card.")).collect();
+            assert!(
+                inside.len() >= 5,
+                "the seed board paints at least one tag per card: {tags:?}"
+            );
+            for tag in inside {
+                assert_eq!(
+                    pinion_core::composite_tag::split_subindex(tag).0,
+                    ROOT_TAG,
+                    "`{tag}` must resolve to the board, or the router drops \
+                     every press that lands on it"
+                );
+            }
         });
     }
 }

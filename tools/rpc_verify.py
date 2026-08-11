@@ -453,6 +453,33 @@ def terminate_process_tree(
     )
 
 
+_POINTER_REACH_BUDGET: Optional[dict[str, frozenset[str]]] = None
+
+
+def _pointer_reach_budget() -> dict[str, frozenset[str]]:
+    """R1650 — the measured backlog of widgets no press reaches, by example.
+
+    A ratchet rather than a list of excuses: the boot gate refuses a victim
+    absent from this file, so the population can only shrink. The shape is
+    `docs/reference-names-budget.tsv`'s, and for the same reason — R1611 met a
+    population of 7,999 and a gate that fails everything on day one is a gate
+    somebody switches off.
+    """
+    global _POINTER_REACH_BUDGET
+    if _POINTER_REACH_BUDGET is None:
+        budget: dict[str, set[str]] = {}
+        path = WORKSPACE_ROOT / "docs" / "pointer-reach-budget.tsv"
+        if path.is_file():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip() or line.lstrip().startswith("#"):
+                    continue
+                example, _, tag = line.partition("\t")
+                if tag:
+                    budget.setdefault(example.strip(), set()).add(tag.strip())
+        _POINTER_REACH_BUDGET = {k: frozenset(v) for k, v in budget.items()}
+    return _POINTER_REACH_BUDGET
+
+
 class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
     """Spawn a pinion example, drive it over JSON-RPC 2.0 stdin/stdout."""
 
@@ -467,6 +494,7 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         visible_window: bool = False,
         env: Optional[dict[str, str]] = None,
         ensure_build: bool = True,
+        pointer_reach_exempt: Optional[dict[str, str]] = None,
     ) -> None:
         self.example = example
         self.release = release
@@ -510,6 +538,13 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         # `tracing` line ([[verify-via-tracing-not-eprintln]]) instead of an example
         # growing an `eprintln!` purely to be observable.
         self.extra_env = dict(env or {})
+        # R1650 §5.35 — widgets this surface is knowingly allowed to leave
+        # unreachable at boot, as `{tag: reason}`. The escape hatch is not free
+        # on purpose (R1640): a bare list would let a red be silenced by adding
+        # a name, so each entry has to say WHY in a sentence that ends up in the
+        # round's record, and a name that stops being unreachable fails too —
+        # an exemption outliving its defect is a claim nobody re-checked.
+        self.pointer_reach_exempt = dict(pointer_reach_exempt or {})
 
         self._proc: Optional[subprocess.Popen] = None
         self._inbox: "queue.Queue[str]" = queue.Queue()
@@ -636,7 +671,90 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
                         time.sleep(0.05)
         finally:
             self.request_timeout = steady_timeout
+        # R1650 — the gate runs INSIDE a teardown guard, because `with` only
+        # calls `__exit__` for a context manager whose `__enter__` RETURNED: a
+        # bare raise here leaves the subprocess running, and R1570.3 recorded
+        # what a leaked process does to every demo the sweep runs after it.
+        # Measured on this gate's own first sweep — 14 refusals left 14 live
+        # binaries holding GPU contexts, and the next launch died with
+        # "Not enough memory left" instead of its own verdict.
+        try:
+            self._gate_pointer_reach()
+        except BaseException:
+            self.shutdown()
+            raise
         return self
+
+    def _gate_pointer_reach(self) -> None:
+        """R1650 §5.35 — refuse to drive a surface a real pointer cannot.
+
+        Every demo pays this, at boot, because the failure it catches is
+        invisible to everything a demo does afterwards: `scene/click`,
+        `scene/invoke` and `send` reach a widget's handler by name, while a
+        mouse reaches it by POSITION through the §5.35 router — so a screen
+        whose widgets are covered by tagged decoration is dead to a person and
+        green to a script. Measured twice before anything checked it (R1497's
+        header cells, R1649.1's whole shell), and a third time by this gate on
+        its first run.
+
+        Two kinds, and only one is fatal here:
+
+        * `blocked_by: <tag>` — a painted node is covering the widget. The
+          repair is one declaration (`pointer_transparent`) at the covering
+          node, so this FAILS the demo: it is a defect with a known fix and no
+          design question attached.
+        * `blocked_by: null` — the widget is painted outside the window with
+          nothing at that point at all. The repair is a scroll region, which is
+          a layout decision rather than a slip, so this is REPORTED and does not
+          fail. `debt-the-analyzer-canvas-does-not-scroll` is that class.
+
+        A binary too old to answer the method is driven without the gate, the
+        same tolerance the boot baseline gives.
+        """
+        try:
+            resp = self.request("scene/pointer_reach")
+        except RpcError as exc:
+            if exc.code == -32601:
+                return  # stale binary, predates the method
+            raise
+        assert resp is not None
+        reach = resp.result
+        unreachable = reach.get("unreachable", [])
+        covered = [u for u in unreachable if u.get("blocked_by") is not None]
+        offscreen = [u for u in unreachable if u.get("blocked_by") is None]
+        budgeted = _pointer_reach_budget().get(self.example, frozenset())
+        allowed = budgeted | set(self.pointer_reach_exempt)
+        fatal = [u for u in covered if u["tag"] not in allowed]
+        if fatal:
+            rows = "; ".join(
+                f"{u['tag']} is covered by {u['blocked_by']} (at {u['path'] or '/'})"
+                for u in fatal
+            )
+            raise AssertionError(
+                f"{self.example}: {len(fatal)} widget(s) cannot be pressed where "
+                f"they are painted, so this screen is dead to a real mouse while "
+                f"every wire-driven assertion below would pass — {rows}. "
+                "Two repairs, and which one is right depends on what the "
+                "covering node IS: pure decoration over a widget takes "
+                "`pointer_transparent` (the reference toolkit's "
+                "WA_TransparentForMouseEvents, CSS's pointer-events: none), "
+                "while a real sub-region of the widget takes a COMPOSITE tag "
+                "`widget#sub`, which keeps it hit-testable so a cursor hint on "
+                "it still works. `docs/pointer-reach-budget.tsv` carries the "
+                "measured backlog; adding a row to silence this is the one use "
+                "that turns the ratchet back into a suggestion."
+            )
+        note = ""
+        if reach.get("shadows"):
+            note += f" shadows={len(reach['shadows'])}"
+        if offscreen:
+            note += f" off-window={len(offscreen)} ({', '.join(u['tag'] for u in offscreen[:3])}…)"
+        if allowed:
+            note += f" budgeted={len(allowed)}"
+        print(
+            f"[pointer-reach] {self.example}: "
+            f"deliverable={reach.get('deliverable', 0)} inert={reach.get('inert', 0)}{note}"
+        )
 
     def __exit__(self, exc_type, exc, tb) -> None:
         leak = self.shutdown()

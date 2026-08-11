@@ -1,0 +1,49 @@
+{
+  "what": "Claims this project makes about the reference desktop toolkit's PUBLIC SURFACE, each with the measurement that re-derives it. Read by tools/reference_surface.py.",
+  "why": "Rounds justify designs by what the reference does and does not offer. Before R1650 those sentences were prose produced by one reading: nothing re-derived them, nothing noticed when one was wrong, and nothing noticed when a release made one false. The node-graph axis has had a meter since R1601 and the analysis-tool axis since R1646. The reference claims had none.",
+  "names": "No claim here spells the reference's name, its directory layout or its class identifiers. A `surface` is a ROLE — `widget`, `attribute-enum` — and the reader resolves it, the same split R1612 made for the operator census: the reader knows the tree's layout because it must to scan it at all, and what it writes is clean.",
+  "member_count_is_load_bearing": "An absence proved by search is worth nothing: a pattern matching nothing and a parse finding nothing look identical, so a broken parse reads as a confirmed absence forever. Every `class_surface` claim pins the parsed member count, so a broken parse or a moved API fails loudly instead of quietly agreeing.",
+  "claims": [
+    {
+      "id": "pointer-transparency-is-a-declaration",
+      "round": "R1650",
+      "kind": "symbol_present",
+      "surface": "attribute-enum",
+      "symbol": "WA_TransparentForMouseEvents",
+      "claim": "The reference makes 'this node does not take pointer input' a per-widget DECLARATION, exactly as CSS spells it `pointer-events: none`. Cited whenever pinion's `LayoutStyle::pointer_transparent` is called the idiomatic repair rather than a workaround: the floor exists, so matching it is not invention.",
+      "used_by": "crates/pinion-runtime/src/input.rs, crates/pinion-rpc/src/pointer_reach.rs"
+    },
+    {
+      "id": "no-aggregate-reachability-query",
+      "round": "R1650",
+      "kind": "class_surface",
+      "surface": "widget",
+      "member_count": 280,
+      "absent_patterns": [
+        "^unreachable",
+        "^transparentChildren",
+        "^hitTest",
+        "^eventTargets",
+        "^inputReach",
+        "^pointerReach"
+      ],
+      "claim": "Of the base widget class's 280 declared members, none answers 'which of my descendants will swallow a press without handling it'. The positional question is askable one point at a time (a child-at-point accessor, a mouse-grabber accessor); the AGGREGATE question, which `scene/pointer_reach` answers in one round trip, has no declared member. Cited for why an external driver there cannot check that a screen is operable before driving it.",
+      "used_by": "crates/pinion-rpc/src/pointer_reach.rs"
+    },
+    {
+      "id": "a-press-is-a-virtual-function-not-data",
+      "round": "R1650",
+      "kind": "class_surface",
+      "surface": "widget",
+      "member_count": 280,
+      "absent_patterns": [
+        "^handlesPress",
+        "^acceptsMouse",
+        "^wantsPointer",
+        "^isPressable"
+      ],
+      "claim": "Nothing declared on the base widget class says whether a press on it will be ACTED on: the press handler is a protected virtual, so 'this widget ignores clicks' is a property of an override rather than a value any caller can read. That is the structural reason the failure `pointer_reach` catches is unaskable there — a press is never dropped for want of a receiver, it is delivered to something that does nothing, which looks identical from outside.",
+      "used_by": "crates/pinion-rpc/src/pointer_reach.rs"
+    }
+  ]
+}

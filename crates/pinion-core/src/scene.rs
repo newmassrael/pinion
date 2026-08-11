@@ -302,6 +302,35 @@ impl SceneNodeKind {
     }
 }
 
+/// (R1650 §5.32 §5.34) One node handed to a [`Scene::for_each_node`] visitor.
+///
+/// Three facts travel together because a walk that hands over only the node
+/// forces the caller to keep its own bookkeeping to answer *where* it is — and
+/// a caller keeping its own copy of the tree's structure is the duplication the
+/// walk exists to remove.
+///
+/// It is a struct rather than a tuple so a later walk-time fact (the resolved
+/// clip, say) is a field instead of a signature change at every call site.
+#[derive(Debug, Clone, Copy)]
+#[non_exhaustive]
+pub struct NodeVisit<'a> {
+    /// The address that resolves this node, as
+    /// [`lookup_path_ref`](Scene::lookup_path_ref) accepts it. Empty at the
+    /// root.
+    pub path: &'a [String],
+    /// The node itself.
+    pub node: &'a Scene,
+    /// Its ancestors, outermost first — `ancestors[0]` is the walk's root and
+    /// the last element is this node's parent. Empty at the root.
+    ///
+    /// Carried because the questions worth asking of a tree are mostly about
+    /// the chain (*is anything above me a widget?*), and reconstructing it from
+    /// `path` is not possible: [`Scene::Scroll`] is path-transparent, so a
+    /// child can share its parent's address and depth cannot be read off the
+    /// segment count.
+    pub ancestors: &'a [&'a Scene],
+}
+
 impl Scene {
     /// Outermost rect of this primitive. [`EffectNode`] has no
     /// geometry of its own and returns [`Rect::default`].
@@ -387,6 +416,111 @@ impl Scene {
             Scene::ImmediateModeNode(_) => SceneNodeKind::ImmediateModeNode,
             Scene::TextGrid(_) => SceneNodeKind::TextGrid,
         }
+    }
+
+    /// (R1650 §5.2 §5.32) The child scenes this node holds, in declaration
+    /// (paint) order — the single enumeration of *which arms have children*.
+    ///
+    /// Link 3 of the [`SceneNodeKind`] census, and the reason it is a method
+    /// rather than a rule each traversal restates: the match below is
+    /// exhaustive over [`Scene`] inside the crate that owns it, so a node kind
+    /// added later cannot join the tree while every walk silently steps over
+    /// it. Measured 2026-08-10, that is not hypothetical — 78 test files
+    /// carried their own scene walker, each free to disagree with the others
+    /// about whether a [`Scroll`](Scene::Scroll) has anything inside it.
+    ///
+    /// [`Scene::Effect`] answers `&[]` for the same reason it never resolves a
+    /// path: it has no introspectable geometry, so nothing is *inside* it as
+    /// far as any question asked here is concerned.
+    #[must_use]
+    pub fn child_nodes(&self) -> &[Scene] {
+        match self {
+            Scene::Container(n) => &n.children,
+            // A `Scroll`'s content is one child. Addressing folds the two
+            // together — see [`Self::for_each_node`].
+            Scene::Scroll(n) => std::slice::from_ref(&n.content),
+            Scene::Box(_)
+            | Scene::Text(_)
+            | Scene::Path(_)
+            | Scene::Image(_)
+            | Scene::Effect(_)
+            | Scene::External(_)
+            | Scene::ImmediateModeNode(_)
+            | Scene::TextGrid(_) => &[],
+        }
+    }
+
+    /// (R1650 §5.32 §5.34 §2 #7) Depth-first pre-order walk of this scene,
+    /// handing `visit` every node together with the path that addresses it.
+    ///
+    /// The path is the one [`lookup_path_ref`](Self::lookup_path_ref) resolves
+    /// and [`hit_test`](Self::hit_test) reports, built from
+    /// [`path_segment_at`](Self::path_segment_at) — so an address produced here
+    /// is an address every other surface accepts, which is the property that
+    /// makes a walk worth having in the crate instead of in each caller.
+    ///
+    /// # The one place the map is not injective, stated rather than hidden
+    ///
+    /// [`Scene::Scroll`] is **path-transparent**: `lookup_path_ref` forwards a
+    /// segment slice straight into `content`, so the scroll and its content
+    /// node share one address and the content's own tag addresses nothing.
+    /// This walk reports both nodes at that shared path rather than inventing a
+    /// segment for one of them, because the alternative — skipping the content
+    /// node — would make the walk answer a *different* set of nodes from the
+    /// one the tree contains, and a traversal that omits nodes is the failure
+    /// this exists to end. A caller that needs the node the router would
+    /// resolve at an address asks `lookup_path_ref` for it; that is exactly
+    /// what [`pinion_runtime`'s pointer-reach report does][reach].
+    ///
+    /// [reach]: https://docs.rs/pinion-runtime
+    pub fn for_each_node(&self, visit: &mut impl FnMut(NodeVisit<'_>)) {
+        let mut path = Vec::new();
+        let mut ancestors = Vec::new();
+        self.walk_from(&mut path, &mut ancestors, visit);
+    }
+
+    /// Recursion behind [`for_each_node`](Self::for_each_node), carrying the
+    /// path and ancestor stacks so no caller allocates one per node.
+    fn walk_from<'s>(
+        &'s self,
+        path: &mut Vec<String>,
+        ancestors: &mut Vec<&'s Scene>,
+        visit: &mut impl FnMut(NodeVisit<'_>),
+    ) {
+        visit(NodeVisit {
+            path,
+            node: self,
+            ancestors,
+        });
+        let transparent_path = matches!(self, Scene::Scroll(_));
+        ancestors.push(self);
+        for (idx, child) in self.child_nodes().iter().enumerate() {
+            if transparent_path {
+                // The scroll's content shares the scroll's own address.
+                child.walk_from(path, ancestors, visit);
+                continue;
+            }
+            path.push(child.path_segment_at(idx));
+            child.walk_from(path, ancestors, visit);
+            path.pop();
+        }
+        ancestors.pop();
+    }
+
+    /// (R1650 §5.32) Every tag in this scene, in depth-first paint order.
+    ///
+    /// The read a census of "what does this screen address" wants, computed by
+    /// [`for_each_node`](Self::for_each_node) so it cannot disagree with the
+    /// walk anything else uses.
+    #[must_use]
+    pub fn tags(&self) -> Vec<String> {
+        let mut out = Vec::new();
+        self.for_each_node(&mut |visit| {
+            if let Some(tag) = visit.node.tag() {
+                out.push(tag.to_string());
+            }
+        });
+        out
     }
 
     /// (R1516 §5.3 §5.16) The [`BoxStyle`] this node carries, or `None` for
@@ -8551,5 +8685,139 @@ mod tests {
         assert_eq!(boxed.box_style(), Some(&style));
         let container = Scene::Container(ContainerNode::new(vec![]).with_style(style.clone()));
         assert_eq!(container.box_style(), Some(&style));
+    }
+
+    // ---- R1650 §5.32 the general walk ----
+
+    /// Link 3 of the census: every node kind answers `child_nodes`, and the
+    /// two that hold children say so. Iterating `ALL` is what makes a new kind
+    /// unable to arrive as a leaf by default — the fixture forces it to be
+    /// constructed and this assertion forces it to be classified.
+    #[test]
+    fn r1650_every_node_kind_answers_what_is_inside_it() {
+        let mut with_children = Vec::new();
+        for kind in SceneNodeKind::ALL {
+            let node = crate::test_fixtures::scene_of_kind(kind);
+            if !node.child_nodes().is_empty() {
+                with_children.push(kind.name());
+            }
+        }
+        // The `Container` fixture is deliberately empty, so the only kind that
+        // reports a child from a bare fixture is the one whose content is not
+        // optional. Both are checked as containers below.
+        assert_eq!(with_children, ["Scroll"]);
+        let filled = Scene::Container(ContainerNode::new(vec![box_at(0, 0, 1, 1)]));
+        assert_eq!(filled.child_nodes().len(), 1, "a container's children");
+        let scroll = Scene::Scroll(ScrollNode::new(
+            Rect::new(0, 0, 10, 10),
+            Scene::Container(ContainerNode::new(vec![])),
+        ));
+        assert_eq!(scroll.child_nodes().len(), 1, "a scroll's content is one");
+    }
+
+    /// The walk's address is the address every other surface resolves. Asserted
+    /// over a tree carrying each of the shapes that make a path non-obvious:
+    /// untagged children (addressed by index), a tag that wins over its index,
+    /// and a scroll (path-transparent).
+    #[test]
+    fn r1650_every_walked_path_resolves_where_lookup_says() {
+        let scene = container_at(
+            0,
+            0,
+            200,
+            200,
+            vec![
+                box_at(0, 0, 10, 10),
+                tagged_box_at(10, 0, 10, 10, "named"),
+                Scene::Scroll(ScrollNode::new(
+                    Rect::new(0, 20, 100, 100),
+                    container_at(
+                        0,
+                        0,
+                        100,
+                        400,
+                        vec![tagged_box_at(0, 0, 10, 10, "in_scroll")],
+                    ),
+                )),
+            ],
+        );
+        let mut seen = Vec::new();
+        scene.for_each_node(&mut |visit| {
+            assert!(
+                scene.lookup_path_ref(visit.path).is_some(),
+                "walked path {:?} must resolve",
+                visit.path
+            );
+            seen.push(visit.path.join("/"));
+        });
+        // Root, two leaves, the scroll, its content (SAME address as the
+        // scroll — the collapse the doc states), and the tagged box inside.
+        assert_eq!(seen, ["", "0", "named", "2", "2", "2/in_scroll"]);
+    }
+
+    /// The ancestor chain is what the path cannot carry, and this is the case
+    /// that proves it: the scroll's content sits at the scroll's own address,
+    /// so its depth is invisible in `path` and visible in `ancestors`.
+    #[test]
+    fn r1650_ancestors_run_outermost_first_and_end_at_the_parent() {
+        let scene = container_at(
+            0,
+            0,
+            200,
+            200,
+            vec![Scene::Scroll(ScrollNode::new(
+                Rect::new(0, 0, 100, 100),
+                container_at(0, 0, 100, 400, vec![tagged_box_at(0, 0, 10, 10, "leaf")]),
+            ))],
+        );
+        let mut depth_of_leaf = None;
+        let mut root_depth = None;
+        scene.for_each_node(&mut |visit| {
+            if visit.node.tag() == Some("leaf") {
+                depth_of_leaf = Some(visit.ancestors.len());
+                assert!(
+                    std::ptr::eq(visit.ancestors[0], std::ptr::from_ref(&scene)),
+                    "outermost ancestor is the walk's root"
+                );
+                assert!(
+                    matches!(
+                        visit.ancestors[visit.ancestors.len() - 1],
+                        Scene::Container(_)
+                    ),
+                    "the last ancestor is the parent — the scroll's content"
+                );
+                assert_eq!(visit.path.len(), 2, "…while the ADDRESS is two segments");
+            }
+            if visit.path.is_empty() && visit.node.tag() == scene.tag() {
+                root_depth = Some(visit.ancestors.len());
+            }
+        });
+        assert_eq!(root_depth, Some(0), "the root has no ancestors");
+        assert_eq!(
+            depth_of_leaf,
+            Some(3),
+            "root -> scroll -> content -> leaf: three ancestors under a two-segment address"
+        );
+    }
+
+    /// `tags` is the walk, not a second traversal — so it reaches inside a
+    /// scroll, which is exactly where a hand-written test walker forgets to go
+    /// (the divergence measured across 78 files that carried their own).
+    #[test]
+    fn r1650_tags_reach_inside_a_scroll() {
+        let scene = container_at(
+            0,
+            0,
+            200,
+            200,
+            vec![Scene::Scroll(
+                ScrollNode::new(
+                    Rect::new(0, 0, 100, 100),
+                    container_at(0, 0, 100, 400, vec![tagged_box_at(0, 0, 10, 10, "buried")]),
+                )
+                .with_tag("scroller"),
+            )],
+        );
+        assert_eq!(scene.tags(), ["scroller", "buried"]);
     }
 }

@@ -3661,6 +3661,242 @@ fn resolve_pointer_tag(paint_scene: &Scene, x: f64, y: f64) -> Option<String> {
     None
 }
 
+/// R1650 §5.35 §2 #7 — a painted tag that the pointer reaches and **nothing can
+/// receive**, together with the widget it takes the input away from.
+///
+/// See [`pointer_reach`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PointerShadow {
+    /// The paint tag the router's own resolution answers at this node.
+    pub tag: String,
+    /// The node's address, as `scene/snapshot` and `scene/locate` spell it.
+    pub path: Vec<String>,
+    /// The tag of the nearest ancestor that **does** resolve to an `External`
+    /// — the widget that would have received the press had this node not been
+    /// painted over it.
+    pub shadowed: String,
+}
+
+/// R1650 §5.35 §2 #7 — a widget whose centre **no widget answers**: a press
+/// at the middle of its own painted rect resolves to a tag nothing receives,
+/// so the router drops it.
+///
+/// Not merely "something else is on top". A row painted over its tree, a cell
+/// over its grid, a button over its toolbar — all cover a container's centre,
+/// and the press reaching the child is what is supposed to happen. This is the
+/// case where it reaches **nothing**.
+///
+/// See [`pointer_reach`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PointerUnreachable {
+    /// The widget's paint tag.
+    pub tag: String,
+    /// Its address.
+    pub path: Vec<String>,
+    /// The tag the router resolves at its centre instead, or `None` when the
+    /// centre hits nothing at all (the widget is off-window or zero-area).
+    pub blocked_by: Option<String>,
+}
+
+/// R1650 §5.35 §2 #7 — the reachability of a painted surface: how much of it a
+/// real pointer can drive, and what is stealing the rest.
+///
+/// See [`pointer_reach`].
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PointerReach {
+    /// Painted tags whose primary half resolves to an `External` in the state
+    /// scene — the nodes a press arrives at, *if* one can land on them.
+    pub deliverable: usize,
+    /// Painted tags that resolve to nothing **and take nothing away**: no
+    /// ancestor of theirs is a widget either, so the region was never live.
+    /// The decorative case, reported as a count so the numbers below sum to
+    /// the tags examined rather than leaving a silent remainder.
+    pub inert: usize,
+    /// Every tag that swallows input a widget above it would have received.
+    ///
+    /// The **census**, not the verdict: a tagged container is an ancestor of
+    /// the real targets inside it and only swallows presses in its own
+    /// uncovered gaps, which a grid or a scroll region may legitimately do
+    /// nothing with. Read [`unreachable`](Self::unreachable) for the defects.
+    pub shadows: Vec<PointerShadow>,
+    /// The widgets whose own centre no widget answers — the point
+    /// `scene/click {path}` presses, and the point R1497 measured as the exact
+    /// discriminator between the header cells that worked and the ones that
+    /// silently did not.
+    ///
+    /// This is the gate-worthy half. A shadow says *some* input is being
+    /// intercepted, which a container legitimately does in its own gaps; an
+    /// entry here says a press lands and is dropped.
+    pub unreachable: Vec<PointerUnreachable>,
+}
+
+/// R1650 §5.35 §2 #7 — ask a painted surface which of its tags a pointer can
+/// actually drive, by replaying the router's own tag-resolution rule over the
+/// whole tree instead of at one cursor position.
+///
+/// # The failure this exists to make visible
+///
+/// Dispatch is two facts, and only one of them is normally asserted. A handler
+/// can be **correct** — driven by `scene/click`, `scene/invoke` or a synthetic
+/// `send`, every assertion passing — while it is not **wired**, because those
+/// wire verbs call the widget's handler directly and the router does not. The
+/// router resolves the deepest *tagged* node under the cursor and looks the
+/// primary half of that tag up as an `External` in the state scene; when the
+/// lookup fails it returns, silently. So a tagged decorative child painted over
+/// a widget makes that widget dead to a real mouse and leaves every wire-driven
+/// test green.
+///
+/// Measured twice in this tree before anything checked it:
+///
+/// * R1497 — `hello-column-reorder` lost 100% of the clicks on `colhdr#3` and
+///   `colhdr#4` while `#0`–`#2` worked, the discriminator being whether the
+///   press point fell inside that header's own `colhdr_label#<n>` text rect;
+/// * R1649.1 — the analyzer shell tagged every card, panel and palette row for
+///   addressing, so the root `External` was shadowed everywhere and **the whole
+///   window was dead to a real mouse** while a 118-assertion demo passed.
+///
+/// Both are one shape, and this report names it: `shadows` is non-empty exactly
+/// when some node swallows input that an `External`-backed ancestor would
+/// otherwise have received.
+///
+/// # Why a shadow is a defect and an inert tag is not
+///
+/// Tags are addresses, not affordances (R1613) — most of them exist so
+/// `scene/snapshot` can name a region, and a chart's mark or a label's text is
+/// meant to be inert. The discriminator is therefore not "does this tag resolve
+/// to a widget" but **"does an ancestor's widget lose input because of it"**.
+/// A decorative tag over dead space costs nothing and is counted as
+/// [`inert`](PointerReach::inert); the same tag over a button is a defect and
+/// is reported by name.
+///
+/// # What is deliberately not reported
+///
+/// * **Pointer-transparent subtrees.** [`Scene::hit_test`] skips such a node
+///   and everything under it, so nothing there is reachable and nothing there
+///   can shadow — this is the declaration
+///   ([`LayoutStyle::pointer_transparent`](pinion_core::style::LayoutStyle::pointer_transparent),
+///   the toolkit's `WA_TransparentForMouseEvents`, CSS's `pointer-events:
+///   none`) that repairs a shadow, so a repaired surface reports clean.
+/// * **Disabled regions.** R1554 made a disabled region deliberately opaque to
+///   the pointer: absorbing the press *is* its job, so it is not a defect.
+/// * **Occlusion.** A tag hidden behind a later sibling is structurally able to
+///   shadow and is reported; deciding it cannot would require a full paint-order
+///   coverage analysis, and the wrong-`have` direction is the expensive one
+///   (R1602).
+///
+/// # Past the reference toolkit
+///
+/// There, every widget is itself an event target, so the analogous silence —
+/// a child that accepts a press and does nothing with it — is *unaskable*: the
+/// per-widget `WA_TransparentForMouseEvents` attribute is readable one widget
+/// at a time and nothing aggregates it, and a widget's willingness to handle a
+/// press is a virtual function, not data. Here the whole answer is a pure
+/// function of two scenes, so it is a wire read (`scene/pointer_reach`) an
+/// agent can take before it decides a screen is operable.
+#[must_use]
+pub fn pointer_reach(paint_scene: &Scene, state_scene: &Scene) -> PointerReach {
+    let mut out = PointerReach::default();
+    // Widget-backed painted nodes, kept so each can be asked afterwards
+    // whether a press at its own centre still reaches it. Collected during the
+    // walk rather than re-walked, and probed after it because the probe
+    // hit-tests from the root.
+    let mut widgets: Vec<(String, Vec<String>)> = Vec::new();
+    paint_scene.for_each_node(&mut |visit| {
+        let node = visit.node;
+        // A transparent node is skipped by `hit_test`, and so is everything
+        // beneath it — the subtree is not reachable, so it cannot shadow.
+        if node.is_pointer_transparent()
+            || visit.ancestors.iter().any(|a| a.is_pointer_transparent())
+        {
+            return;
+        }
+        // R1554 — absorbing the press is what a disabled region is for.
+        if node.declares_disabled() {
+            return;
+        }
+        let Some(tag) = node.tag() else {
+            return;
+        };
+        // A `Scroll` and its content share one address, and the router resolves
+        // the SCROLL there (`lookup_path_ref` stops at it). Asking the address
+        // which node it names keeps this report on the router's side of that
+        // collapse rather than inventing a second answer.
+        if !std::ptr::eq(
+            paint_scene
+                .lookup_path_ref(visit.path)
+                .unwrap_or(paint_scene),
+            node,
+        ) {
+            return;
+        }
+        let (primary, _) = split_subindex(tag);
+        if state_scene.find_external_with_tag(primary).is_some() {
+            out.deliverable += 1;
+            widgets.push((tag.to_string(), visit.path.to_vec()));
+            return;
+        }
+        // Nearest widget-backed ancestor, innermost first — the one whose input
+        // this node is taking.
+        let shadowed = visit.ancestors.iter().rev().find_map(|ancestor| {
+            let ancestor_tag = ancestor.tag()?;
+            let (ancestor_primary, _) = split_subindex(ancestor_tag);
+            state_scene
+                .find_external_with_tag(ancestor_primary)
+                .map(|_| ancestor_tag.to_string())
+        });
+        match shadowed {
+            Some(shadowed) => out.shadows.push(PointerShadow {
+                tag: tag.to_string(),
+                path: visit.path.to_vec(),
+                shadowed,
+            }),
+            None => out.inert += 1,
+        }
+    });
+    // The verdict half: ask the router itself, at the one point every path-form
+    // press lands on and the one a person aims at.
+    for (tag, path) in widgets {
+        // WINDOW-absolute, via the one coordinate-translation authority — a
+        // node's own `rect` inside a `Scroll` is content-intrinsic, and using
+        // it here reported 59 false defects on the first surface that had one.
+        // `None` means clipped fully out of its viewport: a virtualised row
+        // that is scrolled away is not pressable and is not a defect, so the
+        // remedy is to scroll rather than to repair, and it is skipped.
+        let Some(rect) = rect_for_tag(paint_scene, &tag) else {
+            continue;
+        };
+        if rect.w == 0 || rect.h == 0 {
+            continue;
+        }
+        let cx = f64::from(rect.x) + f64::from(rect.w) / 2.0;
+        let cy = f64::from(rect.y) + f64::from(rect.h) / 2.0;
+        let resolved = resolve_pointer_tag(paint_scene, cx, cy);
+        // A press at this widget's centre is DELIVERED when whatever the router
+        // resolves there is a widget — this one, or another one painted over it.
+        //
+        // The second case is ordinary nesting and not a defect: a row inside a
+        // tree, a cell inside a grid and a button inside a toolbar all cover
+        // their container's centre, and the press reaching the row is the
+        // point. Requiring the widget to answer for ITSELF was the first draft,
+        // and the sweep found it flagging four such containers immediately.
+        // What is left is the failure this exists for: the centre resolves to a
+        // tag no `External` answers, so the router drops the press in silence.
+        let delivered = resolved.as_deref().is_some_and(|hit| {
+            state_scene
+                .find_external_with_tag(split_subindex(hit).0)
+                .is_some()
+        });
+        if !delivered {
+            out.unreachable.push(PointerUnreachable {
+                tag,
+                path,
+                blocked_by: resolved,
+            });
+        }
+    }
+    out
+}
+
 /// R1080 §5.51 — hit-test `paint_scene` at `(x, y)` and return the nearest
 /// ancestor that opted in as a drop target
 /// ([`Scene::is_drop_target`](pinion_core::Scene::is_drop_target)) AND carries
@@ -12024,5 +12260,293 @@ mod tests {
             !dragged.contains(&"0:PointerUp".to_string()),
             "a drag that returns to the press point is still a drag, not a click: {dragged:?}"
         );
+    }
+}
+
+#[cfg(test)]
+mod pointer_reach_tests {
+    use super::{PointerShadow, pointer_reach};
+    use pinion_core::Scene;
+    use pinion_core::scene::{BoxNode, ContainerNode, ExternalNode, Rect, ScrollNode};
+    use pinion_core::style::{BoxStyle, LayoutStyle};
+    use pinion_core::widgets::button::ButtonExternal;
+
+    /// A state scene holding one real widget under `tag`.
+    fn state_with(tag: &'static str) -> Scene {
+        Scene::External(ExternalNode::new(Box::new(ButtonExternal::new())).with_tag(tag))
+    }
+
+    fn tagged_box(tag: &'static str) -> Scene {
+        Scene::Box(BoxNode::new(Rect::new(0, 0, 40, 20), BoxStyle::default()).with_tag(tag))
+    }
+
+    /// The R1649.1 incident, reduced: a tagged card painted inside the window's
+    /// one widget-backed root. Every press lands on the card, the card's tag
+    /// resolves to nothing, and the router drops it — while `scene/click` and
+    /// `send` keep working, because they never ask the router.
+    #[test]
+    fn r1650_a_tagged_child_over_a_widget_is_reported_as_a_shadow() {
+        let paint = Scene::Container(
+            ContainerNode::new(vec![tagged_box("card.alpha")]).with_tag("shell.root"),
+        );
+        let reach = pointer_reach(&paint, &state_with("shell.root"));
+        assert_eq!(
+            reach.shadows,
+            vec![PointerShadow {
+                tag: "card.alpha".to_string(),
+                path: vec!["card.alpha".to_string()],
+                shadowed: "shell.root".to_string(),
+            }],
+            "the card takes the root widget's input and the report names both"
+        );
+        assert_eq!(reach.deliverable, 1, "the root itself is still deliverable");
+        assert_eq!(reach.inert, 0);
+    }
+
+    /// The declaration that repairs it — the same one CSS and the reference
+    /// toolkit use — makes the surface report clean. Without this the check
+    /// would flag a correctly-built screen and be worthless as a gate.
+    #[test]
+    fn r1650_declaring_the_child_transparent_clears_the_shadow() {
+        let card = match tagged_box("card.alpha") {
+            Scene::Box(n) => {
+                Scene::Box(n.with_layout(LayoutStyle::new().with_pointer_transparent(true)))
+            }
+            other => other,
+        };
+        let paint = Scene::Container(ContainerNode::new(vec![card]).with_tag("shell.root"));
+        let reach = pointer_reach(&paint, &state_with("shell.root"));
+        assert!(reach.shadows.is_empty(), "{:?}", reach.shadows);
+        assert_eq!(reach.deliverable, 1);
+    }
+
+    /// A tag over dead space is an ADDRESS, not a defect: nothing above it is a
+    /// widget, so nothing loses input. Counted, so the report's numbers account
+    /// for every tag it looked at instead of leaving a silent remainder.
+    #[test]
+    fn r1650_a_tag_with_no_widget_above_it_is_inert_not_a_shadow() {
+        let paint = Scene::Container(ContainerNode::new(vec![
+            tagged_box("legend.row"),
+            tagged_box("legend.swatch"),
+        ]));
+        let reach = pointer_reach(&paint, &state_with("elsewhere"));
+        assert!(reach.shadows.is_empty(), "{:?}", reach.shadows);
+        assert_eq!(reach.inert, 2, "both tags counted, neither a defect");
+        assert_eq!(reach.deliverable, 0);
+    }
+
+    /// The R1497 incident: a header cell IS the widget-backed target and its
+    /// own centred label shadows it, which is why the clicks that landed on the
+    /// text were lost while the ones beside it worked. The composite `#n` half
+    /// is split off before the lookup, exactly as dispatch does it.
+    #[test]
+    fn r1650_a_composite_tag_resolves_on_its_primary_half() {
+        let paint = Scene::Container(ContainerNode::new(vec![Scene::Container(
+            ContainerNode::new(vec![tagged_box("colhdr_label#3")]).with_tag("colhdr#3"),
+        )]));
+        let reach = pointer_reach(&paint, &state_with("colhdr"));
+        assert_eq!(reach.deliverable, 1, "`colhdr#3` resolves via `colhdr`");
+        assert_eq!(
+            reach
+                .shadows
+                .iter()
+                .map(|s| s.tag.as_str())
+                .collect::<Vec<_>>(),
+            ["colhdr_label#3"],
+            "and its own label is what swallowed the press"
+        );
+        assert_eq!(reach.shadows[0].shadowed, "colhdr#3");
+    }
+
+    /// A shadow inside a scroll is still a shadow, and the address reported is
+    /// the one the wire accepts — the case a hand-written walker gets wrong by
+    /// not descending, and the case the path collapse makes subtle.
+    #[test]
+    fn r1650_the_report_descends_a_scroll_and_uses_the_wire_address() {
+        let paint = Scene::Container(
+            ContainerNode::new(vec![Scene::Scroll(ScrollNode::new(
+                Rect::new(0, 0, 100, 100),
+                Scene::Container(ContainerNode::new(vec![tagged_box("row.7")])),
+            ))])
+            .with_tag("shell.root"),
+        );
+        let reach = pointer_reach(&paint, &state_with("shell.root"));
+        assert_eq!(
+            reach
+                .shadows
+                .iter()
+                .map(|s| s.path.join("/"))
+                .collect::<Vec<_>>(),
+            ["0/row.7"],
+            "the scroll contributes one segment and its content none"
+        );
+    }
+
+    /// Everything under a transparent ancestor is unreachable, so nothing there
+    /// can shadow. Without this the repair would have to be applied to every
+    /// descendant instead of once at the overlay's root.
+    #[test]
+    fn r1650_a_transparent_ancestor_hides_its_whole_subtree() {
+        let overlay = Scene::Container(
+            ContainerNode::new(vec![tagged_box("ring.label")])
+                .with_tag("ring")
+                .with_layout(LayoutStyle::new().with_pointer_transparent(true)),
+        );
+        let paint = Scene::Container(ContainerNode::new(vec![overlay]).with_tag("shell.root"));
+        let reach = pointer_reach(&paint, &state_with("shell.root"));
+        assert!(reach.shadows.is_empty(), "{:?}", reach.shadows);
+        assert_eq!(reach.inert, 0, "an unreachable tag is not even counted");
+    }
+
+    /// The verdict half, on the shape that was measured dead: a card painted
+    /// over the whole board leaves the board's own centre resolving to the
+    /// card, so the widget cannot be pressed anywhere a person would press it.
+    #[test]
+    fn r1650_a_widget_covered_at_its_centre_is_unreachable() {
+        let mut board = ContainerNode::new(vec![Scene::Box(
+            BoxNode::new(Rect::new(0, 0, 100, 100), BoxStyle::default()).with_tag("card.alarms"),
+        )])
+        .with_tag("dashboard");
+        board.rect = Rect::new(0, 0, 100, 100);
+        let paint = Scene::Container(board);
+        let reach = pointer_reach(&paint, &state_with("dashboard"));
+        assert_eq!(
+            reach.unreachable,
+            vec![super::PointerUnreachable {
+                tag: "dashboard".to_string(),
+                path: Vec::new(),
+                blocked_by: Some("card.alarms".to_string()),
+            }],
+            "the board is not pressable at its own centre"
+        );
+    }
+
+    /// …and the shape that is NOT a defect, which is what keeps the verdict
+    /// usable as a gate: a tagged region covering part of a widget swallows the
+    /// gaps and nothing else, because the widget's own composite cell still
+    /// answers at the centre. Measured on `hello-data-grid`, whose header and
+    /// scroll regions are tagged exactly this way.
+    #[test]
+    fn r1650_a_partial_shadow_that_leaves_the_centre_alone_is_not_a_defect() {
+        let mut grid = ContainerNode::new(vec![
+            Scene::Box(
+                BoxNode::new(Rect::new(0, 0, 100, 20), BoxStyle::default()).with_tag("grid_header"),
+            ),
+            Scene::Box(
+                BoxNode::new(Rect::new(0, 20, 100, 80), BoxStyle::default()).with_tag("grid#0_1"),
+            ),
+        ])
+        .with_tag("grid");
+        grid.rect = Rect::new(0, 0, 100, 100);
+        let paint = Scene::Container(grid);
+        let reach = pointer_reach(&paint, &state_with("grid"));
+        assert_eq!(
+            reach
+                .shadows
+                .iter()
+                .map(|s| s.tag.as_str())
+                .collect::<Vec<_>>(),
+            ["grid_header"],
+            "the header still intercepts its own band, and the census says so"
+        );
+        assert!(
+            reach.unreachable.is_empty(),
+            "but the grid answers at its centre through its own cell: {:?}",
+            reach.unreachable
+        );
+    }
+
+    /// The row names the widget that ACTUALLY loses the press, which is the
+    /// nearest one — and until this fixture existed nothing said so: every
+    /// other case here has one widget ancestor, so walking the chain from
+    /// either end gave the same answer and a counterfactual reversing the walk
+    /// passed. Two nested widgets is the smallest tree that can tell them
+    /// apart, and it is the common one (a panel inside a shell).
+    #[test]
+    fn r1650_a_shadow_names_the_nearest_widget_above_it() {
+        let mut panel = ContainerNode::new(vec![tagged_box("panel.caption")]).with_tag("panel");
+        panel.rect = Rect::new(0, 0, 100, 100);
+        let mut shell = ContainerNode::new(vec![Scene::Container(panel)]).with_tag("shell");
+        shell.rect = Rect::new(0, 0, 100, 100);
+        let state = Scene::Container(ContainerNode::new(vec![
+            state_with("shell"),
+            state_with("panel"),
+        ]));
+        let reach = pointer_reach(&Scene::Container(shell), &state);
+        assert_eq!(
+            reach
+                .shadows
+                .iter()
+                .map(|s| s.shadowed.as_str())
+                .collect::<Vec<_>>(),
+            ["panel"],
+            "the caption takes the PANEL's press, not the shell's"
+        );
+    }
+
+    /// A widget painted over another widget is ordinary nesting — a row over
+    /// its tree, a cell over its grid — and reporting it as a defect is what
+    /// the first draft did. The sweep found four containers flagged that way
+    /// on its first run, so the bar is "does a widget answer here", not "does
+    /// THIS widget answer here".
+    #[test]
+    fn r1650_a_widget_covered_by_another_widget_is_not_a_defect() {
+        let mut tree = ContainerNode::new(vec![Scene::Box(
+            BoxNode::new(Rect::new(0, 0, 100, 100), BoxStyle::default()).with_tag("row#4"),
+        )])
+        .with_tag("tree");
+        tree.rect = Rect::new(0, 0, 100, 100);
+        let paint = Scene::Container(tree);
+        let state = Scene::Container(ContainerNode::new(vec![
+            state_with("tree"),
+            state_with("row"),
+        ]));
+        let reach = pointer_reach(&paint, &state);
+        assert!(
+            reach.unreachable.is_empty(),
+            "the press reaches `row`, which is the point: {:?}",
+            reach.unreachable
+        );
+        assert_eq!(reach.deliverable, 2, "both are widget-backed tags");
+    }
+
+    /// A widget inside a scroll is pressable, and saying otherwise is the
+    /// error this test pins. A node's own `rect` inside a [`Scene::Scroll`] is
+    /// content-intrinsic, not window-absolute; probing the centre with it
+    /// aimed at the wrong pixel and reported **59 false defects** on the first
+    /// real surface with a scroll region. The probe goes through the one
+    /// coordinate-translation authority instead.
+    #[test]
+    fn r1650_a_widget_inside_a_scroll_is_probed_in_window_coordinates() {
+        let mut row = ContainerNode::new(vec![]).with_tag("grid#0_0");
+        row.rect = Rect::new(0, 200, 100, 40);
+        let mut content = ContainerNode::new(vec![Scene::Container(row)]);
+        content.rect = Rect::new(0, 0, 100, 4000);
+        let mut root = ContainerNode::new(vec![Scene::Scroll(
+            ScrollNode::new(Rect::new(0, 0, 100, 300), Scene::Container(content))
+                .with_offset(0, 180),
+        )]);
+        root.rect = Rect::new(0, 0, 100, 300);
+        let paint = Scene::Container(root);
+        let reach = pointer_reach(&paint, &state_with("grid"));
+        assert_eq!(reach.deliverable, 1);
+        assert!(
+            reach.unreachable.is_empty(),
+            "the row sits at window y=20..60 once the scroll offset is applied: {:?}",
+            reach.unreachable
+        );
+    }
+
+    /// A disabled region absorbs the press by design (R1554), so reporting it
+    /// would train readers to ignore the report.
+    #[test]
+    fn r1650_a_disabled_region_absorbs_by_design_and_is_not_a_defect() {
+        let veil = match tagged_box("panel.veil") {
+            Scene::Box(n) => Scene::Box(n.with_layout(LayoutStyle::new().with_disabled(true))),
+            other => other,
+        };
+        let paint = Scene::Container(ContainerNode::new(vec![veil]).with_tag("shell.root"));
+        let reach = pointer_reach(&paint, &state_with("shell.root"));
+        assert!(reach.shadows.is_empty(), "{:?}", reach.shadows);
     }
 }

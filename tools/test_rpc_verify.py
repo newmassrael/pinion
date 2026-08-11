@@ -41,8 +41,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from rpc_verify import (  # noqa: E402
+    Response,
     RpcError,
     RpcSubprocess,
+    _pointer_reach_budget,
     access_node_by_tag,
     assert_eq,
     find_by_tag,
@@ -482,6 +484,55 @@ def test_assume_built_gate_reads_the_value_not_the_presence() -> None:
                 os.environ.pop("PINION_ASSUME_BUILT", None)
             else:
                 os.environ["PINION_ASSUME_BUILT"] = previous
+
+
+def test_pointer_reach_gate_separates_the_two_unreachable_kinds() -> None:
+    # R1650 — a covered widget FAILS (the repair is a declaration) and an
+    # off-window one does not (the repair is a scroll region, a layout
+    # decision). Getting these the same way round is what would make the gate
+    # either useless or unadoptable.
+    tf = RpcSubprocess("fixture-example")
+    tf._proc = None
+    report = {"deliverable": 1, "inert": 0, "shadows": [], "unreachable": []}
+    tf.request = lambda method, params=None, **kw: Response(  # type: ignore[assignment]
+        id=1, result=report
+    )
+    tf._gate_pointer_reach()  # clean surface: no raise
+
+    report["unreachable"] = [{"tag": "row", "path": "row", "blocked_by": None}]
+    tf._gate_pointer_reach()  # off-window: reported, not fatal
+
+    report["unreachable"] = [{"tag": "board", "path": "", "blocked_by": "card"}]
+    raised = None
+    try:
+        tf._gate_pointer_reach()
+    except AssertionError as exc:
+        raised = str(exc)
+    check(raised is not None, "gate: a covered widget fails the demo")
+    check(
+        raised is not None and "board" in raised and "card" in raised,
+        "gate: the failure names BOTH the widget and what covers it",
+    )
+
+    # And the budget is what makes it adoptable — the same row, allowed.
+    tf.pointer_reach_exempt = {"board": "a fixture"}
+    tf._gate_pointer_reach()
+
+
+def test_pointer_reach_budget_parses_the_committed_file() -> None:
+    # R1650 — a ratchet whose reader silently produced nothing would allow
+    # everything, which is the failure mode a budget file has: it looks like a
+    # gate and behaves like an exemption for the whole tree.
+    budget = _pointer_reach_budget()
+    check(bool(budget), "budget: the committed file parses to something")
+    check(
+        all(isinstance(v, frozenset) and v for v in budget.values()),
+        "budget: every example maps to a non-empty tag set",
+    )
+    check(
+        all(not k.startswith("#") for k in budget),
+        "budget: comment lines are not read as examples",
+    )
 
 
 def main() -> int:

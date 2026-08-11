@@ -106,6 +106,18 @@ EXCLUDED: list[tuple[str, str]] = [
         "hold the committed spelling to its rename.",
     ),
     (
+        "tools/reference_surface.py",
+        "R1650 -- the reader of the reference toolkit's HEADERS: it holds the "
+        "one table mapping a claim's role (`widget`, `attribute-enum`) to the "
+        "header path and class identifier that answer it, and it is the only "
+        "file that does. Same split as `reference_census.py` beside it -- a "
+        "scanner must know a tree's layout to scan it at all -- and what it "
+        "READS from and WRITES to, `docs/reference-surface.json`, carries no "
+        "spelling of the reference at all and is counted normally. Its own "
+        "selftest fixture builds its class name from pieces so the FIXTURE is "
+        "not the reason this exclusion exists.",
+    ),
+    (
         "tools/reference_names_migrate.py",
         "the substitution table: it must hold both the name it removes and the "
         "phrase it puts there. Its own tests build fixture names from pieces so "

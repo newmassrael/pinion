@@ -182,7 +182,13 @@ fn badge_pill(tag: &'static str, label: &str, dot: bool, bx: u32, theme: &Theme)
                 .with_size_px(11)
                 .with_fg(theme.resolve(ColorRole::OnError)),
         )
-        .with_tag(COUNT_LABEL_TAG),
+        .with_tag(COUNT_LABEL_TAG)
+        // R1650 §5.35 — the count is an ADDRESS for `scene/snapshot`, not a
+        // control. Without this declaration it is the deepest tagged node over
+        // the badge's whole rect, so the router resolved it, found no widget
+        // behind the name and dropped every press on the badge — the R1497
+        // shape, and `pointer_reach` reported it on its first sweep.
+        .with_layout(LayoutStyle::new().with_pointer_transparent(true)),
     );
     Scene::Container(
         ContainerNode::new(vec![text])

@@ -2726,6 +2726,14 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                     crate::disabled::handle_scene_disabled(last_paint_scene),
                     HandlerKind::Read,
                 ),
+                // R1650 §5.35 — which painted tags a real pointer can drive,
+                // and which of them swallow a widget's input. Reads the same
+                // two scenes the router resolves between, so the answer is the
+                // router's own, not a second opinion about it.
+                "scene/pointer_reach" => (
+                    crate::pointer_reach::handle_scene_pointer_reach(last_paint_scene, scene),
+                    HandlerKind::Read,
+                ),
                 "scene/dry_run" => (
                     handle_scene_dry_run(scene, request.params.as_ref()),
                     HandlerKind::Read,

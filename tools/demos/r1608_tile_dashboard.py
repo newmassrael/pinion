@@ -107,13 +107,20 @@ def body() -> None:
         assert_eq(
             cards,
             {
-                "card.throughput",
-                "card.latency",
-                "card.loss",
-                "card.topology",
-                "card.alarms",
+                "dashboard#card.throughput",
+                "dashboard#card.latency",
+                "dashboard#card.loss",
+                "dashboard#card.topology",
+                "dashboard#card.alarms",
             },
-            "B: each card is addressable, so a client can point at one",
+            "B: ★ each card is addressable as a COMPOSITE sub-tag of the board "
+            "(R1650). It used to be a bare `card.<id>`, which addressed it fine "
+            "and made the board dead to a real mouse: the router resolves the "
+            "deepest tag under the cursor and looks its PRIMARY half up as a "
+            "widget, and `card.loss` is nobody. Measured with `scene/drag` — the "
+            "arrangement did not move under a router-driven drag and did move "
+            "under `invoke`, so R1608's own claim that the model's locality "
+            "'holds under a real pointer' was never actually driven by one",
         )
 
         # ── (C) a move NAMES what it displaced, transitively ────────────────
@@ -219,6 +226,45 @@ def body() -> None:
             "J: and the removed card is gone from the paint, not just the model",
         )
         assert_eq(q(tf, "violations"), 0, "J: with the invariant intact throughout")
+
+        # ── (K) R1650 — a REAL pointer, through the router ──────────────────
+        # Everything above drives `invoke`, which reaches the board's handler by
+        # name. A mouse reaches it by POSITION, and until R1650 it did not reach
+        # it at all: each card was tagged `card.<id>`, the router resolved that
+        # deepest tag, found no widget behind the name, and dropped the press —
+        # so this board was dead to a hand from R1608 until here while every
+        # assertion above passed. Measured with `scene/drag`: UNCHANGED before,
+        # MOVED after.
+        before = q(tf, "layout")
+        # Section J already waited for the board to settle, so this reads the
+        # paint rather than polling for it.
+        snap = tf.snapshot(source="paint", viewport=WIN)
+        rect = find_by_tag(snap, "dashboard#card.loss")["rect"]
+        cx = rect["x"] + rect["w"] // 2
+        cy = rect["y"] + rect["h"] // 2
+        board_rect = find_by_tag(snap, BOARD)["rect"]
+        # Aim at the FIRST column, and assert the card lands where the cursor
+        # is. A column is what tells the two normalisations apart: the board
+        # declares `CaptureNormalize::Primary`, so the cursor arrives as a
+        # fraction of the BOARD; the default would hand it as a fraction of the
+        # grabbed card and every drag would land somewhere else.
+        target_x = board_rect["x"] + board_rect["w"] // 24
+        tf.drag(from_at=(cx, cy), to_at=(target_x, cy))
+        after = q(tf, "layout")
+        assert after != before, (
+            "K: ★ a router-driven drag moves the board — the press arrives, "
+            "which is a different fact from `invoke` working and was FALSE for "
+            "42 rounds"
+        )
+        moved = next(t for t in after["tiles"] if t["id"] == "loss")
+        assert_eq(
+            moved["col"],
+            0,
+            "K: ★ and it lands under the CURSOR: the drag was aimed at the "
+            "board's first column and the card is there, which is only true "
+            "when the cursor is normalised against the board rather than "
+            "against the grabbed card",
+        )
 
 
 if __name__ == "__main__":

@@ -124,7 +124,7 @@ pub use reactive::{
 };
 pub use renderer::WidgetRenderer;
 pub use revision::SceneRevision;
-pub use scene::{HitPath, Scene};
+pub use scene::{HitPath, NodeVisit, Scene};
 pub use storage::{InMemoryStorage, Storage};
 pub use style::{
     Align, AlignItems, Border, BoxStyle, Color, ColorStop, Display, Extend, Fit, FlexDirection,

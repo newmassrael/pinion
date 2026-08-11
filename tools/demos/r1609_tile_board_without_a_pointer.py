@@ -350,7 +350,7 @@ def body() -> None:
         )
         assert_eq(
             (access.get("focus") or {}).get("active_descendant"),
-            "card.topology",
+            "dashboard#card.topology",
             "L: ★ the roving current card reaches an AT as "
             "`aria-activedescendant`, so a screen reader says which card the "
             "keyboard will act on. The toolkit's interactive mode is private, so nothing "
@@ -361,9 +361,9 @@ def body() -> None:
             for node in access.get("nodes") or ()
             if node.get("selected") is True
         ]
-        assert_eq(selected, ["card.topology"], "L: exactly one current card")
+        assert_eq(selected, ["dashboard#card.topology"], "L: exactly one current card")
 
-        card = access_node_by_tag(access, "card.topology")
+        card = access_node_by_tag(access, "dashboard#card.topology")
         assert card is not None, "L: the card itself is in the tree"
         assert q(tf, "announcement").startswith("topology at column"), (
             "L: and the region's slot numbers are the SAME one-based lines the "
@@ -375,16 +375,16 @@ def body() -> None:
         # ── (M) a grip ring is painted, and only on the current card ─────────
         snap = wait_snap(
             tf,
-            lambda s: find_by_tag(s, "card.topology.handle.TopLeft") is not None,
+            lambda s: find_by_tag(s, "dashboard#card.topology.handle.TopLeft") is not None,
             viewport=WIN,
             desc="the selected card paints its handle ring",
         )
         for name in HANDLES:
-            assert find_by_tag(snap, f"card.topology.handle.{name}") is not None, (
+            assert find_by_tag(snap, f"dashboard#card.topology.handle.{name}") is not None, (
                 f"M: the {name} grip is painted and addressable"
             )
         for other in ("throughput", "latency", "loss", "alarms"):
-            assert find_by_tag(snap, f"card.{other}.handle.TopLeft") is None, (
+            assert find_by_tag(snap, f"dashboard#card.{other}.handle.TopLeft") is None, (
                 f"M: ★ only the current card shows grips — {other} would make "
                 "this a forty-grip board, and a card that showed no grip must "
                 "not resize either, which is the fact the hit-test reads too"

@@ -1,0 +1,48 @@
+# R1650 — the pointer-reach ratchet's budget. One row per widget whose own
+# centre no widget answers: a press there is resolved to a tag nothing
+# receives and dropped in silence, so that control is dead to a real mouse
+# while every wire-driven assertion about it passes.
+#
+# The gate (tools/rpc_verify.py, at every demo's boot) refuses a victim that
+# is NOT listed here. A row may be removed by the round that repairs it and
+# must never be added to make a failure go away — that is the one use that
+# turns a ratchet back into a suggestion.
+#
+# Measured 2026-08-11 over 148 examples that boot with a GPU surface: 14 had
+# one, and 2 were repaired in the round that measured them (hello-badge and
+# hello-status-bar, both a text region that had grown over its own widget —
+# repaired by declaring it `pointer_transparent`, which is what a label is).
+# The 12 below are the honest remainder. They are NOT a different kind of
+# defect; they are the same one, unpaid.
+#
+# The two repairs this population takes:
+#   * pure decoration over a widget -> `pointer_transparent` on the decoration
+#   * a real sub-REGION of one widget -> tag it `widget#sub` so the router
+#     resolves the widget and the region stays hit-testable (a cursor hint on
+#     a resize grip needs that, and transparency would take it away)
+#
+# example	victim tag
+hello-category-axis	category_window
+hello-dock-panels	inspector
+hello-dock-panels	inspector#content
+hello-dock-panels	left_splitter
+hello-dock-panels	main_splitter
+hello-dock-panels-editor	console
+hello-dock-panels-editor	console#content
+hello-dock-panels-editor	editor_split_inner_h
+hello-dock-panels-editor	editor_split_inner_v
+hello-dock-panels-editor	editor_split_middle_h
+hello-elevation-trace	elevationtrace
+hello-file-browser	fb
+hello-file-browser	fb_dir
+hello-file-manager	fb_dir
+hello-floating-chart	chartpane
+hello-floating-chart	chartpane#content
+hello-grid-hscroll	ghs_ch0
+hello-grid-hscroll	ghs_ch1
+hello-grid-hscroll	ghs_ch2
+hello-grid-hscroll	ghs_ch3
+hello-inspector	inspector
+hello-lazy-tree	lazytree
+hello-market-map	marketmap
+hello-measured-list	mlist

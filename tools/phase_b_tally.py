@@ -215,6 +215,17 @@ AXES = [
                 # named families are property grid, data grid and node graph,
                 # and a dashboard shell is none of them.
                 "tile-dashboard",
+                # R1650, cleared inline: `hello-analyzer-shell` (R1648/R1649)
+                # had no pattern and was reported UNCLASSIFIED at the push that
+                # added it — the FOURTH time this census has caught a shell
+                # arriving without an axis. Filed beside `tile-dashboard` for
+                # the reason that one is: it is a board of arranged, detachable
+                # panels, which is the kind this axis already holds. Its rounds
+                # declare `catalog`, and that is not a contradiction — the
+                # artifact belongs to this axis and the WORK those rounds did
+                # was a widget-catalogue vocabulary (`widgets::card`).
+                "analyzer-shell",
+                "analyzer-lab",
             ]),
         ],
         # R1532 re-judgment, demanded by this axis's round count going 0 -> 1
@@ -1044,9 +1055,34 @@ AXES = [
         # click paints the focus ring with no `:focus-visible` distinction — not below the
         # toolkit, whose common styles do the same, but now visible on 17 more
         # controls.
-        "judged_at": 1570,
-        "completion": 95,
-        "evidence_snapshot": {"example-name": 76, "round-axis": 6},
+        # R1650 RE-JUDGMENT, demanded by the tool (round-axis 6 -> 9, +50%),
+        # absorbing R1648 and R1649. 95 -> 96, and the point of the move is that
+        # it is MEASURED rather than recalled.
+        #
+        # ONE OF THE FIVE NAMED ABSENT KINDS WAS NEVER ABSENT. R1554 listed
+        # "dial, a paged container, key-sequence editor, font picker, a canned
+        # message box / input dialog", and R1570 carried that list forward
+        # unexamined. Measured now: `pinion_core::widgets::key_sequence`
+        # (`KeySequenceEdit`) landed at **R1569** — the round BEFORE the
+        # judgment that called it missing. So the gap has been four kinds, not
+        # five, for eighty rounds. The lesson is R1622's, arriving on a third
+        # axis: a gap list is a judgment, not a fact, and re-reading it is part
+        # of the re-judgment rather than something the re-judgment may assume.
+        #
+        # AND ONE KIND ARRIVED: `widgets::card` (R1648) — chrome, affordances,
+        # and a six-arm content state with a derived remedy. Measured on the
+        # reference at 6.11 by R1648: no content-state concept exists on any
+        # panel or view class there, and no class carries both tear-off and
+        # maximise.
+        #
+        # RE-MEASURED AND STILL OPEN, so the move stays small: `External::wheel`
+        # has exactly **two** widget implementors (`slider`, `spin_button`),
+        # unchanged since R1554 named it — a combo box and a tab bar still do
+        # not answer a wheel, which is the largest cross-cutting item here.
+        # Mnemonic adoption and the disabled cascade are likewise untouched.
+        "judged_at": 1650,
+        "completion": 96,
+        "evidence_snapshot": {"example-name": 77, "round-axis": 9},
     },
     {
         "key": "dataviz",

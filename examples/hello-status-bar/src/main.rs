@@ -323,6 +323,11 @@ fn view(_mode_index: usize, _frame: &Frame) -> Scene {
                 .flex(FlexDirection::Row)
                 .with_align_items(AlignItems::Center)
                 .with_flex_grow(1.0)
+                // R1650 §5.35 — the message region is an address, not a
+                // control, and it grows to fill the bar: it covered the status
+                // bar's own centre, so the router resolved a name no widget
+                // answers and dropped the press.
+                .with_pointer_transparent(true)
                 .with_padding(Rect::new(8, 0, 8, 0)),
         ),
     );

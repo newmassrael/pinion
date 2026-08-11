@@ -230,6 +230,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc, MethodWindow)] = &[
         MethodOcc::Mutate,
         MethodWindow::Scope,
     ),
+    ("scene/pointer_reach", MethodOcc::Read, MethodWindow::Scope),
     (
         "scene/pointer_tangential_pressure",
         MethodOcc::Mutate,
