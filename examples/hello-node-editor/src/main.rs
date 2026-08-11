@@ -3078,6 +3078,13 @@ struct GraphServices {
 /// The node-graph coordinator. Holds `Rc` clones of the reactive holders
 /// (same instances the view fn reads) plus the internal drag latches.
 struct NodeGraphExternal {
+    /// R1656 §5.15 — the size the shell says this surface currently has.
+    ///
+    /// Kept because `External::pointer_move` hands a FRACTION of it and not the
+    /// rectangle itself, so a consumer that wants pixels has to hold the basis.
+    /// Seeded with the opening size and replaced by every
+    /// [`External::on_resize`].
+    surface: (u32, u32),
     /// R1596 — the graph: nodes, wires, frames, authored port values and the id
     /// counters, as one [`Document`]. Six holders before this round.
     document: Rc<Signal<Graph>>,
@@ -3141,6 +3148,7 @@ impl NodeGraphExternal {
         services: GraphServices,
     ) -> Self {
         Self {
+            surface: (WIN_W, WIN_H),
             document,
             selection,
             preview,
@@ -5793,13 +5801,22 @@ impl External for NodeGraphExternal {
     /// the canvas; the first move snapshots the graph-space grab offset, each
     /// later move re-derives `node = cursor_graph + grab` against the current
     /// viewport (R877 — robust to a pan / zoom landing mid-drag).
+    /// R1656 §5.15 — the shell's resize notification, which is how this surface
+    /// knows what a pointer fraction is a fraction OF.
+    fn on_resize(&mut self, width: u32, height: u32) {
+        self.surface = (width.max(1), height.max(1));
+    }
+
     fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
         let (gx, gy) = self.cursor_graph(f64::from(x_rel), f64::from(y_rel));
         // The cursor in screen px (the dead-zone metric space — the same
         // logical-pixel space the router's click-vs-drag latch measures).
+        // ★ R1656 — see `on_resize`: the basis is the live surface, not the
+        // design size, so a dead-zone measured here is pixels at any window
+        // size rather than only at the opening one.
         let screen = (
-            f64::from(x_rel) * f64::from(WIN_W),
-            f64::from(y_rel) * f64::from(WIN_H),
+            f64::from(x_rel) * f64::from(self.surface.0),
+            f64::from(y_rel) * f64::from(self.surface.1),
         );
         let Some(node) = self.grabbed_node.get() else {
             // Not dragging a node. A background press drives the marquee

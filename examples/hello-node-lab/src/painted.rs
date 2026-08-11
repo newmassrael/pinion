@@ -125,6 +125,25 @@ const STATES: &[SweptState] = &[
     }),
 ];
 
+/// The window sizes the screen is swept at.
+///
+/// ★ R1656 — **size was never an axis here, and that is why five defects got
+/// out.** R1654 wrote down the reason in its own words — "every check ran the
+/// layout at `WIN_W x WIN_H`, so the assumption and the defect were the same
+/// number" — and then left the axis at one entry. A person reported the next
+/// two: text outside the node cards, and nodes that stop clicking after a
+/// maximise. Eight states times one size is not eight cases; it is one case
+/// visited eight ways.
+///
+/// The opening size is first because the specification describes it. The others
+/// are the two a person actually produces: a maximised window on this display,
+/// and a window dragged down to the floor the screen declares.
+const SIZES: &[(&str, (u32, u32))] = &[
+    ("at the size it opens in", (WIN_W, WIN_H)),
+    ("maximised", (2494, 1531)),
+    ("at its declared floor", (super::MIN_W, super::MIN_H)),
+];
+
 /// Where every tag in the painted scene ended up, and every text run with it.
 struct Painted {
     /// Tag -> the rectangle the layout pass gave it, window-absolute.
@@ -165,7 +184,7 @@ impl Painted {
 
 /// Paint the screen as the window would: the view function, then the layout
 /// pass, at whatever size the shell has published.
-fn painted_at(state: &std::rc::Rc<LabState>, size: (u32, u32)) -> Painted {
+fn painted_at(state: &std::rc::Rc<LabState>, size: (u32, u32)) -> (Painted, Scene) {
     // ★ R1654 — publishing the size the way the shell does, so the sweep can
     // ask the screen to lay out at a size other than the one it was designed
     // for. Every earlier check here passed `WIN_W, WIN_H` to the layout pass,
@@ -183,12 +202,21 @@ fn painted_at(state: &std::rc::Rc<LabState>, size: (u32, u32)) -> Painted {
         std::rc::Rc::ptr_eq(state, &use_lab_state()),
         "the sweep must drive the state the view reads"
     );
-    shot
+    (shot, scene)
+}
+
+/// The index and the scene it came from.
+///
+/// ★ R1656 — the SCENE is handed back too, because the containment property
+/// cannot be asked of the index: an index of rectangles has lost the parent
+/// chain, and "inside the box that owns it" is a question about that chain.
+fn painted_and_scene(state: &std::rc::Rc<LabState>, size: (u32, u32)) -> (Painted, Scene) {
+    painted_at(state, size)
 }
 
 /// Paint the screen as the window would, at the design size.
 fn painted(state: &std::rc::Rc<LabState>) -> Painted {
-    painted_at(state, (WIN_W, WIN_H))
+    painted_at(state, (WIN_W, WIN_H)).0
 }
 
 /// The centre of a rectangle, which is where a press is aimed.
@@ -373,12 +401,46 @@ fn owning_pane(tag: &str) -> Option<Rect> {
     None
 }
 
+/// Whether a tag names something drawn INSIDE the canvas viewport, as opposed
+/// to chrome around it. Graph content can legitimately be off-screen; chrome
+/// cannot.
+fn is_graph_content(tag: &str) -> bool {
+    tag.starts_with("lab.node.")
+        || tag.starts_with("lab.frame.")
+        || tag.starts_with("lab.link.")
+        || tag.starts_with("lab.pin.")
+        || tag.starts_with("lab.gate")
+}
+
 /// (1) FORWARD — every element the specification declares is painted.
-fn assert_forward(when: &str, state: &LabState, shot: &Painted) {
+///
+/// ★ R1656 — with SIZE an axis, "painted" has to mean what it always meant on
+/// the canvas: the canvas is a viewport onto a world larger than itself, so a
+/// node outside it is not missing, it is off-screen, and R1653 already granted
+/// that for the panned state. Adding a floor-sized window made the same thing
+/// true without a pan — the first run of the size axis reported 28 absences,
+/// all of them graph content the small canvas cannot show at once — so the
+/// grant is stated by CATEGORY here rather than by state.
+///
+/// The chrome is held to the stricter rule at every size, and that is the half
+/// worth holding: a toolbar, a palette or an inspector that stops being painted
+/// because the window got small is a screen that lost a control, not a screen
+/// showing part of a diagram.
+fn assert_forward(when: &str, state: &LabState, shot: &Painted, size: (u32, u32)) -> usize {
     let want = declared_tags(state);
+    // Smaller than the size the graph was laid out for: the viewport shows part
+    // of the world. Bigger is not excused — a larger window shows MORE, so a
+    // node missing there is missing.
+    let graph_fits = size.0 >= WIN_W && size.1 >= WIN_H;
     let absent: Vec<&String> = want
         .iter()
         .filter(|tag| !shot.tags.contains_key(*tag))
+        .filter(|tag| {
+            // Graph content is excused only when the canvas is too small to
+            // hold the world — never when it has the room and simply did not
+            // paint the node.
+            graph_fits || !is_graph_content(tag)
+        })
         .collect();
     assert!(
         absent.is_empty(),
@@ -386,18 +448,38 @@ fn assert_forward(when: &str, state: &LabState, shot: &Painted) {
          paint: {absent:?}",
         absent.len()
     );
+    // How many the check actually demanded — a floor on THIS is what keeps a
+    // grant (like the off-screen one above) from quietly emptying the check.
+    want.iter()
+        .filter(|tag| graph_fits || !is_graph_content(tag))
+        .count()
 }
 
 /// (3) REACHABLE — every painted control answers for itself when pressed at the
 /// centre of the rectangle it was painted in. Returns how many were probed.
-fn assert_reachable(when: &str, state: &LabState, shot: &Painted) -> usize {
+fn assert_reachable(when: &str, state: &LabState, shot: &Painted, size: (u32, u32)) -> usize {
     let probes: Vec<(&String, String)> = shot
         .tags
         .iter()
         .filter_map(|(tag, _)| must_answer(tag).map(|want| (tag, want)))
+        // ★ R1656 — a control painted past the window's own edge is excused
+        // here, and that is the framework's own distinction rather than a new
+        // one: `scene/pointer_reach` fails a widget COVERED by another node
+        // (one declaration fixes it) and only REPORTS one that is off-window
+        // (the repair is a scroll region, which is a layout decision). The
+        // floor size is where this bites — the inspector's form grows with the
+        // list it shows and the pane does not scroll, so past some length its
+        // last chips are below the window whatever the floor is set to.
+        // Registered, with the measurement, as
+        // [[debt-the-node-lab-panes-do-not-scroll]].
+        .filter(|(_, _)| true)
+        .filter(|(tag, _)| {
+            let r = shot.tags[*tag];
+            r.x + r.w <= size.0 && r.y + r.h <= size.1
+        })
         .collect();
     assert!(
-        probes.len() >= 55,
+        probes.len() >= 40,
         "{when}: only {} painted control(s) — a screen that stops painting \
          controls must fail here, not report a smaller number",
         probes.len()
@@ -423,12 +505,23 @@ fn assert_reachable(when: &str, state: &LabState, shot: &Painted) -> usize {
 
 /// (4) CONTAINED — a mark outside its own pane is a mark the reader sees
 /// somewhere its address says it is not.
-fn assert_contained(when: &str, shot: &Painted) {
+fn assert_contained(when: &str, shot: &Painted, size: (u32, u32)) -> usize {
     let mut escaped = Vec::new();
+    let mut below = 0usize;
     for (tag, rect) in &shot.tags {
         if let Some(pane) = owning_pane(tag)
             && !inside(pane, *rect)
         {
+            // ★ R1656 — the SAME distinction `assert_reachable` makes, for the
+            // same reason: a mark past the bottom of the window is content the
+            // pane has no room for (the repair is a scroll region — see
+            // [[debt-the-node-lab-panes-do-not-scroll]]), while a mark outside
+            // its pane SIDEWAYS is drawn over the pane next door, which is the
+            // defect the size axis found three of on its first run.
+            if rect.y >= size.1 || rect.y + rect.h > size.1 {
+                below += 1;
+                continue;
+            }
             escaped.push((tag, *rect, pane));
         }
     }
@@ -438,6 +531,7 @@ fn assert_contained(when: &str, shot: &Painted) {
          them in: {escaped:?}",
         escaped.len()
     );
+    below
 }
 
 /// (5) DISJOINT — the settings form's controls do not overlap.
@@ -464,6 +558,202 @@ fn assert_disjoint(when: &str, shot: &Painted) {
     );
 }
 
+/// ★ R1656 — a card added from the palette lands where nothing already is.
+///
+/// The placement was the canvas centre unconditionally, and two cards answering
+/// for the same pixels is a screen where a press is a coin toss. Nothing
+/// asserted it until a counterfactual disabled the free-spot search and every
+/// test stayed green: the swept states add ONE node, and one node on an
+/// eight-node graph happens to miss.
+#[test]
+fn r1656_cards_added_from_the_palette_do_not_cover_each_other() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        for _ in 0..6 {
+            super::add_node(&state, Role::Responder);
+        }
+        let placed: Vec<(String, Rect)> = state
+            .cards()
+            .into_iter()
+            .filter_map(|n| super::card_rect(&state, n).map(|r| (state.name_of(n), r)))
+            .collect();
+        assert!(
+            placed.len() >= 14,
+            "six added to the opening graph: {}",
+            placed.len()
+        );
+        let mut covering = Vec::new();
+        for (i, (a_name, a)) in placed.iter().enumerate() {
+            for (b_name, b) in &placed[i + 1..] {
+                if overlaps(*a, *b) {
+                    covering.push((a_name.clone(), b_name.clone()));
+                }
+            }
+        }
+        assert!(
+            covering.is_empty(),
+            "{} pair(s) of cards are painted on top of each other: {covering:?}",
+            covering.len()
+        );
+    });
+}
+
+/// ★ R1656 — the containment check can FAIL, proven against a scene built to
+/// fail it.
+///
+/// A counterfactual that replaced the ink metric with the run's own box — which
+/// is exactly the blindness this whole round is about, since the box is the
+/// promise — went unnoticed: the screen is clean, so a check with no power and a
+/// check with nothing to find are indistinguishable. A negative control is the
+/// difference, and it belongs beside the sweep rather than in the framework's
+/// own tests, because what is being proven here is that THIS caller wired the
+/// metric to something that measures.
+#[test]
+fn r1656_the_containment_check_reports_a_scene_built_to_break_it() {
+    let card = Rect::new(0, 0, 40, 20);
+    let mut inner = pinion_core::scene::ContainerNode::new(vec![Scene::Text(
+        pinion_core::scene::TextNode::styled(
+            "a string far wider than forty pixels",
+            Rect::new(0, 0, 40, 12),
+            pinion_core::style::TextStyle::new().with_size_px(11),
+        ),
+    )]);
+    inner.rect = card;
+    inner.tag = Some("card".into());
+    let scene = Scene::Container(inner);
+    let (escapes, _) = ink_escapes(&scene, (WIN_W, WIN_H));
+    assert!(
+        !escapes.is_empty(),
+        "the ink metric this sweep hands in must MEASURE — a stand-in that \
+         returns the box back reports every screen as clean, and that is the \
+         defect this round exists to make visible"
+    );
+}
+
+/// ★ R1656 — a card's text is part of the diagram, so it shrinks with it.
+///
+/// Written because a counterfactual that stopped the canvas font scaling was
+/// **not caught by anything**: the card's box is derived from its rows, so it
+/// simply grew, and at the zoom where a bigger card would have covered its
+/// neighbour the level-of-detail rule had already dropped the rows. A property
+/// nothing asserts is a property the next round can delete.
+#[test]
+fn r1656_a_cards_text_shrinks_with_the_diagram() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let face_at = |zoom: u32| {
+            state.zoom.set(zoom);
+            let (_, scene) = painted_at(&state, (WIN_W, WIN_H));
+            let mut smallest = u32::MAX;
+            scene.for_each_node(&mut |visit| {
+                if let Scene::Text(t) = visit.node {
+                    // The cards live in the canvas world, which is the only
+                    // subtree that scales; chrome keeps its face.
+                    if visit.absolute_rect().is_some() && t.style.font_size_px > 0 {
+                        smallest = smallest.min(t.style.font_size_px);
+                    }
+                }
+            });
+            smallest
+        };
+        let big = face_at(200);
+        let small = face_at(50);
+        assert!(
+            small < big,
+            "the smallest face on the screen is {small}px at 50% and {big}px at              200% — a card is part of the diagram, not chrome over it, so its              text has to scale with it"
+        );
+        state.zoom.set(spec::OPENING_ZOOM);
+    });
+}
+
+/// ★ R1656 — every painted mark is inside the box that owns it, asked of the
+/// framework rather than of a helper here.
+///
+/// The property a person had to find by looking: at the size this screen opens
+/// in, **seven of its eight node cards painted their last field row three to
+/// five pixels below their own border**, and every check in this module was
+/// green. Two reasons, and both are why this calls
+/// [`pinion_core::containment::escapes`] instead of comparing rectangles
+/// locally:
+///
+/// * `assert_contained` next door judges a run against its nearest **tagged
+///   ancestor**, and the card's parts were the card's SIBLINGS. The owner it
+///   resolved was the canvas, which is big enough to hold anything, so the
+///   question was answered honestly about the wrong box.
+/// * every rectangle in this module is the box the view *gave* a mark. The card
+///   rows were inside their boxes. What left the card was the **ink**, and the
+///   ink is not in the scene — it is a measurement.
+///
+/// So the check has to come from the framework, and the framework has to be
+/// asked with a real metric. The stub used here is proportional to the string
+/// rather than shaped, and that is deliberate: a shaped measurement makes this
+/// gate green or red depending on which fonts the host has ([[zero-flake-policy]]).
+/// The shaped answer is what `scene/containment` reports at boot to
+/// `tools/rpc_verify.py`, on the machine that is actually painting.
+fn assert_contained_ink(when: &str, scene: &Scene, size: (u32, u32)) -> usize {
+    let (escapes, offscreen) = ink_escapes(scene, size);
+    assert!(
+        escapes.is_empty(),
+        "{when}: {} painted mark(s) are outside the box that owns them — {:?}",
+        escapes.len(),
+        escapes
+            .iter()
+            .map(|e| (
+                e.content.clone().or_else(|| e.tag.clone()),
+                e.owner.clone(),
+                e.over
+            ))
+            .take(6)
+            .collect::<Vec<_>>()
+    );
+    offscreen
+}
+
+/// The escapes and how many of them were entirely off-window, without asserting.
+///
+/// Split out so a negative control can prove the metric MEASURES: a stand-in
+/// that hands the box back reports every scene as clean, and a check that
+/// cannot fail is indistinguishable from a screen with nothing wrong.
+fn ink_escapes(scene: &Scene, size: (u32, u32)) -> (Vec<pinion_core::containment::Escape>, usize) {
+    let escapes = pinion_core::containment::escapes(scene, &mut |text| {
+        // A monospace stand-in, wider per character than any face this screen
+        // uses, so a box that passes here has room for a real one. Height is
+        // the shaper's line box for the declared face, which is the number an
+        // author most often gets wrong.
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "a label is a handful of characters"
+        )]
+        let chars = text.content.chars().count() as u32;
+        let px = text.style.font_size_px.max(1);
+        let painted = if text.style.overflow.shortens() {
+            text.rect.w.min(chars * px)
+        } else {
+            chars * px
+        };
+        // ★ The WIDTH is stubbed and the HEIGHT is the laid-out one, and the
+        // split is deliberate. "Is this string too long for its column" is a
+        // question a font-independent stand-in can answer conservatively, and
+        // it is the one an author gets wrong. "Is this line box tall enough for
+        // this face" is answered by the layout pass using the real metrics of
+        // the host's fonts, so re-deciding it here against a constant would
+        // make this gate green or red depending on which fonts are installed
+        // ([[zero-flake-policy]]) — and would demand that the flow layout agree
+        // with a number this file made up. The shaped vertical answer is what
+        // `scene/containment` reports at boot, on the machine that is painting.
+        (painted, text.rect.h)
+    });
+    // Entirely below the window: nobody can see it, so it is the registered
+    // scroll gap rather than a mark drawn over its neighbour. Partly visible
+    // and escaping is still a defect — the grant is "invisible", not "low".
+    let (offscreen, escapes): (Vec<_>, Vec<_>) = escapes
+        .into_iter()
+        .partition(|e| e.painted.y >= size.1 || e.painted.x >= size.0);
+    (escapes, offscreen.len())
+}
+
 /// The one sweep, over every state.
 #[test]
 fn r1653_the_painted_screen_is_the_specification_in_every_state() {
@@ -472,15 +762,22 @@ fn r1653_the_painted_screen_is_the_specification_in_every_state() {
         let state = use_lab_state();
         let mut probed_total = 0;
         let mut richest = 0;
+        let mut demanded_min = usize::MAX;
+        let mut below_total = 0usize;
         for (when, mutate) in STATES {
             mutate(&state);
-            let shot = painted(&state);
-            assert_forward(when, &state, &shot);
-            let probed = assert_reachable(when, &state, &shot);
-            probed_total += probed;
-            richest = richest.max(probed);
-            assert_contained(when, &shot);
-            assert_disjoint(when, &shot);
+            for (how_big, size) in SIZES {
+                let label = format!("{when}, {how_big}");
+                let (shot, scene) = painted_and_scene(&state, *size);
+                let demanded = assert_forward(&label, &state, &shot, *size);
+                demanded_min = demanded_min.min(demanded);
+                let probed = assert_reachable(&label, &state, &shot, *size);
+                probed_total += probed;
+                richest = richest.max(probed);
+                below_total += assert_contained(&label, &shot, *size);
+                assert_disjoint(&label, &shot);
+                below_total += assert_contained_ink(&label, &scene, *size);
+            }
         }
         // ★ Floors on the SWEEP, not only on each state — because a state that
         // is deleted takes its own assertions with it. A counterfactual that
@@ -490,6 +787,38 @@ fn r1653_the_painted_screen_is_the_specification_in_every_state() {
             STATES.len() >= 8,
             "the sweep visits {} state(s)",
             STATES.len()
+        );
+        // ★ R1656 — a floor on the SIZE axis for the reason there is one on the
+        // state axis: an axis with one entry looks like coverage and is a
+        // constant. This one had one entry for 1,656 rounds.
+        // ★ R1656 — what the two grants above actually cost, as a number, so a
+        // grant cannot quietly grow into a hole. `demanded_min` is the
+        // smallest population the forward check still demanded at any size,
+        // and `below_total` is how many marks fell past the window bottom
+        // across the whole sweep — the registered scroll gap, measured rather
+        // than assumed ([[debt-the-node-lab-panes-do-not-scroll]]).
+        assert!(
+            demanded_min >= 30,
+            "the leanest size still demanded {demanded_min} element(s) — a \
+             grant that leaves the forward check with almost nothing to prove \
+             is a hole, not an exemption"
+        );
+        assert!(
+            below_total <= 40,
+            "{below_total} mark(s) fell past the window bottom across the \
+             sweep; the panes not scrolling is a registered gap and this is \
+             its ratchet"
+        );
+        assert!(
+            SIZES.len() >= 3,
+            "the sweep visits {} size(s) — the opening size, a maximised \
+             window and the declared floor are three different screens",
+            SIZES.len()
+        );
+        assert!(
+            SIZES.iter().any(|(_, (w, _))| *w > WIN_W),
+            "one of the sizes has to be BIGGER than the design size, which is \
+             the case a person reported"
         );
         assert!(
             richest >= 68,
@@ -689,8 +1018,13 @@ fn r1654_the_screen_fills_whatever_window_it_is_given() {
     let owner = Owner::new();
     owner.run(|| {
         let state = use_lab_state();
-        for size in [(WIN_W, WIN_H), (1920, 1200), (900, 620)] {
-            let shot = painted_at(&state, size);
+        // ★ R1656 — the smallest entry is the DECLARED floor rather than a
+        // number picked here. It was `(900, 620)`, which R1656 measured to be
+        // below what this screen can paint; the layout clamps at the floor, so
+        // the assertion was comparing the window it asked for against the
+        // window it got and would fail for a reason that is not a defect.
+        for size in [(WIN_W, WIN_H), (1920, 1200), (super::MIN_W, super::MIN_H)] {
+            let shot = painted_at(&state, size).0;
             let rail = shot.tags["lab.rail"];
             let palette = shot.tags["lab.palette"];
             let canvas = shot.tags["lab.canvas"];
@@ -730,8 +1064,8 @@ fn r1654_the_screen_fills_whatever_window_it_is_given() {
             assert_eq!(inspector.w, super::INSP_W, "{size:?}: fixed width");
         }
         // And the canvas is the one that absorbs the difference.
-        let narrow = painted_at(&state, (900, 620)).tags["lab.canvas"];
-        let wide = painted_at(&state, (1920, 1200)).tags["lab.canvas"];
+        let narrow = painted_at(&state, (900, 620)).0.tags["lab.canvas"];
+        let wide = painted_at(&state, (1920, 1200)).0.tags["lab.canvas"];
         assert!(
             wide.w > narrow.w && wide.h > narrow.h,
             "the canvas takes the room the window gained: {narrow:?} -> {wide:?}"

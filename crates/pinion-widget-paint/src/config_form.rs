@@ -340,6 +340,13 @@ const CHIP_PAD: u32 = 10;
 const CHIP_GAP: u32 = 6;
 /// Height of the "add this key" chip row entries.
 const ADD_CHIP_H: u32 = 24;
+
+/// A badge's horizontal padding, one side. Named because the header's width
+/// budget has to add it back (R1656).
+const BADGE_PAD: u32 = 6;
+
+/// The gap between the header's items, which the width budget also spends.
+const HEADER_GAP: u32 = 6;
 /// A numeric stepper button's width.
 const STEP_W: u32 = 26;
 /// Vertical space between a list's element rows.
@@ -376,7 +383,12 @@ pub fn form_geometry(form: &ConfigForm, origin: (u32, u32), style: &FormStyle) -
 /// One row's rectangles, under the style's policy pair.
 fn lay_row(field: &ConfigField, at: (u32, u32), key_col: u32, style: &FormStyle) -> RowBox {
     let (x0, y) = at;
-    let key_line = style.key_px + 7;
+    // ★ R1656 — the shaper's LINE box for this face, not the face's size plus a
+    // number somebody picked. `key_px + 7` was one short of it, so every key
+    // label on every consumer of this widget painted a pixel below its own row
+    // — invisible to a boolean overflow flag that was true of most runs anyway,
+    // and caught the moment `pinion_core::containment` asked per edge.
+    let key_line = pinion_core::containment::line_box(style.key_px);
     {
         let hungry = control_is_hungry(field.shape());
         let hint = control_hint(field, style);
@@ -598,7 +610,12 @@ fn badge(text: &str, ink: Color, theme: &Theme, tag: Option<String>) -> Scene {
                 .flex(FlexDirection::Row)
                 .with_align_items(AlignItems::Center)
                 .with_justify(JustifyContent::Center)
-                .with_padding(Rect::new(6, 2, 6, 2))
+                .with_padding(Rect::new(BADGE_PAD, 2, BADGE_PAD, 2))
+                // ★ R1656 — a badge is a read-out and must not be shrunk to
+                // make room; the key beside it is what gives way (R1536
+                // measured a 10px mark painted at 6px when a decoration was
+                // allowed to absorb a deficit).
+                .with_flex_shrink(0.0)
                 // ★ R1655 — a badge is a READ-OUT, and a tagged node that is
                 // not transparent becomes the §5.35 router's hit target: the
                 // router looks its tag up as an `External`, finds none (the tag
@@ -695,13 +712,39 @@ fn view_header(
         // The header: key, declared type, applies badge, and the defect when
         // there is one. The defect sits ON the row rather than only in a list
         // at the bottom, which is why `ConfigDefect` carries its key.
-        let mut header: Vec<Scene> = vec![Scene::Text(TextNode::styled(
-            field.key().to_owned(),
-            Rect::default(),
-            form_run_style()
-                .with_size_px(11)
-                .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
-        ))];
+        // ★ R1656 — the LAYOUT decides who gives way, not an estimate here.
+        //
+        // The key was `Rect::default()`, and a zero-width box means "no
+        // maximum" to the shaper, so the eliding policy this style has declared
+        // since R1654 could never fire: a long path simply pushed the badges
+        // past the header's own right edge. Measured the first time
+        // `pinion_core::containment` was pointed at a real screen — the defect
+        // badge on `transport.link.tx.batch_size` was painted 7px outside its
+        // row, and nothing else could see it because the row's box was right,
+        // the badge's box was right, and only their SUM was wrong.
+        //
+        // The first repair computed a width budget by measuring the badge
+        // strings, and it was still 7px short — a fallback advance estimate is
+        // not a shaped advance, and a gate built on the difference is a gate
+        // that is green on one host. So the deficit is handed to the flex pass:
+        // the badges refuse to shrink (they are read-outs, and R1536 measured
+        // what shrinking one costs), the key is allowed to shrink below its
+        // content, and the shaper then elides it to the width it was actually
+        // given. No number in this file has to be right.
+        let mut header: Vec<Scene> = vec![Scene::Text(
+            TextNode::styled(
+                field.key().to_owned(),
+                Rect::default(),
+                form_run_style()
+                    .with_size_px(11)
+                    .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+            )
+            .with_layout(
+                LayoutStyle::new()
+                    .with_min_size(Size::px(0, 0))
+                    .with_flex_shrink(1.0),
+            ),
+        )];
         header.push(badge(
             field.ty(),
             theme.resolve(ColorRole::OnSurfaceMuted),
@@ -732,7 +775,7 @@ fn view_header(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
                     .with_align_items(AlignItems::Center)
-                    .with_gap(6)
+                    .with_gap(HEADER_GAP)
                     .with_pointer_transparent(true),
                 row.header,
                 origin,
@@ -1135,6 +1178,87 @@ pub fn row_description(nodes: &[AccessNode], tag_prefix: &str, key: &str) -> Opt
 
 #[cfg(test)]
 mod tests {
+
+    /// ★ R1656 — a header's parts fit the header, however long the key is.
+    ///
+    /// The badges are read-outs and the key gives way, so a long configuration
+    /// path elides instead of pushing them off the row. Asserted HERE and not
+    /// only in a consumer's sweep for the reason R1655 established: a
+    /// consumer's suite finds one screen at a time, and this painter is used by
+    /// every screen that shows a settings form. Run through the real layout
+    /// pass, because "who absorbs the deficit" is a question only the flex
+    /// solver answers — the round's first repair computed a width budget by
+    /// measuring the badge strings and was still 7px short.
+    #[test]
+    fn r1656_a_long_key_gives_way_instead_of_pushing_the_badges_out() {
+        use pinion_runtime::layout::compute_layout;
+        let theme = pinion_core::theme::Theme::default();
+        let style = FormStyle::default();
+        let field = ConfigField::new(
+            "transport.link.tx.batch_size.and.then.some.more.segments",
+            "int",
+            Applies::Restart,
+            "65535",
+        );
+        let form = ConfigForm::new(vec![field], Vec::new());
+        let geometry = form_geometry(&form, (0, 0), &style);
+        let mut scene = view_config_form("f", &form, &geometry, &theme);
+        let mut cache = pinion_text::LayoutCache::new();
+        compute_layout(&mut scene, &mut cache, 400, 400);
+        let escapes = pinion_core::containment::escapes(&scene, &mut |t| {
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "a configuration path is a handful of characters"
+            )]
+            let chars = t.content.chars().count() as u32;
+            let px = t.style.font_size_px.max(1);
+            let w = if t.style.overflow.shortens() {
+                t.rect.w.min(chars * px)
+            } else {
+                chars * px
+            };
+            (w, t.rect.h)
+        });
+        assert!(
+            escapes.is_empty(),
+            "{} mark(s) left the box that owns them with a long key: {:?}",
+            escapes.len(),
+            escapes
+                .iter()
+                .map(|e| (e.content.clone().or_else(|| e.tag.clone()), e.over))
+                .collect::<Vec<_>>()
+        );
+    }
+
+    /// ★ R1656 — a row's key line is at least the LINE box of the face it
+    /// holds, at every size a caller can set.
+    ///
+    /// Written because a counterfactual that put it back to `key_px + 7` — one
+    /// pixel short, which is what shipped — was caught by nothing in Rust. The
+    /// escape it causes is real and `scene/containment` reports it at boot, but
+    /// a property this crate owns should not depend on a consumer booting to be
+    /// checked, and a gate that lives only in another language is a gate that
+    /// does not run when this crate is edited.
+    #[test]
+    fn r1656_a_rows_key_line_holds_the_face_it_is_given() {
+        for key_px in 6..=24u32 {
+            let style = FormStyle {
+                key_px,
+                ..FormStyle::default()
+            };
+            let field = ConfigField::new("listen.endpoints", "text", Applies::Restart, "tcp/0:1");
+            let form = ConfigForm::new(vec![field], Vec::new());
+            let row = &form_geometry(&form, (0, 0), &style).rows[0];
+            let want = pinion_core::containment::line_box(key_px);
+            assert!(
+                row.header.h >= want,
+                "a {key_px}px face needs a {want}px line box and the header \
+                 reserved {}px — a box authored at the FONT SIZE overflows by \
+                 construction, which is the whole reason the ink read exists",
+                row.header.h
+            );
+        }
+    }
     use pinion_core::widgets::config_form::{Applies, ConfigField, ConfigForm, FieldType};
 
     use super::{

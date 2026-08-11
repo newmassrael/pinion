@@ -72,6 +72,19 @@ pub struct PaintedTextReport {
     /// can spill sideways on one line, and a run can wrap inside a box tall
     /// enough to hold both.
     pub lines: u32,
+    /// How far the ink reaches past the box's right edge, in pixels — `0` when
+    /// it fits.
+    ///
+    /// ★ R1656 — published because the boolean beside it **cannot
+    /// discriminate**. Measured on the analysis-tool screen, `overflows` is
+    /// true for 124 of 157 runs: a shaper's line box for a 12px face is 21px,
+    /// so a box authored at anything less overflows vertically, and that is
+    /// near-universal and harmless. A gate needs the amount and the axis, and a
+    /// reader needs to tell "two pixels of line-box rounding" from "this label
+    /// is painted across the row below it".
+    pub over_w: u32,
+    /// How far the ink reaches past the box's bottom edge, in pixels.
+    pub over_h: u32,
     /// Whether the ink is larger than the box the scene gave it.
     ///
     /// ★ The question this surface exists to answer. A rectangle in a scene is
@@ -154,6 +167,8 @@ pub fn collect_painted(scene: &Scene, cache: &mut LayoutCache) -> Vec<PaintedTex
             ink_w,
             ink_h,
             lines,
+            over_w: ink_w.saturating_sub(t.rect.w.max(1) * u32::from(t.rect.w > 0)),
+            over_h: ink_h.saturating_sub(t.rect.h.max(1) * u32::from(t.rect.h > 0)),
             // Against the box the SCENE gave the run, not against the clipped
             // rectangle: a run inside a scroll that is half out of view has
             // kept its promise, and reporting that as an overflow would make

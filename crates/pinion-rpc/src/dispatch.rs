@@ -586,6 +586,10 @@ pub struct DispatchContext<'a> {
     /// they hold, collected with `text_painted::collect_painted`.
     /// `scene/text_painted` reads it.
     pub text_painted: Option<Vec<crate::text_painted::PaintedTextReport>>,
+    /// R1656 §5.32 §5.36 — the marks this frame painted outside the box that
+    /// owns them, collected with `pinion_core::containment::escapes`.
+    /// `scene/containment` reads it.
+    pub containment: Option<crate::containment::ContainmentOutcome>,
 
     /// R907 §5.16 §5.7 — per-window frame-timing profiler snapshot.
     /// Resolved by the embedder before dispatch (the
@@ -1668,6 +1672,7 @@ impl<'a> DispatchContext<'a> {
             revision,
             paint_producer: None,
             access_producer: None,
+            containment: None,
             resize_request: None,
             declare_request: None,
             accelerators: Vec::new(),
@@ -1978,6 +1983,13 @@ impl<'a> DispatchContext<'a> {
         self
     }
 
+    /// R1656 §5.32 §5.36 — install the escape report `scene/containment` reads.
+    #[must_use]
+    pub fn with_containment(mut self, report: crate::containment::ContainmentOutcome) -> Self {
+        self.containment = Some(report);
+        self
+    }
+
     /// R907 §5.16 §5.7 — builder: attach the per-window frame-timing
     /// profiler snapshot the embedder pre-resolved from
     /// `pinion-shell::ShellCore::frame_timings_for_window`.
@@ -2285,6 +2297,8 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     let text_blocks = ctx.text_blocks.take();
     // R1654 §5.36 — the same shape: `scene/text_painted` reads it.
     let text_painted = ctx.text_painted.take();
+    // R1656 §5.32 — the same shape: `scene/containment` reads it.
+    let containment = ctx.containment.take();
     // R907 §5.16 — per-window frame-timing profiler snapshot the
     // embedder pre-resolved from `ShellCore::frame_timings_for_window`.
     // Copy out for the dispatch lifetime; `scene/frame_timings` reads
@@ -2839,6 +2853,10 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                 ),
                 "scene/text_painted" => (
                     crate::text_painted::handle_scene_text_painted(text_painted.as_deref()),
+                    HandlerKind::Read,
+                ),
+                "scene/containment" => (
+                    crate::containment::handle_scene_containment(containment.as_ref()),
                     HandlerKind::Read,
                 ),
                 "scene/text_backgrounds" => (

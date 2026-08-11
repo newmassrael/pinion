@@ -507,6 +507,38 @@ def _text_smear_budget() -> dict[str, int]:
     return _TEXT_SMEAR_BUDGET
 
 
+_CONTAINMENT_BUDGET: Optional[dict[str, int]] = None
+
+
+def _containment_budget() -> dict[str, int]:
+    """R1656 — the measured backlog of marks painted outside the box that owns
+    them, by example.
+
+    A COUNT, for the reason `_text_smear_budget` is one: the identity of an
+    escape is a rectangle and rectangles move, so pinning them would report an
+    unrelated layout change as a new defect. The count only falls.
+
+    The population this was measured against is the point of the file. The
+    class it gates had SEVEN of eight node cards painting a row past their own
+    border on the screen four rounds had called a reproduction, and a person
+    found it because nothing here could: the framework's own reads answered
+    "the run is inside its owner" while the owner they resolved was the canvas.
+    """
+    global _CONTAINMENT_BUDGET
+    if _CONTAINMENT_BUDGET is None:
+        budget: dict[str, int] = {}
+        path = WORKSPACE_ROOT / "docs" / "containment-budget.tsv"
+        if path.is_file():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip() or line.lstrip().startswith("#"):
+                    continue
+                example, _, count = line.partition("\t")
+                if count.strip().isdigit():
+                    budget[example.strip()] = int(count.strip())
+        _CONTAINMENT_BUDGET = budget
+    return _CONTAINMENT_BUDGET
+
+
 class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
     """Spawn a pinion example, drive it over JSON-RPC 2.0 stdin/stdout."""
 
@@ -708,6 +740,7 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         try:
             self._gate_pointer_reach()
             self._gate_text_smear()
+            self._gate_containment()
         except BaseException:
             self.shutdown()
             raise
@@ -843,6 +876,62 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             print(
                 f"[text-smear] {self.example}: {len(smeared)} overlapping "
                 f"pair(s), budget {allowed}"
+            )
+
+    def _gate_containment(self) -> None:
+        """R1656 §5.32 §5.36 — refuse a screen that paints outside its own boxes.
+
+        Every demo pays this at boot, because the class it catches is invisible
+        to everything a demo does afterwards. A rectangle in a scene is a
+        promise; every other read here reports the promise, and this is the only
+        one that reports whether it was kept. Measured on the screen it was
+        written for: seven of eight node cards painted their last field row
+        three to five pixels below their own border, at the size the app opens
+        in, with the round's own 8-state painted-spec sweep green — because the
+        card's parts were SIBLINGS of the card, so "is this run inside its
+        owner" was being asked about the canvas.
+
+        `clipped` counts too. An overhang a clip cuts away loses the reader the
+        content with nothing saying so, which is a different repair (elide,
+        wrap, scroll) and the same defect.
+
+        A binary too old to answer the method is driven without the gate, the
+        same tolerance the boot baseline gives.
+        """
+        try:
+            resp = self.request("scene/containment")
+        except RpcError as exc:
+            if exc.code in (-32601, -32602):
+                return  # stale binary, or a host that cannot shape
+            raise
+        assert resp is not None
+        out = resp.result
+        escapes = out.get("escapes", [])
+        allowed = _containment_budget().get(self.example, 0)
+        if len(escapes) > allowed:
+            rows = "; ".join(
+                f"{(e.get('content') or e.get('tag') or '<a mark>')!r} is "
+                f"{max(e['over'].values())}px outside {e['owner']} ({e['fate']})"
+                for e in escapes[:6]
+            )
+            raise AssertionError(
+                f"{self.example}: {len(escapes)} painted mark(s) are outside "
+                f"the box that owns them and the budget allows {allowed} — "
+                f"{rows}. Two shapes cause almost all of it: a box whose size "
+                f"is a CONSTANT while its contents are derived (the repair is "
+                f"to derive the box from the rows it paints, so a row that does "
+                f"not fit is not expressible), and a text box authored at the "
+                f"font size rather than at its LINE box (the shaper's line for "
+                f"a 12px face is 21px). `docs/containment-budget.tsv` carries "
+                f"the measured backlog; raising a number there to silence this "
+                f"is the one use that turns the ratchet back into a suggestion."
+            )
+        if escapes or allowed:
+            print(
+                f"[containment] {self.example}: {len(escapes)} escape(s) "
+                f"(smeared {out.get('smeared', 0)} / clipped "
+                f"{out.get('clipped', 0)}) of {out.get('marks', 0)} marks, "
+                f"budget {allowed}"
             )
 
     def __exit__(self, exc_type, exc, tb) -> None:

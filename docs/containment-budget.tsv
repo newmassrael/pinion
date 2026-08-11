@@ -1,0 +1,61 @@
+# R1656 — the measured backlog of painted marks that left the box that owns them.
+#
+# `<example>\t<count>`. A RATCHET: the boot gate in `tools/rpc_verify.py` refuses
+# a surface that reports more escapes than its row allows, so a number here may
+# fall and never rise. Raising one to silence a red is the single use that turns
+# this back into a suggestion.
+#
+# Why a count rather than a list of marks: the identity of an escape is a
+# rectangle, and rectangles move. Pinning them would report an unrelated layout
+# change as a new defect — the same reasoning `docs/text-smear-budget.tsv` gives.
+#
+# MEASURED 2026-08-11 over all 223 example packages, at each one's own opening
+# size, through the real view -> layout -> shape pipeline:
+#
+#   measured                214
+#   surfaces with escapes    25   (this file)
+#   total escapes            95
+#   unmeasured                9   (listed below, and NOT counted as clean)
+#
+# The nine that could not be measured, and why. Recorded rather than omitted,
+# because "did not answer" and "answered zero" are different facts and a file
+# that keeps only the second reads as coverage it does not have:
+#
+#   ai-introspect-demo      boot timed out on the readiness handshake
+#   forge-counter           exits during boot (rc=0) — a codegen fixture, no window
+#   hello-audio             no audio device on this host
+#   hello-place-map         no device
+#   hello-narrative-walk    no device
+#   hello-button-tui        the terminal backend has no GPU surface to shape with
+#   hello-commands-tui      as above
+#   hello-textfield-tui     as above
+#   hello-toggle-tui        as above
+#
+# The two biggest rows are worth naming here because they are the analysis tool's
+# other screens, and this round repaired only the node-graph one:
+# `hello-analyzer-shell` (18) and `hello-virtual-table` (14).
+hello-analyzer-shell	18
+hello-virtual-table	14
+hello-property-grid	7
+hello-dock-chart	6
+hello-inspector	6
+hello-tabbed-chart	6
+hello-rating	5
+hello-scene-scale	4
+hello-data-grid	3
+hello-group-box	3
+hello-legend-toggle	3
+hello-linked-legend	3
+hello-rescale-toggle	3
+hello-status-bar	3
+hello-autoscale-y	1
+hello-chart	1
+hello-dock-panels-editor	1
+hello-endpoint-identity	1
+hello-fab	1
+hello-histogram-brush	1
+hello-linked-brush	1
+hello-row-dissect	1
+hello-scatter	1
+hello-textarea	1
+hello-textgrid	1

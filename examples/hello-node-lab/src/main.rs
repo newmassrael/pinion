@@ -58,6 +58,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
+use pinion_core::containment::line_box;
 use pinion_core::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
@@ -140,9 +141,39 @@ fn window_size() -> (u32, u32) {
 /// Below it the panes would overlap, so the layout stops shrinking and the
 /// window clips instead — the same choice a fixed minimum size makes, stated
 /// here rather than left to arithmetic that would produce negative widths.
-const MIN_W: u32 = RAIL_W + PALETTE_W + 240 + INSP_W;
+/// ★ R1656 — the width the toolbar's RIGHT-anchored cluster needs. The zoom
+/// pair, the readout, the config button and the run button are all placed by
+/// subtracting a constant from the pane's right edge, so a pane narrower than
+/// this paints them off its own left side — and the floor below is what
+/// declares that width supported.
+const TOOLBAR_RIGHT_CLUSTER: u32 = 300;
+
+/// ★ R1656 — the canvas pane's floor is DERIVED from what the chrome above it
+/// needs, not asserted at 240. The size axis found the difference on its first
+/// run: at the old floor the zoom readout was not painted at all, because
+/// `right - 300` had gone past the pane's own left edge. A declared minimum the
+/// screen cannot actually paint is a claim nobody was checking.
+const MIN_W: u32 = RAIL_W + PALETTE_W + (TOOLBAR_RIGHT_CLUSTER + TOOLBAR_LEFT_CLUSTER) + INSP_W;
+
+/// ★ R1656 — the toolbar's LEFT half: the graph title, the node/link counts and
+/// the launch-gate chip, which is placed after them. Named for the same reason
+/// its sibling is — the floor has to be wide enough for both halves, and the
+/// size axis found the gate chip painted past the pane's right edge when it
+/// was not.
+const TOOLBAR_LEFT_CLUSTER: u32 = 420;
 /// The smallest height, likewise.
-const MIN_H: u32 = APP_BAR_H + TOOLBAR_H + 200;
+/// ★ R1656 — MEASURED, not asserted. The old floor (`+ 200`) declared a height
+/// at which the palette and the inspector paint 22 of their 46 controls below
+/// the window's own bottom edge — the size axis reported it the first time it
+/// ran, and no check before that had ever laid this screen out at anything but
+/// the design size.
+///
+/// The panes do not scroll, so the floor IS their content height; making them
+/// scroll would let this number come back down and is the better answer
+/// ([[debt-the-node-lab-panes-do-not-scroll]]). Until then a declared minimum
+/// has to be one the screen can actually paint, because the resize lower bound
+/// is set from it and a person can therefore reach it.
+const MIN_H: u32 = APP_BAR_H + TOOLBAR_H + 680;
 
 fn canvas_rect() -> Rect {
     let (w, h) = window_size();
@@ -180,10 +211,6 @@ fn toolbar_rect() -> Rect {
 /// The height of one palette row, and the gap under a group heading.
 const PAL_ROW_H: u32 = 40;
 const PAL_HEAD_H: u32 = 22;
-/// A node card's header band.
-const CARD_HDR: u32 = 26;
-/// One key/value line inside a node card.
-const CARD_ROW_H: u32 = 15;
 /// A pin's diameter.
 const PIN: u32 = 11;
 /// The zoom range, in percent, and the step a press moves it.
@@ -909,21 +936,149 @@ fn card_width(state: &LabState, node: NodeId) -> u32 {
         .map_or(146, |declared| declared.rect.2)
 }
 
-/// The rectangle a node's card occupies, in window pixels.
-fn card_rect(state: &LabState, node: NodeId) -> Option<Rect> {
+/// Every rectangle a node's card is made of, derived once.
+///
+/// ★ R1656 — the card's own box is computed FROM the rows it paints, and the
+/// rows are placed in the same pass. Before this they were two derivations of
+/// one fact: the height was `scaled(HDR + rows * ROW_H + 6)` while the rows
+/// were placed at `y + HDR + n * ROW_H` **unscaled**, so at any zoom below 100%
+/// the last row was painted below the border — measured at the size the screen
+/// opens in, seven of eight cards spilled by three to five pixels, and a person
+/// reported it before any check here did.
+///
+/// Written as a shape rather than as a rule ("remember to scale both") for the
+/// reason [`pinion_core::widgets::config_form`]'s row parts are: a rule can be
+/// half-applied and a derivation cannot. `rect.h` is the union of the parts,
+/// so a row that does not fit is not expressible.
+struct CardShape {
+    /// The card's box, in window pixels.
+    rect: Rect,
+    /// The identity label, relative to `rect`.
+    id: Rect,
+    /// The role badge and the text inside it, relative to `rect`.
+    badge: Rect,
+    /// The badge's label, relative to `rect`.
+    badge_text: Rect,
+    /// The face the identity label is drawn at — scaled, so it shrinks with
+    /// the diagram it belongs to.
+    id_font: u32,
+    /// The face a digest row is drawn at.
+    row_font: u32,
+    /// The face the role badge is drawn at.
+    badge_font: u32,
+    /// One (key, value) pair of rectangles per digest row, relative to `rect`.
+    rows: Vec<(Rect, Rect)>,
+}
+
+/// The size a face on the canvas is drawn at: it scales with the zoom, because
+/// a node card is part of the diagram and not chrome over it.
+///
+/// ★ R1656 — this scaling did not exist. The card's BOX was scaled while its
+/// font and its row pitch were not, so at any zoom below 100% the two disagreed
+/// and the disagreement was painted: rows placed 15px apart inside a box sized
+/// for `zoom * 15`. Floored rather than allowed to reach zero, because a face
+/// of 0px is not a smaller label, it is an invisible one — the same reason
+/// R1653 scaled the pins.
+fn canvas_font(state: &LabState, px: u32) -> u32 {
+    scaled(state, px).max(6)
+}
+
+/// Derive a node's card: where every part goes, and therefore how big it is.
+fn card_shape(state: &LabState, node: NodeId) -> Option<CardShape> {
     let (nx, ny) = {
         let doc = state.doc.borrow();
         let held = doc.tree(ROOT)?.node(node)?;
         (held.x, held.y)
     };
     let (x, y) = to_content(state, nx, ny);
-    let rows = u32::try_from(card_rows(state, node).len()).unwrap_or(0);
-    Some(Rect::new(
-        x,
-        y,
-        scaled(state, card_width(state, node)),
-        scaled(state, CARD_HDR + rows * CARD_ROW_H + 6),
-    ))
+    let w = scaled(state, card_width(state, node));
+    let pad = scaled(state, 10).max(3);
+    let id_font = canvas_font(state, FONT_SMALL);
+    let row_font = canvas_font(state, FONT_TINY);
+    let id_line = line_box(id_font);
+    let row_line = line_box(row_font);
+    // The header band is as tall as the identity line it holds, plus the gap
+    // above and below it — not a constant that happens to fit at one zoom.
+    // Tight on purpose: `line_box` already over-reserves (it is a
+    // font-independent floor, not a measurement), so padding it generously
+    // again compounds — measured, five lines of that made a card 9px taller
+    // than the spacing the reference lays its graph out on, and the cards
+    // started covering each other.
+    let id_top = 2;
+    let hdr = id_top + id_line + 2;
+    let row_pitch = row_line + 1;
+    let key_w = scaled(state, 40).max(8);
+    let gap = scaled(state, 2).max(1);
+    // ★ R1656 — LEVEL OF DETAIL: below the zoom at which a row's face would be
+    // drawn at the legibility floor, the card shows its identity band alone.
+    //
+    // Derived from a real tension rather than chosen for looks. `canvas_font`
+    // floors the face at 6px, because a 0px label is not a smaller label but an
+    // invisible one — so below that zoom the TEXT stops shrinking while the
+    // graph's spacing keeps shrinking, and a card with rows grows relative to
+    // the diagram until it covers its neighbour. Measured: the press sweep found
+    // 34 of 2,556 points on a card reaching a different one at the minimum zoom.
+    // Every node editor this is judged against collapses a node's contents on
+    // the way out for the same reason.
+    let detailed = scaled(state, FONT_TINY) >= 6;
+    let rows: Vec<(Rect, Rect)> = card_rows(state, node)
+        .iter()
+        .take(if detailed { usize::MAX } else { 0 })
+        .enumerate()
+        .map(|(n, _)| {
+            let top = hdr + u32::try_from(n).unwrap_or(0) * row_pitch;
+            (
+                Rect::new(pad, top, key_w, row_line),
+                Rect::new(
+                    pad + key_w + gap,
+                    top,
+                    w.saturating_sub(pad * 2 + key_w + gap).max(8),
+                    row_line,
+                ),
+            )
+        })
+        .collect();
+    // The height IS the content: the lowest edge any part reaches, plus the
+    // bottom padding. Nothing here can disagree with what the painter draws,
+    // because the painter draws exactly these rectangles.
+    let content_bottom = rows
+        .iter()
+        .map(|(_, value)| value.y + value.h)
+        .max()
+        .unwrap_or(hdr);
+    let badge_w = scaled(state, 38).max(10);
+    let badge_font = canvas_font(state, 8);
+    let badge_line = line_box(badge_font);
+    Some(CardShape {
+        rect: Rect::new(x, y, w, content_bottom + 3),
+        id: Rect::new(
+            pad,
+            id_top,
+            w.saturating_sub(pad * 2 + badge_w).max(8),
+            id_line,
+        ),
+        badge: Rect::new(
+            w.saturating_sub(badge_w + pad / 2),
+            id_top + id_line.saturating_sub(badge_line) / 2,
+            badge_w,
+            badge_line,
+        ),
+        badge_text: Rect::new(
+            w.saturating_sub(badge_w + pad / 2) + gap,
+            id_top + id_line.saturating_sub(badge_line) / 2,
+            badge_w.saturating_sub(gap * 2).max(4),
+            badge_line,
+        ),
+        id_font,
+        row_font,
+        badge_font,
+        rows,
+    })
+}
+
+/// The rectangle a node's card occupies, in window pixels.
+fn card_rect(state: &LabState, node: NodeId) -> Option<Rect> {
+    card_shape(state, node).map(|shape| shape.rect)
 }
 
 /// A pin's rectangle. `dial` is the outgoing pin on the right edge.
@@ -936,7 +1091,10 @@ fn card_rect(state: &LabState, node: NodeId) -> Option<Rect> {
 /// never reach, which is the class this round exists to make visible.
 fn pin_rect(state: &LabState, card: Rect, dial: bool) -> Rect {
     let pin = scaled(state, PIN).max(3);
-    let y = card.y + scaled(state, CARD_HDR).max(4) / 2;
+    // ★ R1656 — the header's HALF, read from the same derivation the card is
+    // built from. It was `scaled(CARD_HDR)/2` against a constant the card no
+    // longer uses, which is one fact in two places by construction.
+    let y = card.y + (line_box(canvas_font(state, FONT_SMALL)) / 2).max(2);
     if dial {
         Rect::new(card.x + card.w.saturating_sub(pin / 2), y, pin, pin)
     } else {
@@ -1337,7 +1495,11 @@ fn gate_rect(state: &LabState) -> Rect {
 
 fn hint_rect() -> Rect {
     let canvas = canvas_rect();
-    Rect::new(canvas.x + 12, canvas.y + canvas.h - 34, 470, 24)
+    // ★ R1656 — clamped to the pane it sits in. It was a flat 470, so on a
+    // canvas narrower than that the strip advertising the screen's gestures was
+    // painted over the inspector beside it.
+    let w = 470.min(canvas.w.saturating_sub(24)).max(80);
+    Rect::new(canvas.x + 12, canvas.y + canvas.h - 34, w, 24)
 }
 
 // ── The inspector ───────────────────────────────────────────────────────────
@@ -1851,7 +2013,8 @@ fn toolbar(state: &LabState, ink: Ink) -> Scene {
             Some(gate_colour),
             vec![label(
                 gate_word,
-                Rect::new(10, 5, 84, 13),
+                // ★ R1656 — the LINE box of the face, not the face's size.
+                Rect::new(10, 4, 84, line_box(FONT_SMALL)),
                 FONT_SMALL,
                 gate_colour,
             )],
@@ -1992,8 +2155,26 @@ fn canvas_world(state: &LabState, ink: Ink) -> Vec<Scene> {
 /// The reference's dot grid: a pip every 22 canvas units, moving with the pan
 /// so the canvas reads as a surface being moved rather than a viewport sliding
 /// over a static picture.
+/// How big the world surface is, at this zoom and this window.
+///
+/// ★ R1656 — ONE derivation, because two of them disagreed. The surface sized
+/// itself here while the pip texture on it ran to the VIEWPORT's width, and at
+/// the minimum zoom the world is narrower than the viewport — so the texture
+/// marched thousands of dots past the edge of the thing it was decorating. The
+/// containment check reported 11,472 of them the first time the size axis
+/// visited "zoomed out, maximised"; before that nothing looked, because a pip
+/// carries no tag and every other gate here is tag-keyed.
+fn world_extent(state: &LabState) -> (u32, u32) {
+    let rect = canvas_rect();
+    (
+        scaled(state, WORLD.unsigned_abs()).max(rect.w),
+        scaled(state, WORLD.unsigned_abs()).max(rect.h),
+    )
+}
+
 fn canvas_grid(state: &LabState, ink: Ink) -> Vec<Scene> {
     let rect = canvas_rect();
+    let (world_w, world_h) = world_extent(state);
     let mut children: Vec<Scene> = Vec::new();
     let pitch = scaled(state, 22).max(6);
     // Only the slice of the surface the viewport is over: the pips are a
@@ -2006,9 +2187,9 @@ fn canvas_grid(state: &LabState, ink: Ink) -> Vec<Scene> {
     };
     let (from_x, from_y) = (first(ox), first(oy));
     let mut gy = from_y;
-    while gy < from_y + rect.h + pitch {
+    while gy < (from_y + rect.h + pitch).min(world_h) {
         let mut gx = from_x;
-        while gx < from_x + rect.w + pitch {
+        while gx < (from_x + rect.w + pitch).min(world_w) {
             children.push(Scene::Container(
                 ContainerNode::new(Vec::new())
                     .with_style(BoxStyle::filled(ink.grid))
@@ -2061,13 +2242,17 @@ fn canvas_wires(state: &LabState, ink: Ink) -> Vec<Scene> {
                     // without an exception list beside the rule.
                     children.push(panel(
                         "lab.link.label",
-                        Rect::new(mid.0.saturating_sub(70), mid.1.saturating_sub(24), 150, 20),
+                        // ★ R1656 — tall enough for the LINE BOX the shaper
+                        // produces, not for the number the author guessed. At
+                        // 20 the run's ink reached 21 and `scene/containment`
+                        // said so on the first run.
+                        Rect::new(mid.0.saturating_sub(70), mid.1.saturating_sub(26), 150, 24),
                         ink.accent_soft,
                         Some(ink.accent_line),
                         vec![tagged_label(
                             "lab.link.label.text",
                             endpoint,
-                            Rect::new(7, 6, 136, 13),
+                            Rect::new(7, 5, 136, 15),
                             10,
                             ink.accent,
                         )],
@@ -2100,75 +2285,78 @@ fn canvas_wires(state: &LabState, ink: Ink) -> Vec<Scene> {
 }
 
 /// One card per node: its identity band, its digest rows, and its pins.
+///
+/// ★ R1656 — the card's parts are its CHILDREN, not its siblings.
+///
+/// They were siblings until a person reported text outside the border and
+/// nothing here could see it. §5.15's containment read judges a mark against
+/// its parent, `scene/text_painted` names a run's nearest tagged ancestor, and
+/// the smear gate groups by that ancestor — so with the parts flattened into
+/// the canvas's child list, every one of those three questions was being asked
+/// about the CANVAS, which is big enough to hold anything. The scene was
+/// describing a screen that did not exist (§2 #7), and the checks were honest
+/// answers to the wrong question.
+///
+/// Nesting costs the card-local coordinates below: an absolutely-positioned
+/// child is placed relative to its parent (R1648 measured what forgetting that
+/// looks like — every mark at twice its offset), which is why `CardShape`
+/// hands out local rectangles for the parts and a window rectangle for the card.
 fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
     let mut children: Vec<Scene> = Vec::new();
     let selected = state.selected.get();
     for node in state.cards() {
-        let Some(card) = card_rect(state, node) else {
+        let Some(shape) = card_shape(state, node) else {
             continue;
         };
         let name = state.name_of(node);
         let rows = card_rows(state, node);
         let role = state.role_of(node).unwrap_or(Role::Peer);
         let chosen = selected == Some(node);
-        let card_local = card;
-        children.push(box_at(
-            &format!("lab.node.{name}"),
-            card_local,
-            ink.surface,
-            Some(if chosen { ink.accent } else { ink.outline_2 }),
-            9,
-        ));
-        children.push(tagged_label(
+        let mut parts: Vec<Scene> = Vec::new();
+        parts.push(tagged_label(
             &format!("lab.node.{name}.id"),
             name.clone(),
-            Rect::new(card_local.x + 10, card_local.y + 7, 60, 13),
-            FONT_SMALL,
+            shape.id,
+            shape.id_font,
             ink.text,
         ));
-        children.push(box_at(
+        parts.push(box_at(
             &format!("lab.node.{name}.badge"),
-            Rect::new(
-                card_local.x + card_local.w.saturating_sub(46),
-                card_local.y + 6,
-                38,
-                14,
-            ),
+            shape.badge,
             ink.surface,
             Some(role_ink(role)),
             4,
         ));
-        children.push(label(
+        parts.push(label(
             role.badge(),
-            Rect::new(
-                card_local.x + card_local.w.saturating_sub(42),
-                card_local.y + 8,
-                34,
-                11,
-            ),
-            8,
+            shape.badge_text,
+            shape.badge_font,
             role_ink(role),
         ));
-        for (n, (key, value)) in rows.iter().enumerate() {
-            let y = card_local.y + CARD_HDR + u32::try_from(n).unwrap_or(0) * CARD_ROW_H;
-            children.push(label(
-                key.clone(),
-                Rect::new(card_local.x + 10, y, 40, 11),
-                FONT_TINY,
-                ink.text_3,
-            ));
+        for ((key, value), (key_rect, value_rect)) in rows.iter().zip(shape.rows.iter()) {
+            parts.push(label(key.clone(), *key_rect, shape.row_font, ink.text_3));
             // The value column holds user data — an endpoint, a key
             // expression — and its TAIL is what distinguishes one from another,
             // so the middle gives way rather than the end.
-            children.push(value_label(
+            parts.push(value_label(
                 value.clone(),
-                Rect::new(card_local.x + 52, y, card_local.w.saturating_sub(60), 11),
-                FONT_TINY,
+                *value_rect,
+                shape.row_font,
                 ink.text_2,
             ));
         }
-
-        children.extend(canvas_pins(state, node, card, role, ink));
+        let mut style = BoxStyle::filled(ink.surface).with_corner_radius(9);
+        style = style.with_border(Border::new(
+            if chosen { ink.accent } else { ink.outline_2 },
+            1,
+        ));
+        children.push(Scene::Container(
+            ContainerNode::new(parts)
+                .with_tag(format!("lab.node.{name}"))
+                .with_style(style)
+                .with_layout(absolute(shape.rect)),
+        ));
+        children.extend(canvas_pins(state, node, shape.rect, role, ink));
     }
     children
 }
@@ -2293,13 +2481,11 @@ fn canvas(state: &LabState, ink: Ink) -> Scene {
     // rectangle: that has no clip (panned content painted over the palette and
     // the inspector) and it underflows on a leftward pan, which is a crash on
     // half of the gesture the hint strip advertises.
+    let (world_w, world_h) = world_extent(state);
     let world = Scene::Container(
         ContainerNode::new(canvas_world(state, ink))
             .with_style(BoxStyle::filled(ink.bg))
-            .with_layout(LayoutStyle::new().with_size(Size::px(
-                scaled(state, WORLD.unsigned_abs()).max(rect.w),
-                scaled(state, WORLD.unsigned_abs()).max(rect.h),
-            ))),
+            .with_layout(LayoutStyle::new().with_size(Size::px(world_w, world_h))),
     );
     let (ox, oy) = world_offset(state, state.pan.get());
     let viewport = Scene::Scroll(
@@ -2483,6 +2669,11 @@ fn view(_state: (), _frame: Frame) -> Scene {
 
 struct LabOracle {
     state: Option<Rc<LabState>>,
+    /// R1656 §5.15 — the size the shell says this widget currently has, kept
+    /// because `External::pointer_move` hands a FRACTION of it and not the
+    /// rectangle itself. Seeded with the opening size and replaced by every
+    /// [`External::on_resize`].
+    surface: (u32, u32),
 }
 
 impl core::fmt::Debug for LabOracle {
@@ -2493,7 +2684,10 @@ impl core::fmt::Debug for LabOracle {
 
 impl LabOracle {
     const fn new() -> Self {
-        Self { state: None }
+        Self {
+            state: None,
+            surface: (WIN_W, WIN_H),
+        }
     }
 
     fn attach(&mut self, state: Rc<LabState>) {
@@ -3407,9 +3601,58 @@ fn toggle_option(state: &Rc<LabState>, key: &str, word: &str) {
 }
 
 /// Put a new node of that role at the middle of the canvas.
+/// Where a new card can go without covering one that is already there, in the
+/// CANVAS coordinates a node is stored in.
+///
+/// ★ R1656 — the centre, and then straight down until the spot is free.
+///
+/// It was the centre unconditionally, and a card dropped on top of another is
+/// two cards that answer for the same pixels. The first repair searched in
+/// WINDOW coordinates and compared against `card_rect`, which is in world ones —
+/// `to_canvas` and `to_content` are not inverses, they map different pairs of
+/// frames — so nothing ever looked occupied and six added nodes landed in one
+/// stack. Measured by the test written for it, which is the point of writing
+/// one: the round's own repair was wrong and said so on its first run.
+fn free_spot(state: &LabState, want: (i32, i32), size: (i32, i32)) -> (i32, i32) {
+    let taken: Vec<(i32, i32, i32, i32)> = {
+        let doc = state.doc.borrow();
+        doc.tree(ROOT).map_or_else(Vec::new, |tree| {
+            state
+                .cards()
+                .into_iter()
+                .filter_map(|node| tree.node(node).map(|held| (held.x, held.y)))
+                .map(|(x, y)| (x, y, size.0, size.1))
+                .collect()
+        })
+    };
+    let clear = |x: i32, y: i32| {
+        taken.iter().all(|(hx, hy, hw, hh)| {
+            x >= hx + hw || *hx >= x + size.0 || y >= hy + hh || *hy >= y + size.1
+        })
+    };
+    let step = size.1 + 12;
+    let (mut x, mut y) = want;
+    // Bounded: a column full to its own depth wraps to the next one rather than
+    // looping forever.
+    for attempt in 0..64 {
+        if clear(x, y) {
+            break;
+        }
+        y += step;
+        if attempt % 8 == 7 {
+            x += size.0 + 12;
+            y = want.1;
+        }
+    }
+    (x, y)
+}
+
 fn add_node(state: &Rc<LabState>, role: Role) {
     let canvas = canvas_rect();
-    let (cx, cy) = to_canvas(state, canvas.x + canvas.w / 2, canvas.y + canvas.h / 2);
+    let want = to_canvas(state, canvas.x + canvas.w / 2, canvas.y + canvas.h / 2);
+    // Design units, because that is what a node's stored position is in: the
+    // card is painted at `zoom` times this, and so is every other card.
+    let (cx, cy) = free_spot(state, want, (146, 96));
     let id = {
         let mut doc = state.doc.borrow_mut();
         doc.add_node(
@@ -3505,9 +3748,36 @@ impl External for LabOracle {
         let Some(state) = self.state.clone() else {
             return;
         };
-        let px = (x_rel.clamp(0.0, 1.0) * window_size().0 as f32) as u32;
-        let py = (y_rel.clamp(0.0, 1.0) * WIN_H as f32) as u32;
+        // ★ R1656 — the fraction is of the LIVE surface, and this multiplies by
+        // the live surface.
+        //
+        // It multiplied by the design size until a person reported that nodes
+        // stop clicking after a maximise. `External::pointer_move` hands a
+        // fraction of the widget's post-layout rect and does not hand the rect,
+        // so a consumer that wants pixels has to find the basis somewhere else
+        // — and `window_size()` reads `use_viewport_size`, which needs a
+        // reactive scope. There is none inside a pointer callback, so it fell
+        // through to the design constants and every coordinate arrived scaled
+        // by opening-size over current-size. Measured exactly: after a maximise
+        // to 2494x1531 the app was told 0.5775x horizontally (1440/2494) and
+        // 0.5880x vertically (900/1531), so a press aimed at the right-hand
+        // inspector landed sixty pixels away and nothing under the cursor
+        // answered.
+        //
+        // `surface` is the size the shell told this widget it has
+        // ([`External::on_resize`]), so the basis and the fraction are now one
+        // fact rather than two — the class fix is
+        // [[debt-an-external-reads-a-fraction-without-its-basis]].
+        let (w, h) = self.surface;
+        let px = (x_rel.clamp(0.0, 1.0) * w as f32) as u32;
+        let py = (y_rel.clamp(0.0, 1.0) * h as f32) as u32;
         move_cursor(&state, px, py);
+    }
+
+    /// R1656 §5.15 — the shell's resize notification, which is how this widget
+    /// knows what a pointer fraction is a fraction OF.
+    fn on_resize(&mut self, width: u32, height: u32) {
+        self.surface = (width.max(1), height.max(1));
     }
 
     fn introspect(&self) -> Option<&dyn ExternalIntrospect> {

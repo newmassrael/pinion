@@ -1069,12 +1069,20 @@ const HELP_STRIP: &str = "drag a header to move \u{00B7} e edit \u{00B7} o detac
 
 struct ShellOracle {
     state: Option<Rc<ShellState>>,
+    /// R1656 §5.15 — the size the shell says this surface currently has.
+    ///
+    /// Kept because `External::pointer_move` hands a FRACTION of it and not the
+    /// rectangle itself, so a consumer that wants pixels has to hold the basis.
+    /// Seeded with the opening size and replaced by every
+    /// [`External::on_resize`].
+    surface: (u32, u32),
 }
 
 impl core::fmt::Debug for ShellOracle {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("ShellOracle")
             .field("attached", &self.state.is_some())
+            .field("surface", &self.surface)
             .finish()
     }
 }
@@ -1083,7 +1091,10 @@ impl ShellOracle {
     const NO_STATE: &str = "this shell surface is not bound to a model yet";
 
     const fn new() -> Self {
-        Self { state: None }
+        Self {
+            state: None,
+            surface: (WIN_W, WIN_H),
+        }
     }
 
     fn attach_state(&mut self, state: Rc<ShellState>) {
@@ -2348,12 +2359,32 @@ impl External for ShellOracle {
         clippy::cast_sign_loss,
         reason = "a window fraction times a window size is a pixel inside it"
     )]
+    /// R1656 §5.15 — the shell's resize notification, which is how this surface
+    /// knows what a pointer fraction is a fraction OF.
+    fn on_resize(&mut self, width: u32, height: u32) {
+        self.surface = (width.max(1), height.max(1));
+    }
+
     fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
         let Some(state) = self.state.clone() else {
             return;
         };
-        let px = (x_rel.clamp(0.0, 1.0) * WIN_W as f32) as u32;
-        let py = (y_rel.clamp(0.0, 1.0) * WIN_H as f32) as u32;
+        // ★ R1656 — the LIVE surface, told by `External::on_resize`. It was the
+        // design constant, which is right at the size the app opens in and
+        // wrong by opening-size-over-current-size at every other size: a person
+        // reported nodes that stop clicking after a maximise, and the
+        // coordinates were measured arriving at 0.5775x.
+        let (sw, sh) = self.surface;
+        #[allow(
+            clippy::cast_precision_loss,
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a clamped 0..=1 fraction times a window size is a pixel inside it"
+        )]
+        let (px, py) = (
+            (x_rel.clamp(0.0, 1.0) * sw as f32) as u32,
+            (y_rel.clamp(0.0, 1.0) * sh as f32) as u32,
+        );
         Self::move_cursor(&state, px, py);
     }
 

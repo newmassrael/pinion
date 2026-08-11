@@ -18,6 +18,7 @@ pub mod cache_stats;
 pub mod caret_state;
 pub mod cell_editors;
 pub mod commands;
+pub mod containment;
 pub mod cross_window_drop;
 pub mod derivations;
 pub mod disabled;

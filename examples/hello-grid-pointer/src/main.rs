@@ -150,6 +150,19 @@ impl External for GridPointerExternal {
     /// a click (the capture click-to-position forward) and on every move while
     /// the press is held. Reconstruct grid pixels and resolve the cell under the
     /// cursor: the live R1.8 hit-test.
+    /// R1656 §5.15 — the shell's resize notification. `width_px` / `height_px`
+    /// are the basis `pointer_move`'s fraction is a fraction of, and nothing
+    /// updated them: `External::on_resize` was a declared §5.15 arm with no
+    /// call site anywhere in the workspace until R1656 wired it, so this grid
+    /// resolved a cell against the size it was constructed with for as long as
+    /// the window was not that size.
+    fn on_resize(&mut self, width: u32, height: u32) {
+        self.width_px = width.max(1);
+        self.height_px = height.max(1);
+        self.cols = self.metric.cols_for(self.width_px);
+        self.rows = self.metric.rows_for(self.height_px);
+    }
+
     fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
         let x_px = CellMetric::frac_to_px(x_rel, self.width_px);
         let y_px = CellMetric::frac_to_px(y_rel, self.height_px);

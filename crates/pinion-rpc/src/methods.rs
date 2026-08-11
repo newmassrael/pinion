@@ -171,6 +171,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc, MethodWindow)] = &[
     ("scene/cell_editors", MethodOcc::Read, MethodWindow::Scope),
     ("scene/click", MethodOcc::Mutate, MethodWindow::Scope),
     ("scene/commands", MethodOcc::Read, MethodWindow::Scope),
+    ("scene/containment", MethodOcc::Read, MethodWindow::Scope),
     (
         "scene/cross_window_drop",
         MethodOcc::Read,

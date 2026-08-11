@@ -355,6 +355,18 @@ pub struct ShellCore<V: WidgetView> {
     /// closure) use the field directly.
     text_cache: LayoutCache,
 
+    /// R1656 §5.32 — marks already reported by
+    /// [`Self::warn_about_escaped_marks`], so a screen that spills the same
+    /// label every frame says so once instead of sixty times a second. Keyed by
+    /// owner + content + overhang, because a label that starts spilling FURTHER
+    /// is a new fact and has to be said again.
+    #[cfg(debug_assertions)]
+    warned_escapes: HashSet<String>,
+
+    /// R1656 §5.15 — per-window, per-`External` last announced size, so
+    /// [`Self::announce_surface_sizes`] speaks only on a change.
+    external_sizes: HashMap<String, pinion_runtime::ExternalSizes>,
+
     /// R1460 §5.16 §5.7 §2 #2 — cumulative work done by the RPC scene
     /// PRODUCER (see [`pinion_runtime::ProduceWork`]).
     ///
@@ -863,6 +875,9 @@ impl<V: WidgetView> ShellCore<V> {
             focus: FocusManager::new(),
             modifiers: Modifiers::empty(),
             text_cache,
+            #[cfg(debug_assertions)]
+            warned_escapes: HashSet::new(),
+            external_sizes: HashMap::new(),
             produce_work: ProduceWork::default(),
             mirror_work: MirrorWork::default(),
             focus_work: pinion_runtime::FocusWorkCell::default(),
@@ -5198,8 +5213,97 @@ impl<V: WidgetView> ShellCore<V> {
         // `Signal::set` re-flags it — the `handle_tail` `is_dirty()` bridge
         // then knows a real change occurred and a benign no-op did not.
         self.core.root_owner().clear_dirty();
-        overlays.apply::<V>(paint_scene, w, h, self.core.root_owner())
+        let dressed = overlays.apply::<V>(paint_scene, w, h, self.core.root_owner());
+        self.warn_about_escaped_marks(&dressed);
+        self.announce_surface_sizes(window_key, &dressed);
+        dressed
     }
+
+    /// R1656 §5.15 — tell each painted `External` the size of the rect it was
+    /// laid out into, whenever that changes.
+    ///
+    /// The §5.15 lifecycle arm this drives had been declared and never called;
+    /// [`pinion_runtime::announce_external_sizes`] carries the measurement of
+    /// what that cost. Runs after the overlay chain so a widget under chrome is
+    /// told the size it actually got, and takes the state scene because that is
+    /// where the handle whose fields survive the frame lives.
+    fn announce_surface_sizes(&mut self, window_key: &str, paint: &Scene) {
+        let known = self
+            .external_sizes
+            .entry(window_key.to_owned())
+            .or_default();
+        pinion_runtime::announce_external_sizes(paint, self.core.scene_mut(), known);
+    }
+
+    /// R1656 §5.32 §5.36 §2 #7 — say so, on the frame it happens, when this
+    /// paint put a mark outside the box that owns it.
+    ///
+    /// # Why a warning and not a compile error
+    ///
+    /// Because the fact is not knowable until the string, the font and the
+    /// window size are all present: the same label fits at one size and spills
+    /// at another, and no signature can carry that. What the type system CAN
+    /// do here is make a box that ignores its own contents unrepresentable —
+    /// derive the box from the rows rather than fixing it — and where a
+    /// consumer does that, this never fires. So the two halves are: a shape
+    /// that prevents the authoring mistake, and this, for everything that
+    /// depends on the data.
+    ///
+    /// # Why a warning and not a panic
+    ///
+    /// A panic here would take down a running application over a
+    /// three-pixel line box, and the measured population is not zero — this
+    /// tree had fifteen escapes on one screen the day the check was written.
+    /// The gate that must be red instead of merely loud is the boot-time one
+    /// every demo pays, which can carry a budget and ratchet it down.
+    ///
+    /// # Cost
+    ///
+    /// Debug builds only, and once per distinct mark: a screen that spills the
+    /// same label every frame says so on the first one and then stops, so a
+    /// warning cannot turn into sixty lines a second. Release builds do not
+    /// walk the scene at all — the read stays available there through
+    /// `scene/containment`, which is asked rather than paid for.
+    #[cfg(debug_assertions)]
+    fn warn_about_escaped_marks(&mut self, scene: &Scene) {
+        let cache = &mut self.text_cache;
+        let escapes = pinion_core::containment::escapes(scene, &mut |t| {
+            let max_width = if t.rect.w > 0 { Some(t.rect.w) } else { None };
+            cache.ink_size(&t.content, &t.style, &t.runs, max_width)
+        });
+        for escape in escapes {
+            let what = escape
+                .content
+                .as_deref()
+                .or(escape.tag.as_deref())
+                .unwrap_or("<a mark>");
+            let key = format!("{}|{}|{}", escape.owner, what, escape.over.worst());
+            if !self.warned_escapes.insert(key) {
+                continue;
+            }
+            tracing::warn!(
+                target: "pinion::containment",
+                owner = %escape.owner,
+                fate = escape.fate.wire_word(),
+                content = %what,
+                left = escape.over.left,
+                top = escape.over.top,
+                right = escape.over.right,
+                bottom = escape.over.bottom,
+                "a painted mark is {}px outside the box that owns it — ask \
+                 `scene/containment` for the whole list",
+                escape.over.worst()
+            );
+        }
+    }
+
+    /// Release builds do not walk the scene for this; see the debug arm.
+    #[cfg(not(debug_assertions))]
+    #[allow(
+        clippy::unused_self,
+        reason = "mirrors the debug arm's signature so the call site is one line in both"
+    )]
+    fn warn_about_escaped_marks(&self, _scene: &Scene) {}
 
     /// (R1467 §5.16 §5.39 §2 #7) Sample the shell-owned state the window-overlay
     /// chain reads, so one [`WindowOverlayInputs::apply`] dresses this window on
@@ -6295,6 +6399,17 @@ impl<V: WidgetView> ShellCore<V> {
                     pinion_rpc::text_painted::collect_painted(paint, text_cache_ptr)
                 })
             });
+            // R1656 §5.32 §5.36 §2 #7 — every mark this frame painted outside
+            // the box that owns it. Collected here rather than in the paint
+            // pass for the same reason its siblings above are: the answer needs
+            // BOTH the painted scene and the shape cache, and only the embedder
+            // holds the second.
+            let containment = (request.method == "scene/containment").then(|| {
+                last_paint_scene_ref.map_or_else(
+                    || pinion_rpc::containment::report(&[], 0),
+                    |paint| pinion_rpc::containment::collect(paint, text_cache_ptr),
+                )
+            });
             let produce_work_ptr = &mut self.produce_work;
             // R1072 §5.37 — the opt-in engine measure for the RPC-side producer,
             // so a `scene/snapshot from: paint` (and the post-dispatch
@@ -6429,6 +6544,11 @@ impl<V: WidgetView> ShellCore<V> {
             // `scene/text_blocks` only.
             if let Some(runs) = text_painted {
                 ctx = ctx.with_text_painted(runs);
+            }
+            // R1656 §5.32 — the escape report collected above, for
+            // `scene/containment` only.
+            if let Some(report) = containment {
+                ctx = ctx.with_containment(report);
             }
             if let Some(blocks) = text_blocks {
                 ctx = ctx.with_text_blocks(blocks);

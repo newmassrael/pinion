@@ -560,6 +560,17 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "ContainmentOutcome",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("escapes", WireTy::Array, Some("EscapeReport")),
+                WireField::new("smeared", WireTy::Integer, None),
+                WireField::new("clipped", WireTy::Integer, None),
+                WireField::new("marks", WireTy::Integer, None),
+            ],
+        },
+    },
+    WireType {
         name: "CoverageOutcome",
         shape: WireShape::Object {
             fields: &[
@@ -815,6 +826,22 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("data_is_prose", WireTy::Boolean, None),
                 WireField::new("standard", WireTy::Boolean, None),
                 WireField::new("data_vocabulary", WireTy::Array, None),
+            ],
+        },
+    },
+    WireType {
+        name: "EscapeReport",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("tag", WireTy::String, None).nullable(),
+                WireField::new("path", WireTy::String, None),
+                WireField::new("owner", WireTy::String, None),
+                WireField::new("content", WireTy::String, None).nullable(),
+                WireField::new("promised", WireTy::Object, Some("RectReport")),
+                WireField::new("painted", WireTy::Object, Some("RectReport")),
+                WireField::new("owner_rect", WireTy::Object, Some("RectReport")),
+                WireField::new("over", WireTy::Object, Some("OverhangReport")),
+                WireField::new("fate", WireTy::String, None),
             ],
         },
     },
@@ -1395,6 +1422,17 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "OverhangReport",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("left", WireTy::Integer, None),
+                WireField::new("top", WireTy::Integer, None),
+                WireField::new("right", WireTy::Integer, None),
+                WireField::new("bottom", WireTy::Integer, None),
+            ],
+        },
+    },
+    WireType {
         name: "PaintedTextReport",
         shape: WireShape::Object {
             fields: &[
@@ -1409,6 +1447,8 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("ink_w", WireTy::Integer, None),
                 WireField::new("ink_h", WireTy::Integer, None),
                 WireField::new("lines", WireTy::Integer, None),
+                WireField::new("over_w", WireTy::Integer, None),
+                WireField::new("over_h", WireTy::Integer, None),
                 WireField::new("overflows", WireTy::Boolean, None),
             ],
         },
@@ -1474,6 +1514,17 @@ pub const WIRE_TYPES: &[WireType] = &[
         name: "PostscriptNameOutcome",
         shape: WireShape::Object {
             fields: &[WireField::new("name", WireTy::String, None).nullable()],
+        },
+    },
+    WireType {
+        name: "RectReport",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("x", WireTy::Integer, None),
+                WireField::new("y", WireTy::Integer, None),
+                WireField::new("w", WireTy::Integer, None),
+                WireField::new("h", WireTy::Integer, None),
+            ],
         },
     },
     WireType {

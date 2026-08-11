@@ -33,6 +33,7 @@ pub mod cell_value;
 pub mod clipboard;
 pub mod command;
 pub mod composite_tag;
+pub mod containment;
 pub mod contrast;
 pub mod derivation;
 pub mod directory;

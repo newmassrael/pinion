@@ -4854,6 +4854,135 @@ mod tests {
         }
     }
 
+    /// R1656 — an External that records every size the framework tells it,
+    /// which is the fact `pointer_move`'s fraction is a fraction OF.
+    /// The log of sizes a [`SizedExternal`] was told.
+    type SizeLog = Arc<Mutex<Vec<(u32, u32)>>>;
+
+    struct SizedExternal {
+        sizes: SizeLog,
+    }
+
+    impl SizedExternal {
+        fn new() -> (Self, SizeLog) {
+            let sizes = Arc::new(Mutex::new(Vec::new()));
+            (
+                Self {
+                    sizes: Arc::clone(&sizes),
+                },
+                sizes,
+            )
+        }
+    }
+
+    impl std::fmt::Debug for SizedExternal {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("SizedExternal").finish()
+        }
+    }
+
+    impl pinion_core::external::External for SizedExternal {
+        fn backends(&self) -> BackendSupport {
+            BackendSupport::new(&[Backend::Gui], BackendFallback::Skip)
+        }
+        fn repaint_ownership(&self) -> RepaintOwner {
+            RepaintOwner::Framework
+        }
+        fn thread_ownership(&self) -> ThreadOwnership {
+            ThreadOwnership::UiThreadSync
+        }
+        fn on_resize(&mut self, width: u32, height: u32) {
+            self.sizes
+                .lock()
+                .expect("mutex poisoned")
+                .push((width, height));
+        }
+    }
+
+    /// How a `WidgetCore` binding's surface actually appears in the paint
+    /// scene: an ordinary container carrying the surface's tag. NOT an
+    /// `External` — asserting against one of those is what let the first
+    /// version of this wiring pass its tests and do nothing on a real screen.
+    fn painted_as(tag: &'static str, rect: Rect) -> Scene {
+        let mut c = ContainerNode::new(Vec::new());
+        c.rect = rect;
+        c.tag = Some(tag.into());
+        c.layout = pinion_core::style::LayoutStyle::new();
+        Scene::Container(c)
+    }
+
+    fn external_at(tag: &'static str, rect: Rect, handle: SizedExternal) -> Scene {
+        let mut node = pinion_core::scene::ExternalNode::new(Box::new(handle)).with_tag(tag);
+        node.rect = rect;
+        Scene::External(node)
+    }
+
+    /// ★ R1656 §5.15 — the widget is told its size, and told again when it
+    /// changes.
+    ///
+    /// Written because the arm it exercises was **declared and never called**.
+    /// `External::on_resize` has been one of the eight §5.15 contract items
+    /// since the contract was written, and a search of every call site in this
+    /// workspace found none — so a consumer implementing it, as the contract
+    /// invites, waited forever. The visible cost was a screen whose pointer
+    /// coordinates were scaled by opening-size over current-size after a
+    /// maximise, because the only other way to learn the basis of
+    /// `pointer_move`'s fraction is a reactive hook that does not answer from
+    /// inside a pointer callback.
+    #[test]
+    fn r1656_an_external_is_told_the_size_its_fractions_are_of() {
+        let (handle, sizes) = SizedExternal::new();
+        let mut state = Scene::Container(ContainerNode::new(vec![external_at(
+            "canvas",
+            Rect::new(0, 0, 0, 0),
+            handle,
+        )]));
+        let paint = painted_as("canvas", Rect::new(0, 0, 1440, 900));
+        let mut known = std::collections::HashMap::new();
+
+        assert_eq!(announce_external_sizes(&paint, &mut state, &mut known), 1);
+        assert_eq!(
+            *sizes.lock().expect("mutex poisoned"),
+            vec![(1440, 900)],
+            "the opening size arrives"
+        );
+
+        // A still window says nothing: the callback is an event, so a consumer
+        // does not have to debounce it.
+        assert_eq!(announce_external_sizes(&paint, &mut state, &mut known), 0);
+        assert_eq!(sizes.lock().expect("mutex poisoned").len(), 1);
+
+        // A maximise, which is the case a person reported.
+        let grown = painted_as("canvas", Rect::new(0, 0, 2494, 1531));
+        assert_eq!(announce_external_sizes(&grown, &mut state, &mut known), 1);
+        assert_eq!(
+            *sizes.lock().expect("mutex poisoned"),
+            vec![(1440, 900), (2494, 1531)],
+            "and the new one, so a fraction of it can become pixels"
+        );
+    }
+
+    /// ★ The size announced is the WIDGET's rect, not the window's — because
+    /// that is the rect `pointer_move` normalises over. A viewport inset by a
+    /// toolbar would otherwise be handed a basis it never had.
+    #[test]
+    fn r1656_the_size_announced_is_the_widgets_own_rect() {
+        let (handle, sizes) = SizedExternal::new();
+        let mut state = Scene::Container(ContainerNode::new(vec![external_at(
+            "viewport",
+            Rect::new(0, 0, 0, 0),
+            handle,
+        )]));
+        let paint = painted_as("viewport", Rect::new(280, 56, 860, 744));
+        let mut known = std::collections::HashMap::new();
+        announce_external_sizes(&paint, &mut state, &mut known);
+        assert_eq!(
+            *sizes.lock().expect("mutex poisoned"),
+            vec![(860, 744)],
+            "the pane it was laid out into, not the window around it"
+        );
+    }
+
     fn read(captures: &Arc<Mutex<Vec<String>>>) -> Vec<String> {
         captures.lock().expect("mutex poisoned").clone()
     }
@@ -12549,4 +12678,99 @@ mod pointer_reach_tests {
         let reach = pointer_reach(&paint, &state_with("shell.root"));
         assert!(reach.shadows.is_empty(), "{:?}", reach.shadows);
     }
+}
+
+/// The per-surface record of what each `External` was last told, keyed by tag.
+///
+/// A named type rather than a bare map because it crosses a crate boundary: the
+/// shell holds one of these per window and hands it back every frame, and a
+/// signature that spells the map out invites a caller to build a different one.
+pub type ExternalSizes = std::collections::HashMap<String, (u32, u32)>;
+
+/// R1656 §5.15 §5.35 — tell every painted [`Scene::External`] how big it is,
+/// whenever that changes.
+///
+/// # The half-fact this closes
+///
+/// [`External::pointer_move`](pinion_core::external::External::pointer_move)
+/// hands a **fraction** of the widget's post-layout rect and does not hand the
+/// rect. A consumer that wants pixels — which is every consumer that draws its
+/// own content — has to find the basis somewhere else, and there is no scope
+/// inside a pointer callback from which the reactive viewport hook answers. So
+/// the standard mistake is to multiply by a constant, and the standard mistake
+/// is invisible until the window is resized.
+///
+/// It shipped here. A person reported that the analysis-tool canvas stops
+/// responding to a real mouse after a maximise; measured, the application was
+/// being told a cursor scaled by opening-size over current-size — 0.5775x
+/// horizontally after a maximise from 1440 to 2494 — so every press landed
+/// somewhere else, and further off the further right it was aimed.
+///
+/// [`External::on_resize`](pinion_core::external::External::on_resize) is a
+/// §5.15 lifecycle item and has been declared since the contract was written.
+/// **Nothing called it.** A declared arm with no implementation is worse than
+/// an absent one (R1654): a consumer reads the trait, implements the arm, and
+/// waits forever for a call. This is the call.
+///
+/// # Why the size comes from the paint scene and the handle from the state one
+///
+/// The same split [`pointer_reach`] and
+/// `InputRouter::forward_pointer_move` work in: the paint scene carries the
+/// post-layout geometry and its handles are rebuilt every frame, while the
+/// state scene owns the handle whose fields survive between frames. Announcing
+/// to the paint scene's handle would tell a value that is about to be dropped.
+///
+/// Only a size CHANGE is announced, so a still window costs one walk and no
+/// calls — and a consumer can treat the callback as an event rather than
+/// having to debounce it.
+///
+/// Returns how many widgets were told, which is what lets a test distinguish
+/// "nothing changed" from "nothing was wired".
+pub fn announce_external_sizes(
+    paint_scene: &Scene,
+    state_scene: &mut Scene,
+    known: &mut ExternalSizes,
+) -> usize {
+    // The tags to ask about come from the STATE scene, because that is where
+    // the `External` handles live. The paint scene often has no `Scene::External`
+    // node at all — a `WidgetCore` binding's `view` replaces its primary
+    // surface with an ordinary container tree carrying the same tag, and the
+    // first draft of this function walked the paint scene for `External` nodes,
+    // found none on exactly the screen it was written for, and never fired.
+    let mut tags: Vec<String> = Vec::new();
+    state_scene.for_each_node(&mut |visit| {
+        if let Scene::External(node) = visit.node {
+            if let Some(tag) = node.tag.as_deref() {
+                tags.push(tag.to_owned());
+            }
+        }
+    });
+    let mut told = 0;
+    for tag in tags {
+        // ★ `rect_for_tag` on the PAINT scene, which is the same resolution
+        // `capture_rel_coords` divides by — so the size announced and the size
+        // the fraction is a fraction of are one derivation. Two derivations of
+        // one geometry is the defect this whole function exists to remove; it
+        // must not reappear inside it.
+        let Some(rect) = rect_for_tag(paint_scene, &tag) else {
+            // Not painted this frame (a torn-off surface, a hidden pane). Drop
+            // the memory so its size is announced again when it returns.
+            known.remove(&tag);
+            continue;
+        };
+        if rect.w == 0 || rect.h == 0 {
+            continue; // a degenerate layout is not a size worth acting on
+        }
+        if known.get(&tag) == Some(&(rect.w, rect.h)) {
+            continue;
+        }
+        let Some(external) = state_scene.find_external_with_tag_mut(&tag) else {
+            known.remove(&tag);
+            continue;
+        };
+        external.handle.on_resize(rect.w, rect.h);
+        known.insert(tag, (rect.w, rect.h));
+        told += 1;
+    }
+    told
 }
