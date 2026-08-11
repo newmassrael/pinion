@@ -108,6 +108,25 @@ fi
 # compositions of other operators — as capabilities. `--check-pin` needs no
 # reference tree, which is what makes it a gate: the trees live outside this
 # repo, but the JUDGEMENT is committed here and is the thing that rots.
+# R1646 — the analysis-tool census. The node-graph axis has had a meter since
+# R1601; the analysis-tool axis had a prose table in a session note, and prose
+# drifts: measured twice in one session, it called the charting remainder "3D
+# only" while a label-thinning gap sat in it, and it listed the two-layer link
+# diff as closed when what existed was the paint and the model was inside an
+# example. Both are the failure the other census exists to prevent. This gate
+# holds the judgement to a shape — every declared capability carries a verdict
+# from a closed set, a `have` names what covers it, and `unmeasured` is a
+# verdict rather than a silence.
+echo "pre-push: analysis-tool census ..." >&2
+if ! python3 "$repo_root/tools/analyzer_census.py" --selftest >&2; then
+    echo "pre-push: the analysis-tool census failed its own tests" >&2
+    exit 1
+fi
+if ! python3 "$repo_root/tools/analyzer_census.py" --check-pin >&2; then
+    echo "pre-push: docs/analyzer-census.json is malformed" >&2
+    exit 1
+fi
+
 echo "pre-push: reference census ..." >&2
 if ! python3 "$repo_root/tools/reference_census.py" --selftest >&2; then
     echo "pre-push: the reference census failed its own tests" >&2

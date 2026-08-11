@@ -1,0 +1,542 @@
+[
+  {
+    "id": "capture.t0.1",
+    "plane": "capture",
+    "tier": "t0",
+    "capability": "resumable stream decode: a length-prefixed envelope, and a decoder that rewinds its cursor and asks for more bytes",
+    "verdict": "outside",
+    "covered_by": "a codec. The framework's boundary is that view-fn is sync and pure, so IO lives outside it"
+  },
+  {
+    "id": "capture.t0.2",
+    "plane": "capture",
+    "tier": "t0",
+    "capability": "an N-layer decode tree with collapse and expand",
+    "verdict": "have",
+    "covered_by": "`row_dissect` (a value-to-tree transducer whose module doc names this view) plus the tree widget's expand/collapse"
+  },
+  {
+    "id": "capture.t0.3",
+    "plane": "capture",
+    "tier": "t0",
+    "capability": "bidirectional highlight between a field and its bytes",
+    "verdict": "have",
+    "covered_by": "`widgets::hex_dump` (HexLayout / Cell / Region / Nibble / ByteSelection) plus `scene/marks`, which answers the named run stack over one position"
+  },
+  {
+    "id": "capture.t0.4",
+    "plane": "capture",
+    "tier": "t0",
+    "capability": "session negotiation context injected into the parser, with an unobserved-handshake warning",
+    "verdict": "outside",
+    "covered_by": "a parser concern; the warning and the assumed defaults are the application's to state"
+  },
+  {
+    "id": "capture.t0.5",
+    "plane": "capture",
+    "tier": "t0",
+    "capability": "an id-to-name table rebuilt from earlier declarations, with an unresolved badge and a direction",
+    "verdict": "app",
+    "covered_by": "a table over the data grid; the resolution history and the badge are domain logic"
+  },
+  {
+    "id": "capture.t0.6",
+    "plane": "capture",
+    "tier": "t0",
+    "capability": "payload carried out of band, shown as a descriptor rather than as empty",
+    "verdict": "app",
+    "covered_by": "a dissect row shape; nothing in it is a framework capability"
+  },
+  {
+    "id": "capture.t0.7",
+    "plane": "capture",
+    "tier": "t0",
+    "capability": "an unknown extension shown as id, length and raw bytes rather than as a parse failure",
+    "verdict": "app",
+    "covered_by": "`row_dissect` plus `hex_dump` hold the shapes"
+  },
+  {
+    "id": "capture.t1.8",
+    "plane": "capture",
+    "tier": "t1",
+    "capability": "a filter language over name, type, endpoint, session, direction and size, shared with saved filter chips",
+    "verdict": "gap",
+    "covered_by": "the predicate half is here (`FilterOp` / `ColumnFacet` / `GridFilter`, with wire forms). The CHIP is not: debt-no-toggle-chip-painter is open, so the saved-filter half has no painter"
+  },
+  {
+    "id": "capture.t1.9",
+    "plane": "capture",
+    "tier": "t1",
+    "capability": "request-response correlation, one row linking to another",
+    "verdict": "app",
+    "covered_by": "a derived column over the model; the list can already scroll to and select a row"
+  },
+  {
+    "id": "capture.t1.10",
+    "plane": "capture",
+    "tier": "t1",
+    "capability": "fragment reassembly with a reassembled-versus-original view toggle",
+    "verdict": "outside",
+    "covered_by": "a codec concern"
+  },
+  {
+    "id": "capture.t1.11",
+    "plane": "capture",
+    "tier": "t1",
+    "capability": "follow one session, in time order",
+    "verdict": "app",
+    "covered_by": "a filter plus a sort over the substrate above"
+  },
+  {
+    "id": "capture.t1.12",
+    "plane": "capture",
+    "tier": "t1",
+    "capability": "marking, bookmarks and comments, plus exporting a range",
+    "verdict": "gap",
+    "covered_by": "the marking half is app work over selection; EXPORTING IS NOT HERE — measured, no tabular/CSV export derivation exists in any crate. A file dialog and a PDF export do"
+  },
+  {
+    "id": "capture.t1.13",
+    "plane": "capture",
+    "tier": "t1",
+    "capability": "a view of the declarations currently in force, rebuilt from the capture",
+    "verdict": "app",
+    "covered_by": "a table over reconstructed state"
+  },
+  {
+    "id": "capture.t2.14",
+    "plane": "capture",
+    "tier": "t2",
+    "capability": "building a topology from observed messages, with no management API",
+    "verdict": "app",
+    "covered_by": "the parse is domain; where it LANDS is now `Document::observe` (R1645)"
+  },
+  {
+    "id": "capture.t2.15",
+    "plane": "capture",
+    "tier": "t2",
+    "capability": "injecting a recovered topology into the authoring canvas",
+    "verdict": "have",
+    "covered_by": "`Document::observe` plus `Document::layers` (R1645): a reported link is a first-class part of the model and the difference from the drawn one is derived"
+  },
+  {
+    "id": "capture.t2.16",
+    "plane": "capture",
+    "tier": "t2",
+    "capability": "doubling as a parser regression harness, with a corpus to load",
+    "verdict": "outside",
+    "covered_by": "a codec test concern"
+  },
+  {
+    "id": "capture.t2.17",
+    "plane": "capture",
+    "tier": "t2",
+    "capability": "fingerprinting the peer implementation from the handshake",
+    "verdict": "outside",
+    "covered_by": "a protocol concern"
+  },
+  {
+    "id": "capture.t2.18",
+    "plane": "capture",
+    "tier": "t2",
+    "capability": "protocol violation rows: sequence regression, undeclared reference, unnegotiated extension",
+    "verdict": "app",
+    "covered_by": "a derived row kind over the parse"
+  },
+  {
+    "id": "lab.t0.1",
+    "plane": "lab",
+    "tier": "t0",
+    "capability": "a node palette organised by role",
+    "verdict": "app",
+    "covered_by": "the node model plus list widgets; which roles exist is the application's taxonomy"
+  },
+  {
+    "id": "lab.t0.2",
+    "plane": "lab",
+    "tier": "t0",
+    "capability": "a node inspector that is the settings editor: every field, text round-trip, and a per-field applies-live versus needs-restart badge",
+    "verdict": "gap",
+    "covered_by": "MEASURED R1646: there is NO property grid in any crate — `grep` over `crates/*/src` finds it only in `hello-property-grid` and `hello-data-grid`. So the node inspector this tier needs is an example an application copies, which is the same shape R1645 just closed for the two-layer diff. The per-field applies-live badge is unanswerable until the widget has a home"
+  },
+  {
+    "id": "lab.t0.3",
+    "plane": "lab",
+    "tier": "t0",
+    "capability": "authoring an edge, with a direction and a transport choice",
+    "verdict": "have",
+    "covered_by": "`Document::connect`, whose refusals name which rule failed, and `Flow` for the direction law"
+  },
+  {
+    "id": "lab.t0.4",
+    "plane": "lab",
+    "tier": "t0",
+    "capability": "a master auto-discovery switch, off by default",
+    "verdict": "have",
+    "covered_by": "`Discovery` (R1645), off by default, and the default is argued as a determinism switch rather than a preference"
+  },
+  {
+    "id": "lab.t0.5",
+    "plane": "lab",
+    "tier": "t0",
+    "capability": "run and stop, with a per-node lifecycle state",
+    "verdict": "app",
+    "covered_by": "`Document::run` derives the order; a node's lifecycle is the application's own state"
+  },
+  {
+    "id": "lab.t0.6",
+    "plane": "lab",
+    "tier": "t0",
+    "capability": "an observed overlay and its difference from the authored graph",
+    "verdict": "have",
+    "covered_by": "`Document::layers` / `LinkLayer` / `Document::adopt` (R1645), with the paint primitive from R1575",
+    "proven_by": "pinion-node-graph::r1645_the_layer_of_a_link_is_derived_from_two_sets"
+  },
+  {
+    "id": "lab.t0.7",
+    "plane": "lab",
+    "tier": "t0",
+    "capability": "a pre-launch configuration gate, because the target keeps starting with the bad setting discarded",
+    "verdict": "app",
+    "covered_by": "`Document::validate` gates the graph; the three failure kinds the field notes record are the application's schema to check"
+  },
+  {
+    "id": "lab.t1.8",
+    "plane": "lab",
+    "tier": "t1",
+    "capability": "traffic nodes carrying rate, payload, priority, congestion and reliability",
+    "verdict": "app",
+    "covered_by": "a taxonomy, which this crate deliberately does not own"
+  },
+  {
+    "id": "lab.t1.9",
+    "plane": "lab",
+    "tier": "t1",
+    "capability": "checkpoints and assertions with a timeout",
+    "verdict": "app",
+    "covered_by": "expressible over run and tick; the predicate is the application's"
+  },
+  {
+    "id": "lab.t1.10",
+    "plane": "lab",
+    "tier": "t1",
+    "capability": "a scenario timeline: warmup, sequential and concurrent tasks, and killing a node at a given time",
+    "verdict": "gap",
+    "covered_by": "MEASURED R1646: no keyframe or scrub-editing timeline exists in any crate — `pinion_chart::timeline` is a reading lane. A scenario that kills a node at time T has no authoring surface"
+  },
+  {
+    "id": "lab.t1.11",
+    "plane": "lab",
+    "tier": "t1",
+    "capability": "a fault injection panel for the faults the target's own settings provide",
+    "verdict": "app",
+    "covered_by": "a form; the link-level faults are stated out of scope by the capability list itself"
+  },
+  {
+    "id": "lab.t1.12",
+    "plane": "lab",
+    "tier": "t1",
+    "capability": "saving a scenario and exporting a deployable configuration",
+    "verdict": "gap",
+    "covered_by": "the document is serde; the EXPORT half is the same missing derivation as capture.t1.12"
+  },
+  {
+    "id": "lab.t2.13",
+    "plane": "lab",
+    "tier": "t2",
+    "capability": "importing a live topology into the canvas",
+    "verdict": "have",
+    "covered_by": "`Document::observe` plus `adopt` (R1645) — and adoption runs the authoring rules, so a reported link the model cannot hold is named",
+    "proven_by": "pinion-node-graph::r1645_observation_is_admitted_where_authoring_is_refused"
+  },
+  {
+    "id": "lab.t2.14",
+    "plane": "lab",
+    "tier": "t2",
+    "capability": "attaching a real device as a graph node and driving it through the same surface",
+    "verdict": "outside",
+    "covered_by": "process and device supervision"
+  },
+  {
+    "id": "lab.t2.15",
+    "plane": "lab",
+    "tier": "t2",
+    "capability": "predicting routing statically, then comparing with what was observed",
+    "verdict": "have",
+    "covered_by": "`Document::reaches` answers on BOTH layers and carries a `Standing`, so the prediction and the measurement are one read and a partial drawing cannot be read as fact",
+    "proven_by": "pinion-node-graph::r1645_the_two_layers_can_disagree_about_what_is_reachable"
+  },
+  {
+    "id": "lab.t2.16",
+    "plane": "lab",
+    "tier": "t2",
+    "capability": "stateful nodes as first-class citizens",
+    "verdict": "gap",
+    "covered_by": "DELIBERATE DIVERGENCE, not an oversight: the only state is a delay (R1600), which is what buys a tick's reproducibility. Arbitrary node state makes a graph's meaning not a function of the graph. Needs a spec round, not an implementation"
+  },
+  {
+    "id": "lab.t2.17",
+    "plane": "lab",
+    "tier": "t2",
+    "capability": "scenario diff and regression: two runs of one graph compared on order and latency distribution",
+    "verdict": "app",
+    "covered_by": "`Run::trace` is comparable and the chart crate has the distributions; the comparison is the application's"
+  },
+  {
+    "id": "lab.t2.18",
+    "plane": "lab",
+    "tier": "t2",
+    "capability": "replaying a capture as a traffic source",
+    "verdict": "outside",
+    "covered_by": "a codec and IO concern"
+  },
+  {
+    "id": "lab.t2.19",
+    "plane": "lab",
+    "tier": "t2",
+    "capability": "heterogeneous implementation node types, as a compatibility test graph",
+    "verdict": "app",
+    "covered_by": "a taxonomy"
+  },
+  {
+    "id": "dashboard.t0.1",
+    "plane": "dashboard",
+    "tier": "t0",
+    "capability": "an app bar: source selection, a capture toggle, global search, a theme toggle",
+    "verdict": "app",
+    "covered_by": "every part is a widget the catalog has"
+  },
+  {
+    "id": "dashboard.t0.2",
+    "plane": "dashboard",
+    "tier": "t0",
+    "capability": "a thin left palette and navigation rail",
+    "verdict": "app",
+    "covered_by": "a list and a toolbar"
+  },
+  {
+    "id": "dashboard.t0.3",
+    "plane": "dashboard",
+    "tier": "t0",
+    "capability": "a docking tile grid with drag, snap and resize",
+    "verdict": "have",
+    "covered_by": "`widgets::tile_grid` (R1607/R1608) plus the dock tree for the other model"
+  },
+  {
+    "id": "dashboard.t0.4",
+    "plane": "dashboard",
+    "tier": "t0",
+    "capability": "a widget card with a title, settings, tear-off, maximise and close",
+    "verdict": "app",
+    "covered_by": "`widgets::dock_panel` carries the tear-off and `tile_grid` the placement; the title, settings and maximise affordances are assembled per application over them"
+  },
+  {
+    "id": "dashboard.t0.5",
+    "plane": "dashboard",
+    "tier": "t0",
+    "capability": "named layout presets, saved and switched",
+    "verdict": "have",
+    "covered_by": "`tile_grid`'s arrangement is a value that round-trips — its own test is named for it: an arrangement round-trips so a named preset is just a value. Window placement is display-relative (R1576), so a preset survives the desk changing",
+    "proven_by": "pinion-core::an_arrangement_round_trips_so_a_named_preset_is_just_a_value"
+  },
+  {
+    "id": "dashboard.t0.6",
+    "plane": "dashboard",
+    "tier": "t0",
+    "capability": "multi-window: tear-off to an independent window, with an always-on-top option",
+    "verdict": "have",
+    "covered_by": "`WindowSpec` with `display` and `level` (R1576 / R1610 / R1616 / R1617), and a display that disappears is reported by name"
+  },
+  {
+    "id": "dashboard.t1.1",
+    "plane": "dashboard",
+    "tier": "t1",
+    "capability": "a virtualised packet stream at capture scale",
+    "verdict": "have",
+    "covered_by": "the virtualised list/table/tree at 1M rows, LRU-paged, with tail-follow"
+  },
+  {
+    "id": "dashboard.t1.2",
+    "plane": "dashboard",
+    "tier": "t1",
+    "capability": "a decode inspector pane",
+    "verdict": "have",
+    "covered_by": "`row_dissect`"
+  },
+  {
+    "id": "dashboard.t1.3",
+    "plane": "dashboard",
+    "tier": "t1",
+    "capability": "a topology map",
+    "verdict": "have",
+    "covered_by": "`pinion-node-graph` plus its `layout` (Sugiyama and a reproducible organic relaxation)"
+  },
+  {
+    "id": "dashboard.t1.4",
+    "plane": "dashboard",
+    "tier": "t1",
+    "capability": "a throughput time series",
+    "verdict": "have",
+    "covered_by": "`pinion_chart::LineChart`, with stacking (R1622)"
+  },
+  {
+    "id": "dashboard.t1.5",
+    "plane": "dashboard",
+    "tier": "t1",
+    "capability": "a share view: treemap or donut",
+    "verdict": "have",
+    "covered_by": "`pinion_chart::treemap` and `donut`"
+  },
+  {
+    "id": "dashboard.t1.6",
+    "plane": "dashboard",
+    "tier": "t1",
+    "capability": "a latency distribution: a histogram",
+    "verdict": "gap",
+    "covered_by": "NO BINNING IN THE CRATE — measured: `Density` (KDE), box and violin exist, and a histogram is assembled by the application out of `BarChart` bins it computes itself"
+  },
+  {
+    "id": "dashboard.t1.7",
+    "plane": "dashboard",
+    "tier": "t1",
+    "capability": "a loss timeline in lanes",
+    "verdict": "have",
+    "covered_by": "`pinion_chart::timeline`"
+  },
+  {
+    "id": "dashboard.t1.8",
+    "plane": "dashboard",
+    "tier": "t1",
+    "capability": "KPI stat tiles with sparklines",
+    "verdict": "app",
+    "covered_by": "MEASURED R1646: `sparkline`'s own doc names the KPI stat tile as a PLACE it is displayed, not as a widget the crate ships. The tile is a box, a label and a sparkline, assembled per application"
+  },
+  {
+    "id": "dashboard.t1.9",
+    "plane": "dashboard",
+    "tier": "t1",
+    "capability": "an alarm feed",
+    "verdict": "app",
+    "covered_by": "a virtualised list with a severity column"
+  },
+  {
+    "id": "dashboard.t1.10",
+    "plane": "dashboard",
+    "tier": "t1",
+    "capability": "a search and filter widget",
+    "verdict": "app",
+    "covered_by": "`GridFilter` plus a text field"
+  },
+  {
+    "id": "dashboard.t1.11",
+    "plane": "dashboard",
+    "tier": "t1",
+    "capability": "a replay and injection console",
+    "verdict": "app",
+    "covered_by": "a form plus the lab's own verbs"
+  },
+  {
+    "id": "dashboard.t1.12",
+    "plane": "dashboard",
+    "tier": "t1",
+    "capability": "report export",
+    "verdict": "have",
+    "covered_by": "`pinion-rpc::export_pdf`. The TABULAR export the capture pane wants is a different gap, and it is capture.t1.12"
+  },
+  {
+    "id": "dashboard.t2.1",
+    "plane": "dashboard",
+    "tier": "t2",
+    "capability": "hover tooltips on marks",
+    "verdict": "have",
+    "covered_by": "`widgets::tooltip` (`TooltipExternal`), which distinguishes hovered from focused from dismissed rather than treating a tooltip as a hover side effect"
+  },
+  {
+    "id": "dashboard.t2.2",
+    "plane": "dashboard",
+    "tier": "t2",
+    "capability": "brush and zoom",
+    "verdict": "have",
+    "covered_by": "`pinion_chart::brush`"
+  },
+  {
+    "id": "dashboard.t2.3",
+    "plane": "dashboard",
+    "tier": "t2",
+    "capability": "toggling a series from the legend",
+    "verdict": "gap",
+    "covered_by": "the legend SLOT is modelled — hiding a series keeps its palette index — but there is no legend widget to click"
+  },
+  {
+    "id": "dashboard.t2.4",
+    "plane": "dashboard",
+    "tier": "t2",
+    "capability": "click to cross-filter every linked view",
+    "verdict": "gap",
+    "covered_by": "bar and line participate; POLAR HAS NO BRUSH LEG AT ALL (measured: zero references), so the interaction is not uniform across the chart types this dashboard needs"
+  },
+  {
+    "id": "dashboard.t2.5",
+    "plane": "dashboard",
+    "tier": "t2",
+    "capability": "live, paused and scrubbed playback states",
+    "verdict": "have",
+    "covered_by": "`widgets::transport` — `TransportStatus` (stopped / playing / paused) plus `TransportClock` for the playhead, with one canonical state name a readout and a screen reader share"
+  },
+  {
+    "id": "dashboard.t2.6",
+    "plane": "dashboard",
+    "tier": "t2",
+    "capability": "loading, empty and error states per widget",
+    "verdict": "app",
+    "covered_by": "MEASURED R1646: no framework-level widget-state affordance exists; every binding paints its own empty and error case. Recorded as the application's rather than as a gap because a per-widget state machine is a design this axis has not asked for"
+  },
+  {
+    "id": "dashboard.t2.7",
+    "plane": "dashboard",
+    "tier": "t2",
+    "capability": "a no-permission state",
+    "verdict": "app",
+    "covered_by": "a widget state the application supplies"
+  },
+  {
+    "id": "dashboard.t2.8",
+    "plane": "dashboard",
+    "tier": "t2",
+    "capability": "an encrypted-link state, where content is unavailable",
+    "verdict": "app",
+    "covered_by": "a widget state the application supplies"
+  },
+  {
+    "id": "dashboard.t2.9",
+    "plane": "dashboard",
+    "tier": "t2",
+    "capability": "light and dark parity",
+    "verdict": "have",
+    "covered_by": "the theme system, with every demo asserting both"
+  },
+  {
+    "id": "dashboard.t2.10",
+    "plane": "dashboard",
+    "tier": "t2",
+    "capability": "a colour-blind-safe categorical palette",
+    "verdict": "have",
+    "covered_by": "`pinion_chart::palette` is Okabe-Ito, the de-facto colour-blind-safe qualitative set"
+  },
+  {
+    "id": "dashboard.t2.11",
+    "plane": "dashboard",
+    "tier": "t2",
+    "capability": "dense label overlap avoidance",
+    "verdict": "have",
+    "covered_by": "R1633: an axis thins its labels and REPORTS which it dropped"
+  },
+  {
+    "id": "dashboard.t2.12",
+    "plane": "dashboard",
+    "tier": "t2",
+    "capability": "a 3D surface",
+    "verdict": "gap",
+    "covered_by": "waits on the Phase C renderer, which is outside this axis"
+  }
+]
