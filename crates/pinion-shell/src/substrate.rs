@@ -44,7 +44,7 @@ use pinion_a11y::{
 use pinion_core::accelerator::Chord;
 use pinion_core::event::WheelDelta;
 use pinion_core::reactive::{FONT_SOURCES, FontSourceReport, SelfHostedFace};
-use pinion_core::{Frame, Intent, Scene, SceneRevision};
+use pinion_core::{Frame, Intent, KeyPress, Scene, SceneRevision};
 use pinion_rpc::{
     DeferredInput, DispatchContext, DragButton, DragPhase, KeyWireState, LayoutNode, PreviewLedger,
     Request, dispatch_parsed, parse_request,
@@ -2532,6 +2532,23 @@ impl<V: WidgetView> ShellCore<V> {
         self.apply_key_inner(key, false);
     }
 
+    /// R1658 §5.13 §5.39 — open a keystroke delivery, so every key dispatched
+    /// until the next open carries one arrival. See
+    /// [`CoreShell::open_key_delivery`](pinion_runtime::CoreShell::open_key_delivery).
+    ///
+    /// Public because the **backend** is what knows where a platform handover
+    /// begins, and the backend is outside this type: `AppShell::new_events`
+    /// calls it once per winit event-loop iteration. A binding never does.
+    pub fn open_key_delivery(&mut self) -> pinion_core::KeyArrival {
+        self.core.open_key_delivery()
+    }
+
+    /// R1658 §5.13 §5.39 — the arrival of the delivery currently open.
+    #[must_use]
+    pub fn key_delivery(&self) -> pinion_core::KeyArrival {
+        self.core.key_delivery()
+    }
+
     /// R1071 PR-27 §5.39 §5.35 — body of [`Self::apply_key`] carrying the
     /// platform auto-repeat flag through to [`CoreShell::apply_key_repeat`]
     /// (and thence the binding's [`WidgetCore::apply_key_repeat`](pinion_core::WidgetCore::apply_key_repeat)). The
@@ -2540,10 +2557,13 @@ impl<V: WidgetView> ShellCore<V> {
     /// ([`Self::key_press_for_window`]) pass the real flag.
     pub(crate) fn apply_key_inner(&mut self, key: &str, repeat: bool) {
         let focused = self.focus.focused().map(str::to_owned);
-        if let Some(tail) =
-            self.core
-                .apply_key_repeat(focused.as_deref(), key, self.modifiers, repeat)
-        {
+        // R1658 §5.13 §5.39 — the keystroke carries the arrival of the
+        // delivery the backend opened for this platform handover, NOT a fresh
+        // one taken here: taking it here would date the key at the moment
+        // this app got round to it, which is what the capability exists to
+        // stop. `AppShell::new_events` is what opens it.
+        let press = KeyPress::new(key, self.modifiers, repeat, self.core.key_delivery());
+        if let Some(tail) = self.core.apply_key_press(focused.as_deref(), &press) {
             self.revision.bump();
             self.handle_tail(&tail);
         }
@@ -2980,10 +3000,10 @@ impl<V: WidgetView> ShellCore<V> {
     /// flag.
     pub(crate) fn try_apply_key_inner(&mut self, key_str: &str, repeat: bool) -> bool {
         let focused = self.focus.focused().map(str::to_owned);
-        if let Some(tail) =
-            self.core
-                .apply_key_repeat(focused.as_deref(), key_str, self.modifiers, repeat)
-        {
+        // R1658 — same rule as `apply_key_inner`: the arrival is the open
+        // delivery's, not one taken at dispatch.
+        let press = KeyPress::new(key_str, self.modifiers, repeat, self.core.key_delivery());
+        if let Some(tail) = self.core.apply_key_press(focused.as_deref(), &press) {
             self.revision.bump();
             // R705.1 — `handle_tail` arms `redraw_requested` whenever the
             // dispatch dirtied a view-subscribed `Signal` (the reactive
@@ -3742,6 +3762,13 @@ impl<V: WidgetView> ShellCore<V> {
     #[allow(clippy::too_many_lines)]
     fn drain_deferred_inputs_for_window(&mut self, scope: Option<&str>, inputs: &[DeferredInput]) {
         let window_id = scope.unwrap_or(pinion_runtime::DEFAULT_WINDOW);
+        // R1658 §5.13 §5.39 — one drain is one delivery. Every key this drain
+        // dispatches carries one arrival, because the agent handed them over
+        // together; a key from the NEXT request gets its own, because it was
+        // sent separately. The instant is taken here, before the first
+        // handler of the drain runs, for the same reason the winit path takes
+        // it in `new_events`.
+        self.core.open_key_delivery();
         // `DeferredInput` is `non_exhaustive`; the wildcard arm
         // covers future variants (key, cursor_only, etc.) silently
         // no-op against this drain until a follow-up round extends
@@ -12687,5 +12714,202 @@ mod modal_tail_focus_tests {
 
         assert_eq!(sc.focus().focused(), Some(OTHER_BG));
         assert_eq!(sc.focus().modal_depth(), 0);
+    }
+}
+
+/// R1658 §5.13 §5.39 — the injected keystroke says when it arrived.
+#[cfg(test)]
+mod injected_arrival_tests {
+    use super::ShellCore;
+    use pinion_a11y::WidgetA11y;
+    use pinion_core::{KeyPress, Scene, WidgetCore};
+
+    use crate::test_fixtures::TestRenderer;
+    use crate::{SizeStrategy, WidgetView};
+
+    thread_local! {
+        static INJECTED_ARRIVALS: std::cell::RefCell<Vec<pinion_core::KeyArrival>> =
+            const { std::cell::RefCell::new(Vec::new()) };
+    }
+
+    struct InjectedArrivalFixture;
+
+    impl WidgetCore for InjectedArrivalFixture {
+        type State = pinion_core::widgets::button::ButtonState;
+        type Event = pinion_core::widgets::button::ButtonEvent;
+
+        fn create_external() -> Box<dyn pinion_core::external::External> {
+            Box::new(pinion_core::widgets::button::ButtonExternal::new())
+        }
+
+        fn tag() -> &'static str {
+            "injected_arrival"
+        }
+
+        fn read_state(_scene: &Scene) -> Self::State {
+            pinion_core::widgets::button::ButtonState::Idle
+        }
+
+        fn view(_state: Self::State, _frame: &pinion_core::Frame) -> Scene {
+            Scene::Container(
+                pinion_core::scene::ContainerNode::new(vec![]).with_tag("injected_arrival"),
+            )
+        }
+
+        fn event_name(_event: Self::Event) -> &'static str {
+            "__internal__"
+        }
+
+        fn title() -> &'static str {
+            "InjectedArrival"
+        }
+
+        fn apply_key_press(
+            _scene: &mut Scene,
+            _focused: Option<&str>,
+            press: &KeyPress<'_>,
+        ) -> bool {
+            INJECTED_ARRIVALS.with(|log| log.borrow_mut().push(press.arrival));
+            true
+        }
+    }
+
+    fn drain_one_key(sc: &mut ShellCore<InjectedArrivalFixture>, key: &str) {
+        use pinion_rpc::{DeferredInput, KeyWireState};
+        use pinion_runtime::DEFAULT_WINDOW;
+        sc.drain_deferred_inputs_for_window(
+            Some(DEFAULT_WINDOW),
+            &[DeferredInput::Key {
+                x: 5.0,
+                y: 5.0,
+                key: key.to_owned(),
+                state: KeyWireState::Press,
+            }],
+        );
+    }
+
+    #[test]
+    fn r1658_an_injected_key_carries_an_arrival_and_each_request_is_its_own() {
+        // §2 #2 — every input a human makes has an RPC peer, and this round's
+        // capability is no exception: a key injected over the wire carries an
+        // arrival too, stamped as the drain opens rather than when the binding
+        // gets round to it.
+        //
+        // ONE REQUEST IS ONE DELIVERY, and that is the honest answer for this
+        // path rather than a limitation: the agent sent them as two calls, so
+        // they did not arrive together. A test asserting the opposite would be
+        // asserting a lie about how the wire works.
+        INJECTED_ARRIVALS.with(|log| log.borrow_mut().clear());
+        let mut sc = ShellCore::<InjectedArrivalFixture>::new();
+        let boot = sc.compute_paint_scene(100, 100);
+        sc.finalize_frame(boot);
+
+        drain_one_key(&mut sc, "a");
+        drain_one_key(&mut sc, "b");
+
+        let log = INJECTED_ARRIVALS.with(|log| log.borrow().clone());
+        assert_eq!(log.len(), 2, "both injected keys reached the binding");
+        assert!(
+            !log[0].arrived_with(log[1]),
+            "two `scene/key` requests are two deliveries"
+        );
+    }
+
+    #[test]
+    fn r1658_keys_of_one_drain_arrived_together() {
+        // The other half of the same rule: keys the agent handed over in ONE
+        // drain did arrive together. This is what makes the batch axis
+        // drivable over the wire at all — without it the injected path could
+        // never express a gesture, only a sequence of unrelated keystrokes.
+        use pinion_rpc::{DeferredInput, KeyWireState};
+        use pinion_runtime::DEFAULT_WINDOW;
+
+        INJECTED_ARRIVALS.with(|log| log.borrow_mut().clear());
+        let mut sc = ShellCore::<InjectedArrivalFixture>::new();
+        let boot = sc.compute_paint_scene(100, 100);
+        sc.finalize_frame(boot);
+
+        let key = |name: &str| DeferredInput::Key {
+            x: 5.0,
+            y: 5.0,
+            key: name.to_owned(),
+            state: KeyWireState::Press,
+        };
+        sc.drain_deferred_inputs_for_window(Some(DEFAULT_WINDOW), &[key("a"), key("b"), key("c")]);
+
+        let log = INJECTED_ARRIVALS.with(|log| log.borrow().clone());
+        assert_eq!(log.len(), 3);
+        assert!(
+            log[0].arrived_with(log[1]) && log[1].arrived_with(log[2]),
+            "one drain is one delivery"
+        );
+        assert_eq!(log[0].at(), log[2].at(), "and one instant");
+    }
+
+    #[test]
+    fn r1658_the_platform_key_path_takes_the_open_delivery() {
+        // THE GUI PATH ITSELF, which is the one the defect was reported on and
+        // the one a counterfactual found untested: every other test here drives
+        // `CoreShell` or the RPC drain, and both would stay green with
+        // `apply_key_inner` stamping a fresh arrival at dispatch — the exact
+        // shape this round exists to remove.
+        //
+        // `AppShell::new_events` opens the delivery once per winit event-loop
+        // iteration; this stands in for that, then sends two keys the way two
+        // `WindowEvent::KeyboardInput` arms of one iteration would.
+        INJECTED_ARRIVALS.with(|log| log.borrow_mut().clear());
+        let mut sc = ShellCore::<InjectedArrivalFixture>::new();
+        let boot = sc.compute_paint_scene(100, 100);
+        sc.finalize_frame(boot);
+
+        let opened = sc.open_key_delivery();
+        sc.apply_key("a");
+        sc.apply_key("b");
+
+        let log = INJECTED_ARRIVALS.with(|log| log.borrow().clone());
+        assert_eq!(log.len(), 2, "both keys reached the binding");
+        assert!(
+            log[0].arrived_with(opened) && log[1].arrived_with(opened),
+            "both carry the delivery the backend opened, not one taken at dispatch"
+        );
+        assert_eq!(
+            log[0].at(),
+            log[1].at(),
+            "and so the second key is not dated later than the first"
+        );
+    }
+
+    #[test]
+    fn r1658_the_offer_first_key_path_takes_the_open_delivery_too() {
+        // `try_apply_key_inner` is the SECOND winit dispatch arm — the
+        // offer-first path Escape and Tab take before the shell's own
+        // fallbacks. It is a separate call site with its own copy of the rule,
+        // so it gets its own assertion rather than being assumed to match.
+        INJECTED_ARRIVALS.with(|log| log.borrow_mut().clear());
+        let mut sc = ShellCore::<InjectedArrivalFixture>::new();
+        let boot = sc.compute_paint_scene(100, 100);
+        sc.finalize_frame(boot);
+
+        let opened = sc.open_key_delivery();
+        assert!(sc.try_apply_key("Escape"), "the fixture claims every key");
+        assert!(sc.try_apply_key("Tab"));
+
+        let log = INJECTED_ARRIVALS.with(|log| log.borrow().clone());
+        assert_eq!(log.len(), 2);
+        assert!(
+            log[0].arrived_with(opened) && log[1].arrived_with(opened),
+            "the offer-first arm reads the open delivery as well"
+        );
+    }
+
+    impl WidgetA11y for InjectedArrivalFixture {}
+    impl WidgetView for InjectedArrivalFixture {
+        type Renderer = TestRenderer;
+        fn initial_size_strategy() -> SizeStrategy {
+            SizeStrategy::Fixed {
+                width: 100,
+                height: 100,
+            }
+        }
     }
 }

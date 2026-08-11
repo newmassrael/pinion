@@ -107,9 +107,9 @@ pub use file_dialog::{
 pub use frame::Frame;
 pub use input::{
     AutoRepeat, CompositionEvent, DRAG_CLICK_THRESHOLD_PX, DragCalibration, DragLatch,
-    GesturePhase, HeldKeys, InputStateSnapshot, KeyDispatchFocus, Modifiers, PointerButton,
-    PointerButtons, PointerEdge, PointerKind, RawPointerButton, SelectionChord, edit_field_keymap,
-    forward_key_to_field,
+    GesturePhase, HeldKeys, InputStateSnapshot, KeyArrival, KeyBatch, KeyDispatchFocus, KeyPress,
+    Modifiers, PointerButton, PointerButtons, PointerEdge, PointerKind, RawPointerButton,
+    SelectionChord, edit_field_keymap, forward_key_to_field,
 };
 pub use intent::{Intent, IntentTag};
 pub use mnemonic::{Mnemonic, MnemonicBinding, MnemonicLabel, scene_mnemonics};

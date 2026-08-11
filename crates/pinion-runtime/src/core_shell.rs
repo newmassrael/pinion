@@ -80,7 +80,7 @@ use pinion_core::mnemonic::{Mnemonic, scene_mnemonics};
 use pinion_core::reactive::{Effect, Signal};
 use pinion_core::scene::{ContainerNode, ExternalNode};
 use pinion_core::widgets::aria::send_keyboard_activate;
-use pinion_core::{Command, HeldKeys, Owner, Scene, WidgetCore};
+use pinion_core::{Command, HeldKeys, KeyArrival, KeyBatch, KeyPress, Owner, Scene, WidgetCore};
 
 use crate::command::CommandExecutor;
 use crate::focus::FocusManager;
@@ -162,6 +162,21 @@ pub struct CoreShell<V: WidgetCore> {
     /// `scene/key state` drain) and blur consumers
     /// ([`Self::clear_held_keys`]).
     held_keys: HeldKeys,
+    /// R1658 §5.13 §5.39 — the keystroke arrival the **currently open
+    /// platform delivery** stamps: see [`Self::open_key_delivery`].
+    ///
+    /// Lives here, not per backend shell, for the same §2 #6 reason
+    /// [`Self::held_keys`] does — "when did this key arrive" is one answer,
+    /// and two shells each deriving their own is the divergence class the
+    /// audit flags. The GUI backend opens a delivery per event-loop
+    /// iteration, the terminal backend per platform read, and the RPC
+    /// injection path per drain; every one of them lands here.
+    ///
+    /// Seeded with [`KeyBatch::initial`] and the construction instant, so a
+    /// keystroke dispatched before any backend opened a delivery carries an
+    /// arrival that is honest about being nobody's batch rather than
+    /// claiming to have arrived with the next one.
+    key_delivery: KeyArrival,
     /// R1543 §5.39 — per-`(window, folded key)` cycling cursor for **ambiguous**
     /// mnemonics: the tag [`Self::dispatch_mnemonic_for_window`] activated last
     /// time this accelerator was pressed in this window.
@@ -808,6 +823,7 @@ impl<V: WidgetCore> CoreShell<V> {
             cached_state,
             routers,
             held_keys: HeldKeys::default(),
+            key_delivery: KeyArrival::new(std::time::Instant::now(), KeyBatch::initial()),
             mnemonic_cursor: HashMap::new(),
             intent_queue: IntentQueue::new(),
             root_owner,
@@ -2257,9 +2273,64 @@ impl<V: WidgetCore> CoreShell<V> {
         modifiers: pinion_core::Modifiers,
         repeat: bool,
     ) -> Option<DispatchTail<V::State>> {
+        // R1658 — a caller that names no delivery is dispatching a keystroke
+        // that arrived on its own: the a11y Click → `apply_key("Enter")`
+        // synthesis, a unit test, a backend that has not adopted
+        // `open_key_delivery`. Opening one here is what makes that true
+        // rather than letting it inherit whatever delivery ran last and
+        // claim to have arrived alongside it.
+        let arrival = self.open_key_delivery();
+        self.apply_key_press(focused, &KeyPress::new(key, modifiers, repeat, arrival))
+    }
+
+    /// R1658 §5.13 §5.39 — open a new platform delivery and return the
+    /// arrival every keystroke dispatched under it will carry.
+    ///
+    /// A **delivery** is one handover from the platform to this runtime:
+    /// the GUI backend opens one per event-loop iteration (winit's
+    /// `new_events`, which runs before any event of that iteration is
+    /// dispatched), and the RPC injection path opens one per drain. Every
+    /// keystroke dispatched between two opens shares one batch and one
+    /// instant — which is exactly "these arrived together", the fact a
+    /// repeat window is a statement about.
+    ///
+    /// The instant is taken here, **before** any binding handler for this
+    /// delivery runs. That ordering is the whole capability: it is what
+    /// separates "when the keystroke arrived" from "when this app got round
+    /// to it", and those differ by however long the previous keystroke's
+    /// handler took.
+    pub fn open_key_delivery(&mut self) -> KeyArrival {
+        self.key_delivery =
+            KeyArrival::new(std::time::Instant::now(), self.key_delivery.batch().next());
+        self.key_delivery
+    }
+
+    /// R1658 §5.13 §5.39 — the arrival of the delivery currently open.
+    ///
+    /// A backend that opened a delivery for this event-loop iteration reads
+    /// it here for each keystroke that iteration dispatches, so all of them
+    /// carry one batch.
+    #[must_use]
+    pub const fn key_delivery(&self) -> KeyArrival {
+        self.key_delivery
+    }
+
+    /// R1658 §5.13 §5.39 — arrival-aware key dispatch: the variant every
+    /// backend drives so the binding's
+    /// [`WidgetCore::apply_key_press`] sees when the keystroke arrived and
+    /// what it arrived with.
+    ///
+    /// Same `root_owner.run(...)` wrap as [`Self::apply_key`] so
+    /// [`pinion_core::Owner::current`] resolves to this binding's root scope
+    /// from inside the widget's keyboard handler (R51.152).
+    pub fn apply_key_press(
+        &mut self,
+        focused: Option<&str>,
+        press: &KeyPress<'_>,
+    ) -> Option<DispatchTail<V::State>> {
         let owner = self.root_owner.clone();
         let scene = &mut self.scene;
-        let handled = owner.run(|| V::apply_key_repeat(scene, focused, key, modifiers, repeat));
+        let handled = owner.run(|| V::apply_key_press(scene, focused, press));
         if handled { Some(self.tail()) } else { None }
     }
 
@@ -7369,5 +7440,227 @@ mod mnemonic_tests {
             Some("other"),
             "the unbound press did not disturb S's cursor"
         );
+    }
+}
+
+/// R1658 §5.13 §5.39 — a keystroke says when it arrived.
+#[cfg(test)]
+mod key_arrival_tests {
+    use super::CoreShell;
+    use pinion_core::widgets::button::{ButtonEvent, ButtonState};
+    use pinion_core::{Frame, KeyPress, Scene, WidgetCore};
+    use std::cell::{Cell, RefCell};
+
+    // ── R1658 §5.13 §5.39 — a keystroke says when it arrived ──────────
+
+    thread_local! {
+        /// What each dispatched keystroke saw: the arrival it was HANDED,
+        /// and the clock it would have read for itself inside the handler.
+        static ARRIVAL_LOG: RefCell<Vec<(pinion_core::KeyArrival, std::time::Instant)>> =
+            const { RefCell::new(Vec::new()) };
+        /// How long each handler blocks — the embedder's per-keystroke round
+        /// trip, which is what makes the two clocks diverge.
+        static HANDLER_WORK: Cell<std::time::Duration> =
+            const { Cell::new(std::time::Duration::ZERO) };
+    }
+
+    struct ArrivalFixture;
+
+    impl WidgetCore for ArrivalFixture {
+        type State = ButtonState;
+        type Event = ButtonEvent;
+
+        fn create_external() -> Box<dyn pinion_core::external::External> {
+            Box::new(pinion_core::widgets::button::ButtonExternal::new())
+        }
+
+        fn tag() -> &'static str {
+            "arrival"
+        }
+
+        fn read_state(_scene: &Scene) -> Self::State {
+            ButtonState::Idle
+        }
+
+        fn view(_state: Self::State, _frame: &Frame) -> Scene {
+            Scene::Container(pinion_core::scene::ContainerNode::new(vec![]).with_tag("arrival"))
+        }
+
+        fn event_name(_event: Self::Event) -> &'static str {
+            "__internal__"
+        }
+
+        fn title() -> &'static str {
+            "Arrival"
+        }
+
+        fn apply_key_press(
+            _scene: &mut Scene,
+            _focused: Option<&str>,
+            press: &KeyPress<'_>,
+        ) -> bool {
+            ARRIVAL_LOG.with(|log| {
+                log.borrow_mut()
+                    .push((press.arrival, std::time::Instant::now()));
+            });
+            // The embedder's blocking round trip, stood in for by a sleep.
+            std::thread::sleep(HANDLER_WORK.with(Cell::get));
+            true
+        }
+    }
+
+    fn drive_arrival_keys(
+        work: std::time::Duration,
+        keys: &[&str],
+    ) -> Vec<(pinion_core::KeyArrival, std::time::Instant)> {
+        ARRIVAL_LOG.with(|log| log.borrow_mut().clear());
+        HANDLER_WORK.with(|w| w.set(work));
+        let mut core: CoreShell<ArrivalFixture> = CoreShell::new();
+        // ONE delivery, the way a backend opens one per platform handover.
+        let opened = core.open_key_delivery();
+        for key in keys {
+            let press = KeyPress::new(
+                key,
+                pinion_core::Modifiers::empty(),
+                false,
+                core.key_delivery(),
+            );
+            let _ = core.apply_key_press(Some("arrival"), &press);
+        }
+        let log = ARRIVAL_LOG.with(|log| log.borrow().clone());
+        assert!(
+            log.iter().all(|(a, _)| a.arrived_with(opened)),
+            "every key of one delivery carries that delivery's arrival"
+        );
+        log
+    }
+
+    #[test]
+    fn r1658_keys_of_one_delivery_arrived_together() {
+        let log = drive_arrival_keys(std::time::Duration::ZERO, &["a", "b", "c"]);
+        assert_eq!(log.len(), 3);
+        assert!(
+            log[0].0.arrived_with(log[1].0) && log[1].0.arrived_with(log[2].0),
+            "three keys the platform handed over in one delivery are one gesture"
+        );
+        assert_eq!(
+            log[0].0.at(),
+            log[2].0.at(),
+            "and they are dated at the delivery, not at their own dispatch"
+        );
+    }
+
+    #[test]
+    fn r1658_a_blocking_handler_does_not_move_the_arrival() {
+        // THE DEFECT, REPRODUCED. A binding that blocks per keystroke sees its
+        // own clock run away from the delivery; a window judged on the handler
+        // clock shrinks by exactly the work done, which is how a 500 ms repeat
+        // window lost two presses out of three under load. Both halves are
+        // asserted, because a test that only checked the arrival could pass on
+        // a build where the handler clock did not diverge either — and then it
+        // would be asserting nothing.
+        let work = std::time::Duration::from_millis(20);
+        let log = drive_arrival_keys(work, &["a", "b", "c"]);
+
+        assert_eq!(
+            log[0].0.at(),
+            log[2].0.at(),
+            "the arrival is the delivery's, so the third key is not dated late"
+        );
+        let handler_drift = log[2].1.duration_since(log[0].1);
+        assert!(
+            handler_drift >= work * 2,
+            "the handler's own clock DID run away ({handler_drift:?} >= {:?}) — \
+             which is what the arrival is not doing",
+            work * 2
+        );
+    }
+
+    #[test]
+    fn r1658_separate_deliveries_did_not_arrive_together() {
+        ARRIVAL_LOG.with(|log| log.borrow_mut().clear());
+        HANDLER_WORK.with(|w| w.set(std::time::Duration::ZERO));
+        let mut core: CoreShell<ArrivalFixture> = CoreShell::new();
+        for key in ["a", "b"] {
+            let arrival = core.open_key_delivery();
+            let press = KeyPress::new(key, pinion_core::Modifiers::empty(), false, arrival);
+            let _ = core.apply_key_press(Some("arrival"), &press);
+        }
+        let log = ARRIVAL_LOG.with(|log| log.borrow().clone());
+        assert!(
+            !log[0].0.arrived_with(log[1].0),
+            "two platform deliveries are two gestures"
+        );
+    }
+
+    #[test]
+    fn r1658_a_synthesised_key_arrives_on_its_own() {
+        // `apply_key` / `apply_key_repeat` are the synthesis paths — the a11y
+        // Click -> Enter activation, a unit test, a backend that has not
+        // adopted the delivery seam. Each opens its own, because inheriting the
+        // last one would have it claim to have arrived alongside a keystroke it
+        // has nothing to do with.
+        ARRIVAL_LOG.with(|log| log.borrow_mut().clear());
+        HANDLER_WORK.with(|w| w.set(std::time::Duration::ZERO));
+        let mut core: CoreShell<ArrivalFixture> = CoreShell::new();
+        let _ = core.apply_key(Some("arrival"), "a", pinion_core::Modifiers::empty());
+        let _ = core.apply_key(Some("arrival"), "b", pinion_core::Modifiers::empty());
+        let log = ARRIVAL_LOG.with(|log| log.borrow().clone());
+        assert!(
+            !log[0].0.arrived_with(log[1].0),
+            "two synthesised activations did not arrive together"
+        );
+    }
+
+    #[test]
+    fn r1658_the_default_hook_still_reaches_apply_key() {
+        // The 160 `apply_key` impls in this tree do not know `apply_key_press`
+        // exists. The default chain has to carry a press all the way down to
+        // them, or this round breaks every binding in the workspace while
+        // compiling cleanly.
+        thread_local! {
+            static SEEN: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
+        }
+        struct LegacyFixture;
+        impl WidgetCore for LegacyFixture {
+            type State = ButtonState;
+            type Event = ButtonEvent;
+            fn create_external() -> Box<dyn pinion_core::external::External> {
+                Box::new(pinion_core::widgets::button::ButtonExternal::new())
+            }
+            fn tag() -> &'static str {
+                "legacy"
+            }
+            fn read_state(_scene: &Scene) -> Self::State {
+                ButtonState::Idle
+            }
+            fn view(_state: Self::State, _frame: &Frame) -> Scene {
+                Scene::Container(pinion_core::scene::ContainerNode::new(vec![]).with_tag("legacy"))
+            }
+            fn event_name(_event: Self::Event) -> &'static str {
+                "__internal__"
+            }
+            fn title() -> &'static str {
+                "Legacy"
+            }
+            fn apply_key(
+                _scene: &mut Scene,
+                _focused: Option<&str>,
+                key: &str,
+                _modifiers: pinion_core::Modifiers,
+            ) -> bool {
+                SEEN.with(|s| s.borrow_mut().push(key.to_owned()));
+                true
+            }
+        }
+
+        let mut core: CoreShell<LegacyFixture> = CoreShell::new();
+        let arrival = core.open_key_delivery();
+        let press = KeyPress::new("z", pinion_core::Modifiers::empty(), false, arrival);
+        assert!(
+            core.apply_key_press(Some("legacy"), &press).is_some(),
+            "the press reached a binding that only implements `apply_key`"
+        );
+        assert_eq!(SEEN.with(|s| s.borrow().clone()), vec!["z".to_owned()]);
     }
 }

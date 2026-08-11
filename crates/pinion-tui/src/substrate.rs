@@ -783,7 +783,13 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             }
         }
         let focused = V::primary_surface().map(|p| p.tag);
-        if let Some(tail) = self.core.apply_key(focused, key_str, modifiers) {
+        // R1658 §5.13 §5.39 — the keystroke carries the arrival of the
+        // delivery the event loop opened, not one taken at dispatch: see
+        // `shell.rs`'s `carried_over` for where the terminal's delivery
+        // boundary is decided. A terminal reports no auto-repeat edge, so
+        // `repeat` stays `false` — a held key arrives as ordinary keystrokes.
+        let press = pinion_core::KeyPress::new(key_str, modifiers, false, self.core.key_delivery());
+        if let Some(tail) = self.core.apply_key_press(focused, &press) {
             return self.handle_tail(&tail);
         }
         // R51.187 §5.45 R55.C.3 — widget reported the key
@@ -1168,6 +1174,17 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     #[must_use]
     pub fn wants_next_frame(&self, epsilon: f32) -> bool {
         self.any_animation_active(epsilon) || self.auto_repeat_armed.get()
+    }
+
+    /// R1658 §5.13 §5.39 §2 #6 — open a keystroke delivery, the terminal peer
+    /// of `ShellCore::open_key_delivery`.
+    ///
+    /// The event loop calls it when it had to WAIT for the next event; an
+    /// event that was already available belongs to the delivery already open.
+    /// See `shell.rs`'s `carried_over` for why that is the terminal's
+    /// boundary.
+    pub fn open_key_delivery(&mut self) -> pinion_core::KeyArrival {
+        self.core.open_key_delivery()
     }
 
     pub fn drain_deferred_inputs(&mut self, inputs: &[pinion_rpc::DeferredInput]) -> bool {

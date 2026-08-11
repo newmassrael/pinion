@@ -3828,6 +3828,28 @@ impl<V: WidgetView + 'static> AppShell<V> {
 }
 
 impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
+    /// R1658 §5.13 §5.39 — open a keystroke **delivery** for this event-loop
+    /// iteration.
+    ///
+    /// winit calls this once at the top of every iteration, *before* it
+    /// dispatches any of that iteration's events, which makes it the exact
+    /// boundary the capability needs: every key winit hands over without an
+    /// intervening wait shares one arrival, and the instant is stamped before
+    /// the first binding handler of the iteration runs.
+    ///
+    /// That ordering is the whole point. Stamping inside the keyboard arm
+    /// instead would date the second key of a burst at *after the first key's
+    /// handler returned* — and a handler that blocks (an embedder doing a
+    /// round trip per keystroke) is precisely the case where a repeat window
+    /// judged on that clock silently collapses.
+    ///
+    /// `cause` is deliberately unread: a poll wake, a timer wake and a
+    /// platform wake are all the start of a new delivery, and discriminating
+    /// them would make the batch mean something different on each platform.
+    fn new_events(&mut self, _event_loop: &ActiveEventLoop, _cause: winit::event::StartCause) {
+        self.core.open_key_delivery();
+    }
+
     /// R46.3.4 — winit may fire `resumed` more than once on platforms
     /// that suspend (Android, Wayland-compositor focus changes). The
     /// Vello canonical pattern caches the previous `Window` across

@@ -212,6 +212,41 @@ pub fn run_with_handlers<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBacken
     run_impl::<V>(Some((cmd_exec, rx)))
 }
 
+/// R1658 §5.13 §5.39 — wait for the next terminal event, and say whether we
+/// HAD to wait for it.
+///
+/// `None` = the adaptive poll timed out with nothing to read. `Some(true)` =
+/// an event is ready and this turn waited for it, so it begins a new keystroke
+/// **delivery**. `Some(false)` = it was already available before this turn
+/// waited, which means the person produced it BEFORE the app finished the
+/// previous keystroke — so it belongs to the delivery already open and the two
+/// are one gesture.
+///
+/// The availability question is asked FIRST, before the waiting poll, because
+/// the answer is about the moment the previous dispatch returned. Asking it
+/// afterwards would answer about a different moment.
+///
+/// Deliberately not "came out of the same read": crossterm does not say, and
+/// "already waiting" is what "same read" is a proxy for anyway — whether the
+/// bytes sat in crossterm's buffer or the tty's, the person had already typed
+/// them. The GUI backend answers the same question at winit's `new_events`.
+///
+/// See the module-level [`IDLE_POLL_MS`] / [`ACTIVE_POLL_MS`] / [`REST_EPSILON`]
+/// notes for the R51.148 §5.28 adaptive-poll rationale the timeout comes from.
+fn await_terminal_event<V: WidgetViewTui>(core: &ShellCoreTui<V>) -> io::Result<Option<bool>> {
+    let carried_over = crossterm::event::poll(Duration::ZERO)?;
+    let timeout = if core.wants_next_frame(REST_EPSILON) {
+        Duration::from_millis(ACTIVE_POLL_MS)
+    } else {
+        Duration::from_millis(IDLE_POLL_MS)
+    };
+    if crossterm::event::poll(timeout)? {
+        Ok(Some(!carried_over))
+    } else {
+        Ok(None)
+    }
+}
+
 /// R51.160 §5.23 — shared event-loop body for [`run`] and
 /// [`run_with_handlers`]. When `commands` is `Some`, the
 /// [`CommandExecutor`] is injected into the substrate and the
@@ -340,12 +375,7 @@ fn run_impl<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
             commit_and_finalize::<V>(&mut core, cols, rows, &mut renderer)?;
         }
 
-        let poll_timeout = if core.wants_next_frame(REST_EPSILON) {
-            Duration::from_millis(ACTIVE_POLL_MS)
-        } else {
-            Duration::from_millis(IDLE_POLL_MS)
-        };
-        if !crossterm::event::poll(poll_timeout)? {
+        let Some(waited) = await_terminal_event(&core)? else {
             // R51.148 §5.28 — timeout without an input event. If an
             // animation is still moving, commit another paint so the
             // user observes the spring transition; otherwise stay
@@ -354,6 +384,9 @@ fn run_impl<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBackend<Stdout>>>>(
                 commit_and_finalize::<V>(&mut core, cols, rows, &mut renderer)?;
             }
             continue;
+        };
+        if waited {
+            core.open_key_delivery();
         }
         match crossterm::event::read()? {
             crossterm::event::Event::Key(key) => {

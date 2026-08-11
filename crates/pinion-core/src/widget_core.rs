@@ -542,6 +542,51 @@ pub trait WidgetCore: 'static {
         Self::apply_key(scene, focused, key, modifiers)
     }
 
+    /// R1658 §5.13 §5.39 — the keyboard entry point that carries the
+    /// keystroke's **arrival**: when the runtime received it, and which
+    /// platform delivery it came in
+    /// ([`KeyArrival`](crate::input::KeyArrival)).
+    ///
+    /// Every dispatch path in the tree funnels through here — the winit
+    /// keyboard arm, the terminal backend, the a11y activation synthesis and
+    /// the §5.49 RPC `scene/key` injection — so a binding that overrides
+    /// this sees every keystroke, whatever produced it.
+    ///
+    /// # What this answers that the others cannot
+    ///
+    /// A binding whose keyboard model has a **window** — a repeat window, a
+    /// chord timeout, a double-tap — has to judge it against the moment the
+    /// keystroke arrived. Reading `Instant::now()` inside the handler judges
+    /// it against the moment the binding *got round to* the keystroke, which
+    /// is later by however long the previous keystroke's handler took, so
+    /// the window silently shrinks by exactly the amount of work the app is
+    /// doing. That is a measured defect and not a hypothetical: see
+    /// [`KeyArrival`](crate::input::KeyArrival) for the case.
+    ///
+    /// # Default
+    ///
+    /// Delegates to [`Self::apply_key_repeat`], dropping the arrival — the
+    /// behaviour every existing binding already has, so the 160 `apply_key`
+    /// impls and the 3 `apply_key_repeat` impls in this tree stay
+    /// byte-unchanged. Override this **instead of** either when the arrival
+    /// matters.
+    ///
+    /// # Why a struct and not a sixth parameter
+    ///
+    /// [`KeyPress`](crate::input::KeyPress) is `#[non_exhaustive]`, so the
+    /// next fact a keystroke needs to carry is a field rather than a fifth
+    /// hook. This entry point has already grown once by growing a hook
+    /// (`apply_key` → `apply_key_repeat` for the auto-repeat flag) and that
+    /// does not go a third time.
+    #[must_use]
+    fn apply_key_press(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        press: &crate::input::KeyPress<'_>,
+    ) -> bool {
+        Self::apply_key_repeat(scene, focused, press.key, press.modifiers, press.repeat)
+    }
+
     /// R772.1 §5.38 — the canonical [`Self::apply_key`] body for a binding
     /// whose model is a single root [`Scene::External`] carrying its whole
     /// keyboard model on the `"key"` invoke wire — the command-menu family

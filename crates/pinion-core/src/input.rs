@@ -589,6 +589,160 @@ impl MultiSelectKeyOp {
     }
 }
 
+/// R1658 §5.13 §5.39 — which platform delivery a keystroke came out of.
+///
+/// Opaque and comparable, not arithmetic: the only question a consumer may
+/// ask is whether two keystrokes carry the *same* batch, so the value is not
+/// a number anyone can do sums on. Ids are allocated per binding and never
+/// reused within a run.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct KeyBatch(u64);
+
+impl KeyBatch {
+    /// The batch a freshly-built shell starts in, before any platform
+    /// delivery has opened one. Distinct from every batch
+    /// [`next`](Self::next) produces, so a key dispatched before the first
+    /// delivery does not claim to have arrived with one.
+    #[must_use]
+    pub const fn initial() -> Self {
+        Self(0)
+    }
+
+    /// The batch after this one. The runtime owns the allocation; a binding
+    /// never calls this.
+    #[must_use]
+    pub const fn next(self) -> Self {
+        Self(self.0.wrapping_add(1))
+    }
+}
+
+/// R1658 §5.13 §5.39 — when a keystroke reached the runtime, and which
+/// platform delivery it arrived in.
+///
+/// # Why an event has to carry this
+///
+/// Without it the only clock an embedder can read is `Instant::now()` inside
+/// its own handler, and that is *when this app got round to the key*, not
+/// *when the key arrived*. The two differ by however long the previous
+/// keystroke's handler took — so any window judged against the handler's
+/// clock (a repeat window, a double-tap, a chord timeout) silently shrinks
+/// under load, by exactly the amount of work the app is doing.
+///
+/// That is a measured user-facing defect, not a hypothetical: an embedder
+/// with a blocking round trip per keystroke lost two presses out of three
+/// from a 500 ms repeat window under 2x CPU oversubscription, and the
+/// dropped presses went through to the terminal underneath as raw escapes.
+/// The same product's terminal frontend had no such defect, because its
+/// input layer hands over the read a key came out of.
+///
+/// # The two halves, and why both
+///
+/// [`at`](Self::at) is *when*, [`batch`](Self::batch) is *with what*. They
+/// answer different questions and neither derives the other: two keys the
+/// platform handed over in one delivery share a batch **and** an instant,
+/// but two keys with instants a microsecond apart may still be separate
+/// deliveries. A gesture is a statement about the second — three presses out
+/// of one platform read are one gesture however long the app spends between
+/// them — which is why [`arrived_with`](Self::arrived_with) is published as
+/// a predicate rather than left to be re-derived from an id.
+///
+/// # What it is not
+///
+/// It is **not** when the human pressed the key. No portable windowing layer
+/// offers that: winit exposes no platform event timestamp, so this is stamped
+/// by the runtime as the delivery is opened — before any binding handler runs,
+/// which is the whole of what the defect above needs. Naming it `arrival`
+/// rather than `time` is the honest shape.
+///
+/// Carrying it on the event also makes a keystroke **replayable**: a handler
+/// that reads `Instant::now()` cannot be replayed at all, where one that
+/// reads the arrival it was given can be handed a recorded one.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct KeyArrival {
+    at: std::time::Instant,
+    batch: KeyBatch,
+}
+
+impl KeyArrival {
+    /// Build an arrival. The runtime calls this as it opens a delivery;
+    /// a test calls it to hand a binding a known arrival.
+    #[must_use]
+    pub const fn new(at: std::time::Instant, batch: KeyBatch) -> Self {
+        Self { at, batch }
+    }
+
+    /// When the runtime opened the delivery this keystroke came in.
+    ///
+    /// Stamped before any binding handler ran — see the type's own doc for
+    /// what that buys and what it does not claim.
+    #[must_use]
+    pub const fn at(self) -> std::time::Instant {
+        self.at
+    }
+
+    /// Which platform delivery this keystroke came in.
+    #[must_use]
+    pub const fn batch(self) -> KeyBatch {
+        self.batch
+    }
+
+    /// Whether `other` came out of the same platform delivery as this one —
+    /// "these arrived together".
+    ///
+    /// The predicate rather than the id, because this is the whole of what a
+    /// consumer wants to know and a consumer that compares ids itself is a
+    /// second author of the rule.
+    #[must_use]
+    pub fn arrived_with(self, other: Self) -> bool {
+        self.batch == other.batch
+    }
+}
+
+/// R1658 §5.13 §5.39 — one keystroke, with everything the runtime knows
+/// about it at dispatch time.
+///
+/// Exists so that the next fact a keystroke needs to carry is a **field**
+/// rather than a fourth hook. The keyboard entry point has already grown
+/// once this way — `apply_key` → `apply_key_repeat` added the platform
+/// auto-repeat flag as a whole new method, and every impl of the old one had
+/// to keep working — and a hook per fact does not scale past two.
+///
+/// [`WidgetCore::apply_key_press`](crate::WidgetCore::apply_key_press) is
+/// the hook that takes it.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy)]
+pub struct KeyPress<'a> {
+    /// W3C `KeyboardEvent.key` name — the same string
+    /// [`apply_key`](crate::WidgetCore::apply_key) receives.
+    pub key: &'a str,
+    /// Modifier state at dispatch time.
+    pub modifiers: Modifiers,
+    /// `true` for an OS auto-repeat re-send of a held key, `false` for the
+    /// leading press. Synthesised keystrokes are never repeats.
+    pub repeat: bool,
+    /// When this keystroke reached the runtime, and what it arrived with.
+    pub arrival: KeyArrival,
+}
+
+impl<'a> KeyPress<'a> {
+    /// Build a keystroke. The runtime calls this on every dispatch path;
+    /// a test calls it to drive a binding directly.
+    #[must_use]
+    pub const fn new(
+        key: &'a str,
+        modifiers: Modifiers,
+        repeat: bool,
+        arrival: KeyArrival,
+    ) -> Self {
+        Self {
+            key,
+            modifiers,
+            repeat,
+            arrival,
+        }
+    }
+}
+
 /// R56.1.f.0 §5.13 — abstract modifier-key state, mirroring
 /// `winit::keyboard::ModifiersState` and W3C DOM Level 3
 /// `getModifierState` without the winit dependency. Four modifier
@@ -2669,5 +2823,56 @@ mod drag_calibration_tests {
         assert_eq!(GesturePhase::from_wire_name(""), None);
         // The default is `Begin` — a gesture arc's first phase.
         assert_eq!(GesturePhase::default(), GesturePhase::Begin);
+    }
+}
+
+/// R1658 §5.13 §5.39 — a keystroke says when it arrived.
+#[cfg(test)]
+mod key_arrival_tests {
+    use super::{KeyArrival, KeyBatch, KeyPress, Modifiers};
+
+    #[test]
+    fn r1658_arrived_together_is_the_batch_and_not_the_instant() {
+        // THE AXIS, PINNED. Two keystrokes of one delivery share both halves,
+        // so a shell-level test cannot tell an implementation that compares
+        // batches from one that compares instants. These two can: they hold
+        // the halves apart deliberately.
+        let t0 = std::time::Instant::now();
+        let t1 = std::time::Instant::now();
+
+        let one = KeyArrival::new(t0, KeyBatch::initial().next());
+        let same_batch_later_instant = KeyArrival::new(t1, KeyBatch::initial().next());
+        assert!(
+            one.arrived_with(same_batch_later_instant),
+            "one delivery is one gesture however its instants were taken"
+        );
+
+        let same_instant_next_batch = KeyArrival::new(t0, KeyBatch::initial().next().next());
+        assert!(
+            !one.arrived_with(same_instant_next_batch),
+            "two deliveries are two gestures even if the clock could not \
+             separate them — which is exactly why the batch exists and the \
+             instant is not the answer"
+        );
+    }
+
+    #[test]
+    fn r1658_the_initial_batch_is_nobodys_delivery() {
+        // A keystroke dispatched before any backend opened a delivery must not
+        // claim to have arrived with the first one that opens.
+        let initial = KeyBatch::initial();
+        assert_ne!(initial, initial.next());
+        assert_ne!(initial.next(), initial.next().next());
+    }
+
+    #[test]
+    fn r1658_a_press_carries_its_arrival_unchanged() {
+        let arrival = KeyArrival::new(std::time::Instant::now(), KeyBatch::initial().next());
+        let press = KeyPress::new("a", Modifiers::empty(), true, arrival);
+        assert_eq!(press.key, "a");
+        assert!(press.repeat);
+        assert_eq!(press.arrival, arrival);
+        assert_eq!(press.arrival.at(), arrival.at());
+        assert_eq!(press.arrival.batch(), arrival.batch());
     }
 }
