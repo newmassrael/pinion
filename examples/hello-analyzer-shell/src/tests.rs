@@ -5,6 +5,7 @@
 //! functions where a unit test is the sharper instrument — in particular the
 //! ones that must be **total over a vocabulary**, which a demo can only sample.
 
+use pinion_core::reactive::Owner;
 use pinion_core::scene::Rect;
 use pinion_core::widgets::card::{CardAffordance, CardState, Remedy};
 use pinion_core::widgets::tile_grid::Tile;
@@ -294,6 +295,58 @@ fn r1649_the_catalogue_exercises_every_affordance_in_both_directions() {
             "every kind offers {affordance:?}, so nothing can refuse it"
         );
     }
+}
+
+/// R1649.1 — ★★ a REAL pointer reaches this surface.
+///
+/// The §5.35 router resolves the hit target by hit-testing the paint scene for
+/// the deepest TAGGED node under the cursor, then looks up an `External`
+/// carrying that tag. Every tag here is an address and there is exactly one
+/// `External` — the root — so a tagged child that is not `pointer_transparent`
+/// makes the lookup fail and the router forwards NOTHING: the whole shell is
+/// dead to a mouse.
+///
+/// ★ That shipped, and the demo did not catch it, because the demo drives
+/// `point` / `send` over the wire and those BYPASS the router. A capability
+/// verified only through a bypass is not verified
+/// (debt-a-surface-can-be-dead-to-a-real-pointer). This is the assertion that
+/// makes it impossible to ship again: every point in the window must hit-test
+/// to the root's tag, which is the one the router can resolve an `External`
+/// for.
+#[test]
+fn r1649_every_tag_but_the_root_is_pointer_transparent() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let scene = super::view((), pinion_core::Frame::default());
+        let mut tagged = 0;
+        let mut walk = vec![(&scene, true)];
+        while let Some((node, is_root)) = walk.pop() {
+            if let Some(tag) = node.tag() {
+                tagged += 1;
+                if is_root {
+                    assert_eq!(tag, super::VIEW_TAG, "the root carries the External's tag");
+                    assert!(
+                        !node.is_pointer_transparent(),
+                        "the ROOT must stay opaque, or there is no hit target at all"
+                    );
+                } else {
+                    assert!(
+                        node.is_pointer_transparent(),
+                        "{tag:?} carries a tag and is NOT pointer-transparent, so the \
+                         router resolves it as the hit target, finds no External with \
+                         that tag, and forwards nothing — the surface is dead to a real \
+                         pointer. Give it `with_pointer_transparent(true)`."
+                    );
+                }
+            }
+            if let pinion_core::Scene::Container(container) = node {
+                for child in &container.children {
+                    walk.push((child, false));
+                }
+            }
+        }
+        assert!(tagged > 25, "the shell tags plenty to check: {tagged}");
+    });
 }
 
 /// R1649 — the published vocabularies have no repeats.

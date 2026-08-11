@@ -34740,6 +34740,48 @@
         "The card bodies are placeholders -- a code badge and a one-line description, except the KPI tile which carries a real sparkline. Stated design: this file demonstrates the SHELL, and the panes have their own examples."
       ]
     },
+    "R1649.1": {
+      "decision_summary": "A capability verified only through a bypass is not verified. R1649 shipped a shell whose every control was DEAD TO A REAL MOUSE, and its 118-assertion demo passed, because the demo drives `invoke(\"point\")` / `invoke(\"send\", ...)` and those call the oracle's handlers DIRECTLY -- they never go through the §5.35 input router. The module's own documentation claimed, in as many words, that a real press and a scripted one reach the same code and that no parallel automation surface exists. That claim was false and nothing could see it. The user found it in about a minute by clicking. THE MECHANISM: `forward_pointer_move` resolves the hit target by hit-testing the paint scene for the deepest TAGGED node under the cursor, then looks up an `External` carrying that tag; the shell tags forty-odd nodes as ADDRESSES (R1613: a tag is an address, not a claim of clickability) and there is exactly ONE `External`, the root, so the lookup failed on every move and the router returned without forwarding anything. The fix is one line in the shared `absolute()` helper -- every tagged child is `pointer_transparent`, the root is not -- and it is verified by driving a REAL pointer: a calibrated `xdotool` click on the capture chip toggles capture, on the palette adds a card. The gate that makes it unshippable again is structural rather than behavioural, because the behavioural one needs a live window: a walk of the view scene asserting that every tagged node except the root is pointer-transparent, and that the root is not. The counterfactual that removes the transparency fails it. WHAT IS REGISTERED RATHER THAN FIXED is the class: no gate anywhere else checks router reachability, nobody has counted how many other surfaces tag without transparency, and the only demos that drive a real pointer are the five x11grab ones, which check pixels rather than reachability.",
+      "changes_bullets": [
+        "examples/hello-analyzer-shell/src/main.rs: `absolute()` now returns a pointer-transparent layout, with the router's resolution rule written out at the call site. Every tagged child of the shell uses it; the root keeps its own layout and stays the hit target.",
+        "examples/hello-analyzer-shell/src/tests.rs: r1649_every_tag_but_the_root_is_pointer_transparent -- walks the view scene, asserts every tagged node except the root is pointer-transparent and that the root is not, over 25+ tags."
+      ],
+      "verification_bullets": [
+        "REAL POINTER, not the wire: RpcSubprocess(visible_window=True) plus xdotool, with the window-frame offset recovered by moving to a known screen point and reading back the app's own `cursor`. Before the fix: cursor 0,0 and a click changed nothing. After: `hit` resolves shell.appbar.capture, a real click toggles capture True -> False, a real click on the palette moves placed_count 3 -> 4, a real click on the sub bar reports its toast.",
+        "cargo test -p hello-analyzer-shell: 16 passed (1 new). cargo clippy -p pinion-core -p hello-analyzer-shell --all-targets: clean at -D pedantic.",
+        "tools/demos/r1649_the_analyzer_shell_matches_the_reference.py: PASS, unchanged -- which is the point: the demo could not tell the difference, and that is why the new assertion is structural.",
+        "COUNTERFACTUAL: 1 case, CAUGHT. Removing the transparency from the shared helper fails the new test."
+      ],
+      "impact_refs": [
+        "5.35",
+        "5.21",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "NEW DEBT, registered as its own file: debt-a-surface-can-be-dead-to-a-real-pointer. This round fixed ONE surface and gated ONE surface. Nobody has counted how many other bindings tag a node without making it pointer-transparent, and the census that would answer it is a scan for `with_tag` without `with_pointer_transparent` on non-External nodes. The stronger gate -- driving a real pointer through the router in a demo -- is now known to be possible (this round did it), so the reason it does not exist is that nobody wrote it, not that it cannot be written.",
+        "GENERALISED, for the next round to cite: a capability reachable through a bypass has TWO facts, and only one of them was ever asserted. That the handler is correct, and that the handler is WIRED. This round is the case where the second was false for a whole round while the first was checked 118 times."
+      ],
+      "publishable_decision_summary": "A capability verified only through a bypass is not verified. R1649 shipped a shell whose every control was DEAD TO A REAL MOUSE, and its 118-assertion demo passed, because the demo drives `invoke(\"point\")` / `invoke(\"send\", ...)` and those call the oracle's handlers DIRECTLY -- they never go through the §5.35 input router. The module's own documentation claimed, in as many words, that a real press and a scripted one reach the same code and that no parallel automation surface exists. That claim was false and nothing could see it. The user found it in about a minute by clicking. THE MECHANISM: `forward_pointer_move` resolves the hit target by hit-testing the paint scene for the deepest TAGGED node under the cursor, then looks up an `External` carrying that tag; the shell tags forty-odd nodes as ADDRESSES (R1613: a tag is an address, not a claim of clickability) and there is exactly ONE `External`, the root, so the lookup failed on every move and the router returned without forwarding anything. The fix is one line in the shared `absolute()` helper -- every tagged child is `pointer_transparent`, the root is not -- and it is verified by driving a REAL pointer: a calibrated `xdotool` click on the capture chip toggles capture, on the palette adds a card. The gate that makes it unshippable again is structural rather than behavioural, because the behavioural one needs a live window: a walk of the view scene asserting that every tagged node except the root is pointer-transparent, and that the root is not. The counterfactual that removes the transparency fails it. WHAT IS REGISTERED RATHER THAN FIXED is the class: no gate anywhere else checks router reachability, nobody has counted how many other surfaces tag without transparency, and the only demos that drive a real pointer are the five x11grab ones, which check pixels rather than reachability.",
+      "publishable_changes_bullets": [
+        "examples/hello-analyzer-shell/src/main.rs: `absolute()` now returns a pointer-transparent layout, with the router's resolution rule written out at the call site. Every tagged child of the shell uses it; the root keeps its own layout and stays the hit target.",
+        "examples/hello-analyzer-shell/src/tests.rs: r1649_every_tag_but_the_root_is_pointer_transparent -- walks the view scene, asserts every tagged node except the root is pointer-transparent and that the root is not, over 25+ tags."
+      ],
+      "publishable_verification_bullets": [
+        "REAL POINTER, not the wire: RpcSubprocess(visible_window=True) plus xdotool, with the window-frame offset recovered by moving to a known screen point and reading back the app's own `cursor`. Before the fix: cursor 0,0 and a click changed nothing. After: `hit` resolves shell.appbar.capture, a real click toggles capture True -> False, a real click on the palette moves placed_count 3 -> 4, a real click on the sub bar reports its toast.",
+        "cargo test -p hello-analyzer-shell: 16 passed (1 new). cargo clippy -p pinion-core -p hello-analyzer-shell --all-targets: clean at -D pedantic.",
+        "tools/demos/r1649_the_analyzer_shell_matches_the_reference.py: PASS, unchanged -- which is the point: the demo could not tell the difference, and that is why the new assertion is structural.",
+        "COUNTERFACTUAL: 1 case, CAUGHT. Removing the transparency from the shared helper fails the new test."
+      ],
+      "publishable_impact_refs": [
+        "5.35",
+        "5.21",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "NEW DEBT, registered as its own file: debt-a-surface-can-be-dead-to-a-real-pointer. This round fixed ONE surface and gated ONE surface. Nobody has counted how many other bindings tag a node without making it pointer-transparent, and the census that would answer it is a scan for `with_tag` without `with_pointer_transparent` on non-External nodes. The stronger gate -- driving a real pointer through the router in a demo -- is now known to be possible (this round did it), so the reason it does not exist is that nobody wrote it, not that it cannot be written.",
+        "GENERALISED, for the next round to cite: a capability reachable through a bypass has TWO facts, and only one of them was ever asserted. That the handler is correct, and that the handler is WIRED. This round is the case where the second was false for a whole round while the first was checked 118 times."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

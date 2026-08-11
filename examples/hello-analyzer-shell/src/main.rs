@@ -2423,10 +2423,29 @@ fn label(text: &str, rect: Rect, px: u32, fg: Color) -> Scene {
     )
 }
 
+/// Place a node at an exact rectangle inside its container, and make it
+/// **pointer-transparent**.
+///
+/// ★★ The transparency is load-bearing and it is the bug this shell shipped.
+/// The §5.35 input router resolves the hit target by hit-testing the paint
+/// scene for the DEEPEST TAGGED node under the cursor, then looks up an
+/// `External` carrying that tag. Every tag here is an ADDRESS — the thing the
+/// wire and the demo compare (R1613: a tag is an address, not a claim of
+/// clickability) — and there is exactly one `External`, the root. So a tagged
+/// child that is not transparent becomes the target, the lookup finds no
+/// `External` with that tag, and the router silently forwards NOTHING: a real
+/// mouse move never arrives and every control is dead to a hand, while the
+/// wire's own `point` / `send` keep working because they bypass the router.
+///
+/// That asymmetry is why the first version passed its whole demo while being
+/// unusable, and it is exactly the "parallel automation surface" the module
+/// docs claim does not exist. The root container is the one node that keeps
+/// its own layout, so it stays the target.
 fn absolute(rect: Rect) -> LayoutStyle {
     LayoutStyle::new()
         .with_absolute_position(rect.x, rect.y)
         .with_size(Size::px(rect.w, rect.h))
+        .with_pointer_transparent(true)
 }
 
 /// A small square dot — a grid pip, a status light, a grip dot.
