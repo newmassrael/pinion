@@ -1484,7 +1484,17 @@ fn wire(tag: &str, from: (u32, u32), to: (u32, u32), colour: Color, width: u32) 
             ],
             PathStyle::stroked(Stroke::new(colour, width)),
         )
-        .with_tag(tag.to_owned()),
+        .with_tag(tag.to_owned())
+        // ★ R1655 — a wire's BOUNDING BOX is most of the canvas, and a tagged
+        // node that is not transparent is what the §5.35 router resolves as the
+        // hit target: it looks the tag up as an `External`, finds none, and
+        // forwards nothing. Measured by reverting it: with the wires opaque the
+        // app never received the cursor at all (it reported 0,0 after a real
+        // warp onto the canvas), which is exactly "sometimes a node presses and
+        // sometimes it does not". The link stays selectable — `link_at`
+        // hit-tests the CHORD in the app's own resolver, which is where a
+        // wire's shape lives.
+        .with_layout(LayoutStyle::new().with_pointer_transparent(true)),
     )
 }
 

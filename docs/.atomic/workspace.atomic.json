@@ -35358,6 +35358,74 @@
         "tree does now -- the safe direction for a ratchet, and stated in the file."
       ]
     },
+    "R1655": {
+      "decision_summary": "\"Sometimes a node presses and sometimes it does not\" — and the model was\ninnocent. Every point of every card in every state already resolved to that\ncard; what failed was the ROUTER path. The §5.35 router resolves the deepest\nTAGGED node under the cursor and looks that tag up as an `External`; a tag here\nis an address, not a widget, so a tagged node that is not pointer-transparent\nmakes the lookup fail and the router forwards nothing. Two families were opaque:\nevery wire on the canvas — whose bounding box is most of the canvas — and the\nsettings form's badges, which are painted by a CRATE and therefore dead in every\nconsumer of it. Measured by reverting: with the wires opaque the application\nnever received the cursor at all, reporting 0,0 after a real warp onto the\ncanvas.",
+      "changes_bullets": [
+        "examples/hello-node-lab: a wire declares itself pointer-transparent; the link",
+        "stays selectable through `link_at`, which hit-tests the chord in the app's own",
+        "resolver.",
+        "pinion-widget-paint: a form badge declares itself pointer-transparent, and the",
+        "crate now tests that every tag it writes does — the guarantee belongs where the",
+        "node is painted, not in one consumer's suite.",
+        "examples/hello-node-lab: three sweeps over the derived population — every card",
+        "presses and drags to itself in every state, a press anywhere on a card (a 6x6",
+        "grid, ~1,700 points) reaches that card, and every tag but the root is",
+        "pointer-transparent in every state."
+      ],
+      "verification_bullets": [
+        "cargo test: 27 hello-node-lab, 841 pinion-widget-paint, 17 hello-analyzer-shell.",
+        "clippy -D pedantic clean.",
+        "3 counterfactuals, 3 caught — after one was a finding: the first draft of the",
+        "badge case edited a line the real setting overrode, so it broke nothing and",
+        "reported PASSED, which is what a counterfactual is for.",
+        "A REAL mouse over a mapped window, three runs, no flake: a click on the card's",
+        "centre and on two corners a wire crosses all select that card. The aim is",
+        "corrected against the application's own reported cursor rather than a",
+        "once-calibrated offset — the window's placement is a per-run fact and a probe",
+        "near an edge was flaky without it.",
+        "Reverted, the same probe reports the cursor at 0,0: the canvas was dead."
+      ],
+      "impact_refs": [
+        "5.12",
+        "5.35"
+      ],
+      "carry_forward_bullets": [
+        "None."
+      ],
+      "publishable_decision_summary": "\"Sometimes a node presses and sometimes it does not\" — and the model was\ninnocent. Every point of every card in every state already resolved to that\ncard; what failed was the ROUTER path. The §5.35 router resolves the deepest\nTAGGED node under the cursor and looks that tag up as an `External`; a tag here\nis an address, not a widget, so a tagged node that is not pointer-transparent\nmakes the lookup fail and the router forwards nothing. Two families were opaque:\nevery wire on the canvas — whose bounding box is most of the canvas — and the\nsettings form's badges, which are painted by a CRATE and therefore dead in every\nconsumer of it. Measured by reverting: with the wires opaque the application\nnever received the cursor at all, reporting 0,0 after a real warp onto the\ncanvas.",
+      "publishable_changes_bullets": [
+        "examples/hello-node-lab: a wire declares itself pointer-transparent; the link",
+        "stays selectable through `link_at`, which hit-tests the chord in the app's own",
+        "resolver.",
+        "pinion-widget-paint: a form badge declares itself pointer-transparent, and the",
+        "crate now tests that every tag it writes does — the guarantee belongs where the",
+        "node is painted, not in one consumer's suite.",
+        "examples/hello-node-lab: three sweeps over the derived population — every card",
+        "presses and drags to itself in every state, a press anywhere on a card (a 6x6",
+        "grid, ~1,700 points) reaches that card, and every tag but the root is",
+        "pointer-transparent in every state."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test: 27 hello-node-lab, 841 pinion-widget-paint, 17 hello-analyzer-shell.",
+        "clippy -D pedantic clean.",
+        "3 counterfactuals, 3 caught — after one was a finding: the first draft of the",
+        "badge case edited a line the real setting overrode, so it broke nothing and",
+        "reported PASSED, which is what a counterfactual is for.",
+        "A REAL mouse over a mapped window, three runs, no flake: a click on the card's",
+        "centre and on two corners a wire crosses all select that card. The aim is",
+        "corrected against the application's own reported cursor rather than a",
+        "once-calibrated offset — the window's placement is a per-run fact and a probe",
+        "near an edge was flaky without it.",
+        "Reverted, the same probe reports the cursor at 0,0: the canvas was dead."
+      ],
+      "publishable_impact_refs": [
+        "5.12",
+        "5.35"
+      ],
+      "publishable_carry_forward_bullets": [
+        "None."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

@@ -598,7 +598,15 @@ fn badge(text: &str, ink: Color, theme: &Theme, tag: Option<String>) -> Scene {
                 .flex(FlexDirection::Row)
                 .with_align_items(AlignItems::Center)
                 .with_justify(JustifyContent::Center)
-                .with_padding(Rect::new(6, 2, 6, 2)),
+                .with_padding(Rect::new(6, 2, 6, 2))
+                // ★ R1655 — a badge is a READ-OUT, and a tagged node that is
+                // not transparent becomes the §5.35 router's hit target: the
+                // router looks its tag up as an `External`, finds none (the tag
+                // is an address, not a widget), and forwards NOTHING. Wherever
+                // a badge is painted the form was dead to a real mouse, while
+                // every wire-driven assertion about it passed — R1649.1's
+                // class, in a crate, so every consumer of this painter had it.
+                .with_pointer_transparent(true),
         );
     if let Some(tag) = tag {
         node = node.with_tag(tag);
@@ -1805,5 +1813,42 @@ mod tests {
     fn r1651_the_policy_vocabularies_are_closed_and_fully_enumerated() {
         assert_eq!(RowWrap::ALL.len(), RowWrap::ARMS);
         assert_eq!(FieldGrowth::ALL.len(), FieldGrowth::ARMS);
+    }
+
+    /// ★ R1655 — every node this painter tags is transparent to the §5.35
+    /// router.
+    ///
+    /// A tag here is an ADDRESS, not a widget: the router resolves the deepest
+    /// tagged node under the cursor and looks that tag up as an `External`,
+    /// finds none, and forwards NOTHING. So an opaque tagged node makes the
+    /// form dead to a real mouse wherever it is painted, while every
+    /// wire-driven assertion about the form keeps passing — R1649.1's class.
+    ///
+    /// It belongs in this crate rather than in a consumer: the badges are
+    /// painted here, so every screen that uses this form inherits whichever
+    /// answer this file gives. A consumer's own test could only find it one
+    /// screen at a time, and one screen did — the analysis-tool node lab, from
+    /// a person clicking on it.
+    #[test]
+    fn r1655_every_tag_this_painter_writes_is_pointer_transparent() {
+        let form = inspector();
+        let geometry = form_geometry(&form, (0, 0), &FormStyle::default());
+        let scene = view_config_form("insp", &form, &geometry, &pinion_core::Theme::dark());
+        let mut tagged = 0;
+        let mut opaque = Vec::new();
+        scene.for_each_node(&mut |visit| {
+            if let Some(tag) = visit.node.tag() {
+                tagged += 1;
+                if !visit.node.is_pointer_transparent() {
+                    opaque.push(tag.to_owned());
+                }
+            }
+        });
+        assert!(tagged > 10, "the form tags plenty to check: {tagged}");
+        assert!(
+            opaque.is_empty(),
+            "{} tagged node(s) would swallow a real press: {opaque:?}",
+            opaque.len()
+        );
     }
 }

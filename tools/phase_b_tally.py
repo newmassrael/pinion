@@ -1090,9 +1090,44 @@ AXES = [
         # unchanged since R1554 named it — a combo box and a tab bar still do
         # not answer a wheel, which is the largest cross-cutting item here.
         # Mnemonic adoption and the disabled cascade are likewise untouched.
-        "judged_at": 1650,
-        "completion": 96,
-        "evidence_snapshot": {"example-name": 77, "round-axis": 9},
+        # R1655 RE-JUDGMENT, demanded by the tool (round-axis 9 -> 12, +33%),
+        # absorbing R1651-R1655. 96 -> 97, and the +1 is one item off the axis's
+        # own stated list, measured rather than recalled.
+        #
+        # A RUN CAN SAY WHAT HAPPENS WHEN IT DOES NOT FIT (R1654). `TextOverflow`
+        # had three arms declared since R47.5, on the wire and in the footprint
+        # census, and NOTHING implemented the eliding one — both painters
+        # carried a comment saying they fell back to a hard cut. So the catalog
+        # had a property every control's label could set and no control's label
+        # could rely on. It is five arms now (start / middle / end, plus keep and
+        # clip), the policy is one function both backends read, and the shortened
+        # string is PUBLISHED (`scene/text_painted`). Measured against the
+        # reference at 6.11: its four elide modes live on a metrics helper the
+        # caller must remember, its label class has no elide property at all
+        # (only its item views do), and the elided string is not observable
+        # afterwards — `text()` returns what was authored. So this passes the
+        # floor rather than reaching it, which is why it is worth a point on an
+        # axis that moves in ones.
+        #
+        # WHY NOT MORE. The axis's stated gap list is almost untouched:
+        # `External::wheel` still has exactly two widget implementors, so a
+        # combo box and a tab bar still do not answer a wheel and that remains
+        # the largest cross-cutting item; mnemonic adoption is still four sites;
+        # the disabled cascade still has one consumer; and the same four widget
+        # kinds are absent (dial, a paged container, font picker, the canned
+        # message box / input dialog).
+        #
+        # AND ONE ITEM WORTH ADDING TO THE LIST, found by a person clicking on a
+        # screen rather than by a census (R1655): a tagged node painted by a
+        # catalogue widget that is not `pointer_transparent` swallows a real
+        # press, and the settings form's badges were doing it — in the CRATE, so
+        # every consumer inherited it. The repair is one declaration; what the
+        # axis gains is a test in the painter that every tag it writes is
+        # transparent. Nothing else in the catalogue has that test, which is the
+        # next thing to measure here rather than a point to award now.
+        "judged_at": 1655,
+        "completion": 97,
+        "evidence_snapshot": {"example-name": 77, "round-axis": 12},
     },
     {
         "key": "dataviz",

@@ -739,6 +739,207 @@ fn r1654_the_screen_fills_whatever_window_it_is_given() {
     });
 }
 
+/// ★ R1655 — **every card, in every state, answers a press at the centre of the
+/// rectangle it was painted in, and the drag that follows moves THAT card.**
+///
+/// Reported from the running window: "sometimes a node presses and sometimes it
+/// does not". A press that lands on the wrong thing is invisible to every check
+/// here that asks about one state or one card — R1653's sweep probes a control
+/// per painted TAG, which asks whether the address answers, and this asks the
+/// harder question: after the press, did the thing that moved turn out to be
+/// the thing under the cursor?
+///
+/// The population is derived — every card the model holds, at every state the
+/// sweep visits — so a card that becomes unpressable in one state cannot hide
+/// behind the others.
+#[test]
+fn r1655_every_card_presses_and_drags_in_every_state() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let mut checked = 0;
+        let mut wrong = Vec::new();
+        for (when, mutate) in STATES {
+            mutate(&state);
+            let shot = painted(&state);
+            for node in state.cards() {
+                let name = state.name_of(node);
+                let Some(rect) = shot.tags.get(&format!("lab.node.{name}")).copied() else {
+                    // Panned out of view is a legitimate absence; the clipping
+                    // property is asserted elsewhere.
+                    continue;
+                };
+                let (px, py) = centre(rect);
+                checked += 1;
+
+                // (1) the press resolves to the card it was painted in.
+                let answered = Hit::at(&state, px, py);
+                if answered != Hit::Node(node) {
+                    wrong.push(format!(
+                        "{when}: pressing {name} at its painted centre ({px},{py}) \
+                         answered {}",
+                        answered.word(&state)
+                    ));
+                    continue;
+                }
+
+                // (2) the drag that follows moves THAT card and no other.
+                let before = positions(&state);
+                super::move_cursor(&state, px, py);
+                super::press(&state);
+                super::move_cursor(&state, px + 9, py + 7);
+                super::release(&state);
+                let after = positions(&state);
+                let moved: Vec<&String> = before
+                    .iter()
+                    .filter(|(k, v)| after.get(*k) != Some(v))
+                    .map(|(k, _)| k)
+                    .collect();
+                if moved != vec![&name] {
+                    wrong.push(format!("{when}: dragging {name} moved {moved:?}"));
+                }
+            }
+        }
+        assert!(checked >= 60, "the sweep pressed {checked} card(s)");
+        assert!(
+            wrong.is_empty(),
+            "{} of {checked} press-and-drag(s) reached the wrong thing:\n  {}",
+            wrong.len(),
+            wrong.join("\n  ")
+        );
+    });
+}
+
+/// ★ R1655 — the same question over the WHOLE card, not only its centre.
+///
+/// "Sometimes a node presses and sometimes it does not" is not a question about
+/// the middle of a card: a centre probe answers for one pixel out of a few
+/// thousand, and a press lands wherever the hand was. This samples a grid over
+/// every card in every state and reports what each point actually resolves to.
+#[test]
+fn r1655_a_press_anywhere_on_a_card_reaches_that_card() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let mut tally: BTreeMap<String, usize> = BTreeMap::new();
+        let mut sampled = 0;
+        for (when, mutate) in STATES {
+            mutate(&state);
+            let shot = painted(&state);
+            for node in state.cards() {
+                let name = state.name_of(node);
+                let Some(rect) = shot.tags.get(&format!("lab.node.{name}")).copied() else {
+                    continue;
+                };
+                for i in 0..6u32 {
+                    for j in 0..6u32 {
+                        let px = rect.x + 1 + (rect.w.saturating_sub(2)) * i / 5;
+                        let py = rect.y + 1 + (rect.h.saturating_sub(2)) * j / 5;
+                        sampled += 1;
+                        let got = Hit::at(&state, px, py);
+                        if got == Hit::Node(node) {
+                            continue;
+                        }
+                        let kind = match got {
+                            Hit::Pin { node: p, dial } if p == node => {
+                                format!("its own {} pin", if dial { "dial" } else { "accept" })
+                            }
+                            Hit::Pin { node: p, .. } => {
+                                format!("ANOTHER node's pin ({})", state.name_of(p))
+                            }
+                            Hit::Node(other) => {
+                                format!("ANOTHER card ({})", state.name_of(other))
+                            }
+                            other => format!("{} [{when}]", other.word(&state)),
+                        };
+                        *tally.entry(kind).or_default() += 1;
+                    }
+                }
+            }
+        }
+        assert!(sampled > 1500, "sampled {sampled} point(s)");
+        let stray: Vec<(&String, &usize)> = tally
+            .iter()
+            .filter(|(k, _)| !k.starts_with("its own"))
+            .collect();
+        assert!(
+            stray.is_empty(),
+            "of {sampled} points on a card, these reached something else: {stray:?}"
+        );
+    });
+}
+
+/// ★ R1655 — every tag but the root is pointer-transparent, at every state.
+///
+/// The R1649.1 class, which is the one that produces "sometimes it presses and
+/// sometimes it does not": the §5.35 router resolves a hit target by
+/// hit-testing the paint scene for the DEEPEST TAGGED node under the cursor and
+/// then looking up an `External` carrying that tag. Every tag here is an
+/// address and there is exactly one `External` — the root — so a tagged child
+/// that is not transparent makes the lookup fail and the router forwards
+/// NOTHING. Wherever that child is painted, the screen is dead to a hand, and
+/// everywhere else it works.
+///
+/// The sibling shell has carried this test since R1649.1 and this screen never
+/// had one, which is why a round could add a tagged node and nothing would say.
+#[test]
+fn r1655_every_tag_but_the_root_is_pointer_transparent() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let mut opaque = Vec::new();
+        let mut tagged = 0;
+        for (when, mutate) in STATES {
+            mutate(&state);
+            let mut scene = super::view((), Frame::default());
+            let mut cache = pinion_runtime::LayoutCache::new();
+            pinion_runtime::compute_layout(&mut scene, &mut cache, WIN_W, WIN_H);
+            let mut walk = vec![(&scene, true)];
+            while let Some((node, is_root)) = walk.pop() {
+                if let Some(tag) = node.tag() {
+                    tagged += 1;
+                    if is_root {
+                        assert_eq!(tag, super::VIEW_TAG, "the root carries the External's tag");
+                        assert!(
+                            !node.is_pointer_transparent(),
+                            "the ROOT must stay opaque, or there is no hit target at all"
+                        );
+                    } else if !node.is_pointer_transparent() {
+                        opaque.push(format!("{when}: {tag}"));
+                    }
+                }
+                for child in node.child_nodes() {
+                    walk.push((child, false));
+                }
+            }
+        }
+        assert!(tagged > 400, "the screen tags plenty to check: {tagged}");
+        assert!(
+            opaque.is_empty(),
+            "{} tagged node(s) are NOT pointer-transparent, so the router \
+             resolves them as the hit target, finds no External with that tag, \
+             and forwards nothing — the screen is dead to a real mouse wherever \
+             they are painted: {opaque:?}",
+            opaque.len()
+        );
+    });
+}
+
+/// Every card's world position, by name.
+fn positions(state: &LabState) -> BTreeMap<String, (i32, i32)> {
+    state
+        .cards()
+        .into_iter()
+        .filter_map(|n| {
+            state
+                .doc
+                .borrow()
+                .tree(super::ROOT)
+                .and_then(|t| t.node(n).map(|s| (state.name_of(n), (s.x, s.y))))
+        })
+        .collect()
+}
+
 /// ★ R1654 — every run on this screen declares a policy for not fitting.
 ///
 /// The rule that makes "the box is the promise" keepable. A run is given an
