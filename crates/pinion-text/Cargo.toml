@@ -6,6 +6,24 @@ rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
 
+[features]
+# R1659 — can the text stack DISCOVER the fonts installed on this machine?
+#
+# On by default, so pinion's own bindings and every existing consumer are
+# unchanged. Off is for a consumer that reaches this crate without ever asking
+# it to shape anything against a system font — the JSON-RPC-only case — and
+# what it buys is not speed but a BUILD: parley's `system` feature forwards to
+# `fontique/system`, which on Linux makes the fontconfig development headers a
+# requirement of everything downstream.
+#
+# It gates a font SOURCE, not an API. Every type and every method here exists
+# and compiles either way; with the source off the stack shapes against the
+# fonts it was GIVEN (`LayoutCache::with_own_fonts`, R1573) and finds none it
+# was not. That is why this is a dependency switch rather than a `cfg` over the
+# surfaces that measure text.
+default = ["system-fonts"]
+system-fonts = ["parley/system"]
+
 [dependencies]
 pinion-core = { path = "../pinion-core" }
 # §5.37.4 R51.31 — UAX #9 BIDI substrate for the L4 mirroring pass.

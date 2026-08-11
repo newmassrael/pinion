@@ -377,7 +377,24 @@ proc-macro2 = "1"
 # layout responsibility lives in parley for §5.16 R41 Vello ecosystem
 # consistency; R31 glyph atlas GPU texture intent is preserved through
 # pinion-text GlyphCache + Vello draw_glyph integration.
-parley = "0.9"
+#
+# R1659 — `default-features = false` here, and the system font SOURCE is
+# re-enabled by `pinion-text`'s own `system-fonts` feature (default on, so
+# nothing in this tree changes). parley's default `system` feature forwards to
+# `fontique/system`, which on Linux pulls `yeslogic-fontconfig-sys` and makes
+# the **fontconfig development headers a build requirement of anything that
+# reaches this crate**. A consumer that only speaks pinion's JSON-RPC wire
+# reaches it through `pinion-rpc`, and had no way to say it wanted neither
+# pixels nor system fonts — its CI failed to build with
+# "The system library `fontconfig` ... was not found", on Linux only (macOS
+# takes Core Text and never links it).
+#
+# The switch lives HERE rather than as a `cfg` over the RPC methods that shape
+# text, which is what the report proposed: measured, every one of those methods
+# still compiles and answers with the source off — what changes is which fonts
+# the stack can FIND, not which questions it can be asked. Gating the methods
+# would have removed a capability to solve a linking problem.
+parley = { version = "0.9", default-features = false, features = ["std"] }
 swash = "0.2"
 
 # §5.36 R47.2 — LRU bounded backing for pinion-text LayoutCache.

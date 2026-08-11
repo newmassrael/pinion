@@ -12,7 +12,13 @@ description = "Render loop and SCE hierarchical state machinery"
 # module — Scene → vello::Scene walk for the Vello render path. Kept
 # behind a feature so non-GUI consumers (headless / TUI / future
 # pinion-render-* alternatives) don't pull wgpu transitively.
-default = []
+# R1659 — `system-fonts` forwards to `pinion-text`'s switch of the same name:
+# ON here, unlike `vello`, because it is on TODAY and a default that quietly
+# stopped a consumer's text from finding any font would be a behaviour change
+# wearing a feature flag. A headless consumer takes this crate with
+# `default-features = false` and gets no fontconfig build requirement.
+default = ["system-fonts"]
+system-fonts = ["pinion-text/system-fonts"]
 # `vello` also pulls the §5.37 self-hosted text engine (`pinion-text-font`):
 # R1063 wires its `Coverage` AA-mask output into the Vello image path
 # (`paint_adapter::coverage_to_image_data` / `draw_coverage`) — the first
@@ -37,7 +43,7 @@ lru = { workspace = true }
 # Text arm) 양쪽이 같은 `LayoutCache` 인스턴스를 공유하여 shape work
 # amortize. headless / TUI 도 intrinsic measure 가 필요하므로 default
 # dep — vello feature gate 외부.
-pinion-text = { path = "../pinion-text", version = "0.0.1" }
+pinion-text = { path = "../pinion-text", version = "0.0.1", default-features = false }
 # §5.21 R23/R24 layout system. Confined to pinion-runtime per the
 # spec lock — pinion-core stays free of any layout-engine dep.
 taffy = "0.7"

@@ -154,6 +154,24 @@ if ! python3 "$repo_root/tools/reference_names.py" --check >&2; then
     exit 1
 fi
 
+# R1659 -- a consumer that speaks only the JSON-RPC wire links no font stack.
+#
+# parley's default `system` feature makes the fontconfig development headers a
+# BUILD requirement of anything reaching `pinion-text`, and a wire-only consumer
+# reaches it through `pinion-rpc`. The property is a closure over the dependency
+# graph, not a fact about one manifest: `pinion-rpc` has TWO paths to the text
+# stack, which is why the reported fix -- gate the deps this crate declares --
+# would have left the build broken. A third path is one ordinary-looking
+# `Cargo.toml` line away and nobody would see it.
+echo "pre-push: wire-only deps ..." >&2
+if ! python3 "$repo_root/tools/wire_only_deps.py" --selftest >&2; then
+    echo "pre-push: the wire-only dep gate failed its own tests" >&2
+    exit 1
+fi
+if ! python3 "$repo_root/tools/wire_only_deps.py" --check >&2; then
+    exit 1
+fi
+
 # R1600.1 — the counterfactual driver. Counterfactual verification is this
 # project's round-level discipline and until R1600 it had no mechanism: the
 # driver was rewritten in a scratchpad each round, and R1599 built two defects
