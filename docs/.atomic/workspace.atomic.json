@@ -35014,6 +35014,42 @@
         "debt-the-property-grid-is-an-example-not-a-crate is narrowed a second time: its type-specific-editor half is closed by this round, and what is left is the category tree and the two examples that still hold their own. The shapes FieldType does not yet declare (colour, curve, vector) are recorded as a question about that VOCABULARY rather than about the property grid, because that is where the answer would go."
       ]
     },
+    "R1652.1": {
+      "decision_summary": "R1652's own audit found that a list grown past four elements painted its rows straight over the next field, and that the sweep which should have caught it only ever probed the OPENING screen — the one state a specification describes and the one state nobody works in. Both are repaired, and a counterfactual shows the defect is worse than the audit measured: reverted, eleven controls are unreachable and five whole rows are shadowed.",
+      "changes_bullets": [
+        "A control's height is now a function of its SHAPE (`control_height`) rather than a token. R1652 gave every control `style.control_h`, and a list draws one row per element, so a list of six overflowed its own row and was drawn over the field below it. The list's own placement carries a debug assertion that its rows fit the control that was sized for them, so the two cannot drift apart silently.",
+        "The regression test asserts over a RANGE of lengths (1..=8) rather than one fixture, because a defect whose trigger is \"enough elements\" is invisible to any single length — and it asserts the row height STRICTLY INCREASES with the element count, which is the property that separates the fix from a bigger constant.",
+        "tools/demos/r1651_...py runs its derived sweep TWICE: on the opening screen, and again after growing a list to seven elements. Growing a list is the cheapest thing that changes a control's SIZE, and size is exactly what a single-state sweep cannot see. The demo asserts the used screen paints MORE controls than the opening one, so a sweep that silently stopped exercising the second state would fail rather than pass quietly."
+      ],
+      "verification_bullets": [
+        "COUNTERFACTUAL, run rather than argued: with `control_height` reverted to the token, the unit test panics on its own debug assertion at one element past the boundary AND the demo fails with 11 of 67 painted controls unreachable — `connect.endpoints`, `control.permissions`, `transport.link.tx.batch_size`, both permission chips, both steppers and both add-chips all answer for a list row instead of themselves. So neither gate is one that cannot fail, and the defect shipped in R1652 was larger than the audit that found it measured.",
+        "Restored: cargo test pinion-core 3364, pinion-widget-paint 840, hello-node-lab 14; clippy clean under -D pedantic on both changed crates; the demo passes with 61 controls swept on the opening screen and 67 after the list is grown.",
+        "A real mouse over a mapped window drives all six checks including the checkbox, the stepper and the list's add row. Its calibration was also made non-flaky: it probes from the window's OWN geometry rather than a fixed screen point, which is why it had failed on one run in three."
+      ],
+      "impact_refs": [
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "NO NEW DEBT. What the audit that produced this round would have registered is instead FIXED, which is the standing rule; what remains is one generalisation worth stating rather than filing: a sweep over one state is a sweep over one state, and the states that matter are the ones a person reaches by using the screen. This round covers the cheapest such transition (a control that changes size). The transitions it does NOT cover — a node dragged off-screen, a graph with fifty nodes, a form whose every key has been added — are named here so the next round choosing coverage knows what was chosen and what was not."
+      ],
+      "publishable_decision_summary": "R1652's own audit found that a list grown past four elements painted its rows straight over the next field, and that the sweep which should have caught it only ever probed the OPENING screen — the one state a specification describes and the one state nobody works in. Both are repaired, and a counterfactual shows the defect is worse than the audit measured: reverted, eleven controls are unreachable and five whole rows are shadowed.",
+      "publishable_changes_bullets": [
+        "A control's height is now a function of its SHAPE (`control_height`) rather than a token. R1652 gave every control `style.control_h`, and a list draws one row per element, so a list of six overflowed its own row and was drawn over the field below it. The list's own placement carries a debug assertion that its rows fit the control that was sized for them, so the two cannot drift apart silently.",
+        "The regression test asserts over a RANGE of lengths (1..=8) rather than one fixture, because a defect whose trigger is \"enough elements\" is invisible to any single length — and it asserts the row height STRICTLY INCREASES with the element count, which is the property that separates the fix from a bigger constant.",
+        "tools/demos/r1651_...py runs its derived sweep TWICE: on the opening screen, and again after growing a list to seven elements. Growing a list is the cheapest thing that changes a control's SIZE, and size is exactly what a single-state sweep cannot see. The demo asserts the used screen paints MORE controls than the opening one, so a sweep that silently stopped exercising the second state would fail rather than pass quietly."
+      ],
+      "publishable_verification_bullets": [
+        "COUNTERFACTUAL, run rather than argued: with `control_height` reverted to the token, the unit test panics on its own debug assertion at one element past the boundary AND the demo fails with 11 of 67 painted controls unreachable — `connect.endpoints`, `control.permissions`, `transport.link.tx.batch_size`, both permission chips, both steppers and both add-chips all answer for a list row instead of themselves. So neither gate is one that cannot fail, and the defect shipped in R1652 was larger than the audit that found it measured.",
+        "Restored: cargo test pinion-core 3364, pinion-widget-paint 840, hello-node-lab 14; clippy clean under -D pedantic on both changed crates; the demo passes with 61 controls swept on the opening screen and 67 after the list is grown.",
+        "A real mouse over a mapped window drives all six checks including the checkbox, the stepper and the list's add row. Its calibration was also made non-flaky: it probes from the window's OWN geometry rather than a fixed screen point, which is why it had failed on one run in three."
+      ],
+      "publishable_impact_refs": [
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "NO NEW DEBT. What the audit that produced this round would have registered is instead FIXED, which is the standing rule; what remains is one generalisation worth stating rather than filing: a sweep over one state is a sweep over one state, and the states that matter are the ones a person reaches by using the screen. This round covers the cheapest such transition (a control that changes size). The transitions it does NOT cover — a node dragged off-screen, a graph with fifty nodes, a form whose every key has been added — are named here so the next round choosing coverage knows what was chosen and what was not."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

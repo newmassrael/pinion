@@ -412,13 +412,27 @@ def body() -> None:
                 "lab.palette.discovery": "discovery",
             }.get(tag)
 
-        painted = tags(paint(tf))
-        probes = [(tag, want) for tag in sorted(painted)
-                  if (want := expected(tag)) is not None]
-        # A floor, so a regression that stops PAINTING a control shows up here
-        # rather than as a smaller number nobody reads.
-        assert len(probes) >= 55, f"the sweep found only {len(probes)} control(s)"
-        def same_row(want: str, got: str) -> bool:
+        def sweep(when: str) -> int:
+            painted_now = tags(paint(tf))
+            probes = [
+                (tag, want)
+                for tag in sorted(painted_now)
+                if (want := expected(tag)) is not None
+            ]
+            # A floor, so a regression that stops PAINTING a control shows up
+            # here rather than as a smaller number nobody reads.
+            assert len(probes) >= 55, f"{when}: only {len(probes)} control(s)"
+            bad = []
+            for tag, want in probes:
+                answered = inv(tf, "point", at(tf, tag))
+                if answered != want and not same_row(want, answered):
+                    bad.append((tag, want, answered))
+            assert not bad, (
+                f"{when}: {len(bad)} of {len(probes)} painted control(s) are drawn "
+                f"where a press does not reach them: {bad}"
+            )
+            return len(probes)
+        def same_row(want: str, got: str) -> bool:  # noqa: F811
             """Both answers are about the same form row."""
             if not want.startswith("field:"):
                 return False
@@ -427,17 +441,25 @@ def body() -> None:
                 ".", 1
             )[1].startswith(key)
 
-        wrong = []
-        for tag, want in probes:
-            answered = inv(tf, "point", at(tf, tag))
-            if answered != want and not same_row(want, answered):
-                wrong.append((tag, want, answered))
-        assert not wrong, (
-            f"{len(wrong)} of {len(probes)} painted control(s) are drawn where a "
-            f"press does not reach them: {wrong}"
+        opening = sweep("opening")
+
+        # ★ R1652.1 — and AGAIN on a screen somebody has used. The opening
+        # screen is the one state a specification describes and the one state
+        # nobody works in: a list has one element there and cannot overflow its
+        # own row, which is how R1652 shipped a list of six painting straight
+        # over the next field with this sweep passing. Growing the list is the
+        # cheapest thing that changes a control's SIZE, and size is what a
+        # single-state sweep cannot see.
+        for _ in range(6):
+            click(tf, at(tf, "lab.form.item.listen.endpoints.add"))
+        used = sweep("after growing a list to seven elements")
+        assert used > opening, (
+            f"the used screen must paint MORE than the opening one, or growing "
+            f"the list did nothing: {opening} -> {used}"
         )
-        print(f"[H] {len(probes)} painted control(s), DERIVED from the scene rather "
-              f"than listed, each answer a press at their painted centre")
+        print(f"[H] {opening} painted control(s) on the opening screen and {used} "
+              f"after growing a list, DERIVED from the scene rather than listed, "
+              f"each answering a press at their painted centre")
 
         # ── (I) The gestures the hint strip advertises ──────────────────────
         # Every gesture the screen tells a person about has to work, or the

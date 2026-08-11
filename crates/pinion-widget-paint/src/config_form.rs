@@ -276,6 +276,21 @@ fn measured_key_width(key: &str, text_style: &TextStyle, key_px: u32) -> u32 {
     )
 }
 
+/// How tall a field's control has to be to hold what it draws.
+///
+/// Every shape but one is a single line. A [`FieldType::List`] is one row per
+/// element plus the row that adds one, so its height is a function of its
+/// **value** — which is why this takes the field and not the shape.
+fn control_height(field: &ConfigField, style: &FormStyle) -> u32 {
+    match field.shape() {
+        FieldType::List { .. } => {
+            let elements = u32::try_from(FieldType::elements(field.value()).count()).unwrap_or(0);
+            elements * (style.control_h + LIST_GAP) + ADD_CHIP_H
+        }
+        _ => style.control_h,
+    }
+}
+
 /// Whether a field's control wants every pixel it is offered.
 ///
 /// A text box does; a row of option chips does not, and stretching it would put
@@ -359,7 +374,12 @@ fn lay_row(field: &ConfigField, at: (u32, u32), key_col: u32, style: &FormStyle)
                 key_w + style.beside_gap + hint > style.width
             }
         };
-        let control_h = style.control_h;
+        // ★ R1652.1 — the control's height is a function of the SHAPE, not a
+        // token. A list draws one row per element and R1652 gave it
+        // `control_h` regardless, so a list of six painted its rows straight
+        // over the next field. Measured, not reasoned: an audit grew the list
+        // and read the rectangles back off the scene.
+        let control_h = control_height(field, style);
         let (header, control) = if wrapped {
             let offered = style.width;
             let w = if style.growth.fills(hungry) {
@@ -450,9 +470,8 @@ fn lay_parts(field: &ConfigField, control: Rect, style: &FormStyle) -> Vec<(Stri
             placed
         }
         FieldType::List { .. } => {
-            // One row per element, then the row that adds one. A list's text is
-            // comma-separated and that is the DOCUMENT's spelling; a person
-            // editing it should not have to count commas.
+            // One row per element, then the row that adds one, all INSIDE the
+            // control — whose height `control_height` sized for exactly this.
             let mut placed = Vec::new();
             let mut y = control.y;
             for (n, _) in FieldType::elements(field.value()).enumerate() {
@@ -466,6 +485,10 @@ fn lay_parts(field: &ConfigField, control: Rect, style: &FormStyle) -> Vec<(Stri
                 format!("item.{key}.add"),
                 Rect::new(control.x, y, control.w, ADD_CHIP_H),
             ));
+            debug_assert!(
+                y + ADD_CHIP_H <= control.y + control.h,
+                "a list's rows must fit the control `control_height` sized"
+            );
             placed
         }
     }
@@ -1428,6 +1451,89 @@ mod tests {
         assert_eq!(FieldType::ARMS, 6);
         let with_parts = geometry.rows.iter().filter(|r| !r.parts.is_empty()).count();
         assert_eq!(with_parts, 5, "five of six shapes carry affordances");
+    }
+
+    #[test]
+    fn r1652_1_a_grown_list_stays_inside_its_own_row() {
+        // ★ R1652 sized every control with one token, so a list of six painted
+        // its rows over the NEXT field. Found by growing the list on a running
+        // screen and reading the rectangles back — not by reasoning, and not by
+        // the sweep, which only ever probed the opening state where a list has
+        // one element and cannot overflow.
+        //
+        // The assertion is over a RANGE of lengths, because a defect whose
+        // trigger is "enough elements" is invisible to any single fixture.
+        for count in 1..=8_usize {
+            let value = (0..count)
+                .map(|n| format!("t/0.0:{n}"))
+                .collect::<Vec<_>>()
+                .join(FieldType::SEPARATOR);
+            let form = ConfigForm::new(
+                vec![
+                    ConfigField::new("hosts", "name[]", Applies::Hot, value).with_shape(
+                        FieldType::List {
+                            of: Box::new(FieldType::Text),
+                        },
+                    ),
+                    ConfigField::new("after", "text", Applies::Hot, "next"),
+                ],
+                vec![],
+            );
+            let geometry = form_geometry(&form, (0, 0), &FormStyle::default());
+            let list = geometry.row("hosts").expect("shown");
+            let after = geometry.row("after").expect("shown");
+
+            for (name, seat) in &list.parts {
+                assert!(
+                    seat.y + seat.h <= list.control.y + list.control.h,
+                    "{count} element(s): {name} at {seat:?} leaves its control \
+                     {:?}",
+                    list.control
+                );
+                assert!(
+                    seat.y + seat.h <= after.row.y,
+                    "{count} element(s): {name} at {seat:?} is drawn over the \
+                     next field at {:?}",
+                    after.row
+                );
+            }
+            assert!(
+                list.row.y + list.row.h <= after.row.y,
+                "{count} element(s): the rows do not overlap"
+            );
+        }
+
+        // And the property that makes the fix a fix rather than a bigger
+        // constant: the row's height TRACKS the element count. A control sized
+        // by a token could pass every assertion above at some fixed length and
+        // fail at the next one, which is exactly what R1652 did.
+        let heights: Vec<u32> = (1..=4_usize)
+            .map(|count| {
+                let value = (0..count)
+                    .map(|n| format!("t/0.0:{n}"))
+                    .collect::<Vec<_>>()
+                    .join(FieldType::SEPARATOR);
+                let form = ConfigForm::new(
+                    vec![
+                        ConfigField::new("hosts", "name[]", Applies::Hot, value).with_shape(
+                            FieldType::List {
+                                of: Box::new(FieldType::Text),
+                            },
+                        ),
+                    ],
+                    vec![],
+                );
+                form_geometry(&form, (0, 0), &FormStyle::default())
+                    .row("hosts")
+                    .expect("shown")
+                    .row
+                    .h
+            })
+            .collect();
+        assert!(
+            heights.windows(2).all(|w| w[1] > w[0]),
+            "each element adds height: {heights:?}"
+        );
     }
 
     #[test]
