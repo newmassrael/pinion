@@ -35222,6 +35222,48 @@
         "None. The bound is stated where a position is set rather than carried."
       ]
     },
+    "R1653.2": {
+      "decision_summary": "R1653's close audit asked the obvious question -- the instrument that found five\ndefects on one surface reaches exactly that one surface -- and rather than\nregistering the answer as a guess, asked the second surface on the spot. The\nsibling shell is where this class was first measured (R1649 stacked every card's\ntext down the left edge with 118 wire assertions passing), so it is the one\nworth asking first. It passes, which makes the debt \"nobody asked\" rather than\n\"there are more defects\", and a counterfactual confirms the check can fail.",
+      "changes_bullets": [
+        "examples/hello-analyzer-shell: a test asserting no two text runs of one widget",
+        "are painted on top of each other, over the real view -> layout pipeline."
+      ],
+      "verification_bullets": [
+        "cargo test -p hello-analyzer-shell: 17 passed. clippy with -D pedantic: clean.",
+        "1 counterfactual, caught: removing R1649's own repair (the layout style on",
+        "label()) turns the new check red, so it is not reporting coverage it lacks."
+      ],
+      "impact_refs": [
+        "5.12",
+        "5.32"
+      ],
+      "carry_forward_bullets": [
+        "The other ~250 surfaces have not been asked. Registered as",
+        "debt-the-painted-spec-sweep-reaches-one-surface, with the note that the",
+        "app-independent half of these properties belongs in the boot sweep that already",
+        "launches every example rather than copied into each of them."
+      ],
+      "publishable_decision_summary": "R1653's close audit asked the obvious question -- the instrument that found five\ndefects on one surface reaches exactly that one surface -- and rather than\nregistering the answer as a guess, asked the second surface on the spot. The\nsibling shell is where this class was first measured (R1649 stacked every card's\ntext down the left edge with 118 wire assertions passing), so it is the one\nworth asking first. It passes, which makes the debt \"nobody asked\" rather than\n\"there are more defects\", and a counterfactual confirms the check can fail.",
+      "publishable_changes_bullets": [
+        "examples/hello-analyzer-shell: a test asserting no two text runs of one widget",
+        "are painted on top of each other, over the real view -> layout pipeline."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p hello-analyzer-shell: 17 passed. clippy with -D pedantic: clean.",
+        "1 counterfactual, caught: removing R1649's own repair (the layout style on",
+        "label()) turns the new check red, so it is not reporting coverage it lacks."
+      ],
+      "publishable_impact_refs": [
+        "5.12",
+        "5.32"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The other ~250 surfaces have not been asked. Registered as",
+        "debt-the-painted-spec-sweep-reaches-one-surface, with the note that the",
+        "app-independent half of these properties belongs in the boot sweep that already",
+        "launches every example rather than copied into each of them."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
