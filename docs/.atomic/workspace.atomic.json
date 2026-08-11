@@ -35426,6 +35426,52 @@
         "None."
       ]
     },
+    "R1655.1": {
+      "decision_summary": "The close audit found that R1654's own module doc was false: it says the policy\nis shared and names both backends, and only the GPU one had been wired, so §2\n#6's dual answered two different strings for one scene. The terminal now applies\nthe same decision with its own metric — grapheme boundaries and cell widths —\nand the doc says what is true.",
+      "changes_bullets": [
+        "pinion-tui: `text_layout::painted_text` applies the eliding arms in CELLS,",
+        "through `pinion_core::text_elide`, and the paint walker resolves the text once",
+        "and places and slices the same string.",
+        "pinion-core: the `text_elide` module doc names the two callers and records that",
+        "it described a terminal arm that did not exist yet."
+      ],
+      "verification_bullets": [
+        "cargo test: 169 pinion-tui, 3376 pinion-core, 105 pinion-text. clippy clean.",
+        "1 counterfactual, caught — after the first version PASSED, which is the finding:",
+        "the test called the policy directly and a break in the PAINT path went",
+        "unnoticed, R1649.1's bypass lesson one crate over. The assertion reads terminal",
+        "cells now: an eliding arm puts the ellipsis in row 0 and leaves row 1 empty,",
+        "where the default arm fills both."
+      ],
+      "impact_refs": [
+        "5.36"
+      ],
+      "carry_forward_bullets": [
+        "None."
+      ],
+      "publishable_decision_summary": "The close audit found that R1654's own module doc was false: it says the policy\nis shared and names both backends, and only the GPU one had been wired, so §2\n#6's dual answered two different strings for one scene. The terminal now applies\nthe same decision with its own metric — grapheme boundaries and cell widths —\nand the doc says what is true.",
+      "publishable_changes_bullets": [
+        "pinion-tui: `text_layout::painted_text` applies the eliding arms in CELLS,",
+        "through `pinion_core::text_elide`, and the paint walker resolves the text once",
+        "and places and slices the same string.",
+        "pinion-core: the `text_elide` module doc names the two callers and records that",
+        "it described a terminal arm that did not exist yet."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test: 169 pinion-tui, 3376 pinion-core, 105 pinion-text. clippy clean.",
+        "1 counterfactual, caught — after the first version PASSED, which is the finding:",
+        "the test called the policy directly and a break in the PAINT path went",
+        "unnoticed, R1649.1's bypass lesson one crate over. The assertion reads terminal",
+        "cells now: an eliding arm puts the ellipsis in row 0 and leaves row 1 empty,",
+        "where the default arm fills both."
+      ],
+      "publishable_impact_refs": [
+        "5.36"
+      ],
+      "publishable_carry_forward_bullets": [
+        "None."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

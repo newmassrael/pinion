@@ -526,7 +526,12 @@ fn paint_text_inner(t: &TextNode, buf: &mut Buffer, clip: CellClip, offset_px: (
     // pinned at the box would erase on the terminal exactly what the pixel
     // backend draws. The widening is bounded by the declared outdent, so it can
     // never exceed what the paragraph asked for.
-    let lines = layout.place_px(&t.content, t.rect.w, &t.style);
+    // ★ R1655 §2 #6 — the overflow policy, resolved ONCE: the line ranges below
+    // index the string that is placed, and every slice taken from them has to
+    // come from that same string.
+    let cut = crate::text_layout::painted_text(&t.content, box_cols, &t.style);
+    let content: &str = cut.as_deref().unwrap_or(&t.content);
+    let lines = layout.place_px(content, t.rect.w, &t.style);
     let outdent = lines
         .iter()
         .map(|l| l.start_col().min(0))
@@ -556,7 +561,8 @@ fn paint_text_inner(t: &TextNode, buf: &mut Buffer, clip: CellClip, offset_px: (
         // `line_text` drops the trailing UAX #14 break codepoint, so no
         // control byte can reach a cell (a raw `\n` in the buffer would
         // emit a line feed mid-frame and corrupt the terminal).
-        let text = layout.line_text(&t.content, line.range);
+        // The string the lines were PLACED from — see `painted_text`.
+        let text = layout.line_text(content, line.range);
         paint_text_line(
             t,
             text,
@@ -2529,6 +2535,56 @@ mod tests {
             buf[(0, 0)].fg,
             TuiColor::Rgb(0xff, 0, 0),
             "row 0 is outside the run",
+        );
+    }
+    /// ★ R1655 §2 #6 — the eliding arms reach the TERMINAL BUFFER, through the
+    /// painter rather than past it.
+    ///
+    /// The first version of this test called the policy directly and a
+    /// counterfactual that disabled it in the paint path reported PASSED: a
+    /// capability verified only through a bypass is not verified (R1649.1's
+    /// lesson, one crate over). This reads the cells.
+    #[test]
+    fn r1655_an_eliding_arm_reaches_the_terminal_cells() {
+        use pinion_core::style::TextOverflow;
+        let row = |overflow| {
+            let mut label = text_at(0, 0, "demo/units/1/pose");
+            label.style.overflow = overflow;
+            // Eight cells wide for a seventeen-cell string, and TWO cells
+            // tall — a one-cell box clips the wrap away and the control case
+            // would prove nothing.
+            label.rect = Rect::new(0, 0, 8 * CELL.cell_w(), 2 * CELL.cell_h());
+            let mut buf = Buffer::empty(TuiRect::new(0, 0, 8, 2));
+            paint_text(&label, &mut buf);
+            (0..2)
+                .map(|r| {
+                    (0..8)
+                        .map(|c| buf[(c, r)].symbol().to_owned())
+                        .collect::<String>()
+                })
+                .collect::<Vec<_>>()
+        };
+
+        let elided = row(TextOverflow::Ellipsis);
+        assert!(
+            elided[0].contains('\u{2026}'),
+            "the first row says the string was cut: {elided:?}"
+        );
+        assert!(
+            elided[1].trim().is_empty(),
+            "★ and there is no SECOND row — an eliding arm is single-line, so \
+             nothing lands on whatever the next widget occupies: {elided:?}"
+        );
+        assert!(
+            elided[0].starts_with("demo"),
+            "what survived is the head: {elided:?}"
+        );
+
+        let wrapped = row(TextOverflow::Visible);
+        assert!(
+            !wrapped[1].trim().is_empty(),
+            "the default arm still wraps, which is what makes the check above \
+             mean something: {wrapped:?}"
         );
     }
 }

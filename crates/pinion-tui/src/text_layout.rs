@@ -124,6 +124,56 @@ pub fn cell_width(text: &str) -> usize {
     text.graphemes(true).map(grapheme_cells).sum()
 }
 
+/// R1655 §5.36 §2 #6 — the string a terminal paints for `content` when the
+/// overflow policy shortens it, or `None` when it is painted as authored.
+///
+/// The metric is [`cell_width`] and the cuttable offsets are grapheme
+/// boundaries; the decision is [`pinion_core::text_elide::elide_to_fit`],
+/// shared with the GPU path. Splitting it any other way would let the two
+/// backends disagree about which characters a reader sees, which §2 #6 exists
+/// to prevent.
+///
+/// # It is a PRE-step, not something `place` does for you
+///
+/// [`CellTextLayout::place`] answers line ranges **into the string it was
+/// given**, and a caller slices that same string to paint it. Eliding inside
+/// `place` would hand back ranges into a string the caller does not hold — it
+/// would slice the authored text with offsets computed from the shortened one,
+/// which is wrong characters at best and a panic on a non-boundary at worst.
+/// So the caller resolves the text ONCE and uses it for both:
+///
+/// ```ignore
+/// let cut = painted_text(&t.content, cols, &t.style);
+/// let text = cut.as_deref().unwrap_or(&t.content);
+/// let lines = layout.place(text, cols, &t.style);   // ranges index `text`
+/// ```
+///
+/// A counterfactual is what established this: hiding the call inside `place`
+/// passed every test in this crate, because the test called the policy directly
+/// and never went through the placement the painter uses.
+#[must_use]
+pub fn painted_text(content: &str, max_cols: u32, style: &TextStyle) -> Option<String> {
+    if !style.overflow.shortens() || max_cols == 0 {
+        return None;
+    }
+    let boundaries: Vec<usize> = content
+        .grapheme_indices(true)
+        .map(|(i, _)| i)
+        .chain(std::iter::once(content.len()))
+        .collect();
+    let mut measure = |candidate: &str| u32::try_from(cell_width(candidate)).unwrap_or(u32::MAX);
+    pinion_core::text_elide::elide_to_fit(
+        &pinion_core::text_elide::ElideRequest {
+            content,
+            boundaries: &boundaries,
+            budget: max_cols,
+        },
+        style.overflow,
+        &mut measure,
+    )
+    .map(|cut| cut.text)
+}
+
 /// Cells spanned by one grapheme cluster — the shared advance rule for
 /// [`cell_width`] (measure) and [`crate::paint`] (paint).
 #[must_use]
@@ -1040,5 +1090,57 @@ mod tests {
             "and the reported line_count must equal the wrapped rows — this is \
              the §5.12 datum an AI client reads instead of pixels",
         );
+    }
+
+    /// ★ R1655 §2 #6 — the terminal honours the eliding arms, and it and the
+    /// GPU path answer the same SHAPE of string.
+    ///
+    /// The two cannot answer the same number of characters — one measures cells
+    /// and the other shaped pixels — so what is asserted is the property that
+    /// must hold on both: the answer fits the budget, it says a cut was made,
+    /// and which END gave way is the arm's.
+    #[test]
+    fn r1655_the_terminal_elides_by_the_shared_policy() {
+        use pinion_core::style::TextOverflow;
+        let content = "demo/units/1/pose";
+        let cells = |s: &str| cell_width(s);
+        let mut style = TextStyle::new();
+        for (arm, head, tail) in [
+            (TextOverflow::Ellipsis, true, false),
+            (TextOverflow::EllipsisStart, false, true),
+            (TextOverflow::EllipsisMiddle, true, true),
+        ] {
+            style.overflow = arm;
+            let cut = super::painted_text(content, 9, &style).expect("it does not fit");
+            assert!(
+                cells(&cut) <= 9,
+                "{arm:?}: {cut:?} is {} cells",
+                cells(&cut)
+            );
+            assert!(cut.contains('\u{2026}'), "{arm:?}: {cut:?}");
+            let (kept_head, kept_tail) = cut.split_once('\u{2026}').expect("the cut is marked");
+            assert_eq!(
+                !kept_head.is_empty(),
+                head,
+                "{arm:?} keeps the head: {cut:?}"
+            );
+            assert_eq!(
+                !kept_tail.is_empty(),
+                tail,
+                "{arm:?} keeps the tail: {cut:?}"
+            );
+            assert!(
+                content.starts_with(kept_head) && content.ends_with(kept_tail),
+                "{arm:?}: what survived came from the authored string: {cut:?}"
+            );
+        }
+        // The arms that keep every character change nothing.
+        for arm in [TextOverflow::Visible, TextOverflow::Clip] {
+            style.overflow = arm;
+            assert_eq!(super::painted_text(content, 9, &style), None, "{arm:?}");
+        }
+        // And a string that fits is untouched whatever the arm.
+        style.overflow = TextOverflow::Ellipsis;
+        assert_eq!(super::painted_text("ok", 40, &style), None);
     }
 }

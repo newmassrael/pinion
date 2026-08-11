@@ -21,9 +21,12 @@
 //!
 //! So this module takes the metric as a closure and the segmentation as a list
 //! of byte offsets the caller considers cuttable. The GPU path hands over
-//! parley's cluster boundaries and an advance read off an already-shaped line;
-//! the terminal hands over grapheme boundaries and a cell count. Neither
-//! re-implements the decision.
+//! parley's cluster boundaries and an advance read off an already-shaped line
+//! (`pinion_text::LayoutCache`); the terminal hands over grapheme boundaries
+//! and a cell count (`pinion_tui::text_layout`). Neither re-implements the
+//! decision, and §2 #6 therefore cannot answer two different strings for one
+//! scene — which it did for a day, because R1654 wired the shaper and left this
+//! paragraph describing a terminal arm that did not exist yet.
 //!
 //! # What the reference does, measured
 //!
