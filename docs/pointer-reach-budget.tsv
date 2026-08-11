@@ -8,12 +8,21 @@
 # must never be added to make a failure go away — that is the one use that
 # turns a ratchet back into a suggestion.
 #
-# Measured 2026-08-11 over 148 examples that boot with a GPU surface: 14 had
-# one, and 2 were repaired in the round that measured them (hello-badge and
-# hello-status-bar, both a text region that had grown over its own widget —
-# repaired by declaring it `pointer_transparent`, which is what a label is).
-# The 12 below are the honest remainder. They are NOT a different kind of
-# defect; they are the same one, unpaid.
+# Measured 2026-08-11 over 222 example packages: 213 answered, 9 cannot boot
+# headless here at all (four terminal arms, an audio-device demo, two
+# cross-repo consumers, and two that serve no RPC at boot) and are listed at
+# the foot of this file rather than left as a silent remainder. Of the 213,
+# EIGHTEEN had a widget nobody can press. Two were repaired in the round that
+# measured them (hello-badge, hello-status-bar — a text region that had grown
+# over its own widget, repaired by declaring it `pointer_transparent`, which
+# is what a label is). The 16 below are the honest remainder.
+#
+# ★ The first pass reported 14, and the four it missed were hidden by a defect
+# in the GATE ITSELF: raising from `__enter__` leaked the refused subprocess,
+# and the leaked binaries starved every launch after them. The round's own
+# changelog carries the wrong diagnosis for that (it blamed the terminal arms
+# and GPU memory); this file carries the re-measurement, which is what a
+# number nobody re-derived is worth.
 #
 # The two repairs this population takes:
 #   * pure decoration over a widget -> `pointer_transparent` on the decoration
@@ -46,3 +55,13 @@ hello-inspector	inspector
 hello-lazy-tree	lazytree
 hello-market-map	marketmap
 hello-measured-list	mlist
+hello-tabbed-chart	chart_split
+hello-tail-reveal	reveal_list
+hello-textgrid	htg
+hello-value-scatter	valuescatter
+#
+# Cannot be measured here, and each says why rather than being dropped:
+#   ai-introspect-demo, forge-counter   serve no RPC at boot
+#   hello-audio                         opens an audio device
+#   hello-*-tui (4)                     terminal arms, no pointer surface at all
+#   hello-narrative-walk, hello-place-map   cross-repo consumers
