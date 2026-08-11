@@ -343,6 +343,15 @@ impl FieldType {
         matches!(self, Self::Choice { .. })
     }
 
+    /// The elements a [`Self::List`] or [`Self::Flags`] text holds, in order.
+    ///
+    /// Public because a painter drawing a row per element must split it the
+    /// same way the encoder does — two spellings of "what the commas mean" is
+    /// how a screen shows four rows for a value the document reads as three.
+    pub fn elements(text: &str) -> impl Iterator<Item = &str> {
+        Self::split(text)
+    }
+
     fn split(text: &str) -> impl Iterator<Item = &str> {
         text.split(',')
             .map(str::trim)

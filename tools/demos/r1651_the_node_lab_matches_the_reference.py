@@ -220,16 +220,47 @@ def body() -> None:
             declared.add(f"lab.form.control.{field['key']}")
             declared.add(f"lab.form.applies.{field['key']}")
             declared.add(f"lab.form.defect.{field['key']}")
+            # Every affordance a shape can put inside its control. Declared per
+            # family rather than per instance because how many a row has is a
+            # function of its VALUE (a list grows), and the count pin below is
+            # what keeps that from being a hole.
             for word in ("read", "write"):
                 declared.add(f"lab.form.option.{field['key']}.{word}")
+            for part in ("up", "down"):
+                declared.add(f"lab.form.step.{field['key']}.{part}")
+            declared.add(f"lab.form.toggle.{field['key']}")
+            declared.add(f"lab.form.item.{field['key']}.add")
+            for n in range(8):
+                declared.add(f"lab.form.item.{field['key']}.{n}")
         for key in spec["addable"]:
             declared.add(f"lab.form.add.{key}")
-        # The families the specification names as a whole rather than per item.
-        FAMILIES = (
-            "node_lab",
-            "lab.appbar", "lab.toolbar", "lab.gate", "lab.hint", "lab.link",
-            "lab.inspector", "lab.palette.discovery",
-        )
+        # The families the specification names as a WHOLE rather than per item,
+        # because the reference describes those regions as a block ("title,
+        # meta, chip, zoom, config, Run") and a table written at element
+        # resolution would be a copy of the screen rather than a specification
+        # of it.
+        #
+        # ★ R1652 — each family carries a MEMBER COUNT, which is what stops
+        # "accepted wholesale" from being a hole. R1651.1 registered this as a
+        # debt in exactly those words: a family prefix let anything under it
+        # through, so "all N painted tags are declared" was true of far fewer
+        # than N elements. A count cannot say WHICH element arrived, but it
+        # fails the moment one does, and that is the R1650 shape — pin the
+        # member set, do not search for an absence.
+        # `lab.link` is a wire per link plus the selected one's two label
+        # nodes, so its pin is DERIVED from the specification rather than
+        # written down — a family whose size is a function of the graph must
+        # not be pinned to a constant, or adding a link fails the wrong check.
+        FAMILIES = {
+            "node_lab": 1,
+            "lab.appbar": 3,
+            "lab.toolbar": 10,
+            "lab.gate": 7,
+            "lab.hint": 2,
+            "lab.link": len(spec["links"]) + 2,
+            "lab.inspector": 7,
+            "lab.palette.discovery": 3,
+        }
         undeclared = [
             tag
             for tag in painted
@@ -240,8 +271,21 @@ def body() -> None:
             f"the screen paints {len(undeclared)} element(s) the specification does "
             f"not declare: {undeclared}"
         )
-        print(f"[D] BACKWARD — every one of {len(painted)} painted tag(s) is declared "
-              f"or in a named family")
+        drifted = []
+        for family, pinned in FAMILIES.items():
+            held = sorted(
+                t for t in painted if t == family or t.startswith(family + ".")
+            )
+            if len(held) != pinned:
+                drifted.append((family, pinned, len(held), held))
+        assert not drifted, (
+            "a family gained or lost members without the specification saying so "
+            f"(pin, actual, members): {drifted}"
+        )
+        counted = sum(FAMILIES.values())
+        print(f"[D] BACKWARD — {len(painted) - counted} painted tag(s) declared "
+              f"element by element, {counted} more pinned by member count across "
+              f"{len(FAMILIES)} named families; nothing unaccounted for")
 
         # ── (E) The inspector IS the settings editor ────────────────────────
         form = json.loads(q(tf, "form"))
@@ -334,7 +378,15 @@ def body() -> None:
         # produce must answer for ITSELF at the centre of the rectangle it was
         # painted in, so a new control cannot join the screen unprobed.
         def expected(tag: str) -> str | None:
-            """What a press at this tag's centre must answer, from the tag alone."""
+            """What a press at this tag's centre must answer, from the tag alone.
+
+            A control that carries affordances INSIDE it (a list's element rows,
+            a stepper) legitimately answers with the affordance under the
+            cursor rather than with itself — that is the affordance working.
+            What must never happen is an answer naming a different ROW, which
+            is what `same_row` below checks and what all three R1651.1 defects
+            violated.
+            """
             for prefix, verb in (
                 ("lab.rail.", "rail"),
                 ("lab.palette.role.", "role"),
@@ -344,10 +396,9 @@ def body() -> None:
                     return f"{verb}:{tag[len(prefix):]}"
             if tag.startswith("lab.form.control."):
                 return f"field:{tag[len('lab.form.control.'):]}"
-            if tag.startswith("lab.form.option."):
-                rest = tag[len("lab.form.option."):]
-                key, _, word = rest.rpartition(".")
-                return f"option:{key}:{word}"
+            for family in ("option", "step", "toggle", "item"):
+                if tag.startswith(f"lab.form.{family}."):
+                    return tag[len("lab.form."):]
             if tag.startswith("lab.pin."):
                 node, _, side = tag[len("lab.pin."):].rpartition(".")
                 return f"pin:{node}:{side}"
@@ -367,10 +418,19 @@ def body() -> None:
         # A floor, so a regression that stops PAINTING a control shows up here
         # rather than as a smaller number nobody reads.
         assert len(probes) >= 55, f"the sweep found only {len(probes)} control(s)"
+        def same_row(want: str, got: str) -> bool:
+            """Both answers are about the same form row."""
+            if not want.startswith("field:"):
+                return False
+            key = want[len("field:"):]
+            return got.startswith(("option.", "step.", "toggle.", "item.")) and got.split(
+                ".", 1
+            )[1].startswith(key)
+
         wrong = []
         for tag, want in probes:
             answered = inv(tf, "point", at(tf, tag))
-            if answered != want:
+            if answered != want and not same_row(want, answered):
                 wrong.append((tag, want, answered))
         assert not wrong, (
             f"{len(wrong)} of {len(probes)} painted control(s) are drawn where a "

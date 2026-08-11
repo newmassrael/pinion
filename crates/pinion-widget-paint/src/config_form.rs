@@ -192,17 +192,29 @@ pub struct RowBox {
     /// Derived under [`RowWrap::WrapLong`], so a caller can see which rows the
     /// policy moved without re-measuring the text.
     pub wrapped: bool,
-    /// Where each option of a [`FieldType::Choice`] / [`FieldType::Flags`] row
-    /// landed, empty for every other shape.
+    /// Every **affordance inside the control**, as the tag suffix the painter
+    /// gives it and the rectangle it landed in.
     ///
-    /// ★ R1651.1 — published because a consumer needs it and computing it a
-    /// second time is how R1651 shipped an option row whose second chip could
-    /// not be pressed: the painter laid the chips out content-hugging with a
-    /// gap and the consumer's hit test divided the control evenly, so the two
-    /// disagreed by the width of a word. The round's own headline claim is that
-    /// the paint and the hit test read ONE geometry; this is that claim made
-    /// true for the one row where it was not.
-    pub options: Vec<(String, Rect)>,
+    /// The suffix is relative to the form's prefix — `option.<key>.<word>`,
+    /// `step.<key>.up`, `toggle.<key>`, `item.<key>.<n>` — so a consumer's hit
+    /// test iterates this list and never spells a shape's layout out again.
+    ///
+    /// ★ R1651.1 published the option rectangles because computing them twice
+    /// is how R1651 shipped an option row whose second chip could not be
+    /// pressed. R1652 generalises it to every shape for the same reason, before
+    /// rather than after: a stepper and a checkbox are the same hazard.
+    pub parts: Vec<(String, Rect)>,
+}
+
+impl RowBox {
+    /// Where the part with that tag suffix landed.
+    #[must_use]
+    pub fn part(&self, suffix: &str) -> Option<Rect> {
+        self.parts
+            .iter()
+            .find(|(name, _)| name == suffix)
+            .map(|(_, rect)| *rect)
+    }
 }
 
 /// Where every part of a form landed.
@@ -294,6 +306,10 @@ const CHIP_PAD: u32 = 10;
 const CHIP_GAP: u32 = 6;
 /// Height of the "add this key" chip row entries.
 const ADD_CHIP_H: u32 = 24;
+/// A numeric stepper button's width.
+const STEP_W: u32 = 26;
+/// Vertical space between a list's element rows.
+const LIST_GAP: u32 = 4;
 
 /// Lay a form out, giving every part a rectangle.
 ///
@@ -378,27 +394,81 @@ fn lay_row(field: &ConfigField, at: (u32, u32), key_col: u32, style: &FormStyle)
             header,
             control,
             wrapped,
-            options: lay_options(field, control, style),
+            parts: lay_parts(field, control, style),
         }
     }
 }
 
-/// Where a row's options land inside its control — content-hugging, in order,
-/// separated by [`CHIP_GAP`], which is exactly what the painter draws.
-fn lay_options(field: &ConfigField, control: Rect, style: &FormStyle) -> Vec<(String, Rect)> {
-    let options = field.shape().options();
-    if options.is_empty() {
-        return Vec::new();
-    }
+/// Where a row's affordances land inside its control.
+///
+/// One function over every shape, because the alternative is one per shape and
+/// a consumer that has to know which. What each shape gets:
+///
+/// | shape | parts |
+/// |---|---|
+/// | [`FieldType::Text`] | none — the control *is* the box |
+/// | [`FieldType::Integer`] | `step.<key>.down`, `step.<key>.up` |
+/// | [`FieldType::Boolean`] | `toggle.<key>` |
+/// | [`FieldType::Choice`] / [`FieldType::Flags`] | `option.<key>.<word>` each |
+/// | [`FieldType::List`] | `item.<key>.<n>` each, then `item.<key>.add` |
+fn lay_parts(field: &ConfigField, control: Rect, style: &FormStyle) -> Vec<(String, Rect)> {
+    let key = field.key();
     let text_style = TextStyle::new().with_size_px(style.key_px);
-    let mut x = control.x;
-    let mut placed = Vec::new();
-    for word in options {
-        let w = measured_key_width(word, &text_style, style.key_px) + CHIP_PAD * 2;
-        placed.push((word.to_string(), Rect::new(x, control.y, w, control.h)));
-        x += w + CHIP_GAP;
+    match field.shape() {
+        FieldType::Text => Vec::new(),
+        FieldType::Integer { .. } => {
+            // A stepper pair at the trailing edge, so the value's text keeps
+            // the left of the box and the two buttons never overlap it.
+            let w = STEP_W;
+            let right = control.x + control.w;
+            vec![
+                (
+                    format!("step.{key}.down"),
+                    Rect::new(right.saturating_sub(w * 2), control.y, w, control.h),
+                ),
+                (
+                    format!("step.{key}.up"),
+                    Rect::new(right.saturating_sub(w), control.y, w, control.h),
+                ),
+            ]
+        }
+        FieldType::Boolean => vec![(
+            format!("toggle.{key}"),
+            Rect::new(control.x, control.y, control.h, control.h),
+        )],
+        FieldType::Choice { of } | FieldType::Flags { of } => {
+            let mut x = control.x;
+            let mut placed = Vec::new();
+            for word in of {
+                let w = measured_key_width(word, &text_style, style.key_px) + CHIP_PAD * 2;
+                placed.push((
+                    format!("option.{key}.{word}"),
+                    Rect::new(x, control.y, w, control.h),
+                ));
+                x += w + CHIP_GAP;
+            }
+            placed
+        }
+        FieldType::List { .. } => {
+            // One row per element, then the row that adds one. A list's text is
+            // comma-separated and that is the DOCUMENT's spelling; a person
+            // editing it should not have to count commas.
+            let mut placed = Vec::new();
+            let mut y = control.y;
+            for (n, _) in FieldType::elements(field.value()).enumerate() {
+                placed.push((
+                    format!("item.{key}.{n}"),
+                    Rect::new(control.x, y, control.w, style.control_h),
+                ));
+                y += style.control_h + LIST_GAP;
+            }
+            placed.push((
+                format!("item.{key}.add"),
+                Rect::new(control.x, y, control.w, ADD_CHIP_H),
+            ));
+            placed
+        }
     }
-    placed
 }
 
 /// The chips that add an offered key, wrapped into the pane's width.
@@ -634,94 +704,284 @@ fn view_control(
     {
         match field.shape() {
             FieldType::Choice { .. } | FieldType::Flags { .. } => {
-                let chosen: Vec<&str> = field.value().split(',').map(str::trim).collect();
-                let chips: Vec<Scene> = row
-                    .options
-                    .iter()
-                    .map(|(word, seat)| {
-                        let on = chosen.contains(&word.as_str());
-                        let ink = if on {
-                            theme.resolve(ColorRole::Accent)
-                        } else {
-                            theme.resolve(ColorRole::OnSurfaceMuted)
-                        };
-                        Scene::Container(
-                            ContainerNode::new(vec![Scene::Text(TextNode::styled(
-                                word.clone(),
-                                Rect::default(),
-                                TextStyle::new().with_size_px(10).with_fg(ink),
-                            ))])
-                            .with_tag(format!("{tag_prefix}.option.{}.{word}", row.key))
-                            .with_style(
-                                BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh))
-                                    .with_corner_radius(6)
-                                    .with_border(Border::new(ink, 1)),
-                            )
-                            // ★ Placed from the SAME rectangle `RowBox::options`
-                            // publishes. R1651 laid these out with flex and let
-                            // its consumer divide the control evenly, so the
-                            // second chip could not be pressed — the round's own
-                            // one-geometry claim, false on the one row nobody
-                            // probed.
-                            // Relative to the CONTROL, which is this chip's
-                            // parent — an absolutely-placed child is positioned
-                            // against its own container, and passing the form's
-                            // origin here is the same double offset one level
-                            // down.
-                            .with_layout(placed(
-                                LayoutStyle::new()
-                                    .flex(FlexDirection::Row)
-                                    .with_align_items(AlignItems::Center)
-                                    .with_justify(JustifyContent::Center),
-                                *seat,
-                                (row.control.x, row.control.y),
-                            )),
-                        )
-                    })
-                    .collect();
-                Scene::Container(
-                    ContainerNode::new(chips)
-                        .with_tag(format!("{tag_prefix}.control.{}", row.key))
-                        .with_layout(placed(
-                            LayoutStyle::new().with_focusable(true),
-                            row.control,
-                            origin,
-                        )),
-                )
+                let chosen: Vec<&str> = FieldType::elements(field.value()).collect();
+                option_chips(tag_prefix, row, &chosen, origin, theme)
             }
-            _ => Scene::Container(
-                ContainerNode::new(vec![Scene::Text(TextNode::styled(
-                    field.value().to_owned(),
-                    Rect::default(),
-                    TextStyle::new()
-                        .with_size_px(12)
-                        .with_fg(theme.resolve(ColorRole::OnSurface)),
-                ))])
-                .with_tag(format!("{tag_prefix}.control.{}", row.key))
-                .with_style(
-                    BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh))
-                        .with_corner_radius(8)
-                        .with_border(Border::new(
-                            if worst.is_some_and(ConfigDefect::blocks) {
-                                theme.resolve(ColorRole::Error)
-                            } else {
-                                theme.resolve(ColorRole::Outline)
-                            },
-                            1,
-                        )),
-                )
-                .with_layout(placed(
-                    LayoutStyle::new()
-                        .flex(FlexDirection::Row)
-                        .with_align_items(AlignItems::Center)
-                        .with_padding(Rect::new(10, 0, 10, 0))
-                        .with_focusable(true),
-                    row.control,
-                    origin,
-                )),
-            ),
+            FieldType::Boolean => boolean_control(tag_prefix, row, field, origin, theme),
+            FieldType::Integer { .. } => {
+                number_control(tag_prefix, row, field, worst, origin, theme)
+            }
+            FieldType::List { .. } => list_control(tag_prefix, row, field, origin, theme),
+            FieldType::Text => text_control(tag_prefix, row, field, worst, origin, theme),
         }
     }
+}
+
+/// The skin every boxed control shares: the surface tone, the corner and the
+/// border, which turns to [`ColorRole::Error`] when the row's defect blocks.
+///
+/// One chooser rather than four, because a divergence between the shapes here
+/// would be a bug: "this value stops a launch" is a fact about the row, not
+/// about which control the row happens to draw.
+fn control_skin(worst: Option<&ConfigDefect>, theme: &Theme) -> BoxStyle {
+    BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh))
+        .with_corner_radius(8)
+        .with_border(Border::new(
+            if worst.is_some_and(ConfigDefect::blocks) {
+                theme.resolve(ColorRole::Error)
+            } else {
+                theme.resolve(ColorRole::Outline)
+            },
+            1,
+        ))
+}
+
+fn part_seat(row: &RowBox, suffix: &str) -> Rect {
+    row.part(suffix).unwrap_or(row.control)
+}
+
+/// A pill carrying one word, placed at a published part rectangle.
+fn part_pill(
+    tag: String,
+    label: &str,
+    ink: Color,
+    seat: Rect,
+    origin: (u32, u32),
+    theme: &Theme,
+) -> Scene {
+    Scene::Container(
+        ContainerNode::new(vec![Scene::Text(TextNode::styled(
+            label.to_owned(),
+            Rect::default(),
+            TextStyle::new().with_size_px(10).with_fg(ink),
+        ))])
+        .with_tag(tag)
+        .with_style(
+            BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh))
+                .with_corner_radius(6)
+                .with_border(Border::new(ink, 1)),
+        )
+        .with_layout(placed(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center)
+                .with_justify(JustifyContent::Center),
+            seat,
+            origin,
+        )),
+    )
+}
+
+/// Every option, with the chosen ones marked.
+fn option_chips(
+    tag_prefix: &str,
+    row: &RowBox,
+    chosen: &[&str],
+    origin: (u32, u32),
+    theme: &Theme,
+) -> Scene {
+    let chips: Vec<Scene> = row
+        .parts
+        .iter()
+        .filter_map(|(suffix, seat)| {
+            let word = suffix.rsplit('.').next()?;
+            let on = chosen.contains(&word);
+            let ink = if on {
+                theme.resolve(ColorRole::Accent)
+            } else {
+                theme.resolve(ColorRole::OnSurfaceMuted)
+            };
+            // Relative to the CONTROL, which is this chip's parent — an
+            // absolutely-placed child is positioned against its own container.
+            Some(part_pill(
+                format!("{tag_prefix}.{suffix}"),
+                word,
+                ink,
+                *seat,
+                (row.control.x, row.control.y),
+                theme,
+            ))
+        })
+        .collect();
+    Scene::Container(
+        ContainerNode::new(chips)
+            .with_tag(format!("{tag_prefix}.control.{}", row.key))
+            .with_layout(placed(
+                LayoutStyle::new().with_focusable(true),
+                row.control,
+                origin,
+            )),
+    )
+}
+
+/// A boolean row: a **checkbox**, not a box somebody types `true` into.
+fn boolean_control(
+    tag_prefix: &str,
+    row: &RowBox,
+    field: &ConfigField,
+    origin: (u32, u32),
+    theme: &Theme,
+) -> Scene {
+    let on = field.value().trim() == "true";
+    let seat = part_seat(row, &format!("toggle.{}", row.key));
+    let ink = if on {
+        theme.resolve(ColorRole::Accent)
+    } else {
+        theme.resolve(ColorRole::OnSurfaceMuted)
+    };
+    Scene::Container(
+        ContainerNode::new(vec![
+            part_pill(
+                format!("{tag_prefix}.toggle.{}", row.key),
+                if on { "\u{2713}" } else { " " },
+                ink,
+                seat,
+                (row.control.x, row.control.y),
+                theme,
+            ),
+            Scene::Text(TextNode::styled(
+                if on { "true" } else { "false" }.to_owned(),
+                Rect::new(seat.w + 10, 8, 80, 14),
+                TextStyle::new()
+                    .with_size_px(12)
+                    .with_fg(theme.resolve(ColorRole::OnSurface)),
+            )),
+        ])
+        .with_tag(format!("{tag_prefix}.control.{}", row.key))
+        .with_layout(placed(
+            LayoutStyle::new().with_focusable(true),
+            row.control,
+            origin,
+        )),
+    )
+}
+
+/// A numeric row: the value, and a **stepper pair** that knows the bounds.
+///
+/// The bounds are on the field ([`FieldType::Integer`]), so the buttons clamp
+/// rather than letting a person walk out of range and be told afterwards.
+fn number_control(
+    tag_prefix: &str,
+    row: &RowBox,
+    field: &ConfigField,
+    worst: Option<&ConfigDefect>,
+    origin: (u32, u32),
+    theme: &Theme,
+) -> Scene {
+    let muted = theme.resolve(ColorRole::OnSurfaceMuted);
+    let mut children = vec![Scene::Text(TextNode::styled(
+        field.value().to_owned(),
+        Rect::new(10, 8, row.control.w.saturating_sub(STEP_W * 2 + 16), 14),
+        TextStyle::new()
+            .with_size_px(12)
+            .with_fg(theme.resolve(ColorRole::OnSurface)),
+    ))];
+    for (suffix, glyph) in [("down", "-"), ("up", "+")] {
+        let name = format!("step.{}.{suffix}", row.key);
+        children.push(part_pill(
+            format!("{tag_prefix}.{name}"),
+            glyph,
+            muted,
+            part_seat(row, &name),
+            (row.control.x, row.control.y),
+            theme,
+        ));
+    }
+    Scene::Container(
+        ContainerNode::new(children)
+            .with_tag(format!("{tag_prefix}.control.{}", row.key))
+            .with_style(control_skin(worst, theme))
+            .with_layout(placed(
+                LayoutStyle::new().with_focusable(true),
+                row.control,
+                origin,
+            )),
+    )
+}
+
+/// A list row: **one row per element**, then the row that adds one.
+///
+/// A list's text is comma-separated because that is the document's spelling;
+/// a person editing it should not have to count commas.
+fn list_control(
+    tag_prefix: &str,
+    row: &RowBox,
+    field: &ConfigField,
+    origin: (u32, u32),
+    theme: &Theme,
+) -> Scene {
+    let muted = theme.resolve(ColorRole::OnSurfaceMuted);
+    let elements: Vec<&str> = FieldType::elements(field.value()).collect();
+    let mut children = Vec::new();
+    for (n, element) in elements.iter().enumerate() {
+        let name = format!("item.{}.{n}", row.key);
+        let seat = part_seat(row, &name);
+        children.push(Scene::Container(
+            ContainerNode::new(vec![Scene::Text(TextNode::styled(
+                (*element).to_owned(),
+                Rect::new(10, 8, seat.w.saturating_sub(20), 14),
+                TextStyle::new()
+                    .with_size_px(12)
+                    .with_fg(theme.resolve(ColorRole::OnSurface)),
+            ))])
+            .with_tag(format!("{tag_prefix}.{name}"))
+            .with_style(control_skin(None, theme))
+            .with_layout(placed(
+                LayoutStyle::new().with_focusable(true),
+                seat,
+                (row.control.x, row.control.y),
+            )),
+        ));
+    }
+    let add = format!("item.{}.add", row.key);
+    children.push(part_pill(
+        format!("{tag_prefix}.{add}"),
+        "+ one more",
+        muted,
+        part_seat(row, &add),
+        (row.control.x, row.control.y),
+        theme,
+    ));
+    Scene::Container(
+        ContainerNode::new(children)
+            .with_tag(format!("{tag_prefix}.control.{}", row.key))
+            .with_layout(placed(
+                LayoutStyle::new().with_focusable(true),
+                row.control,
+                origin,
+            )),
+    )
+}
+
+/// A free-text row: the box, and nothing else — the control IS the box.
+fn text_control(
+    tag_prefix: &str,
+    row: &RowBox,
+    field: &ConfigField,
+    worst: Option<&ConfigDefect>,
+    origin: (u32, u32),
+    theme: &Theme,
+) -> Scene {
+    Scene::Container(
+        ContainerNode::new(vec![Scene::Text(TextNode::styled(
+            field.value().to_owned(),
+            Rect::default(),
+            TextStyle::new()
+                .with_size_px(12)
+                .with_fg(theme.resolve(ColorRole::OnSurface)),
+        ))])
+        .with_tag(format!("{tag_prefix}.control.{}", row.key))
+        .with_style(control_skin(worst, theme))
+        .with_layout(placed(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center)
+                .with_padding(Rect::new(10, 0, 10, 0))
+                .with_focusable(true),
+            row.control,
+            origin,
+        )),
+    )
 }
 
 /// The chip that adds an offered key.
@@ -1097,6 +1357,321 @@ mod tests {
             assert!(
                 tags.contains(&format!("insp.add.{key}")),
                 "{key} is offered"
+            );
+        }
+    }
+
+    #[test]
+    fn r1652_every_declared_shape_gets_a_control_of_its_own() {
+        // ★ R1651 declared six shapes and drew two: a boolean was a box
+        // somebody typed `true` into and an integer knew its range with no way
+        // to step inside it. The model's precision was invisible on screen.
+        // This asserts the OTHER direction of that — one arm per shape, and
+        // each shape's own affordance painted.
+        use pinion_core::Theme;
+
+        let form = ConfigForm::new(
+            vec![
+                ConfigField::new("free", "text", Applies::Hot, "anything"),
+                ConfigField::new("count", "int", Applies::Hot, "3")
+                    .with_shape(FieldType::Integer { min: 0, max: 9 }),
+                ConfigField::new("on", "bool", Applies::Hot, "true").with_shape(FieldType::Boolean),
+                ConfigField::new("mode", "mode", Applies::Hot, "b").with_shape(FieldType::Choice {
+                    of: vec!["a".into(), "b".into()],
+                }),
+                ConfigField::new("perm", "perm", Applies::Hot, "read").with_shape(
+                    FieldType::Flags {
+                        of: vec!["read".into(), "write".into()],
+                    },
+                ),
+                ConfigField::new("hosts", "name[]", Applies::Hot, "one, two").with_shape(
+                    FieldType::List {
+                        of: Box::new(FieldType::Text),
+                    },
+                ),
+            ],
+            vec![],
+        );
+        let geometry = form_geometry(&form, (0, 0), &FormStyle::default());
+        let painted = view_config_form("f", &form, &geometry, &Theme::dark());
+        let mut tags = Vec::new();
+        painted.for_each_node(&mut |node| {
+            if let Some(tag) = node.node.tag() {
+                tags.push(tag.to_string());
+            }
+        });
+        let has = |t: &str| tags.iter().any(|x| x == t);
+
+        assert!(has("f.control.free"), "text: the control IS the box");
+        assert_eq!(
+            geometry.row("free").expect("shown").parts.len(),
+            0,
+            "and it has no parts inside it"
+        );
+        assert!(
+            has("f.step.count.up") && has("f.step.count.down"),
+            "{tags:?}"
+        );
+        assert!(has("f.toggle.on"), "a boolean is a checkbox: {tags:?}");
+        assert!(has("f.option.mode.a") && has("f.option.mode.b"), "{tags:?}");
+        assert!(
+            has("f.option.perm.read") && has("f.option.perm.write"),
+            "{tags:?}"
+        );
+        assert!(
+            has("f.item.hosts.0") && has("f.item.hosts.1") && has("f.item.hosts.add"),
+            "a list is one row per element, then the row that adds one: {tags:?}"
+        );
+
+        // And the census direction: every shape the vocabulary declares is
+        // reached, so a seventh arm cannot arrive drawn as a text box.
+        assert_eq!(FieldType::ARMS, 6);
+        let with_parts = geometry.rows.iter().filter(|r| !r.parts.is_empty()).count();
+        assert_eq!(with_parts, 5, "five of six shapes carry affordances");
+    }
+
+    #[test]
+    fn r1652_a_lists_rows_follow_the_elements_the_document_would_hold() {
+        // Two spellings of "what the commas mean" is how a screen shows four
+        // rows for a value the document reads as three.
+        use pinion_core::Theme;
+        let form = ConfigForm::new(
+            vec![
+                ConfigField::new("hosts", "name[]", Applies::Hot, "a, b,, c ").with_shape(
+                    FieldType::List {
+                        of: Box::new(FieldType::Text),
+                    },
+                ),
+            ],
+            vec![],
+        );
+        let geometry = form_geometry(&form, (0, 0), &FormStyle::default());
+        let rows = geometry.row("hosts").expect("shown");
+        let items = rows
+            .parts
+            .iter()
+            .filter(|(n, _)| n.starts_with("item.") && n.rsplit('.').next() != Some("add"))
+            .count();
+        assert_eq!(
+            items,
+            3,
+            "the empty run between two commas is not an element, and the \
+             document agrees: {:?}",
+            form.document().expect("sound")["hosts"]
+        );
+        assert_eq!(
+            form.document().expect("sound")["hosts"]
+                .as_array()
+                .expect("a list")
+                .len(),
+            items,
+            "★ one splitter, so the screen and the document cannot disagree"
+        );
+        let _ = view_config_form("f", &form, &geometry, &Theme::dark());
+    }
+
+    /// The pinned measurement of the floor — see `docs/reference-form-floor.json`.
+    fn floor() -> serde_json::Value {
+        let path = concat!(
+            env!("CARGO_MANIFEST_DIR"),
+            "/../../docs/reference-form-floor.json"
+        );
+        serde_json::from_str(&std::fs::read_to_string(path).expect("the floor is pinned"))
+            .expect("the pin parses")
+    }
+
+    #[test]
+    fn r1652_this_form_reproduces_every_behaviour_the_pinned_floor_measured() {
+        // ★ R1651 measured the floor and wrote the numbers into a doc comment,
+        // and R1651.1's audit registered that as debt: the probe is outside the
+        // repository by directive, so a fresh clone could not re-derive them and
+        // nothing would notice them going stale. The measurement is now a file,
+        // and this is what reads it.
+        //
+        // It gates RELATIONS, not pixels: our tokens are our own (a 31px control
+        // where the floor's is 25) and copying its geometry would be cargo-cult.
+        // What must hold is every behaviour it demonstrated.
+        let floor = floor();
+        let form = inspector();
+        let style = FormStyle::default().with_width(284);
+
+        // 1. Beside vs wrapped: wrapping makes the form taller.
+        let beside = form_geometry(
+            &form,
+            (0, 0),
+            &style.with_policy(RowWrap::Beside, FieldGrowth::AllGrow),
+        );
+        let wrapped = form_geometry(
+            &form,
+            (0, 0),
+            &style.with_policy(RowWrap::WrapAll, FieldGrowth::AllGrow),
+        );
+        let taller = floor["wrapped"]["grown"]["height"]
+            .as_u64()
+            .expect("pinned")
+            > floor["beside"]["grown"]["height"].as_u64().expect("pinned");
+        assert!(taller, "the floor's wrapped form is the taller one");
+        assert_eq!(wrapped.height > beside.height, taller, "and so is ours");
+
+        // 2. Growth widens a control, beside AND wrapped, exactly where the
+        //    floor's does.
+        //
+        //    ★ The fixture is 600 px wide and the first draft was 284. Beside a
+        //    key column sized for `transport.link.tx.batch_size`, a 284 px pane
+        //    has LESS room left than a control's natural width, so both growth
+        //    policies hand back the same number and the fixture cannot tell
+        //    them apart — it reported a failure against the floor and the code
+        //    was right. A fixture that cannot discriminate is not a test
+        //    (R1633's lesson, and the floor's own fixture is 320 px against a
+        //    91 px key for the same reason).
+        let roomy = style.with_width(600);
+        for (policy, arm) in [(RowWrap::Beside, "beside"), (RowWrap::WrapAll, "wrapped")] {
+            let hint = form_geometry(
+                &form,
+                (0, 0),
+                &roomy.with_policy(policy, FieldGrowth::AtSizeHint),
+            );
+            let grown = form_geometry(
+                &form,
+                (0, 0),
+                &roomy.with_policy(policy, FieldGrowth::AllGrow),
+            );
+            let floor_grows = floor[arm]["grown"]["field_w"].as_u64().expect("pinned")
+                > floor[arm]["at_hint"]["field_w"].as_u64().expect("pinned");
+            let we_grow = grown.row("id").expect("shown").control.w
+                > hint.row("id").expect("shown").control.w;
+            assert_eq!(we_grow, floor_grows, "{arm}: growth widens the control");
+        }
+
+        // And the narrow case is a stated no-op rather than an unexamined one:
+        // with no room left beside the key, both policies hand back what is
+        // left, which is the correct answer and not the absence of one.
+        let cramped_hint = form_geometry(
+            &form,
+            (0, 0),
+            &style.with_policy(RowWrap::Beside, FieldGrowth::AtSizeHint),
+        );
+        let cramped_grown = form_geometry(
+            &form,
+            (0, 0),
+            &style.with_policy(RowWrap::Beside, FieldGrowth::AllGrow),
+        );
+        assert_eq!(
+            cramped_hint.row("id").expect("shown").control.w,
+            cramped_grown.row("id").expect("shown").control.w,
+            "a control with no room to grow into does not grow"
+        );
+
+        floor_wrap_long_and_hidden_rows(&floor, &form, style);
+    }
+
+    /// The third and fourth behaviours the pin measured, so the parity test
+    /// stays under the length the lint asks for without either half losing the
+    /// pin it is checked against.
+    fn floor_wrap_long_and_hidden_rows(
+        floor: &serde_json::Value,
+        form: &ConfigForm,
+        style: FormStyle,
+    ) {
+        // 3. Beside-unless-it-does-not-fit wraps NOTHING in a wide box and
+        //    SOMETHING in a narrow one — the property that makes it a derived
+        //    policy rather than a per-row flag.
+        let floor_wide = floor["wrap_when_it_does_not_fit"]["wide_box"]["wrapped_rows"]
+            .as_array()
+            .expect("pinned")
+            .len();
+        let floor_narrow = floor["wrap_when_it_does_not_fit"]["narrow_box"]["wrapped_rows"]
+            .as_array()
+            .expect("pinned")
+            .len();
+        assert_eq!(floor_wide, 0, "the floor wraps nothing when it fits");
+        assert!(floor_narrow > 0, "and something when it does not");
+        let wide = form_geometry(
+            form,
+            (0, 0),
+            &style
+                .with_width(600)
+                .with_policy(RowWrap::WrapLong, FieldGrowth::AllGrow),
+        );
+        let narrow = form_geometry(
+            form,
+            (0, 0),
+            &style
+                .with_width(160)
+                .with_policy(RowWrap::WrapLong, FieldGrowth::AllGrow),
+        );
+        assert_eq!(
+            wide.rows.iter().filter(|r| r.wrapped).count(),
+            floor_wide,
+            "and so do we, in a box that fits"
+        );
+        assert!(
+            narrow.rows.iter().filter(|r| r.wrapped).count() > 0,
+            "and in one that does not"
+        );
+        assert!(
+            floor["wrap_when_it_does_not_fit"]["narrow_box"]["key_widths"]
+                .as_array()
+                .expect("pinned")
+                .windows(2)
+                .all(|w| w[0].as_u64() <= w[1].as_u64()),
+            "the floor's fixture has the long key last, which is why row 2 is \
+             the one it moved — a fixture whose keys were all one width could \
+             not tell a derived policy from a flag"
+        );
+
+        // 4. A hidden row shortens the form and does NOT change the row count.
+        assert!(
+            floor["hidden_row"]["height_middle_hidden"].as_u64()
+                < floor["hidden_row"]["height_all_shown"].as_u64(),
+        );
+        assert_eq!(floor["hidden_row"]["row_count_unchanged"], true);
+        let mut fields: Vec<ConfigField> = form.fields().to_vec();
+        fields[1] = fields[1].clone().with_hidden(true);
+        let hiding = ConfigForm::new(fields, vec![]);
+        let shown = form_geometry(form, (0, 0), &FormStyle::default());
+        let hidden = form_geometry(&hiding, (0, 0), &FormStyle::default());
+        assert!(hidden.height < shown.height);
+        assert_eq!(hiding.fields().len(), form.fields().len());
+    }
+
+    #[test]
+    fn r1652_the_pin_records_the_two_things_the_floor_does_not_do() {
+        // The half that is not parity: what the floor CANNOT express, recorded
+        // as measurements rather than as a claim, so a re-measurement that
+        // changed either would be a finding rather than a surprise.
+        let floor = floor();
+        assert_eq!(
+            floor["per_field_verdict"]["empty_and_out_of_range_agree"], true,
+            "★ its per-field verdict gives ONE answer for 'not finished' and \
+             'out of range' — which is why `ConfigDefect` is three arms and not \
+             a validator"
+        );
+        assert_eq!(floor["per_field_verdict"]["in_range_differs"], true);
+        assert_eq!(
+            floor["declared_properties_over_the_five_form_classes"], 105,
+            "the population the applies-scope absence is claimed over — an \
+             absence proved by searching for a name you invented is worth zero"
+        );
+        assert_eq!(
+            floor["label_names_the_control_automatically"], false,
+            "★ and its label→control relation is NOT automatic, so a form \
+             assembled the way an application assembles one has controls with \
+             no accessible name; `row_access_nodes` derives ours"
+        );
+
+        // Ours, by contrast, is derived per row and cannot be forgotten.
+        let form = inspector();
+        let geometry = form_geometry(&form, (0, 0), &FormStyle::default());
+        let nodes = row_access_nodes("insp", &form, &geometry);
+        for row in &geometry.rows {
+            assert!(
+                nodes
+                    .iter()
+                    .any(|n| n.tag == format!("insp.control.{}", row.key)
+                        && n.name.as_deref() == Some(row.key.as_str())),
+                "{} is named for an assistive technology",
+                row.key
             );
         }
     }

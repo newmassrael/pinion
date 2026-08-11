@@ -63,7 +63,7 @@ use pinion_core::external::{
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
     SchemaField, ThreadOwnership,
 };
-use pinion_core::reactive::Signal;
+use pinion_core::reactive::{Signal, Tracked};
 use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect, TextNode};
 use pinion_core::style::{
     Border, BoxStyle, Color, LayoutStyle, PathStyle, Size, Stroke, TextStyle,
@@ -251,11 +251,11 @@ enum Drag {
 
 /// Everything the screen is.
 struct LabState {
-    doc: RefCell<Document<LabNode>>,
+    doc: Tracked<Document<LabNode>>,
     /// Which node each identifier is, so the wire can address a node the way
     /// the screen labels it rather than by an internal number.
     ids: RefCell<BTreeMap<String, NodeId>>,
-    forms: RefCell<BTreeMap<NodeId, ConfigForm>>,
+    forms: Tracked<BTreeMap<NodeId, ConfigForm>>,
     frames: RefCell<BTreeMap<NodeId, String>>,
     selected: Signal<Option<NodeId>>,
     selected_link: Signal<Option<LinkId>>,
@@ -270,18 +270,6 @@ struct LabState {
     drag: Signal<Option<Drag>>,
     pressed: RefCell<Option<Hit>>,
     toast: Signal<String>,
-    /// **What makes an edit visible.**
-    ///
-    /// The document and the forms are behind `RefCell`s, because a `Signal`
-    /// over either would clone the whole graph on every read and a screen that
-    /// re-clones its model per frame is not a screen anybody would ship. The
-    /// cost of that choice is that the reactive substrate cannot see a mutation
-    /// through them — so every mutation bumps this, and [`view`] reads it.
-    ///
-    /// Found by the demo rather than reasoned about: a defect typed into the
-    /// inspector changed the gate on the wire and left the screen showing the
-    /// old row, because nothing the view read had changed.
-    revision: Signal<u64>,
 }
 
 thread_local! {
@@ -367,9 +355,9 @@ impl LabState {
 
         let selected = ids.get(spec::SELECTED_NODE).copied();
         Self {
-            doc: RefCell::new(doc),
+            doc: Tracked::new(doc),
             ids: RefCell::new(ids),
-            forms: RefCell::new(forms),
+            forms: Tracked::new(forms),
             frames: RefCell::new(frames),
             selected: Signal::new(selected),
             selected_link: Signal::new(selected_link),
@@ -381,17 +369,11 @@ impl LabState {
             drag: Signal::new(None),
             pressed: RefCell::new(None),
             toast: Signal::new(String::new()),
-            revision: Signal::new(0),
         }
     }
 
     fn say(&self, what: impl Into<String>) {
         self.toast.set(what.into());
-    }
-
-    /// Announce that the document or a form changed behind its `RefCell`.
-    fn touched(&self) {
-        self.revision.set(self.revision.get().wrapping_add(1));
     }
 
     fn node_of(&self, id: &str) -> Option<NodeId> {
@@ -858,11 +840,20 @@ enum Hit {
     Config,
     Run,
     Node(NodeId),
-    Pin { node: NodeId, dial: bool },
+    Pin {
+        node: NodeId,
+        dial: bool,
+    },
     Link(LinkId),
     Field(String),
     AddField(String),
-    Option { key: String, word: String },
+    /// An affordance inside a control: an option, a stepper, a checkbox, a list
+    /// row. `part` is the painter's own tag suffix, so this arm covers every
+    /// shape and a seventh needs no new arm here.
+    Part {
+        key: String,
+        part: String,
+    },
     Canvas,
 }
 
@@ -872,11 +863,13 @@ impl Hit {
         if contains(inspector_rect(), px, py) {
             let geometry = inspector_geometry(state);
             for row in &geometry.rows {
-                for (word, rect) in option_rects(row) {
+                // Every affordance inside a control, from the geometry the
+                // painter published — never a second layout.
+                for (suffix, rect) in &row.parts {
                     if contains(*rect, px, py) {
-                        return Self::Option {
+                        return Self::Part {
                             key: row.key.clone(),
-                            word: word.clone(),
+                            part: suffix.clone(),
                         };
                     }
                 }
@@ -974,7 +967,7 @@ impl Hit {
             Self::Link(id) => format!("link:{}", id.0),
             Self::Field(key) => format!("field:{key}"),
             Self::AddField(key) => format!("add:{key}"),
-            Self::Option { key, word } => format!("option:{key}:{word}"),
+            Self::Part { part, .. } => part.clone(),
             Self::Canvas => "canvas".into(),
         }
     }
@@ -1139,16 +1132,6 @@ fn inspector_geometry(state: &LabState) -> FormGeometry {
     let form = selected_form(state).unwrap_or_default();
     let rect = inspector_rect();
     form_geometry(&form, (rect.x + PAD, rect.y + INSP_HEAD_H), &form_style())
-}
-
-/// The rectangles a row's options occupy — **the painter's**, not a second
-/// copy.
-///
-/// R1651.1: this function used to divide the control evenly while the painter
-/// laid the chips out content-hugging, so the second chip of every option row
-/// answered for the first. `RowBox::options` is now published for exactly this.
-fn option_rects(row: &pinion_widget_paint::config_form::RowBox) -> &[(String, Rect)] {
-    &row.options
 }
 
 // ── Paint helpers ───────────────────────────────────────────────────────────
@@ -2067,9 +2050,6 @@ fn view(_state: (), _frame: Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let state = use_lab_state();
     let ink = ink(&theme);
-    // Read the revision so an edit behind a `RefCell` re-runs this view — see
-    // `LabState::revision` for why the model is not itself a signal.
-    let _ = state.revision.get();
 
     Scene::Container(
         ContainerNode::new(vec![
@@ -2382,7 +2362,6 @@ impl ExternalIntrospect for LabOracle {
                 let held = form.field(key.trim()).map(|f| f.value().to_owned());
                 drop(forms);
                 sync_node(&state, node);
-                state.touched();
                 state.say(format!("{} = {}", key.trim(), value.trim()));
                 Ok(IntrospectValue::Text(held.unwrap_or_default()))
             }
@@ -2399,7 +2378,6 @@ impl ExternalIntrospect for LabOracle {
                 form.add(key.trim())
                     .map_err(|why| InvokeError::rejected(why.to_string()))?;
                 drop(forms);
-                state.touched();
                 state.say(format!("added {}", key.trim()));
                 Ok(IntrospectValue::Text(key.trim().to_owned()))
             }
@@ -2417,7 +2395,6 @@ impl ExternalIntrospect for LabOracle {
                     .map_err(|why| InvokeError::rejected(why.to_string()))?;
                 drop(forms);
                 sync_node(&state, node);
-                state.touched();
                 Ok(IntrospectValue::Text(key.trim().to_owned()))
             }
             "zoom_by" => {
@@ -2458,7 +2435,6 @@ impl ExternalIntrospect for LabOracle {
                     for form in state.forms.borrow_mut().values_mut() {
                         form.settle();
                     }
-                    state.touched();
                 }
                 state.say(if want { "running" } else { "stopped" });
                 Ok(IntrospectValue::Bool(want))
@@ -2650,7 +2626,6 @@ fn connect(state: &Rc<LabState>, from: NodeId, to: NodeId) -> Result<String, Inv
         .connect(ROOT, Socket::new(from, 0), Socket::new(to, port));
     match made {
         Ok(made) => {
-            state.touched();
             state.selected_link.set(Some(made.link));
             let word = format!("{} -> {}", state.name_of(from), state.name_of(to));
             state.say(format!("linked {word}"));
@@ -2695,7 +2670,6 @@ fn move_cursor(state: &Rc<LabState>, px: u32, py: u32) {
                 slot.x = cx.max(0);
                 slot.y = cy.max(0);
             }
-            state.touched();
         }
         Drag::Wire { .. } => {}
     }
@@ -2789,7 +2763,6 @@ fn release(state: &Rc<LabState>) {
                 for form in state.forms.borrow_mut().values_mut() {
                     form.settle();
                 }
-                state.touched();
                 state.say("running");
             } else {
                 state.say(verdict.sentence());
@@ -2813,10 +2786,9 @@ fn release(state: &Rc<LabState>) {
                     form.add(&key).ok();
                 }
                 drop(forms);
-                state.touched();
             }
         }
-        Hit::Option { key, word } => toggle_option(state, &key, &word),
+        Hit::Part { key, part } => act_on_part(state, &key, &part),
         Hit::Rail(name) => state.say(format!("{name} is not this screen")),
         _ => {}
     }
@@ -2827,6 +2799,96 @@ fn count_leaves(value: &serde_json::Value) -> usize {
         serde_json::Value::Object(map) => map.values().map(count_leaves).sum(),
         _ => 1,
     }
+}
+
+/// Act on an affordance inside a control.
+///
+/// One dispatcher over the painter's part vocabulary, so the screen answers
+/// every shape's affordance rather than the two R1651 drew.
+fn act_on_part(state: &Rc<LabState>, key: &str, part: &str) {
+    let family = part.split('.').next().unwrap_or_default();
+    match family {
+        "option" => {
+            if let Some(word) = part.rsplit('.').next() {
+                toggle_option(state, key, word);
+            }
+        }
+        "toggle" => flip_boolean(state, key),
+        "step" => step_number(state, key, part.rsplit('.').next() == Some("up")),
+        "item" => {
+            if part.rsplit('.').next() == Some("add") {
+                add_element(state, key);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Flip a boolean field, which is what its checkbox does.
+fn flip_boolean(state: &Rc<LabState>, key: &str) {
+    let now = state
+        .forms
+        .borrow()
+        .get(&state.selected.get().unwrap_or(NodeId(0)))
+        .and_then(|f| f.field(key).map(|v| v.value().trim() == "true"));
+    let Some(now) = now else { return };
+    set_and_sync(state, key, if now { "false" } else { "true" });
+}
+
+/// Move a bounded integer by one, **clamped by the bounds the field declares**.
+///
+/// The reason a stepper is worth painting: the field knows its range, so the
+/// control can refuse to leave it instead of the gate reporting it afterwards.
+fn step_number(state: &Rc<LabState>, key: &str, up: bool) {
+    let Some(node) = state.selected.get() else {
+        return;
+    };
+    let next = {
+        let forms = state.forms.borrow();
+        let Some(field) = forms.get(&node).and_then(|f| f.field(key)) else {
+            return;
+        };
+        let FieldType::Integer { min, max } = *field.shape() else {
+            return;
+        };
+        let now: i64 = field.value().trim().parse().unwrap_or(min);
+        let step = if up { 1 } else { -1 };
+        now.saturating_add(step).clamp(min, max)
+    };
+    set_and_sync(state, key, next.to_string());
+}
+
+/// Append an empty element to a list field, which is what its `+` row does.
+fn add_element(state: &Rc<LabState>, key: &str) {
+    let Some(node) = state.selected.get() else {
+        return;
+    };
+    let next = {
+        let forms = state.forms.borrow();
+        let Some(field) = forms.get(&node).and_then(|f| f.field(key)) else {
+            return;
+        };
+        let mut held: Vec<String> = FieldType::elements(field.value())
+            .map(str::to_owned)
+            .collect();
+        held.push(format!("tcp/0.0.0.0:{}", 7400 + held.len()));
+        held.join(FieldType::SEPARATOR)
+    };
+    set_and_sync(state, key, next);
+}
+
+/// Write a field and re-derive what the canvas shows from it.
+fn set_and_sync(state: &Rc<LabState>, key: &str, value: impl Into<String>) {
+    let Some(node) = state.selected.get() else {
+        return;
+    };
+    {
+        let mut forms = state.forms.borrow_mut();
+        if let Some(form) = forms.get_mut(&node) {
+            form.set(key, value).ok();
+        }
+    }
+    sync_node(state, node);
 }
 
 /// Turn one option of a choice or flags field on or off.
@@ -2856,7 +2918,6 @@ fn toggle_option(state: &Rc<LabState>, key: &str, word: &str) {
     form.set(key, chosen.join(FieldType::SEPARATOR)).ok();
     drop(forms);
     sync_node(state, node);
-    state.touched();
 }
 
 /// Put a new node of that role at the middle of the canvas.
@@ -2888,7 +2949,6 @@ fn add_node(state: &Rc<LabState>, role: Role) {
     }
     state.ids.borrow_mut().insert(name.clone(), id);
     state.forms.borrow_mut().insert(id, form_for(&name, role));
-    state.touched();
     state.selected.set(Some(id));
     state.say(format!("added {name}"));
 }

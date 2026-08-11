@@ -17,8 +17,12 @@ pub mod repaint;
 pub mod resource;
 pub mod resource_cache;
 pub mod signal;
+// R1652 §5.22 — the reactive cell for a model too big to clone. `Signal::get`
+// clones, which is right for a word and wrong for a document; a screen that put
+// its document behind a bare `RefCell` instead lost the reactive edge entirely.
 pub mod simulation;
 pub mod text_metrics;
+pub mod tracked;
 pub mod viewport;
 
 pub use computed::Computed;
@@ -45,4 +49,5 @@ pub use simulation::{SimulationGuard, is_simulating};
 pub use text_metrics::{
     NullTextMetrics, TEXT_METRICS, TextExtent, TextMetrics, measured_text_extent,
 };
+pub use tracked::{Tracked, TrackedMut};
 pub use viewport::{VIEWPORT_SIZE, use_viewport_size};

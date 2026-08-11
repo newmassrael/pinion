@@ -158,8 +158,8 @@
     "tier": "t0",
     "capability": "a node inspector that is the settings editor: every field, text round-trip, and a per-field applies-live versus needs-restart badge",
     "verdict": "have",
-    "covered_by": "R1651: `pinion_core::widgets::config_form` is the model (every field keyed by its configuration path, a per-field `Applies` badge, three defect kinds whose blocking-ness is derived, a `document`/`adopt` pair with a round-trip law) and `pinion_widget_paint::config_form` is the painter (rows, badges, the defect on the row it is about, the offered-key chips, and one geometry both the paint and a hit test read). R1646 measured the gap as `there is NO property grid in any crate`; there is now, and the text round-trip this tier names is the document law rather than a claim",
-    "proven_by": "pinion-core::widgets::config_form::tests::r1651_a_document_round_trips_through_the_form_it_came_from; pinion-widget-paint::config_form::tests::r1651_a_defective_row_says_so_on_the_row_and_the_reader_is_told_why"
+    "covered_by": "R1651+R1652: `pinion_core::widgets::config_form` is the model (every field keyed by its configuration path, a per-field `Applies` badge, three defect kinds whose blocking-ness is derived, a `document`/`adopt` pair with a round-trip law) and `pinion_widget_paint::config_form` is the painter — a control per DECLARED SHAPE (a checkbox for a boolean, a range-clamped stepper for an integer, a row per element for a list, option chips for a set), the defect on the row it is about, and one geometry (`RowBox::parts`) that the paint and a consumer's hit test both read. R1646 measured the gap as `there is NO property grid in any crate`; there is now, and the text round-trip this tier names is the document law rather than a claim",
+    "proven_by": "pinion-core::widgets::config_form::tests::r1651_a_document_round_trips_through_the_form_it_came_from; pinion-widget-paint::config_form::tests::r1652_every_declared_shape_gets_a_control_of_its_own"
   },
   {
     "id": "lab.t0.3",
