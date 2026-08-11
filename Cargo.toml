@@ -229,6 +229,7 @@ members = [
     "examples/hello-elevation-trace",
     "examples/hello-node-editor",
     "examples/hello-displays",
+    "examples/hello-analyzer-shell",
     "examples/hello-graph-diff",
     "examples/hello-topology",
     "examples/hello-node-groups",

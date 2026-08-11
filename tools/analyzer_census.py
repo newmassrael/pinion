@@ -54,6 +54,26 @@ answer to it is the same as the reference census's: a test that exercises the
 capability through the public API. `proven_by` is where that goes, and it is
 empty on most rows today — which this reports rather than hides.
 
+## Two verdicts, two kinds of evidence (R1648)
+
+`proven_by` cannot answer for an `app` row, and R1646 registered that as debt
+without deciding what could. An `app` says *the substrate is here and the domain
+logic is the application's* — a claim about COMPOSITION — and no unit test
+exercises a composition. What does is a composite: an application that actually
+assembles the capability out of the pieces this project ships, and a demo that
+drives it.
+
+So `app` rows carry **`assembled_by`** instead, naming the example and the demo
+script, and every path it names must exist. The asymmetry is deliberate and the
+two fields are mutually exclusive by verdict: a `have` is proven by a test, an
+`app` by an assembly, and a row that carried the wrong kind would be claiming
+evidence of a sort its verdict cannot produce.
+
+The error direction is the same one R1602 recorded, which is why the count is
+reported rather than assumed: an `app` nobody has assembled is indistinguishable
+from an `app` somebody assembled, and it is the *unassembled* ones that quietly
+hold the "the framework owes N" figure down.
+
 Usage:
     python3 tools/analyzer_census.py             # the report
     python3 tools/analyzer_census.py --selftest  # the tool's own tests
@@ -117,9 +137,50 @@ def load(text: str) -> list[dict]:
         # evidence for one.
         if row["verdict"] in OWED and row.get("proven_by"):
             raise Finding(f"{where}: verdict {row['verdict']} and still names a proof")
+        # R1648 — the two kinds of evidence do not cross. A `have` is proven by
+        # a test and an `app` by an assembly; a row carrying the other kind is
+        # claiming evidence of a sort its verdict cannot produce, which reads as
+        # stronger than it is.
+        if row.get("assembled_by") and row["verdict"] != "app":
+            raise Finding(
+                f"{where}: verdict {row['verdict']} names an assembly — only `app` is"
+                " a claim about composition"
+            )
+        if row.get("proven_by") and row["verdict"] == "app":
+            raise Finding(
+                f"{where}: verdict app names a proof — an `app` is a claim about"
+                " composition, and no unit test exercises one; use assembled_by"
+            )
         if not row["id"].startswith(f"{row['plane']}."):
             raise Finding(f"{where}: an id is <plane>.<tier>.<n>")
     return rows
+
+
+def assembly_paths(row: dict) -> list[str]:
+    """The paths an `assembled_by` names.
+
+    Pure, and deliberately loose about the prose around them: a token is a path
+    if it contains a separator, so the field can read as a sentence and still be
+    checkable. The alternative — a list field — makes the reason unwriteable,
+    and a citation with no reason is what R1611 spent a round unwinding.
+    """
+    return [token.strip(",;") for token in str(row.get("assembled_by", "")).split() if "/" in token]
+
+
+def check_assemblies(rows: list[dict], exists) -> list[str]:
+    """Every path an `assembled_by` names, that `exists` says is not there.
+
+    Pure in `exists` so the rule is testable without a filesystem. The check
+    matters because the failure it catches is silent: an assembly that was
+    renamed or deleted leaves the row still claiming to be composed, and the
+    verdict it supports is the largest and least reviewed bin in the file.
+    """
+    return [
+        f"{row['id']}: assembled_by names {path}, which is not there"
+        for row in rows
+        for path in assembly_paths(row)
+        if not exists(path)
+    ]
 
 
 def report(rows: list[dict]) -> list[str]:
@@ -161,6 +222,11 @@ def report(rows: list[dict]) -> list[str]:
     out.append(
         f"  {len(proven)} of {tally['have']} `have` verdict(s) name a proof —"
         " the rest are claims, and this says so"
+    )
+    assembled = [r for r in rows if r["verdict"] == "app" and r.get("assembled_by")]
+    out.append(
+        f"  {len(assembled)} of {tally['app']} `app` verdict(s) name an assembly —"
+        " the rest are claims about composition nobody has composed"
     )
     for row in owed_rows:
         out.append(f"    {row['verdict']:<10} {row['id']:<16} {row['capability']}")
@@ -209,6 +275,38 @@ def selftest() -> int:
     )
     refuses("a pin that is not a list", {"id": "x"})  # type: ignore[arg-type]
 
+    # R1648 — the two kinds of evidence do not cross, in either direction.
+    refuses(
+        "a have that names an assembly",
+        [{**good[0], "assembled_by": "examples/x + tools/demos/y.py"}],
+    )
+    refuses(
+        "an app that names a proof",
+        [{**good[0], "verdict": "app", "covered_by": "", "proven_by": "crate::test"}],
+    )
+    ok_app = [
+        {
+            **good[0],
+            "verdict": "app",
+            "covered_by": "",
+            "assembled_by": "assembled by examples/x, driven by tools/demos/y.py",
+        }
+    ]
+    check("an app that names an assembly loads", len(load(json.dumps(ok_app))) == 1)
+    check(
+        "the paths are picked out of the prose around them",
+        assembly_paths(ok_app[0]) == ["examples/x", "tools/demos/y.py"],
+    )
+    check(
+        "a missing assembly is reported by row and by path",
+        check_assemblies(ok_app, lambda p: p != "tools/demos/y.py")
+        == ["capture.t0.1: assembled_by names tools/demos/y.py, which is not there"],
+    )
+    check(
+        "and a present one is not",
+        check_assemblies(ok_app, lambda _p: True) == [],
+    )
+
     # The report sums, which is the property the capability list itself asks
     # for: a meter whose numbers do not add up is not a meter.
     mixed = [
@@ -230,6 +328,14 @@ def main() -> int:
         rows = load(PIN.read_text(encoding="utf-8"))
     except Finding as why:
         print(f"analyzer census: {why}", file=sys.stderr)
+        return 1
+    # R1648 — the assemblies an `app` row cites must be there. Run before the
+    # report on both paths, because a citation to a deleted example is exactly
+    # the drift a census exists to refuse.
+    missing = check_assemblies(rows, lambda path: (ROOT / path).exists())
+    if missing:
+        for gone in missing:
+            print(f"analyzer census: {gone}", file=sys.stderr)
         return 1
     if "--check-pin" in sys.argv:
         print(f"analyzer census: {len(rows)} capability(ies), pin well-formed")

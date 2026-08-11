@@ -304,7 +304,8 @@
     "tier": "t0",
     "capability": "an app bar: source selection, a capture toggle, global search, a theme toggle",
     "verdict": "app",
-    "covered_by": "every part is a widget the catalog has"
+    "covered_by": "every part is a widget the catalog has; R1648 assembled by examples/hello-analyzer-shell and driven on the wire by tools/demos/r1648_the_analyzer_shell_is_assembled.py — the four parts are four writable wire slots",
+    "assembled_by": "assembled by examples/hello-analyzer-shell and driven on the wire by tools/demos/r1648_the_analyzer_shell_is_assembled.py"
   },
   {
     "id": "dashboard.t0.2",
@@ -312,7 +313,8 @@
     "tier": "t0",
     "capability": "a thin left palette and navigation rail",
     "verdict": "app",
-    "covered_by": "a list and a toolbar"
+    "covered_by": "a list and a toolbar; R1648 assembles it as a rail whose per-section count is DERIVED from the board, so closing a card moves it",
+    "assembled_by": "assembled by examples/hello-analyzer-shell and driven on the wire by tools/demos/r1648_the_analyzer_shell_is_assembled.py"
   },
   {
     "id": "dashboard.t0.3",
@@ -328,7 +330,8 @@
     "tier": "t0",
     "capability": "a widget card with a title, settings, tear-off, maximise and close",
     "verdict": "app",
-    "covered_by": "`widgets::dock_panel` carries the tear-off and `tile_grid` the placement; the title, settings and maximise affordances are assembled per application over them"
+    "covered_by": "R1648 moved most of this into the framework: `pinion_core::widgets::card::CardChrome` is the closed four-affordance set (settings / tear-off / maximise / close) in one canonical layout order, `TileGrid::maximize` returns the `Maximized` way home, and tear-off drives the existing `DockPanelPolicy`. WHAT IS STILL THE APPLICATION'S IS THE PAINTER: `pinion-widget-paint` has no card header, so every consumer draws the five affordances itself. That remainder is registered as debt rather than left in this sentence",
+    "assembled_by": "assembled by examples/hello-analyzer-shell and driven on the wire by tools/demos/r1648_the_analyzer_shell_is_assembled.py"
   },
   {
     "id": "dashboard.t0.5",
@@ -488,24 +491,27 @@
     "plane": "dashboard",
     "tier": "t2",
     "capability": "loading, empty and error states per widget",
-    "verdict": "app",
-    "covered_by": "MEASURED R1646: no framework-level widget-state affordance exists; every binding paints its own empty and error case. Recorded as the application's rather than as a gap because a per-widget state machine is a design this axis has not asked for"
+    "verdict": "have",
+    "covered_by": "R1648: `pinion_core::widgets::card::CardState` is the six-arm vocabulary — ready plus the five reasons there is no content — and `Remedy` is what a person can do about each, DERIVED rather than decided per card kind. The paint is still the application's; the concept, its detail arity and its remedy are not",
+    "proven_by": "pinion-core::widgets::card::tests::r1648_the_state_vocabulary_is_total_over_remedies"
   },
   {
     "id": "dashboard.t2.7",
     "plane": "dashboard",
     "tier": "t2",
     "capability": "a no-permission state",
-    "verdict": "app",
-    "covered_by": "a widget state the application supplies"
+    "verdict": "have",
+    "covered_by": "R1648: `CardState::Denied` carries WHICH right is missing and derives `Remedy::Authorize`, which `is_actionable` — somebody can grant it",
+    "proven_by": "pinion-core::widgets::card::tests::r1648_a_denial_and_an_encrypted_link_do_not_share_a_remedy"
   },
   {
     "id": "dashboard.t2.8",
     "plane": "dashboard",
     "tier": "t2",
     "capability": "an encrypted-link state, where content is unavailable",
-    "verdict": "app",
-    "covered_by": "a widget state the application supplies"
+    "verdict": "have",
+    "covered_by": "R1648: `CardState::Opaque` derives `Remedy::Nothing`, which is NOT actionable. The pair with t2.7 is the point — both render as 'no content' and they are opposite, so one `Error` arm makes a shell offer 'request access' on a link no permission can open",
+    "proven_by": "pinion-core::widgets::card::tests::r1648_a_denial_and_an_encrypted_link_do_not_share_a_remedy"
   },
   {
     "id": "dashboard.t2.9",

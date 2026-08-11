@@ -715,6 +715,49 @@ impl std::fmt::Display for TileError {
 
 impl std::error::Error for TileError {}
 
+/// (R1648) The way back from [`TileGrid::maximize`]: which tile was maximised,
+/// and the arrangement the board had before it was.
+///
+/// `#[must_use]` because dropping it is exactly the bug this type exists to
+/// make visible — a maximise whose restore was discarded leaves a board the
+/// user cannot get their layout back from, and it looks like a working maximise
+/// until they try.
+///
+/// It is serialisable for the same reason the arrangement is: a session that
+/// was saved while a card was maximised must reopen with the way home intact.
+#[must_use = "dropping this loses the arrangement the board had before it was maximised"]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Maximized {
+    id: TileId,
+    restore: TileGrid,
+}
+
+impl Maximized {
+    /// Which tile is filling the board.
+    #[must_use]
+    pub const fn id(&self) -> &TileId {
+        &self.id
+    }
+
+    /// The arrangement to go back to.
+    ///
+    /// Consumes the token, so a restore happens once — a second one would put
+    /// back an arrangement that is two edits old.
+    #[must_use]
+    pub fn restore(self) -> TileGrid {
+        self.restore
+    }
+
+    /// The arrangement to go back to, without consuming the token.
+    ///
+    /// For a shell that wants to *show* what un-maximising will return to (a
+    /// preview, a tooltip, the wire) without performing it.
+    #[must_use]
+    pub const fn peek(&self) -> &TileGrid {
+        &self.restore
+    }
+}
+
 /// A dashboard's arrangement: tiles on a fixed number of columns, none of them
 /// overlapping.
 ///
@@ -1037,6 +1080,59 @@ impl TileGrid {
         Reflow { displaced }
     }
 
+    /// (R1648) Fill the board with one tile, and hand back the way home.
+    ///
+    /// Every dashboard has this and every one of them implements it the same
+    /// wrong way: keep a copy of the arrangement somewhere on the side, swap
+    /// the board for a single full-width tile, and hope the copy is still
+    /// around when the user un-maximises. The copy is the part that gets lost —
+    /// a second maximise overwrites it, a preset load replaces it, a panic
+    /// drops it — and what the user loses is a layout they arranged by hand.
+    ///
+    /// So the way home is not a copy the caller keeps: it is the **return
+    /// value**, it is `#[must_use]`, and it is the only thing
+    /// [`Maximized::restore`] accepts. Dropping it is still possible — this is
+    /// Rust, not a linear type system — but it cannot happen silently, and
+    /// maximising twice cannot clobber the first token because the second call
+    /// starts from a board that already has one tile.
+    ///
+    /// The tiles that are not `id` are **removed**, not hidden: a hidden tile
+    /// is a second visibility model beside the arrangement, and the two would
+    /// have to be kept in agreement by whoever walks the board.
+    ///
+    /// # Errors
+    ///
+    /// [`TileError::NoSuchTile`].
+    pub fn maximize(&mut self, id: &TileId) -> Result<Maximized, TileError> {
+        let tile = self
+            .tile(id)
+            .ok_or_else(|| TileError::NoSuchTile(id.clone()))?
+            .clone();
+        let restore = self.clone();
+        // The full board: every column, and as many rows as the arrangement
+        // reached — so a maximised card is the size of what it replaced rather
+        // than an arbitrary height, and un-maximising does not resize the
+        // scroll extent under the pointer.
+        let height = self.rows().max(tile.h).max(1);
+        self.tiles = vec![Tile::new(id.as_str(), 0, 0, self.columns, height)];
+        Ok(Maximized {
+            id: id.clone(),
+            restore,
+        })
+    }
+
+    /// (R1648) Whether the board is showing one tile because of
+    /// [`Self::maximize`].
+    ///
+    /// A board with exactly one tile spanning every column is indistinguishable
+    /// from a board somebody arranged that way, which is why this is a shape
+    /// question and not a state flag: the authority on "is maximised" is
+    /// whether a [`Maximized`] token exists, and this only reports the shape.
+    #[must_use]
+    pub fn is_filled_by_one(&self) -> bool {
+        matches!(self.tiles.as_slice(), [only] if only.col == 0 && only.w == self.columns)
+    }
+
     /// The CSS grid placement of a tile — `(column, row)`.
     ///
     /// **The one place zero-based model coordinates become CSS's one-based
@@ -1198,6 +1294,97 @@ mod tests {
         grid.place(Tile::new("right", 6, 1, 6, 1)).unwrap();
         grid.place(Tile::new("tall", 0, 2, 4, 2)).unwrap();
         grid
+    }
+
+    #[test]
+    fn r1648_maximizing_fills_the_board_and_hands_back_the_way_home() {
+        let mut grid = dashboard();
+        let before = grid.clone();
+        let token = grid.maximize(&TileId::new("left")).unwrap();
+
+        assert_eq!(grid.tiles().len(), 1, "one card fills the board");
+        assert!(grid.is_filled_by_one());
+        let only = &grid.tiles()[0];
+        assert_eq!(only.id, TileId::new("left"));
+        assert_eq!((only.col, only.row, only.w), (0, 0, 12));
+        assert_eq!(
+            only.h,
+            before.rows(),
+            "as tall as the arrangement it replaced, so the scroll extent holds"
+        );
+
+        assert_eq!(token.id(), &TileId::new("left"));
+        assert_eq!(
+            token.peek(),
+            &before,
+            "peeking does not consume the way home"
+        );
+        assert_eq!(token.restore(), before, "and restoring returns it exactly");
+    }
+
+    #[test]
+    fn r1648_maximizing_an_absent_tile_is_refused_and_leaves_the_board_alone() {
+        // The failure direction that matters: a board that lost its
+        // arrangement to a typo would be unrecoverable, because the token that
+        // recovers it is the return value the failed call did not produce.
+        let mut grid = dashboard();
+        let before = grid.clone();
+        let refused = grid.maximize(&TileId::new("nope"));
+        assert!(matches!(refused, Err(TileError::NoSuchTile(_))));
+        assert_eq!(grid, before, "a refused maximise is not an edit");
+    }
+
+    #[test]
+    fn r1648_a_second_maximise_cannot_clobber_the_first_way_home() {
+        // The bug the token exists to make impossible. With the arrangement
+        // kept on the side, maximising `left` and then `right` overwrites the
+        // saved copy with a board that is already maximised, and the original
+        // is gone. Here the second call's token restores to the ONE-tile board
+        // and the first token still holds the real arrangement.
+        let mut grid = dashboard();
+        let original = grid.clone();
+        let first = grid.maximize(&TileId::new("left")).unwrap();
+        let one_tile = grid.clone();
+        let second = grid.maximize(&TileId::new("left")).unwrap();
+
+        assert_eq!(
+            second.peek(),
+            &one_tile,
+            "the second token is one edit deep"
+        );
+        assert_eq!(
+            first.peek(),
+            &original,
+            "and the first still holds the arrangement the user made"
+        );
+    }
+
+    #[test]
+    fn r1648_a_maximised_board_round_trips_with_its_way_home() {
+        // A session saved while a card was maximised must reopen able to
+        // un-maximise: a token that did not serialise would make "save" a way
+        // to lose the layout.
+        let mut grid = dashboard();
+        let before = grid.clone();
+        let token = grid.maximize(&TileId::new("tall")).unwrap();
+        let json = serde_json::to_string(&token).expect("serialize");
+        let back: Maximized = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(back.id(), &TileId::new("tall"));
+        assert_eq!(back.restore(), before);
+    }
+
+    #[test]
+    fn r1648_one_full_width_tile_reads_as_filled_and_a_narrower_one_does_not() {
+        // `is_filled_by_one` reports a SHAPE, and this states the boundary so a
+        // reader does not mistake it for a maximised flag: an arrangement a
+        // user built by hand can have the shape without a token existing.
+        let mut hand_made = TileGrid::new(12);
+        hand_made.place(Tile::new("solo", 0, 0, 12, 3)).unwrap();
+        assert!(hand_made.is_filled_by_one(), "shape, not provenance");
+
+        let mut narrow = TileGrid::new(12);
+        narrow.place(Tile::new("solo", 0, 0, 6, 3)).unwrap();
+        assert!(!narrow.is_filled_by_one());
     }
 
     #[test]

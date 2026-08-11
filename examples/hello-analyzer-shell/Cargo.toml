@@ -1,0 +1,36 @@
+[package]
+name = "hello-analyzer-shell"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1648 Phase-B plane-C integration consumer — the analysis-tool dashboard shell assembled as ONE app: an app bar (source, capture toggle, global search, theme), a navigation rail, and a twelve-card board on pinion_core::widgets::tile_grid. Every card is a pinion_core::widgets::card::Card, so its header affordances and its body state (ready / loading / empty / failed / denied / opaque) are values on the wire rather than paint, and each not-ready card publishes the derived Remedy a person can act on. Named layout presets are stored TileGrid values; maximise hands back a TileGrid::Maximized token; tear-off drives the existing DockPanelPolicy. This is the assembly that the analysis-tool census's `app` verdicts are proven by."
+publish = false
+
+[[bin]]
+name = "hello-analyzer-shell"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# §5.40 AccessKit substrate for `WidgetA11y::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# §5.16 paint-side AppShell (winit + Vello + RPC).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R1537 §5.16 — the emitted renderer owns its wgpu device through pinion-gpu.
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
+# The KPI card's sparkline, which is the capability list's own example of a
+# widget assembled from a box, a label and a chart primitive.
+pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
+vello = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

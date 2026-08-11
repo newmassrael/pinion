@@ -1785,6 +1785,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-analyzer-shell"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-chart",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-gpu",
+ "pinion-shell",
+ "serde_json",
+ "vello",
+]
+
+[[package]]
 name = "hello-answer-origin"
 version = "0.0.1"
 dependencies = [

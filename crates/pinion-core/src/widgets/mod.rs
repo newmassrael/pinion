@@ -1,6 +1,7 @@
 pub mod aria;
 pub mod badge;
 pub mod button;
+pub mod card;
 pub mod caret_blink;
 pub mod cell_selection;
 pub mod checkbox;
