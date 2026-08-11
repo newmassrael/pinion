@@ -52,7 +52,7 @@ pub use build::{CompileError, compile_file, compile_str};
 pub use codegen::emit_rust;
 pub use diagnostic::{Location, PINION_DSL_NS, PinionForgeDiagnostic, Stage};
 pub use parser::parse_pinion;
-pub use wire::{WIRE_VERSION, to_json_value, to_ndjson_line};
+pub use wire::{GENERATOR_COMMIT, WIRE_VERSION, to_json_value, to_ndjson_line};
 
 #[cfg(test)]
 mod tests {
@@ -954,6 +954,16 @@ mod tests {
                 .and_then(Value::as_str)
                 .unwrap()
                 .starts_with("fnv1a:")
+        );
+        // Attribution travels on the emitted LINE, not only through
+        // `to_json_value` — the NDJSON path is what a consumer reads.
+        // That this list is *complete* is gated separately, by
+        // `wire::tests::mirrors_every_field_the_sce_record_carries`;
+        // hand-listing required fields here is how `generator` was
+        // missing from the record while this test still passed.
+        assert_eq!(
+            obj.get("generator"),
+            Some(&Value::from(wire::GENERATOR_COMMIT))
         );
         assert_eq!(obj.get("code"), Some(&Value::from("dsl/missing-xmlns")));
         assert_eq!(obj.get("stage"), Some(&Value::from("validate")));
