@@ -18,6 +18,11 @@ path = "src/main.rs"
 pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
 # R51.64 §5.40 — AccessKit substrate for `WidgetView::access_node`.
 pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R1645 — the MODEL. This binding kept its own two sets of link pairs until the
+# crate could hold both layers; now the difference between them is
+# `Document::layers` and the authoring rules apply to the drawn one.
+pinion-node-graph = { path = "../../crates/pinion-node-graph", version = "0.0.1" }
+serde = { workspace = true }
 # R51.30 paint-side AppShell (pulls pinion-runtime/vello + pinion-rpc +
 # winit transitively).
 pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }

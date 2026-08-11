@@ -2682,7 +2682,9 @@ dependencies = [
  "pinion-core",
  "pinion-forge",
  "pinion-gpu",
+ "pinion-node-graph",
  "pinion-shell",
+ "serde",
  "vello",
 ]
 

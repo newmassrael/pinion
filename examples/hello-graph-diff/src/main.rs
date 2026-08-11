@@ -24,22 +24,32 @@
 //!
 //! ## What is derived, and why that is the point
 //!
-//! [`LinkKind`] is **not stored**. There is no field on a link saying which
-//! layer it belongs to, and no code that maintains one. There are two sets —
-//! `authored` and `observed` — and the kind of any link is a function of which
-//! sets contain it:
+//! [`LinkLayer`] is **not stored**. There is no field on a link saying which
+//! layer it belongs to, and no code that maintains one. There are two layers —
+//! the tree's links and [`Document::observe`]'s reports — and the layer of any
+//! link is a function of which of them contain it:
 //!
 //! | in `authored` | in `observed` | kind | drawn |
 //! |---|---|---|---|
-//! | yes | yes | [`LinkKind::Matched`] | solid |
-//! | yes | no | [`LinkKind::Missing`] | dashed, error ink |
-//! | no | yes | [`LinkKind::Drift`] | dotted, warning ink |
+//! | yes | yes | [`LinkLayer::Matched`] | solid |
+//! | yes | no | [`LinkLayer::Missing`] | dashed, error ink |
+//! | no | yes | [`LinkLayer::Drift`] | dotted, warning ink |
 //!
-//! So `invoke adopt` — "make the authored layer say what is actually there" —
-//! is one assignment, and every derived fact follows: the counts, the ink, the
-//! dash, the accessible description, and the wire. Nothing has to be walked and
-//! updated, which is precisely the class of bug a maintained `kind` field
-//! exists to produce (two sources of one truth, [[use-substrate-not-hand-rolled-equivalent]]).
+//! So `invoke adopt` — "make the drawn layer say what is actually there" —
+//! runs [`Document::adopt`] per reported link and every derived fact follows:
+//! the counts, the ink, the dash, the accessible description, and the wire.
+//! Nothing has to be walked and updated, which is precisely the class of bug a
+//! maintained `kind` field exists to produce (two sources of one truth).
+//!
+//! ## R1645 — the model is the crate's now
+//!
+//! This binding kept two `Vec` of name pairs until `pinion-node-graph` had
+//! somewhere to put a reported link. It no longer does, and three things follow
+//! that a pair of sets cannot produce: adoption runs the **authoring rules**,
+//! so a report closing a cycle is *named* rather than assigned; `standing` says
+//! whether the drawing can be read as the topology at all; and `reaches`
+//! answers on **both** layers, so the case where a static rule says blocked and
+//! the world disagrees is one read.
 //!
 //! ## Where this is past the toolkit
 //!
@@ -87,13 +97,13 @@
 //!
 //! `tools/demos/r1575_graph_states_its_layers.py` drives all of it over RPC.
 
-use std::collections::BTreeSet;
 use std::rc::Rc;
 
 use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership,
 };
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect, TextNode};
@@ -102,7 +112,11 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::{Frame, Scene, WidgetCore};
+use pinion_node_graph::{
+    AdoptError, Discovery, Document, LinkLayer, NodeBody, NodeId, NodeKind, Port, ROOT, Socket,
+};
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
+use serde::{Deserialize, Serialize};
 
 // pinion-forge codegen output: `pub struct HelloGraphDiffRenderer` + its
 // error type + async `new<...>` + sync `render` / `resize`.
@@ -164,47 +178,68 @@ const OBSERVATIONS: &[(&str, &[(&str, &str)])] = &[
         ],
     ),
     ("converged", AUTHORED),
+    ("impossible", IMPOSSIBLE),
 ];
 
-/// Which layer (or layers) a link is in.
+/// A third observation, so the crate's own refusal is reachable: the world
+/// reports a link back from the hub, which closes a cycle this model will not
+/// hold (R1645).
 ///
-/// Derived on every read from the two sets — see the module doc. The variant
-/// order is the reading order of the legend, and [`LinkKind::name`] is the wire
-/// vocabulary: three words this binding owns, so a client may match on them
-/// (R1565's `data_is_prose` distinction).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum LinkKind {
-    /// Authored and observed. The graph is as drawn.
-    Matched,
-    /// Authored, not observed — drawn and not there.
-    Missing,
-    /// Observed, not authored — there and not drawn.
-    Drift,
-}
+/// Adopting it is refused BY THE AUTHORING RULE, and the refusal is the finding
+/// — "this exists out there and your drawing cannot express it". A binding
+/// keeping its own two sets of name pairs could not produce it at all, because
+/// nothing in a set of pairs knows what a cycle is.
+const IMPOSSIBLE: &[(&str, &str)] = &[
+    ("peer-a", "hub"),
+    ("peer-b", "hub"),
+    ("leaf-1", "peer-a"),
+    ("leaf-2", "peer-a"),
+    ("leaf-3", "peer-b"),
+    ("hub", "peer-a"),
+];
 
-impl LinkKind {
-    const fn name(self) -> &'static str {
-        match self {
-            Self::Matched => "matched",
-            Self::Missing => "missing",
-            Self::Drift => "drift",
-        }
+/// The taxonomy: one kind, carrying the node's name.
+///
+/// Four inputs because a topology node takes several feeds and a value input
+/// takes one link each; one output because a value output feeds as many as it
+/// likes. The kind computes nothing — this graph's subject is its *shape*.
+#[derive(Clone, PartialEq, Debug, Serialize, Deserialize)]
+struct Named(String);
+
+impl NodeKind for Named {
+    type Type = ();
+    type Value = ();
+
+    fn name(&self) -> String {
+        self.0.clone()
     }
 
-    /// The ink and the rhythm this kind is drawn with.
-    ///
-    /// One function, so the paint and the legend cannot disagree about what a
-    /// kind looks like — and so the "is the dash the kind says it should be?"
-    /// assertion has exactly one thing to be true of.
-    fn stroke(self, theme: &pinion_core::theme::Theme) -> Stroke {
-        let base = |role, width| Stroke::new(theme.resolve(role), width).with_cap(StrokeCap::Round);
-        match self {
-            // Solid: the authored graph, confirmed. No dash at all rather than
-            // a dash meaning "solid" — see `Stroke::dash`'s doc.
-            Self::Matched => base(ColorRole::Accent, 2),
-            Self::Missing => base(ColorRole::Error, 2).with_dash(Dash::DASHED),
-            Self::Drift => base(ColorRole::OnSurfaceMuted, 2).with_dash(Dash::DOTTED),
-        }
+    fn inputs(&self) -> Vec<Port<(), ()>> {
+        (0..4).map(|n| Port::new(format!("in {n}"), ())).collect()
+    }
+
+    fn outputs(&self) -> Vec<Port<(), ()>> {
+        vec![Port::new("out", ())]
+    }
+
+    fn evaluate(&self, _inputs: &[Option<()>]) -> Vec<Option<()>> {
+        vec![None]
+    }
+}
+
+/// The ink and the rhythm a layer is drawn with.
+///
+/// One function, so the paint and the legend cannot disagree about what a
+/// layer looks like — and so the "is the dash the layer says it should be?"
+/// assertion has exactly one thing to be true of.
+fn layer_stroke(layer: LinkLayer, theme: &pinion_core::theme::Theme) -> Stroke {
+    let base = |role, width| Stroke::new(theme.resolve(role), width).with_cap(StrokeCap::Round);
+    match layer {
+        // Solid: the authored graph, confirmed. No dash at all rather than
+        // a dash meaning "solid" — see `Stroke::dash`'s doc.
+        LinkLayer::Matched => base(ColorRole::Accent, 2),
+        LinkLayer::Missing => base(ColorRole::Error, 2).with_dash(Dash::DASHED),
+        LinkLayer::Drift => base(ColorRole::OnSurfaceMuted, 2).with_dash(Dash::DOTTED),
     }
 }
 
@@ -225,8 +260,15 @@ fn parse_pair(raw: &str) -> Option<Link> {
 // --- State --------------------------------------------------------------------
 
 struct DiffState {
-    authored: Signal<Vec<Link>>,
-    observed: Signal<Vec<Link>>,
+    /// R1645 — ONE model, holding both layers.
+    ///
+    /// This binding used to keep two `Vec<Link>` of its own and derive the
+    /// layers by set membership. The derivation was right and it is now the
+    /// crate's ([`Document::layers`]), which is what makes this an application
+    /// of a node system rather than a second one: the authored layer is real
+    /// links, so `connect`'s rules apply to it, and the reported layer is
+    /// [`Document::observe`], which no derivation in the crate walks.
+    document: Signal<Document<Named>>,
     scenario: Signal<String>,
     /// The marching-ants offset in pixels, applied to every dashed link.
     flow: Signal<u32>,
@@ -241,37 +283,38 @@ impl DiffState {
                 .map(|(a, b)| ((*a).to_string(), (*b).to_string()))
                 .collect()
         };
+        let _ = owned;
         Self {
-            authored: Signal::new(owned(AUTHORED)),
-            observed: Signal::new(owned(observation("partial").unwrap_or(&[]))),
+            document: Signal::new(build("partial")),
             scenario: Signal::new("partial".to_string()),
             flow: Signal::new(0),
             last_event: Signal::new("loaded".to_string()),
         }
     }
 
-    /// The whole diff, in one canonical order.
+    /// The whole diff, in one canonical order — now a projection of
+    /// [`Document::layers`] back onto the names this screen paints (R1645).
     ///
-    /// Sorted by `(kind, id)` so two reads of an unchanged model are the same
+    /// Sorted by `(layer, id)` so two reads of an unchanged model are the same
     /// list — the property that lets the demo compare `missing_ids` across
-    /// calls without sorting on its side, and the same canonicality argument
-    /// `IndexRuns` makes for a selection.
-    fn diff(&self) -> Vec<(Link, LinkKind)> {
-        let authored: BTreeSet<Link> = self.authored.get().into_iter().collect();
-        let observed: BTreeSet<Link> = self.observed.get().into_iter().collect();
-        let mut out: Vec<(Link, LinkKind)> = authored
-            .union(&observed)
-            .map(|link| {
-                let kind = match (authored.contains(link), observed.contains(link)) {
-                    (true, true) => LinkKind::Matched,
-                    (true, false) => LinkKind::Missing,
-                    // `union` yields only members of one of the two sets, so
-                    // the remaining case is observed-only.
-                    (false, _) => LinkKind::Drift,
-                };
-                (link.clone(), kind)
-            })
-            .collect();
+    /// calls without sorting on its side.
+    fn diff(&self) -> Vec<(Link, LinkLayer)> {
+        let document = self.document.get();
+        let layers = document.layers(ROOT);
+        let mut out: Vec<(Link, LinkLayer)> = Vec::new();
+        for (ids, layer) in [
+            (layers.matched(), LinkLayer::Matched),
+            (layers.missing(), LinkLayer::Missing),
+        ] {
+            for id in ids {
+                if let Some(link) = document.tree(ROOT).and_then(|t| t.link(*id)) {
+                    out.push((named_pair(&document, link.from, link.to), layer));
+                }
+            }
+        }
+        for seen in layers.drift() {
+            out.push((named_pair(&document, seen.from, seen.to), LinkLayer::Drift));
+        }
         out.sort_by(|(la, ka), (lb, kb)| {
             ka.cmp(kb)
                 .then_with(|| link_id(&la.0, &la.1).cmp(&link_id(&lb.0, &lb.1)))
@@ -279,24 +322,112 @@ impl DiffState {
         out
     }
 
-    fn count(&self, kind: LinkKind) -> usize {
-        self.diff().iter().filter(|(_, k)| *k == kind).count()
+    fn count(&self, layer: LinkLayer) -> usize {
+        self.diff().iter().filter(|(_, k)| *k == layer).count()
     }
 
-    fn ids(&self, kind: LinkKind) -> String {
+    fn ids(&self, layer: LinkLayer) -> String {
         self.diff()
             .iter()
-            .filter(|(_, k)| *k == kind)
+            .filter(|(_, k)| *k == layer)
             .map(|((a, b), _)| link_id(a, b))
             .collect::<Vec<_>>()
             .join(",")
     }
 
-    fn set_ids(signal: &Signal<Vec<Link>>) -> String {
-        let mut ids: Vec<String> = signal.get().iter().map(|(a, b)| link_id(a, b)).collect();
+    /// The ids of one whole layer of the model, drawn or reported.
+    fn layer_ids(&self, drawn: bool) -> String {
+        let document = self.document.get();
+        let mut ids: Vec<String> = if drawn {
+            document
+                .tree(ROOT)
+                .map(|t| {
+                    t.links()
+                        .iter()
+                        .map(|l| {
+                            let (a, b) = named_pair(&document, l.from, l.to);
+                            link_id(&a, &b)
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        } else {
+            document
+                .observations(ROOT)
+                .into_iter()
+                .map(|seen| {
+                    let (a, b) = named_pair(&document, seen.from, seen.to);
+                    link_id(&a, &b)
+                })
+                .collect()
+        };
         ids.sort();
         ids.join(",")
     }
+}
+
+/// The two node names a socket pair sits on.
+fn named_pair(document: &Document<Named>, from: Socket, to: Socket) -> Link {
+    let name = |node| {
+        document
+            .tree(ROOT)
+            .and_then(|t| t.node(node))
+            .map_or_else(String::new, pinion_node_graph::Node::display_name)
+    };
+    (name(from.node), name(to.node))
+}
+
+/// The whole model for one scenario: the drawn links, and what a source
+/// reported.
+fn build(scenario: &str) -> Document<Named> {
+    let mut document = Document::new("topology");
+    let mut ids: Vec<(&str, NodeId)> = Vec::new();
+    for (name, x, y) in NODES {
+        let node = document
+            .add_node(ROOT, NodeBody::Kind(Named((*name).to_string())), *x, *y)
+            .expect("the root tree takes a node");
+        ids.push((name, node));
+    }
+    let of = |name: &str| {
+        ids.iter()
+            .find(|(n, _)| *n == name)
+            .map(|(_, id)| *id)
+            .expect("every link names a node in NODES")
+    };
+    // A value input takes one link, so each arrival gets its own free port —
+    // which is what a topology node's several feeds are.
+    for (from, to) in AUTHORED {
+        let sink = of(to);
+        let port = free_input(&document, sink);
+        document
+            .connect(ROOT, Socket::new(of(from), 0), Socket::new(sink, port))
+            .expect("the drawn topology is a legal graph");
+    }
+    for (from, to) in observation(scenario).unwrap_or(&[]) {
+        let sink = of(to);
+        // A report lands on the port the drawn link uses when there is one, so
+        // a link that was drawn AND seen is one pair rather than two.
+        let port = document
+            .tree(ROOT)
+            .and_then(|t| {
+                t.links()
+                    .iter()
+                    .find(|l| l.from.node == of(from) && l.to.node == sink)
+            })
+            .map_or_else(|| free_input(&document, sink), |l| l.to.port);
+        document
+            .observe(ROOT, Socket::new(of(from), 0), Socket::new(sink, port))
+            .expect("a report about this graph");
+    }
+    document
+}
+
+/// The first input of `node` nothing is wired to.
+fn free_input(document: &Document<Named>, node: NodeId) -> u32 {
+    let host = document.tree(ROOT).expect("the root tree");
+    (0..4)
+        .find(|port| host.link_into(Socket::new(node, *port)).is_none())
+        .unwrap_or(0)
 }
 
 fn observation(name: &str) -> Option<&'static [(&'static str, &'static str)]> {
@@ -329,6 +460,44 @@ impl core::fmt::Debug for DiffOracle {
 }
 
 impl DiffOracle {
+    /// R1645 — does one node reach another, on each layer?
+    ///
+    /// Its own function because the dispatcher is at the line ceiling, and
+    /// because this is the one read here that is about the two layers
+    /// DISAGREEING rather than about either of them.
+    fn reaches(
+        state: &Rc<DiffState>,
+        args: &IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        let IntrospectValue::Text(raw) = args else {
+            return Err(InvokeError::rejected("expected \"<from>,<to>\""));
+        };
+        let pair = parse_pair(raw)
+            .ok_or_else(|| InvokeError::rejected(format!("{raw:?} is not <from>,<to>")))?;
+        let document = state.document.get();
+        let of = |name: &str| {
+            document
+                .tree(ROOT)
+                .and_then(|t| t.nodes().find(|n| n.display_name() == name).map(|n| n.id))
+        };
+        let (Some(from), Some(to)) = (of(&pair.0), of(&pair.1)) else {
+            return Err(InvokeError::rejected(format!(
+                "no node named {:?} or {:?}",
+                pair.0, pair.1
+            )));
+        };
+        let judged = document.reaches(ROOT, from, to);
+        // The standing travels WITH the answer, so a client cannot read a
+        // partial drawing's verdict as a fact about the world.
+        Ok(IntrospectValue::Text(format!(
+            "drawn={} observed={} disagrees={} standing={}",
+            judged.answer().drawn,
+            judged.answer().observed,
+            judged.answer().disagrees(),
+            judged.standing().name(),
+        )))
+    }
+
     /// R1564 §5.15 — the one sentence for "not wired to a model yet".
     const NO_STATE: &str = "this graph surface is not bound to a model yet";
 
@@ -361,6 +530,11 @@ impl ExternalIntrospect for DiffOracle {
         IntrospectSchema::new(
             const {
                 &[
+                    // R1645 — the standing: whether an answer computed from
+                    // the drawn links is an answer about the world.
+                    SchemaField::new("standing", "string"),
+                    SchemaField::new("certain", "string"),
+                    SchemaField::new("discovery", "string"),
                     // The census.
                     SchemaField::new("node_count", "int"),
                     SchemaField::new("link_count", "int"),
@@ -380,6 +554,20 @@ impl ExternalIntrospect for DiffOracle {
                     SchemaField::new("flow", "int"),
                     SchemaField::new("flow_period", "int"),
                     // Arg-taking reads and the verbs.
+                    // R1645 — does one node reach another, on EACH layer? The
+                    // case that matters is the disagreement: a static rule says
+                    // blocked and the world says otherwise.
+                    SchemaField::action_with(
+                        "reaches",
+                        "string",
+                        ArgForm::Delimited(','),
+                        const {
+                            &[
+                                SchemaArg::key("from", "string", "node_names"),
+                                SchemaArg::key("to", "string", "node_names"),
+                            ]
+                        },
+                    ),
                     SchemaField::action("link_kind", "string"),
                     SchemaField::action("adopt", "string"),
                     SchemaField::action("advance_flow", "string"),
@@ -395,14 +583,14 @@ impl ExternalIntrospect for DiffOracle {
         match path {
             "node_count" => int(NODES.len()),
             "link_count" => int(state.diff().len()),
-            "matched" => int(state.count(LinkKind::Matched)),
-            "missing" => int(state.count(LinkKind::Missing)),
-            "drift" => int(state.count(LinkKind::Drift)),
-            "matched_ids" => text(state.ids(LinkKind::Matched)),
-            "missing_ids" => text(state.ids(LinkKind::Missing)),
-            "drift_ids" => text(state.ids(LinkKind::Drift)),
-            "authored_ids" => text(DiffState::set_ids(&state.authored)),
-            "observed_ids" => text(DiffState::set_ids(&state.observed)),
+            "matched" => int(state.count(LinkLayer::Matched)),
+            "missing" => int(state.count(LinkLayer::Missing)),
+            "drift" => int(state.count(LinkLayer::Drift)),
+            "matched_ids" => text(state.ids(LinkLayer::Matched)),
+            "missing_ids" => text(state.ids(LinkLayer::Missing)),
+            "drift_ids" => text(state.ids(LinkLayer::Drift)),
+            "authored_ids" => text(state.layer_ids(true)),
+            "observed_ids" => text(state.layer_ids(false)),
             "node_names" => text(
                 NODES
                     .iter()
@@ -412,6 +600,19 @@ impl ExternalIntrospect for DiffOracle {
             ),
             "last_event" => text(state.last_event.get()),
             "scenario" => text(state.scenario.get()),
+            // R1645 — three reads a binding keeping two sets of name pairs
+            // could not answer, because none of them is about the sets: they
+            // are about whether the drawing can be READ as the topology.
+            "standing" => text(state.document.get().standing(ROOT).to_string()),
+            "discovery" => text(state.document.get().discovery().name().to_owned()),
+            "certain" => text(
+                if state.document.get().standing(ROOT).is_certain() {
+                    "yes"
+                } else {
+                    "no"
+                }
+                .to_owned(),
+            ),
             "flow" => int(state.flow.get() as usize),
             // Published because it is what `flow` is reduced modulo: without it
             // a client stepping the animation cannot tell when it has come back
@@ -449,14 +650,32 @@ impl ExternalIntrospect for DiffOracle {
                     .iter()
                     .find(|(n, _)| *n == name.as_str())
                     .map_or("partial", |(n, _)| *n);
-                state.observed.set(
-                    links
-                        .iter()
-                        .map(|(a, b)| ((*a).to_string(), (*b).to_string()))
-                        .collect(),
-                );
+                let _ = links;
+                // R1645 — one model, rebuilt for the scenario: the drawn links
+                // and the reports arrive together, and the difference between
+                // them is derived rather than assigned.
+                state.document.set(build(canonical));
                 state.scenario.set(canonical.to_string());
                 state.last_event.set(format!("observed {canonical}"));
+                Ok(())
+            }
+            // R1645 — the determinism switch, and the one writable slot here.
+            "discovery" => {
+                let IntrospectValue::Text(word) = value else {
+                    return Err(InterveneError::TypeMismatch);
+                };
+                let chosen = Discovery::from_wire(word.trim()).ok_or_else(|| {
+                    InterveneError::out_of_range(format!(
+                        "discovery is one of {}, got {word:?}",
+                        Discovery::WIRE_NAMES.join(" / ")
+                    ))
+                })?;
+                let mut document = state.document.get();
+                let was = document.set_discovery(chosen);
+                state.document.set(document);
+                state
+                    .last_event
+                    .set(format!("discovery {} (was {})", chosen.name(), was.name()));
                 Ok(())
             }
             "flow" => {
@@ -476,7 +695,9 @@ impl ExternalIntrospect for DiffOracle {
             }
             "node_count" | "link_count" | "matched" | "missing" | "drift" | "matched_ids"
             | "missing_ids" | "drift_ids" | "authored_ids" | "observed_ids" | "node_names"
-            | "last_event" | "flow_period" => Err(InterveneError::ReadOnly),
+            | "last_event" | "flow_period" | "standing" | "certain" => {
+                Err(InterveneError::ReadOnly)
+            }
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -510,10 +731,39 @@ impl ExternalIntrospect for DiffOracle {
                         ))
                     })
             }
+            "reaches" => Self::reaches(&self.state()?.clone(), &args),
             "adopt" => {
                 let state = self.state()?.clone();
-                let before = state.count(LinkKind::Missing) + state.count(LinkKind::Drift);
-                state.authored.set(state.observed.get());
+                let before = state.count(LinkLayer::Missing) + state.count(LinkLayer::Drift);
+                // R1645 — adoption runs the AUTHORING rules, one reported link
+                // at a time, and a report this model cannot hold is named
+                // rather than swallowed. That refusal is the finding: the world
+                // is doing something the drawing cannot express. Assigning one
+                // set to the other — which is what this binding did before the
+                // crate held both layers — could not produce it.
+                let mut document = state.document.get();
+                let drift = document.layers(ROOT).drift().to_vec();
+                let mut refused: Vec<String> = Vec::new();
+                for seen in drift {
+                    if let Err(AdoptError::CannotAuthor(why)) =
+                        document.adopt(ROOT, seen.from, seen.to)
+                    {
+                        let (a, b) = named_pair(&document, seen.from, seen.to);
+                        refused.push(format!("{}: {why}", link_id(&a, &b)));
+                    }
+                }
+                // A drawn link nobody reported is retracted, which is the other
+                // half of "make the drawing say what is there".
+                for id in document.layers(ROOT).missing().to_vec() {
+                    document.disconnect(ROOT, id).ok();
+                }
+                state.document.set(document);
+                if !refused.is_empty() {
+                    state
+                        .last_event
+                        .set(format!("refused {}", refused.join("; ")));
+                    return Err(InvokeError::rejected(refused.join("; ")));
+                }
                 state
                     .last_event
                     .set(format!("adopted ({before} differences resolved)"));
@@ -657,9 +907,9 @@ fn status_text(state: &DiffState) -> String {
     format!(
         "observation \"{}\" — {} matched · {} missing (dashed) · {} drift (dotted) · flow {}px",
         state.scenario.get(),
-        state.count(LinkKind::Matched),
-        state.count(LinkKind::Missing),
-        state.count(LinkKind::Drift),
+        state.count(LinkLayer::Matched),
+        state.count(LinkLayer::Missing),
+        state.count(LinkLayer::Drift),
         state.flow.get(),
     )
 }
@@ -688,7 +938,7 @@ fn view(_state: (), _frame: Frame) -> Scene {
 
     // Links first, so a node box always paints over the line reaching it.
     for ((from, to), kind) in state.diff() {
-        let stroke = kind.stroke(&theme);
+        let stroke = layer_stroke(kind, &theme);
         // The flow offset applies only where there IS a dash: advancing a solid
         // stroke is not a thing, which is the shape `Option<Dash>` makes true
         // rather than merely conventional.
@@ -758,7 +1008,7 @@ impl WidgetA11y for GraphDiffView {
     /// construction.
     fn access_node(_state: &(), _focused: Option<&str>) -> Vec<AccessNode> {
         let state = use_diff_state();
-        let describe = |kind: LinkKind| {
+        let describe = |kind: LinkLayer| {
             let ids = state.ids(kind);
             if ids.is_empty() {
                 format!("no {} links", kind.name())
@@ -774,9 +1024,9 @@ impl WidgetA11y for GraphDiffView {
                     NODES.len(),
                     state.diff().len(),
                     state.scenario.get(),
-                    describe(LinkKind::Matched),
-                    describe(LinkKind::Missing),
-                    describe(LinkKind::Drift),
+                    describe(LinkLayer::Matched),
+                    describe(LinkLayer::Missing),
+                    describe(LinkLayer::Drift),
                 ))),
         ]
     }

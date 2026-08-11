@@ -9,14 +9,15 @@ use pinion_graph::Sugiyama;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    Align, Appearance, Axis, BreakError, Breakpoints, Carried, Command, ConnectError, Control,
-    Conversion, Crossings, Definitions, Direction, Distribute, Document, DuplicateError, Edge,
-    EditError, EditPath, Extent, ExtractError, ForceError, Fragment, GroupError, Grow, Halt,
-    InsertError, Instance, InterfaceSide, Item, ItemError, Layered, Machine, Multiplicity,
-    NestError, Node, NodeBody, NodeId, NodeKind, NodeSite, Occurrence, Organic, Orphaned,
-    ParentError, PathError, Port, PortRef, PortSite, PortValueError, ROOT, Reach, RepartitionError,
-    Route, RunError, SelectError, Session, Severed, Sharing, Side, Socket, Stack, Stop, Straighten,
-    Stride, Tick, Timeline, TreeId, UngroupError, Violation, WatchError, Watches, crossing,
+    AdoptError, Align, Appearance, Axis, BreakError, Breakpoints, Carried, Command, ConnectError,
+    Control, Conversion, Crossings, Definitions, Direction, Discovery, Distribute, Document,
+    DuplicateError, Edge, EditError, EditPath, Extent, ExtractError, ForceError, Fragment,
+    GroupError, Grow, Halt, InsertError, Instance, InterfaceSide, Item, ItemError, Layered,
+    LinkLayer, Machine, Multiplicity, NestError, Node, NodeBody, NodeId, NodeKind, NodeSite,
+    ObserveError, Occurrence, Organic, Orphaned, ParentError, PathError, Port, PortRef, PortSite,
+    PortValueError, ROOT, Reach, RepartitionError, Route, RunError, SelectError, Session, Severed,
+    Sharing, Side, Socket, Stack, Standing, Stop, Straighten, Stride, Tick, Timeline, TreeId,
+    UngroupError, Violation, WatchError, Watches, crossing,
 };
 
 /// The test taxonomy: two socket types, so type disagreement is reachable.
@@ -11310,4 +11311,398 @@ fn r1644_a_debug_session_is_a_value() {
     );
     assert_eq!(PortSite::from_wire("0:3.sideways0@*"), None);
     let _: Watches = Watches::new();
+}
+
+// ================================ two layers, and their difference (R1645)
+
+/// The base fixture plus a `Split` fed by the adder, so that `split -> add`
+/// is a wire the world could report and this model must refuse: it closes a
+/// value cycle. A `Sink` cannot stand in for it — it has no output at all, and
+/// a report naming its port 0 as a producer is refused as *backwards*, which is
+/// a different fact and the reason this fixture exists.
+fn looped() -> (Document<Op>, NodeId, NodeId, NodeId, NodeId, NodeId) {
+    let Fixture {
+        mut document,
+        two,
+        three,
+        add,
+        sink,
+    } = fixture();
+    let double = document
+        .add_node(ROOT, NodeBody::Kind(Op::Split), 300, 200)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(add, 0), Socket::new(double, 0))
+        .unwrap();
+    (document, two, three, add, sink, double)
+}
+
+#[test]
+fn r1645_an_observation_changes_nothing_about_the_graph() {
+    let (mut document, two, three, add, sink, double) = looped();
+    let before = document.clone();
+    let value = document.evaluate(ROOT, sink);
+    let links = document.tree(ROOT).unwrap().links().len();
+
+    // Report four things, including one the model would REFUSE to author: a
+    // wire from the sink back to the adder closes a value cycle.
+    for (from, to) in [
+        (Socket::new(two, 0), Socket::new(add, 0)),
+        (Socket::new(three, 0), Socket::new(add, 1)),
+        (Socket::new(add, 0), Socket::new(sink, 0)),
+        (Socket::new(double, 0), Socket::new(add, 0)),
+    ] {
+        assert!(
+            document.observe(ROOT, from, to).unwrap(),
+            "a report about this graph is recorded"
+        );
+    }
+    assert_eq!(document.observations(ROOT).len(), 4);
+
+    // ★ Nothing about the GRAPH moved. This is the property the whole placement
+    // buys: an observation is not in `Tree::links`, so no derivation in this
+    // crate can reach one by accident. Asserted rather than described, because
+    // a later refactor could put a layer tag on `Link` and every one of these
+    // would still compile.
+    assert_eq!(document.evaluate(ROOT, sink), value);
+    assert_eq!(document.tree(ROOT).unwrap().links().len(), links);
+    assert_eq!(document.cycle_nodes(ROOT), before.cycle_nodes(ROOT));
+    assert_eq!(document.control_loops(ROOT), before.control_loops(ROOT));
+    assert!(document.validate().is_empty());
+    assert_eq!(
+        document.data_path_between(ROOT, two, sink),
+        before.data_path_between(ROOT, two, sink),
+    );
+    // And the sockets themselves are untouched: the reported cycle did not
+    // become a link into the adder's occupied input.
+    assert_eq!(
+        document
+            .tree(ROOT)
+            .unwrap()
+            .link_into(Socket::new(add, 0))
+            .map(|l| l.from),
+        Some(Socket::new(two, 0)),
+    );
+}
+
+#[test]
+fn r1645_observation_is_admitted_where_authoring_is_refused() {
+    let (mut document, _two, _three, add, sink, double) = looped();
+    let cycle = (Socket::new(double, 0), Socket::new(add, 0));
+
+    // The world is under no obligation to obey this model. A capture that
+    // dropped what it saw because the model forbids it would be the tool lying.
+    assert!(matches!(
+        document.clone().connect(ROOT, cycle.0, cycle.1),
+        Err(ConnectError::WouldCycle { .. })
+    ));
+    assert!(document.observe(ROOT, cycle.0, cycle.1).unwrap());
+    assert!(
+        !document.observe(ROOT, cycle.0, cycle.1).unwrap(),
+        "and reporting it twice is reporting it once"
+    );
+
+    // ★ Where it shows up is adoption: the refusal is NAMED, which is the
+    // finding — the world is doing something this drawing cannot express.
+    let refusal = document.adopt(ROOT, cycle.0, cycle.1).unwrap_err();
+    assert!(matches!(
+        refusal,
+        AdoptError::CannotAuthor(ConnectError::WouldCycle { .. })
+    ));
+    assert!(format!("{refusal}").contains("cannot hold it"));
+    assert_eq!(
+        document.link_layer(ROOT, cycle.0, cycle.1),
+        Some(LinkLayer::Drift),
+        "so it stays drift, visibly, rather than being forgotten"
+    );
+
+    // A report the model CAN hold is adopted, and then it is matched.
+    let spare = document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(9)), 0, 200)
+        .unwrap();
+    let feed = (Socket::new(spare, 0), Socket::new(sink, 0));
+    document.observe(ROOT, feed.0, feed.1).unwrap();
+    assert_eq!(
+        document.link_layer(ROOT, feed.0, feed.1),
+        Some(LinkLayer::Drift)
+    );
+    let made = document.adopt(ROOT, feed.0, feed.1).unwrap();
+    assert!(
+        made.displaced.is_some(),
+        "it took the sink's occupied input"
+    );
+    assert_eq!(
+        document.link_layer(ROOT, feed.0, feed.1),
+        Some(LinkLayer::Matched)
+    );
+    assert_eq!(
+        document
+            .tree(ROOT)
+            .unwrap()
+            .link_into(Socket::new(sink, 0))
+            .map(|l| l.from),
+        Some(feed.0),
+        "the adopted wire is the one feeding that input now"
+    );
+    // And the link the adoption displaced went to `missing`: it is still drawn
+    // nowhere and was never reported, so the diff has somewhere to put it.
+    assert!(!document.layers(ROOT).missing().contains(&made.link));
+}
+
+#[test]
+fn r1645_the_layer_of_a_link_is_derived_from_two_sets() {
+    let (mut document, two, three, add, sink, double) = looped();
+    let drawn_and_seen = (Socket::new(two, 0), Socket::new(add, 0));
+    let drawn_only = (Socket::new(three, 0), Socket::new(add, 1));
+    let seen_only = (Socket::new(double, 0), Socket::new(add, 0));
+    document
+        .observe(ROOT, drawn_and_seen.0, drawn_and_seen.1)
+        .unwrap();
+    document.observe(ROOT, seen_only.0, seen_only.1).unwrap();
+
+    // The 2x2, and the fourth cell answers None: a pair that is in neither
+    // layer is not a link at all.
+    assert_eq!(
+        document.link_layer(ROOT, drawn_and_seen.0, drawn_and_seen.1),
+        Some(LinkLayer::Matched)
+    );
+    assert_eq!(
+        document.link_layer(ROOT, drawn_only.0, drawn_only.1),
+        Some(LinkLayer::Missing)
+    );
+    assert_eq!(
+        document.link_layer(ROOT, seen_only.0, seen_only.1),
+        Some(LinkLayer::Drift)
+    );
+    assert_eq!(
+        document.link_layer(ROOT, Socket::new(two, 0), Socket::new(sink, 0)),
+        None,
+        "neither drawn nor reported is not a link"
+    );
+
+    let layers = document.layers(ROOT);
+    assert_eq!(layers.matched().len(), 1);
+    assert_eq!(
+        layers.missing().len(),
+        3,
+        "the other three wires were not seen"
+    );
+    assert_eq!(layers.drift().len(), 1);
+    assert!(!layers.agrees());
+    assert_eq!(
+        layers.counts(),
+        [("matched", 1), ("missing", 3), ("drift", 1)]
+            .into_iter()
+            .collect::<std::collections::BTreeMap<_, _>>()
+    );
+
+    // Report the other two and the layers agree — with no edit to the graph.
+    document.observe(ROOT, drawn_only.0, drawn_only.1).unwrap();
+    document
+        .observe(ROOT, Socket::new(add, 0), Socket::new(sink, 0))
+        .unwrap();
+    document.unobserve(ROOT, seen_only.0, seen_only.1);
+    document
+        .observe(ROOT, Socket::new(add, 0), Socket::new(double, 0))
+        .unwrap();
+    let settled = document.layers(ROOT);
+    assert!(settled.agrees(), "{settled:?}");
+    assert_eq!(settled.matched().len(), 4);
+}
+
+#[test]
+fn r1645_a_report_must_be_about_this_graph() {
+    let Fixture {
+        mut document,
+        two,
+        add,
+        ..
+    } = fixture();
+    assert_eq!(
+        document.observe(TreeId(77), Socket::new(two, 0), Socket::new(add, 0)),
+        Err(ObserveError::NoSuchTree(TreeId(77)))
+    );
+    assert_eq!(
+        document.observe(ROOT, Socket::new(NodeId(9999), 0), Socket::new(add, 0)),
+        Err(ObserveError::NoSuchNode {
+            tree: ROOT,
+            node: NodeId(9999)
+        })
+    );
+    assert_eq!(
+        document.observe(ROOT, Socket::new(two, 7), Socket::new(add, 0)),
+        Err(ObserveError::NoSuchPort {
+            tree: ROOT,
+            socket: Socket::new(two, 7)
+        })
+    );
+    // ★ Written backwards is a DIFFERENT refusal from a port that is not there,
+    // because which way traffic went is the content of the report — and the
+    // adder's port 0 exists on both sides, which is what makes the two
+    // distinguishable at all.
+    let backwards = document.observe(ROOT, Socket::new(add, 0), Socket::new(two, 0));
+    assert_eq!(
+        backwards,
+        Err(ObserveError::Backwards {
+            tree: ROOT,
+            socket: Socket::new(two, 0)
+        })
+    );
+    assert!(format!("{}", backwards.unwrap_err()).contains("wrong side"));
+    assert!(document.observations(ROOT).is_empty(), "none of those took");
+}
+
+#[test]
+fn r1645_a_drawing_known_to_be_incomplete_says_so() {
+    let (mut document, two, _three, add, _sink, double) = looped();
+    assert_eq!(document.discovery(), Discovery::Off, "off is the default");
+    assert_eq!(document.standing(ROOT), Standing::Certain);
+    assert!(document.standing(ROOT).is_certain());
+
+    // The switch makes it partial...
+    assert_eq!(document.set_discovery(Discovery::On), Discovery::Off);
+    assert_eq!(
+        document.standing(ROOT),
+        Standing::Partial {
+            drift: 0,
+            discovery: Discovery::On
+        }
+    );
+    assert_eq!(document.set_discovery(Discovery::Off), Discovery::On);
+    assert!(document.standing(ROOT).is_certain());
+
+    // ★ ...and so does DRIFT, on its own, with the switch off. That is the
+    // stronger condition and it is derived rather than declared: one reported
+    // link nobody drew is proof the drawing is not the whole topology, whatever
+    // the switch says.
+    document
+        .observe(ROOT, Socket::new(double, 0), Socket::new(add, 0))
+        .unwrap();
+    assert_eq!(
+        document.standing(ROOT),
+        Standing::Partial {
+            drift: 1,
+            discovery: Discovery::Off
+        }
+    );
+    assert_eq!(document.standing(ROOT).name(), "partial");
+    assert!(format!("{}", document.standing(ROOT)).contains("1 undrawn link"));
+
+    // A reported link that IS drawn does not make it partial: only drift does.
+    let mut agreeing = fixture().document;
+    agreeing
+        .observe(ROOT, Socket::new(two, 0), Socket::new(add, 0))
+        .unwrap();
+    assert!(agreeing.standing(ROOT).is_certain());
+}
+
+#[test]
+fn r1645_the_two_layers_can_disagree_about_what_is_reachable() {
+    let Fixture {
+        mut document,
+        two,
+        three,
+        add,
+        sink,
+    } = fixture();
+    // Drawn: two -> add -> sink. So two reaches sink, and three reaches it too.
+    let both = document.reaches(ROOT, two, sink);
+    assert!(both.answer().drawn);
+    assert_eq!(both.standing(), Standing::Certain);
+    assert_eq!(
+        both.certain().map(|r| r.drawn),
+        Some(true),
+        "with a certain standing the answer is about the world"
+    );
+
+    // A node nothing drawn connects to the sink.
+    let spare = document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(9)), 0, 200)
+        .unwrap();
+    let blocked = document.reaches(ROOT, spare, sink);
+    assert!(!blocked.answer().drawn);
+    assert!(!blocked.answer().observed);
+    assert!(!blocked.answer().disagrees());
+
+    // ★ Now a source reports a link nobody drew, from that node to the adder.
+    // The static rule says blocked; the world says otherwise. That is the case
+    // field experience with a lab built this way names, and here it is one read.
+    document
+        .observe(ROOT, Socket::new(spare, 0), Socket::new(add, 0))
+        .unwrap();
+    document
+        .observe(ROOT, Socket::new(add, 0), Socket::new(sink, 0))
+        .unwrap();
+    let surprising = document.reaches(ROOT, spare, sink);
+    assert!(!surprising.answer().drawn, "the drawing still says no");
+    assert!(surprising.answer().observed, "and the reports say yes");
+    assert!(surprising.answer().disagrees());
+    assert_eq!(
+        surprising.certain(),
+        None,
+        "★ and the answer refuses to be read as one about the world, which is \
+         the whole reason the standing travels with it"
+    );
+    assert!(matches!(
+        surprising.standing(),
+        Standing::Partial { drift, .. } if drift == 1
+    ));
+    // The drawn answer is unchanged by any of it.
+    assert!(document.data_path_between(ROOT, three, sink).is_some());
+}
+
+#[test]
+fn r1645_the_reported_layer_is_a_value() {
+    let (mut document, two, _three, add, _sink, double) = looped();
+    let inner = document.add_definition("Inner");
+    document
+        .observe(ROOT, Socket::new(two, 0), Socket::new(add, 0))
+        .unwrap();
+    document
+        .observe(ROOT, Socket::new(double, 0), Socket::new(add, 0))
+        .unwrap();
+    document.set_discovery(Discovery::On);
+
+    let json = serde_json::to_string(&document).expect("a document serialises");
+    let back: Document<Op> = serde_json::from_str(&json).expect("and comes back");
+    assert_eq!(back, document);
+    assert_eq!(back.observations(ROOT).len(), 2);
+    assert_eq!(back.discovery(), Discovery::On);
+
+    // A document written before this round has neither field, and still loads
+    // with the defaults — which is what makes the reported layer additive.
+    let older = json
+        .replace(",\"observed\":[]", "")
+        .replace("\"discovery\":\"On\",", "")
+        .replace(",\"discovery\":\"On\"", "");
+    let stripped = older.find("\"observed\"").map_or(older.clone(), |_| {
+        // The observations are present in this one; strip them wholesale.
+        let start = older.find(",\"observed\"").expect("the key is there");
+        let end = older[start..]
+            .find("],")
+            .map_or(older.len(), |at| start + at + 2);
+        format!("{}{}", &older[..start], &older[end - 1..])
+    });
+    let loaded: Result<Document<Op>, _> = serde_json::from_str(&stripped);
+    assert!(loaded.is_ok(), "an older document still loads: {stripped}");
+    assert!(loaded.unwrap().observations(ROOT).is_empty());
+
+    // Observations are per tree, and clearing one tree leaves the others.
+    assert_eq!(document.clear_observations(inner), 0);
+    assert_eq!(document.observations(ROOT).len(), 2);
+    assert_eq!(document.clear_observations(ROOT), 2);
+    assert!(document.observations(ROOT).is_empty());
+    assert!(document.standing(ROOT).is_certain() == (document.discovery() == Discovery::Off));
+
+    // Both vocabularies round-trip, so a published name and the parse that
+    // admits it cannot be two definitions (R1642).
+    for one in Discovery::ALL {
+        assert_eq!(Discovery::from_wire(one.name()), Some(one));
+    }
+    for one in LinkLayer::ALL {
+        assert_eq!(LinkLayer::from_wire(one.name()), Some(one));
+    }
+    assert_eq!(Discovery::WIRE_NAMES, ["off", "on"]);
+    assert_eq!(LinkLayer::WIRE_NAMES, ["matched", "missing", "drift"]);
+    assert_eq!(LinkLayer::from_wire("solid"), None);
 }

@@ -202,6 +202,7 @@ mod layout;
 mod machine;
 mod model;
 mod numbering;
+mod observed;
 mod partition;
 mod run;
 mod select;
@@ -235,6 +236,10 @@ pub use model::{
     Interface, InterfaceSide, KindPort, Link, LinkId, Multiplicity, Node, NodeBody, NodeId,
     NodeKind, Port, PortRef, PortValueError, ROOT, Removed, Side, Signature, Socket, Tree, TreeId,
     crossing,
+};
+pub use observed::{
+    AdoptError, Discovery, Judgement, Layers, LinkLayer, Observation, ObserveError, Reachability,
+    Standing,
 };
 pub use partition::{PortChange, RepartitionError, Repartitioned, Sharing};
 pub use run::{Run, RunError, Step, Stop};

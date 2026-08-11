@@ -4,8 +4,11 @@
 //! window over RPC; these pin the parts that are pure functions, where a unit
 //! test is the cheaper and sharper instrument.
 
-use super::{AUTHORED, Dash, DiffState, LinkKind, NODES, anchor, link_id, observation, parse_pair};
+use super::{
+    AUTHORED, Dash, DiffState, NODES, anchor, build, layer_stroke, link_id, observation, parse_pair,
+};
 use pinion_core::reactive::Owner;
+use pinion_node_graph::{Discovery, LinkLayer, ROOT};
 
 /// Build the state outside a live shell. `DiffState::new` needs no Owner; the
 /// `use_diff_state` hook does, and that is the shell's path rather than this
@@ -25,26 +28,25 @@ fn r1575_the_kind_of_a_link_is_which_sets_hold_it() {
 
     // `partial`: one authored link never observed, one observed link never
     // authored, and the other four in both.
-    assert_eq!(state.count(LinkKind::Matched), 4, "matched under partial");
-    assert_eq!(state.count(LinkKind::Missing), 1, "missing under partial");
-    assert_eq!(state.count(LinkKind::Drift), 1, "drift under partial");
-    assert_eq!(state.ids(LinkKind::Missing), "leaf-3>peer-b");
-    assert_eq!(state.ids(LinkKind::Drift), "leaf-2>hub");
+    assert_eq!(state.count(LinkLayer::Matched), 4, "matched under partial");
+    assert_eq!(state.count(LinkLayer::Missing), 1, "missing under partial");
+    assert_eq!(state.count(LinkLayer::Drift), 1, "drift under partial");
+    assert_eq!(state.ids(LinkLayer::Missing), "leaf-3>peer-b");
+    assert_eq!(state.ids(LinkLayer::Drift), "leaf-2>hub");
 
     // The same code over the converged observation.
-    let converged: Vec<(String, String)> = observation("converged")
-        .expect("the converged observation is declared")
-        .iter()
-        .map(|(a, b)| ((*a).to_string(), (*b).to_string()))
-        .collect();
-    state.observed.set(converged);
+    assert!(
+        observation("converged").is_some(),
+        "the converged observation is declared"
+    );
+    state.document.set(build("converged"));
     assert_eq!(
-        state.count(LinkKind::Matched),
+        state.count(LinkLayer::Matched),
         AUTHORED.len(),
         "every authored link is observed under converged",
     );
-    assert_eq!(state.count(LinkKind::Missing), 0, "nothing missing");
-    assert_eq!(state.count(LinkKind::Drift), 0, "nothing drifted");
+    assert_eq!(state.count(LinkLayer::Missing), 0, "nothing missing");
+    assert_eq!(state.count(LinkLayer::Drift), 0, "nothing drifted");
 }
 
 /// R1575 — adopting is one assignment, and every derived fact follows from it.
@@ -56,18 +58,67 @@ fn r1575_the_kind_of_a_link_is_which_sets_hold_it() {
 fn r1575_adopting_the_observation_empties_the_difference() {
     let state = state();
     assert!(
-        state.count(LinkKind::Missing) + state.count(LinkKind::Drift) > 0,
+        state.count(LinkLayer::Missing) + state.count(LinkLayer::Drift) > 0,
         "premise"
     );
 
-    state.authored.set(state.observed.get());
+    // R1645 — adopting is now `Document::adopt` per reported link plus a
+    // retraction of what was drawn and never seen, so the AUTHORING rules apply
+    // to it. Done here the way the binding does it.
+    let mut document = state.document.get();
+    for seen in document.layers(ROOT).drift().to_vec() {
+        document
+            .adopt(ROOT, seen.from, seen.to)
+            .expect("the partial scenario's drift is authorable");
+    }
+    for id in document.layers(ROOT).missing().to_vec() {
+        document
+            .disconnect(ROOT, id)
+            .expect("a drawn link retracts");
+    }
+    let reported = document.observations(ROOT).len();
+    state.document.set(document);
 
-    assert_eq!(state.count(LinkKind::Missing), 0);
-    assert_eq!(state.count(LinkKind::Drift), 0);
+    assert_eq!(state.count(LinkLayer::Missing), 0);
+    assert_eq!(state.count(LinkLayer::Drift), 0);
     assert_eq!(
-        state.count(LinkKind::Matched),
-        state.observed.get().len(),
-        "after adopting, every observed link is matched",
+        state.count(LinkLayer::Matched),
+        reported,
+        "after adopting, every reported link is matched",
+    );
+}
+
+/// R1645 — the scenario the crate makes reachable: the world reports a link
+/// this model cannot hold, and adopting it is REFUSED by name.
+///
+/// A binding keeping two sets of name pairs could not produce this at all —
+/// nothing in a set of pairs knows what a cycle is, so `authored = observed`
+/// would have "adopted" a graph the model forbids.
+#[test]
+fn r1645_a_reported_link_the_model_cannot_hold_is_named() {
+    let state = state();
+    state.document.set(build("impossible"));
+    assert_eq!(state.count(LinkLayer::Drift), 1, "one undrawn report");
+
+    let mut document = state.document.get();
+    let seen = document.layers(ROOT).drift()[0];
+    let refusal = document
+        .adopt(ROOT, seen.from, seen.to)
+        .expect_err("it closes a cycle, and this model does not hold one");
+    assert!(format!("{refusal}").contains("cannot hold it"));
+    assert_eq!(
+        document.layers(ROOT).drift().len(),
+        1,
+        "so it stays visible as drift rather than being forgotten"
+    );
+
+    // And the drawing is known to be partial while it stands — the standing is
+    // derived from the drift, not from the switch.
+    assert_eq!(document.discovery(), Discovery::Off);
+    assert!(!document.standing(ROOT).is_certain());
+    assert!(
+        document.validate().is_empty(),
+        "and the graph is still valid"
     );
 }
 
@@ -76,7 +127,7 @@ fn r1575_adopting_the_observation_empties_the_difference() {
 fn r1575_the_diff_reads_the_same_twice() {
     let state = state();
     assert_eq!(state.diff(), state.diff(), "the derivation is a function");
-    let kinds: Vec<LinkKind> = state.diff().into_iter().map(|(_, k)| k).collect();
+    let kinds: Vec<LinkLayer> = state.diff().into_iter().map(|(_, k)| k).collect();
     let mut sorted = kinds.clone();
     sorted.sort();
     assert_eq!(kinds, sorted, "kinds group in the legend's reading order");
@@ -90,9 +141,9 @@ fn r1575_the_diff_reads_the_same_twice() {
 #[test]
 fn r1575_only_the_unmatched_kinds_carry_a_dash() {
     let theme = pinion_core::theme::Theme::default();
-    let matched = LinkKind::Matched.stroke(&theme);
-    let missing = LinkKind::Missing.stroke(&theme);
-    let drift = LinkKind::Drift.stroke(&theme);
+    let matched = layer_stroke(LinkLayer::Matched, &theme);
+    let missing = layer_stroke(LinkLayer::Missing, &theme);
+    let drift = layer_stroke(LinkLayer::Drift, &theme);
 
     assert!(matched.dash.is_none(), "a confirmed link is drawn solid");
     let missing_dash = missing.dash.expect("a missing link is drawn dashed");

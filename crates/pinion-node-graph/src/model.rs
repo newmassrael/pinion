@@ -1376,16 +1376,67 @@ impl<K: NodeKind> Tree<K> {
 ))]
 pub struct Document<K: NodeKind> {
     trees: Vec<Tree<K>>,
+    /// R1645 — the links a source **reported**, which are not links.
+    ///
+    /// Deliberately not in [`Tree::links`], and that placement is the whole
+    /// guarantee: every derivation in this crate walks a tree's links, so an
+    /// observation cannot reach one by accident. A layer tag on [`Link`] would
+    /// have put reported edges inside the structure they must stay out of,
+    /// where only care keeps them there — the argument R1644 made for keeping
+    /// breakpoints out of the run.
+    ///
+    /// `default` so a document written before this round loads.
+    #[serde(default = "BTreeSet::new")]
+    observed: BTreeSet<crate::observed::Observation>,
+    /// Whether links are allowed to arrive undrawn at all (R1645).
+    #[serde(default)]
+    discovery: crate::observed::Discovery,
 }
 
 /// The root tree, which always exists.
 pub const ROOT: TreeId = TreeId(0);
 
 impl<K: NodeKind> Document<K> {
+    /// R1645 — the reported links, for [`observed`](crate::observed) to read.
+    ///
+    /// The field is private to this module, and these five are the whole of
+    /// what reaches it: nothing in this crate can walk the observations by
+    /// accident, which is the placement's entire point.
+    pub(crate) fn reports(&self) -> impl Iterator<Item = &crate::observed::Observation> {
+        self.observed.iter()
+    }
+
+    pub(crate) fn record(&mut self, what: crate::observed::Observation) -> bool {
+        self.observed.insert(what)
+    }
+
+    pub(crate) fn forget(&mut self, what: &crate::observed::Observation) -> bool {
+        self.observed.remove(what)
+    }
+
+    pub(crate) fn forget_tree(&mut self, tree: TreeId) -> usize {
+        let had = self.observed.len();
+        self.observed.retain(|one| one.tree != tree);
+        had - self.observed.len()
+    }
+
+    pub(crate) const fn discovery_setting(&self) -> crate::observed::Discovery {
+        self.discovery
+    }
+
+    pub(crate) const fn set_discovery_setting(
+        &mut self,
+        discovery: crate::observed::Discovery,
+    ) -> crate::observed::Discovery {
+        std::mem::replace(&mut self.discovery, discovery)
+    }
+
     /// A document holding one empty root tree.
     #[must_use]
     pub fn new(root_name: impl Into<String>) -> Self {
         Self {
+            observed: BTreeSet::new(),
+            discovery: crate::observed::Discovery::Off,
             trees: vec![Tree {
                 id: ROOT,
                 name: root_name.into(),
