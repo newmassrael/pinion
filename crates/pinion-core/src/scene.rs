@@ -24,6 +24,8 @@
 
 use std::borrow::Cow;
 use std::cell::{Cell, RefCell};
+use std::convert::Infallible;
+use std::ops::ControlFlow;
 use std::rc::Rc;
 use std::time::Duration;
 
@@ -304,22 +306,33 @@ impl SceneNodeKind {
 
 /// (R1650 §5.32 §5.34) One node handed to a [`Scene::for_each_node`] visitor.
 ///
-/// Three facts travel together because a walk that hands over only the node
-/// forces the caller to keep its own bookkeeping to answer *where* it is — and
-/// a caller keeping its own copy of the tree's structure is the duplication the
+/// Facts travel together because a walk that hands over only the node forces
+/// the caller to keep its own bookkeeping to answer *where* it is — and a
+/// caller keeping its own copy of the tree's structure is the duplication the
 /// walk exists to remove.
 ///
-/// It is a struct rather than a tuple so a later walk-time fact (the resolved
-/// clip, say) is a field instead of a signature change at every call site.
+/// It is a struct rather than a tuple so a later walk-time fact is a field
+/// instead of a signature change at every call site. R1653 is that later fact
+/// arriving exactly as predicted: the resolved clip, and with it the geometry
+/// the node is painted at.
+/// # Two lifetimes, because the facts have two owners
+///
+/// `'s` is the scene's: `node` and each ancestor outlive the walk, so a visitor
+/// may keep one. `'w` is the walk's own bookkeeping, which lives on its stack
+/// and dies with the callback. Collapsing them into one would shorten `node` to
+/// the callback, and a caller that collects leaves now and measures them after
+/// — [`Scene::for_each_text_leaf`]'s two consumers do exactly that — could not
+/// be written against this walk at all. That is not hypothetical tidiness: it
+/// is why the text-leaf pass had its own copy of the descent until R1653.
 #[derive(Debug, Clone, Copy)]
 #[non_exhaustive]
-pub struct NodeVisit<'a> {
+pub struct NodeVisit<'w, 's> {
     /// The address that resolves this node, as
     /// [`lookup_path_ref`](Scene::lookup_path_ref) accepts it. Empty at the
     /// root.
-    pub path: &'a [String],
+    pub path: &'w [String],
     /// The node itself.
-    pub node: &'a Scene,
+    pub node: &'s Scene,
     /// Its ancestors, outermost first — `ancestors[0]` is the walk's root and
     /// the last element is this node's parent. Empty at the root.
     ///
@@ -328,7 +341,49 @@ pub struct NodeVisit<'a> {
     /// `path` is not possible: [`Scene::Scroll`] is path-transparent, so a
     /// child can share its parent's address and depth cannot be read off the
     /// segment count.
-    pub ancestors: &'a [&'a Scene],
+    pub ancestors: &'w [&'s Scene],
+    /// (R1653) The shift that carries this node's own `rect` into the frame of
+    /// the walk's root: its absolute origin is `(offset.0 + rect.x, offset.1 +
+    /// rect.y)`. Every enclosing [`Scene::Scroll`] contributes `viewport -
+    /// offset`, so a node inside a scrolled list reports where it actually
+    /// sits, not where its container-local rect says.
+    ///
+    /// Unclipped on purpose — this answers *where it would be*, which is what a
+    /// caller placing a leaf on screen needs even when the leaf is scrolled out
+    /// of view. For *where it can be seen*, ask [`absolute_rect`](Self::absolute_rect).
+    pub offset: (i64, i64),
+    /// (R1653) The enclosing [`Scene::Scroll`] viewport stack, already in the
+    /// walk root's frame, or `None` at the top where nothing clips.
+    ///
+    /// Intersected rather than replaced as the walk descends, so nested scrolls
+    /// narrow it the way the renderer does.
+    pub clip: Option<Rect>,
+}
+
+impl NodeVisit<'_, '_> {
+    /// (R1653 §5.12 §5.45 §2 #7) Where this node is painted in the walk root's
+    /// frame, with every enclosing clip already folded in — or `None` when the
+    /// clip leaves nothing of it visible.
+    ///
+    /// # Why `None` rather than an empty rect
+    ///
+    /// Because *reported* and *visible* are then one fact instead of two. The
+    /// mature toolkits this is judged against split them: a scene item's
+    /// absolute bounding rect is computed **without** its ancestors' clip
+    /// (measured — a 500x500 child of a 30x30 clipping parent reports 500x500),
+    /// and a widget's absolute position likewise ignores the scroll area that
+    /// hides it (measured — a label scrolled away reports an origin outside the
+    /// window). Visibility is a *second* call there, and a caller that forgets
+    /// it asserts against a rectangle nothing was drawn in. Here the geometry
+    /// cannot be read without the answer.
+    ///
+    /// The arithmetic is `translate_rect_into_clip`, the one the tag resolver
+    /// and the tag index both use — this is the same fold reaching every node
+    /// rather than only the tagged ones.
+    #[must_use]
+    pub fn absolute_rect(&self) -> Option<Rect> {
+        translate_rect_into_clip(self.node.rect(), self.offset.0, self.offset.1, self.clip)
+    }
 }
 
 impl Scene {
@@ -473,38 +528,90 @@ impl Scene {
     /// what [`pinion_runtime`'s pointer-reach report does][reach].
     ///
     /// [reach]: https://docs.rs/pinion-runtime
-    pub fn for_each_node(&self, visit: &mut impl FnMut(NodeVisit<'_>)) {
-        let mut path = Vec::new();
-        let mut ancestors = Vec::new();
-        self.walk_from(&mut path, &mut ancestors, visit);
+    pub fn for_each_node<'s>(&'s self, visit: &mut impl FnMut(NodeVisit<'_, 's>)) {
+        let _: ControlFlow<Infallible> = self.try_for_each_node(&mut |node| {
+            visit(node);
+            ControlFlow::Continue(())
+        });
     }
 
-    /// Recursion behind [`for_each_node`](Self::for_each_node), carrying the
-    /// path and ancestor stacks so no caller allocates one per node.
-    fn walk_from<'s>(
+    /// (R1653 §5.32 §5.34) [`for_each_node`](Self::for_each_node) with an exit:
+    /// the visitor returns [`ControlFlow::Break`] to stop the descent and hand
+    /// its value back.
+    ///
+    /// This is the form the searches want. Before it existed, a lookup that
+    /// wanted to stop at the first match could not use the walk at all, so it
+    /// spelled the descent again — and "the descent" is not one line: it is the
+    /// scroll's path transparency, the scroll's offset fold and the clip
+    /// intersection, three rules that were written out three times in this file
+    /// and were free to disagree. Now there is one recursion and the searches
+    /// are `Break`.
+    pub fn try_for_each_node<'s, B>(
+        &'s self,
+        visit: &mut impl FnMut(NodeVisit<'_, 's>) -> ControlFlow<B>,
+    ) -> ControlFlow<B> {
+        let mut path = Vec::new();
+        let mut ancestors = Vec::new();
+        self.walk_from(&mut path, &mut ancestors, (0, 0), None, visit)
+    }
+
+    /// Recursion behind [`try_for_each_node`](Self::try_for_each_node),
+    /// carrying the path and ancestor stacks so no caller allocates one per
+    /// node, and the geometry fold so no caller repeats it.
+    fn walk_from<'s, B>(
         &'s self,
         path: &mut Vec<String>,
         ancestors: &mut Vec<&'s Scene>,
-        visit: &mut impl FnMut(NodeVisit<'_>),
-    ) {
+        offset: (i64, i64),
+        clip: Option<Rect>,
+        visit: &mut impl FnMut(NodeVisit<'_, 's>) -> ControlFlow<B>,
+    ) -> ControlFlow<B> {
         visit(NodeVisit {
             path,
             node: self,
             ancestors,
-        });
+            offset,
+            clip,
+        })?;
+        // A scroll shifts its content by `viewport - offset` and tightens the
+        // clip to its own window-absolute viewport; every other kind hands its
+        // children the frame it was given. Stated once, here.
+        let (inner_offset, inner_clip) = match self {
+            Scene::Scroll(n) => (
+                (
+                    offset.0 + i64::from(n.viewport.x) - i64::from(n.offset_x),
+                    offset.1 + i64::from(n.viewport.y) - i64::from(n.offset_y),
+                ),
+                // `None` here would mean "nothing of this viewport survives the
+                // enclosing clip", and an empty rect is how that is carried
+                // down: the nodes inside are still visited — a walk that omits
+                // nodes is the failure this exists to end — and each reports
+                // `absolute_rect() == None`, which is the honest answer.
+                Some(
+                    translate_rect_into_clip(n.viewport, offset.0, offset.1, clip)
+                        .unwrap_or_default(),
+                ),
+            ),
+            _ => (offset, clip),
+        };
         let transparent_path = matches!(self, Scene::Scroll(_));
         ancestors.push(self);
+        let mut flow = ControlFlow::Continue(());
         for (idx, child) in self.child_nodes().iter().enumerate() {
             if transparent_path {
                 // The scroll's content shares the scroll's own address.
-                child.walk_from(path, ancestors, visit);
-                continue;
+                flow = child.walk_from(path, ancestors, inner_offset, inner_clip, visit);
+            } else {
+                path.push(child.path_segment_at(idx));
+                flow = child.walk_from(path, ancestors, inner_offset, inner_clip, visit);
+                path.pop();
             }
-            path.push(child.path_segment_at(idx));
-            child.walk_from(path, ancestors, visit);
-            path.pop();
+            if flow.is_break() {
+                break;
+            }
         }
         ancestors.pop();
+        flow
     }
 
     /// (R1650 §5.32) Every tag in this scene, in depth-first paint order.
@@ -1671,28 +1778,6 @@ impl Scene {
         target.lookup_path(tail)
     }
 
-    /// R705.1 §5.45 §2 #7 — depth-first walk for the **window-absolute**
-    /// post-layout rect of the node tagged `target`.
-    ///
-    /// This is the single coordinate-translation authority for "where on
-    /// screen does tag X paint": rects inside a [`Scene::Scroll`] content
-    /// tree are stored *scroll-local*, while everything else is
-    /// window-absolute. The walk accumulates `(viewport.x - offset_x,
-    /// viewport.y - offset_y)` on each Scroll boundary and intersects the
-    /// enclosing viewport stack as a clip, so the returned rect is always
-    /// window-absolute and bounded to the visible region. A node fully
-    /// scrolled out of view returns `None` (not a degenerate origin
-    /// rect).
-    ///
-    /// Used by the RPC click/drag path-resolver
-    /// (`pinion_rpc::dispatch`) to land synthetic input on the pixels the
-    /// user actually sees, and by the §5.39 focus-ring overlay
-    /// (`pinion_overlay::inject_focus_ring`) to draw the ring at the
-    /// widget's true on-screen position even when the widget lives inside
-    /// a scroll. Consolidating both on one resolver is what makes
-    /// `scene/snapshot from: paint` ring assertions verifiable against
-    /// the real geometry rather than tautologically
-    /// ([[introspection-from-paint-not-screen]]).
     /// R1551 §5.12 §5.45 — visit every [`TextNode`] in the tree, in paint
     /// order, with the window-absolute offset that applies to it.
     ///
@@ -1717,28 +1802,66 @@ impl Scene {
     /// answer their callers can compute; dropping it here would make an absent
     /// row ambiguous between "not painted" and "scrolled away".
     pub fn for_each_text_leaf<'a>(&'a self, mut f: impl FnMut(&'a TextNode, i64, i64)) {
-        fn visit<'a>(scene: &'a Scene, x: i64, y: i64, f: &mut impl FnMut(&'a TextNode, i64, i64)) {
-            match scene {
-                Scene::Text(t) => f(t, x, y),
-                Scene::Container(c) => {
-                    for child in &c.children {
-                        visit(child, x, y, f);
-                    }
-                }
-                Scene::Scroll(n) => {
-                    let dx = i64::from(n.viewport.x) - i64::from(n.offset_x);
-                    let dy = i64::from(n.viewport.y) - i64::from(n.offset_y);
-                    visit(&n.content, x + dx, y + dy, f);
-                }
-                _ => {}
+        // R1653 — the fold this used to spell for itself is the walk's now, so
+        // "what was worth sharing is the arithmetic" is structural instead of a
+        // comment. The filter is all that is left of the difference: text
+        // leaves only, and `NodeVisit::offset` rather than `absolute_rect`,
+        // because this deliberately does not clip (see above).
+        self.for_each_node(&mut |visit| {
+            if let Scene::Text(t) = visit.node {
+                f(t, visit.offset.0, visit.offset.1);
             }
-        }
-        visit(self, 0, 0, &mut f);
+        });
     }
 
+    /// R705.1 §5.45 §2 #7 — the **window-absolute** post-layout rect of the
+    /// node tagged `target`, or `None` when nothing carries that tag and when
+    /// what carries it is scrolled entirely out of view.
+    ///
+    /// This is the single coordinate-translation authority for "where on screen
+    /// does tag X paint": rects inside a [`Scene::Scroll`] content tree are
+    /// stored *scroll-local*, while everything else is window-absolute. The
+    /// walk accumulates `(viewport.x - offset_x, viewport.y - offset_y)` on each
+    /// Scroll boundary and intersects the enclosing viewport stack as a clip, so
+    /// the returned rect is always window-absolute and bounded to the visible
+    /// region. A node fully scrolled out of view returns `None` (not a
+    /// degenerate origin rect).
+    ///
+    /// Used by the RPC click/drag path-resolver (`pinion_rpc::dispatch`) to land
+    /// synthetic input on the pixels the user actually sees, and by the §5.39
+    /// focus-ring overlay (`pinion_overlay::inject_focus_ring`) to draw the ring
+    /// at the widget's true on-screen position even when the widget lives inside
+    /// a scroll. Consolidating both on one resolver is what makes
+    /// `scene/snapshot from: paint` ring assertions verifiable against the real
+    /// geometry rather than tautologically
+    /// ([[introspection-from-paint-not-screen]]).
+    ///
+    /// R1653 — the descent is [`try_for_each_node`](Self::try_for_each_node)'s
+    /// now, and the early exit that used to justify a private copy of it is the
+    /// [`ControlFlow::Break`] below. First tag wins, pre-order, exactly as
+    /// before.
     #[must_use]
     pub fn rect_for_tag_absolute(&self, target: &str) -> Option<Rect> {
-        self.rect_for_tag_with_offset(target, 0, 0, None)
+        match self.try_for_each_node(&mut |visit| {
+            if visit.node.tag() == Some(target) {
+                // `Scene::rect` returns the viewport rect for `Scene::Scroll`,
+                // matching the "scroll's own tag → viewport" convention.
+                //
+                // ★ The FIRST node carrying the tag decides, including when it
+                // decides `None`. That rule is what makes stopping here sound:
+                // under "first *visible* one wins" the walk would have to keep
+                // going past a clipped match, and the early exit — the whole
+                // reason this had a hand-written descent for 948 rounds — would
+                // be a bug rather than an optimisation. A tag that addresses
+                // two nodes is a defect in the scene, and answering with
+                // whichever of them happens not to be scrolled away hides it.
+                return ControlFlow::Break(visit.absolute_rect());
+            }
+            ControlFlow::Continue(())
+        }) {
+            ControlFlow::Break(rect) => rect,
+            ControlFlow::Continue(()) => None,
+        }
     }
 
     /// (R1205 §5.51 §5.39) The DOCK AREA of this (window) paint scene: the
@@ -1768,81 +1891,36 @@ impl Scene {
     /// essentially all of it was this lookup. It is R1536's finding on the
     /// accessible-name pass, one surface over.
     ///
-    /// Same folding as the single lookup, arm for arm: a `Scroll` tightens the
-    /// clip to its window-absolute viewport and folds its offset into the
-    /// descent, a node clipped entirely away is absent rather than present with
-    /// a zero rect, and the FIRST node with a tag wins (pre-order, matching the
-    /// single lookup's `find_map`). `r1560_the_index_answers_what_the_lookup_answers`
-    /// asserts the two agree tag for tag over a scrolled, clipped scene, which
-    /// is what keeps this from being a second implementation free to drift.
+    /// Same folding as the single lookup, arm for arm — since R1653 that is
+    /// structural: both are [`try_for_each_node`](Self::try_for_each_node) with
+    /// a different accumulator, so a `Scroll` tightens the clip and folds its
+    /// offset in one place, a node clipped entirely away is absent rather than
+    /// present with a zero rect in one place, and the FIRST node carrying a tag
+    /// decides in one place.
+    ///
+    /// ★ That last rule is where the two used to *disagree* while the paragraph
+    /// above claimed they did not: this index skipped a first match that was
+    /// clipped away and let a later duplicate fill the slot, where the lookup
+    /// returned `None` and stopped. `r1560_the_index_answers_what_the_lookup_answers`
+    /// could not see it because its fixture has no duplicate tags — the case
+    /// only exists in a scene that is already defective.
+    /// `r1653_a_clipped_first_match_decides_for_both` is the one that pins it.
     #[must_use]
     pub fn absolute_rects_by_tag(&self) -> std::collections::HashMap<String, Rect> {
-        let mut out = std::collections::HashMap::new();
-        self.collect_absolute_rects(&mut out, 0, 0, None);
-        out
-    }
-
-    fn collect_absolute_rects(
-        &self,
-        out: &mut std::collections::HashMap<String, Rect>,
-        x_off: i64,
-        y_off: i64,
-        clip: Option<Rect>,
-    ) {
-        if let Some(tag) = self.tag()
-            && let Some(rect) = translate_rect_into_clip(self.rect(), x_off, y_off, clip)
-        {
-            out.entry(tag.to_owned()).or_insert(rect);
-        }
-        match self {
-            Scene::Container(c) => {
-                for child in &c.children {
-                    child.collect_absolute_rects(out, x_off, y_off, clip);
-                }
+        // `Option` in the map, not a bare `Rect`: a tag whose first node is
+        // clipped away has to occupy its slot, or a later duplicate fills it
+        // and this answers a different node from the lookup.
+        let mut seen: std::collections::HashMap<String, Option<Rect>> =
+            std::collections::HashMap::new();
+        self.for_each_node(&mut |visit| {
+            if let Some(tag) = visit.node.tag() {
+                seen.entry(tag.to_owned())
+                    .or_insert_with(|| visit.absolute_rect());
             }
-            Scene::Scroll(n) => {
-                let Some(new_clip) = translate_rect_into_clip(n.viewport, x_off, y_off, clip)
-                else {
-                    return;
-                };
-                let dx = i64::from(n.viewport.x) - i64::from(n.offset_x);
-                let dy = i64::from(n.viewport.y) - i64::from(n.offset_y);
-                n.content
-                    .collect_absolute_rects(out, x_off + dx, y_off + dy, Some(new_clip));
-            }
-            _ => {}
-        }
-    }
-
-    fn rect_for_tag_with_offset(
-        &self,
-        target: &str,
-        x_off: i64,
-        y_off: i64,
-        clip: Option<Rect>,
-    ) -> Option<Rect> {
-        if self.tag() == Some(target) {
-            // `Self::rect` returns the viewport rect for `Scene::Scroll`,
-            // matching the "scroll's own tag → viewport" convention.
-            return translate_rect_into_clip(self.rect(), x_off, y_off, clip);
-        }
-        match self {
-            Scene::Container(c) => c
-                .children
-                .iter()
-                .find_map(|child| child.rect_for_tag_with_offset(target, x_off, y_off, clip)),
-            Scene::Scroll(n) => {
-                // Tighten the clip to this scroll's window-abs viewport,
-                // then descend with the offset folded in. Nested scrolls
-                // chain their viewports through the recursion.
-                let new_clip = translate_rect_into_clip(n.viewport, x_off, y_off, clip)?;
-                let dx = i64::from(n.viewport.x) - i64::from(n.offset_x);
-                let dy = i64::from(n.viewport.y) - i64::from(n.offset_y);
-                n.content
-                    .rect_for_tag_with_offset(target, x_off + dx, y_off + dy, Some(new_clip))
-            }
-            _ => None,
-        }
+        });
+        seen.into_iter()
+            .filter_map(|(tag, rect)| rect.map(|rect| (tag, rect)))
+            .collect()
     }
 
     /// (§5.34 R42) Immutable counterpart that returns `&Scene` at the
@@ -8819,5 +8897,170 @@ mod tests {
             )],
         );
         assert_eq!(scene.tags(), ["scroller", "buried"]);
+    }
+
+    // ---- R1653 §5.12 §5.45 §2 #7: the walk carries the geometry ----
+
+    /// A scene shaped like the thing this exists for: a pane at an offset, a
+    /// scrolled list inside it, and marks that carry no tag at all.
+    fn geometry_fixture() -> Scene {
+        let row = |y: u32, label: &'static str| {
+            Scene::Container(ContainerNode::new(vec![
+                // Untagged, and therefore invisible to every tag-keyed read.
+                Scene::Text(TextNode::new(label, Rect::new(6, y + 4, 90, 12))),
+            ]))
+        };
+        let list = Scene::Container(ContainerNode::new(vec![
+            row(0, "first"),
+            row(20, "second"),
+            row(200, "far below"),
+        ]));
+        Scene::Container(
+            ContainerNode::new(vec![Scene::Scroll(
+                ScrollNode::new(Rect::new(40, 30, 120, 60), list).with_tag("list"),
+            )])
+            .with_tag("pane"),
+        )
+    }
+
+    /// ★ The capability itself: every painted mark reports where it is, whether
+    /// or not anybody gave it a name.
+    ///
+    /// This is the gap the reference toolkits leave open. Measured on one of
+    /// them: a control's text run is not an object at all, so no API can be
+    /// asked where the run "Save changes" was painted — only where its button
+    /// is. Here a text run is a node, and the walk answers for it.
+    #[test]
+    fn r1653_an_untagged_mark_reports_where_it_paints() {
+        let scene = geometry_fixture();
+        let mut placed = Vec::new();
+        scene.for_each_node(&mut |visit| {
+            if let Scene::Text(t) = visit.node {
+                placed.push((t.content.clone(), visit.absolute_rect()));
+            }
+        });
+        // Scroll at (40,30), offset 0: content origin is the viewport origin.
+        assert_eq!(
+            placed,
+            vec![
+                ("first".to_owned(), Some(Rect::new(46, 34, 90, 12))),
+                ("second".to_owned(), Some(Rect::new(46, 54, 90, 12))),
+                // 200 + 4 is past the 60-high viewport, so it is painted
+                // nowhere — and says so rather than reporting a rect the user
+                // cannot see.
+                ("far below".to_owned(), None),
+            ],
+            "no tag on any of these, and all three are placed"
+        );
+    }
+
+    /// The scrolled-away mark is still *visited* — a walk that omits nodes is
+    /// the failure the walk exists to end — and `offset` still says where it
+    /// would be, which is the question `for_each_text_leaf`'s consumers ask.
+    #[test]
+    fn r1653_a_mark_scrolled_away_is_visited_and_locatable() {
+        let scene = geometry_fixture();
+        let mut seen = 0;
+        let mut hidden = None;
+        scene.for_each_node(&mut |visit| {
+            seen += 1;
+            if let Scene::Text(t) = visit.node
+                && t.content == "far below"
+            {
+                hidden = Some((visit.offset, visit.node.rect(), visit.absolute_rect()));
+            }
+        });
+        let (offset, rect, absolute) = hidden.expect("visited");
+        assert_eq!(absolute, None, "it cannot be seen");
+        assert_eq!(
+            (offset.0 + i64::from(rect.x), offset.1 + i64::from(rect.y)),
+            (46, 234),
+            "★ and it can still be located — the two answers are separate \
+             because they are different questions, not because the caller has \
+             to remember to ask twice"
+        );
+        assert_eq!(seen, 9, "every node, including the ones nothing can see");
+    }
+
+    /// ★ The divergence R1560's equivalence test could not see, because its
+    /// fixture has no duplicate tag: the index used to skip a first match that
+    /// was clipped away and answer with a later one, while the lookup stopped
+    /// and returned `None`. One descent now, so one rule: the FIRST node
+    /// carrying a tag decides, including when it decides "nowhere".
+    ///
+    /// That rule is what makes the lookup's early exit sound. Under "first
+    /// visible one wins" it would have to keep walking past a clipped match.
+    #[test]
+    fn r1653_a_clipped_first_match_decides_for_both() {
+        let content = Scene::Container(ContainerNode::new(vec![
+            // Scrolled far below the viewport: clipped entirely away.
+            tagged_box_at(0, 500, 20, 10, "twice"),
+        ]));
+        let scene = Scene::Container(ContainerNode::new(vec![
+            Scene::Scroll(ScrollNode::new(Rect::new(0, 0, 50, 50), content)),
+            // A second node with the same tag, in plain view.
+            tagged_box_at(60, 0, 20, 10, "twice"),
+        ]));
+        assert_eq!(
+            scene.rect_for_tag_absolute("twice"),
+            None,
+            "the first one carries the tag and it is not visible"
+        );
+        assert_eq!(
+            scene.absolute_rects_by_tag().get("twice"),
+            None,
+            "★ and the index says the same thing — before R1653 it answered \
+             60,0 20x10 here, so two surfaces reported two different nodes for \
+             one address"
+        );
+    }
+
+    /// The early exit is real: the visitor is not called again after it breaks.
+    #[test]
+    fn r1653_a_break_stops_the_descent() {
+        let scene = geometry_fixture();
+        let mut visited = 0;
+        let found = scene.try_for_each_node(&mut |visit| {
+            visited += 1;
+            match visit.node {
+                Scene::Text(t) if t.content == "second" => ControlFlow::Break(visited),
+                _ => ControlFlow::Continue(()),
+            }
+        });
+        assert_eq!(found, ControlFlow::Break(7));
+        assert_eq!(visited, 7, "and nothing after it was walked");
+        let mut total = 0;
+        scene.for_each_node(&mut |_| total += 1);
+        assert!(total > 7, "the tree has more to walk: {total}");
+    }
+
+    /// The index, the lookup and the walk are one descent, so they cannot
+    /// disagree — asserted over every tag rather than a chosen one.
+    #[test]
+    fn r1653_the_three_reads_of_one_descent_agree() {
+        let scene = geometry_fixture();
+        let index = scene.absolute_rects_by_tag();
+        let mut from_walk: std::collections::HashMap<String, Option<Rect>> =
+            std::collections::HashMap::new();
+        scene.for_each_node(&mut |visit| {
+            if let Some(tag) = visit.node.tag() {
+                from_walk
+                    .entry(tag.to_owned())
+                    .or_insert_with(|| visit.absolute_rect());
+            }
+        });
+        assert!(!from_walk.is_empty(), "the fixture tags something");
+        for (tag, rect) in &from_walk {
+            assert_eq!(
+                scene.rect_for_tag_absolute(tag),
+                *rect,
+                "{tag}: the lookup and the walk"
+            );
+            assert_eq!(
+                index.get(tag),
+                rect.as_ref(),
+                "{tag}: the index and the walk"
+            );
+        }
     }
 }

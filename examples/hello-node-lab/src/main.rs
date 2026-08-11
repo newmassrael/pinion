@@ -64,7 +64,9 @@ use pinion_core::external::{
     SchemaField, ThreadOwnership,
 };
 use pinion_core::reactive::{Signal, Tracked};
-use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect, TextNode};
+use pinion_core::scene::{
+    ContainerNode, PathCommand, PathNode, PathPoint, Rect, ScrollAxis, ScrollNode, TextNode,
+};
 use pinion_core::style::{
     Border, BoxStyle, Color, LayoutStyle, PathStyle, Size, Stroke, TextStyle,
 };
@@ -72,6 +74,7 @@ use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::config_form::{
     Applies, ConfigDefect, ConfigField, ConfigForm, FieldType, Verdict,
 };
+use pinion_core::widgets::scroll::AutoScroll;
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_node_graph::{Document, Item, LinkId, NodeBody, NodeId, ROOT, Side, Socket};
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -151,6 +154,15 @@ const ZOOM_MAX: u32 = 400;
 const ZOOM_STEP: u32 = 8;
 /// The grid a ctrl-held node drag snaps to.
 const SNAP: i32 = 22;
+
+/// (R1653) Where world unit `0` sits inside the world surface.
+///
+/// The surface is a fixed extent the canvas viewport slides over, so a
+/// coordinate on it is unsigned; the margin is what lets a node dragged to a
+/// negative world position, or a pan to the left, still land on it.
+const WORLD_ORIGIN: u32 = 2_000;
+/// The world surface's extent, both axes.
+const WORLD: u32 = WORLD_ORIGIN * 2 + 2_400;
 
 // ── The reference's own colour tokens ───────────────────────────────────────
 
@@ -668,23 +680,84 @@ fn offered(key: &str) -> ConfigField {
 // ── Canvas transform ────────────────────────────────────────────────────────
 
 /// Canvas units to window pixels, under the current zoom and pan.
-fn to_window(state: &LabState, cx: i32, cy: i32) -> (u32, u32) {
-    let canvas = canvas_rect();
-    let (px, py) = state.pan.get();
+fn to_content(state: &LabState, cx: i32, cy: i32) -> (u32, u32) {
     let zoom = f64::from(state.zoom.get()) / 100.0;
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
-        reason = "a canvas point times a zoom is a pixel, clamped into the canvas"
+        reason = "a canvas point times a zoom is a pixel inside the world surface"
     )]
     let scale = |v: i32| (f64::from(v) * zoom) as i32;
+    let origin = i32::try_from(WORLD_ORIGIN).unwrap_or(0);
     (
-        u32::try_from(i32::try_from(canvas.x).unwrap_or(0) + scale(cx) + px).unwrap_or(0),
-        u32::try_from(i32::try_from(canvas.y).unwrap_or(0) + scale(cy) + py).unwrap_or(0),
+        u32::try_from(origin + scale(cx)).unwrap_or(0),
+        u32::try_from(origin + scale(cy)).unwrap_or(0),
     )
 }
 
-/// Window pixels back to canvas units — the exact inverse of [`to_window`].
+/// Where the world surface is held against the viewport, which is what the pan
+/// gesture moves.
+///
+/// ★ R1653 — the pan used to be added to every world rectangle and the result
+/// converted back to pane-local by subtracting the pane's origin in `u32`. A
+/// pan to the LEFT makes that subtraction underflow: the debug build panics and
+/// the release build wraps to a coordinate near four billion, so a screen whose
+/// hint strip advertises "drag empty space = pan" crashed on half of the
+/// gesture it advertised. Nothing saw it because every gate drove the screen
+/// from its opening state, where the pan is zero.
+///
+/// The fix is not a clamp. A pan is a *viewport* moving over a surface, the
+/// framework has that primitive, and using it also gives the pane the clipping
+/// it never had — panned content used to be painted over the palette and the
+/// inspector rather than cut off at the canvas edge.
+fn world_offset(pan: (i32, i32)) -> (i32, i32) {
+    let origin = i32::try_from(WORLD_ORIGIN).unwrap_or(i32::MAX);
+    (origin - pan.0, origin - pan.1)
+}
+
+/// A window point in the coordinates the world surface is painted in.
+fn window_to_content(state: &LabState, px: u32, py: u32) -> (i64, i64) {
+    let canvas = canvas_rect();
+    let (ox, oy) = world_offset(state.pan.get());
+    (
+        i64::from(px) - i64::from(canvas.x) + i64::from(ox),
+        i64::from(py) - i64::from(canvas.y) + i64::from(oy),
+    )
+}
+
+/// The inverse of [`window_to_content`]: where a point on the world surface
+/// lands in the window, or `None` when the viewport is not over it.
+///
+/// `None` is the honest answer rather than a clamped coordinate: the canvas
+/// clips, so a point the viewport has scrolled past is not on screen at all,
+/// and handing back the nearest visible pixel would let a caller press
+/// something the user cannot see.
+///
+/// Only the tests need this direction — the screen paints in surface
+/// coordinates and resolves presses into them, so nothing in the running app
+/// ever converts back. It is `cfg(test)` rather than dead production code, and
+/// `r1653_the_two_canvas_conversions_invert_each_other` is what keeps it from
+/// drifting away from the forward one it is supposed to invert.
+#[cfg(test)]
+fn content_to_window(state: &LabState, cx: i64, cy: i64) -> Option<(u32, u32)> {
+    let canvas = canvas_rect();
+    let (ox, oy) = world_offset(state.pan.get());
+    let x = cx - i64::from(ox) + i64::from(canvas.x);
+    let y = cy - i64::from(oy) + i64::from(canvas.y);
+    let (x, y) = (u32::try_from(x).ok()?, u32::try_from(y).ok()?);
+    contains(canvas, x, y).then_some((x, y))
+}
+
+/// Does this world-surface rectangle hold that content-space point?
+const fn holds(rect: Rect, cx: i64, cy: i64) -> bool {
+    cx >= rect.x as i64
+        && cx < (rect.x + rect.w) as i64
+        && cy >= rect.y as i64
+        && cy < (rect.y + rect.h) as i64
+}
+
+/// Window pixels back to canvas units — the exact inverse of [`to_content`]
+/// composed with [`world_offset`].
 ///
 /// Lifted at its third copy: the node drag, the press that starts one and the
 /// palette's "put it in the middle" each need it, and three sites free to
@@ -781,7 +854,7 @@ fn card_rect(state: &LabState, node: NodeId) -> Option<Rect> {
         let held = doc.tree(ROOT)?.node(node)?;
         (held.x, held.y)
     };
-    let (x, y) = to_window(state, nx, ny);
+    let (x, y) = to_content(state, nx, ny);
     let rows = u32::try_from(card_rows(state, node).len()).unwrap_or(0);
     Some(Rect::new(
         x,
@@ -792,17 +865,25 @@ fn card_rect(state: &LabState, node: NodeId) -> Option<Rect> {
 }
 
 /// A pin's rectangle. `dial` is the outgoing pin on the right edge.
-fn pin_rect(card: Rect, dial: bool) -> Rect {
-    let y = card.y + CARD_HDR / 2;
+///
+/// ★ R1653 — the pin SCALES with the canvas, because it is part of the diagram
+/// rather than chrome over it. Held at a fixed size it kept its pixels while
+/// the cards shrank, so at the minimum zoom a dial pin and its neighbour's
+/// accept pin covered the same pixels and the one drawn second could not be
+/// pressed at all — the painted screen offered a control the pointer could
+/// never reach, which is the class this round exists to make visible.
+fn pin_rect(state: &LabState, card: Rect, dial: bool) -> Rect {
+    let pin = scaled(state, PIN).max(3);
+    let y = card.y + scaled(state, CARD_HDR).max(4) / 2;
     if dial {
-        Rect::new(card.x + card.w.saturating_sub(PIN / 2), y, PIN, PIN)
+        Rect::new(card.x + card.w.saturating_sub(pin / 2), y, pin, pin)
     } else {
-        Rect::new(card.x.saturating_sub(PIN / 2), y, PIN, PIN)
+        Rect::new(card.x.saturating_sub(pin / 2), y, pin, pin)
     }
 }
 
 fn frame_rect(state: &LabState, frame: &spec::FrameSpec) -> Rect {
-    let (x, y) = to_window(
+    let (x, y) = to_content(
         state,
         i32::try_from(frame.rect.0).unwrap_or(0),
         i32::try_from(frame.rect.1).unwrap_or(0),
@@ -919,6 +1000,10 @@ impl Hit {
             return Self::Nothing;
         }
         if contains(canvas_rect(), px, py) {
+            // ★ The canvas is a viewport onto a world surface, so a press is
+            // resolved in the surface's coordinates — the same ones the painter
+            // places cards in. One conversion, at the boundary.
+            let (cx, cy) = window_to_content(state, px, py);
             // Pins before cards: a pin overhangs its card's edge, and the pin
             // is the smaller target, so testing the card first would make a
             // link impossible to author with a real mouse.
@@ -926,21 +1011,21 @@ impl Hit {
                 let Some(card) = card_rect(state, node) else {
                     continue;
                 };
-                if contains(pin_rect(card, true), px, py) {
+                if holds(pin_rect(state, card, true), cx, cy) {
                     return Self::Pin { node, dial: true };
                 }
                 if state.role_of(node).is_some_and(Role::accepts)
-                    && contains(pin_rect(card, false), px, py)
+                    && holds(pin_rect(state, card, false), cx, cy)
                 {
                     return Self::Pin { node, dial: false };
                 }
             }
             for node in state.cards().into_iter().rev() {
-                if card_rect(state, node).is_some_and(|r| contains(r, px, py)) {
+                if card_rect(state, node).is_some_and(|r| holds(r, cx, cy)) {
                     return Self::Node(node);
                 }
             }
-            if let Some(link) = link_at(state, px, py) {
+            if let Some(link) = link_at(state, cx, cy) {
                 return Self::Link(link);
             }
             return Self::Canvas;
@@ -973,8 +1058,9 @@ impl Hit {
     }
 }
 
-/// The link whose wire passes within a few pixels of the cursor.
-fn link_at(state: &LabState, px: u32, py: u32) -> Option<LinkId> {
+/// The link whose wire passes within a few pixels of the cursor, in the world
+/// surface's own coordinates.
+fn link_at(state: &LabState, px: i64, py: i64) -> Option<LinkId> {
     let doc = state.doc.borrow();
     let tree = doc.tree(ROOT)?;
     for link in tree.links() {
@@ -984,8 +1070,8 @@ fn link_at(state: &LabState, px: u32, py: u32) -> Option<LinkId> {
         ) else {
             continue;
         };
-        let (ax, ay) = centre(pin_rect(a, true));
-        let (bx, by) = centre(pin_rect(b, false));
+        let (ax, ay) = centre(pin_rect(state, a, true));
+        let (bx, by) = centre(pin_rect(state, b, false));
         // Sample the straight chord: the wire is drawn as a curve between the
         // same two points, and the chord is within the tolerance a finger has.
         for step in 0..=20u32 {
@@ -996,8 +1082,8 @@ fn link_at(state: &LabState, px: u32, py: u32) -> Option<LinkId> {
                 reason = "a lerp between two pixels is a pixel"
             )]
             let (lx, ly) = (
-                (f64::from(ax) + (f64::from(bx) - f64::from(ax)) * t) as u32,
-                (f64::from(ay) + (f64::from(by) - f64::from(ay)) * t) as u32,
+                (f64::from(ax) + (f64::from(bx) - f64::from(ax)) * t) as i64,
+                (f64::from(ay) + (f64::from(by) - f64::from(ay)) * t) as i64,
             );
             if px.abs_diff(lx) <= 6 && py.abs_diff(ly) <= 6 {
                 return Some(link.id);
@@ -1143,12 +1229,26 @@ fn absolute(rect: Rect) -> LayoutStyle {
         .with_pointer_transparent(true)
 }
 
+/// A text run at an exact rectangle inside its container.
+///
+/// ★★ **The layout style is load-bearing and its absence is the defect R1653
+/// found.** A [`TextNode`] carries a `rect`, which reads like a position and is
+/// not one: with no [`LayoutStyle`] the engine treats the run as a flow child
+/// and stacks it under its predecessor, so a screen that computes every
+/// rectangle correctly still paints its text in a column down the left edge of
+/// whatever contains it. `hello-analyzer-shell` learned this at R1649 and this
+/// example was written afterwards without it — every label here flowed, all of
+/// the canvas's card text landed in one stripe, and six rounds of gates passed
+/// anyway because a run carries no tag and every gate was tag-keyed.
 fn label(text: impl Into<String>, rect: Rect, px: u32, fg: Color) -> Scene {
-    Scene::Text(TextNode::styled(
-        text.into(),
-        rect,
-        TextStyle::new().with_size_px(px).with_fg(fg),
-    ))
+    Scene::Text(
+        TextNode::styled(
+            text.into(),
+            rect,
+            TextStyle::new().with_size_px(px).with_fg(fg),
+        )
+        .with_layout(absolute(rect)),
+    )
 }
 
 fn tagged_label(tag: &str, text: impl Into<String>, rect: Rect, px: u32, fg: Color) -> Scene {
@@ -1158,7 +1258,8 @@ fn tagged_label(tag: &str, text: impl Into<String>, rect: Rect, px: u32, fg: Col
             rect,
             TextStyle::new().with_size_px(px).with_fg(fg),
         )
-        .with_tag(tag.to_owned()),
+        .with_tag(tag.to_owned())
+        .with_layout(absolute(rect)),
     )
 }
 
@@ -1440,13 +1541,23 @@ fn palette_determinism(state: &LabState, rect: Rect, ink: Ink) -> Vec<Scene> {
         } else {
             "discovery off · fully specified"
         },
-        Rect::new(toggle.x + 48, toggle.y + 10, 170, 13),
+        Rect::new(
+            toggle.x + 48,
+            toggle.y + 10,
+            PALETTE_W - toggle.x - 48 - PAD,
+            13,
+        ),
         FONT_SMALL,
         ink.text,
     ));
     children.push(label(
         "turning it on lets nodes acquire links nobody authored",
-        Rect::new(toggle.x + 48, toggle.y + 28, 170, 24),
+        Rect::new(
+            toggle.x + 48,
+            toggle.y + 28,
+            PALETTE_W - toggle.x - 48 - PAD,
+            24,
+        ),
         9,
         ink.text_2,
     ));
@@ -1455,6 +1566,8 @@ fn palette_determinism(state: &LabState, rect: Rect, ink: Ink) -> Vec<Scene> {
 }
 
 fn toolbar(state: &LabState, ink: Ink) -> Scene {
+    /// The clearance between one toolbar label's box and the next one's.
+    const GAP: u32 = 8;
     let bar = toolbar_rect();
     let verdict = state.verdict();
     let nodes = state.cards().len();
@@ -1471,33 +1584,39 @@ fn toolbar(state: &LabState, ink: Ink) -> Scene {
         ink.err
     };
 
+    // ★ R1653 — each label's box ends where the next one begins. A text node's
+    // rectangle is not a hint, it is the box the run is wrapped into: two boxes
+    // that overlap paint one string over another as soon as either string grows
+    // to fill the space it was promised, and the strings here are a graph name
+    // and a count.
     let mut children = vec![
         tagged_label(
             "lab.toolbar.title",
             spec::GRAPH_NAME,
-            Rect::new(PAD, 15, 180, 16),
+            Rect::new(PAD, 15, 160 - GAP, 16),
             FONT_TITLE,
             ink.text,
         ),
         tagged_label(
             "lab.toolbar.meta",
             format!("{nodes} nodes · {links} links"),
-            Rect::new(PAD + 160, 17, 160, 13),
+            Rect::new(PAD + 160, 17, 140 - GAP, 13),
             FONT_SMALL,
             ink.text_3,
         ),
-        box_at(
+        // The word lives INSIDE the chip rather than beside it, so it is the
+        // chip's own content and cannot drift out of it.
+        panel(
             "lab.toolbar.gate",
             Rect::new(PAD + 300, 12, 104, 22),
             ink.raised,
             Some(gate_colour),
-            6,
-        ),
-        label(
-            gate_word,
-            Rect::new(PAD + 310, 17, 100, 13),
-            FONT_SMALL,
-            gate_colour,
+            vec![label(
+                gate_word,
+                Rect::new(10, 5, 84, 13),
+                FONT_SMALL,
+                gate_colour,
+            )],
         ),
     ];
 
@@ -1582,15 +1701,13 @@ fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
     children
 }
 
-fn canvas_layers(state: &LabState, ink: Ink) -> Vec<Scene> {
-    let rect = canvas_rect();
-    let local = |r: Rect| Rect::new(r.x - rect.x, r.y - rect.y, r.w, r.h);
+fn canvas_world(state: &LabState, ink: Ink) -> Vec<Scene> {
     let mut children: Vec<Scene> = Vec::new();
 
     children.extend(canvas_grid(state, ink));
 
     for frame in spec::FRAMES {
-        let box_rect = local(frame_rect(state, frame));
+        let box_rect = frame_rect(state, frame);
         children.push(box_at(
             &format!("lab.frame.{}", frame.name),
             box_rect,
@@ -1601,14 +1718,18 @@ fn canvas_layers(state: &LabState, ink: Ink) -> Vec<Scene> {
         children.push(tagged_label(
             &format!("lab.frame.{}.name", frame.name),
             format!("{} · {}", frame.name, frame.gist),
-            Rect::new(box_rect.x + 12, box_rect.y.saturating_sub(6), 200, 13),
+            Rect::new(
+                box_rect.x + 12,
+                box_rect.y.saturating_sub(6),
+                box_rect.w.saturating_sub(24).max(40),
+                13,
+            ),
             10,
             ink.text_3,
         ));
     }
     children.extend(canvas_wires(state, ink));
     children.extend(canvas_cards(state, ink));
-    children.extend(canvas_overlays(state, ink));
     children
 }
 
@@ -1619,15 +1740,19 @@ fn canvas_grid(state: &LabState, ink: Ink) -> Vec<Scene> {
     let rect = canvas_rect();
     let mut children: Vec<Scene> = Vec::new();
     let pitch = scaled(state, 22).max(6);
-    let (pan_x, pan_y) = state.pan.get();
-    let origin = (
-        pan_x.rem_euclid(i32::try_from(pitch).unwrap_or(1)),
-        pan_y.rem_euclid(i32::try_from(pitch).unwrap_or(1)),
-    );
-    let mut gy = u32::try_from(origin.1).unwrap_or(0);
-    while gy < rect.h {
-        let mut gx = u32::try_from(origin.0).unwrap_or(0);
-        while gx < rect.w {
+    // Only the slice of the surface the viewport is over: the pips are a
+    // texture, and a texture over the whole 6,400-unit world would be a quarter
+    // of a million nodes to lay out for the few thousand anybody can see.
+    let (ox, oy) = world_offset(state.pan.get());
+    let first = |offset: i32| {
+        let pitch = i32::try_from(pitch).unwrap_or(1);
+        u32::try_from(offset - offset.rem_euclid(pitch)).unwrap_or(0)
+    };
+    let (from_x, from_y) = (first(ox), first(oy));
+    let mut gy = from_y;
+    while gy < from_y + rect.h + pitch {
+        let mut gx = from_x;
+        while gx < from_x + rect.w + pitch {
             children.push(Scene::Container(
                 ContainerNode::new(Vec::new())
                     .with_style(BoxStyle::filled(ink.grid))
@@ -1643,8 +1768,6 @@ fn canvas_grid(state: &LabState, ink: Ink) -> Vec<Scene> {
 
 /// The wires, and the label the selected one alone carries.
 fn canvas_wires(state: &LabState, ink: Ink) -> Vec<Scene> {
-    let rect = canvas_rect();
-    let local = |r: Rect| Rect::new(r.x - rect.x, r.y - rect.y, r.w, r.h);
     let mut children: Vec<Scene> = Vec::new();
     let selected_link = state.selected_link.get();
     {
@@ -1658,8 +1781,8 @@ fn canvas_wires(state: &LabState, ink: Ink) -> Vec<Scene> {
                     continue;
                 };
                 let chosen = selected_link == Some(link.id);
-                let from = centre(local(pin_rect(a, true)));
-                let to = centre(local(pin_rect(b, false)));
+                let from = centre(pin_rect(state, a, true));
+                let to = centre(pin_rect(state, b, false));
                 children.push(wire(
                     &format!("lab.link.{}", link.id.0),
                     from,
@@ -1675,19 +1798,23 @@ fn canvas_wires(state: &LabState, ink: Ink) -> Vec<Scene> {
                         .and_then(|f| f.field("listen.endpoints").map(|v| v.value().to_owned()))
                         .unwrap_or_default();
                     let mid = (u32::midpoint(from.0, to.0), u32::midpoint(from.1, to.1));
-                    children.push(box_at(
+                    // ★ The text is the label's CHILD, not its neighbour. A
+                    // floating annotation is drawn over the diagram on purpose,
+                    // so it is its own layer, and saying that structurally is
+                    // what keeps "no two runs of one widget overlap" true
+                    // without an exception list beside the rule.
+                    children.push(panel(
                         "lab.link.label",
                         Rect::new(mid.0.saturating_sub(70), mid.1.saturating_sub(24), 150, 20),
                         ink.accent_soft,
                         Some(ink.accent_line),
-                        5,
-                    ));
-                    children.push(tagged_label(
-                        "lab.link.label.text",
-                        endpoint,
-                        Rect::new(mid.0.saturating_sub(63), mid.1.saturating_sub(18), 140, 13),
-                        10,
-                        ink.accent,
+                        vec![tagged_label(
+                            "lab.link.label.text",
+                            endpoint,
+                            Rect::new(7, 6, 136, 13),
+                            10,
+                            ink.accent,
+                        )],
                     ));
                 }
             }
@@ -1699,12 +1826,13 @@ fn canvas_wires(state: &LabState, ink: Ink) -> Vec<Scene> {
     if let Some(Drag::Wire { from }) = state.drag.get() {
         if let Some(card) = card_rect(state, from) {
             let cursor = state.cursor.get();
+            let (cx, cy) = window_to_content(state, cursor.0, cursor.1);
             children.push(wire(
                 "lab.link.preview",
-                centre(local(pin_rect(card, true))),
+                centre(pin_rect(state, card, true)),
                 (
-                    cursor.0.saturating_sub(rect.x),
-                    cursor.1.saturating_sub(rect.y),
+                    u32::try_from(cx).unwrap_or(0),
+                    u32::try_from(cy).unwrap_or(0),
                 ),
                 ink.accent,
                 2,
@@ -1717,8 +1845,6 @@ fn canvas_wires(state: &LabState, ink: Ink) -> Vec<Scene> {
 
 /// One card per node: its identity band, its digest rows, and its pins.
 fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
-    let rect = canvas_rect();
-    let local = |r: Rect| Rect::new(r.x - rect.x, r.y - rect.y, r.w, r.h);
     let mut children: Vec<Scene> = Vec::new();
     let selected = state.selected.get();
     for node in state.cards() {
@@ -1729,7 +1855,7 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
         let rows = card_rows(state, node);
         let role = state.role_of(node).unwrap_or(Role::Peer);
         let chosen = selected == Some(node);
-        let card_local = local(card);
+        let card_local = card;
         children.push(box_at(
             &format!("lab.node.{name}"),
             card_local,
@@ -1792,8 +1918,6 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
 /// can dial, ringed in the transport's colour = can be dialled, grey = the role
 /// listens and this node has nowhere to.
 fn canvas_pins(state: &LabState, node: NodeId, card: Rect, role: Role, ink: Ink) -> Vec<Scene> {
-    let rect = canvas_rect();
-    let local = |r: Rect| Rect::new(r.x - rect.x, r.y - rect.y, r.w, r.h);
     let name = state.name_of(node);
     let mut children: Vec<Scene> = Vec::new();
     {
@@ -1813,7 +1937,7 @@ fn canvas_pins(state: &LabState, node: NodeId, card: Rect, role: Role, ink: Ink)
             .unwrap_or(Transport::Tcp);
         children.push(box_at(
             &format!("lab.pin.{name}.dial"),
-            local(pin_rect(card, true)),
+            pin_rect(state, card, true),
             ink.accent,
             Some(ink.accent),
             PIN / 2,
@@ -1821,7 +1945,7 @@ fn canvas_pins(state: &LabState, node: NodeId, card: Rect, role: Role, ink: Ink)
         if role.accepts() {
             children.push(box_at(
                 &format!("lab.pin.{name}.accept"),
-                local(pin_rect(card, false)),
+                pin_rect(state, card, false),
                 ink.surface,
                 Some(if listening {
                     transport_ink(transport)
@@ -1904,11 +2028,35 @@ fn canvas_overlays(state: &LabState, ink: Ink) -> Vec<Scene> {
 /// the host frames, the wires, the node cards, then the two things that float
 /// over all of it.
 fn canvas(state: &LabState, ink: Ink) -> Scene {
+    let rect = canvas_rect();
+    // ★ R1653 — the world surface, and the viewport the pan slides over it.
+    // The alternative the screen shipped with was to add the pan to every
+    // rectangle: that has no clip (panned content painted over the palette and
+    // the inspector) and it underflows on a leftward pan, which is a crash on
+    // half of the gesture the hint strip advertises.
+    let world = Scene::Container(
+        ContainerNode::new(canvas_world(state, ink))
+            .with_style(BoxStyle::filled(ink.bg))
+            .with_layout(LayoutStyle::new().with_size(Size::px(WORLD, WORLD))),
+    );
+    let (ox, oy) = world_offset(state.pan.get());
+    let viewport = Scene::Scroll(
+        ScrollNode::new(Rect::new(0, 0, rect.w, rect.h), world)
+            .with_axis(ScrollAxis::Both)
+            .with_offset(ox, oy)
+            // A drag on this surface is a pan, not a selection sweep, so the
+            // edge must not carry the content away under the cursor.
+            .with_auto_scroll(AutoScroll::off()),
+    );
+    let mut children = vec![viewport];
+    // The gate panel and the hint strip are chrome: they float over the canvas
+    // and do not pan with it.
+    children.extend(canvas_overlays(state, ink));
     Scene::Container(
-        ContainerNode::new(canvas_layers(state, ink))
+        ContainerNode::new(children)
             .with_tag("lab.canvas")
             .with_style(BoxStyle::filled(ink.bg))
-            .with_layout(absolute(canvas_rect())),
+            .with_layout(absolute(rect)),
     )
 }
 
@@ -3120,5 +3268,7 @@ fn main() {
     pinion_shell::run::<NodeLabView>();
 }
 
+#[cfg(test)]
+mod painted;
 #[cfg(test)]
 mod tests;

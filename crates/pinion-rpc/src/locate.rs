@@ -142,6 +142,40 @@ pub fn locate(scene: &Scene, x: u32, y: u32) -> Result<LocateOutcome, LocateErro
 /// * [`BboxError::Path`] when the window prefix is malformed.
 /// * [`BboxError::UnknownPath`] when the segments do not resolve.
 pub fn bbox(scene: &Scene, raw_path: &str) -> Result<Rect, BboxError> {
+    bbox_of(scene, raw_path).map(|outcome| outcome.bbox)
+}
+
+/// R1653 §5.32 §5.45 §2 #7 — [`bbox`], and **where that rectangle is on
+/// screen**.
+///
+/// The two are the same number for most of a scene and not for any of it that
+/// lives inside a [`Scene::Scroll`], whose content rects are scroll-local. That
+/// difference is not a detail: `bbox`'s stated purpose is that an agent
+/// "compute screen coordinates" from it, and inside a scrolled pane those
+/// coordinates address nothing. Measured the day this was written — a node
+/// graph whose canvas became a viewport reported a card at `(2207, 2081)` in a
+/// 1440x900 window, and the agent's click was refused as out of bounds.
+///
+/// So the answer carries both, named for what each one is:
+///
+/// * [`bbox`](BboxOutcome::bbox) — the node's own rectangle, in the frame its
+///   container states it in. Unchanged, and still what a caller reasoning about
+///   a subtree's internal layout wants.
+/// * [`window`](BboxOutcome::window) — where it is painted, every enclosing
+///   scroll offset folded in and every enclosing clip applied, or `None` when
+///   the clips leave nothing of it visible. This is the one a pointer can use,
+///   and it is the same resolver [`Scene::rect_for_tag_absolute`] answers click
+///   routing with, so an agent that presses here presses what it measured.
+///
+/// Reporting both rather than replacing one with the other is deliberate: their
+/// difference is a *fact* about the scene — this node is inside something that
+/// scrolls — and a surface that collapses two facts into one answer makes the
+/// remaining answer ambiguous.
+///
+/// # Errors
+///
+/// Identical to [`bbox`].
+pub fn bbox_of(scene: &Scene, raw_path: &str) -> Result<BboxOutcome, BboxError> {
     let resolved = crate::path::resolve(raw_path)?;
     let _ = resolved.window; // multi-window dispatch lands later
     let segments = crate::path::segments(resolved.scene_path);
@@ -149,9 +183,55 @@ pub fn bbox(scene: &Scene, raw_path: &str) -> Result<Rect, BboxError> {
     // client that reached a node by name must be able to ask this method
     // about that name; `Scene::lookup_path` returns a rect rather than a
     // node, so the alias is applied by resolving the node first.
-    lookup_addressed(scene, &segments)
-        .map(Scene::rect)
-        .ok_or(BboxError::UnknownPath)
+    let node = lookup_addressed(scene, &segments).ok_or(BboxError::UnknownPath)?;
+    // Identity, not address: the walk's own addressing and this method's differ
+    // under the aliases above, and re-deriving the address here would be a
+    // second resolver free to disagree with the one that just answered.
+    let mut window = None;
+    scene.for_each_node(&mut |visit| {
+        if std::ptr::eq(visit.node, node) && window.is_none() {
+            window = Some(visit.absolute_rect());
+        }
+    });
+    Ok(BboxOutcome {
+        bbox: node.rect(),
+        window: window.flatten(),
+    })
+}
+
+/// R1653 §5.32 §5.20 — [`bbox_of`], located by **tag** rather than by address.
+///
+/// The address form needs the whole chain from the root, which a caller reading
+/// a snapshot does not have in the form this method accepts — a
+/// [`Scene::Scroll`] is path-transparent here and is a segment in a snapshot
+/// walk, so the two spellings differ exactly where the window rect starts to
+/// matter. A tag is one word and it is the same word
+/// [`Scene::rect_for_tag_absolute`] routes a click by, which makes "measure it,
+/// then press it" one vocabulary instead of two.
+///
+/// First tag wins, pre-order, the rule the whole tag surface shares.
+#[must_use]
+pub fn bbox_of_tag(scene: &Scene, tag: &str) -> Option<BboxOutcome> {
+    let mut found = None;
+    scene.for_each_node(&mut |visit| {
+        if found.is_none() && visit.node.tag() == Some(tag) {
+            found = Some(BboxOutcome {
+                bbox: visit.node.rect(),
+                window: visit.absolute_rect(),
+            });
+        }
+    });
+    found
+}
+
+/// What [`bbox_of`] answers: a node's own rectangle, and where it is painted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct BboxOutcome {
+    /// The node's own `rect`, in whatever frame its container states it in.
+    pub bbox: Rect,
+    /// Where it is painted, scroll offsets folded and clips applied, or `None`
+    /// when nothing of it is visible.
+    pub window: Option<Rect>,
 }
 
 /// R1591 §5.32 §2 #7 — resolve any [`Region`] against `scene` under a
@@ -488,6 +568,60 @@ mod tests {
         );
         assert!(out.paths.iter().any(|p| p.ends_with("/near")));
         assert!(!out.paths.iter().any(|p| p.ends_with("/far")));
+    }
+
+    /// ★ R1653 — inside a scroll, "its rectangle" and "where it is on screen"
+    /// are two different numbers, and only one of them is a place a pointer can
+    /// go. This is the case that broke a real agent: a card reported at
+    /// `(2207, 2081)` in a 1440x900 window, clicked, refused as out of bounds.
+    #[test]
+    fn r1653_bbox_reports_the_rectangle_and_where_it_is_painted() {
+        let content = container_at(
+            0,
+            0,
+            400,
+            400,
+            vec![
+                tagged_box_at(20, 30, 40, 20, "near"),
+                tagged_box_at(20, 300, 40, 20, "far"),
+            ],
+        );
+        let mut scroll = pinion_core::scene::ScrollNode::new(Rect::new(100, 50, 200, 100), content);
+        scroll.offset_y = 10;
+        let scene = container_at(0, 0, 500, 500, vec![Scene::Scroll(scroll)]);
+
+        let near = bbox_of(&scene, "/0/near").expect("addressed");
+        assert_eq!(
+            near.bbox,
+            Rect::new(20, 30, 40, 20),
+            "its own rectangle is scroll-local and says so"
+        );
+        assert_eq!(
+            near.window,
+            Some(Rect::new(120, 70, 40, 20)),
+            "★ and where it is painted folds the viewport origin and the offset"
+        );
+
+        let far = bbox_of(&scene, "/0/far").expect("addressed");
+        assert_eq!(far.bbox, Rect::new(20, 300, 40, 20));
+        assert_eq!(
+            far.window, None,
+            "★ scrolled past the viewport: painted nowhere, and the answer says              so rather than naming a rectangle nothing was drawn in"
+        );
+
+        // And the answer agrees with the resolver click routing uses.
+        assert_eq!(near.window, scene.rect_for_tag_absolute("near"));
+        assert_eq!(far.window, scene.rect_for_tag_absolute("far"));
+    }
+
+    /// Outside a scroll the two answers are the same, which is why nothing
+    /// noticed for 948 rounds.
+    #[test]
+    fn r1653_without_a_scroll_both_answers_are_one_rectangle() {
+        let scene = container_at(0, 0, 200, 200, vec![tagged_box_at(50, 60, 30, 10, "plain")]);
+        let out = bbox_of(&scene, "/plain").expect("addressed");
+        assert_eq!(out.bbox, Rect::new(50, 60, 30, 10));
+        assert_eq!(out.window, Some(out.bbox));
     }
 
     #[test]

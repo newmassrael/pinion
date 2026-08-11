@@ -5685,6 +5685,75 @@ fn scene_bbox_missing_path_is_invalid_params() {
     assert_eq!(resp.error.unwrap().code, -32602);
 }
 
+/// R1653 — the wire carries BOTH answers, and inside a scroll they differ.
+#[test]
+fn r1653_scene_bbox_answers_where_a_scrolled_node_is_painted() {
+    use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode};
+    let inner = Scene::Container(ContainerNode::new(vec![Scene::Box(
+        BoxNode::filled(
+            Rect::new(5, 200, 20, 10),
+            pinion_core::style::Color::default(),
+        )
+        .with_tag("deep"),
+    )]));
+    let mut scroll = ScrollNode::new(Rect::new(40, 30, 100, 50), inner);
+    scroll.offset_y = 180;
+    let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(scroll)]));
+
+    let req = r#"{"jsonrpc":"2.0","method":"scene/bbox","params":{"tag":"deep"},"id":1}"#;
+    let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+    let result = resp.result.expect("answered by tag");
+    let own = result.get("bbox").unwrap().as_object().unwrap();
+    assert_eq!(own.get("y"), Some(&Value::Number(200.into())), "its own y");
+    let window = result.get("window").unwrap().as_object().unwrap();
+    assert_eq!(
+        window.get("y"),
+        Some(&Value::Number(50.into())),
+        "★ and where it is painted: 30 (the viewport) + 200 - 180 (the offset)"
+    );
+    assert_eq!(window.get("x"), Some(&Value::Number(45.into())));
+}
+
+/// Scrolled out of sight: reported, and reported as painted nowhere.
+#[test]
+fn r1653_scene_bbox_says_null_for_a_node_scrolled_out_of_view() {
+    use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode};
+    let inner = Scene::Container(ContainerNode::new(vec![Scene::Box(
+        BoxNode::filled(
+            Rect::new(5, 900, 20, 10),
+            pinion_core::style::Color::default(),
+        )
+        .with_tag("gone"),
+    )]));
+    let mut scene = Scene::Container(ContainerNode::new(vec![Scene::Scroll(ScrollNode::new(
+        Rect::new(0, 0, 100, 50),
+        inner,
+    ))]));
+    let req = r#"{"jsonrpc":"2.0","method":"scene/bbox","params":{"tag":"gone"},"id":1}"#;
+    let resp = parse_response(&dispatch_t(&mut scene, req).unwrap());
+    let result = resp.result.expect("still answered");
+    assert!(result.get("bbox").is_some(), "it has a rectangle");
+    assert_eq!(
+        result.get("window"),
+        Some(&Value::Null),
+        "and it is painted nowhere, which is an answer and not an absence"
+    );
+}
+
+#[test]
+fn r1653_scene_bbox_refuses_two_locators_and_an_unknown_tag() {
+    let mut scene = box_scene(0, 0, 10, 10);
+    let both = r#"{"jsonrpc":"2.0","method":"scene/bbox","params":{"path":"/","tag":"x"},"id":1}"#;
+    let resp = parse_response(&dispatch_t(&mut scene, both).unwrap());
+    assert_eq!(resp.error.expect("refused").code, -32602);
+    let missing = r#"{"jsonrpc":"2.0","method":"scene/bbox","params":{"tag":"nope"},"id":1}"#;
+    let resp = parse_response(&dispatch_t(&mut scene, missing).unwrap());
+    assert_eq!(
+        resp.error.expect("refused").data,
+        Some(Value::String("UnknownTag".to_string()))
+    );
+}
+
 // ---- R40.2: scene/cancel_preview JSON-RPC wire ----
 
 #[derive(Debug)]

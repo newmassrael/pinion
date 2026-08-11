@@ -56,7 +56,7 @@ use crate::intervene::{InterveneError, intervene_from, intervene_shared_from};
 use crate::invoke::{InvokeError, invoke_from, invoke_shared_from};
 use crate::layout_query::{LayoutQueryError, LayoutQueryParams, layout_query};
 use crate::locate::{
-    BboxError, LocateError, LocateOutcome, LocateRegionOutcome, bbox, locate, locate_shape,
+    BboxError, LocateError, LocateOutcome, LocateRegionOutcome, bbox_of, locate, locate_shape,
 };
 use crate::methods::rpc_methods;
 use crate::origin::{AnswerOrigin, Refusal, SceneSource};
@@ -3015,10 +3015,22 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                         HandlerKind::Read,
                     )
                 }
-                "scene/bbox" => (
-                    handle_scene_bbox(scene, request.params.as_ref()),
-                    HandlerKind::Read,
-                ),
+                "scene/bbox" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let producer = paint_producer.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_bbox(
+                            scene,
+                            producer,
+                            last_paint_scene,
+                            request.params.as_ref(),
+                        ),
+                        HandlerKind::Read,
+                    )
+                }
                 "scene/resize" => {
                     #[allow(
                         clippy::option_as_ref_deref,
@@ -8181,21 +8193,75 @@ fn locate_error_to_rpc(err: LocateError) -> RpcError {
 /// [`handle_scene_locate`]: a view-fn binding's state scene is geometry-less,
 /// so this answers the zero rect on every modern binding; painted-frame
 /// geometry lives on `scene/layout` / `scene/snapshot {from: "paint"}`.
-fn handle_scene_bbox(scene: &Scene, params: Option<&Value>) -> Result<Value, RpcError> {
+fn handle_scene_bbox<F>(
+    scene: &Scene,
+    paint_producer: Option<&mut F>,
+    last_paint_scene: Option<&Scene>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError>
+where
+    F: FnMut(u32, u32) -> Scene + ?Sized,
+{
     let params = require_params(params)?;
-    let Some(path) = params.get("path").and_then(Value::as_str) else {
-        return Err(RpcError::invalid_params(
-            "params.path missing or not a string",
-        ));
-    };
-    match bbox(scene, path) {
-        Ok(r) => {
-            let mut map = serde_json::Map::new();
-            map.insert("bbox".into(), bbox_to_json(&r));
-            Ok(Value::Object(map))
+    // R1653 — the same two-scene basis `scene/snapshot` takes. A geometry
+    // question usually wants `from: "paint"`: a view-fn binding's STATE scene
+    // has not been through the layout pass, so its rects are whatever the view
+    // declared and its `window` answer is that again. The default stays
+    // `"state"` because that is what this method has always read, and a rect
+    // method that silently changed which tree it measures would be the worst
+    // kind of quiet.
+    let basis = resolve_scene_basis(scene, paint_producer, last_paint_scene, params, "state")?;
+    let scene = basis.scene();
+    // R1653 — `tag` is the second locator, and exactly one of the two is
+    // required. A caller that passed both would be stating two targets and
+    // silently getting one of them.
+    let tag = params.get("tag").and_then(Value::as_str);
+    let path = params.get("path").and_then(Value::as_str);
+    match (path, tag) {
+        (Some(path), Some(_)) => {
+            // The window prefix lives in `params.path`, and this method is
+            // published as one that reads it, so a malformed prefix is refused
+            // as a malformed prefix even when a second locator is also present.
+            // Deciding "you gave me two targets" first would make the published
+            // window column false for this input, and `rpc/methods` is checked
+            // against behaviour rather than against intent.
+            crate::path::resolve(path).map_err(|err| bbox_error_to_rpc(err.into()))?;
+            return Err(RpcError::invalid_params(
+                "params.path and params.tag are mutually exclusive — pick one",
+            ));
         }
+        (None, Some(tag)) => {
+            return crate::locate::bbox_of_tag(scene, tag).map_or_else(
+                || Err(RpcError::invalid_params("UnknownTag")),
+                |outcome| Ok(bbox_outcome_to_json(&outcome)),
+            );
+        }
+        (None, None) => {
+            return Err(RpcError::invalid_params(
+                "params.path or params.tag missing or not a string",
+            ));
+        }
+        (Some(_), None) => {}
+    }
+    let path = path.unwrap_or_default();
+    match bbox_of(scene, path) {
+        Ok(outcome) => Ok(bbox_outcome_to_json(&outcome)),
         Err(err) => Err(bbox_error_to_rpc(err)),
     }
+}
+
+/// The `scene/bbox` answer: the node's own rectangle, and where it is painted.
+///
+/// `window` is always present, `null` when the node is scrolled out of view, so
+/// a caller reading it cannot mistake "not visible" for "not reported".
+fn bbox_outcome_to_json(outcome: &crate::locate::BboxOutcome) -> Value {
+    let mut map = serde_json::Map::new();
+    map.insert("bbox".into(), bbox_to_json(&outcome.bbox));
+    map.insert(
+        "window".into(),
+        outcome.window.as_ref().map_or(Value::Null, bbox_to_json),
+    );
+    Value::Object(map)
 }
 
 fn bbox_error_to_rpc(err: BboxError) -> RpcError {

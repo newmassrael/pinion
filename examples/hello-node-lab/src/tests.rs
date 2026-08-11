@@ -9,7 +9,10 @@
 use pinion_core::reactive::Owner;
 use pinion_core::widgets::config_form::Applies;
 
-use super::{Hit, LabState, canvas_rect, card_rect, form_for, inspector_rect, pin_rect, spec};
+use super::{
+    Hit, LabState, canvas_rect, card_rect, content_to_window, form_for, inspector_rect, pin_rect,
+    spec,
+};
 use crate::graph::Role;
 
 fn state() -> LabState {
@@ -264,18 +267,25 @@ fn r1651_every_control_the_screen_paints_is_hit_at_the_centre_it_paints_in() {
     let owner = Owner::new();
     owner.run(|| {
         let state = state();
+        // ★ R1653 — a card's rectangle is on the WORLD SURFACE the canvas is a
+        // viewport onto, and a press arrives in window coordinates. The
+        // conversion is the app's own, so this cannot drift from it.
+        let window = |x: u32, y: u32| {
+            content_to_window(&state, i64::from(x), i64::from(y)).expect("on screen")
+        };
         for node in state.cards() {
             let card = card_rect(&state, node).expect("a declared node has a card");
-            let centre = (card.x + card.w / 2, card.y + card.h / 2);
+            let centre = window(card.x + card.w / 2, card.y + card.h / 2);
             assert_eq!(
                 Hit::at(&state, centre.0, centre.1),
                 Hit::Node(node),
                 "{} is pressable at the centre of its card",
                 state.name_of(node)
             );
-            let dial = pin_rect(card, true);
+            let dial = pin_rect(&state, card, true);
+            let dial_centre = window(dial.x + dial.w / 2, dial.y + dial.h / 2);
             assert_eq!(
-                Hit::at(&state, dial.x + dial.w / 2, dial.y + dial.h / 2),
+                Hit::at(&state, dial_centre.0, dial_centre.1),
                 Hit::Pin { node, dial: true },
                 "★ and its dial pin is reachable — a pin overhangs its card, so \
                  testing the card first would make a link impossible to author"
@@ -330,5 +340,35 @@ fn r1651_every_role_the_palette_offers_is_pressable_and_adds_a_node() {
             Some(before + spec::FRAMES.len() + 1),
             "and pressing one adds a node"
         );
+    });
+}
+
+/// R1653 — the canvas's two coordinate conversions invert each other.
+///
+/// `content_to_window` exists for the tests, so nothing in the running app
+/// would notice it drifting from `window_to_content`. This is what would.
+#[test]
+fn r1653_the_two_canvas_conversions_invert_each_other() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = std::rc::Rc::new(state());
+        let canvas = canvas_rect();
+        // A pan the hint strip's gesture can produce, in both directions.
+        for pan in [(0, 0), (30, 20), (-30, -20), (-400, 250)] {
+            state.pan.set(pan);
+            for (px, py) in [
+                (canvas.x, canvas.y),
+                (canvas.x + canvas.w / 3, canvas.y + canvas.h / 2),
+                (canvas.x + canvas.w - 1, canvas.y + canvas.h - 1),
+            ] {
+                let (cx, cy) = super::window_to_content(&state, px, py);
+                assert!(cx >= 0 && cy >= 0, "the surface has no negative side");
+                assert_eq!(
+                    super::content_to_window(&state, cx, cy),
+                    Some((px, py)),
+                    "pan {pan:?} at ({px},{py})"
+                );
+            }
+        }
     });
 }

@@ -36,6 +36,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_declared_channels_are_true,
     assert_eq,
+    call,
     find_by_tag,
     run_demo,
     walk_nodes,
@@ -79,16 +80,29 @@ def centre(rect: dict) -> str:
     return f"{rect['x'] + rect['w'] // 2},{rect['y'] + rect['h'] // 2}"
 
 
+def window_of(tf: RpcSubprocess, tag: str) -> dict:
+    """The rectangle `tag` occupies ON SCREEN, which is where a pointer goes."""
+    answer = call(tf, "scene/bbox", {"tag": tag, "from": "paint"})
+    window = answer.get("window")
+    assert window is not None, f"{tag} is painted somewhere a pointer can reach"
+    return window
+
+
 def at(tf: RpcSubprocess, tag: str) -> str:
     """The point at the centre of the rectangle `tag` was PAINTED in.
 
     Asking the scene rather than recomputing the screen's layout here: a demo
     carrying a second copy of the geometry could not notice a drift between the
     painter and the hit test, which is the property section (H) holds.
+
+    ★ R1653 — `scene/bbox`'s `window`, not the snapshot node's own `rect`. The
+    two differ for everything inside a scroll, and the canvas is one: a rect
+    read straight off the tree is stated in the scrolling surface's own
+    coordinates, so a press aimed at it lands outside the window. That is
+    exactly what happened the moment the canvas became a viewport — the demo
+    asked for (2207, 2081) in a 1440x900 window and the action refused it.
     """
-    node = find_by_tag(paint(tf), tag)
-    assert node is not None and isinstance(node.get("rect"), dict), f"{tag} is painted"
-    return centre(node["rect"])
+    return centre(window_of(tf, tag))
 
 
 def click(tf: RpcSubprocess, where: str) -> str:
@@ -483,12 +497,16 @@ def body() -> None:
         assert_eq(q(tf, "zoom"), was, "and back")
 
         # 3. drag a node = place it
-        held = find_by_tag(paint(tf), "lab.node.T-01")["rect"]
+        #    ★ R1653 — where it is PAINTED, not the rect the card carries: the
+        #    canvas is a viewport over a world surface, so a card's own
+        #    rectangle is stated in that surface's coordinates and a press aimed
+        #    at it lands outside the window.
+        held = window_of(tf, "lab.node.T-01")
         inv(tf, "point", centre(held))
         inv(tf, "send", "PointerDown")
         inv(tf, "point", f"{held['x'] + held['w'] // 2 + 40},{held['y'] + held['h'] // 2 + 30}")
         inv(tf, "send", "PointerUp")
-        moved = find_by_tag(paint(tf), "lab.node.T-01")["rect"]
+        moved = window_of(tf, "lab.node.T-01")
         assert moved != held, f"a node drag places it: {held} -> {moved}"
 
         # 4. drag a pin = author a link
