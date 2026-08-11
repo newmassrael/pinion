@@ -1640,8 +1640,11 @@ pub fn assert_persisted_shape<T: serde::Serialize>(
         last_digest,
         "{label}: the persisted shape CHANGED (now {digest:#018x}, history ends \
          at {last_digest:#018x}).\n\
-         Bump PERSISTED_SCHEMA_VERSION to {} and append ({}, {digest:#018x}) to \
-         the shape history.\n\
+         Bump PERSISTED_SCHEMA_VERSION to {}, then RUN THIS AGAIN and append \
+         ({}, <the digest it prints then>) to the shape history — the digest \
+         above was taken over a sample carrying the OLD version number, so \
+         bumping moves it. R1647 followed this message literally and had to \
+         come back for the second value.\n\
          An old blob on a user's disk cannot be read by this build; the version \
          is what tells them so instead of reporting a corrupt file.",
         live_version + 1,

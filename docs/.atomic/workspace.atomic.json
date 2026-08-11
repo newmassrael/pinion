@@ -34586,6 +34586,36 @@
         "The saved observation carries no timestamp and no provenance, so a reopened file's drift has no age. Stated on the version comment rather than registered, because giving evidence a time is a model question this axis has not been asked."
       ]
     },
+    "R1647.1": {
+      "decision_summary": "the persistence gate's instruction can be followed. R1647 recorded, in a comment, that this gate's own message cannot be obeyed literally: it prints \"bump to N and append (N, <digest>)\", and that digest was taken over a sample carrying the OLD version number, so bumping moves it and the append is wrong on the first try. Writing that beside one example's ledger helps the next person to edit THAT file and nobody else -- the message is in `pinion-core` and every shape-gated binding in the tree reads it. Fixed where it is produced: the message now says to bump, RUN AGAIN, and append the digest the second run prints, and names the round that followed it literally so the sentence carries its own evidence. A GATE WHOSE INSTRUCTIONS ARE WRONG IS A GATE THAT TEACHES THE WRONG FIX, which is worse than one that only says no -- and this one is read exactly when somebody is already confused about why their change broke a test they did not write. Registered as nothing and fixed instead, because the standing rule is that a residue with no structural blocker is not a carry: this is a string.",
+      "changes_bullets": [
+        "`pinion_core::test_fixtures::assert_persisted_shape`: the failure message tells the reader to bump, run again, and append the digest the SECOND run prints, and says why — the printed digest is taken before the bump it asks for."
+      ],
+      "verification_bullets": [
+        "Every binding the gate reads re-passes: hello-node-editor 255, todomvc 93, settings-panel 2. `cargo test -p pinion-core --lib test_fixtures` 9 pass. clippy on pinion-core clean; fmt clean.",
+        "Behaviour is unchanged by construction — the edit is inside a message string, and the assertion around it is untouched."
+      ],
+      "impact_refs": [
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "Four residues from R1645 and R1646 were promoted from changelog carry sections to debt files in this round's audit: a report cannot cross a group boundary, a saved report has no age, only one derivation carries its standing, and the analysis-tool census's verdicts are unproven. THE GENERAL FINDING IS THE PLACE THEY WERE: a `carry_forward` section is durable, tracked and frozen, which makes it look like the canonical home for a residue — and the debt census greps `status:` fields in memory, so nothing there is ever seen. That is the third location this session has found with the property, after a closed debt file's \"what remains\" section and an axis table's prose."
+      ],
+      "publishable_decision_summary": "the persistence gate's instruction can be followed. R1647 recorded, in a comment, that this gate's own message cannot be obeyed literally: it prints \"bump to N and append (N, <digest>)\", and that digest was taken over a sample carrying the OLD version number, so bumping moves it and the append is wrong on the first try. Writing that beside one example's ledger helps the next person to edit THAT file and nobody else -- the message is in `pinion-core` and every shape-gated binding in the tree reads it. Fixed where it is produced: the message now says to bump, RUN AGAIN, and append the digest the second run prints, and names the round that followed it literally so the sentence carries its own evidence. A GATE WHOSE INSTRUCTIONS ARE WRONG IS A GATE THAT TEACHES THE WRONG FIX, which is worse than one that only says no -- and this one is read exactly when somebody is already confused about why their change broke a test they did not write. Registered as nothing and fixed instead, because the standing rule is that a residue with no structural blocker is not a carry: this is a string.",
+      "publishable_changes_bullets": [
+        "`pinion_core::test_fixtures::assert_persisted_shape`: the failure message tells the reader to bump, run again, and append the digest the SECOND run prints, and says why — the printed digest is taken before the bump it asks for."
+      ],
+      "publishable_verification_bullets": [
+        "Every binding the gate reads re-passes: hello-node-editor 255, todomvc 93, settings-panel 2. `cargo test -p pinion-core --lib test_fixtures` 9 pass. clippy on pinion-core clean; fmt clean.",
+        "Behaviour is unchanged by construction — the edit is inside a message string, and the assertion around it is untouched."
+      ],
+      "publishable_impact_refs": [
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Four residues from R1645 and R1646 were promoted from changelog carry sections to debt files in this round's audit: a report cannot cross a group boundary, a saved report has no age, only one derivation carries its standing, and the analysis-tool census's verdicts are unproven. THE GENERAL FINDING IS THE PLACE THEY WERE: a `carry_forward` section is durable, tracked and frozen, which makes it look like the canonical home for a residue — and the debt census greps `status:` fields in memory, so nothing there is ever seen. That is the third location this session has found with the property, after a closed debt file's \"what remains\" section and an axis table's prose."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
