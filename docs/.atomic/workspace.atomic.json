@@ -35176,6 +35176,52 @@
         "otherwise be believed."
       ]
     },
+    "R1653.1": {
+      "decision_summary": "R1653's own close audit: the world surface it introduced was a fixed pixel\nextent, so the range a node position could take SHRANK as the zoom grew, and a\nposition outside it saturated silently at paint time -- the card appeared in the\ncorner of the canvas with nothing saying why. A bound belongs where the position\nis SET. The surface is now stated in world units and scales with the zoom, so\nthe range is zoom-independent, and the drag clamps to it, so a node stops at the\nedge of the world where the user can see it stop.",
+      "changes_bullets": [
+        "examples/hello-node-lab: WORLD_ORIGIN and WORLD are world units and signed; the",
+        "surface's pixel size is derived from them by the zoom.",
+        "examples/hello-node-lab: clamp_to_world bounds a dragged node's position, and",
+        "the paint-time saturation is now the second half of a stated rule rather than",
+        "the only one."
+      ],
+      "verification_bullets": [
+        "cargo test -p hello-node-lab: 20 passed. clippy with -D pedantic: clean.",
+        "The wire demo re-passed unchanged, which is the proof the coordinate change",
+        "preserved what a pointer reaches.",
+        "The render read back as a PNG: unchanged from R1653's.",
+        "5 counterfactuals re-run against the moved code, 5 caught."
+      ],
+      "impact_refs": [
+        "5.32",
+        "5.45"
+      ],
+      "carry_forward_bullets": [
+        "None. The bound is stated where a position is set rather than carried."
+      ],
+      "publishable_decision_summary": "R1653's own close audit: the world surface it introduced was a fixed pixel\nextent, so the range a node position could take SHRANK as the zoom grew, and a\nposition outside it saturated silently at paint time -- the card appeared in the\ncorner of the canvas with nothing saying why. A bound belongs where the position\nis SET. The surface is now stated in world units and scales with the zoom, so\nthe range is zoom-independent, and the drag clamps to it, so a node stops at the\nedge of the world where the user can see it stop.",
+      "publishable_changes_bullets": [
+        "examples/hello-node-lab: WORLD_ORIGIN and WORLD are world units and signed; the",
+        "surface's pixel size is derived from them by the zoom.",
+        "examples/hello-node-lab: clamp_to_world bounds a dragged node's position, and",
+        "the paint-time saturation is now the second half of a stated rule rather than",
+        "the only one."
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p hello-node-lab: 20 passed. clippy with -D pedantic: clean.",
+        "The wire demo re-passed unchanged, which is the proof the coordinate change",
+        "preserved what a pointer reaches.",
+        "The render read back as a PNG: unchanged from R1653's.",
+        "5 counterfactuals re-run against the moved code, 5 caught."
+      ],
+      "publishable_impact_refs": [
+        "5.32",
+        "5.45"
+      ],
+      "publishable_carry_forward_bullets": [
+        "None. The bound is stated where a position is set rather than carried."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
