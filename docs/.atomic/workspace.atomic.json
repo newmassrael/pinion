@@ -35912,6 +35912,44 @@
         "fontconfig is the Linux font path; macOS and Windows ignore it, so a measurement taken there is still host-dependent. A second platform needs the cache-level pin done properly, which means giving the own-fonts cache a family alias so text still shapes"
       ]
     },
+    "R1661": {
+      "decision_summary": "The two ink ratchets get a producer, so their numbers can be re-derived instead\nof remembered.\n\nWHY THE BUDGETS WENT STALE, WHICH IS THE POINT. R1656 measured 223 surfaces by\nhand, wrote the non-zero rows into `docs/containment-budget.tsv`, and left no\nway to do it again. A ratchet whose numbers cannot be re-derived is a ratchet\nnobody can re-judge: when the numbers turned out to be host-dependent (R1660),\nthere was nothing to re-run, and when a surface could not be measured there was\nnowhere to say so. Both failures are downstream of the same absence.\n\n`tools/measure_ink_budgets.py` is that derivation. It refuses to run with the\nfont pin off — `FONTCONFIG_FILE` already set means the numbers would be a fact\nabout one host again, which is exactly what R1660 removed. Its population is\nderived from the tree rather than listed, because a hand-written population\nreports a sample as coverage.\n\nTHE THIRD STATE. The files could say `<example>\\t<count>` and nothing else, so a\nsurface that could not be measured left no row, and no row reads as `0` — the\nstrictest budget there is, chosen by nobody. `hello-audio-device` cannot boot\nwithout `snd-dummy`; it was silently budgeted at 0 and CI, which loads that\ncard, measures 1. The generated files now carry\n`<example>\\tunmeasured\\t<reason>` as a first-class row: it passes the gate and\nREPORTS, and the reason travels with it so a host that can measure the surface\nis visibly owed a number rather than quietly clean.\n\nWHAT THIS ROUND DOES NOT FINISH, stated rather than implied. The full\nre-measurement is running and takes hours; the parsers in `rpc_verify.py` still\nread the two-state form; and the pin still has no gate, which is registered as\nits own debt because this session already walked into that trap once — an\nown-fonts cache that made three hosts agree by painting no text at all.\n\nAND ONE OBSERVATION THE MEASUREMENT ALREADY MADE. `hello-endpoint-identity`\nreported 2 escapes through the demo and 1 through this tool, both under the pin.\nA number that moves with the pin ON means that surface has a second source of\nnon-determinism — the font was not its only one. Recorded so the next round\nstarts from it rather than rediscovering it.",
+      "changes_bullets": [
+        "tools/measure_ink_budgets.py: the producer for docs/containment-budget.tsv and docs/text-smear-budget.tsv — refuses to run with the pin off, derives its population from the tree, emits the three-state form"
+      ],
+      "verification_bullets": [
+        "smoke-measured three surfaces against the live gate and the numbers agree with what the boot gate prints (hello-tabbed-chart 6, hello-endpoint-identity 1, hello-virtual-columns 0)",
+        "the refusal path is exercised: with FONTCONFIG_FILE set the tool exits rather than producing host-dependent numbers",
+        "the full run is in progress at 25 of 223 surfaces when this was committed"
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "THE ROUND IS NOT FINISHED and CI is still red; R1657-R1661 stay unpushed. Remaining: let the measurement finish and commit both files, teach rpc_verify.py's two parsers the three-state form, gate the pin (debt-the-font-pin-is-not-gated), then confirm on CI",
+        "the tool writes both files only at the very end, so a killed run produces nothing. Safe but not resumable — incremental output is worth adding when someone next waits two hours for it",
+        "hello-endpoint-identity moved 2 -> 1 under the pin, so that surface has a second source of non-determinism beyond the font"
+      ],
+      "publishable_decision_summary": "The two ink ratchets get a producer, so their numbers can be re-derived instead\nof remembered.\n\nWHY THE BUDGETS WENT STALE, WHICH IS THE POINT. R1656 measured 223 surfaces by\nhand, wrote the non-zero rows into `docs/containment-budget.tsv`, and left no\nway to do it again. A ratchet whose numbers cannot be re-derived is a ratchet\nnobody can re-judge: when the numbers turned out to be host-dependent (R1660),\nthere was nothing to re-run, and when a surface could not be measured there was\nnowhere to say so. Both failures are downstream of the same absence.\n\n`tools/measure_ink_budgets.py` is that derivation. It refuses to run with the\nfont pin off — `FONTCONFIG_FILE` already set means the numbers would be a fact\nabout one host again, which is exactly what R1660 removed. Its population is\nderived from the tree rather than listed, because a hand-written population\nreports a sample as coverage.\n\nTHE THIRD STATE. The files could say `<example>\\t<count>` and nothing else, so a\nsurface that could not be measured left no row, and no row reads as `0` — the\nstrictest budget there is, chosen by nobody. `hello-audio-device` cannot boot\nwithout `snd-dummy`; it was silently budgeted at 0 and CI, which loads that\ncard, measures 1. The generated files now carry\n`<example>\\tunmeasured\\t<reason>` as a first-class row: it passes the gate and\nREPORTS, and the reason travels with it so a host that can measure the surface\nis visibly owed a number rather than quietly clean.\n\nWHAT THIS ROUND DOES NOT FINISH, stated rather than implied. The full\nre-measurement is running and takes hours; the parsers in `rpc_verify.py` still\nread the two-state form; and the pin still has no gate, which is registered as\nits own debt because this session already walked into that trap once — an\nown-fonts cache that made three hosts agree by painting no text at all.\n\nAND ONE OBSERVATION THE MEASUREMENT ALREADY MADE. `hello-endpoint-identity`\nreported 2 escapes through the demo and 1 through this tool, both under the pin.\nA number that moves with the pin ON means that surface has a second source of\nnon-determinism — the font was not its only one. Recorded so the next round\nstarts from it rather than rediscovering it.",
+      "publishable_changes_bullets": [
+        "tools/measure_ink_budgets.py: the producer for docs/containment-budget.tsv and docs/text-smear-budget.tsv — refuses to run with the pin off, derives its population from the tree, emits the three-state form"
+      ],
+      "publishable_verification_bullets": [
+        "smoke-measured three surfaces against the live gate and the numbers agree with what the boot gate prints (hello-tabbed-chart 6, hello-endpoint-identity 1, hello-virtual-columns 0)",
+        "the refusal path is exercised: with FONTCONFIG_FILE set the tool exits rather than producing host-dependent numbers",
+        "the full run is in progress at 25 of 223 surfaces when this was committed"
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "THE ROUND IS NOT FINISHED and CI is still red; R1657-R1661 stay unpushed. Remaining: let the measurement finish and commit both files, teach rpc_verify.py's two parsers the three-state form, gate the pin (debt-the-font-pin-is-not-gated), then confirm on CI",
+        "the tool writes both files only at the very end, so a killed run produces nothing. Safe but not resumable — incremental output is worth adding when someone next waits two hours for it",
+        "hello-endpoint-identity moved 2 -> 1 under the pin, so that surface has a second source of non-determinism beyond the font"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
