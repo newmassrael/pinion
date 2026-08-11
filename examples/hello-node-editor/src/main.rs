@@ -440,7 +440,28 @@ const STORAGE_KEY: &str = "node_graph.state";
 // remembered: `PERSISTED_SHAPE_HISTORY` below is checked by
 // `pinion_core::test_fixtures::assert_persisted_shape`, so a shape change
 // cannot reach a commit without a new version.
-const PERSISTED_SCHEMA_VERSION: u32 = 9;
+// R1645 -> 10: a `Document` gained the links a source REPORTED and the
+// auto-discovery switch, so every saved graph changed shape.
+//
+// ★ THE CHOICE THE GATE FORCED, AND IT IS NOT THE OBVIOUS ONE. R1600 drew a
+// line — what the graph IS goes in the file, what it is DOING does not, which
+// is why a `Machine`'s registers are held beside the document rather than in
+// it — and a reported link could have been argued onto either side of it. It is
+// SAVED, because the whole value of the two-layer view is comparing a drawing
+// with what was seen, and a difference that evaporates when the file is closed
+// makes that a live-session-only feature. The residue that buys is stated
+// rather than hidden: an observation carries no time, so a reopened file shows
+// last week's drift exactly as it shows this minute's.
+//
+// Old blobs still LOAD — both new fields carry `serde(default)` — so this is a
+// shape change rather than a compatibility break, and the version says which.
+//
+// ★ AND THE GATE'S OWN MESSAGE CANNOT BE FOLLOWED LITERALLY, which cost one
+// round trip here: it prints "bump to N and append (N, <digest>)", but that
+// digest was taken over a sample carrying the OLD version number, so bumping
+// changes it. Bump first, then read the digest the gate prints on the SECOND
+// run. Recorded because the next person to add a field will hit it too.
+const PERSISTED_SCHEMA_VERSION: u32 = 10;
 
 /// R1599 — the append-only `(version, digest)` ledger the persistence gate
 /// reads. See `pinion_core::test_fixtures::assert_persisted_shape` for why it
@@ -450,7 +471,8 @@ const PERSISTED_SCHEMA_VERSION: u32 = 9;
 /// gate and no digest of them was ever taken, so there is none to record —
 /// writing one now would be inventing a measurement rather than reporting one.
 #[cfg(test)]
-const PERSISTED_SHAPE_HISTORY: &[(u32, u64)] = &[(9, 0xcf24_4e33_beee_b4c5)];
+const PERSISTED_SHAPE_HISTORY: &[(u32, u64)] =
+    &[(9, 0xcf24_4e33_beee_b4c5), (10, 0x9fed_b236_9417_723a)];
 
 /// R849 — where a newly added node first lands, and the per-add cascade step
 /// (in minted-id order) so repeated adds do not stack exactly.

@@ -34546,6 +34546,46 @@
         "One debt registered: debt-the-property-grid-is-an-example-not-a-crate. Its scope is deliberately narrower than the R935 audit that refused to extract three widgets at once — this is ONE widget with a named consumer, which is the condition R1645 showed makes a lift concrete rather than speculative."
       ]
     },
+    "R1647": {
+      "decision_summary": "stop-the-line: R1645 changed a persisted shape and did not say so. Adding the reported-link layer and the discovery switch to a Document changed what every saved graph looks like, because hello-node-editor's persisted type IS one -- `type Graph = Document<MaterialOp>` -- and the R1599 shape gate caught it in CI. Reproduced locally and deterministically, so it is not a flake. THE DECISION THE GATE FORCED IS THE INTERESTING PART AND IT IS NOT THE OBVIOUS ONE. R1600 drew a line: what the graph IS goes in the file, what it is DOING does not, which is why a Machine's registers live beside the document rather than inside it. A reported link could be argued onto either side of that line -- it is evidence about the world at a moment, which sounds like doing rather than being. It is SAVED, because the entire value of a two-layer view is comparing a drawing against what was seen, and a difference that evaporates when the file closes makes that a live-session-only feature. The residue that buys is stated rather than hidden: an observation carries no time, so a reopened file shows last week's drift exactly as it shows this minute's. Old blobs still LOAD, because both fields carry serde(default), so this is a shape change rather than a compatibility break and the version number is what says which. AND THE GATE'S OWN MESSAGE CANNOT BE FOLLOWED LITERALLY, which cost one round trip: it prints \"bump to N and append (N, <digest>)\", but that digest was taken over a sample carrying the OLD version number, so bumping changes it. Bump first, read the digest the gate prints on the SECOND run. Written into the comment beside the ledger, because the next person to add a field will hit it too. THE CONSUMER GATE DID NOT FAIL -- IT PREDICTED THIS EXACTLY. R1645's own pre-commit printed \"251 package(s) can be affected -- over the local cap of 12, so CI covers them\" and then printed the command, hello-node-editor included. The cap is stated design and agrees with the standing rule against local full sweeps. What is worth registering is the RADIUS: 251 is the whole workspace for a change whose crate reports no direct dependents, and the likeliest cause is that R1645 also edited a Cargo.toml -- so the act of making an example USE a crate is what turns off the gate that would catch the consequence, and that is precisely the edit this campaign keeps making. Registered with its diagnosis marked unverified, because a debt note written without a test is a guess.",
+      "changes_bullets": [
+        "`hello-node-editor`: `PERSISTED_SCHEMA_VERSION` 9 -> 10 and the shape ledger gains `(10, 0x9fed_b236_9417_723a)`, which is R1645's consequence declared rather than discovered by a user with an old file.",
+        "The comment beside the constant records WHY the reported layer is saved rather than held beside the document like a `Machine`, and what that costs: an observation carries no time, so a reopened file cannot say how old its drift is.",
+        "It also records that the gate's instruction cannot be followed literally — the digest it prints is taken before the bump it asks for, so it moves when you bump."
+      ],
+      "verification_bullets": [
+        "The failure reproduces locally and deterministically before the fix (`cargo test -p hello-node-editor r1599_the_persisted_shape`) and passes after: 255 tests, 0 failed.",
+        "Every example whose persisted shape could depend on `Document` was run, found by grep rather than by memory: hello-node-editor, hello-graph-diff, hello-node-flow, hello-node-groups — all pass. The other two shape-gated bindings, todomvc and settings-panel, pass unchanged.",
+        "clippy --all-targets on the touched package is clean; fmt clean."
+      ],
+      "impact_refs": [
+        "5.38",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "One debt registered, with its diagnosis marked unverified: debt-a-manifest-edit-disables-the-consumer-gate. The radius of 251 was observed; the Cargo.toml explanation for it was NOT measured, and the round that takes it should confirm that before building anything.",
+        "The saved observation carries no timestamp and no provenance, so a reopened file's drift has no age. Stated on the version comment rather than registered, because giving evidence a time is a model question this axis has not been asked."
+      ],
+      "publishable_decision_summary": "stop-the-line: R1645 changed a persisted shape and did not say so. Adding the reported-link layer and the discovery switch to a Document changed what every saved graph looks like, because hello-node-editor's persisted type IS one -- `type Graph = Document<MaterialOp>` -- and the R1599 shape gate caught it in CI. Reproduced locally and deterministically, so it is not a flake. THE DECISION THE GATE FORCED IS THE INTERESTING PART AND IT IS NOT THE OBVIOUS ONE. R1600 drew a line: what the graph IS goes in the file, what it is DOING does not, which is why a Machine's registers live beside the document rather than inside it. A reported link could be argued onto either side of that line -- it is evidence about the world at a moment, which sounds like doing rather than being. It is SAVED, because the entire value of a two-layer view is comparing a drawing against what was seen, and a difference that evaporates when the file closes makes that a live-session-only feature. The residue that buys is stated rather than hidden: an observation carries no time, so a reopened file shows last week's drift exactly as it shows this minute's. Old blobs still LOAD, because both fields carry serde(default), so this is a shape change rather than a compatibility break and the version number is what says which. AND THE GATE'S OWN MESSAGE CANNOT BE FOLLOWED LITERALLY, which cost one round trip: it prints \"bump to N and append (N, <digest>)\", but that digest was taken over a sample carrying the OLD version number, so bumping changes it. Bump first, read the digest the gate prints on the SECOND run. Written into the comment beside the ledger, because the next person to add a field will hit it too. THE CONSUMER GATE DID NOT FAIL -- IT PREDICTED THIS EXACTLY. R1645's own pre-commit printed \"251 package(s) can be affected -- over the local cap of 12, so CI covers them\" and then printed the command, hello-node-editor included. The cap is stated design and agrees with the standing rule against local full sweeps. What is worth registering is the RADIUS: 251 is the whole workspace for a change whose crate reports no direct dependents, and the likeliest cause is that R1645 also edited a Cargo.toml -- so the act of making an example USE a crate is what turns off the gate that would catch the consequence, and that is precisely the edit this campaign keeps making. Registered with its diagnosis marked unverified, because a debt note written without a test is a guess.",
+      "publishable_changes_bullets": [
+        "`hello-node-editor`: `PERSISTED_SCHEMA_VERSION` 9 -> 10 and the shape ledger gains `(10, 0x9fed_b236_9417_723a)`, which is R1645's consequence declared rather than discovered by a user with an old file.",
+        "The comment beside the constant records WHY the reported layer is saved rather than held beside the document like a `Machine`, and what that costs: an observation carries no time, so a reopened file cannot say how old its drift is.",
+        "It also records that the gate's instruction cannot be followed literally — the digest it prints is taken before the bump it asks for, so it moves when you bump."
+      ],
+      "publishable_verification_bullets": [
+        "The failure reproduces locally and deterministically before the fix (`cargo test -p hello-node-editor r1599_the_persisted_shape`) and passes after: 255 tests, 0 failed.",
+        "Every example whose persisted shape could depend on `Document` was run, found by grep rather than by memory: hello-node-editor, hello-graph-diff, hello-node-flow, hello-node-groups — all pass. The other two shape-gated bindings, todomvc and settings-panel, pass unchanged.",
+        "clippy --all-targets on the touched package is clean; fmt clean."
+      ],
+      "publishable_impact_refs": [
+        "5.38",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "One debt registered, with its diagnosis marked unverified: debt-a-manifest-edit-disables-the-consumer-gate. The radius of 251 was observed; the Cargo.toml explanation for it was NOT measured, and the round that takes it should confirm that before building anything.",
+        "The saved observation carries no timestamp and no provenance, so a reopened file's drift has no age. Stated on the version comment rather than registered, because giving evidence a time is a model question this axis has not been asked."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
