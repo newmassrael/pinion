@@ -160,9 +160,9 @@ const SNAP: i32 = 22;
 /// The surface is a fixed extent the canvas viewport slides over, so a
 /// coordinate on it is unsigned; the margin is what lets a node dragged to a
 /// negative world position, or a pan to the left, still land on it.
-const WORLD_ORIGIN: u32 = 2_000;
+const WORLD_ORIGIN: i32 = 2_000;
 /// The world surface's extent, both axes.
-const WORLD: u32 = WORLD_ORIGIN * 2 + 2_400;
+const WORLD: i32 = WORLD_ORIGIN * 2 + 2_400;
 
 // ── The reference's own colour tokens ───────────────────────────────────────
 
@@ -688,11 +688,33 @@ fn to_content(state: &LabState, cx: i32, cy: i32) -> (u32, u32) {
         reason = "a canvas point times a zoom is a pixel inside the world surface"
     )]
     let scale = |v: i32| (f64::from(v) * zoom) as i32;
-    let origin = i32::try_from(WORLD_ORIGIN).unwrap_or(0);
+    let origin = WORLD_ORIGIN;
+    // The margin is in WORLD units and scales with the surface, so the range a
+    // position may take does not shrink when the zoom grows. `clamp_to_world`
+    // is what keeps this conversion total; the saturation below is the
+    // belt-and-braces half of the same statement.
     (
-        u32::try_from(origin + scale(cx)).unwrap_or(0),
-        u32::try_from(origin + scale(cy)).unwrap_or(0),
+        u32::try_from(scale(origin + cx)).unwrap_or(0),
+        u32::try_from(scale(origin + cy)).unwrap_or(0),
     )
+}
+
+/// The range a node's world position may take.
+///
+/// ★ A bound stated where positions are SET, rather than a saturation where
+/// they are painted. The world surface is finite, so some answer has to be
+/// given for a position outside it, and a silent clamp at paint time is the bad
+/// one: the node keeps a coordinate nothing can draw and the card appears in
+/// the corner with no explanation. Clamping the drag says the same thing where
+/// the user can see it — the node stops at the edge of the world.
+const fn clamp_to_world(v: i32) -> i32 {
+    if v < -WORLD_ORIGIN {
+        -WORLD_ORIGIN
+    } else if v > WORLD - WORLD_ORIGIN {
+        WORLD - WORLD_ORIGIN
+    } else {
+        v
+    }
 }
 
 /// Where the world surface is held against the viewport, which is what the pan
@@ -710,15 +732,15 @@ fn to_content(state: &LabState, cx: i32, cy: i32) -> (u32, u32) {
 /// framework has that primitive, and using it also gives the pane the clipping
 /// it never had — panned content used to be painted over the palette and the
 /// inspector rather than cut off at the canvas edge.
-fn world_offset(pan: (i32, i32)) -> (i32, i32) {
-    let origin = i32::try_from(WORLD_ORIGIN).unwrap_or(i32::MAX);
+fn world_offset(state: &LabState, pan: (i32, i32)) -> (i32, i32) {
+    let origin = i32::try_from(scaled(state, WORLD_ORIGIN.unsigned_abs())).unwrap_or(i32::MAX);
     (origin - pan.0, origin - pan.1)
 }
 
 /// A window point in the coordinates the world surface is painted in.
 fn window_to_content(state: &LabState, px: u32, py: u32) -> (i64, i64) {
     let canvas = canvas_rect();
-    let (ox, oy) = world_offset(state.pan.get());
+    let (ox, oy) = world_offset(state, state.pan.get());
     (
         i64::from(px) - i64::from(canvas.x) + i64::from(ox),
         i64::from(py) - i64::from(canvas.y) + i64::from(oy),
@@ -741,7 +763,7 @@ fn window_to_content(state: &LabState, px: u32, py: u32) -> (i64, i64) {
 #[cfg(test)]
 fn content_to_window(state: &LabState, cx: i64, cy: i64) -> Option<(u32, u32)> {
     let canvas = canvas_rect();
-    let (ox, oy) = world_offset(state.pan.get());
+    let (ox, oy) = world_offset(state, state.pan.get());
     let x = cx - i64::from(ox) + i64::from(canvas.x);
     let y = cy - i64::from(oy) + i64::from(canvas.y);
     let (x, y) = (u32::try_from(x).ok()?, u32::try_from(y).ok()?);
@@ -1743,7 +1765,7 @@ fn canvas_grid(state: &LabState, ink: Ink) -> Vec<Scene> {
     // Only the slice of the surface the viewport is over: the pips are a
     // texture, and a texture over the whole 6,400-unit world would be a quarter
     // of a million nodes to lay out for the few thousand anybody can see.
-    let (ox, oy) = world_offset(state.pan.get());
+    let (ox, oy) = world_offset(state, state.pan.get());
     let first = |offset: i32| {
         let pitch = i32::try_from(pitch).unwrap_or(1);
         u32::try_from(offset - offset.rem_euclid(pitch)).unwrap_or(0)
@@ -2037,9 +2059,12 @@ fn canvas(state: &LabState, ink: Ink) -> Scene {
     let world = Scene::Container(
         ContainerNode::new(canvas_world(state, ink))
             .with_style(BoxStyle::filled(ink.bg))
-            .with_layout(LayoutStyle::new().with_size(Size::px(WORLD, WORLD))),
+            .with_layout(LayoutStyle::new().with_size(Size::px(
+                scaled(state, WORLD.unsigned_abs()).max(rect.w),
+                scaled(state, WORLD.unsigned_abs()).max(rect.h),
+            ))),
     );
-    let (ox, oy) = world_offset(state.pan.get());
+    let (ox, oy) = world_offset(state, state.pan.get());
     let viewport = Scene::Scroll(
         ScrollNode::new(Rect::new(0, 0, rect.w, rect.h), world)
             .with_axis(ScrollAxis::Both)
@@ -2809,6 +2834,10 @@ fn move_cursor(state: &Rc<LabState>, px: u32, py: u32) {
                 cx = (cx + SNAP / 2) / SNAP * SNAP;
                 cy = (cy + SNAP / 2) / SNAP * SNAP;
             }
+            // A node stops at the edge of the world rather than acquiring a
+            // position the surface cannot hold.
+            cx = clamp_to_world(cx);
+            cy = clamp_to_world(cy);
             if let Some(slot) = state
                 .doc
                 .borrow_mut()
