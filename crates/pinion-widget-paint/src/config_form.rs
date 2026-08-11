@@ -192,6 +192,17 @@ pub struct RowBox {
     /// Derived under [`RowWrap::WrapLong`], so a caller can see which rows the
     /// policy moved without re-measuring the text.
     pub wrapped: bool,
+    /// Where each option of a [`FieldType::Choice`] / [`FieldType::Flags`] row
+    /// landed, empty for every other shape.
+    ///
+    /// ★ R1651.1 — published because a consumer needs it and computing it a
+    /// second time is how R1651 shipped an option row whose second chip could
+    /// not be pressed: the painter laid the chips out content-hugging with a
+    /// gap and the consumer's hit test divided the control evenly, so the two
+    /// disagreed by the width of a word. The round's own headline claim is that
+    /// the paint and the hit test read ONE geometry; this is that claim made
+    /// true for the one row where it was not.
+    pub options: Vec<(String, Rect)>,
 }
 
 /// Where every part of a form landed.
@@ -367,8 +378,27 @@ fn lay_row(field: &ConfigField, at: (u32, u32), key_col: u32, style: &FormStyle)
             header,
             control,
             wrapped,
+            options: lay_options(field, control, style),
         }
     }
+}
+
+/// Where a row's options land inside its control — content-hugging, in order,
+/// separated by [`CHIP_GAP`], which is exactly what the painter draws.
+fn lay_options(field: &ConfigField, control: Rect, style: &FormStyle) -> Vec<(String, Rect)> {
+    let options = field.shape().options();
+    if options.is_empty() {
+        return Vec::new();
+    }
+    let text_style = TextStyle::new().with_size_px(style.key_px);
+    let mut x = control.x;
+    let mut placed = Vec::new();
+    for word in options {
+        let w = measured_key_width(word, &text_style, style.key_px) + CHIP_PAD * 2;
+        placed.push((word.to_string(), Rect::new(x, control.y, w, control.h)));
+        x += w + CHIP_GAP;
+    }
+    placed
 }
 
 /// The chips that add an offered key, wrapped into the pane's width.
@@ -603,12 +633,13 @@ fn view_control(
 ) -> Scene {
     {
         match field.shape() {
-            FieldType::Choice { of } | FieldType::Flags { of } => {
+            FieldType::Choice { .. } | FieldType::Flags { .. } => {
                 let chosen: Vec<&str> = field.value().split(',').map(str::trim).collect();
-                let chips: Vec<Scene> = of
+                let chips: Vec<Scene> = row
+                    .options
                     .iter()
-                    .map(|word| {
-                        let on = chosen.contains(&word.as_ref());
+                    .map(|(word, seat)| {
+                        let on = chosen.contains(&word.as_str());
                         let ink = if on {
                             theme.resolve(ColorRole::Accent)
                         } else {
@@ -616,7 +647,7 @@ fn view_control(
                         };
                         Scene::Container(
                             ContainerNode::new(vec![Scene::Text(TextNode::styled(
-                                word.to_string(),
+                                word.clone(),
                                 Rect::default(),
                                 TextStyle::new().with_size_px(10).with_fg(ink),
                             ))])
@@ -626,13 +657,25 @@ fn view_control(
                                     .with_corner_radius(6)
                                     .with_border(Border::new(ink, 1)),
                             )
-                            .with_layout(
+                            // ★ Placed from the SAME rectangle `RowBox::options`
+                            // publishes. R1651 laid these out with flex and let
+                            // its consumer divide the control evenly, so the
+                            // second chip could not be pressed — the round's own
+                            // one-geometry claim, false on the one row nobody
+                            // probed.
+                            // Relative to the CONTROL, which is this chip's
+                            // parent — an absolutely-placed child is positioned
+                            // against its own container, and passing the form's
+                            // origin here is the same double offset one level
+                            // down.
+                            .with_layout(placed(
                                 LayoutStyle::new()
                                     .flex(FlexDirection::Row)
                                     .with_align_items(AlignItems::Center)
-                                    .with_justify(JustifyContent::Center)
-                                    .with_padding(Rect::new(CHIP_PAD, 6, CHIP_PAD, 6)),
-                            ),
+                                    .with_justify(JustifyContent::Center),
+                                *seat,
+                                (row.control.x, row.control.y),
+                            )),
                         )
                     })
                     .collect();
@@ -640,11 +683,7 @@ fn view_control(
                     ContainerNode::new(chips)
                         .with_tag(format!("{tag_prefix}.control.{}", row.key))
                         .with_layout(placed(
-                            LayoutStyle::new()
-                                .flex(FlexDirection::Row)
-                                .with_align_items(AlignItems::Center)
-                                .with_gap(CHIP_GAP)
-                                .with_focusable(true),
+                            LayoutStyle::new().with_focusable(true),
                             row.control,
                             origin,
                         )),

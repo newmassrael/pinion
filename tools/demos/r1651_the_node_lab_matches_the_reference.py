@@ -326,34 +326,58 @@ def body() -> None:
         assert json.loads(q(tf, "verdict"))["may_launch"], "and repairing it reopens"
 
         # ── (H) Paint and gesture read ONE geometry, both directions ────────
-        # Forward: every painted control answers a press at the centre of the
-        # rectangle it was painted in. Backward: the press lands on THAT
-        # control and not on a neighbour.
-        probes = []
-        for node in spec["nodes"]:
-            probes.append((f"lab.node.{node['id']}", f"node:{node['id']}"))
-            probes.append((f"lab.pin.{node['id']}.dial", f"pin:{node['id']}:dial"))
-        for role in spec["roles"]:
-            probes.append((f"lab.palette.role.{role['name']}", f"role:{role['name']}"))
-        for field in spec["fields"]:
-            probes.append((f"lab.form.control.{field['key']}", f"field:{field['key']}"))
-        for key in spec["addable"]:
-            probes.append((f"lab.form.add.{key}", f"add:{key}"))
-        probes += [
-            ("lab.toolbar.zoom.in", "zoom:in"),
-            ("lab.toolbar.zoom.out", "zoom:out"),
-            ("lab.toolbar.config", "config"),
-            ("lab.toolbar.run", "run"),
-            ("lab.palette.discovery", "discovery"),
-        ]
+        # ★ R1651.1 — the probe list is DERIVED FROM THE PAINTED SCENE, not
+        # written out here. R1651 hand-listed it, and a hand-listed population
+        # makes "40 controls pass" read as coverage when it is a sample: an
+        # audit immediately found three controls the list did not name, and all
+        # three were broken. Every painted tag whose name the hit test can also
+        # produce must answer for ITSELF at the centre of the rectangle it was
+        # painted in, so a new control cannot join the screen unprobed.
+        def expected(tag: str) -> str | None:
+            """What a press at this tag's centre must answer, from the tag alone."""
+            for prefix, verb in (
+                ("lab.rail.", "rail"),
+                ("lab.palette.role.", "role"),
+                ("lab.form.add.", "add"),
+            ):
+                if tag.startswith(prefix):
+                    return f"{verb}:{tag[len(prefix):]}"
+            if tag.startswith("lab.form.control."):
+                return f"field:{tag[len('lab.form.control.'):]}"
+            if tag.startswith("lab.form.option."):
+                rest = tag[len("lab.form.option."):]
+                key, _, word = rest.rpartition(".")
+                return f"option:{key}:{word}"
+            if tag.startswith("lab.pin."):
+                node, _, side = tag[len("lab.pin."):].rpartition(".")
+                return f"pin:{node}:{side}"
+            if tag.startswith("lab.node.") and tag.count(".") == 2:
+                return f"node:{tag[len('lab.node.'):]}"
+            return {
+                "lab.toolbar.zoom.in": "zoom:in",
+                "lab.toolbar.zoom.out": "zoom:out",
+                "lab.toolbar.config": "config",
+                "lab.toolbar.run": "run",
+                "lab.palette.discovery": "discovery",
+            }.get(tag)
+
+        painted = tags(paint(tf))
+        probes = [(tag, want) for tag in sorted(painted)
+                  if (want := expected(tag)) is not None]
+        # A floor, so a regression that stops PAINTING a control shows up here
+        # rather than as a smaller number nobody reads.
+        assert len(probes) >= 55, f"the sweep found only {len(probes)} control(s)"
         wrong = []
-        for tag, expect in probes:
+        for tag, want in probes:
             answered = inv(tf, "point", at(tf, tag))
-            if answered != expect:
-                wrong.append((tag, expect, answered))
-        assert not wrong, f"{len(wrong)} control(s) are painted where a press does not reach them: {wrong}"
-        print(f"[H] {len(probes)} painted control(s) each answer a press at the "
-              f"centre of the rectangle they were painted in")
+            if answered != want:
+                wrong.append((tag, want, answered))
+        assert not wrong, (
+            f"{len(wrong)} of {len(probes)} painted control(s) are drawn where a "
+            f"press does not reach them: {wrong}"
+        )
+        print(f"[H] {len(probes)} painted control(s), DERIVED from the scene rather "
+              f"than listed, each answer a press at their painted centre")
 
         # ── (I) The gestures the hint strip advertises ──────────────────────
         # Every gesture the screen tells a person about has to work, or the

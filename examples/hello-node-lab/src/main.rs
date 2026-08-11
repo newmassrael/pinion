@@ -735,10 +735,24 @@ fn scaled(state: &LabState, v: u32) -> u32 {
 fn card_rows(state: &LabState, node: NodeId) -> Vec<(String, String)> {
     let name = state.name_of(node);
     if let Some(declared) = spec::NODES.iter().find(|n| n.id == name) {
+        // ★ R1651.1 — the KEYS are the specification's (they are a per-role
+        // digest, and which fields are worth showing is a design decision), but
+        // the VALUES are re-read from the form whenever the form has that path.
+        // They were the table's until an audit edited an endpoint and watched
+        // the card keep the old one: a card showing a frozen copy of the
+        // configuration is a second source, and the whole round argues against
+        // exactly that.
+        let forms = state.forms.borrow();
+        let form = forms.get(&node);
         return declared
             .rows
             .iter()
-            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .map(|(k, v)| {
+                let live = form
+                    .and_then(|f| digest_path(k).and_then(|path| f.field(path)))
+                    .map(|f| f.value().to_owned());
+                ((*k).to_owned(), live.unwrap_or_else(|| (*v).to_owned()))
+            })
             .collect();
     }
     state
@@ -752,6 +766,21 @@ fn card_rows(state: &LabState, node: NodeId) -> Vec<(String, String)> {
                 .map(|f| (f.key().to_owned(), f.value().to_owned()))
                 .collect()
         })
+}
+
+/// The configuration path a card's digest line is about, when it is about one.
+///
+/// A card row is a *label* a person reads at a glance (`listen`), and the form
+/// is keyed by the configuration path (`listen.endpoints`); this is the one
+/// mapping between them, so a digest line that names a path tracks it.
+const fn digest_path(key: &str) -> Option<&'static str> {
+    match key.as_bytes() {
+        b"listen" => Some("listen.endpoints"),
+        b"id" => Some("id"),
+        b"control" => Some("control.permissions"),
+        b"discovery" => Some("discovery.multicast"),
+        _ => None,
+    }
 }
 
 /// The width a node's card is drawn at, in canvas units.
@@ -843,16 +872,12 @@ impl Hit {
         if contains(inspector_rect(), px, py) {
             let geometry = inspector_geometry(state);
             for row in &geometry.rows {
-                if let Some(form) = selected_form(state) {
-                    if let Some(field) = form.field(&row.key) {
-                        for (word, rect) in option_rects(field, row.control) {
-                            if contains(rect, px, py) {
-                                return Self::Option {
-                                    key: row.key.clone(),
-                                    word,
-                                };
-                            }
-                        }
+                for (word, rect) in option_rects(row) {
+                    if contains(*rect, px, py) {
+                        return Self::Option {
+                            key: row.key.clone(),
+                            word: word.clone(),
+                        };
                     }
                 }
                 if contains(row.control, px, py) || contains(row.header, px, py) {
@@ -1116,28 +1141,14 @@ fn inspector_geometry(state: &LabState) -> FormGeometry {
     form_geometry(&form, (rect.x + PAD, rect.y + INSP_HEAD_H), &form_style())
 }
 
-/// The rectangles a flags/choice row's options occupy inside its control.
-fn option_rects(field: &ConfigField, control: Rect) -> Vec<(String, Rect)> {
-    let options = field.shape().options();
-    if options.is_empty() {
-        return Vec::new();
-    }
-    let gap = 6;
-    let each = control
-        .w
-        .saturating_sub(gap * u32::try_from(options.len().saturating_sub(1)).unwrap_or(0))
-        / u32::try_from(options.len().max(1)).unwrap_or(1);
-    options
-        .iter()
-        .enumerate()
-        .map(|(n, word)| {
-            let n = u32::try_from(n).unwrap_or(0);
-            (
-                word.to_string(),
-                Rect::new(control.x + n * (each + gap), control.y, each, control.h),
-            )
-        })
-        .collect()
+/// The rectangles a row's options occupy — **the painter's**, not a second
+/// copy.
+///
+/// R1651.1: this function used to divide the control evenly while the painter
+/// laid the chips out content-hugging, so the second chip of every option row
+/// answered for the first. `RowBox::options` is now published for exactly this.
+fn option_rects(row: &pinion_widget_paint::config_form::RowBox) -> &[(String, Rect)] {
+    &row.options
 }
 
 // ── Paint helpers ───────────────────────────────────────────────────────────
@@ -1256,9 +1267,16 @@ fn app_bar(state: &LabState, ink: Ink) -> Scene {
 }
 
 fn rail(ink: Ink) -> Scene {
+    let rect = rail_rect();
+    // ★ R1651.1 — LOCAL coordinates. These seats were painted at their window
+    // rectangles inside a container already placed at `rail_rect()`, so every
+    // one of them drew a pane-height below where the hit test looks and a press
+    // on `packets` answered `keys`. R1648's double-offset defect, again, in the
+    // one pane R1651's sweep did not probe.
+    let local = |r: Rect| Rect::new(r.x - rect.x, r.y - rect.y, r.w, r.h);
     let mut children = vec![];
     for (n, (name, locked)) in spec::RAIL.iter().enumerate() {
-        let seat = rail_seat(n);
+        let seat = local(rail_seat(n));
         let active = *name == spec::RAIL_ACTIVE;
         children.push(box_at(
             &format!("lab.rail.{name}"),
@@ -1280,13 +1298,7 @@ fn rail(ink: Ink) -> Scene {
             },
         ));
     }
-    panel(
-        "lab.rail",
-        rail_rect(),
-        ink.surface,
-        Some(ink.outline),
-        children,
-    )
+    panel("lab.rail", rect, ink.surface, Some(ink.outline), children)
 }
 
 fn palette(state: &LabState, ink: Ink) -> Scene {
