@@ -555,7 +555,7 @@ impl WidgetCore for ButtonFixture {
     fn read_state(scene: &Scene) -> Self::State {
         if let Scene::External(node) = scene
             && let Some(intro) = node.handle.introspect()
-            && let Some(IntrospectValue::Text(name)) = intro.query("state")
+            && let Ok(IntrospectValue::Text(name)) = intro.query("state")
         {
             return match name.as_str() {
                 "Hover" => ButtonState::Hover,
@@ -662,11 +662,11 @@ impl WidgetCore for ShadowingFixture {
         };
         let recorded = matches!(
             intro.query("in_flight"),
-            Some(IntrospectValue::Text(ref run)) if !run.is_empty(),
+            Ok(IntrospectValue::Text(ref run)) if !run.is_empty(),
         );
         let disabled = matches!(
             intro.query("state"),
-            Some(IntrospectValue::Text(ref name)) if name == "Disabled",
+            Ok(IntrospectValue::Text(ref name)) if name == "Disabled",
         );
         (recorded, disabled)
     }
@@ -822,7 +822,7 @@ impl WidgetCore for ScrollbarMultiFixture {
         scene
             .find_external_with_tag(<Self as WidgetCore>::tag())
             .and_then(|n| n.handle.introspect())
-            .and_then(|i| i.query("state"))
+            .and_then(|i| i.query("state").ok())
             .map_or(ButtonState::Idle, |v| match v {
                 IntrospectValue::Text(s) => {
                     <ButtonState as crate::WidgetStateName>::from_name_or_default(&s)
@@ -891,7 +891,7 @@ impl WidgetCore for ContextMenuFixture {
 
     fn read_state(scene: &Scene) -> Self::State {
         let open_query = |intro: &dyn crate::external::ExternalIntrospect, path: &str| {
-            if let Some(IntrospectValue::Float(v)) = intro.query(path) {
+            if let Ok(IntrospectValue::Float(v)) = intro.query(path) {
                 #[allow(
                     clippy::cast_possible_truncation,
                     reason = "anchor coords are window-local f32 values widened for the wire"
@@ -905,7 +905,7 @@ impl WidgetCore for ContextMenuFixture {
             .find_external_with_tag(Self::tag())
             .and_then(|n| n.handle.introspect())
             .map_or_else(ContextMenuFixtureState::default, |intro| {
-                let open = matches!(intro.query("open"), Some(IntrospectValue::Bool(true)));
+                let open = matches!(intro.query("open"), Ok(IntrospectValue::Bool(true)));
                 let anchor = match (open_query(intro, "open_x"), open_query(intro, "open_y")) {
                     (Some(x), Some(y)) => Some((x, y)),
                     _ => None,

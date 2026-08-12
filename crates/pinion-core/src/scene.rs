@@ -5257,7 +5257,9 @@ impl ImmediatePainter for RecordingImmediatePainter {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::external::{Backend, CountedExternal, External, IntrospectValue, StubExternal};
+    use crate::external::{
+        Backend, CountedExternal, External, IntrospectValue, ReadRefusal, StubExternal,
+    };
 
     fn stub_handle() -> Box<dyn External> {
         Box::new(StubExternal::new())
@@ -6343,7 +6345,7 @@ mod tests {
                     .handle
                     .introspect()
                     .expect("CountedExternal opts in to introspection");
-                assert_eq!(intro.query("count"), Some(IntrospectValue::Int(5)));
+                assert_eq!(intro.query("count"), Ok(IntrospectValue::Int(5)));
             }
             _ => panic!("expected External variant"),
         }
@@ -7547,8 +7549,10 @@ mod tests {
                     const { &[crate::external::SchemaField::new("count", "int")] },
                 )
             }
-            fn query(&self, path: &str) -> Option<IntrospectValue> {
-                (path == "count").then_some(IntrospectValue::Int(self.count))
+            fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
+                (path == "count")
+                    .then_some(IntrospectValue::Int(self.count))
+                    .ok_or(ReadRefusal::UnknownPath)
             }
             fn intervene(
                 &mut self,
@@ -7560,7 +7564,7 @@ mod tests {
         }
         let driver = CountedDriver { count: 5 };
         let introspect = driver.introspect().expect("opt-in declared");
-        assert_eq!(introspect.query("count"), Some(IntrospectValue::Int(5)),);
+        assert_eq!(introspect.query("count"), Ok(IntrospectValue::Int(5)),);
     }
 
     // ── ImmediateModeNode helper API ───────────────────────────────
@@ -7633,7 +7637,7 @@ mod tests {
         handle_b.borrow_mut().tick(Duration::from_millis(17));
         // Concrete read through the original `Rc`.
         assert_eq!(driver.borrow().tick_count, 2);
-        assert_eq!(driver.borrow().accumulated_dt, Duration::from_millis(33));
+        assert_eq!(driver.borrow().accumulated_dt, Duration::from_millis(33),);
     }
 
     #[test]

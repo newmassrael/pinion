@@ -49,7 +49,8 @@ use std::rc::Rc;
 use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -328,24 +329,27 @@ impl ExternalIntrospect for PresetCommandExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
             "names" => {
                 let names: Vec<String> =
                     self.sig.presets.get().into_iter().map(|(n, _)| n).collect();
-                Some(IntrospectValue::Json(serde_json::json!(names)))
+                Ok(IntrospectValue::Json(serde_json::json!(names)))
             }
-            "active" => Some(IntrospectValue::Text(self.sig.active.get())),
-            "status" => Some(IntrospectValue::Text(self.sig.status.get())),
-            "count" => Some(IntrospectValue::Int(
+            "active" => Ok(IntrospectValue::Text(self.sig.active.get())),
+            "status" => Ok(IntrospectValue::Text(self.sig.status.get())),
+            "count" => Ok(IntrospectValue::Int(
                 i64::try_from(self.sig.presets.get().len()).unwrap_or(i64::MAX),
             )),
+            // R1667 — a preset surface with no topology yet is declared and
+            // unanswerable, not a path that does not exist.
             "active_blob" => self
                 .sig
                 .topology
                 .get()
-                .map(|t| IntrospectValue::Text(serialize_topology(&t))),
-            _ => None,
+                .map(|t| IntrospectValue::Text(serialize_topology(&t)))
+                .ok_or_else(|| ReadRefusal::unavailable("no topology is active")),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 

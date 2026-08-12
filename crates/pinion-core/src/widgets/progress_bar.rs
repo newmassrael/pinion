@@ -38,7 +38,7 @@ use std::rc::Rc;
 use crate::animation::Tickable;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, ReadRefusal, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use crate::reactive::{Owner, Signal};
 
@@ -171,17 +171,17 @@ impl ExternalIntrospect for ProgressBarExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "value" => Some(IntrospectValue::Float(f64::from(self.value))),
+            "value" => Ok(IntrospectValue::Float(f64::from(self.value))),
             // The normalized range is fixed: a progress bar always
             // reports its fraction against `[0, 1]` (matching the
             // `AccessValue::Float` min/max the binding lowers).
-            "min" => Some(IntrospectValue::Float(0.0)),
-            "max" => Some(IntrospectValue::Float(1.0)),
+            "min" => Ok(IntrospectValue::Float(0.0)),
+            "max" => Ok(IntrospectValue::Float(1.0)),
             // R726 §5.38 — busy/determinate flag, AI-readable as data.
-            "indeterminate" => Some(IntrospectValue::Bool(self.indeterminate)),
-            _ => None,
+            "indeterminate" => Ok(IntrospectValue::Bool(self.indeterminate)),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -368,10 +368,10 @@ mod tests {
     #[test]
     fn query_reports_value_and_fixed_range() {
         let p = ProgressBarExternal::with_value(0.75);
-        assert_eq!(p.query("value"), Some(IntrospectValue::Float(0.75)));
-        assert_eq!(p.query("min"), Some(IntrospectValue::Float(0.0)));
-        assert_eq!(p.query("max"), Some(IntrospectValue::Float(1.0)));
-        assert_eq!(p.query("nope"), None);
+        assert_eq!(p.query("value"), Ok(IntrospectValue::Float(0.75)));
+        assert_eq!(p.query("min"), Ok(IntrospectValue::Float(0.0)));
+        assert_eq!(p.query("max"), Ok(IntrospectValue::Float(1.0)));
+        assert_eq!(p.query("nope"), Err(ReadRefusal::UnknownPath));
     }
 
     #[test]
@@ -437,7 +437,7 @@ mod tests {
         p.intervene("indeterminate", IntrospectValue::Bool(true))
             .expect("bool accepted");
         assert!(p.indeterminate());
-        assert_eq!(p.query("indeterminate"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(p.query("indeterminate"), Ok(IntrospectValue::Bool(true)));
         // Reporting a concrete fraction returns to determinate.
         p.set_value(0.5);
         assert!(!p.indeterminate());

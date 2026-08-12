@@ -115,8 +115,8 @@ use pinion_core::composite_tag::prefixed_index;
 use pinion_core::directory::{Directory, InMemoryDirectory};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, CaptureNormalize, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
-    SchemaField, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
+    SchemaArg, SchemaField, ThreadOwnership,
 };
 use pinion_core::input::{DRAG_CLICK_THRESHOLD_PX, DragCalibration};
 use pinion_core::reactive::{Owner, Signal, batch};
@@ -2209,6 +2209,111 @@ impl PropertyGridExternal {
             _ => IntrospectValue::Null,
         }
     }
+
+    /// R1667 — the `<slot>.<addr>` half of `query`: every per-leaf and
+    /// per-element read.
+    ///
+    /// Split out because stating a bound is what made the combined function
+    /// outgrow its line ceiling — each arm now names the range it refused
+    /// against, where before every one of them answered the same word as a
+    /// slot this grid does not publish.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReadRefusal`] per the variants there.
+    fn query_addressed(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
+        // R919 / R936 — is the leaf at `<addr>` modified from its class
+        // default? A scalar index ("modified.6") reads the flat baseline;
+        // an element address ("modified.elem.2") reads the array baseline.
+        if let Some(addr) = path.strip_prefix("modified.") {
+            return match row_ref(addr).ok_or(ReadRefusal::QueryTypeMismatch)? {
+                ValueRef::Scalar(i) => (i < self.count())
+                    .then(|| IntrospectValue::Bool(self.is_modified(i)))
+                    .ok_or_else(|| outside("property", i, self.count())),
+                ValueRef::Elem(k) => (k < self.array_len())
+                    .then(|| IntrospectValue::Bool(self.element_is_modified(k)))
+                    .ok_or_else(|| outside("element", k, self.array_len())),
+            };
+        }
+        // R931 — `name.<addr>` / `kind.<addr>` / `value.<addr>` address
+        // either a scalar leaf (a bare decimal) or an array element
+        // (`elem.<k>`), the same `ValueRef` vocabulary the wire uses
+        // throughout: the read shape is identical for both.
+        if let Some(addr) = path.strip_prefix("name.") {
+            return match row_ref(addr).ok_or(ReadRefusal::QueryTypeMismatch)? {
+                ValueRef::Scalar(i) => PROPERTY_NAMES
+                    .get(i)
+                    .map(|name| IntrospectValue::Text((*name).to_owned()))
+                    .ok_or_else(|| outside("property", i, PROPERTY_NAMES.len())),
+                ValueRef::Elem(k) => (k < self.array_len())
+                    .then(|| IntrospectValue::Text(format!("{ARRAY_LABEL} [{k}]")))
+                    .ok_or_else(|| outside("element", k, self.array_len())),
+            };
+        }
+        if let Some(addr) = path.strip_prefix("kind.") {
+            let value = self
+                .value_at(row_ref(addr).ok_or(ReadRefusal::QueryTypeMismatch)?)
+                .ok_or_else(|| ReadRefusal::no_such_member(format!("no leaf at `{addr}`")))?;
+            return Ok(IntrospectValue::Text(value.kind().name().to_owned()));
+        }
+        if let Some(addr) = path.strip_prefix("value.") {
+            let value = self
+                .value_at(row_ref(addr).ok_or(ReadRefusal::QueryTypeMismatch)?)
+                .ok_or_else(|| ReadRefusal::no_such_member(format!("no leaf at `{addr}`")))?;
+            return Ok(value.to_introspect());
+        }
+        // R964 — the bounded scalar's `"<lo>..<hi>"` interval, or
+        // `"none"` for an unranged leaf / array element. The AI reads the
+        // bounds before a `value.<i>` write (the clamp would otherwise be
+        // silent), the §2#7 scene-as-data peer of the painted gauge. The
+        // wire mirrors the data-grid R894 `col_range.<col>` sibling
+        // (`"0..1000"` / `"none"`) so one range format reads across both
+        // DCC widgets.
+        if let Some(addr) = path.strip_prefix("range.") {
+            return Ok(IntrospectValue::Text(
+                match row_ref(addr).ok_or(ReadRefusal::QueryTypeMismatch)? {
+                    ValueRef::Scalar(i) => scalar_range(i)
+                        .map_or_else(|| "none".to_owned(), |(lo, hi)| format!("{lo}..{hi}")),
+                    ValueRef::Elem(_) => "none".to_owned(),
+                },
+            ));
+        }
+        // R921 — a branch's collapse flag, by node id (`expanded.cat:…`
+        // / `expanded.struct:…`). Null for a leaf / unknown id.
+        if let Some(id) = path.strip_prefix("expanded.") {
+            let tree = self.tree.get();
+            return Ok(find_node(&tree, id)
+                .filter(|n| !n.children.is_empty())
+                .map_or(IntrospectValue::Null, |n| IntrospectValue::Bool(n.expanded)));
+        }
+        // R921 — a struct's collapsed-summary tuple (`struct_summary.struct.Position`).
+        if let Some(id) = path.strip_prefix("struct_summary.") {
+            if struct_field_indices(&self.tree.get(), id).is_empty() {
+                return Ok(IntrospectValue::Null);
+            }
+            return Ok(IntrospectValue::Text(self.struct_summary(id)));
+        }
+        // R921 — whether any of a struct's fields is modified.
+        if let Some(id) = path.strip_prefix("struct_modified.") {
+            if struct_field_indices(&self.tree.get(), id).is_empty() {
+                return Ok(IntrospectValue::Null);
+            }
+            return Ok(IntrospectValue::Bool(self.struct_modified(id)));
+        }
+        // R936 — whether the array branch is modified (length or any
+        // element), keyed by its branch id; the array peer of
+        // `struct_modified.<id>`. Null for any id but the array branch.
+        if let Some(id) = path.strip_prefix("array_modified.") {
+            return (id == ARR_BRANCH_ID)
+                .then(|| IntrospectValue::Bool(self.array_modified()))
+                .ok_or_else(|| {
+                    ReadRefusal::no_such_member(format!(
+                        "`{id}` is not the array branch (`{ARR_BRANCH_ID}`)"
+                    ))
+                });
+        }
+        Err(ReadRefusal::UnknownPath)
+    }
 }
 
 impl core::fmt::Debug for PropertyGridExternal {
@@ -2266,6 +2371,16 @@ impl External for PropertyGridExternal {
     fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
         Some(self)
     }
+}
+
+/// R1667 — the refusal an out-of-range property address owes its caller.
+///
+/// This grid addresses two spaces (`<i>` a scalar leaf, `elem.<k>` an array
+/// element) and bounds both at half a dozen sites; before this round every one
+/// of them answered a bare `None`, indistinguishable on the wire from asking
+/// for a slot the grid does not publish at all.
+fn outside(what: &str, i: usize, len: usize) -> ReadRefusal {
+    ReadRefusal::no_such_member(format!("{what} {i} is outside 0..{len}"))
 }
 
 impl ExternalIntrospect for PropertyGridExternal {
@@ -2375,15 +2490,15 @@ impl ExternalIntrospect for PropertyGridExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "row_count" => Some(IntrospectValue::Int(
+            "row_count" => Ok(IntrospectValue::Int(
                 i64::try_from(self.count()).expect("row count fits in i64"),
             )),
             // R921.1 — gated on `editing_if_visible`: an edit whose row is
             // collapsed / filtered out of the flatten reports Null (it paints
             // nowhere, so advertising it would be an R901.1 introspection lie).
-            "editing" => Some(IntrospectValue::Json(match self.editing_if_visible() {
+            "editing" => Ok(IntrospectValue::Json(match self.editing_if_visible() {
                 // R931 — the editing leaf's **node id** (a scalar "6" or an
                 // `elem.2`), the same addressing vocabulary `cursor` uses, so a
                 // scalar and an array element are reported uniformly.
@@ -2393,7 +2508,7 @@ impl ExternalIntrospect for PropertyGridExternal {
             // R921.1 — Null unless the open popup's row is visible (same gate):
             // a popup hidden by a collapse / filter paints no panel, so its
             // cursor is not reported either.
-            "popup_cursor" => Some(
+            "popup_cursor" => Ok(
                 match self.editing_if_visible().and(self.popup_cursor.get()) {
                     Some(i) => {
                         IntrospectValue::Int(i64::try_from(i).expect("cursor index fits in i64"))
@@ -2401,101 +2516,19 @@ impl ExternalIntrospect for PropertyGridExternal {
                     None => IntrospectValue::Null,
                 },
             ),
-            "scrubbing" => Some(IntrospectValue::Bool(self.is_scrubbing())),
+            "scrubbing" => Ok(IntrospectValue::Bool(self.is_scrubbing())),
             // R921 — the roving cursor's node id (Null when unset).
-            "cursor" => Some(
-                self.cursor
-                    .get()
-                    .map_or(IntrospectValue::Null, IntrospectValue::Text),
-            ),
+            "cursor" => Ok(self
+                .cursor
+                .get()
+                .map_or(IntrospectValue::Null, IntrospectValue::Text)),
             // R919 — any property modified from its default (the dirty read).
-            "any_modified" => Some(IntrospectValue::Bool(self.any_modified())),
+            "any_modified" => Ok(IntrospectValue::Bool(self.any_modified())),
             // R931 — the array element count (the dynamic-collection length).
-            "elem_count" => Some(IntrospectValue::Int(
+            "elem_count" => Ok(IntrospectValue::Int(
                 i64::try_from(self.array_len()).expect("element count fits in i64"),
             )),
-            _ => {
-                // R919 / R936 — is the leaf at `<addr>` modified from its class
-                // default? A scalar index ("modified.6") reads the flat baseline;
-                // an element address ("modified.elem.2") reads the array baseline.
-                // Out-of-range -> `None`, like the other `<addr>` reads.
-                if let Some(addr) = path.strip_prefix("modified.") {
-                    return match row_ref(addr)? {
-                        ValueRef::Scalar(i) => {
-                            (i < self.count()).then(|| IntrospectValue::Bool(self.is_modified(i)))
-                        }
-                        ValueRef::Elem(k) => (k < self.array_len())
-                            .then(|| IntrospectValue::Bool(self.element_is_modified(k))),
-                    };
-                }
-                // R931 — `name.<addr>` / `kind.<addr>` / `value.<addr>` address
-                // either a scalar leaf (a bare decimal) or an array element
-                // (`elem.<k>`), the same `ValueRef` vocabulary the wire uses
-                // throughout: the read shape is identical for both.
-                if let Some(addr) = path.strip_prefix("name.") {
-                    return match row_ref(addr)? {
-                        ValueRef::Scalar(i) => PROPERTY_NAMES
-                            .get(i)
-                            .map(|name| IntrospectValue::Text((*name).to_owned())),
-                        ValueRef::Elem(k) => (k < self.array_len())
-                            .then(|| IntrospectValue::Text(format!("{ARRAY_LABEL} [{k}]"))),
-                    };
-                }
-                if let Some(addr) = path.strip_prefix("kind.") {
-                    let value = self.value_at(row_ref(addr)?)?;
-                    return Some(IntrospectValue::Text(value.kind().name().to_owned()));
-                }
-                if let Some(addr) = path.strip_prefix("value.") {
-                    let value = self.value_at(row_ref(addr)?)?;
-                    return Some(value.to_introspect());
-                }
-                // R964 — the bounded scalar's `"<lo>..<hi>"` interval, or
-                // `"none"` for an unranged leaf / array element. The AI reads the
-                // bounds before a `value.<i>` write (the clamp would otherwise be
-                // silent), the §2#7 scene-as-data peer of the painted gauge. The
-                // wire mirrors the data-grid R894 `col_range.<col>` sibling
-                // (`"0..1000"` / `"none"`) so one range format reads across both
-                // DCC widgets.
-                if let Some(addr) = path.strip_prefix("range.") {
-                    return Some(IntrospectValue::Text(match row_ref(addr)? {
-                        ValueRef::Scalar(i) => scalar_range(i)
-                            .map_or_else(|| "none".to_owned(), |(lo, hi)| format!("{lo}..{hi}")),
-                        ValueRef::Elem(_) => "none".to_owned(),
-                    }));
-                }
-                // R921 — a branch's collapse flag, by node id (`expanded.cat:…`
-                // / `expanded.struct:…`). Null for a leaf / unknown id.
-                if let Some(id) = path.strip_prefix("expanded.") {
-                    let tree = self.tree.get();
-                    return Some(
-                        find_node(&tree, id)
-                            .filter(|n| !n.children.is_empty())
-                            .map_or(IntrospectValue::Null, |n| IntrospectValue::Bool(n.expanded)),
-                    );
-                }
-                // R921 — a struct's collapsed-summary tuple (`struct_summary.struct.Position`).
-                if let Some(id) = path.strip_prefix("struct_summary.") {
-                    if struct_field_indices(&self.tree.get(), id).is_empty() {
-                        return Some(IntrospectValue::Null);
-                    }
-                    return Some(IntrospectValue::Text(self.struct_summary(id)));
-                }
-                // R921 — whether any of a struct's fields is modified.
-                if let Some(id) = path.strip_prefix("struct_modified.") {
-                    if struct_field_indices(&self.tree.get(), id).is_empty() {
-                        return Some(IntrospectValue::Null);
-                    }
-                    return Some(IntrospectValue::Bool(self.struct_modified(id)));
-                }
-                // R936 — whether the array branch is modified (length or any
-                // element), keyed by its branch id; the array peer of
-                // `struct_modified.<id>`. Null for any id but the array branch.
-                if let Some(id) = path.strip_prefix("array_modified.") {
-                    return (id == ARR_BRANCH_ID)
-                        .then(|| IntrospectValue::Bool(self.array_modified()));
-                }
-                None
-            }
+            _ => self.query_addressed(path),
         }
     }
 
@@ -4799,33 +4832,35 @@ mod tests {
             let mut scene = boot_scene();
             assert_eq!(
                 grid_intro(&scene).query("any_modified"),
-                Some(IntrospectValue::Bool(false)),
+                Ok(IntrospectValue::Bool(false)),
                 "boot: clean"
             );
             assert_eq!(
                 grid_intro(&scene).query("modified.4"),
-                Some(IntrospectValue::Bool(false))
+                Ok(IntrospectValue::Bool(false))
             );
             with_grid_mut(&mut scene, |i| {
                 i.intervene("value.4", IntrospectValue::Int(17)).unwrap();
             });
             assert_eq!(
                 grid_intro(&scene).query("modified.4"),
-                Some(IntrospectValue::Bool(true)),
+                Ok(IntrospectValue::Bool(true)),
                 "an edited value is modified"
             );
             assert_eq!(
                 grid_intro(&scene).query("any_modified"),
-                Some(IntrospectValue::Bool(true))
+                Ok(IntrospectValue::Bool(true))
             );
             assert_eq!(
                 grid_intro(&scene).query("modified.6"),
-                Some(IntrospectValue::Bool(false)),
+                Ok(IntrospectValue::Bool(false)),
                 "an untouched row stays clean"
             );
-            assert_eq!(
-                grid_intro(&scene).query("modified.99"),
-                None,
+            assert!(
+                matches!(
+                    grid_intro(&scene).query("modified.99"),
+                    Err(ReadRefusal::NoSuchMember(_))
+                ),
                 "out-of-range modified -> None"
             );
             // Reset restores the default and clears modified.
@@ -4836,16 +4871,16 @@ mod tests {
             );
             assert_eq!(
                 grid_intro(&scene).query("value.4"),
-                Some(IntrospectValue::Int(3)),
+                Ok(IntrospectValue::Int(3)),
                 "reset restored the default"
             );
             assert_eq!(
                 grid_intro(&scene).query("modified.4"),
-                Some(IntrospectValue::Bool(false))
+                Ok(IntrospectValue::Bool(false))
             );
             assert_eq!(
                 grid_intro(&scene).query("any_modified"),
-                Some(IntrospectValue::Bool(false))
+                Ok(IntrospectValue::Bool(false))
             );
             // Resetting an already-default row is a no-op `false`.
             assert_eq!(
@@ -4871,7 +4906,7 @@ mod tests {
             });
             assert_eq!(
                 grid_intro(&scene).query("modified.4"),
-                Some(IntrospectValue::Bool(true))
+                Ok(IntrospectValue::Bool(true))
             );
             // An AT Click on the reset button child resets the row to its default.
             assert!(
@@ -4885,7 +4920,7 @@ mod tests {
             );
             assert_eq!(
                 grid_intro(&scene).query("modified.4"),
-                Some(IntrospectValue::Bool(false)),
+                Ok(IntrospectValue::Bool(false)),
                 "the AT reset restored the row to its default",
             );
             // A non-control Click (a bare leaf row id) falls through (no prefix).
@@ -4915,7 +4950,7 @@ mod tests {
             });
             assert_eq!(
                 grid_intro(&scene).query("any_modified"),
-                Some(IntrospectValue::Bool(true))
+                Ok(IntrospectValue::Bool(true))
             );
             assert_eq!(
                 with_grid_mut(&mut scene, |i| i.invoke("reset_all", IntrospectValue::Null)),
@@ -4924,22 +4959,22 @@ mod tests {
             );
             assert_eq!(
                 grid_intro(&scene).query("value.4"),
-                Some(IntrospectValue::Int(3)),
+                Ok(IntrospectValue::Int(3)),
                 "Int restored"
             );
             assert_eq!(
                 grid_intro(&scene).query("value.6"),
-                Some(IntrospectValue::Float(12.5)),
+                Ok(IntrospectValue::Float(12.5)),
                 "Float restored"
             );
             assert_eq!(
                 grid_intro(&scene).query("value.2"),
-                Some(IntrospectValue::Bool(true)),
+                Ok(IntrospectValue::Bool(true)),
                 "Bool restored"
             );
             assert_eq!(
                 grid_intro(&scene).query("any_modified"),
-                Some(IntrospectValue::Bool(false))
+                Ok(IntrospectValue::Bool(false))
             );
             assert_eq!(
                 with_grid_mut(&mut scene, |i| i.invoke("reset_all", IntrospectValue::Null)),
@@ -5018,12 +5053,12 @@ mod tests {
             );
             assert_eq!(
                 grid_intro(&scene).query("value.4"),
-                Some(IntrospectValue::Int(3)),
+                Ok(IntrospectValue::Int(3)),
                 "Delete reset the cursor row"
             );
             assert_eq!(
                 grid_intro(&scene).query("modified.4"),
-                Some(IntrospectValue::Bool(false))
+                Ok(IntrospectValue::Bool(false))
             );
         });
     }
@@ -5043,12 +5078,12 @@ mod tests {
             });
             assert_eq!(
                 grid_intro(&scene).query("value.4"),
-                Some(IntrospectValue::Int(3)),
+                Ok(IntrospectValue::Int(3)),
                 "the arrow click reset the row"
             );
             assert_eq!(
                 grid_intro(&scene).query("modified.4"),
-                Some(IntrospectValue::Bool(false))
+                Ok(IntrospectValue::Bool(false))
             );
         });
     }
@@ -5063,7 +5098,7 @@ mod tests {
             let mut scene = boot_scene();
             assert_eq!(
                 grid_intro(&scene).query("modified.elem.0"),
-                Some(IntrospectValue::Bool(false)),
+                Ok(IntrospectValue::Bool(false)),
                 "boot: clean"
             );
             with_grid_mut(&mut scene, |i| {
@@ -5072,17 +5107,19 @@ mod tests {
             });
             assert_eq!(
                 grid_intro(&scene).query("modified.elem.0"),
-                Some(IntrospectValue::Bool(true)),
+                Ok(IntrospectValue::Bool(true)),
                 "an edited element is modified"
             );
             assert_eq!(
                 grid_intro(&scene).query("modified.elem.1"),
-                Some(IntrospectValue::Bool(false)),
+                Ok(IntrospectValue::Bool(false)),
                 "a sibling element stays clean"
             );
-            assert_eq!(
-                grid_intro(&scene).query("modified.elem.9"),
-                None,
+            assert!(
+                matches!(
+                    grid_intro(&scene).query("modified.elem.9"),
+                    Err(ReadRefusal::NoSuchMember(_))
+                ),
                 "out-of-range element modified -> None"
             );
             // The unified `reset` funnel takes an element node id, like the click.
@@ -5094,12 +5131,12 @@ mod tests {
             );
             assert_eq!(
                 grid_intro(&scene).query("value.elem.0"),
-                Some(IntrospectValue::Float(1.0)),
+                Ok(IntrospectValue::Float(1.0)),
                 "reset restored the default"
             );
             assert_eq!(
                 grid_intro(&scene).query("modified.elem.0"),
-                Some(IntrospectValue::Bool(false))
+                Ok(IntrospectValue::Bool(false))
             );
             assert_eq!(
                 with_grid_mut(&mut scene, |i| i
@@ -5120,12 +5157,14 @@ mod tests {
             let arr_q = format!("array_modified.{ARR_BRANCH_ID}");
             assert_eq!(
                 grid_intro(&scene).query(&arr_q),
-                Some(IntrospectValue::Bool(false)),
+                Ok(IntrospectValue::Bool(false)),
                 "boot: array clean"
             );
-            assert_eq!(
-                grid_intro(&scene).query("array_modified.struct.Position"),
-                None,
+            assert!(
+                matches!(
+                    grid_intro(&scene).query("array_modified.struct.Position"),
+                    Err(ReadRefusal::NoSuchMember(_))
+                ),
                 "only the array branch id is valid"
             );
             // (a) an element edit makes the branch modified; reset clears it.
@@ -5135,7 +5174,7 @@ mod tests {
             });
             assert_eq!(
                 grid_intro(&scene).query(&arr_q),
-                Some(IntrospectValue::Bool(true)),
+                Ok(IntrospectValue::Bool(true)),
                 "edited element -> array modified"
             );
             with_grid_mut(&mut scene, |i| {
@@ -5144,7 +5183,7 @@ mod tests {
             });
             assert_eq!(
                 grid_intro(&scene).query(&arr_q),
-                Some(IntrospectValue::Bool(false)),
+                Ok(IntrospectValue::Bool(false)),
                 "element reset -> array clean"
             );
             // (b) a length change makes the branch modified; `reset_array` restores
@@ -5158,7 +5197,7 @@ mod tests {
             });
             assert_eq!(
                 grid_intro(&scene).query(&arr_q),
-                Some(IntrospectValue::Bool(true)),
+                Ok(IntrospectValue::Bool(true)),
                 "length + content differ"
             );
             assert_eq!(
@@ -5169,17 +5208,17 @@ mod tests {
             );
             assert_eq!(
                 grid_intro(&scene).query("elem_count"),
-                Some(IntrospectValue::Int(3)),
+                Ok(IntrospectValue::Int(3)),
                 "length restored"
             );
             assert_eq!(
                 grid_intro(&scene).query("value.elem.0"),
-                Some(IntrospectValue::Float(1.0)),
+                Ok(IntrospectValue::Float(1.0)),
                 "content restored"
             );
             assert_eq!(
                 grid_intro(&scene).query(&arr_q),
-                Some(IntrospectValue::Bool(false))
+                Ok(IntrospectValue::Bool(false))
             );
             assert_eq!(
                 with_grid_mut(&mut scene, |i| i
@@ -5310,7 +5349,7 @@ mod tests {
             });
             assert_eq!(
                 grid_intro(&scene).query("value.elem.0"),
-                Some(IntrospectValue::Float(1.0)),
+                Ok(IntrospectValue::Float(1.0)),
                 "element arrow click reset it"
             );
             // Array branch arrow click (after a length change).
@@ -5325,12 +5364,12 @@ mod tests {
             });
             assert_eq!(
                 grid_intro(&scene).query("elem_count"),
-                Some(IntrospectValue::Int(3)),
+                Ok(IntrospectValue::Int(3)),
                 "array arrow click restored length"
             );
             assert_eq!(
                 grid_intro(&scene).query("value.elem.1"),
-                Some(IntrospectValue::Float(0.5)),
+                Ok(IntrospectValue::Float(0.5)),
                 "array arrow click restored content"
             );
         });
@@ -5350,7 +5389,7 @@ mod tests {
             });
             assert_eq!(
                 grid_intro(&scene).query("any_modified"),
-                Some(IntrospectValue::Bool(true)),
+                Ok(IntrospectValue::Bool(true)),
                 "scalar OR array dirties the object"
             );
             assert_eq!(
@@ -5360,17 +5399,17 @@ mod tests {
             );
             assert_eq!(
                 grid_intro(&scene).query("value.4"),
-                Some(IntrospectValue::Int(3)),
+                Ok(IntrospectValue::Int(3)),
                 "scalar restored"
             );
             assert_eq!(
                 grid_intro(&scene).query("value.elem.0"),
-                Some(IntrospectValue::Float(1.0)),
+                Ok(IntrospectValue::Float(1.0)),
                 "array restored"
             );
             assert_eq!(
                 grid_intro(&scene).query("any_modified"),
-                Some(IntrospectValue::Bool(false)),
+                Ok(IntrospectValue::Bool(false)),
                 "object clean after reset_all"
             );
         });
@@ -5388,7 +5427,7 @@ mod tests {
             });
             assert_eq!(
                 grid_intro(&scene).query("any_modified"),
-                Some(IntrospectValue::Bool(true)),
+                Ok(IntrospectValue::Bool(true)),
                 "a dirty array alone is dirty"
             );
             with_grid_mut(&mut scene, |i| {
@@ -5397,7 +5436,7 @@ mod tests {
             });
             assert_eq!(
                 grid_intro(&scene).query("any_modified"),
-                Some(IntrospectValue::Bool(false))
+                Ok(IntrospectValue::Bool(false))
             );
         });
     }
@@ -5409,40 +5448,43 @@ mod tests {
             let intro = grid_intro(&scene);
             assert_eq!(
                 intro.query("row_count"),
-                Some(IntrospectValue::Int(16)),
+                Ok(IntrospectValue::Int(16)),
                 "12 scalars + 4 struct fields"
             );
             assert_eq!(
                 intro.query("name.0"),
-                Some(IntrospectValue::Text("Name".to_owned()))
+                Ok(IntrospectValue::Text("Name".to_owned()))
             );
             assert_eq!(
                 intro.query("name.6"),
-                Some(IntrospectValue::Text("Position X".to_owned()))
+                Ok(IntrospectValue::Text("Position X".to_owned()))
             );
             assert_eq!(
                 intro.query("kind.2"),
-                Some(IntrospectValue::Text("bool".to_owned()))
+                Ok(IntrospectValue::Text("bool".to_owned()))
             );
             assert_eq!(
                 intro.query("kind.4"),
-                Some(IntrospectValue::Text("int".to_owned()))
+                Ok(IntrospectValue::Text("int".to_owned()))
             );
             assert_eq!(
                 intro.query("kind.6"),
-                Some(IntrospectValue::Text("float".to_owned()))
+                Ok(IntrospectValue::Text("float".to_owned()))
             );
-            assert_eq!(intro.query("value.2"), Some(IntrospectValue::Bool(true)));
-            assert_eq!(intro.query("value.4"), Some(IntrospectValue::Int(3)));
-            assert_eq!(intro.query("value.6"), Some(IntrospectValue::Float(12.5)));
+            assert_eq!(intro.query("value.2"), Ok(IntrospectValue::Bool(true)));
+            assert_eq!(intro.query("value.4"), Ok(IntrospectValue::Int(3)));
+            assert_eq!(intro.query("value.6"), Ok(IntrospectValue::Float(12.5)));
             assert_eq!(
                 intro.query("value.0"),
-                Some(IntrospectValue::Text("Player".to_owned()))
+                Ok(IntrospectValue::Text("Player".to_owned()))
             );
-            assert_eq!(intro.query("value.99"), None, "out-of-range -> None");
+            assert!(
+                matches!(intro.query("value.99"), Err(ReadRefusal::NoSuchMember(_))),
+                "R1667 - the family is declared and this argument addresses nothing"
+            );
             assert_eq!(
                 intro.query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::Null))
+                Ok(IntrospectValue::Json(serde_json::Value::Null))
             );
         });
     }
@@ -5471,8 +5513,8 @@ mod tests {
                 intro.intervene("editing", IntrospectValue::Int(0)),
                 Err(InterveneError::ReadOnly),
             );
-            assert_eq!(intro.query("value.4"), Some(IntrospectValue::Int(17)));
-            assert_eq!(intro.query("value.2"), Some(IntrospectValue::Bool(false)));
+            assert_eq!(intro.query("value.4"), Ok(IntrospectValue::Int(17)));
+            assert_eq!(intro.query("value.2"), Ok(IntrospectValue::Bool(false)));
         });
     }
 
@@ -5490,14 +5532,14 @@ mod tests {
                     .and_then(|n| n.handle.introspect())
                     .expect("tree introspection present");
                 let int = |p: &str| match tn.query(p) {
-                    Some(IntrospectValue::Int(i)) => i,
+                    Ok(IntrospectValue::Int(i)) => i,
                     other => panic!("{p} -> {other:?}"),
                 };
                 let text = |p: &str| match tn.query(p) {
-                    Some(IntrospectValue::Text(t)) => t,
+                    Ok(IntrospectValue::Text(t)) => t,
                     other => panic!("{p} -> {other:?}"),
                 };
-                let expanded0 = tn.query("expanded_at.0") == Some(IntrospectValue::Bool(true));
+                let expanded0 = tn.query("expanded_at.0") == Ok(IntrospectValue::Bool(true));
                 // Row 15 = the Position struct header (after 5 cats + Identity's 3
                 // leaves + Appearance's 4 + Physics's 2 + Stats's 1 + the Transform
                 // header); row 16 = its first field (Position X).
@@ -5538,16 +5580,16 @@ mod tests {
             );
             assert_eq!(
                 gi.query("struct_modified.struct.Position"),
-                Some(IntrospectValue::Bool(false)),
+                Ok(IntrospectValue::Bool(false)),
                 "boot clean"
             );
             assert_eq!(
                 gi.query("expanded.cat.Identity"),
-                Some(IntrospectValue::Bool(true))
+                Ok(IntrospectValue::Bool(true))
             );
             assert_eq!(
                 gi.query("expanded.0"),
-                Some(IntrospectValue::Null),
+                Ok(IntrospectValue::Null),
                 "a leaf has no expanded flag"
             );
             // Collapse Identity via toggle_branch → its 3 leaves vanish (23 − 3).
@@ -5561,7 +5603,7 @@ mod tests {
             );
             assert_eq!(
                 grid_intro(&scene).query("expanded.cat.Identity"),
-                Some(IntrospectValue::Bool(false))
+                Ok(IntrospectValue::Bool(false))
             );
             assert_eq!(tree_intro(&scene).0, 25, "28 − 3 Identity leaves");
             // Editing a struct field marks the struct modified; reset_struct clears it.
@@ -5571,7 +5613,7 @@ mod tests {
             });
             assert_eq!(
                 grid_intro(&scene).query("struct_modified.struct.Position"),
-                Some(IntrospectValue::Bool(true))
+                Ok(IntrospectValue::Bool(true))
             );
             assert_eq!(
                 with_grid_mut(&mut scene, |i| i.invoke(
@@ -5583,11 +5625,11 @@ mod tests {
             );
             assert_eq!(
                 grid_intro(&scene).query("value.6"),
-                Some(IntrospectValue::Float(12.5))
+                Ok(IntrospectValue::Float(12.5))
             );
             assert_eq!(
                 grid_intro(&scene).query("struct_modified.struct.Position"),
-                Some(IntrospectValue::Bool(false))
+                Ok(IntrospectValue::Bool(false))
             );
         });
     }
@@ -5601,7 +5643,7 @@ mod tests {
             let mut scene = boot_scene();
             assert_eq!(
                 grid_intro(&scene).query("cursor"),
-                Some(IntrospectValue::Null),
+                Ok(IntrospectValue::Null),
                 "no cursor at boot"
             );
             with_grid_mut(&mut scene, |i| {
@@ -5613,19 +5655,19 @@ mod tests {
             });
             assert_eq!(
                 grid_intro(&scene).query("cursor"),
-                Some(IntrospectValue::Text("struct.Position".to_owned()))
+                Ok(IntrospectValue::Text("struct.Position".to_owned()))
             );
             // A pure cursor move does NOT toggle / edit the row (no side effect).
             assert_eq!(
                 grid_intro(&scene).query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::Null))
+                Ok(IntrospectValue::Json(serde_json::Value::Null))
             );
             with_grid_mut(&mut scene, |i| {
                 i.intervene("cursor", IntrospectValue::Null).unwrap();
             });
             assert_eq!(
                 grid_intro(&scene).query("cursor"),
-                Some(IntrospectValue::Null),
+                Ok(IntrospectValue::Null),
                 "Null clears the cursor"
             );
         });
@@ -5646,12 +5688,12 @@ mod tests {
             });
             assert_eq!(
                 grid_intro(&scene).query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::from("9"))),
+                Ok(IntrospectValue::Json(serde_json::Value::from("9"))),
                 "while visible the open popup is advertised",
             );
             assert_eq!(
                 grid_intro(&scene).query("popup_cursor"),
-                Some(IntrospectValue::Int(0))
+                Ok(IntrospectValue::Int(0))
             );
             // Collapse Appearance (hides the Blend row) via RPC.
             with_grid_mut(&mut scene, |i| {
@@ -5663,12 +5705,12 @@ mod tests {
             // The now-hidden edit/popup reports as not-editing (matches paint).
             assert_eq!(
                 grid_intro(&scene).query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::Null)),
+                Ok(IntrospectValue::Json(serde_json::Value::Null)),
                 "a collapsed edit is not advertised",
             );
             assert_eq!(
                 grid_intro(&scene).query("popup_cursor"),
-                Some(IntrospectValue::Null)
+                Ok(IntrospectValue::Null)
             );
             // The invisible popup does not intercept the grid keymap: ArrowDown
             // moves the tree cursor (Identity branch -> its first leaf).
@@ -5693,7 +5735,7 @@ mod tests {
             });
             assert_eq!(
                 grid_intro(&scene).query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::from("9"))),
+                Ok(IntrospectValue::Json(serde_json::Value::from("9"))),
                 "re-expanding restores the advertisement",
             );
         });
@@ -5712,7 +5754,7 @@ mod tests {
                 intro.invoke("toggle", IntrospectValue::Int(2)),
                 Ok(IntrospectValue::Bool(true))
             );
-            assert_eq!(intro.query("value.2"), Some(IntrospectValue::Bool(false)));
+            assert_eq!(intro.query("value.2"), Ok(IntrospectValue::Bool(false)));
             // A non-bool source -> no-op.
             assert_eq!(
                 intro.invoke("toggle", IntrospectValue::Int(0)),
@@ -5720,7 +5762,7 @@ mod tests {
             );
             assert_eq!(
                 intro.query("value.0"),
-                Some(IntrospectValue::Text("Player".to_owned()))
+                Ok(IntrospectValue::Text("Player".to_owned()))
             );
         });
     }
@@ -5738,7 +5780,7 @@ mod tests {
             let _ = intro.invoke("send", IntrospectValue::Text("3:PointerUp".to_owned()));
             assert_eq!(
                 intro.query("value.3"),
-                Some(IntrospectValue::Bool(true)),
+                Ok(IntrospectValue::Bool(true)),
                 "false -> true"
             );
             assert_eq!(
@@ -5765,7 +5807,7 @@ mod tests {
             // Pos X (source 6) boots at 12.5.
             assert_eq!(
                 node.handle.introspect().unwrap().query("value.6"),
-                Some(IntrospectValue::Float(12.5))
+                Ok(IntrospectValue::Float(12.5))
             );
             // Press the row (arm), then drag the captured cursor from x_rel 0.5
             // to 0.75 across the 400px grid: travel = 0.25 · 400 = 100px → +1.0.
@@ -5777,18 +5819,18 @@ mod tests {
             node.handle.pointer_move(0.5, 0.5); // calibrate (no mutation)
             assert_eq!(
                 node.handle.introspect().unwrap().query("value.6"),
-                Some(IntrospectValue::Float(12.5)),
+                Ok(IntrospectValue::Float(12.5)),
                 "first move only calibrates"
             );
             assert_eq!(
                 node.handle.introspect().unwrap().query("scrubbing"),
-                Some(IntrospectValue::Bool(false)),
+                Ok(IntrospectValue::Bool(false)),
                 "R915: the calibration frame is a click so far, not yet a scrub"
             );
             node.handle.pointer_move(0.75, 0.5); // apply +100px (past the 4px dead zone)
             assert_eq!(
                 node.handle.introspect().unwrap().query("scrubbing"),
-                Some(IntrospectValue::Bool(true)),
+                Ok(IntrospectValue::Bool(true)),
                 "a real drag past the threshold is a scrub"
             );
             let IntrospectValue::Float(v) =
@@ -5805,7 +5847,7 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 node.handle.introspect().unwrap().query("scrubbing"),
-                Some(IntrospectValue::Bool(false))
+                Ok(IntrospectValue::Bool(false))
             );
         });
     }
@@ -5850,11 +5892,11 @@ mod tests {
                 .expect("grid present");
             assert_eq!(
                 node.handle.introspect().unwrap().query("range.8"),
-                Some(IntrospectValue::Text("0..1".to_owned()))
+                Ok(IntrospectValue::Text("0..1".to_owned()))
             );
             assert_eq!(
                 node.handle.introspect().unwrap().query("range.6"),
-                Some(IntrospectValue::Text("none".to_owned())),
+                Ok(IntrospectValue::Text("none".to_owned())),
                 "Pos X is unranged"
             );
             // An out-of-range RPC write clamps both ends through the set_value funnel.
@@ -5865,7 +5907,7 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 node.handle.introspect().unwrap().query("value.8"),
-                Some(IntrospectValue::Float(1.0)),
+                Ok(IntrospectValue::Float(1.0)),
                 "above-max write clamps to 1.0"
             );
             node.handle
@@ -5875,7 +5917,7 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 node.handle.introspect().unwrap().query("value.8"),
-                Some(IntrospectValue::Float(0.0)),
+                Ok(IntrospectValue::Float(0.0)),
                 "below-min write clamps to 0.0"
             );
         });
@@ -5894,7 +5936,7 @@ mod tests {
             // Opacity (source 8) boots at the top of [0, 1].
             assert_eq!(
                 node.handle.introspect().unwrap().query("value.8"),
-                Some(IntrospectValue::Float(1.0))
+                Ok(IntrospectValue::Float(1.0))
             );
             node.handle
                 .introspect_mut()
@@ -5905,7 +5947,7 @@ mod tests {
             node.handle.pointer_move(0.6, 0.5); // +40px → 1.0 + 0.4 = 1.4 → clamp 1.0
             assert_eq!(
                 node.handle.introspect().unwrap().query("value.8"),
-                Some(IntrospectValue::Float(1.0)),
+                Ok(IntrospectValue::Float(1.0)),
                 "scrub past the top clamps to max"
             );
             node.handle.pointer_move(0.45, 0.5); // −20px from press → 1.0 − 0.2 = 0.8
@@ -5944,7 +5986,7 @@ mod tests {
             node.handle.pointer_move(0.7, 0.5); // +0.2·400 = 80px → +10
             assert_eq!(
                 node.handle.introspect().unwrap().query("value.4"),
-                Some(IntrospectValue::Int(13))
+                Ok(IntrospectValue::Int(13))
             );
             // Same gesture, leftward: a fresh press anchors, drag −80px → 3.
             node.handle
@@ -5961,7 +6003,7 @@ mod tests {
             node.handle.pointer_move(0.3, 0.5); // −80px → −10 → 3
             assert_eq!(
                 node.handle.introspect().unwrap().query("value.4"),
-                Some(IntrospectValue::Int(3))
+                Ok(IntrospectValue::Int(3))
             );
         });
     }
@@ -5990,7 +6032,7 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 node.handle.introspect().unwrap().query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::Null)),
+                Ok(IntrospectValue::Json(serde_json::Value::Null)),
                 "a scrub does not open the editor"
             );
             // A drag on the Visible bool (source 2) does not scrub; the release
@@ -6004,7 +6046,7 @@ mod tests {
             node.handle.pointer_move(0.8, 0.5); // no-op (non-numeric armed → none)
             assert_eq!(
                 node.handle.introspect().unwrap().query("scrubbing"),
-                Some(IntrospectValue::Bool(false)),
+                Ok(IntrospectValue::Bool(false)),
                 "a non-numeric press never calibrates a scrub"
             );
             node.handle
@@ -6014,7 +6056,7 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 node.handle.introspect().unwrap().query("value.2"),
-                Some(IntrospectValue::Bool(false)),
+                Ok(IntrospectValue::Bool(false)),
                 "the bool still toggles on release (drag did not scrub it)"
             );
         });
@@ -6038,7 +6080,7 @@ mod tests {
             );
             assert_eq!(
                 intro.query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::from("4")))
+                Ok(IntrospectValue::Json(serde_json::Value::from("4")))
             );
             assert_eq!(
                 use_text_edit_state(EDIT_TF_TAG).text(),
@@ -6051,12 +6093,12 @@ mod tests {
             let intro = grid_intro(&scene);
             assert_eq!(
                 intro.query("value.4"),
-                Some(IntrospectValue::Int(12)),
+                Ok(IntrospectValue::Int(12)),
                 "committed"
             );
             assert_eq!(
                 intro.query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::Null))
+                Ok(IntrospectValue::Json(serde_json::Value::Null))
             );
         });
     }
@@ -6075,7 +6117,7 @@ mod tests {
             );
             assert_eq!(
                 intro.query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::Null))
+                Ok(IntrospectValue::Json(serde_json::Value::Null))
             );
         });
     }
@@ -6094,11 +6136,11 @@ mod tests {
             let intro = grid_intro(&scene);
             assert_eq!(
                 intro.query("value.0"),
-                Some(IntrospectValue::Text("Player".to_owned()))
+                Ok(IntrospectValue::Text("Player".to_owned()))
             );
             assert_eq!(
                 intro.query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::Null))
+                Ok(IntrospectValue::Json(serde_json::Value::Null))
             );
         });
     }
@@ -6117,7 +6159,7 @@ mod tests {
             let intro = grid_intro(&scene);
             assert_eq!(
                 intro.query("value.4"),
-                Some(IntrospectValue::Int(3)),
+                Ok(IntrospectValue::Int(3)),
                 "kept prior value"
             );
         });
@@ -6264,7 +6306,7 @@ mod tests {
             ));
             assert_eq!(
                 grid_intro(&scene).query("value.2"),
-                Some(IntrospectValue::Bool(false))
+                Ok(IntrospectValue::Bool(false))
             );
             // Cursor onto the Name text row (leaf 0) and Enter -> edit mode.
             set_cursor_id("0");
@@ -6276,7 +6318,7 @@ mod tests {
             ));
             assert_eq!(
                 grid_intro(&scene).query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::from("0"))),
+                Ok(IntrospectValue::Json(serde_json::Value::from("0"))),
             );
         });
     }
@@ -6298,7 +6340,7 @@ mod tests {
             ));
             assert_eq!(
                 grid_intro(&scene).query("value.0"),
-                Some(IntrospectValue::Text("Enemy".to_owned()))
+                Ok(IntrospectValue::Text("Enemy".to_owned()))
             );
         });
     }
@@ -6457,7 +6499,7 @@ mod tests {
             // Boot: the Mesh leaf holds the seeded asset path; the picker is shut.
             assert_eq!(
                 grid_intro(&scene).query("value.1"),
-                Some(IntrospectValue::Text("/proj/meshes/hero.fbx".to_owned())),
+                Ok(IntrospectValue::Text("/proj/meshes/hero.fbx".to_owned())),
             );
             assert!(!asset_modal().is_open());
 
@@ -6484,7 +6526,7 @@ mod tests {
             assert_eq!(use_asset_target().get(), None);
             assert_eq!(
                 grid_intro(&scene).query("value.1"),
-                Some(IntrospectValue::Text("/proj/meshes/enemy.fbx".to_owned())),
+                Ok(IntrospectValue::Text("/proj/meshes/enemy.fbx".to_owned())),
                 "the picked path is written into the Mesh slot",
             );
         });
@@ -6504,7 +6546,7 @@ mod tests {
             // Only confirm writes — a cancel leaves the Mesh value as it was.
             assert_eq!(
                 grid_intro(&scene).query("value.1"),
-                Some(IntrospectValue::Text("/proj/meshes/hero.fbx".to_owned())),
+                Ok(IntrospectValue::Text("/proj/meshes/hero.fbx".to_owned())),
                 "cancel leaves the path untouched",
             );
         });
@@ -6580,13 +6622,13 @@ mod tests {
             let intro = grid_intro(&scene);
             assert_eq!(
                 intro.query("kind.9"),
-                Some(IntrospectValue::Text("choice".to_owned()))
+                Ok(IntrospectValue::Text("choice".to_owned()))
             );
             assert_eq!(
                 intro.query("kind.10"),
-                Some(IntrospectValue::Text("choice".to_owned()))
+                Ok(IntrospectValue::Text("choice".to_owned()))
             );
-            let Some(IntrospectValue::Json(blend)) = intro.query("value.9") else {
+            let Ok(IntrospectValue::Json(blend)) = intro.query("value.9") else {
                 panic!("choice value is json");
             };
             assert_eq!(blend["selected"], serde_json::json!(0));
@@ -6597,7 +6639,7 @@ mod tests {
             );
             assert_eq!(
                 intro.query("popup_cursor"),
-                Some(IntrospectValue::Null),
+                Ok(IntrospectValue::Null),
                 "no popup at boot"
             );
         });
@@ -6617,11 +6659,11 @@ mod tests {
             let intro = grid_intro(&scene);
             assert_eq!(
                 intro.query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::from("9")))
+                Ok(IntrospectValue::Json(serde_json::Value::from("9")))
             );
             assert_eq!(
                 intro.query("popup_cursor"),
-                Some(IntrospectValue::Int(0)),
+                Ok(IntrospectValue::Int(0)),
                 "cursor seeded at the committed option",
             );
         });
@@ -6643,7 +6685,7 @@ mod tests {
             }
             assert_eq!(
                 grid_intro(&scene).query("popup_cursor"),
-                Some(IntrospectValue::Int(3))
+                Ok(IntrospectValue::Int(3))
             );
             // Enter commits the cursor (Screen) and closes the popup.
             assert!(PropertyGridView::apply_key(
@@ -6652,13 +6694,13 @@ mod tests {
                 "Enter",
                 Modifiers::empty()
             ));
-            let Some(IntrospectValue::Json(v)) = grid_intro(&scene).query("value.9") else {
+            let Ok(IntrospectValue::Json(v)) = grid_intro(&scene).query("value.9") else {
                 panic!("json");
             };
             assert_eq!(v["label"], serde_json::json!("Screen"));
             assert_eq!(
                 grid_intro(&scene).query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::Null))
+                Ok(IntrospectValue::Json(serde_json::Value::Null))
             );
         });
     }
@@ -6682,9 +6724,9 @@ mod tests {
             ));
             assert_eq!(
                 grid_intro(&scene).query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::Null))
+                Ok(IntrospectValue::Json(serde_json::Value::Null))
             );
-            let Some(IntrospectValue::Json(v)) = grid_intro(&scene).query("value.9") else {
+            let Ok(IntrospectValue::Json(v)) = grid_intro(&scene).query("value.9") else {
                 panic!("json");
             };
             assert_eq!(
@@ -6706,14 +6748,14 @@ mod tests {
             let _ = intro.invoke("send", IntrospectValue::Text("9:PointerUp".to_owned()));
             assert_eq!(
                 intro.query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::from("9")))
+                Ok(IntrospectValue::Json(serde_json::Value::from("9")))
             );
             let _ = intro.invoke("send", IntrospectValue::Text("opt2:PointerUp".to_owned()));
             assert_eq!(
                 intro.query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::Null))
+                Ok(IntrospectValue::Json(serde_json::Value::Null))
             );
-            let Some(IntrospectValue::Json(v)) = intro.query("value.9") else {
+            let Ok(IntrospectValue::Json(v)) = intro.query("value.9") else {
                 panic!("json")
             };
             assert_eq!(v["label"], serde_json::json!("Multiply"));
@@ -6723,7 +6765,7 @@ mod tests {
                 intro.invoke("choose", IntrospectValue::Int(0)),
                 Ok(IntrospectValue::Bool(true))
             );
-            let Some(IntrospectValue::Json(v)) = intro.query("value.10") else {
+            let Ok(IntrospectValue::Json(v)) = intro.query("value.10") else {
                 panic!("json")
             };
             assert_eq!(v["label"], serde_json::json!("None"));
@@ -6744,11 +6786,11 @@ mod tests {
             );
             assert_eq!(
                 intro.query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::Null))
+                Ok(IntrospectValue::Json(serde_json::Value::Null))
             );
             // Direct AI set by index (no popup needed) + strict errors.
             assert!(intro.intervene("value.9", IntrospectValue::Int(1)).is_ok());
-            let Some(IntrospectValue::Json(v)) = intro.query("value.9") else {
+            let Ok(IntrospectValue::Json(v)) = intro.query("value.9") else {
                 panic!("json")
             };
             assert_eq!(v["label"], serde_json::json!("Additive"));
@@ -6838,9 +6880,9 @@ mod tests {
             let intro = grid_intro(&scene);
             assert_eq!(
                 intro.query("kind.11"),
-                Some(IntrospectValue::Text("color".to_owned()))
+                Ok(IntrospectValue::Text("color".to_owned()))
             );
-            let Some(IntrospectValue::Json(tint)) = intro.query("value.11") else {
+            let Ok(IntrospectValue::Json(tint)) = intro.query("value.11") else {
                 panic!("colour value is json");
             };
             assert_eq!(tint["hex"], serde_json::json!("#1e88e5"), "Tint boots Blue");
@@ -6857,11 +6899,11 @@ mod tests {
             let intro = grid_intro(&scene);
             assert_eq!(
                 intro.query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::from("11")))
+                Ok(IntrospectValue::Json(serde_json::Value::from("11")))
             );
             assert_eq!(
                 intro.query("popup_cursor"),
-                Some(IntrospectValue::Int(4)),
+                Ok(IntrospectValue::Int(4)),
                 "cursor seeded at the swatch matching the committed colour (Blue=4)",
             );
         });
@@ -6881,7 +6923,7 @@ mod tests {
             ));
             assert_eq!(
                 grid_intro(&scene).query("popup_cursor"),
-                Some(IntrospectValue::Int(5))
+                Ok(IntrospectValue::Int(5))
             );
             assert!(PropertyGridView::apply_key(
                 &mut scene,
@@ -6889,13 +6931,13 @@ mod tests {
                 "Enter",
                 Modifiers::empty()
             ));
-            let Some(IntrospectValue::Json(v)) = grid_intro(&scene).query("value.11") else {
+            let Ok(IntrospectValue::Json(v)) = grid_intro(&scene).query("value.11") else {
                 panic!("json");
             };
             assert_eq!(v["hex"], serde_json::json!("#fdd835"), "committed Yellow");
             assert_eq!(
                 grid_intro(&scene).query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::Null))
+                Ok(IntrospectValue::Json(serde_json::Value::Null))
             );
         });
     }
@@ -6910,16 +6952,16 @@ mod tests {
             let _ = intro.invoke("send", IntrospectValue::Text("11:PointerUp".to_owned()));
             assert_eq!(
                 intro.query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::from("11")))
+                Ok(IntrospectValue::Json(serde_json::Value::from("11")))
             );
             let _ = intro.invoke("send", IntrospectValue::Text("sw2:PointerUp".to_owned()));
-            let Some(IntrospectValue::Json(v)) = intro.query("value.11") else {
+            let Ok(IntrospectValue::Json(v)) = intro.query("value.11") else {
                 panic!("json")
             };
             assert_eq!(v["hex"], serde_json::json!("#e53935"), "clicked Red");
             assert_eq!(
                 intro.query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::Null))
+                Ok(IntrospectValue::Json(serde_json::Value::Null))
             );
             // The RPC pick_color path commits + closes too.
             let _ = intro.invoke("begin", IntrospectValue::Int(11));
@@ -6927,7 +6969,7 @@ mod tests {
                 intro.invoke("pick_color", IntrospectValue::Int(0)),
                 Ok(IntrospectValue::Bool(true))
             );
-            let Some(IntrospectValue::Json(v)) = intro.query("value.11") else {
+            let Ok(IntrospectValue::Json(v)) = intro.query("value.11") else {
                 panic!("json")
             };
             assert_eq!(
@@ -6941,7 +6983,7 @@ mod tests {
                     .intervene("value.11", IntrospectValue::Text("#abcdef".to_owned()))
                     .is_ok()
             );
-            let Some(IntrospectValue::Json(v)) = intro.query("value.11") else {
+            let Ok(IntrospectValue::Json(v)) = intro.query("value.11") else {
                 panic!("json")
             };
             assert_eq!(v["hex"], serde_json::json!("#abcdef"));
@@ -7075,7 +7117,7 @@ mod tests {
                 "Enter",
                 Modifiers::empty(),
             ));
-            let Some(IntrospectValue::Json(v)) = grid_intro(&scene).query("value.11") else {
+            let Ok(IntrospectValue::Json(v)) = grid_intro(&scene).query("value.11") else {
                 panic!("json");
             };
             assert_eq!(
@@ -7085,7 +7127,7 @@ mod tests {
             );
             assert_eq!(
                 grid_intro(&scene).query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::Null)),
+                Ok(IntrospectValue::Json(serde_json::Value::Null)),
                 "popup closed after hex commit",
             );
         });
@@ -7410,7 +7452,7 @@ mod tests {
             );
             assert_eq!(
                 grid_intro(&scene).query("elem_count"),
-                Some(IntrospectValue::Int(3))
+                Ok(IntrospectValue::Int(3))
             );
         });
     }
@@ -7423,7 +7465,7 @@ mod tests {
             let mut scene = boot_scene();
             assert_eq!(
                 grid_intro(&scene).query("value.elem.1"),
-                Some(IntrospectValue::Float(0.5))
+                Ok(IntrospectValue::Float(0.5))
             );
             with_grid_mut(&mut scene, |i| {
                 i.intervene("value.elem.1", IntrospectValue::Float(2.0))
@@ -7431,10 +7473,13 @@ mod tests {
             .expect("set element value");
             assert_eq!(
                 grid_intro(&scene).query("value.elem.1"),
-                Some(IntrospectValue::Float(2.0))
+                Ok(IntrospectValue::Float(2.0))
             );
             // An out-of-range element address reads None (like a scalar OOB).
-            assert_eq!(grid_intro(&scene).query("value.elem.9"), None);
+            assert!(matches!(
+                grid_intro(&scene).query("value.elem.9"),
+                Err(ReadRefusal::NoSuchMember(_))
+            ));
         });
     }
 
@@ -7446,11 +7491,11 @@ mod tests {
             let scene = boot_scene();
             assert_eq!(
                 grid_intro(&scene).query("name.elem.0"),
-                Some(IntrospectValue::Text("Spawn Weights [0]".to_owned()))
+                Ok(IntrospectValue::Text("Spawn Weights [0]".to_owned()))
             );
             assert_eq!(
                 grid_intro(&scene).query("kind.elem.0"),
-                Some(IntrospectValue::Text("float".to_owned()))
+                Ok(IntrospectValue::Text("float".to_owned()))
             );
         });
     }
@@ -7467,11 +7512,11 @@ mod tests {
             assert_eq!(idx, IntrospectValue::Int(3), "new element index");
             assert_eq!(
                 grid_intro(&scene).query("elem_count"),
-                Some(IntrospectValue::Int(4))
+                Ok(IntrospectValue::Int(4))
             );
             assert_eq!(
                 grid_intro(&scene).query("value.elem.3"),
-                Some(IntrospectValue::Float(0.0)),
+                Ok(IntrospectValue::Float(0.0)),
                 "a new element seeds 0.0"
             );
             let ok = with_grid_mut(&mut scene, |i| {
@@ -7481,11 +7526,11 @@ mod tests {
             assert_eq!(ok, IntrospectValue::Bool(true));
             assert_eq!(
                 grid_intro(&scene).query("elem_count"),
-                Some(IntrospectValue::Int(3))
+                Ok(IntrospectValue::Int(3))
             );
             assert_eq!(
                 grid_intro(&scene).query("value.elem.0"),
-                Some(IntrospectValue::Float(0.5)),
+                Ok(IntrospectValue::Float(0.5)),
                 "elements shift down on remove"
             );
             assert_eq!(
@@ -7512,11 +7557,11 @@ mod tests {
             assert_eq!(ok, IntrospectValue::Bool(true));
             assert_eq!(
                 grid_intro(&scene).query("value.elem.0"),
-                Some(IntrospectValue::Float(0.5))
+                Ok(IntrospectValue::Float(0.5))
             );
             assert_eq!(
                 grid_intro(&scene).query("value.elem.2"),
-                Some(IntrospectValue::Float(1.0))
+                Ok(IntrospectValue::Float(1.0))
             );
             assert_eq!(
                 with_grid_mut(&mut scene, |i| i
@@ -7547,7 +7592,7 @@ mod tests {
             .unwrap();
             assert_eq!(
                 grid_intro(&scene).query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::from("elem.1"))),
+                Ok(IntrospectValue::Json(serde_json::Value::from("elem.1"))),
                 "editing the element"
             );
             with_grid_mut(&mut scene, |i| {
@@ -7556,7 +7601,7 @@ mod tests {
             .unwrap();
             assert_eq!(
                 grid_intro(&scene).query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::Null)),
+                Ok(IntrospectValue::Json(serde_json::Value::Null)),
                 "the in-flight element edit is cancelled on remove"
             );
         });
@@ -7602,7 +7647,7 @@ mod tests {
             );
             assert_eq!(
                 grid_intro(&scene).query("row_count"),
-                Some(IntrospectValue::Int(16)),
+                Ok(IntrospectValue::Int(16)),
                 "the flat model length is permanent"
             );
         });
@@ -7679,7 +7724,7 @@ mod tests {
             ));
             assert_eq!(
                 grid_intro(&scene).query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::from("elem.0"))),
+                Ok(IntrospectValue::Json(serde_json::Value::from("elem.0"))),
                 "Enter begins the element edit"
             );
             // Reset the latch, then Delete on the element cursor removes it.
@@ -7694,7 +7739,7 @@ mod tests {
             ));
             assert_eq!(
                 grid_intro(&scene).query("elem_count"),
-                Some(IntrospectValue::Int(2)),
+                Ok(IntrospectValue::Int(2)),
                 "Delete removed the element"
             );
         });
@@ -7713,7 +7758,7 @@ mod tests {
             .unwrap();
             assert_eq!(
                 grid_intro(&scene).query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::from("elem.0"))),
+                Ok(IntrospectValue::Json(serde_json::Value::from("elem.0"))),
                 "editing elem.0"
             );
             // Remove a LATER element (elem.2) — elem.0 is unaffected, so the edit
@@ -7724,7 +7769,7 @@ mod tests {
             .unwrap();
             assert_eq!(
                 grid_intro(&scene).query("editing"),
-                Some(IntrospectValue::Json(serde_json::Value::from("elem.0"))),
+                Ok(IntrospectValue::Json(serde_json::Value::from("elem.0"))),
                 "an edit before the removal survives"
             );
         });

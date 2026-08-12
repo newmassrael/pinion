@@ -187,12 +187,12 @@ impl RadioView {
     fn read_state(scene: &Scene) -> (RadioState, bool) {
         if let Scene::External(node) = scene {
             if let Some(intro) = node.handle.introspect() {
-                let state = if let Some(IntrospectValue::Text(name)) = intro.query("state") {
+                let state = if let Ok(IntrospectValue::Text(name)) = intro.query("state") {
                     RadioState::from_name_or_default(&name)
                 } else {
                     RadioState::Idle
                 };
-                let selected = matches!(intro.query("selected"), Some(IntrospectValue::Bool(true)));
+                let selected = matches!(intro.query("selected"), Ok(IntrospectValue::Bool(true)));
                 return (state, selected);
             }
         }

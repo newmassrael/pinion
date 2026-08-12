@@ -41,7 +41,8 @@ use pinion_platform_storage::{AppStorage, use_app_storage};
 use pinion_core::composite_tag::{SendPayload, require_parsed_send_payload};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use pinion_core::reactive::{Effect, Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, ScrollNode, TextNode};
@@ -605,7 +606,7 @@ fn filter_focused_index(scene: &Scene) -> Option<usize> {
     let node = scene.find_external_with_tag(FILTER_TAG)?;
     let intro = node.handle.introspect()?;
     match intro.query("focused_index") {
-        Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+        Ok(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
         _ => None,
     }
 }
@@ -621,12 +622,12 @@ fn read_filter_radio_states(scene: &Scene) -> FilterRadioStates {
     };
     let mut states = [RadioState::Idle; 3];
     for (i, slot) in states.iter_mut().enumerate() {
-        if let Some(IntrospectValue::Text(name)) = intro.query(&format!("state.{i}")) {
+        if let Ok(IntrospectValue::Text(name)) = intro.query(&format!("state.{i}")) {
             *slot = RadioState::from_name_or_default(&name);
         }
     }
     let focused = match intro.query("focused_index") {
-        Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+        Ok(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
         _ => None,
     };
     FilterRadioStates { states, focused }
@@ -1458,11 +1459,11 @@ impl ExternalIntrospect for TodoDeleteExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
             "count" => {
                 let n = self.todos.get().len();
-                Some(IntrospectValue::Int(
+                Ok(IntrospectValue::Int(
                     i64::try_from(n).expect("todo count must fit in i64"),
                 ))
             }
@@ -1472,9 +1473,9 @@ impl ExternalIntrospect for TodoDeleteExternal {
                     .iter()
                     .map(|item| serde_json::Value::from(item.id))
                     .collect();
-                Some(IntrospectValue::Json(serde_json::Value::Array(arr)))
+                Ok(IntrospectValue::Json(serde_json::Value::Array(arr)))
             }
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -1606,15 +1607,15 @@ impl ExternalIntrospect for TodoToggleExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         let snapshot = self.todos.get();
         match path {
-            "count" => Some(IntrospectValue::Int(
+            "count" => Ok(IntrospectValue::Int(
                 i64::try_from(snapshot.len()).expect("todo count must fit in i64"),
             )),
             "completed_count" => {
                 let n = snapshot.iter().filter(|i| i.completed).count();
-                Some(IntrospectValue::Int(
+                Ok(IntrospectValue::Int(
                     i64::try_from(n).expect("completed count must fit in i64"),
                 ))
             }
@@ -1624,9 +1625,9 @@ impl ExternalIntrospect for TodoToggleExternal {
                     .filter(|i| i.completed)
                     .map(|item| serde_json::Value::from(item.id))
                     .collect();
-                Some(IntrospectValue::Json(serde_json::Value::Array(arr)))
+                Ok(IntrospectValue::Json(serde_json::Value::Array(arr)))
             }
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -1837,14 +1838,14 @@ impl ExternalIntrospect for TodoEditExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "editing_id" => Some(IntrospectValue::Json(
+            "editing_id" => Ok(IntrospectValue::Json(
                 self.editing_id
                     .get()
                     .map_or(serde_json::Value::Null, serde_json::Value::from),
             )),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 

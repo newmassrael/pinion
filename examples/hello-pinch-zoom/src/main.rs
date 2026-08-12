@@ -17,7 +17,8 @@
 use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode, capture_surface};
 use pinion_core::style::{Border, BoxStyle, LayoutStyle, Size, TextStyle};
@@ -240,25 +241,25 @@ impl ExternalIntrospect for PinchViewport {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "scale" => Some(IntrospectValue::Float(self.scale)),
-            "scale_at_begin" => Some(IntrospectValue::Float(self.scale_at_begin)),
-            "magnification" => Some(IntrospectValue::Float(self.magnification)),
-            "phase" => Some(self.phase.map_or(IntrospectValue::Null, |p| {
+            "scale" => Ok(IntrospectValue::Float(self.scale)),
+            "scale_at_begin" => Ok(IntrospectValue::Float(self.scale_at_begin)),
+            "magnification" => Ok(IntrospectValue::Float(self.magnification)),
+            "phase" => Ok(self.phase.map_or(IntrospectValue::Null, |p| {
                 IntrospectValue::Text(p.as_wire_name().to_owned())
             })),
-            "events" => Some(IntrospectValue::Int(
+            "events" => Ok(IntrospectValue::Int(
                 i64::try_from(self.events).unwrap_or(i64::MAX),
             )),
-            "anchor_x" => Some(self.anchor.map_or(IntrospectValue::Null, |(x, _)| {
+            "anchor_x" => Ok(self.anchor.map_or(IntrospectValue::Null, |(x, _)| {
                 IntrospectValue::Float(x.into())
             })),
-            "anchor_y" => Some(self.anchor.map_or(IntrospectValue::Null, |(_, y)| {
+            "anchor_y" => Ok(self.anchor.map_or(IntrospectValue::Null, |(_, y)| {
                 IntrospectValue::Float(y.into())
             })),
-            "last_mods" => Some(IntrospectValue::Text(self.modifiers.as_wire_token())),
-            _ => None,
+            "last_mods" => Ok(IntrospectValue::Text(self.modifiers.as_wire_token())),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -297,15 +298,15 @@ fn read_viewport(scene: &Scene) -> ViewState {
         return ViewState::default();
     };
     let scale = match intro.query("scale") {
-        Some(IntrospectValue::Float(f)) => f,
+        Ok(IntrospectValue::Float(f)) => f,
         _ => 1.0,
     };
     let events = match intro.query("events") {
-        Some(IntrospectValue::Int(n)) => u64::try_from(n).unwrap_or(0),
+        Ok(IntrospectValue::Int(n)) => u64::try_from(n).unwrap_or(0),
         _ => 0,
     };
     let phase = match intro.query("phase") {
-        Some(IntrospectValue::Text(s)) => GesturePhase::from_wire_name(&s),
+        Ok(IntrospectValue::Text(s)) => GesturePhase::from_wire_name(&s),
         _ => None,
     };
     let anchor = match (query_frac(intro, "anchor_x"), query_frac(intro, "anchor_y")) {
@@ -326,7 +327,7 @@ fn query_frac(intro: &dyn ExternalIntrospect, path: &str) -> Option<f32> {
             clippy::cast_possible_truncation,
             reason = "an anchor fraction 0.0..=1.0 loses no meaningful precision as f32"
         )]
-        Some(IntrospectValue::Float(f)) => Some(f as f32),
+        Ok(IntrospectValue::Float(f)) => Some(f as f32),
         _ => None,
     }
 }
@@ -556,9 +557,9 @@ mod tests {
         assert!(v.modifiers.control_key(), "ctrl-fine-zoom bit recorded");
         // The introspect surface mirrors the fields (§2 #7).
         assert!(
-            matches!(v.query("anchor_x"), Some(IntrospectValue::Float(f)) if (f - 0.75).abs() < 1e-6)
+            matches!(v.query("anchor_x"), Ok(IntrospectValue::Float(f)) if (f - 0.75).abs() < 1e-6)
         );
-        assert!(matches!(v.query("phase"), Some(IntrospectValue::Text(ref s)) if s == "begin"));
+        assert!(matches!(v.query("phase"), Ok(IntrospectValue::Text(ref s)) if s == "begin"));
     }
 
     #[test]

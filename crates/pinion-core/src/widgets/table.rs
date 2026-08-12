@@ -48,8 +48,8 @@
 use crate::WidgetStateName;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
-    ThreadOwnership, int_of,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership, int_of,
 };
 use crate::input::PointerWireEvent;
 use crate::intent::Intent;
@@ -600,7 +600,7 @@ pub fn cell_cmp(a: &str, b: &str) -> core::cmp::Ordering {
 #[must_use]
 pub fn read_focused_row(intro: &dyn ExternalIntrospect) -> Option<usize> {
     match intro.query("focused_row") {
-        Some(IntrospectValue::Int(r)) if r >= 0 => usize::try_from(r).ok(),
+        Ok(IntrospectValue::Int(r)) if r >= 0 => usize::try_from(r).ok(),
         _ => None,
     }
 }
@@ -610,7 +610,7 @@ pub fn read_focused_row(intro: &dyn ExternalIntrospect) -> Option<usize> {
 #[must_use]
 pub fn read_focused_col(intro: &dyn ExternalIntrospect) -> usize {
     match intro.query("focused_col") {
-        Some(IntrospectValue::Int(c)) if c >= 0 => usize::try_from(c).unwrap_or(0),
+        Ok(IntrospectValue::Int(c)) if c >= 0 => usize::try_from(c).unwrap_or(0),
         _ => 0,
     }
 }
@@ -620,7 +620,7 @@ pub fn read_focused_col(intro: &dyn ExternalIntrospect) -> usize {
 #[must_use]
 pub fn read_rows(intro: &dyn ExternalIntrospect) -> usize {
     match intro.query("rows") {
-        Some(IntrospectValue::Int(r)) => usize::try_from(r).unwrap_or(0),
+        Ok(IntrospectValue::Int(r)) => usize::try_from(r).unwrap_or(0),
         _ => 0,
     }
 }
@@ -630,7 +630,7 @@ pub fn read_rows(intro: &dyn ExternalIntrospect) -> usize {
 #[must_use]
 pub fn read_cols(intro: &dyn ExternalIntrospect) -> usize {
     match intro.query("cols") {
-        Some(IntrospectValue::Int(c)) => usize::try_from(c).unwrap_or(0),
+        Ok(IntrospectValue::Int(c)) => usize::try_from(c).unwrap_or(0),
         _ => 0,
     }
 }
@@ -1202,6 +1202,97 @@ impl TableExternal {
     fn resolve_col_intervene(&self, i: i64) -> Result<usize, InterveneError> {
         crate::widgets::wire::resolve_index("column", i, self.col_count())
     }
+
+    /// R1667 — the `<slot>.<index>` half of [`query`](Self::query): every
+    /// per-column, per-row and per-cell read.
+    ///
+    /// Split out for the reason `hello-data-grid`'s `query_cell_path` and
+    /// `hello-node-editor`'s `query_prefixed` were: the two halves answer
+    /// different shapes of question, and only this one grows when a bound is
+    /// stated. It grew by exactly that this round — each arm now names the range
+    /// it refused against instead of answering the same word as an unknown slot,
+    /// and that pushed the combined function past its line ceiling.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReadRefusal`] per the variants there.
+    fn query_indexed(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
+        // Per-column header text: `header.<col>`.
+        if let Some(col_str) = path.strip_prefix("header.") {
+            let col: usize = col_str
+                .parse()
+                .map_err(|_| ReadRefusal::QueryTypeMismatch)?;
+            if col >= self.col_count() {
+                return Err(ReadRefusal::no_such_member(format!(
+                    "column {col} is outside 0..{}",
+                    self.col_count()
+                )));
+            }
+            return Ok(IntrospectValue::Text(self.em.inner.header(col).to_string()));
+        }
+        // Per-cell text: `cell.<row>.<col>`.
+        if let Some(rest) = path.strip_prefix("cell.") {
+            let (row_str, col_str) = rest.split_once('.').ok_or(ReadRefusal::QueryTypeMismatch)?;
+            let row: usize = row_str
+                .parse()
+                .map_err(|_| ReadRefusal::QueryTypeMismatch)?;
+            let col: usize = col_str
+                .parse()
+                .map_err(|_| ReadRefusal::QueryTypeMismatch)?;
+            if row >= self.row_count() || col >= self.col_count() {
+                return Err(ReadRefusal::no_such_member(format!(
+                    "cell {row}.{col} is outside 0..{}.0..{}",
+                    self.row_count(),
+                    self.col_count()
+                )));
+            }
+            return Ok(IntrospectValue::Text(
+                self.em.inner.cell(row, col).to_string(),
+            ));
+        }
+        // Per-row interaction state: `state.<row>`.
+        if let Some(row_str) = path.strip_prefix("state.") {
+            let row: usize = row_str
+                .parse()
+                .map_err(|_| ReadRefusal::QueryTypeMismatch)?;
+            if row >= self.row_count() {
+                return Err(ReadRefusal::no_such_member(format!(
+                    "row {row} is outside 0..{}",
+                    self.row_count()
+                )));
+            }
+            return Ok(IntrospectValue::Text(self.state(row).as_name().to_string()));
+        }
+        // Per-row selected bit: `selected.<row>`.
+        if let Some(row_str) = path.strip_prefix("selected.") {
+            let row: usize = row_str
+                .parse()
+                .map_err(|_| ReadRefusal::QueryTypeMismatch)?;
+            if row >= self.row_count() {
+                return Err(ReadRefusal::no_such_member(format!(
+                    "row {row} is outside 0..{}",
+                    self.row_count()
+                )));
+            }
+            return Ok(IntrospectValue::Bool(self.is_selected(row)));
+        }
+        // R730 §5.40 — visual→data permutation: `order.<visual>`
+        // is the data-row index painted at visual position.
+        if let Some(v_str) = path.strip_prefix("order.") {
+            let visual: usize = v_str.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?;
+            let order = self.order();
+            return order
+                .get(visual)
+                .map(|&d| IntrospectValue::Int(int_of(d)))
+                .ok_or_else(|| {
+                    ReadRefusal::no_such_member(format!(
+                        "visual position {visual} is outside 0..{}",
+                        order.len()
+                    ))
+                });
+        }
+        Err(ReadRefusal::UnknownPath)
+    }
 }
 
 impl Default for TableExternal {
@@ -1343,18 +1434,18 @@ impl ExternalIntrospect for TableExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "rows" => Some(IntrospectValue::Int(int_of(self.row_count()))),
-            "cols" => Some(IntrospectValue::Int(int_of(self.col_count()))),
+            "rows" => Ok(IntrospectValue::Int(int_of(self.row_count()))),
+            "cols" => Ok(IntrospectValue::Int(int_of(self.col_count()))),
             // R735 §5.38 — mode metadata so a mode-agnostic introspector
             // picks the right path (`selected.<i>` per-row vs
             // `selected_row` single).
-            "multiselect" => Some(IntrospectValue::Bool(self.is_multiselect())),
+            "multiselect" => Ok(IntrospectValue::Bool(self.is_multiselect())),
             // R955.1 §5.38 — the pointer SelectionBehavior as a wire token, so
             // an AI client reads the grid's mode (rows vs cells) the same way
             // it reads `multiselect`.
-            "selection_behavior" => Some(IntrospectValue::Text(
+            "selection_behavior" => Ok(IntrospectValue::Text(
                 match self.selection_behavior() {
                     SelectionBehavior::SelectRows => "rows",
                     SelectionBehavior::SelectItems => "items",
@@ -1369,42 +1460,40 @@ impl ExternalIntrospect for TableExternal {
             )),
             // `selected` (any row selected?) is mode-agnostic — reads the
             // selection set, never the single-only `selected_row`.
-            "selected" => Some(IntrospectValue::Bool(!self.selected_rows().is_empty())),
+            "selected" => Ok(IntrospectValue::Bool(!self.selected_rows().is_empty())),
             // The selected / focused row use `-1` until a value lands
             // (mirror of the date picker's `selected_day` / `focused_day`
             // `int` sentinel convention). R735 §5.38 — multi-mode has no
             // single selected row, so it returns `-1` (AI clients use the
             // per-row `selected.<i>` slots).
-            "selected_row" => Some(IntrospectValue::Int(if self.is_multiselect() {
+            "selected_row" => Ok(IntrospectValue::Int(if self.is_multiselect() {
                 -1
             } else {
                 self.selected_row().map_or(-1, int_of)
             })),
-            "focused_row" => Some(IntrospectValue::Int(self.focused_row().map_or(-1, int_of))),
-            "focused_col" => Some(IntrospectValue::Int(int_of(self.focused_col()))),
+            "focused_row" => Ok(IntrospectValue::Int(self.focused_row().map_or(-1, int_of))),
+            "focused_col" => Ok(IntrospectValue::Int(int_of(self.focused_col()))),
             // R952 §5.38 — the selected cell rectangle as "row0,col0,row1,col1"
             // (data coords, inclusive), or `Null` when no cell selection is
             // active. Text-encoded (the file's `sort_dir` / `send` idiom; no
             // serde_json dependency), parsed by the AI client on the comma.
-            "cell_selection" => Some(match self.cell_selection_bounds() {
+            "cell_selection" => Ok(match self.cell_selection_bounds() {
                 Some((r0, c0, r1, c1)) => IntrospectValue::Text(format!("{r0},{c0},{r1},{c1}")),
                 None => IntrospectValue::Null,
             }),
-            "cell_selection_count" => {
-                Some(IntrospectValue::Int(int_of(self.cell_selection_count())))
-            }
+            "cell_selection_count" => Ok(IntrospectValue::Int(int_of(self.cell_selection_count()))),
             // R1222 §5.38 — the selected cell rectangle as TSV (the AI-first
             // "copy the selection" read; `Null` when nothing is selected).
-            "cell_selection_tsv" => Some(match self.selected_tsv() {
+            "cell_selection_tsv" => Ok(match self.selected_tsv() {
                 Some(tsv) => IntrospectValue::Text(tsv),
                 None => IntrospectValue::Null,
             }),
             // R730 §5.40 — sort key column (`-1` when unsorted) + the
             // WAI-ARIA `aria-sort` token the active header carries.
-            "sort_col" => Some(IntrospectValue::Int(
+            "sort_col" => Ok(IntrospectValue::Int(
                 self.sort_state().map_or(-1, |(c, _)| int_of(c)),
             )),
-            "sort_dir" => Some(IntrospectValue::Text(
+            "sort_dir" => Ok(IntrospectValue::Text(
                 match self.sort_state() {
                     None => "none",
                     Some((_, true)) => "ascending",
@@ -1412,52 +1501,7 @@ impl ExternalIntrospect for TableExternal {
                 }
                 .to_string(),
             )),
-            _ => {
-                // Per-column header text: `header.<col>`.
-                if let Some(col_str) = path.strip_prefix("header.") {
-                    let col: usize = col_str.parse().ok()?;
-                    if col >= self.col_count() {
-                        return None;
-                    }
-                    return Some(IntrospectValue::Text(self.em.inner.header(col).to_string()));
-                }
-                // Per-cell text: `cell.<row>.<col>`.
-                if let Some(rest) = path.strip_prefix("cell.") {
-                    let (row_str, col_str) = rest.split_once('.')?;
-                    let row: usize = row_str.parse().ok()?;
-                    let col: usize = col_str.parse().ok()?;
-                    if row >= self.row_count() || col >= self.col_count() {
-                        return None;
-                    }
-                    return Some(IntrospectValue::Text(
-                        self.em.inner.cell(row, col).to_string(),
-                    ));
-                }
-                // Per-row interaction state: `state.<row>`.
-                if let Some(row_str) = path.strip_prefix("state.") {
-                    let row: usize = row_str.parse().ok()?;
-                    if row >= self.row_count() {
-                        return None;
-                    }
-                    return Some(IntrospectValue::Text(self.state(row).as_name().to_string()));
-                }
-                // Per-row selected bit: `selected.<row>`.
-                if let Some(row_str) = path.strip_prefix("selected.") {
-                    let row: usize = row_str.parse().ok()?;
-                    if row >= self.row_count() {
-                        return None;
-                    }
-                    return Some(IntrospectValue::Bool(self.is_selected(row)));
-                }
-                // R730 §5.40 — visual→data permutation: `order.<visual>`
-                // is the data-row index painted at visual position.
-                if let Some(v_str) = path.strip_prefix("order.") {
-                    let visual: usize = v_str.parse().ok()?;
-                    let order = self.order();
-                    return order.get(visual).map(|&d| IntrospectValue::Int(int_of(d)));
-                }
-                None
-            }
+            _ => self.query_indexed(path),
         }
     }
 
@@ -1728,24 +1772,30 @@ mod tests {
             vec!["Name".to_string(), "Round".to_string()],
             vec![vec!["Table".to_string(), "R707".to_string()]],
         );
-        assert_eq!(ext.query("rows"), Some(IntrospectValue::Int(1)));
-        assert_eq!(ext.query("cols"), Some(IntrospectValue::Int(2)));
-        assert_eq!(ext.query("selected"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(ext.query("selected_row"), Some(IntrospectValue::Int(-1)));
-        assert_eq!(ext.query("focused_row"), Some(IntrospectValue::Int(-1)));
-        assert_eq!(ext.query("focused_col"), Some(IntrospectValue::Int(0)));
+        assert_eq!(ext.query("rows"), Ok(IntrospectValue::Int(1)));
+        assert_eq!(ext.query("cols"), Ok(IntrospectValue::Int(2)));
+        assert_eq!(ext.query("selected"), Ok(IntrospectValue::Bool(false)));
+        assert_eq!(ext.query("selected_row"), Ok(IntrospectValue::Int(-1)));
+        assert_eq!(ext.query("focused_row"), Ok(IntrospectValue::Int(-1)));
+        assert_eq!(ext.query("focused_col"), Ok(IntrospectValue::Int(0)));
         assert_eq!(
             ext.query("header.1"),
-            Some(IntrospectValue::Text("Round".to_string())),
+            Ok(IntrospectValue::Text("Round".to_string())),
         );
         assert_eq!(
             ext.query("cell.0.0"),
-            Some(IntrospectValue::Text("Table".to_string())),
+            Ok(IntrospectValue::Text("Table".to_string())),
         );
         // Out-of-range and unknown slots return `None` (the RPC layer
         // turns this into a clean error, never a silent default).
-        assert_eq!(ext.query("cell.0.9"), None);
-        assert_eq!(ext.query("no_such_slot"), None);
+        assert!(matches!(
+            ext.query("cell.0.9"),
+            Err(ReadRefusal::NoSuchMember(_))
+        ));
+        // …and an undeclared NAME is a different refusal from an out-of-range
+        // INDEX. R1667 split these; before it both answered the same word, and
+        // this test could not have told them apart.
+        assert_eq!(ext.query("no_such_slot"), Err(ReadRefusal::UnknownPath));
     }
 
     #[test]
@@ -1765,8 +1815,8 @@ mod tests {
             ext.intervene("focused_col", IntrospectValue::Int(1))
                 .is_ok()
         );
-        assert_eq!(ext.query("focused_row"), Some(IntrospectValue::Int(1)));
-        assert_eq!(ext.query("focused_col"), Some(IntrospectValue::Int(1)));
+        assert_eq!(ext.query("focused_row"), Ok(IntrospectValue::Int(1)));
+        assert_eq!(ext.query("focused_col"), Ok(IntrospectValue::Int(1)));
         // Out-of-range rejected.
         assert_out_of_range_saying(
             &ext.intervene("focused_row", IntrospectValue::Int(9)),
@@ -1779,7 +1829,7 @@ mod tests {
         );
         // `Null` clears the active descendant row.
         assert!(ext.intervene("focused_row", IntrospectValue::Null).is_ok());
-        assert_eq!(ext.query("focused_row"), Some(IntrospectValue::Int(-1)));
+        assert_eq!(ext.query("focused_row"), Ok(IntrospectValue::Int(-1)));
     }
 
     #[test]
@@ -1795,7 +1845,7 @@ mod tests {
             let _ = ext.invoke("send", IntrospectValue::Text(format!("1_1:{ev}")));
         }
         assert_eq!(ext.selected_row(), Some(1));
-        assert_eq!(ext.query("selected_row"), Some(IntrospectValue::Int(1)));
+        assert_eq!(ext.query("selected_row"), Ok(IntrospectValue::Int(1)));
         // Malformed and out-of-range wires reject.
         assert_refused_saying(
             &ext.invoke("send", IntrospectValue::Text("nope".to_string())),
@@ -1908,10 +1958,10 @@ mod tests {
             ext.invoke("sort", IntrospectValue::Int(1)),
             Ok(IntrospectValue::Text("ascending".to_string())),
         );
-        assert_eq!(ext.query("sort_col"), Some(IntrospectValue::Int(1)));
+        assert_eq!(ext.query("sort_col"), Ok(IntrospectValue::Int(1)));
         assert_eq!(
             ext.query("sort_dir"),
-            Some(IntrospectValue::Text("ascending".to_string()))
+            Ok(IntrospectValue::Text("ascending".to_string()))
         );
         // Out-of-range column rejects.
         assert_refused_saying(
@@ -1924,10 +1974,13 @@ mod tests {
     fn order_query_reports_visual_to_data_mapping() {
         let mut ext = sort_sample_ext();
         let _ = ext.invoke("sort", IntrospectValue::Int(1)); // Round asc -> [1,0,2]
-        assert_eq!(ext.query("order.0"), Some(IntrospectValue::Int(1)));
-        assert_eq!(ext.query("order.1"), Some(IntrospectValue::Int(0)));
-        assert_eq!(ext.query("order.2"), Some(IntrospectValue::Int(2)));
-        assert_eq!(ext.query("order.9"), None, "out of range visual is None");
+        assert_eq!(ext.query("order.0"), Ok(IntrospectValue::Int(1)));
+        assert_eq!(ext.query("order.1"), Ok(IntrospectValue::Int(0)));
+        assert_eq!(ext.query("order.2"), Ok(IntrospectValue::Int(2)));
+        assert!(
+            matches!(ext.query("order.9"), Err(ReadRefusal::NoSuchMember(_))),
+            "R1667 - the family is declared and this argument addresses nothing"
+        );
     }
 
     fn sort_sample_ext() -> TableExternal {
@@ -2043,18 +2096,18 @@ mod tests {
                 vec!["3".to_string(), "4".to_string()],
             ],
         );
-        assert_eq!(ext.query("multiselect"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(ext.query("multiselect"), Ok(IntrospectValue::Bool(true)));
         // No selection yet.
-        assert_eq!(ext.query("selected"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(ext.query("selected"), Ok(IntrospectValue::Bool(false)));
         // selected_row is the -1 sentinel in multi-mode (no single row).
-        assert_eq!(ext.query("selected_row"), Some(IntrospectValue::Int(-1)));
+        assert_eq!(ext.query("selected_row"), Ok(IntrospectValue::Int(-1)));
         // Toggle row 1 on through the wire.
         for ev in ["PointerEnter", "PointerDown", "PointerUp"] {
             let _ = ext.invoke("send", IntrospectValue::Text(format!("1_0:{ev}")));
         }
-        assert_eq!(ext.query("selected"), Some(IntrospectValue::Bool(true)));
-        assert_eq!(ext.query("selected.1"), Some(IntrospectValue::Bool(true)));
-        assert_eq!(ext.query("selected.0"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(ext.query("selected"), Ok(IntrospectValue::Bool(true)));
+        assert_eq!(ext.query("selected.1"), Ok(IntrospectValue::Bool(true)));
+        assert_eq!(ext.query("selected.0"), Ok(IntrospectValue::Bool(false)));
         assert_eq!(ext.selected_rows(), vec![1]);
         // invoke send returns Null in multi-mode (no single selected row).
         let r = ext.invoke("send", IntrospectValue::Text("0_0:PointerUp".to_string()));
@@ -2203,7 +2256,7 @@ mod tests {
         );
         assert_eq!(
             ext.query("cell_selection_tsv"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "no selection -> Null",
         );
         ext.invoke("select-cell", IntrospectValue::Text("0,0".to_string()))
@@ -2212,7 +2265,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             ext.query("cell_selection_tsv"),
-            Some(IntrospectValue::Text("1\t2\n3\t4".to_string())),
+            Ok(IntrospectValue::Text("1\t2\n3\t4".to_string())),
             "the query mirrors Table::selected_tsv over the wire",
         );
         let fields: Vec<&str> = ext.schema().fields.iter().map(|f| f.path).collect();
@@ -2365,12 +2418,12 @@ mod tests {
         let mut ext = cell_sample_ext();
         assert_eq!(
             ext.query("cell_selection"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "no selection at boot"
         );
         assert_eq!(
             ext.query("cell_selection_count"),
-            Some(IntrospectValue::Int(0))
+            Ok(IntrospectValue::Int(0))
         );
         assert_eq!(
             ext.invoke("select-cell", IntrospectValue::Text("1,1".to_string())),
@@ -2378,11 +2431,11 @@ mod tests {
         );
         assert_eq!(
             ext.query("cell_selection"),
-            Some(IntrospectValue::Text("1,1,1,1".to_string())),
+            Ok(IntrospectValue::Text("1,1,1,1".to_string())),
         );
         assert_eq!(
             ext.query("cell_selection_count"),
-            Some(IntrospectValue::Int(1))
+            Ok(IntrospectValue::Int(1))
         );
         assert_eq!(
             ext.invoke("extend-cell", IntrospectValue::Text("2,1".to_string())),
@@ -2390,12 +2443,12 @@ mod tests {
         );
         assert_eq!(
             ext.query("cell_selection"),
-            Some(IntrospectValue::Text("1,1,2,1".to_string())),
+            Ok(IntrospectValue::Text("1,1,2,1".to_string())),
             "the rectangle grew from (1,1) to (2,1)",
         );
         assert_eq!(
             ext.query("cell_selection_count"),
-            Some(IntrospectValue::Int(2))
+            Ok(IntrospectValue::Int(2))
         );
         assert_eq!(
             ext.invoke("clear-cell-selection", IntrospectValue::Null),
@@ -2403,7 +2456,7 @@ mod tests {
         );
         assert_eq!(
             ext.query("cell_selection"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "cleared"
         );
     }
@@ -2416,7 +2469,7 @@ mod tests {
             Ok(IntrospectValue::Bool(false)),
             "out-of-range cell select is a no-op (false), not an error",
         );
-        assert_eq!(ext.query("cell_selection"), Some(IntrospectValue::Null));
+        assert_eq!(ext.query("cell_selection"), Ok(IntrospectValue::Null));
         assert!(matches!(
             ext.invoke("select-cell", IntrospectValue::Int(3)),
             Err(InvokeError::TypeMismatch),
@@ -2466,7 +2519,7 @@ mod tests {
         arc(&mut from_body, "1_0");
         assert_eq!(
             from_band.query("selected_row"),
-            Some(IntrospectValue::Int(1)),
+            Ok(IntrospectValue::Int(1)),
             "the band press washed row 1",
         );
         assert_eq!(
@@ -2516,7 +2569,7 @@ mod tests {
         );
         assert_eq!(
             ext.query("cell_selection_count"),
-            Some(IntrospectValue::Int(2)),
+            Ok(IntrospectValue::Int(2)),
         );
     }
 
@@ -2556,16 +2609,16 @@ mod tests {
         // is under `SingleSelection`.
         let mut single = cell_sample_ext();
         let _ = single.invoke("send", IntrospectValue::Text(press()));
-        assert_eq!(single.query("selected_row"), Some(IntrospectValue::Int(-1)));
+        assert_eq!(single.query("selected_row"), Ok(IntrospectValue::Int(-1)));
         // `SelectItems` spans the whole grid, then clears.
         let mut items = cell_select_items_ext();
         let _ = items.invoke("send", IntrospectValue::Text(press()));
         assert_eq!(
             items.query("cell_selection"),
-            Some(IntrospectValue::Text("0,0,2,1".to_string())),
+            Ok(IntrospectValue::Text("0,0,2,1".to_string())),
         );
         let _ = items.invoke("send", IntrospectValue::Text(press()));
-        assert_eq!(items.query("cell_selection"), Some(IntrospectValue::Null));
+        assert_eq!(items.query("cell_selection"), Ok(IntrospectValue::Null));
     }
 
     /// R954 §5.38 — a plain pointer click on a `SelectItems` grid selects the
@@ -2590,20 +2643,20 @@ mod tests {
         );
         assert_eq!(
             ext.query("cell_selection"),
-            Some(IntrospectValue::Text("1,1,1,1".to_string())),
+            Ok(IntrospectValue::Text("1,1,1,1".to_string())),
             "the click selected the single cell (1,1)",
         );
         assert_eq!(
             ext.query("selected_row"),
-            Some(IntrospectValue::Int(-1)),
+            Ok(IntrospectValue::Int(-1)),
             "no row was washed (SelectItems, not SelectRows)",
         );
         assert_eq!(
             ext.query("focused_row"),
-            Some(IntrospectValue::Int(1)),
+            Ok(IntrospectValue::Int(1)),
             "cursor followed click"
         );
-        assert_eq!(ext.query("focused_col"), Some(IntrospectValue::Int(1)));
+        assert_eq!(ext.query("focused_col"), Ok(IntrospectValue::Int(1)));
     }
 
     /// R954 §5.38 — a `Shift`+click extends the rectangle from the anchor (the
@@ -2636,12 +2689,12 @@ mod tests {
         );
         assert_eq!(
             ext.query("cell_selection"),
-            Some(IntrospectValue::Text("0,0,2,1".to_string())),
+            Ok(IntrospectValue::Text("0,0,2,1".to_string())),
             "Shift+click grew the rectangle (0,0)->(2,1) from the pinned anchor",
         );
         assert_eq!(
             ext.query("cell_selection_count"),
-            Some(IntrospectValue::Int(6))
+            Ok(IntrospectValue::Int(6))
         );
     }
 
@@ -2666,12 +2719,12 @@ mod tests {
         }
         assert_eq!(
             ext.query("cell_selection"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "hover / press / leave selected nothing — only PointerUp activates",
         );
         assert_eq!(
             ext.query("selected_row"),
-            Some(IntrospectValue::Int(-1)),
+            Ok(IntrospectValue::Int(-1)),
             "no row washed"
         );
     }
@@ -2708,12 +2761,12 @@ mod tests {
         );
         assert_eq!(
             ext.query("selected_row"),
-            Some(IntrospectValue::Int(1)),
+            Ok(IntrospectValue::Int(1)),
             "row 1 washed"
         );
         assert_eq!(
             ext.query("cell_selection"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "no cell rectangle in SelectRows mode",
         );
     }
@@ -2725,12 +2778,12 @@ mod tests {
     fn r955_1_selection_behavior_is_introspectable() {
         assert_eq!(
             cell_select_items_ext().query("selection_behavior"),
-            Some(IntrospectValue::Text("items".to_string())),
+            Ok(IntrospectValue::Text("items".to_string())),
             "a SelectItems grid reports its mode",
         );
         assert_eq!(
             cell_sample_ext().query("selection_behavior"),
-            Some(IntrospectValue::Text("rows".to_string())),
+            Ok(IntrospectValue::Text("rows".to_string())),
             "a SelectRows grid reports its mode",
         );
     }

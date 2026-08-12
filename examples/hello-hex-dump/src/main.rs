@@ -75,8 +75,8 @@ use pinion_chart::{Brush, BrushStripColors};
 use pinion_core::composite_tag::parse_pair as parse_typed_pair;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
-    selection_copy_payload,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership, selection_copy_payload,
 };
 use pinion_core::marks::{Mark, MarkSet, MarkedGrid, domain};
 use pinion_core::scene::{ContainerNode, Rect, TextGridNode, TextNode};
@@ -240,7 +240,7 @@ fn read_selection(scene: &Scene) -> Option<Selection> {
         .handle
         .introspect()?;
     let field = |name: &str| -> Option<usize> {
-        match intro.query(name)? {
+        match intro.query(name).ok()? {
             IntrospectValue::Int(i) => usize::try_from(i).ok(),
             _ => None,
         }
@@ -659,26 +659,25 @@ impl ExternalIntrospect for HexDumpOracle {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         let int = |n: usize| IntrospectValue::Int(i64::try_from(n).unwrap_or(0));
         let range = self.range();
         match path {
-            "byte_count" => Some(int(SAMPLE_LEN)),
-            "bytes_per_row" => Some(int(BYTES_PER_ROW)),
-            "row_count" => Some(int(ROWS)),
-            "total_cols" => Some(int(TOTAL_COLS)),
+            "byte_count" => Ok(int(SAMPLE_LEN)),
+            "bytes_per_row" => Ok(int(BYTES_PER_ROW)),
+            "row_count" => Ok(int(ROWS)),
+            "total_cols" => Ok(int(TOTAL_COLS)),
             // The selection's focus byte, or Null before any select.
-            "cursor_byte" => Some(self.focus().map_or(IntrospectValue::Null, int)),
+            "cursor_byte" => Ok(self.focus().map_or(IntrospectValue::Null, int)),
             // The focus byte's value as two hex digits, or Null.
-            "cursor_value" => Some(
-                self.focus()
-                    .and_then(|b| self.bytes.get(b))
-                    .map_or(IntrospectValue::Null, |&byte| {
-                        IntrospectValue::Text(format!("{byte:02x}"))
-                    }),
-            ),
+            "cursor_value" => Ok(self
+                .focus()
+                .and_then(|b| self.bytes.get(b))
+                .map_or(IntrospectValue::Null, |&byte| {
+                    IntrospectValue::Text(format!("{byte:02x}"))
+                })),
             // The hex cell the cursor rings ("col,row"), or Null.
-            "cursor_cell" => Some(self.focus().map_or(IntrospectValue::Null, |b| {
+            "cursor_cell" => Ok(self.focus().map_or(IntrospectValue::Null, |b| {
                 IntrospectValue::Text(format!(
                     "{},{}",
                     hex_col(b % BYTES_PER_ROW),
@@ -686,13 +685,13 @@ impl ExternalIntrospect for HexDumpOracle {
                 ))
             })),
             // The selection range [start, end), its length, and its hex bytes.
-            "selection_start" => Some(range.map_or(IntrospectValue::Null, |(s, _)| int(s))),
-            "selection_end" => Some(range.map_or(IntrospectValue::Null, |(_, e)| int(e))),
-            "selection_len" => Some(range.map_or(IntrospectValue::Null, |(s, e)| int(e - s))),
-            "selection_hex" => Some(range.map_or(IntrospectValue::Null, |(s, e)| {
+            "selection_start" => Ok(range.map_or(IntrospectValue::Null, |(s, _)| int(s))),
+            "selection_end" => Ok(range.map_or(IntrospectValue::Null, |(_, e)| int(e))),
+            "selection_len" => Ok(range.map_or(IntrospectValue::Null, |(s, e)| int(e - s))),
+            "selection_hex" => Ok(range.map_or(IntrospectValue::Null, |(s, e)| {
                 IntrospectValue::Text(selection_hex(&self.bytes, s, e))
             })),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -1177,11 +1176,11 @@ mod tests {
     #[test]
     fn oracle_reports_the_layout_and_the_mappings() {
         let mut o = HexDumpOracle::new();
-        assert_eq!(o.query("byte_count"), Some(IntrospectValue::Int(128)));
-        assert_eq!(o.query("bytes_per_row"), Some(IntrospectValue::Int(16)));
-        assert_eq!(o.query("row_count"), Some(IntrospectValue::Int(8)));
-        assert_eq!(o.query("total_cols"), Some(IntrospectValue::Int(78)));
-        assert_eq!(o.query("nope"), None);
+        assert_eq!(o.query("byte_count"), Ok(IntrospectValue::Int(128)));
+        assert_eq!(o.query("bytes_per_row"), Ok(IntrospectValue::Int(16)));
+        assert_eq!(o.query("row_count"), Ok(IntrospectValue::Int(8)));
+        assert_eq!(o.query("total_cols"), Ok(IntrospectValue::Int(78)));
+        assert_eq!(o.query("nope"), Err(ReadRefusal::UnknownPath));
 
         // hex_cell / ascii_cell map a byte to its "col,row".
         assert_eq!(
@@ -1335,24 +1334,24 @@ mod tests {
     #[test]
     fn select_range_invoke_and_selection_queries() {
         let mut o = HexDumpOracle::new();
-        assert_eq!(o.query("selection_start"), Some(IntrospectValue::Null));
-        assert_eq!(o.query("selection_hex"), Some(IntrospectValue::Null));
+        assert_eq!(o.query("selection_start"), Ok(IntrospectValue::Null));
+        assert_eq!(o.query("selection_hex"), Ok(IntrospectValue::Null));
         // Select the header's 4-byte length field [4, 8) = 00 00 00 2c.
         assert_eq!(
             o.invoke("select_range", IntrospectValue::Text("4,8".into())),
             Ok(IntrospectValue::Text("4,8".into())),
         );
-        assert_eq!(o.query("selection_start"), Some(IntrospectValue::Int(4)));
-        assert_eq!(o.query("selection_end"), Some(IntrospectValue::Int(8)));
-        assert_eq!(o.query("selection_len"), Some(IntrospectValue::Int(4)));
+        assert_eq!(o.query("selection_start"), Ok(IntrospectValue::Int(4)));
+        assert_eq!(o.query("selection_end"), Ok(IntrospectValue::Int(8)));
+        assert_eq!(o.query("selection_len"), Ok(IntrospectValue::Int(4)));
         assert_eq!(
             o.query("selection_hex"),
-            Some(IntrospectValue::Text("0000002c".into())),
+            Ok(IntrospectValue::Text("0000002c".into())),
             "the length field's bytes",
         );
         assert_eq!(
             o.query("cursor_byte"),
-            Some(IntrospectValue::Int(7)),
+            Ok(IntrospectValue::Int(7)),
             "focus is the last selected byte",
         );
         // "none" clears it.
@@ -1360,7 +1359,7 @@ mod tests {
             o.invoke("select_range", IntrospectValue::Text("none".into())),
             Ok(IntrospectValue::Text("none".into())),
         );
-        assert_eq!(o.query("selection_start"), Some(IntrospectValue::Null));
+        assert_eq!(o.query("selection_start"), Ok(IntrospectValue::Null));
         // Empty / out-of-range ranges are rejected.
         assert_refused_saying(
             &o.invoke("select_range", IntrospectValue::Text("5,5".into())),
@@ -1461,25 +1460,25 @@ mod tests {
     fn intervene_cursor_byte_sets_and_clears_and_queries_reflect_it() {
         let mut o = HexDumpOracle::new();
         // Boot: no cursor.
-        assert_eq!(o.query("cursor_byte"), Some(IntrospectValue::Null));
-        assert_eq!(o.query("cursor_value"), Some(IntrospectValue::Null));
+        assert_eq!(o.query("cursor_byte"), Ok(IntrospectValue::Null));
+        assert_eq!(o.query("cursor_value"), Ok(IntrospectValue::Null));
 
         // Select byte 0 (0x50) — the queries reflect it.
         o.intervene("cursor_byte", IntrospectValue::Int(0)).unwrap();
-        assert_eq!(o.query("cursor_byte"), Some(IntrospectValue::Int(0)));
+        assert_eq!(o.query("cursor_byte"), Ok(IntrospectValue::Int(0)));
         assert_eq!(
             o.query("cursor_value"),
-            Some(IntrospectValue::Text("50".into())),
+            Ok(IntrospectValue::Text("50".into())),
             "byte 0 is 0x50",
         );
         assert_eq!(
             o.query("cursor_cell"),
-            Some(IntrospectValue::Text(format!("{},0", hex_col(0)))),
+            Ok(IntrospectValue::Text(format!("{},0", hex_col(0)))),
         );
 
         // Null deselects.
         o.intervene("cursor_byte", IntrospectValue::Null).unwrap();
-        assert_eq!(o.query("cursor_byte"), Some(IntrospectValue::Null));
+        assert_eq!(o.query("cursor_byte"), Ok(IntrospectValue::Null));
 
         // Out of range and read-only slots are rejected.
         assert_out_of_range_saying(

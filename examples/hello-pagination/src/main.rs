@@ -218,7 +218,7 @@ fn read_button_state(
     path: &str,
 ) -> ButtonState {
     match intro.query(path) {
-        Some(IntrospectValue::Text(name)) => ButtonState::from_name_or_default(&name),
+        Ok(IntrospectValue::Text(name)) => ButtonState::from_name_or_default(&name),
         _ => ButtonState::Idle,
     }
 }
@@ -247,8 +247,8 @@ impl WidgetCore for PaginationView {
         };
         rc::read_rows(intro, &mut out.pages);
         out.focused = rc::focused_index(intro);
-        out.can_prev = matches!(intro.query("can_prev"), Some(IntrospectValue::Bool(true)));
-        out.can_next = matches!(intro.query("can_next"), Some(IntrospectValue::Bool(true)));
+        out.can_prev = matches!(intro.query("can_prev"), Ok(IntrospectValue::Bool(true)));
+        out.can_next = matches!(intro.query("can_next"), Ok(IntrospectValue::Bool(true)));
         out.prev_state = read_button_state(intro, "prev.state");
         out.next_state = read_button_state(intro, "next.state");
         out

@@ -46,7 +46,7 @@ use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_chart::{ChartStyle, DataPoint, LineChart, Series};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, ReadRefusal, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use pinion_core::scene::{ContainerNode, Rect, TextNode, capture_surface};
 use pinion_core::style::{BoxStyle, LayoutStyle, Size, TextStyle};
@@ -198,7 +198,7 @@ fn read_crosshair(scene: &Scene) -> Option<f32> {
             clippy::cast_possible_truncation,
             reason = "an inspect fraction 0.0..=1.0 loses no meaningful precision as f32"
         )]
-        Some(IntrospectValue::Float(f)) => Some(f as f32),
+        Ok(IntrospectValue::Float(f)) => Some(f as f32),
         _ => None,
     }
 }
@@ -276,14 +276,13 @@ impl ExternalIntrospect for CrosshairExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "x_frac" => Some(
-                self.x_frac
-                    .map_or(IntrospectValue::Null, |f| IntrospectValue::Float(f.into())),
-            ),
-            "has_crosshair" => Some(IntrospectValue::Bool(self.x_frac.is_some())),
-            _ => None,
+            "x_frac" => Ok(self
+                .x_frac
+                .map_or(IntrospectValue::Null, |f| IntrospectValue::Float(f.into()))),
+            "has_crosshair" => Ok(IntrospectValue::Bool(self.x_frac.is_some())),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -507,27 +506,20 @@ mod tests {
     #[test]
     fn a_hover_move_sets_the_fraction_and_a_leave_clears_it() {
         let mut ext = CrosshairExternal::new();
-        assert_eq!(
-            ext.query("x_frac"),
-            Some(IntrospectValue::Null),
-            "boot: none"
-        );
+        assert_eq!(ext.query("x_frac"), Ok(IntrospectValue::Null), "boot: none");
         ext.pointer_move(0.42, 0.5);
         assert_eq!(
             ext.query("x_frac"),
-            Some(IntrospectValue::Float(0.42_f32.into())),
+            Ok(IntrospectValue::Float(0.42_f32.into())),
             "hover move stored the x fraction"
         );
-        assert_eq!(
-            ext.query("has_crosshair"),
-            Some(IntrospectValue::Bool(true))
-        );
+        assert_eq!(ext.query("has_crosshair"), Ok(IntrospectValue::Bool(true)));
         // A leave (the router's boundary send) clears the crosshair.
         ext.invoke("send", IntrospectValue::Text("PointerLeave".to_owned()))
             .expect("send is infallible");
         assert_eq!(
             ext.query("x_frac"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "leaving the plot clears the crosshair"
         );
     }
@@ -551,9 +543,6 @@ mod tests {
         // A valid fraction is accepted and rendered.
         ext.intervene("x_frac", IntrospectValue::Float(0.5))
             .expect("in-range fraction accepted");
-        assert_eq!(
-            ext.query("has_crosshair"),
-            Some(IntrospectValue::Bool(true))
-        );
+        assert_eq!(ext.query("has_crosshair"), Ok(IntrospectValue::Bool(true)));
     }
 }

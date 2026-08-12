@@ -40,8 +40,8 @@ use std::rc::Rc;
 use pinion_a11y::{AccessNode, WidgetA11y, windowed_list_nodes};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, RepaintOwner, SchemaArg, SchemaField, ThreadOwnership,
-    int_of,
+    IntrospectSchema, IntrospectValue, ReadRefusal, RepaintOwner, SchemaArg, SchemaField,
+    ThreadOwnership, int_of,
 };
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -283,16 +283,16 @@ impl ExternalIntrospect for MeasuredListExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "item_count" => Some(IntrospectValue::Int(int_of(self.measured.item_count()))),
-            "estimated" => Some(IntrospectValue::Int(i64::from(EST))),
-            "measured_count" => Some(IntrospectValue::Int(int_of(self.measured.measured_count()))),
-            "is_fully_measured" => Some(IntrospectValue::Bool(self.measured.is_fully_measured())),
-            "total_height" => Some(IntrospectValue::Int(i64::from(
+            "item_count" => Ok(IntrospectValue::Int(int_of(self.measured.item_count()))),
+            "estimated" => Ok(IntrospectValue::Int(i64::from(EST))),
+            "measured_count" => Ok(IntrospectValue::Int(int_of(self.measured.measured_count()))),
+            "is_fully_measured" => Ok(IntrospectValue::Bool(self.measured.is_fully_measured())),
+            "total_height" => Ok(IntrospectValue::Int(i64::from(
                 self.measured.total_height(),
             ))),
-            "exact_total" => Some(IntrospectValue::Int(i64::from(exact_total()))),
+            "exact_total" => Ok(IntrospectValue::Int(i64::from(exact_total()))),
             _ => {
                 // `model_height.<row>` / `measured_height.<row>` — the modeled
                 // vs (nullable) measured height of a single row.
@@ -305,20 +305,26 @@ impl ExternalIntrospect for MeasuredListExternal {
                 // `IndexOf("item_count")` domain is only true with this guard.
                 if let Some(row) = path.strip_prefix("model_height.").and_then(parse_index) {
                     if row >= self.measured.item_count() {
-                        return None;
+                        return Err(ReadRefusal::no_such_member(format!(
+                            "row {row} is outside 0..{}",
+                            self.measured.item_count()
+                        )));
                     }
-                    return Some(IntrospectValue::Int(i64::from(model_height(row))));
+                    return Ok(IntrospectValue::Int(i64::from(model_height(row))));
                 }
                 if let Some(row) = path.strip_prefix("measured_height.").and_then(parse_index) {
                     if row >= self.measured.item_count() {
-                        return None;
+                        return Err(ReadRefusal::no_such_member(format!(
+                            "row {row} is outside 0..{}",
+                            self.measured.item_count()
+                        )));
                     }
-                    return Some(match self.measured.measured_height(row) {
+                    return Ok(match self.measured.measured_height(row) {
                         Some(h) => IntrospectValue::Int(i64::from(h)),
                         None => IntrospectValue::Null,
                     });
                 }
-                None
+                Err(ReadRefusal::UnknownPath)
             }
         }
     }
@@ -486,44 +492,41 @@ mod tests {
             let ext = MeasuredListExternal {
                 measured: use_measured_rows(MEASURED_KEY, N, EST),
             };
-            assert_eq!(
-                ext.query("item_count"),
-                Some(IntrospectValue::Int(int_of(N)))
-            );
+            assert_eq!(ext.query("item_count"), Ok(IntrospectValue::Int(int_of(N))));
             assert_eq!(
                 ext.query("estimated"),
-                Some(IntrospectValue::Int(i64::from(EST)))
+                Ok(IntrospectValue::Int(i64::from(EST)))
             );
             assert_eq!(
                 ext.query("measured_count"),
-                Some(IntrospectValue::Int(0)),
+                Ok(IntrospectValue::Int(0)),
                 "nothing measured before a layout pass runs",
             );
             assert_eq!(
                 ext.query("is_fully_measured"),
-                Some(IntrospectValue::Bool(false))
+                Ok(IntrospectValue::Bool(false))
             );
             assert_eq!(
                 ext.query("total_height"),
-                Some(IntrospectValue::Int(i64::from(
+                Ok(IntrospectValue::Int(i64::from(
                     u32::try_from(N).unwrap() * EST
                 ))),
                 "the pre-measurement total is the all-estimate baseline",
             );
             assert_eq!(
                 ext.query("exact_total"),
-                Some(IntrospectValue::Int(i64::from(exact_total()))),
+                Ok(IntrospectValue::Int(i64::from(exact_total()))),
             );
             assert_eq!(
                 ext.query("model_height.4"),
-                Some(IntrospectValue::Int(i64::from(5 * STRIP_H)))
+                Ok(IntrospectValue::Int(i64::from(5 * STRIP_H)))
             );
             assert_eq!(
                 ext.query("measured_height.4"),
-                Some(IntrospectValue::Null),
+                Ok(IntrospectValue::Null),
                 "unmeasured row reports Null, not the estimate",
             );
-            assert_eq!(ext.query("bogus"), None);
+            assert_eq!(ext.query("bogus"), Err(ReadRefusal::UnknownPath));
         });
     }
 }

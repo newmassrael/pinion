@@ -74,8 +74,8 @@ use crate::WidgetStateName;
 use crate::accelerator::{Chord, KeySequence, QT_MAX_SEQUENCE_LENGTH, SequenceFull};
 use crate::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
-    SchemaField, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
+    SchemaArg, SchemaField, ThreadOwnership,
 };
 use crate::input::Modifiers;
 use crate::intent::Intent;
@@ -560,17 +560,17 @@ impl ExternalIntrospect for KeySequenceEditExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         let edit = &self.em.inner;
         match path {
-            "state" => Some(IntrospectValue::Text(edit.state().as_name().to_string())),
-            "recording" => Some(IntrospectValue::Bool(edit.is_recording())),
-            "sequence" => Some(IntrospectValue::Text(edit.sequence().portable())),
-            "in_flight" => Some(IntrospectValue::Text(edit.in_flight().portable())),
+            "state" => Ok(IntrospectValue::Text(edit.state().as_name().to_string())),
+            "recording" => Ok(IntrospectValue::Bool(edit.is_recording())),
+            "sequence" => Ok(IntrospectValue::Text(edit.sequence().portable())),
+            "in_flight" => Ok(IntrospectValue::Text(edit.in_flight().portable())),
             // The prefix the toolkit drops. A held modifier with no key spells
             // as the chord it would become, trailing separator and all,
             // because that is what the field displays.
-            "pending" => Some(IntrospectValue::Text(edit.pending().map_or_else(
+            "pending" => Ok(IntrospectValue::Text(edit.pending().map_or_else(
                 String::new,
                 |m| {
                     let mut probe = Chord::new(String::new(), m).portable();
@@ -580,11 +580,11 @@ impl ExternalIntrospect for KeySequenceEditExternal {
                     probe
                 },
             ))),
-            "revision" => Some(IntrospectValue::Int(i64::from(self.revision))),
-            "max_len" => Some(IntrospectValue::Int(
+            "revision" => Ok(IntrospectValue::Int(i64::from(self.revision))),
+            "max_len" => Ok(IntrospectValue::Int(
                 i64::try_from(edit.max_len()).unwrap_or(i64::MAX),
             )),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -726,7 +726,7 @@ mod tests {
         assert!(w.edit().in_flight().is_empty(), "a prefix is not a chord");
         assert_eq!(
             w.query("pending"),
-            Some(IntrospectValue::Text("Ctrl+Shift+".to_string())),
+            Ok(IntrospectValue::Text("Ctrl+Shift+".to_string())),
             "the prefix spells as the chord it would become",
         );
         // A real key lands: the prefix resolves and stops being pending.
@@ -842,21 +842,21 @@ mod tests {
         w.record(&ctrl("k"));
         assert_eq!(
             w.query("state"),
-            Some(IntrospectValue::Text("Recording".into()))
+            Ok(IntrospectValue::Text("Recording".into()))
         );
-        assert_eq!(w.query("recording"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(w.query("recording"), Ok(IntrospectValue::Bool(true)));
         assert_eq!(
             w.query("in_flight"),
-            Some(IntrospectValue::Text("Ctrl+k".into()))
+            Ok(IntrospectValue::Text("Ctrl+k".into()))
         );
         assert_eq!(
             w.query("sequence"),
-            Some(IntrospectValue::Text(String::new()))
+            Ok(IntrospectValue::Text(String::new()))
         );
-        assert_eq!(w.query("max_len"), Some(IntrospectValue::Int(4)));
+        assert_eq!(w.query("max_len"), Ok(IntrospectValue::Int(4)));
         // R1566 — an undeclared name is UnknownPath; a declared read-only one
         // is ReadOnly, and the two are told apart from the schema.
-        assert!(w.query("no_such_slot").is_none());
+        assert!(w.query("no_such_slot").is_err());
     }
 
     #[test]
@@ -868,7 +868,7 @@ mod tests {
         );
         assert_eq!(
             w.query("in_flight"),
-            Some(IntrospectValue::Text("Ctrl+Shift+P".into())),
+            Ok(IntrospectValue::Text("Ctrl+Shift+P".into())),
         );
         // An unreadable spelling is a NAMED refusal, where the toolkit's `fromString`
         // would hand back a sequence containing `Key_unknown`.

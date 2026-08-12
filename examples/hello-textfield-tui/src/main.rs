@@ -261,11 +261,11 @@ impl WidgetCore for HelloTextFieldTui {
             return (TextFieldState::Idle, 0);
         };
         let interaction = match intro.query("state") {
-            Some(IntrospectValue::Text(name)) => TextFieldState::from_name_or_default(&name),
+            Ok(IntrospectValue::Text(name)) => TextFieldState::from_name_or_default(&name),
             _ => TextFieldState::Idle,
         };
         let caret = match intro.query("caret") {
-            Some(IntrospectValue::Int(n)) => u32::try_from(n.max(0)).unwrap_or(u32::MAX),
+            Ok(IntrospectValue::Int(n)) => u32::try_from(n.max(0)).unwrap_or(u32::MAX),
             _ => 0,
         };
         (interaction, caret)

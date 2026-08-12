@@ -41,8 +41,8 @@
 use crate::WidgetStateName;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
-    ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::radio::{Radio, RadioEvent, RadioState};
@@ -429,19 +429,19 @@ impl ExternalIntrospect for RadioGroupExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "count" => Some(IntrospectValue::Int(
+            "count" => Ok(IntrospectValue::Int(
                 i64::try_from(self.count()).expect("RadioGroup count must fit in i64"),
             )),
-            "selected_index" => Some(match self.selected_index() {
+            "selected_index" => Ok(match self.selected_index() {
                 Some(idx) => IntrospectValue::Int(i64::try_from(idx).expect("index fits in i64")),
                 None => IntrospectValue::Null,
             }),
             // R51.87 §5.40 — AT-side active descendant. `Null` until
             // a `Focus` action or `intervene "focused_index" = Int(i)`
             // sets it.
-            "focused_index" => Some(match self.focused_index() {
+            "focused_index" => Ok(match self.focused_index() {
                 Some(idx) => IntrospectValue::Int(i64::try_from(idx).expect("index fits in i64")),
                 None => IntrospectValue::Null,
             }),
@@ -455,20 +455,30 @@ impl ExternalIntrospect for RadioGroupExternal {
                 // and the `scene/query` RPC treat that as "no such
                 // path" silently.
                 if let Some(idx_str) = path.strip_prefix("state.") {
-                    let idx: usize = idx_str.parse().ok()?;
+                    let idx: usize = idx_str
+                        .parse()
+                        .map_err(|_| ReadRefusal::QueryTypeMismatch)?;
                     if idx >= self.count() {
-                        return None;
+                        return Err(ReadRefusal::no_such_member(format!(
+                            "radio {idx} is outside 0..{}",
+                            self.count()
+                        )));
                     }
-                    return Some(IntrospectValue::Text(self.state(idx).as_name().to_string()));
+                    return Ok(IntrospectValue::Text(self.state(idx).as_name().to_string()));
                 }
                 if let Some(idx_str) = path.strip_prefix("selected.") {
-                    let idx: usize = idx_str.parse().ok()?;
+                    let idx: usize = idx_str
+                        .parse()
+                        .map_err(|_| ReadRefusal::QueryTypeMismatch)?;
                     if idx >= self.count() {
-                        return None;
+                        return Err(ReadRefusal::no_such_member(format!(
+                            "radio {idx} is outside 0..{}",
+                            self.count()
+                        )));
                     }
-                    return Some(IntrospectValue::Bool(self.is_selected(idx)));
+                    return Ok(IntrospectValue::Bool(self.is_selected(idx)));
                 }
-                None
+                Err(ReadRefusal::UnknownPath)
             }
         }
     }
@@ -711,7 +721,7 @@ mod tests {
     #[test]
     fn external_query_unknown_path_returns_none() {
         let g = RadioGroupExternal::new(2);
-        assert!(g.query("nope").is_none());
+        assert!(g.query("nope").is_err());
     }
 
     #[test]
@@ -1133,27 +1143,27 @@ mod tests {
         let mut g = RadioGroupExternal::new(3);
         assert_eq!(
             g.query("state.0"),
-            Some(IntrospectValue::Text("Idle".to_string())),
+            Ok(IntrospectValue::Text("Idle".to_string())),
         );
         g.send(1, RadioEvent::PointerEnter);
         assert_eq!(
             g.query("state.1"),
-            Some(IntrospectValue::Text("Hover".to_string())),
+            Ok(IntrospectValue::Text("Hover".to_string())),
         );
         g.send(1, RadioEvent::PointerDown);
         assert_eq!(
             g.query("state.1"),
-            Some(IntrospectValue::Text("Pressed".to_string())),
+            Ok(IntrospectValue::Text("Pressed".to_string())),
         );
         g.send(2, RadioEvent::Disable);
         assert_eq!(
             g.query("state.2"),
-            Some(IntrospectValue::Text("Disabled".to_string())),
+            Ok(IntrospectValue::Text("Disabled".to_string())),
         );
         // Untouched radios stay Idle.
         assert_eq!(
             g.query("state.0"),
-            Some(IntrospectValue::Text("Idle".to_string())),
+            Ok(IntrospectValue::Text("Idle".to_string())),
         );
     }
 
@@ -1164,8 +1174,8 @@ mod tests {
         // `query("selected")`. After activating radio 1, only index
         // 1 reads as `true`.
         let mut g = RadioGroupExternal::new(3);
-        assert_eq!(g.query("selected.0"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(g.query("selected.1"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(g.query("selected.0"), Ok(IntrospectValue::Bool(false)));
+        assert_eq!(g.query("selected.1"), Ok(IntrospectValue::Bool(false)));
         // Full activate sequence on radio 1.
         for ev in [
             RadioEvent::PointerEnter,
@@ -1174,9 +1184,9 @@ mod tests {
         ] {
             g.send(1, ev);
         }
-        assert_eq!(g.query("selected.0"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(g.query("selected.1"), Some(IntrospectValue::Bool(true)));
-        assert_eq!(g.query("selected.2"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(g.query("selected.0"), Ok(IntrospectValue::Bool(false)));
+        assert_eq!(g.query("selected.1"), Ok(IntrospectValue::Bool(true)));
+        assert_eq!(g.query("selected.2"), Ok(IntrospectValue::Bool(false)));
     }
 
     #[test]
@@ -1186,20 +1196,46 @@ mod tests {
         // observe the same silent-fall-through that hits unknown
         // top-level paths.
         let g = RadioGroupExternal::new(3);
-        assert_eq!(g.query("state.99"), None);
-        assert_eq!(g.query("selected.99"), None);
+        assert!(matches!(
+            g.query("state.99"),
+            Err(ReadRefusal::NoSuchMember(_))
+        ));
+        assert!(matches!(
+            g.query("selected.99"),
+            Err(ReadRefusal::NoSuchMember(_))
+        ));
     }
 
+    /// R1667 — a malformed ARGUMENT and an unknown PATH are different refusals,
+    /// and this test is where the difference is stated for this widget.
+    ///
+    /// Every assertion below answered the same word before the read channel
+    /// could carry a reason, so the test's own name described the
+    /// only answer available rather than the one that was true (the name was
+    /// `external_query_malformed_per_radio_path_is_none`).
     #[test]
-    fn external_query_malformed_per_radio_path_is_none() {
-        // Non-numeric suffix → parse fails → `None`. The router
-        // does not panic on a malformed AI request.
+    fn external_query_malformed_per_radio_path_states_which_half_is_wrong() {
         let g = RadioGroupExternal::new(3);
-        assert_eq!(g.query("state.abc"), None);
-        assert_eq!(g.query("selected.-1"), None);
-        // Bare prefix with no `.` returns `None` via the top-level
-        // unknown-path fall-through.
-        assert_eq!(g.query("state"), None);
-        assert_eq!(g.query("selected"), None);
+        // A declared family, and the argument is not the declared type.
+        assert_eq!(
+            g.query("state.abc"),
+            Err(ReadRefusal::QueryTypeMismatch),
+            "`abc` is not an index",
+        );
+        assert_eq!(
+            g.query("selected.-1"),
+            Err(ReadRefusal::QueryTypeMismatch),
+            "a negative index is not a `usize`",
+        );
+        // R1667 — the bare stem is NOT a member of the family (the template's
+        // separator never matched), so it stays the unknown-path answer.
+        assert_eq!(g.query("state"), Err(ReadRefusal::UnknownPath));
+        assert_eq!(g.query("selected"), Err(ReadRefusal::UnknownPath));
+        // …and the empty member is now the surface's call, not the matcher's.
+        assert_eq!(
+            g.query("state."),
+            Err(ReadRefusal::QueryTypeMismatch),
+            "R1667 - the family owns its empty member; the argument is malformed",
+        );
     }
 }

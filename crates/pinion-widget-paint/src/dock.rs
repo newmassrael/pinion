@@ -66,7 +66,7 @@ use std::collections::{HashMap, VecDeque};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, DOCK_SURFACE_TAG, DragPayload, DragUpdate, DropPoint,
     External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
-    RepaintOwner, SchemaField, ThreadOwnership,
+    ReadRefusal, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use pinion_core::input::PointerWireEvent;
 use pinion_core::intent::Intent;
@@ -3926,12 +3926,12 @@ impl ExternalIntrospect for DockReorganizeExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
             // R1082.1 §5.51 — the shared live drag-preview (same SSOT
             // projection the panel externals expose). Null when no pointer
             // panels are wired / no drag is in flight.
-            "drop_preview" => Some(drop_preview_introspect(self.drop_preview.as_ref())),
+            "drop_preview" => Ok(drop_preview_introspect(self.drop_preview.as_ref())),
             "topology" => {
                 // §2 #7 scene-as-data — the live dock surface as queryable
                 // JSON. (R1084) `None` (empty dock) serialises to JSON
@@ -3939,20 +3939,19 @@ impl ExternalIntrospect for DockReorganizeExternal {
                 // rather than a fabricated tree. serde cannot fail for the
                 // well-formed `Option<topology>`; fall back to Null
                 // defensively rather than panic.
-                serde_json::to_value(self.reorganizer.topology().get())
-                    .ok()
-                    .map(IntrospectValue::Json)
+                Ok(serde_json::to_value(self.reorganizer.topology().get())
+                    .map_or(IntrospectValue::Null, IntrospectValue::Json))
             }
-            "split_seq" => Some(IntrospectValue::Int(
+            "split_seq" => Ok(IntrospectValue::Int(
                 i64::try_from(self.reorganizer.split_seq()).unwrap_or(i64::MAX),
             )),
-            "tabs_seq" => Some(IntrospectValue::Int(
+            "tabs_seq" => Ok(IntrospectValue::Int(
                 i64::try_from(self.reorganizer.tabs_seq()).unwrap_or(i64::MAX),
             )),
             // R1112 §5.51 §2 #7 PR-37 — the surface tab-docking policy.
-            "tabbing" => Some(IntrospectValue::Bool(self.reorganizer.tabbing())),
+            "tabbing" => Ok(IntrospectValue::Bool(self.reorganizer.tabbing())),
             // R1134 §5.51.1 §2 #7 — the surface torn-slot (collapse) policy.
-            "float_policy" => Some(IntrospectValue::Text(
+            "float_policy" => Ok(IntrospectValue::Text(
                 self.reorganizer.float_policy().as_str().to_string(),
             )),
             // (R1350 §5.51.1 §2 #7 PR-59) The lock, as data — the `tabbing`
@@ -3961,14 +3960,14 @@ impl ExternalIntrospect for DockReorganizeExternal {
             // entry would be ambiguous (locked? older pinion? another external
             // type?), and discovering it from a rejection means having already
             // tried to make the surface lie.
-            "float_policy_locked" => Some(IntrospectValue::Bool(
+            "float_policy_locked" => Ok(IntrospectValue::Bool(
                 self.reorganizer.float_policy_locked(),
             )),
-            "last_outcome" => Some(match self.reorganizer.last_outcome() {
+            "last_outcome" => Ok(match self.reorganizer.last_outcome() {
                 Some(s) => IntrospectValue::Text(s),
                 None => IntrospectValue::Null,
             }),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -4657,16 +4656,15 @@ impl ExternalIntrospect for TabWellExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "well_id" => Some(IntrospectValue::Text(self.well_id.to_string())),
-            "active" => Some(
-                self.reorganizer
-                    .tab_well_active(&self.well_id)
-                    .and_then(|a| i64::try_from(a).ok())
-                    .map_or(IntrospectValue::Null, IntrospectValue::Int),
-            ),
-            _ => None,
+            "well_id" => Ok(IntrospectValue::Text(self.well_id.to_string())),
+            "active" => Ok(self
+                .reorganizer
+                .tab_well_active(&self.well_id)
+                .and_then(|a| i64::try_from(a).ok())
+                .map_or(IntrospectValue::Null, IntrospectValue::Int)),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -7187,10 +7185,10 @@ impl External for DockPanelExternal {
         let Some(intro) = fresh.introspect() else {
             return;
         };
-        if let Some(IntrospectValue::Bool(movable)) = intro.query("movable") {
+        if let Ok(IntrospectValue::Bool(movable)) = intro.query("movable") {
             self.movable = movable;
         }
-        if let Some(IntrospectValue::Bool(floatable)) = intro.query("floatable") {
+        if let Ok(IntrospectValue::Bool(floatable)) = intro.query("floatable") {
             self.floatable = floatable;
         }
     }
@@ -7768,61 +7766,58 @@ impl ExternalIntrospect for DockPanelExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "panel_id" => Some(IntrospectValue::Text(self.panel_id.to_string())),
+            "panel_id" => Ok(IntrospectValue::Text(self.panel_id.to_string())),
             // R1112 §5.51 §2 #7 PR-37 — the effective tab-docking policy this
             // panel follows (its shared coordinator's surface policy).
-            "tabbing" => Some(IntrospectValue::Bool(self.effective_tabbing())),
+            "tabbing" => Ok(IntrospectValue::Bool(self.effective_tabbing())),
             // R1134 §5.51.1 §2 #7 — the effective torn-slot policy this panel
             // follows (its coordinator's surface policy).
-            "float_policy" => Some(IntrospectValue::Text(
+            "float_policy" => Ok(IntrospectValue::Text(
                 self.effective_float_policy().as_str().to_string(),
             )),
             // R1172 §5.16 §2 #7 — the panel move / float policy.
-            "movable" => Some(IntrospectValue::Bool(self.movable)),
-            "floatable" => Some(IntrospectValue::Bool(self.floatable)),
-            "dragging" => Some(IntrospectValue::Bool(self.is_dragging())),
-            "tear_off_fired" => Some(IntrospectValue::Bool(self.tear_off_fired())),
+            "movable" => Ok(IntrospectValue::Bool(self.movable)),
+            "floatable" => Ok(IntrospectValue::Bool(self.floatable)),
+            "dragging" => Ok(IntrospectValue::Bool(self.is_dragging())),
+            "tear_off_fired" => Ok(IntrospectValue::Bool(self.tear_off_fired())),
             // R1081 §5.51 — the shared live preview (any panel's external
             // reads the one shared signal). Null when no drag is in
             // flight / no preview signal is wired.
-            "drop_preview" => Some(drop_preview_introspect(self.drop_preview.as_ref())),
+            "drop_preview" => Ok(drop_preview_introspect(self.drop_preview.as_ref())),
             // R1093 §5.15 §5.51 §2 #7 — the forwarded absolute cursor.
-            "drag_cursor" => Some(drag_cursor_introspect(self.drag_cursor.get())),
+            "drag_cursor" => Ok(drag_cursor_introspect(self.drag_cursor.get())),
             // R1094 §5.16 §5.41 §5.51 — the live-follower latch.
-            "detached" => Some(IntrospectValue::Bool(self.detached())),
+            "detached" => Ok(IntrospectValue::Bool(self.detached())),
             // R1129 §5.51.1 §5.38 §2 #7 — the persistent dock-lifecycle state
             // (`"Docked"` / `"Floating"`, the `WidgetStateName` SSOT), the SCXML
             // chart the float/redock/restore decision now lives in (was implicit
             // in the binding's window signal + the per-gesture `detached` bool).
-            "lifecycle" => Some(IntrospectValue::Text(self.lifecycle_name().to_string())),
+            "lifecycle" => Ok(IntrospectValue::Text(self.lifecycle_name().to_string())),
             // R1102 §5.51 §2 #7 PR-33 — the last cross-window dock-at payload
             // (null before any cross-window redock this gesture).
-            "redock_at" => Some(
-                self.last_redock_at
-                    .borrow()
-                    .clone()
-                    .map_or(IntrospectValue::Null, IntrospectValue::Json),
-            ),
+            "redock_at" => Ok(self
+                .last_redock_at
+                .borrow()
+                .clone()
+                .map_or(IntrospectValue::Null, IntrospectValue::Json)),
             // R1149 §5.51 §2 #7 — the in-flight would-dock (where a release NOW
             // redocks; null = it would float). Compared to `redock_at` across a
             // release, the two must agree, else the release ignored the resolved
             // drop — the divergence this read makes RPC-diagnosable.
-            "redock_pending" => Some(
-                self.redock_pending
-                    .borrow()
-                    .clone()
-                    .map_or(IntrospectValue::Null, IntrospectValue::Json),
-            ),
+            "redock_pending" => Ok(self
+                .redock_pending
+                .borrow()
+                .clone()
+                .map_or(IntrospectValue::Null, IntrospectValue::Json)),
             // R1107 §5.51 §2 #7 — the window the last follow-drag was measured in.
-            "source_window" => Some(
-                self.last_source_window
-                    .borrow()
-                    .clone()
-                    .map_or(IntrospectValue::Null, IntrospectValue::Text),
-            ),
-            _ => None,
+            "source_window" => Ok(self
+                .last_source_window
+                .borrow()
+                .clone()
+                .map_or(IntrospectValue::Null, IntrospectValue::Text)),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -8238,12 +8233,12 @@ mod tests {
             "★a non-movable panel starts no drag",
         );
         assert!(!locked.is_dragging(), "no session means not dragging");
-        assert_eq!(locked.query("movable"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(locked.query("movable"), Ok(IntrospectValue::Bool(false)));
         // Default → freely movable + floatable.
         let free = DockPanelExternal::new("a");
         assert!(free.begin_drag().is_some(), "a default panel drags");
-        assert_eq!(free.query("movable"), Some(IntrospectValue::Bool(true)));
-        assert_eq!(free.query("floatable"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(free.query("movable"), Ok(IntrospectValue::Bool(true)));
+        assert_eq!(free.query("floatable"), Ok(IntrospectValue::Bool(true)));
         // floatable=false → an escaped drag (`over` None → Float) snaps back: NO
         // tear-off intent is enqueued.
         let reorg = Rc::new(DockReorganizer::new(Rc::new(Signal::new(Some(
@@ -8254,7 +8249,7 @@ mod tests {
             .with_floatable(false);
         assert_eq!(
             dock_only.query("floatable"),
-            Some(IntrospectValue::Bool(false))
+            Ok(IntrospectValue::Bool(false))
         );
         let _ = dock_only.begin_drag();
         dock_only.drag_release(&dummy_payload(), None);
@@ -8294,7 +8289,7 @@ mod tests {
         let mut live = DockPanelExternal::new("terminal-0");
         assert!(live.begin_drag().is_some(), "precondition: a drag opened");
         assert!(live.is_dragging(), "precondition: the session is in flight");
-        assert_eq!(live.query("movable"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(live.query("movable"), Ok(IntrospectValue::Bool(true)));
 
         // The factory recomputed this surface as the SOLE docked pane → LOCKED.
         let fresh = DockPanelExternal::new("terminal-0")
@@ -8306,10 +8301,10 @@ mod tests {
         // WITHOUT disturbing the in-flight gesture the reconcile kept it alive for.
         assert_eq!(
             live.query("movable"),
-            Some(IntrospectValue::Bool(false)),
+            Ok(IntrospectValue::Bool(false)),
             "★the factory's movable=false reaches the preserved live panel",
         );
-        assert_eq!(live.query("floatable"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(live.query("floatable"), Ok(IntrospectValue::Bool(false)));
         assert!(
             live.is_dragging(),
             "★reconcile_from copies declarative policy only — in-flight drag survives",
@@ -8329,7 +8324,7 @@ mod tests {
         still_free.reconcile_from(&DockPanelExternal::new("terminal-1"));
         assert_eq!(
             still_free.query("movable"),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
             "an unchanged policy leaves a two-pane-docked panel freely movable",
         );
     }
@@ -8409,6 +8404,7 @@ mod tests {
             .handle
             .introspect()?
             .query("movable")
+            .ok()
     }
 
     #[test]
@@ -8994,13 +8990,13 @@ mod tests {
             "split-only surface: a centre drop floats (dead-zone), shows no dock preview",
         );
         // The effective policy is observable (§2 #7) + read-only on the panel.
-        assert_eq!(off.query("tabbing"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(on.query("tabbing"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(off.query("tabbing"), Ok(IntrospectValue::Bool(false)));
+        assert_eq!(on.query("tabbing"), Ok(IntrospectValue::Bool(true)));
         // A tear-off-only panel (no coordinator) reports the default — moot,
         // since it can never reorganize.
         assert_eq!(
             DockPanelExternal::new("a").query("tabbing"),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
         );
         assert!(matches!(
             off.intervene("tabbing", IntrospectValue::Bool(true)),
@@ -9222,7 +9218,7 @@ mod tests {
         let mut ext = DockPanelExternal::new("p1");
         assert_eq!(
             ext.query("drag_cursor"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "drag_cursor is null before any drag"
         );
         let _ = ext.begin_drag();
@@ -9230,21 +9226,21 @@ mod tests {
         ext.drag_to_at(&dummy_payload(), &upd(None, (123.0, 45.0), None, false));
         assert_eq!(
             ext.query("drag_cursor"),
-            Some(IntrospectValue::Json(serde_json::json!([123.0, 45.0]))),
+            Ok(IntrospectValue::Json(serde_json::json!([123.0, 45.0]))),
             "drag_cursor mirrors the forwarded move cursor"
         );
         // The release cursor overwrites it and persists post-gesture.
         ext.drag_release_at(&dummy_payload(), &upd(None, (200.0, 88.0), None, false));
         assert_eq!(
             ext.query("drag_cursor"),
-            Some(IntrospectValue::Json(serde_json::json!([200.0, 88.0]))),
+            Ok(IntrospectValue::Json(serde_json::json!([200.0, 88.0]))),
             "drag_cursor mirrors the release cursor and persists after the drop"
         );
         // A new gesture clears the stale cursor.
         let _ = ext.begin_drag();
         assert_eq!(
             ext.query("drag_cursor"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "begin_drag resets drag_cursor for the fresh gesture"
         );
         // The slot is framework-owned, not AI-writable.
@@ -9330,7 +9326,7 @@ mod tests {
         // And it is observable as scene-as-data (§2 #7).
         assert_eq!(
             ext.query("source_window"),
-            Some(IntrospectValue::Text("torn-viewport".to_string())),
+            Ok(IntrospectValue::Text("torn-viewport".to_string())),
         );
     }
 
@@ -9351,7 +9347,7 @@ mod tests {
         );
         assert_eq!(
             ext.query("source_window"),
-            Some(IntrospectValue::Text("torn-viewport".to_string())),
+            Ok(IntrospectValue::Text("torn-viewport".to_string())),
         );
         // Router-owned diagnostic — an AI cannot poke it directly.
         assert!(matches!(
@@ -9360,7 +9356,7 @@ mod tests {
         ));
         // A fresh gesture clears it.
         let _ = ext.begin_drag();
-        assert_eq!(ext.query("source_window"), Some(IntrospectValue::Null));
+        assert_eq!(ext.query("source_window"), Ok(IntrospectValue::Null));
     }
 
     #[test]
@@ -9455,7 +9451,7 @@ mod tests {
         // R1102 §2 #7 — the transient intent is also recorded on the persistent
         // `redock_at` slot so an AI (and the live demo) can observe the
         // cross-window redock after the intent has been drained.
-        let Some(IntrospectValue::Json(observed)) = ext.query("redock_at") else {
+        let Ok(IntrospectValue::Json(observed)) = ext.query("redock_at") else {
             panic!("redock_at must surface the cross-window dock-at as JSON");
         };
         assert_eq!(observed["window"], "main");
@@ -9474,7 +9470,7 @@ mod tests {
         let mut ext = DockPanelExternal::new("inspector");
         assert_eq!(
             ext.query("redock_at"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "redock_at is null before any cross-window redock"
         );
         let _ = ext.begin_drag();
@@ -9491,14 +9487,14 @@ mod tests {
             ),
         );
         assert!(
-            matches!(ext.query("redock_at"), Some(IntrospectValue::Json(_))),
+            matches!(ext.query("redock_at"), Ok(IntrospectValue::Json(_))),
             "redock_at carries the cross-window dock-at after the release"
         );
         // A fresh gesture clears the stale diagnostic.
         let _ = ext.begin_drag();
         assert_eq!(
             ext.query("redock_at"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "begin_drag resets redock_at for the new gesture"
         );
     }
@@ -9538,7 +9534,7 @@ mod tests {
         let ext = DockPanelExternal::new("a");
         assert_eq!(
             ext.query("lifecycle"),
-            Some(IntrospectValue::Text("Docked".to_string())),
+            Ok(IntrospectValue::Text("Docked".to_string())),
             "a freshly registered panel is docked (the chart's SCXML initial)",
         );
     }
@@ -9555,7 +9551,7 @@ mod tests {
         cross_detach(&mut ext, None, (640.0, 300.0)); // escape → float
         assert_eq!(
             ext.query("lifecycle"),
-            Some(IntrospectValue::Text("Floating".to_string())),
+            Ok(IntrospectValue::Text("Floating".to_string())),
             "escaping every drop target floats the panel (escaped → floating)",
         );
         let mut drained: Vec<Intent> = Vec::new();
@@ -9564,7 +9560,7 @@ mod tests {
         ext.drag_release(&dummy_payload(), Some(drop_point("b", 0.5, 0.5)));
         assert_eq!(
             ext.query("lifecycle"),
-            Some(IntrospectValue::Text("Docked".to_string())),
+            Ok(IntrospectValue::Text("Docked".to_string())),
             "redocking over a zone docks the panel (dropped → docked)",
         );
         let mut after: Vec<Intent> = Vec::new();
@@ -9592,7 +9588,7 @@ mod tests {
         floated.drag_release(&dummy_payload(), Some(drop_point("a", 0.5, 0.5))); // home
         assert_eq!(
             floated.query("lifecycle"),
-            Some(IntrospectValue::Text("Docked".to_string())),
+            Ok(IntrospectValue::Text("Docked".to_string())),
         );
         let mut after: Vec<Intent> = Vec::new();
         floated.drain_intents(&mut |i| after.push(i));
@@ -9608,7 +9604,7 @@ mod tests {
         never.drag_release(&dummy_payload(), Some(drop_point("a", 0.5, 0.5)));
         assert_eq!(
             never.query("lifecycle"),
-            Some(IntrospectValue::Text("Docked".to_string())),
+            Ok(IntrospectValue::Text("Docked".to_string())),
             "a never-floated drag stays docked",
         );
         let mut none: Vec<Intent> = Vec::new();
@@ -9627,14 +9623,14 @@ mod tests {
         cross_detach(&mut ext, None, (640.0, 300.0)); // escape → float
         assert_eq!(
             ext.query("lifecycle"),
-            Some(IntrospectValue::Text("Floating".to_string())),
+            Ok(IntrospectValue::Text("Floating".to_string())),
         );
         let mut drained: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| drained.push(i));
         ext.drag_cancel(&dummy_payload());
         assert_eq!(
             ext.query("lifecycle"),
-            Some(IntrospectValue::Text("Docked".to_string())),
+            Ok(IntrospectValue::Text("Docked".to_string())),
             "a cancelled float restores to docked",
         );
         let mut after: Vec<Intent> = Vec::new();
@@ -9657,7 +9653,7 @@ mod tests {
             .expect("direct tear_off invoke");
         assert_eq!(
             ext.query("lifecycle"),
-            Some(IntrospectValue::Text("Floating".to_string())),
+            Ok(IntrospectValue::Text("Floating".to_string())),
         );
     }
 
@@ -9671,7 +9667,7 @@ mod tests {
         cross_detach(&mut ext, None, (640.0, 300.0)); // escape → float
         assert_eq!(
             ext.query("lifecycle"),
-            Some(IntrospectValue::Text("Floating".to_string())),
+            Ok(IntrospectValue::Text("Floating".to_string())),
         );
         let mut drained: Vec<Intent> = Vec::new();
         ext.drain_intents(&mut |i| drained.push(i));
@@ -9686,7 +9682,7 @@ mod tests {
         );
         assert_eq!(
             ext.query("lifecycle"),
-            Some(IntrospectValue::Text("Docked".to_string())),
+            Ok(IntrospectValue::Text("Docked".to_string())),
             "a cross-window dock-at docks the lifecycle",
         );
     }
@@ -9697,7 +9693,7 @@ mod tests {
         // through the gesture / invoke channels, not by poking the slot.
         let mut ext = DockPanelExternal::new("a");
         assert!(
-            ext.query("lifecycle").is_some(),
+            ext.query("lifecycle").is_ok(),
             "lifecycle is introspectable"
         );
         assert!(matches!(
@@ -9717,7 +9713,7 @@ mod tests {
         cross_detach(&mut ext, None, (640.0, 300.0)); // escape → float
         assert_eq!(
             ext.query("lifecycle"),
-            Some(IntrospectValue::Text("Floating".to_string())),
+            Ok(IntrospectValue::Text("Floating".to_string())),
         );
         // A fresh gesture clears the per-gesture `detached` latch …
         let _ = ext.begin_drag();
@@ -9725,7 +9721,7 @@ mod tests {
         // … but the persistent lifecycle is still floating.
         assert_eq!(
             ext.query("lifecycle"),
-            Some(IntrospectValue::Text("Floating".to_string())),
+            Ok(IntrospectValue::Text("Floating".to_string())),
             "the chart persists the float across gestures (not gesture-scoped)",
         );
     }
@@ -9744,7 +9740,7 @@ mod tests {
             .expect("tear_off invoke (float)");
         assert_eq!(
             ext.query("lifecycle"),
-            Some(IntrospectValue::Text("Floating".to_string())),
+            Ok(IntrospectValue::Text("Floating".to_string())),
             "a docked panel's tear_off floats it",
         );
         let mut first: Vec<Intent> = Vec::new();
@@ -9764,7 +9760,7 @@ mod tests {
             .expect("tear_off invoke (dock-back)");
         assert_eq!(
             ext.query("lifecycle"),
-            Some(IntrospectValue::Text("Docked".to_string())),
+            Ok(IntrospectValue::Text("Docked".to_string())),
             "a floating panel's tear_off dock-backs it (chart not desynced)",
         );
         let mut second: Vec<Intent> = Vec::new();
@@ -9788,18 +9784,18 @@ mod tests {
         let floating = DockPanelExternal::new("a").with_initial_floating(true);
         assert_eq!(
             floating.query("lifecycle"),
-            Some(IntrospectValue::Text("Floating".to_string())),
+            Ok(IntrospectValue::Text("Floating".to_string())),
             "with_initial_floating(true) re-hydrates the chart to Floating",
         );
         let docked = DockPanelExternal::new("a").with_initial_floating(false);
         assert_eq!(
             docked.query("lifecycle"),
-            Some(IntrospectValue::Text("Docked".to_string())),
+            Ok(IntrospectValue::Text("Docked".to_string())),
             "with_initial_floating(false) leaves the chart Docked",
         );
         assert_eq!(
             DockPanelExternal::new("a").query("lifecycle"),
-            Some(IntrospectValue::Text("Docked".to_string())),
+            Ok(IntrospectValue::Text("Docked".to_string())),
             "plain new is Docked (the SCXML initial)",
         );
     }
@@ -9838,7 +9834,7 @@ mod tests {
         let mut ext = DockPanelExternal::new("b").with_reorganizer(Rc::clone(&reorg));
         assert_eq!(
             ext.query("float_policy"),
-            Some(IntrospectValue::Text("collapse".to_string())),
+            Ok(IntrospectValue::Text("collapse".to_string())),
             "the panel reports its coordinator's policy",
         );
         // Float (collapse out).
@@ -9849,7 +9845,7 @@ mod tests {
         );
         assert_eq!(
             ext.query("lifecycle"),
-            Some(IntrospectValue::Text("Floating".to_string())),
+            Ok(IntrospectValue::Text("Floating".to_string())),
             "the chart floated",
         );
         // Dock back (restore home).
@@ -9859,7 +9855,7 @@ mod tests {
         assert_eq!(after.panel_ids().len(), 3, "all three panels present");
         assert_eq!(
             ext.query("lifecycle"),
-            Some(IntrospectValue::Text("Docked".to_string())),
+            Ok(IntrospectValue::Text("Docked".to_string())),
             "the chart docked back",
         );
     }
@@ -9873,7 +9869,7 @@ mod tests {
         let mut ext = DockPanelExternal::new("b").with_reorganizer(reorg);
         assert_eq!(
             ext.query("float_policy"),
-            Some(IntrospectValue::Text("placeholder".to_string())),
+            Ok(IntrospectValue::Text("placeholder".to_string())),
         );
         ext.invoke(TEAR_OFF_EVENT, IntrospectValue::Null).unwrap();
         assert!(
@@ -9883,7 +9879,7 @@ mod tests {
         assert_eq!(topo.get().unwrap().panel_ids().len(), 3, "no reflow");
         assert_eq!(
             ext.query("lifecycle"),
-            Some(IntrospectValue::Text("Floating".to_string())),
+            Ok(IntrospectValue::Text("Floating".to_string())),
             "the chart still floats (the window side); only the leaf stays",
         );
     }
@@ -9905,7 +9901,7 @@ mod tests {
         );
         assert_eq!(
             ext.query("lifecycle"),
-            Some(IntrospectValue::Text("Floating".to_string())),
+            Ok(IntrospectValue::Text("Floating".to_string())),
             "the chart floated mid-drag (the live follow), but the slot stayed",
         );
         // Release while escaped → settle as floated → collapse now.
@@ -9924,7 +9920,7 @@ mod tests {
         let topo = abc_signal();
         let reorg = collapse_reorg(&topo);
         let mut ext = DockPanelExternal::new("c").with_reorganizer(reorg);
-        let docked = |ext: &DockPanelExternal| matches!(ext.query("lifecycle"), Some(IntrospectValue::Text(ref s)) if s == "Docked");
+        let docked = |ext: &DockPanelExternal| matches!(ext.query("lifecycle"), Ok(IntrospectValue::Text(ref s)) if s == "Docked");
         assert!(
             docked(&ext) && topo.get().unwrap().panel_ids().contains(&"c"),
             "start: docked"
@@ -9968,7 +9964,7 @@ mod tests {
             .with_initial_floating(true);
         assert_eq!(
             ext.query("lifecycle"),
-            Some(IntrospectValue::Text("Floating".to_string())),
+            Ok(IntrospectValue::Text("Floating".to_string())),
             "the panel starts floating (it IS a floater)",
         );
         let _ = ext.begin_drag();
@@ -9998,7 +9994,7 @@ mod tests {
         );
         assert_eq!(
             ext.query("lifecycle"),
-            Some(IntrospectValue::Text("Floating".to_string())),
+            Ok(IntrospectValue::Text("Floating".to_string())),
             "the chart stays Floating — the floater is still floating",
         );
         assert!(!ext.is_dragging(), "the gesture ended cleanly");
@@ -10025,7 +10021,7 @@ mod tests {
             },
         );
         assert!(
-            matches!(ext.query("redock_at"), Some(IntrospectValue::Json(_))),
+            matches!(ext.query("redock_at"), Ok(IntrospectValue::Json(_))),
             "a release over another window's dock redocks (redock_at recorded)",
         );
     }
@@ -10077,14 +10073,14 @@ mod tests {
         );
         assert_eq!(
             ext.query("lifecycle"),
-            Some(IntrospectValue::Text("RedockArmed".to_string())),
+            Ok(IntrospectValue::Text("RedockArmed".to_string())),
             "a floater move over a dock zone ARMS the redock (preview shows)",
         );
         // is_floating stays true while armed (it is still a floating window).
         ext.drag_to_at(&dummy_payload(), &window_move_update((80.0, 10.0), None));
         assert_eq!(
             ext.query("lifecycle"),
-            Some(IntrospectValue::Text("Floating".to_string())),
+            Ok(IntrospectValue::Text("Floating".to_string())),
             "leaving every zone DISARMS back to plain floating",
         );
     }
@@ -10130,7 +10126,7 @@ mod tests {
             "carries the supplied normalised cursor",
         );
         // The persistent diagnostic mirrors the fired intent.
-        let Some(IntrospectValue::Json(observed)) = ext.query("redock_at") else {
+        let Ok(IntrospectValue::Json(observed)) = ext.query("redock_at") else {
             panic!("redock_at must surface the invoke-driven dock-at as JSON");
         };
         assert_eq!(observed["window"], "main");
@@ -10151,7 +10147,7 @@ mod tests {
             IntrospectValue::Json(serde_json::json!({ "window": "main" })),
         )
         .expect("window-only redock invoke");
-        let Some(IntrospectValue::Json(observed)) = ext.query("redock_at") else {
+        let Ok(IntrospectValue::Json(observed)) = ext.query("redock_at") else {
             panic!("redock_at recorded");
         };
         assert_eq!(observed["target"], "");
@@ -10176,7 +10172,7 @@ mod tests {
             "a payload missing the required `window` is a type mismatch",
         );
         // A rejected invoke records nothing.
-        assert_eq!(ext.query("redock_at"), Some(IntrospectValue::Null));
+        assert_eq!(ext.query("redock_at"), Ok(IntrospectValue::Null));
     }
 
     #[test]
@@ -10566,14 +10562,14 @@ mod tests {
         let mut ext = DockPanelExternal::new("a");
         assert_eq!(
             ext.query("detached"),
-            Some(IntrospectValue::Bool(false)),
+            Ok(IntrospectValue::Bool(false)),
             "detached is false before any drag",
         );
         let _ = ext.begin_drag();
         cross_detach(&mut ext, None, (640.0, 300.0));
         assert_eq!(
             ext.query("detached"),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
             "detached is true after a threshold move",
         );
         // Framework-owned, not AI-writable.
@@ -10585,7 +10581,7 @@ mod tests {
         let _ = ext.begin_drag();
         assert_eq!(
             ext.query("detached"),
-            Some(IntrospectValue::Bool(false)),
+            Ok(IntrospectValue::Bool(false)),
             "begin_drag resets detached",
         );
     }
@@ -10820,7 +10816,7 @@ mod tests {
             .with_reorganizer(reorg)
             .with_drop_preview(Rc::clone(&preview));
         // No drag → null.
-        assert_eq!(ext.query("drop_preview"), Some(IntrospectValue::Null));
+        assert_eq!(ext.query("drop_preview"), Ok(IntrospectValue::Null));
         let _ = ext.begin_drag();
         ext.drag_to(&dummy_payload(), Some(drop_point("b", 0.5, 0.5)));
         let IntrospectValue::Json(obj) = ext.query("drop_preview").expect("queryable") else {
@@ -12482,6 +12478,7 @@ mod reorganize_tests {
     //! 3. [`DockReorganizeExternal`] — the `scene/invoke` AI-native
     //!    wire: parse JSON payload, apply, mutate the shared topology
     //!    Signal, expose the result via `query`.
+    use pinion_core::external::ReadRefusal;
     use pinion_core::test_fixtures::assert_refused_saying;
 
     use std::rc::Rc;
@@ -12522,7 +12519,7 @@ mod reorganize_tests {
         let ext = DockReorganizeExternal::from_reorganizer(reorganizer)
             .with_drop_preview(Rc::clone(&preview));
         // No drag → null.
-        assert_eq!(ext.query("drop_preview"), Some(IntrospectValue::Null));
+        assert_eq!(ext.query("drop_preview"), Ok(IntrospectValue::Null));
         // A panel's drag_to writes the shared signal → the canonical
         // external observes it via the same SSOT projection.
         preview.set(Some(DockDropPreview {
@@ -13832,7 +13829,7 @@ mod reorganize_tests {
         let mut ext = DockReorganizeExternal::from_reorganizer(Rc::clone(&reorganizer));
         assert_eq!(
             ext.query("float_policy"),
-            Some(IntrospectValue::Text("placeholder".to_string())),
+            Ok(IntrospectValue::Text("placeholder".to_string())),
             "default is placeholder",
         );
         // Toggle to collapse — the invoke echoes the applied policy name.
@@ -13851,7 +13848,7 @@ mod reorganize_tests {
         );
         assert_eq!(
             ext.query("float_policy"),
-            Some(IntrospectValue::Text("collapse".to_string())),
+            Ok(IntrospectValue::Text("collapse".to_string())),
             "query reflects it",
         );
         // Back to placeholder.
@@ -13901,7 +13898,7 @@ mod reorganize_tests {
         // policy, which is the whole point of advertising it.
         assert_eq!(
             ext.query("float_policy"),
-            Some(IntrospectValue::Text("collapse".to_string())),
+            Ok(IntrospectValue::Text("collapse".to_string())),
         );
         // …and so is the LOCK itself, as data. This is the `tabbing` shape: an
         // agent consults the policy before attempting the action it governs,
@@ -13910,7 +13907,7 @@ mod reorganize_tests {
         // locked, an older pinion, and a different external type).
         assert_eq!(
             ext.query("float_policy_locked"),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
         );
         // The wire flip is refused — and, decisively, does NOT take effect. A
         // rejection that still mutated would be the original defect wearing an
@@ -13969,7 +13966,7 @@ mod reorganize_tests {
         // from a field's absence.
         assert_eq!(
             ext.query("float_policy_locked"),
-            Some(IntrospectValue::Bool(false)),
+            Ok(IntrospectValue::Bool(false)),
         );
         assert_eq!(
             ext.invoke(
@@ -14283,7 +14280,7 @@ mod reorganize_tests {
         let reorganizer = Rc::new(DockReorganizer::new(Rc::clone(&signal)).with_tabbing(false));
         let mut ext = DockReorganizeExternal::from_reorganizer(reorganizer);
         // The surface policy is discoverable before classifying a drop (§2 #7).
-        assert_eq!(ext.query("tabbing"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(ext.query("tabbing"), Ok(IntrospectValue::Bool(false)));
         // Drop "a" onto the CENTRE of "b" (300, 200) — dead-centre of b.
         let payload = IntrospectValue::Json(serde_json::json!({
             "source": "a",
@@ -14326,7 +14323,7 @@ mod reorganize_tests {
         let signal = Rc::new(Signal::new(Some(abc_topology())));
         let reorganizer = Rc::new(DockReorganizer::new(Rc::clone(&signal)).with_tabbing(false));
         let mut ext = DockReorganizeExternal::from_reorganizer(reorganizer);
-        assert_eq!(ext.query("tabbing"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(ext.query("tabbing"), Ok(IntrospectValue::Bool(false)));
 
         assert_refused_saying(
             &ext.invoke(
@@ -14343,7 +14340,7 @@ mod reorganize_tests {
         // saved the session, but the client had already drawn the well).
         assert_eq!(
             ext.query("tabs_seq"),
-            Some(IntrospectValue::Int(0)),
+            Ok(IntrospectValue::Int(0)),
             "no tab well was minted",
         );
         // Asserted STRUCTURALLY, not by panel count: a `Tabify` re-parents `a`
@@ -14359,7 +14356,7 @@ mod reorganize_tests {
         // `last_outcome` channel every other rejection reports through.
         let outcome = ext.query("last_outcome");
         assert!(
-            matches!(&outcome, Some(IntrospectValue::Text(t)) if t.contains("tabbing")),
+            matches!(&outcome, Ok(IntrospectValue::Text(t)) if t.contains("tabbing")),
             "the rejection names its reason: {outcome:?}",
         );
     }
@@ -14371,7 +14368,7 @@ mod reorganize_tests {
         // call, so PR-60 removed a policy hole rather than the Center zone.
         let signal = Rc::new(Signal::new(Some(abc_topology())));
         let mut ext = DockReorganizeExternal::new(Rc::clone(&signal));
-        assert_eq!(ext.query("tabbing"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(ext.query("tabbing"), Ok(IntrospectValue::Bool(true)));
         ext.invoke(
             "reorganize",
             IntrospectValue::Json(serde_json::json!({
@@ -14381,7 +14378,7 @@ mod reorganize_tests {
         .unwrap();
         assert_eq!(
             ext.query("tabs_seq"),
-            Some(IntrospectValue::Int(1)),
+            Ok(IntrospectValue::Int(1)),
             "a tab well was minted",
         );
     }
@@ -14536,7 +14533,7 @@ mod reorganize_tests {
         // §2 #7 — the empty dock reads as JSON null, not a fabricated tree.
         assert_eq!(
             ext.query("topology"),
-            Some(IntrospectValue::Json(serde_json::Value::Null)),
+            Ok(IntrospectValue::Json(serde_json::Value::Null)),
         );
     }
 
@@ -14565,7 +14562,7 @@ mod reorganize_tests {
             ext.schema().fields.iter().any(|f| f.path == "tabs_seq"),
             "tabs_seq is advertised in the schema",
         );
-        assert_eq!(ext.query("tabs_seq"), Some(IntrospectValue::Int(0)));
+        assert_eq!(ext.query("tabs_seq"), Ok(IntrospectValue::Int(0)));
         // A tabify bumps it; an AI observes the mint count through the schema key.
         reorganizer
             .apply_intent(&DockReorganizeIntent::Tabify {
@@ -14573,7 +14570,7 @@ mod reorganize_tests {
                 target: "b".into(),
             })
             .expect("tabify applies");
-        assert_eq!(ext.query("tabs_seq"), Some(IntrospectValue::Int(1)));
+        assert_eq!(ext.query("tabs_seq"), Ok(IntrospectValue::Int(1)));
     }
 
     // ── R1085 §5.51 — tab-well navigation (`activate_tab`) ──────────
@@ -14627,7 +14624,7 @@ mod reorganize_tests {
         // An AI confirms the gesture through the one outcome SSOT.
         assert_eq!(
             ext.query("last_outcome"),
-            Some(IntrospectValue::Text("activate w0#1".to_string())),
+            Ok(IntrospectValue::Text("activate w0#1".to_string())),
         );
     }
 
@@ -14849,16 +14846,13 @@ mod reorganize_tests {
     #[test]
     fn r1096_tab_well_query_and_intervene() {
         let (_signal, _reorg, mut ext) = tab_well_fixture();
-        assert_eq!(
-            ext.query("well_id"),
-            Some(IntrospectValue::Text("w0".into()))
-        );
+        assert_eq!(ext.query("well_id"), Ok(IntrospectValue::Text("w0".into())));
         // `active` is a live read of the topology — not stored on the external.
-        assert_eq!(ext.query("active"), Some(IntrospectValue::Int(0)));
+        assert_eq!(ext.query("active"), Ok(IntrospectValue::Int(0)));
         ext.invoke("send", IntrospectValue::Text("2:PointerUp".into()))
             .expect("activate");
-        assert_eq!(ext.query("active"), Some(IntrospectValue::Int(2)));
-        assert_eq!(ext.query("nope"), None);
+        assert_eq!(ext.query("active"), Ok(IntrospectValue::Int(2)));
+        assert_eq!(ext.query("nope"), Err(ReadRefusal::UnknownPath));
         // The derived reads are not interveneable; tabs switch via the wire.
         assert_eq!(
             ext.intervene("active", IntrospectValue::Int(1)),
@@ -14889,7 +14883,7 @@ mod reorganize_tests {
         // An external bound to a well that does not exist reads `active` as
         // null (the topology owns the value; there is none to project).
         let ghost = TabWellExternal::new("ghost", reorg);
-        assert_eq!(ghost.query("active"), Some(IntrospectValue::Null));
+        assert_eq!(ghost.query("active"), Ok(IntrospectValue::Null));
     }
 
     #[test]

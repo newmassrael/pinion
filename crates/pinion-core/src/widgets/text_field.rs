@@ -76,6 +76,7 @@
     clippy::all
 )]
 mod sm {
+    use crate::external::ReadRefusal;
     include!(concat!(env!("OUT_DIR"), "/text_field_sm.rs"));
 }
 
@@ -99,7 +100,8 @@ use crate::clipboard::{Clipboard, ClipboardSelection};
 use crate::composite_tag::split_send_payload;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use crate::input::is_activation_event;
 use crate::intent::Intent;
@@ -911,6 +913,31 @@ impl TextFieldExternal {
         self.em.inner.text_state()
     }
 
+    /// R1667 §5.15 — the refusal every detached read owes its caller.
+    ///
+    /// A bare `TextField` declares `text` / `caret` / `selection` / … and holds
+    /// none of them: the state lives in an attached [`TextEditState`]. That is
+    /// not an unknown path and not a bad argument, so it is
+    /// [`ReadRefusal::Unavailable`] — and stating it once is what keeps the
+    /// fourteen reads that need it from drifting into fourteen sentences.
+    fn detached() -> ReadRefusal {
+        ReadRefusal::unavailable("no TextEditState is attached to this TextField")
+    }
+
+    /// R1667 §5.15 — read `f` off the attached state, or refuse with
+    /// [`Self::detached`].
+    ///
+    /// The arms that need this all had the shape `self.text_state().map(|s|
+    /// …)`, whose `None` the trait used to swallow. Routing them through one
+    /// combinator keeps the refusal at the seam instead of at eight call sites,
+    /// and keeps each arm reading as what it is: a projection of the state.
+    fn on_state(
+        &self,
+        f: impl FnOnce(&Rc<TextEditState>) -> IntrospectValue,
+    ) -> Result<IntrospectValue, ReadRefusal> {
+        self.text_state().map(f).ok_or_else(Self::detached)
+    }
+
     /// R56.1.h §5.38 §5.28 — attach a [`CaretBlink`] handle to the
     /// inner [`TextField`] (composition; delegates to
     /// [`TextField::attach_blink`]). Builder-style; chain after
@@ -1433,15 +1460,15 @@ impl ExternalIntrospect for TextFieldExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "state" => Some(IntrospectValue::Text(self.state().as_name().to_string())),
+            "state" => Ok(IntrospectValue::Text(self.state().as_name().to_string())),
             // R56.1.b §5.38 — text + caret read through the attached
             // [`TextEditState`]. `None` when no handle is attached;
             // the AI client treats that as "widget not bound to
             // reactive state" and gates intervene/invoke accordingly.
-            "text" => self.text_state().map(|s| IntrospectValue::Text(s.text())),
-            "caret" => self.text_state().map(|s| {
+            "text" => self.on_state(|s| IntrospectValue::Text(s.text())),
+            "caret" => self.on_state(|s| {
                 // usize → i64 — caret is bounded by `text.len() <=
                 // isize::MAX` on every platform pinion targets, so
                 // the cast is lossless. The `try_from` defends
@@ -1451,9 +1478,9 @@ impl ExternalIntrospect for TextFieldExternal {
             // R941 §5.22 — the logical (newline-delimited) line count, the
             // upper bound for `go-to-line` + a line-number gutter / prompt max.
             // `None` for a bare field (no attached state), like `caret`.
-            "line_count" => self
-                .text_state()
-                .map(|s| IntrospectValue::Int(i64::try_from(s.line_count()).unwrap_or(i64::MAX))),
+            "line_count" => self.on_state(|s| {
+                IntrospectValue::Int(i64::try_from(s.line_count()).unwrap_or(i64::MAX))
+            }),
             // R56.1.f.3 §5.38 §5.22 — selection range as Json
             // `{"start": int, "end": int}` mirror of W3C
             // `HTMLInputElement.selectionStart` / `selectionEnd`.
@@ -1464,16 +1491,14 @@ impl ExternalIntrospect for TextFieldExternal {
             // R903 — the `{start, end}|Null` encoding is the
             // [`selection_range_to_value`] SSOT, shared with the
             // `find-next` / `find-prev` invoke return.
-            "selection" => self
-                .text_state()
-                .map(|s| selection_range_to_value(s.selection_range())),
+            "selection" => self.on_state(|s| selection_range_to_value(s.selection_range())),
             // R769.1 §5.36 §5.22 — applied formatting runs as a JSON array
             // `[{"start", "end", "style": {...}}]` (the `StyleRun` serde
             // shape, identical to the field Text node's `runs` in
             // `scene/snapshot`). `[]` when the buffer is unstyled. Lets an
             // AI verify bold / italic / colour over the selection directly
             // — the read peer of the `apply-style` / `clear-style` actions.
-            "style_runs" => self.text_state().map(|s| {
+            "style_runs" => self.on_state(|s| {
                 IntrospectValue::Json(
                     serde_json::to_value(s.style_runs())
                         .unwrap_or_else(|_| serde_json::Value::Array(Vec::new())),
@@ -1484,13 +1509,11 @@ impl ExternalIntrospect for TextFieldExternal {
             // full TextStyle object (the `apply-style` `style` shape an agent
             // mutates + writes back via `mark`), or `Null` when the next char is
             // the field base. What a Bold toolbar button lights from.
-            "style_at_caret" => self
-                .text_state()
-                .map(|s| style_to_value(s.style_at_caret())),
+            "style_at_caret" => self.on_state(|s| style_to_value(s.style_at_caret())),
             // R951 §5.36 §5.22 — the *armed* typing mark only (`Null` when the
             // next char merely inherits): lets an AI / toolbar distinguish "Bold
             // is armed" from "the text here is already bold".
-            "pending_style" => self.text_state().map(|s| style_to_value(s.pending_style())),
+            "pending_style" => self.on_state(|s| style_to_value(s.pending_style())),
             // R56.1.g.2 §5.38 §5.22 — preedit (IME composition) read
             // path. `Text(s)` when composing (mirror of W3C
             // `CompositionEvent.data` observed during
@@ -1498,27 +1521,23 @@ impl ExternalIntrospect for TextFieldExternal {
             // active. Bare `TextField` (no attached state) returns
             // `None` so the AI client distinguishes "no state bound"
             // from "not composing".
-            "preedit" => self.text_state().map(|s| match s.preedit() {
+            "preedit" => self.on_state(|s| match s.preedit() {
                 Some(content) => IntrospectValue::Text(content),
                 None => IntrospectValue::Null,
             }),
             // R903 §5.22 — find &amp; replace read surface (the write peers are
             // the matching `intervene` arms + `find-*` / `replace*` invokes).
-            "find_query" => self
-                .text_state()
-                .map(|s| IntrospectValue::Text(s.find_query())),
-            "find_case_sensitive" => self
-                .text_state()
-                .map(|s| IntrospectValue::Bool(s.find_case_sensitive())),
-            "find_whole_word" => self
-                .text_state()
-                .map(|s| IntrospectValue::Bool(s.find_whole_word())),
+            "find_query" => self.on_state(|s| IntrospectValue::Text(s.find_query())),
+            "find_case_sensitive" => {
+                self.on_state(|s| IntrospectValue::Bool(s.find_case_sensitive()))
+            }
+            "find_whole_word" => self.on_state(|s| IntrospectValue::Bool(s.find_whole_word())),
             // Derived match state: count + every `[start, end]` range + the
             // index the selection currently coincides with (`current`, null
             // when off a match) — the "{n} of {N}" status + highlight data, all
             // from the one `find_matches` derivation so the wire never disagrees
             // with the paint.
-            "find_matches" => self.text_state().map(|s| {
+            "find_matches" => self.on_state(|s| {
                 let matches = s.find_matches();
                 let ranges: Vec<[usize; 2]> = matches.iter().map(|&(a, b)| [a, b]).collect();
                 IntrospectValue::Json(serde_json::json!({
@@ -1542,7 +1561,7 @@ impl ExternalIntrospect for TextFieldExternal {
             // so an unfocused field can answer a pair here while showing
             // no box. The buffer truth is the introspection contract;
             // the paint gate is presentation.
-            "bracket_match" => self.text_state().map(|s| match s.matching_bracket() {
+            "bracket_match" => self.on_state(|s| match s.matching_bracket() {
                 Some((open, close)) => IntrospectValue::Json(serde_json::json!({
                     "open": open,
                     "close": close,
@@ -1556,7 +1575,7 @@ impl ExternalIntrospect for TextFieldExternal {
             // the wire and the painted chevrons can never report a different
             // fold set. `[]` for an unfoldable buffer; `None` (path unknown)
             // for a bare field with no attached state.
-            "fold_regions" => self.text_state().map(|s| {
+            "fold_regions" => self.on_state(|s| {
                 let regions: Vec<serde_json::Value> = s
                     .fold_regions()
                     .iter()
@@ -1572,7 +1591,7 @@ impl ExternalIntrospect for TextFieldExternal {
                     .collect();
                 IntrospectValue::Json(serde_json::Value::Array(regions))
             }),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -2824,6 +2843,7 @@ mod tests {
     //! Mirror of the R55.D.2 `ScrollBar` test layout: initial state,
     //! four-state transition graph, commit/cancel detection, ARIA
     //! commit-on-blur path, introspect surface.
+    use crate::external::ReadRefusal;
     use crate::test_fixtures::assert_refused_saying;
 
     use super::{TextField, TextFieldEvent, TextFieldExternal, TextFieldState};
@@ -3096,7 +3116,7 @@ mod tests {
             tfx.query("state").unwrap(),
             IntrospectValue::Text("Idle".to_string()),
         );
-        assert_eq!(tfx.query("value"), None);
+        assert_eq!(tfx.query("value"), Err(ReadRefusal::UnknownPath));
     }
 
     #[test]
@@ -3402,8 +3422,8 @@ mod r56_1_b_tests {
     #[test]
     fn r56_1_b_query_text_returns_none_without_attached_state() {
         let tfx = TextFieldExternal::new();
-        assert!(tfx.query("text").is_none());
-        assert!(tfx.query("caret").is_none());
+        assert!(tfx.query("text").is_err());
+        assert!(tfx.query("caret").is_err());
     }
 
     #[test]
@@ -4560,6 +4580,7 @@ mod r56_1_f_tests {
     //! R56.1.f.2 §5.22 §5.38 — `apply_key` Shift-prefix selection
     //! extension + Ctrl+A select-all + selection-replace dispatch
     //! through the `TextField` keystroke surface.
+    use crate::external::ReadRefusal;
 
     use super::{TextFieldExternal, apply_key};
     use crate::external::{ExternalIntrospect, IntrospectValue};
@@ -4875,7 +4896,10 @@ mod r56_1_f_tests {
         // (path "selection" is unbound), distinguishing "no state"
         // from "no selection" for the RPC client.
         let tfx = TextFieldExternal::new();
-        assert_eq!(tfx.query("selection"), None);
+        assert!(matches!(
+            tfx.query("selection"),
+            Err(ReadRefusal::Unavailable(_))
+        ));
     }
 
     #[test]
@@ -6432,6 +6456,7 @@ mod r56_1_g_2_tests {
     //! composition-event-shape]]) and the
     //! [[rpc-introspect-pair-complete]] contract that every state
     //! axis has both read and write wires.
+    use crate::external::ReadRefusal;
 
     use super::{TextFieldEvent, TextFieldExternal, TextFieldState};
     use crate::external::{ExternalIntrospect, InterveneError, IntrospectValue, InvokeError};
@@ -6494,7 +6519,10 @@ mod r56_1_g_2_tests {
     #[test]
     fn r56_1_g_2_query_preedit_returns_none_on_bare_external() {
         let tfx = TextFieldExternal::new();
-        assert_eq!(tfx.query("preedit"), None);
+        assert!(
+            matches!(tfx.query("preedit"), Err(ReadRefusal::Unavailable(_))),
+            "R1667 — declared, and this instance holds no state to read it from",
+        );
     }
 
     // R769.1 §5.36 §5.22 — `style_runs` read slot: applied rich-text
@@ -6532,7 +6560,10 @@ mod r56_1_g_2_tests {
     #[test]
     fn r769_1_query_style_runs_none_on_bare_external() {
         let tfx = TextFieldExternal::new();
-        assert_eq!(tfx.query("style_runs"), None);
+        assert!(
+            matches!(tfx.query("style_runs"), Err(ReadRefusal::Unavailable(_))),
+            "R1667 — declared, and this instance holds no state to read it from",
+        );
     }
 
     // ─────────────────────────────────────────────────────────────
@@ -6772,6 +6803,7 @@ mod r903_find_replace_tests {
     //! [`TextFieldExternal`]: query / intervene read-write symmetry, the
     //! `find-next` / `find-prev` navigation, and `replace` / `replace-all`
     //! mutation (the AI-first peer of the find bar's keyboard).
+    use crate::external::ReadRefusal;
 
     use super::TextFieldExternal;
     use crate::external::{ExternalIntrospect, InterveneError, IntrospectValue, InvokeError};
@@ -6863,7 +6895,7 @@ mod r903_find_replace_tests {
         // path — the AI client reads None ("not bound"), not Null ("no
         // pair"), the same bare/wired distinction text / caret draw.
         let tfx = TextFieldExternal::new();
-        assert!(tfx.query("bracket_match").is_none());
+        assert!(tfx.query("bracket_match").is_err());
     }
 
     #[test]
@@ -6936,7 +6968,10 @@ mod r903_find_replace_tests {
         // setter returns ReadOnly, the actions return their empty outcome —
         // never UnknownPath (the slots exist in the schema unconditionally).
         let mut tfx = TextFieldExternal::new();
-        assert_eq!(tfx.query("find_query"), None);
+        assert!(
+            matches!(tfx.query("find_query"), Err(ReadRefusal::Unavailable(_))),
+            "R1667 — the name this test already carried: inert, not unknown",
+        );
         assert!(matches!(
             tfx.intervene("find_query", IntrospectValue::Text("a".to_string())),
             Err(InterveneError::ReadOnly),
@@ -7059,7 +7094,7 @@ mod r933_fold_tests {
         // A bare TextField (no attached state) does not know the path —
         // None ("not bound"), the same bare/wired distinction text draws.
         let tfx = TextFieldExternal::new();
-        assert!(tfx.query("fold_regions").is_none());
+        assert!(tfx.query("fold_regions").is_err());
     }
 
     #[test]
@@ -7228,7 +7263,7 @@ mod r933_fold_tests {
             bare.invoke("go-to-line", IntrospectValue::Int(1)).unwrap(),
             IntrospectValue::Int(0),
         );
-        assert!(bare.query("line_count").is_none());
+        assert!(bare.query("line_count").is_err());
     }
 
     // ─── R959 / R961 §5.36 §5.22 — gutter send-route (TextFieldSendKey) ──────

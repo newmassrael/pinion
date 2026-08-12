@@ -50,7 +50,8 @@ use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_chart::{ChartStyle, ColorScale, DataPoint, ScatterChart, Series};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
@@ -302,18 +303,18 @@ impl ExternalIntrospect for ValueScatterOracle {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         let diverging = self.is_diverging();
         match path {
-            "encoding" => Some(IntrospectValue::Text(
+            "encoding" => Ok(IntrospectValue::Text(
                 if diverging { "diverging" } else { "sequential" }.to_string(),
             )),
-            "domain_low" => Some(IntrospectValue::Float(DOMAIN_LOW)),
-            "domain_high" => Some(IntrospectValue::Float(DOMAIN_HIGH)),
-            "neutral" => Some(IntrospectValue::Float(NEUTRAL)),
-            "neutral_offset" => Some(IntrospectValue::Float(neutral_offset())),
-            "neutral_hex" => Some(IntrospectValue::Text(hex(scale().sample(0.5)))),
-            _ => None,
+            "domain_low" => Ok(IntrospectValue::Float(DOMAIN_LOW)),
+            "domain_high" => Ok(IntrospectValue::Float(DOMAIN_HIGH)),
+            "neutral" => Ok(IntrospectValue::Float(NEUTRAL)),
+            "neutral_offset" => Ok(IntrospectValue::Float(neutral_offset())),
+            "neutral_hex" => Ok(IntrospectValue::Text(hex(scale().sample(0.5)))),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 

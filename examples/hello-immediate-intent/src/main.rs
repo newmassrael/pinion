@@ -45,7 +45,7 @@ use std::time::Duration;
 use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_core::external::{
     ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
-    SchemaField, read_only_or_unknown,
+    ReadRefusal, SchemaField, read_only_or_unknown,
 };
 use pinion_core::scene::{
     ContainerNode, ImmediateMode, ImmediateModeNode, ImmediatePainter, Rect, TextNode,
@@ -312,22 +312,22 @@ impl ExternalIntrospect for BouncingBallDriver {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "pos" => Some(IntrospectValue::Float(f64::from(self.pos))),
-            "velocity" => Some(IntrospectValue::Float(f64::from(self.vel))),
-            "bounces" => Some(IntrospectValue::Int(i64::from(self.bounces))),
+            "pos" => Ok(IntrospectValue::Float(f64::from(self.pos))),
+            "velocity" => Ok(IntrospectValue::Float(f64::from(self.vel))),
+            "bounces" => Ok(IntrospectValue::Int(i64::from(self.bounces))),
             // R830 — the forwarded player-input state (Null before the
             // first click, so the parametric paths are still schema-
             // declared but resolve to "no value yet").
-            "clicked" => Some(IntrospectValue::Bool(self.last_click.is_some())),
-            "last_click_x" => Some(self.last_click.map_or(IntrospectValue::Null, |(x, _)| {
+            "clicked" => Ok(IntrospectValue::Bool(self.last_click.is_some())),
+            "last_click_x" => Ok(self.last_click.map_or(IntrospectValue::Null, |(x, _)| {
                 IntrospectValue::Float(f64::from(x))
             })),
-            "last_click_y" => Some(self.last_click.map_or(IntrospectValue::Null, |(_, y)| {
+            "last_click_y" => Ok(self.last_click.map_or(IntrospectValue::Null, |(_, y)| {
                 IntrospectValue::Float(f64::from(y))
             })),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -700,18 +700,15 @@ mod r827_immediate_intent_tests {
         // `bounces` mirrors the driver's own simulation tally.
         assert_eq!(
             intro.query("bounces"),
-            Some(IntrospectValue::Int(i64::from(driver.bounces))),
+            Ok(IntrospectValue::Int(i64::from(driver.bounces))),
         );
         // pos / velocity surface as floats; unknown paths are None.
-        assert!(matches!(
-            intro.query("pos"),
-            Some(IntrospectValue::Float(_))
-        ));
+        assert!(matches!(intro.query("pos"), Ok(IntrospectValue::Float(_))));
         assert!(matches!(
             intro.query("velocity"),
-            Some(IntrospectValue::Float(_))
+            Ok(IntrospectValue::Float(_))
         ));
-        assert_eq!(intro.query("ghost"), None);
+        assert_eq!(intro.query("ghost"), Err(ReadRefusal::UnknownPath));
         // Schema declares the simulation fields plus the R830 forwarded-
         // input fields.
         assert_eq!(
@@ -761,7 +758,7 @@ mod r827_immediate_intent_tests {
             .expect("velocity is writable");
         assert_eq!(
             intro.query("velocity"),
-            Some(IntrospectValue::Float(0.75)),
+            Ok(IntrospectValue::Float(0.75)),
             "the write must be readable back through the same surface",
         );
     }
@@ -780,7 +777,7 @@ mod r827_immediate_intent_tests {
             Ok(IntrospectValue::Int(i64::from(bounced))),
             "the action reports what it cleared",
         );
-        assert_eq!(intro.query("bounces"), Some(IntrospectValue::Int(0)));
+        assert_eq!(intro.query("bounces"), Ok(IntrospectValue::Int(0)));
         assert!(matches!(
             intro.invoke("ghost", IntrospectValue::Null),
             Err(InvokeError::UnknownPath),
@@ -826,19 +823,19 @@ mod r827_immediate_intent_tests {
         // mutating press below can take `&mut driver`).
         {
             let intro = driver.introspect().expect("opt-in");
-            assert_eq!(intro.query("clicked"), Some(IntrospectValue::Bool(false)));
-            assert_eq!(intro.query("last_click_x"), Some(IntrospectValue::Null));
+            assert_eq!(intro.query("clicked"), Ok(IntrospectValue::Bool(false)));
+            assert_eq!(intro.query("last_click_x"), Ok(IntrospectValue::Null));
         }
         driver.on_pointer_down(40.0, 18.0);
         let intro = driver.introspect().expect("opt-in");
-        assert_eq!(intro.query("clicked"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(intro.query("clicked"), Ok(IntrospectValue::Bool(true)));
         assert_eq!(
             intro.query("last_click_x"),
-            Some(IntrospectValue::Float(40.0))
+            Ok(IntrospectValue::Float(40.0))
         );
         assert_eq!(
             intro.query("last_click_y"),
-            Some(IntrospectValue::Float(18.0))
+            Ok(IntrospectValue::Float(18.0))
         );
     }
 

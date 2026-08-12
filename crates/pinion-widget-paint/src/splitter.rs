@@ -77,8 +77,8 @@ use std::rc::Rc;
 
 use pinion_core::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
-    SchemaField, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
+    SchemaArg, SchemaField, ThreadOwnership,
 };
 use pinion_core::input::{DragCalibration, PointerWireEvent};
 use pinion_core::intent::Intent;
@@ -1016,18 +1016,23 @@ impl ExternalIntrospect for SplitterExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "orientation" => Some(IntrospectValue::Text(match self.orientation {
+            "orientation" => Ok(IntrospectValue::Text(match self.orientation {
                 SplitterOrientation::Horizontal => "horizontal".to_string(),
                 SplitterOrientation::Vertical => "vertical".to_string(),
             })),
+            // R1667 — a splitter with no ratio handle is declared and
+            // unanswerable, which is `Unavailable` and not "no such path".
             "ratio" => self
                 .ratio
                 .as_ref()
-                .map(|r| IntrospectValue::Float(f64::from(r.get()))),
-            "dragging" => Some(IntrospectValue::Bool(self.is_dragging())),
-            _ => None,
+                .map(|r| IntrospectValue::Float(f64::from(r.get())))
+                .ok_or_else(|| {
+                    ReadRefusal::unavailable("this splitter has no ratio signal attached")
+                }),
+            "dragging" => Ok(IntrospectValue::Bool(self.is_dragging())),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 

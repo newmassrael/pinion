@@ -123,12 +123,12 @@ impl DisclosureView {
     fn read_state(scene: &Scene) -> (DisclosureState, bool) {
         if let Scene::External(node) = scene {
             if let Some(intro) = node.handle.introspect() {
-                let state = if let Some(IntrospectValue::Text(name)) = intro.query("state") {
+                let state = if let Ok(IntrospectValue::Text(name)) = intro.query("state") {
                     DisclosureState::from_name_or_default(&name)
                 } else {
                     DisclosureState::Idle
                 };
-                let expanded = matches!(intro.query("expanded"), Some(IntrospectValue::Bool(true)));
+                let expanded = matches!(intro.query("expanded"), Ok(IntrospectValue::Bool(true)));
                 return (state, expanded);
             }
         }

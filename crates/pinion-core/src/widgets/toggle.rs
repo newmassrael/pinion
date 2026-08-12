@@ -64,8 +64,8 @@ use sm::TogglePolicy;
 use crate::WidgetStateName;
 use crate::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
-    SchemaField, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
+    SchemaArg, SchemaField, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
@@ -326,11 +326,11 @@ impl ExternalIntrospect for ToggleExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "state" => Some(IntrospectValue::Text(self.state().as_name().to_string())),
-            "value" => Some(IntrospectValue::Bool(self.is_on())),
-            _ => None,
+            "state" => Ok(IntrospectValue::Text(self.state().as_name().to_string())),
+            "value" => Ok(IntrospectValue::Bool(self.is_on())),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -447,11 +447,11 @@ impl ExternalIntrospect for ToggleStateSnapshot {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "state" => Some(IntrospectValue::Text(self.state.as_name().to_string())),
-            "value" => Some(IntrospectValue::Bool(self.value)),
-            _ => None,
+            "state" => Ok(IntrospectValue::Text(self.state.as_name().to_string())),
+            "value" => Ok(IntrospectValue::Bool(self.value)),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -604,15 +604,15 @@ mod tests {
         let tx = ToggleExternal::new();
         assert_eq!(
             tx.query("state"),
-            Some(IntrospectValue::Text("Idle".to_string()))
+            Ok(IntrospectValue::Text("Idle".to_string()))
         );
-        assert_eq!(tx.query("value"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(tx.query("value"), Ok(IntrospectValue::Bool(false)));
     }
 
     #[test]
     fn external_unknown_query_path_returns_none() {
         let tx = ToggleExternal::new();
-        assert!(tx.query("nope").is_none());
+        assert!(tx.query("nope").is_err());
     }
 
     #[test]
@@ -716,9 +716,9 @@ mod tests {
         assert!(snap.is_on());
         assert_eq!(
             snap.query("state"),
-            Some(IntrospectValue::Text("Hover".to_string()))
+            Ok(IntrospectValue::Text("Hover".to_string()))
         );
-        assert_eq!(snap.query("value"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(snap.query("value"), Ok(IntrospectValue::Bool(true)));
     }
 
     #[test]

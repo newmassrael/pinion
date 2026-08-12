@@ -313,6 +313,7 @@ fn read_badge(scene: &Scene, tag: &str) -> BadgeData {
     let u32_slot = |path: &str, default: u32| {
         intro
             .query(path)
+            .ok()
             .and_then(|v| v.as_i64())
             .and_then(|n| u32::try_from(n).ok())
             .unwrap_or(default)
@@ -320,7 +321,7 @@ fn read_badge(scene: &Scene, tag: &str) -> BadgeData {
     BadgeData {
         count: u32_slot("count", 0),
         max: u32_slot("max", BadgeExternal::DEFAULT_MAX),
-        dot: matches!(intro.query("dot"), Some(IntrospectValue::Bool(true))),
+        dot: matches!(intro.query("dot"), Ok(IntrospectValue::Bool(true))),
     }
 }
 

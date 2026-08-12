@@ -56,7 +56,7 @@ use std::rc::Rc;
 
 use pinion_core::external::{
     ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
-    SchemaField, int_of,
+    ReadRefusal, SchemaField, int_of,
 };
 use pinion_core::intent::Intent;
 
@@ -297,65 +297,65 @@ impl ExternalIntrospect for VnExternal {
         IntrospectSchema::new(SCHEMA_FIELDS)
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "mode" => Some(IntrospectValue::Text(
+            "mode" => Ok(IntrospectValue::Text(
                 self.state.mode().as_str().to_string(),
             )),
-            "step" => Some(IntrospectValue::Int(i64::from(self.state.runtime().step))),
-            "step_count" => Some(IntrospectValue::Int(int_of(self.state.step_count()))),
-            "speaker" => Some(IntrospectValue::Text(match self.state.current_step() {
+            "step" => Ok(IntrospectValue::Int(i64::from(self.state.runtime().step))),
+            "step_count" => Ok(IntrospectValue::Int(int_of(self.state.step_count()))),
+            "speaker" => Ok(IntrospectValue::Text(match self.state.current_step() {
                 Some(VnStep::Line { speaker, .. }) => speaker.clone(),
                 _ => String::new(),
             })),
-            "line" => Some(IntrospectValue::Text(match self.state.current_step() {
+            "line" => Ok(IntrospectValue::Text(match self.state.current_step() {
                 Some(VnStep::Line { text, .. }) => text.clone(),
                 _ => String::new(),
             })),
-            "revealed" => Some(IntrospectValue::Text(self.state.revealed_text())),
-            "revealed_chars" => Some(IntrospectValue::Int(int_of(self.state.revealed_chars()))),
-            "line_len" => Some(IntrospectValue::Int(int_of(self.state.line_len()))),
-            "fully_revealed" => Some(IntrospectValue::Bool(self.state.fully_revealed())),
-            "prompt" => Some(IntrospectValue::Text(match self.state.current_step() {
+            "revealed" => Ok(IntrospectValue::Text(self.state.revealed_text())),
+            "revealed_chars" => Ok(IntrospectValue::Int(int_of(self.state.revealed_chars()))),
+            "line_len" => Ok(IntrospectValue::Int(int_of(self.state.line_len()))),
+            "fully_revealed" => Ok(IntrospectValue::Bool(self.state.fully_revealed())),
+            "prompt" => Ok(IntrospectValue::Text(match self.state.current_step() {
                 Some(VnStep::TimedChoice { prompt, .. }) => prompt.clone(),
                 _ => String::new(),
             })),
-            "options" => Some(self.options_json()),
-            "option_count" => Some(IntrospectValue::Int(int_of(
+            "options" => Ok(self.options_json()),
+            "option_count" => Ok(IntrospectValue::Int(int_of(
                 match self.state.current_step() {
                     Some(VnStep::TimedChoice { options, .. }) => options.len(),
                     _ => 0,
                 },
             ))),
-            "timeout_ms" => Some(IntrospectValue::Int(i64::from(self.state.timeout_ms()))),
-            "remaining_ms" => Some(IntrospectValue::Int(i64::from(self.state.remaining_ms()))),
-            "expired" => Some(IntrospectValue::Bool(self.state.expired())),
-            "resolved" => Some(IntrospectValue::Bool(self.state.resolution().is_some())),
-            "outcome" => Some(IntrospectValue::Text(
+            "timeout_ms" => Ok(IntrospectValue::Int(i64::from(self.state.timeout_ms()))),
+            "remaining_ms" => Ok(IntrospectValue::Int(i64::from(self.state.remaining_ms()))),
+            "expired" => Ok(IntrospectValue::Bool(self.state.expired())),
+            "resolved" => Ok(IntrospectValue::Bool(self.state.resolution().is_some())),
+            "outcome" => Ok(IntrospectValue::Text(
                 self.state
                     .resolved_option()
                     .map(|o| o.outcome.clone())
                     .unwrap_or_default(),
             )),
-            "outcome_label" => Some(IntrospectValue::Text(
+            "outcome_label" => Ok(IntrospectValue::Text(
                 self.state
                     .resolved_option()
                     .map(|o| o.label.clone())
                     .unwrap_or_default(),
             )),
-            "timed_out" => Some(IntrospectValue::Bool(
+            "timed_out" => Ok(IntrospectValue::Bool(
                 self.state.resolution().is_some_and(|r| r.timed_out),
             )),
-            "script" => Some(IntrospectValue::json(self.state.script())),
-            "background" => Some(match self.state.stage().background() {
+            "script" => Ok(IntrospectValue::json(self.state.script())),
+            "background" => Ok(match self.state.stage().background() {
                 Some(source) => IntrospectValue::Text(source),
                 None => IntrospectValue::Null,
             }),
-            "sprites" => Some(IntrospectValue::json(&self.state.stage().sprites())),
-            "sprite_count" => Some(IntrospectValue::Int(int_of(
+            "sprites" => Ok(IntrospectValue::json(&self.state.stage().sprites())),
+            "sprite_count" => Ok(IntrospectValue::Int(int_of(
                 self.state.stage().sprite_count(),
             ))),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -373,7 +373,7 @@ impl ExternalIntrospect for VnExternal {
             };
         }
         // Any other declared field is read-via-query, write-via-invoke.
-        if self.query(path).is_some() {
+        if self.query(path).is_ok() {
             Err(InterveneError::ReadOnly)
         } else {
             Err(InterveneError::UnknownPath)
@@ -498,16 +498,16 @@ mod tests {
         })
     }
 
-    fn text(v: Option<IntrospectValue>) -> String {
+    fn text(v: Result<IntrospectValue, ReadRefusal>) -> String {
         match v {
-            Some(IntrospectValue::Text(s)) => s,
+            Ok(IntrospectValue::Text(s)) => s,
             other => panic!("expected Text, got {other:?}"),
         }
     }
 
-    fn int(v: Option<IntrospectValue>) -> i64 {
+    fn int(v: Result<IntrospectValue, ReadRefusal>) -> i64 {
         match v {
-            Some(IntrospectValue::Int(n)) => n,
+            Ok(IntrospectValue::Int(n)) => n,
             other => panic!("expected Int, got {other:?}"),
         }
     }
@@ -521,7 +521,7 @@ mod tests {
             assert_eq!(int(ext.query("revealed_chars")), 0);
             assert_eq!(int(ext.query("line_len")), 7);
             assert_eq!(int(ext.query("step_count")), 2);
-            assert!(ext.query("bogus").is_none());
+            assert!(ext.query("bogus").is_err());
         });
     }
 
@@ -571,10 +571,7 @@ mod tests {
     fn stage_director_verbs_place_and_query_sprites() {
         with_external(|ext| {
             // Empty stage at boot.
-            assert!(matches!(
-                ext.query("background"),
-                Some(IntrospectValue::Null)
-            ));
+            assert!(matches!(ext.query("background"), Ok(IntrospectValue::Null)));
             assert_eq!(int(ext.query("sprite_count")), 0);
 
             ext.invoke("set_background", IntrospectValue::Text("tideflat".into()))
@@ -588,7 +585,7 @@ mod tests {
             ext.invoke("show", show).expect("show");
             assert_eq!(int(ext.query("sprite_count")), 1);
             let sprites = match ext.query("sprites") {
-                Some(IntrospectValue::Json(serde_json::Value::Array(a))) => a,
+                Ok(IntrospectValue::Json(serde_json::Value::Array(a))) => a,
                 other => panic!("sprites is a JSON array, got {other:?}"),
             };
             assert_eq!(sprites[0]["id"], "mudang");
@@ -608,7 +605,7 @@ mod tests {
             )
             .expect("re-express");
             let sprites = match ext.query("sprites") {
-                Some(IntrospectValue::Json(serde_json::Value::Array(a))) => a,
+                Ok(IntrospectValue::Json(serde_json::Value::Array(a))) => a,
                 other => panic!("got {other:?}"),
             };
             assert_eq!(sprites[0]["at"], "center");
@@ -620,10 +617,7 @@ mod tests {
             assert_eq!(int(ext.query("sprite_count")), 0);
             ext.invoke("clear_background", IntrospectValue::Null)
                 .expect("clear");
-            assert!(matches!(
-                ext.query("background"),
-                Some(IntrospectValue::Null)
-            ));
+            assert!(matches!(ext.query("background"), Ok(IntrospectValue::Null)));
 
             // Failure surfaces: missing id, bad position, move of an absent sprite.
             assert!(matches!(
@@ -656,7 +650,7 @@ mod tests {
     fn advance_snaps_then_steps_and_emits_intent() {
         with_external(|ext| {
             ext.invoke("advance", IntrospectValue::Null).expect("snap");
-            assert!(ext.query("fully_revealed").is_some());
+            assert!(ext.query("fully_revealed").is_ok());
             assert_eq!(text(ext.query("revealed")), "돌아오지 마라");
             ext.invoke("advance", IntrospectValue::Null).expect("step");
             assert_eq!(text(ext.query("mode")), "choice");
@@ -676,9 +670,9 @@ mod tests {
             assert_eq!(int(ext.query("remaining_ms")), 4000);
             ext.invoke("tick", IntrospectValue::Int(5000)).unwrap();
             assert_eq!(text(ext.query("mode")), "end");
-            assert!(ext.query("expired").is_some());
+            assert!(ext.query("expired").is_ok());
             assert_eq!(text(ext.query("outcome")), "endure", "default option");
-            assert!(ext.query("timed_out").is_some());
+            assert!(ext.query("timed_out").is_ok());
             let mut tags = Vec::new();
             ext.drain_intents(&mut |i| tags.push(i.tag));
             assert!(tags.iter().any(|t| t == TIMEOUT_INTENT));

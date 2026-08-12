@@ -67,8 +67,8 @@ use pinion_a11y::{AccessAction, AccessFocus, AccessNode, TabCell, WidgetA11y, ta
 use pinion_a11y::AriaRole;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, DragPayload, DropPoint, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField,
-    ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
+    SchemaField, ThreadOwnership,
 };
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -342,7 +342,7 @@ impl ExternalIntrospect for ReorderableTabsExternal {
         IntrospectSchema::new(&SCHEMA_FIELDS)
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
             "labels" => {
                 let arr: Vec<serde_json::Value> = self
@@ -350,12 +350,12 @@ impl ExternalIntrospect for ReorderableTabsExternal {
                     .into_iter()
                     .map(serde_json::Value::from)
                     .collect();
-                Some(IntrospectValue::Json(serde_json::Value::Array(arr)))
+                Ok(IntrospectValue::Json(serde_json::Value::Array(arr)))
             }
-            "selected_id" => Some(IntrospectValue::Int(
+            "selected_id" => Ok(IntrospectValue::Int(
                 i64::try_from(self.selected.get()).unwrap_or(0),
             )),
-            "selected_visual" => Some(IntrospectValue::Int(
+            "selected_visual" => Ok(IntrospectValue::Int(
                 i64::try_from(self.selected_visual()).unwrap_or(0),
             )),
             // Reorder-owned slots: order / preview / focused_index /
@@ -642,7 +642,7 @@ impl WidgetCore for TabReorderView {
         out.preview = v.preview.map(|p| (p.from_visual, p.insert_at));
         out.focused = v.focused;
         out.grabbed = v.grabbed;
-        if let Some(IntrospectValue::Int(i)) = intro.query("selected_id") {
+        if let Ok(IntrospectValue::Int(i)) = intro.query("selected_id") {
             if let Ok(i) = usize::try_from(i) {
                 out.selected = i;
             }
@@ -689,7 +689,7 @@ impl WidgetCore for TabReorderView {
         let Some(intro) = node.handle.introspect_mut() else {
             return false;
         };
-        let grabbed = matches!(intro.query("grabbed"), Some(IntrospectValue::Bool(true)));
+        let grabbed = matches!(intro.query("grabbed"), Ok(IntrospectValue::Bool(true)));
         let big = i64::try_from(N).unwrap_or(i64::MAX);
         let last = i64::try_from(N - 1).unwrap_or(0);
         match key {
@@ -955,14 +955,14 @@ mod tests {
             .expect("press");
         ext.drag_release(&ext.begin_drag().expect("armed"), Some(drop_at(2, 0.75)));
         match ext.query("labels") {
-            Some(IntrospectValue::Json(serde_json::Value::Array(a))) => {
+            Ok(IntrospectValue::Json(serde_json::Value::Array(a))) => {
                 let got: Vec<&str> = a.iter().filter_map(serde_json::Value::as_str).collect();
                 assert_eq!(got, ["Script", "Shader", "Scene", "Assets"]);
             }
             other => panic!("expected labels array, got {other:?}"),
         }
-        assert_eq!(ext.query("selected_id"), Some(IntrospectValue::Int(0)));
-        assert_eq!(ext.query("selected_visual"), Some(IntrospectValue::Int(2)));
+        assert_eq!(ext.query("selected_id"), Ok(IntrospectValue::Int(0)));
+        assert_eq!(ext.query("selected_visual"), Ok(IntrospectValue::Int(2)));
     }
 
     #[test]
@@ -1090,7 +1090,7 @@ mod tests {
     #[test]
     fn r743_unknown_path_rejected() {
         let ext = fresh();
-        assert!(ext.query("no_such_field").is_none());
+        assert!(ext.query("no_such_field").is_err());
     }
 }
 

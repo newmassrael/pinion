@@ -66,8 +66,8 @@ use crate::WidgetStateName;
 use crate::event::WheelStepper;
 use crate::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
-    SchemaField, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
+    SchemaArg, SchemaField, ThreadOwnership,
 };
 use crate::input::Modifiers;
 use crate::intent::Intent;
@@ -582,19 +582,19 @@ impl ExternalIntrospect for SliderExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "state" => Some(IntrospectValue::Text(self.state().as_name().to_string())),
-            "value" => Some(IntrospectValue::Float(f64::from(self.value()))),
-            "orientation" => Some(IntrospectValue::Text(
+            "state" => Ok(IntrospectValue::Text(self.state().as_name().to_string())),
+            "value" => Ok(IntrospectValue::Float(f64::from(self.value()))),
+            "orientation" => Ok(IntrospectValue::Text(
                 slider_axis_name(self.axis()).to_string(),
             )),
             // R737 §5.38 — `0.0` sentinel = continuous (no snap); any
             // positive value is the normalised tick increment.
-            "step" => Some(IntrospectValue::Float(f64::from(
+            "step" => Ok(IntrospectValue::Float(f64::from(
                 self.step().unwrap_or(0.0),
             ))),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -1005,11 +1005,11 @@ mod tests {
         let v = SliderExternal::with_axis(SliderAxis::Vertical);
         assert_eq!(
             h.query("orientation"),
-            Some(IntrospectValue::Text("horizontal".to_string())),
+            Ok(IntrospectValue::Text("horizontal".to_string())),
         );
         assert_eq!(
             v.query("orientation"),
-            Some(IntrospectValue::Text("vertical".to_string())),
+            Ok(IntrospectValue::Text("vertical".to_string())),
         );
     }
 

@@ -45,10 +45,14 @@ pub fn read_slider_state(scene: &Scene, tag: &str) -> Option<(SliderState, f32)>
     let node = scene.find_external_with_tag(tag)?;
     let intro = node.handle.introspect()?;
     let state = match intro.query("state") {
-        Some(IntrospectValue::Text(name)) => SliderState::from_name_or_default(&name),
+        Ok(IntrospectValue::Text(name)) => SliderState::from_name_or_default(&name),
         _ => SliderState::Idle,
     };
-    let value = intro.query("value").and_then(|v| v.as_f32()).unwrap_or(0.0);
+    let value = intro
+        .query("value")
+        .ok()
+        .and_then(|v| v.as_f32())
+        .unwrap_or(0.0);
     Some((state, value))
 }
 
@@ -93,7 +97,7 @@ pub fn slider_apply_key(
         return false;
     };
     // A disabled slider ignores keyboard input (ARIA).
-    if let Some(IntrospectValue::Text(name)) = intro.query("state") {
+    if let Ok(IntrospectValue::Text(name)) = intro.query("state") {
         if matches!(
             SliderState::from_name_or_default(&name),
             SliderState::Disabled
@@ -101,7 +105,7 @@ pub fn slider_apply_key(
             return false;
         }
     }
-    let Some(current) = intro.query("value").and_then(|v| v.as_f32()) else {
+    let Some(current) = intro.query("value").ok().and_then(|v| v.as_f32()) else {
         return false;
     };
     let Some(next) = next_value(current) else {

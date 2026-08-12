@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use pinion_core::external::{
     ArgForm, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
-    SchemaArg, SchemaField, int_of, read_only_or_unknown,
+    ReadRefusal, SchemaArg, SchemaField, int_of, read_only_or_unknown,
 };
 use pinion_core::intent::Intent;
 use serde::Serialize;
@@ -272,12 +272,12 @@ impl ExternalIntrospect for AudioEngineExternal {
         IntrospectSchema::new(ENGINE_EXTERNAL_FIELDS)
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         let engine = self.engine.borrow();
         match path {
-            "voice_count" => Some(IntrospectValue::Int(int_of(engine.voice_count()))),
-            "sample_rate" => Some(IntrospectValue::Int(i64::from(engine.sample_rate()))),
-            "master_gain" => Some(IntrospectValue::Float(f64::from(engine.master_gain()))),
+            "voice_count" => Ok(IntrospectValue::Int(int_of(engine.voice_count()))),
+            "sample_rate" => Ok(IntrospectValue::Int(i64::from(engine.sample_rate()))),
+            "master_gain" => Ok(IntrospectValue::Float(f64::from(engine.master_gain()))),
             "voices" => {
                 let infos: Vec<VoiceInfo> = engine
                     .voices()
@@ -298,12 +298,12 @@ impl ExternalIntrospect for AudioEngineExternal {
                         }
                     })
                     .collect();
-                Some(IntrospectValue::json(&infos))
+                Ok(IntrospectValue::json(&infos))
             }
-            "clips" => Some(IntrospectValue::json(&self.clips.names())),
-            "listener" => Some(IntrospectValue::json(&engine.listener())),
-            "attenuation" => Some(IntrospectValue::json(&engine.attenuation())),
-            _ => None,
+            "clips" => Ok(IntrospectValue::json(&self.clips.names())),
+            "listener" => Ok(IntrospectValue::json(&engine.listener())),
+            "attenuation" => Ok(IntrospectValue::json(&engine.attenuation())),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -681,18 +681,18 @@ impl ExternalIntrospect for AudioControllerExternal {
         IntrospectSchema::new(RT_EXTERNAL_FIELDS)
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         // Held for the whole read: `snapshot` and the label map both borrow from
         // it, and `RtVoiceInfo` borrows its label straight out of that map.
         let controller = self.controller.borrow();
         let snapshot = controller.snapshot();
         match path {
-            "voice_count" => Some(IntrospectValue::Int(i64::from(snapshot.voice_count()))),
-            "max_voices" => Some(IntrospectValue::Int(int_of(snapshot.max_voices()))),
-            "peak" => Some(IntrospectValue::Float(f64::from(snapshot.peak()))),
-            "frames_rendered" => Some(IntrospectValue::Int(int_of_u64(snapshot.frames_rendered()))),
-            "rejected" => Some(IntrospectValue::Int(int_of_u64(snapshot.rejected()))),
-            "stolen" => Some(IntrospectValue::Int(int_of_u64(snapshot.stolen()))),
+            "voice_count" => Ok(IntrospectValue::Int(i64::from(snapshot.voice_count()))),
+            "max_voices" => Ok(IntrospectValue::Int(int_of(snapshot.max_voices()))),
+            "peak" => Ok(IntrospectValue::Float(f64::from(snapshot.peak()))),
+            "frames_rendered" => Ok(IntrospectValue::Int(int_of_u64(snapshot.frames_rendered()))),
+            "rejected" => Ok(IntrospectValue::Int(int_of_u64(snapshot.rejected()))),
+            "stolen" => Ok(IntrospectValue::Int(int_of_u64(snapshot.stolen()))),
             // Join the lock-free per-voice numeric slots with the control-thread
             // label map (an atomic slot cannot hold the `String` label).
             "voices" => {
@@ -712,21 +712,21 @@ impl ExternalIntrospect for AudioControllerExternal {
                         distance: v.distance,
                     })
                     .collect();
-                Some(IntrospectValue::json(&infos))
+                Ok(IntrospectValue::json(&infos))
             }
             // Read the 3D listener / attenuation off the control-thread mirror
             // (the audio thread owns the engine and cannot be read lock-free,
             // but the control thread is their sole writer — see
             // [`AudioController::listener`]).
-            "listener" => Some(IntrospectValue::json(&controller.listener())),
-            "attenuation" => Some(IntrospectValue::json(&controller.attenuation())),
+            "listener" => Ok(IntrospectValue::json(&controller.listener())),
+            "attenuation" => Ok(IntrospectValue::json(&controller.attenuation())),
             // The full-pool policy, off the control-thread mirror — so an agent
             // watching `rejected`/`stolen` climb can discover which policy caused
             // it.
-            "voice_policy" => Some(IntrospectValue::Text(
+            "voice_policy" => Ok(IntrospectValue::Text(
                 controller.voice_policy().as_wire().to_string(),
             )),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -993,12 +993,12 @@ mod tests {
         assert!(matches!(id, Ok(IntrospectValue::Int(1))));
         assert!(matches!(
             ext.query("voice_count"),
-            Some(IntrospectValue::Int(1))
+            Ok(IntrospectValue::Int(1))
         ));
         assert!(ext.is_dirty(), "play queues an intent");
 
         match ext.query("voices") {
-            Some(IntrospectValue::Json(serde_json::Value::Array(items))) => {
+            Ok(IntrospectValue::Json(serde_json::Value::Array(items))) => {
                 assert_eq!(items[0]["label"], "bell");
                 assert_eq!(items[0]["looping"], false);
             }
@@ -1026,7 +1026,7 @@ mod tests {
             other => panic!("expected id, got {other:?}"),
         };
         match ext.query("voices") {
-            Some(IntrospectValue::Json(serde_json::Value::Array(items))) => {
+            Ok(IntrospectValue::Json(serde_json::Value::Array(items))) => {
                 assert_eq!(items[0]["looping"], true);
                 assert!((items[0]["gain"].as_f64().unwrap() - 0.3).abs() < 1e-3);
             }
@@ -1048,7 +1048,7 @@ mod tests {
         ));
         assert!(matches!(
             ext.query("voice_count"),
-            Some(IntrospectValue::Int(1))
+            Ok(IntrospectValue::Int(1))
         ));
         ext.invoke("send", IntrospectValue::Text("stop_all".to_string()))
             .expect("stop_all sends");
@@ -1065,7 +1065,7 @@ mod tests {
             .expect("set master");
         assert!(matches!(
             ext.query("master_gain"),
-            Some(IntrospectValue::Float(g)) if (g - 0.25).abs() < 1e-6
+            Ok(IntrospectValue::Float(g)) if (g - 0.25).abs() < 1e-6
         ));
     }
 
@@ -1095,7 +1095,7 @@ mod tests {
         ext.invoke("play", args).expect("spatial play");
 
         match ext.query("voices") {
-            Some(IntrospectValue::Json(serde_json::Value::Array(items))) => {
+            Ok(IntrospectValue::Json(serde_json::Value::Array(items))) => {
                 let v = &items[0];
                 assert_eq!(v["position"], serde_json::json!([2.0, 0.0, 0.0]));
                 assert!((v["distance"].as_f64().unwrap() - 2.0).abs() < 1e-4);
@@ -1112,7 +1112,7 @@ mod tests {
         let mut ext = director();
         // Default listener faces -Z from the origin.
         match ext.query("listener") {
-            Some(IntrospectValue::Json(v)) => {
+            Ok(IntrospectValue::Json(v)) => {
                 assert_eq!(v["position"], serde_json::json!([0.0, 0.0, 0.0]));
                 assert_eq!(v["forward"], serde_json::json!([0.0, 0.0, -1.0]));
             }
@@ -1125,7 +1125,7 @@ mod tests {
         )
         .expect("move listener");
         match ext.query("listener") {
-            Some(IntrospectValue::Json(v)) => {
+            Ok(IntrospectValue::Json(v)) => {
                 assert_eq!(v["position"], serde_json::json!([5.0, 0.0, 0.0]));
                 assert_eq!(
                     v["forward"],
@@ -1157,7 +1157,7 @@ mod tests {
         .expect("set voice position");
 
         match ext.query("voices") {
-            Some(IntrospectValue::Json(serde_json::Value::Array(items))) => {
+            Ok(IntrospectValue::Json(serde_json::Value::Array(items))) => {
                 let v = &items[0];
                 assert!(
                     (v["gain"].as_f64().unwrap() - 0.3).abs() < 1e-3,
@@ -1175,7 +1175,7 @@ mod tests {
         ext.intervene(&format!("voice.{id}.position"), IntrospectValue::Null)
             .expect("clear position");
         match ext.query("voices") {
-            Some(IntrospectValue::Json(serde_json::Value::Array(items))) => {
+            Ok(IntrospectValue::Json(serde_json::Value::Array(items))) => {
                 assert!(items[0].get("distance").is_none(), "flat again");
             }
             other => panic!("expected voices, got {other:?}"),
@@ -1206,7 +1206,7 @@ mod tests {
         }));
         ext.invoke("play", args).expect("spatial play");
         match ext.query("voices") {
-            Some(IntrospectValue::Json(serde_json::Value::Array(items))) => {
+            Ok(IntrospectValue::Json(serde_json::Value::Array(items))) => {
                 assert!(
                     (items[0]["effective_gain"].as_f64().unwrap() - 1.0).abs() < 1e-3,
                     "zero rolloff → no attenuation even at distance 50"
@@ -1233,12 +1233,12 @@ mod tests {
         // Nothing rendered yet.
         assert!(matches!(
             ext.query("voice_count"),
-            Some(IntrospectValue::Int(0))
+            Ok(IntrospectValue::Int(0))
         ));
         // The pool bound is introspectable before any render (fixed at creation).
         assert!(matches!(
             ext.query("max_voices"),
-            Some(IntrospectValue::Int(8))
+            Ok(IntrospectValue::Int(8))
         ));
 
         let id = ext.invoke("play", IntrospectValue::Text("bell".to_string()));
@@ -1255,15 +1255,15 @@ mod tests {
 
         assert!(matches!(
             ext.query("voice_count"),
-            Some(IntrospectValue::Int(1))
+            Ok(IntrospectValue::Int(1))
         ));
         match ext.query("peak") {
-            Some(IntrospectValue::Float(p)) => assert!(p > 0.5, "audible: {p}"),
+            Ok(IntrospectValue::Float(p)) => assert!(p > 0.5, "audible: {p}"),
             other => panic!("expected peak float, got {other:?}"),
         }
         assert!(matches!(
             ext.query("frames_rendered"),
-            Some(IntrospectValue::Int(128))
+            Ok(IntrospectValue::Int(128))
         ));
     }
 
@@ -1276,7 +1276,7 @@ mod tests {
         renderer.render(&mut out);
         assert!(matches!(
             ext.query("voice_count"),
-            Some(IntrospectValue::Int(1))
+            Ok(IntrospectValue::Int(1))
         ));
 
         ext.invoke("stop_all", IntrospectValue::Null)
@@ -1284,7 +1284,7 @@ mod tests {
         renderer.render(&mut out);
         assert!(matches!(
             ext.query("voice_count"),
-            Some(IntrospectValue::Int(0))
+            Ok(IntrospectValue::Int(0))
         ));
     }
 
@@ -1305,7 +1305,7 @@ mod tests {
         renderer.render(&mut out);
         assert!(matches!(
             ext.query("voice_count"),
-            Some(IntrospectValue::Int(0))
+            Ok(IntrospectValue::Int(0))
         ));
     }
 
@@ -1329,7 +1329,7 @@ mod tests {
         renderer.render(&mut out);
         // centre 0.707 × voice-gain 0.5 × master 0.5 ≈ 0.177.
         match ext.query("peak") {
-            Some(IntrospectValue::Float(p)) => assert!(
+            Ok(IntrospectValue::Float(p)) => assert!(
                 (p - f64::from(std::f32::consts::FRAC_1_SQRT_2) * 0.25).abs() < 1e-2,
                 "master + voice gain both applied: peak {p}"
             ),
@@ -1371,10 +1371,10 @@ mod tests {
         renderer.render(&mut out);
         assert!(matches!(
             ext.query("voice_count"),
-            Some(IntrospectValue::Int(2))
+            Ok(IntrospectValue::Int(2))
         ));
         assert!(
-            matches!(ext.query("rejected"), Some(IntrospectValue::Int(1))),
+            matches!(ext.query("rejected"), Ok(IntrospectValue::Int(1))),
             "the voice-budget drop is introspectable"
         );
     }
@@ -1400,7 +1400,7 @@ mod tests {
             ext.intervene("nonexistent", IntrospectValue::Float(1.0)),
             Err(InterveneError::UnknownPath)
         ));
-        assert!(ext.query("nonexistent").is_none());
+        assert!(ext.query("nonexistent").is_err());
     }
 
     #[test]
@@ -1408,7 +1408,7 @@ mod tests {
         let (mut ext, mut renderer) = rt_director(8);
         // The default listener is readable off the control-thread mirror.
         match ext.query("listener") {
-            Some(IntrospectValue::Json(v)) => {
+            Ok(IntrospectValue::Json(v)) => {
                 assert_eq!(v["position"], serde_json::json!([0.0, 0.0, 0.0]));
                 assert_eq!(v["forward"], serde_json::json!([0.0, 0.0, -1.0]));
             }
@@ -1427,7 +1427,7 @@ mod tests {
         let mut out = [0.0f32; 256];
         renderer.render(&mut out);
         let far = match ext.query("peak") {
-            Some(IntrospectValue::Float(p)) => p,
+            Ok(IntrospectValue::Float(p)) => p,
             other => panic!("expected peak, got {other:?}"),
         };
         assert!((far - 0.25).abs() < 1e-2, "distant voice attenuated: {far}");
@@ -1441,7 +1441,7 @@ mod tests {
         .expect("move listener");
         // The mirror advanced and kept the unspecified axes.
         match ext.query("listener") {
-            Some(IntrospectValue::Json(v)) => {
+            Ok(IntrospectValue::Json(v)) => {
                 assert_eq!(v["position"], serde_json::json!([3.0, 0.0, 0.0]));
                 assert_eq!(
                     v["forward"],
@@ -1453,7 +1453,7 @@ mod tests {
         }
         renderer.render(&mut out);
         let near = match ext.query("peak") {
-            Some(IntrospectValue::Float(p)) => p,
+            Ok(IntrospectValue::Float(p)) => p,
             other => panic!("expected peak, got {other:?}"),
         };
         assert!(
@@ -1485,7 +1485,7 @@ mod tests {
         let (mut ext, _renderer) = rt_director(4);
         let read = |ext: &mut AudioControllerExternal, key: &str| -> f64 {
             match ext.query("attenuation") {
-                Some(IntrospectValue::Json(v)) => v[key].as_f64().expect("a number"),
+                Ok(IntrospectValue::Json(v)) => v[key].as_f64().expect("a number"),
                 other => panic!("expected attenuation json, got {other:?}"),
             }
         };
@@ -1544,7 +1544,7 @@ mod tests {
         )
         .expect("set attenuation");
         match ext.query("attenuation") {
-            Some(IntrospectValue::Json(v)) => {
+            Ok(IntrospectValue::Json(v)) => {
                 assert!(v["rolloff"].as_f64().unwrap().abs() < 1e-9);
                 assert!(
                     (v["reference_distance"].as_f64().unwrap() - 1.0).abs() < 1e-6,
@@ -1555,7 +1555,7 @@ mod tests {
         }
         renderer.render(&mut out);
         match ext.query("peak") {
-            Some(IntrospectValue::Float(p)) => {
+            Ok(IntrospectValue::Float(p)) => {
                 assert!(
                     (p - 1.0).abs() < 1e-2,
                     "zero rolloff → full gain at distance 4: {p}"
@@ -1624,7 +1624,7 @@ mod tests {
         }
         // The refused set_listener did not advance the mirror (no drift).
         match ext.query("listener") {
-            Some(IntrospectValue::Json(v)) => {
+            Ok(IntrospectValue::Json(v)) => {
                 assert_eq!(
                     v["position"],
                     serde_json::json!([0.0, 0.0, 0.0]),
@@ -1660,7 +1660,7 @@ mod tests {
         renderer.render(&mut out);
 
         match ext.query("voices") {
-            Some(IntrospectValue::Json(serde_json::Value::Array(items))) => {
+            Ok(IntrospectValue::Json(serde_json::Value::Array(items))) => {
                 assert_eq!(items.len(), 2, "both live voices listed");
                 let bell = items
                     .iter()
@@ -1701,7 +1701,7 @@ mod tests {
         // The finished voice is gone from the per-voice read (reaped before the
         // publish).
         match ext.query("voices") {
-            Some(IntrospectValue::Json(serde_json::Value::Array(items))) => {
+            Ok(IntrospectValue::Json(serde_json::Value::Array(items))) => {
                 assert!(items.is_empty(), "finished voice not listed");
             }
             other => panic!("expected empty voices array, got {other:?}"),
@@ -1739,14 +1739,14 @@ mod tests {
         renderer.render(&mut out);
         assert!(matches!(
             ext.query("voice_count"),
-            Some(IntrospectValue::Int(2))
+            Ok(IntrospectValue::Int(2))
         ));
         assert!(
-            matches!(ext.query("stolen"), Some(IntrospectValue::Int(1))),
+            matches!(ext.query("stolen"), Ok(IntrospectValue::Int(1))),
             "the steal is introspectable"
         );
         assert!(
-            matches!(ext.query("rejected"), Some(IntrospectValue::Int(0))),
+            matches!(ext.query("rejected"), Ok(IntrospectValue::Int(0))),
             "no rejection under StealOldest"
         );
     }
@@ -1767,7 +1767,7 @@ mod tests {
         renderer.render(&mut out);
         let dist = |ext: &AudioControllerExternal| -> f64 {
             match ext.query("voices") {
-                Some(IntrospectValue::Json(serde_json::Value::Array(items))) => {
+                Ok(IntrospectValue::Json(serde_json::Value::Array(items))) => {
                     items[0]["distance"].as_f64().expect("3D distance")
                 }
                 other => panic!("expected voices, got {other:?}"),
@@ -1798,7 +1798,7 @@ mod tests {
         .expect("un-spatialise");
         renderer.render(&mut out);
         match ext.query("voices") {
-            Some(IntrospectValue::Json(serde_json::Value::Array(items))) => {
+            Ok(IntrospectValue::Json(serde_json::Value::Array(items))) => {
                 assert!(
                     items[0].get("distance").is_none(),
                     "un-spatialised: flat again"
@@ -1823,7 +1823,7 @@ mod tests {
         let mut out = [0.0f32; 256];
         renderer.render(&mut out);
         match ext.query("voices") {
-            Some(IntrospectValue::Json(serde_json::Value::Array(items))) => {
+            Ok(IntrospectValue::Json(serde_json::Value::Array(items))) => {
                 assert!(
                     (items[0]["effective_pan"].as_f64().unwrap() - 1.0).abs() < 1e-3,
                     "the pan reached the mix (flat voice → effective == authored)"
@@ -1840,7 +1840,7 @@ mod tests {
         let (mut ext, mut renderer) = rt_director(2);
         assert!(matches!(
             ext.query("voice_policy"),
-            Some(IntrospectValue::Text(ref s)) if s == "reject_newest"
+            Ok(IntrospectValue::Text(ref s)) if s == "reject_newest"
         ));
         ext.invoke(
             "set_voice_policy",
@@ -1849,7 +1849,7 @@ mod tests {
         .expect("set policy");
         assert!(matches!(
             ext.query("voice_policy"),
-            Some(IntrospectValue::Text(ref s)) if s == "steal_oldest"
+            Ok(IntrospectValue::Text(ref s)) if s == "steal_oldest"
         ));
         // The queued policy applies before the queued plays, so the third steals.
         for _ in 0..3 {
@@ -1859,13 +1859,10 @@ mod tests {
         let mut out = [0.0f32; 256];
         renderer.render(&mut out);
         assert!(
-            matches!(ext.query("stolen"), Some(IntrospectValue::Int(1))),
+            matches!(ext.query("stolen"), Ok(IntrospectValue::Int(1))),
             "the RPC policy change reached the audio thread"
         );
-        assert!(matches!(
-            ext.query("rejected"),
-            Some(IntrospectValue::Int(0))
-        ));
+        assert!(matches!(ext.query("rejected"), Ok(IntrospectValue::Int(0))));
         // An unknown policy string is Rejected (Text type ok, value invalid).
         assert_refused_saying(
             &ext.invoke(

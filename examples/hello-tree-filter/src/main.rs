@@ -49,7 +49,7 @@
 use pinion_a11y::{AccessFocus, AccessNode, WidgetA11y, tree_row_tag, windowed_tree_access_nodes};
 use pinion_core::external::{
     External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
-    SchemaField,
+    ReadRefusal, SchemaField,
 };
 use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
@@ -356,12 +356,12 @@ impl ExternalIntrospect for TreeSortExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "sort" => Some(IntrospectValue::Text(
+            "sort" => Ok(IntrospectValue::Text(
                 self.state.sort.get().label().to_owned(),
             )),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -629,7 +629,7 @@ impl WidgetCore for SceneGraphFilter {
     fn read_state(scene: &Scene) -> Self::State {
         if let Some(node) = scene.find_external_with_tag(ROOT_TAG)
             && let Some(intro) = node.handle.introspect()
-            && let Some(IntrospectValue::Text(name)) = intro.query("state")
+            && let Ok(IntrospectValue::Text(name)) = intro.query("state")
         {
             return <Self::State as pinion_core::WidgetStateName>::from_name_or_default(&name);
         }
@@ -757,6 +757,7 @@ mod tests {
         SceneGraphFilter, TOTAL_NODES, TREE_TAG, TreeRow, TreeSort, TreeSortExternal,
         apply_key_impl, initial_nodes, sorted_tree, tree_row_tag, use_filter, use_tree_state, view,
     };
+    use pinion_core::external::ReadRefusal;
     use pinion_core::test_fixtures::assert_refused_saying;
     use std::rc::Rc;
 
@@ -990,11 +991,8 @@ mod tests {
             let state = use_filter();
             let mut ext = TreeFilterExternal::new(Rc::clone(&state));
             // Boot: empty query, full view.
-            assert_eq!(
-                ext.query("query"),
-                Some(IntrospectValue::Text(String::new()))
-            );
-            assert_eq!(ext.query("visible_count"), Some(IntrospectValue::Int(boot)));
+            assert_eq!(ext.query("query"), Ok(IntrospectValue::Text(String::new())));
+            assert_eq!(ext.query("visible_count"), Ok(IntrospectValue::Int(boot)));
             // invoke set_filter returns the resulting visible_count in one trip.
             assert_eq!(
                 ext.invoke("set_filter", IntrospectValue::Text("Node03".into())),
@@ -1002,22 +1000,26 @@ mod tests {
             );
             assert_eq!(
                 ext.query("query"),
-                Some(IntrospectValue::Text("Node03".into()))
+                Ok(IntrospectValue::Text("Node03".into()))
             );
             assert_eq!(
                 ext.query("visible_at.0"),
-                Some(IntrospectValue::Text("g3".into()))
+                Ok(IntrospectValue::Text("g3".into()))
             );
             assert_eq!(
                 ext.query("label_at.0"),
-                Some(IntrospectValue::Text("Group03".into()))
+                Ok(IntrospectValue::Text("Group03".into()))
             );
             assert_eq!(
                 ext.query("visible_at.999"),
-                Some(IntrospectValue::Null),
+                Ok(IntrospectValue::Null),
                 "out-of-range filtered position is present-but-empty",
             );
-            assert_eq!(ext.query("nope"), None, "undeclared path is absent");
+            assert_eq!(
+                ext.query("nope"),
+                Err(ReadRefusal::UnknownPath),
+                "undeclared path is absent"
+            );
             // intervene sets the query (admin/restore); read-only + type guards.
             ext.intervene("query", IntrospectValue::Text("Group07".into()))
                 .unwrap();
@@ -1135,7 +1137,7 @@ mod tests {
         Owner::new().run(|| {
             let state = use_tree_state();
             let mut ext = TreeSortExternal::new(Rc::clone(&state));
-            let text = |s: &str| Some(IntrospectValue::Text(s.to_owned()));
+            let text = |s: &str| Ok(IntrospectValue::Text(s.to_owned()));
             assert_eq!(ext.query("sort"), text("source"), "boots in source order");
             // cycle: source -> asc -> desc -> source
             assert_eq!(
@@ -1174,7 +1176,7 @@ mod tests {
                 Err(InterveneError::TypeMismatch)
             );
             // guards
-            assert_eq!(ext.query("bogus"), None);
+            assert_eq!(ext.query("bogus"), Err(ReadRefusal::UnknownPath));
             assert_eq!(
                 ext.invoke("bogus", IntrospectValue::Null),
                 Err(InvokeError::UnknownPath)

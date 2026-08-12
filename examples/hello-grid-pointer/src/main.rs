@@ -37,7 +37,8 @@
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use pinion_core::scene::{ContainerNode, TextGridNode};
 use pinion_core::style::{AlignItems, FlexDirection, LayoutStyle, Size};
@@ -190,19 +191,19 @@ impl ExternalIntrospect for GridPointerExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "cell" => Some(self.cell_text()),
-            "cell_col" => Some(self.cell.map_or(IntrospectValue::Null, |(c, _)| {
+            "cell" => Ok(self.cell_text()),
+            "cell_col" => Ok(self.cell.map_or(IntrospectValue::Null, |(c, _)| {
                 IntrospectValue::Int(i64::from(c))
             })),
-            "cell_row" => Some(self.cell.map_or(IntrospectValue::Null, |(_, r)| {
+            "cell_row" => Ok(self.cell.map_or(IntrospectValue::Null, |(_, r)| {
                 IntrospectValue::Int(i64::from(r))
             })),
-            "cols" => Some(IntrospectValue::Int(i64::from(self.cols))),
-            "rows" => Some(IntrospectValue::Int(i64::from(self.rows))),
-            "last_key" => Some(self.last_key_text()),
-            _ => None,
+            "cols" => Ok(IntrospectValue::Int(i64::from(self.cols))),
+            "rows" => Ok(IntrospectValue::Int(i64::from(self.rows))),
+            "last_key" => Ok(self.last_key_text()),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -480,15 +481,15 @@ mod tests {
     #[test]
     fn query_surfaces_cell_and_dims() {
         let mut e = ext();
-        assert_eq!(e.query("cell"), Some(IntrospectValue::Text("none".into())));
-        assert_eq!(e.query("cell_col"), Some(IntrospectValue::Null));
-        assert_eq!(e.query("cols"), Some(IntrospectValue::Int(80)));
-        assert_eq!(e.query("rows"), Some(IntrospectValue::Int(24)));
+        assert_eq!(e.query("cell"), Ok(IntrospectValue::Text("none".into())));
+        assert_eq!(e.query("cell_col"), Ok(IntrospectValue::Null));
+        assert_eq!(e.query("cols"), Ok(IntrospectValue::Int(80)));
+        assert_eq!(e.query("rows"), Ok(IntrospectValue::Int(24)));
         e.pointer_move(0.5, 0.5);
-        assert_eq!(e.query("cell"), Some(IntrospectValue::Text("40,12".into())));
-        assert_eq!(e.query("cell_col"), Some(IntrospectValue::Int(40)));
-        assert_eq!(e.query("cell_row"), Some(IntrospectValue::Int(12)));
-        assert_eq!(e.query("nope"), None);
+        assert_eq!(e.query("cell"), Ok(IntrospectValue::Text("40,12".into())));
+        assert_eq!(e.query("cell_col"), Ok(IntrospectValue::Int(40)));
+        assert_eq!(e.query("cell_row"), Ok(IntrospectValue::Int(12)));
+        assert_eq!(e.query("nope"), Err(ReadRefusal::UnknownPath));
     }
 
     #[test]
@@ -550,7 +551,7 @@ mod tests {
         let mut e = ext();
         assert_eq!(
             e.query("last_key"),
-            Some(IntrospectValue::Text("none".into())),
+            Ok(IntrospectValue::Text("none".into())),
             "no key yet"
         );
         // The editing + function keys R1009 added to named_key_str arrive here
@@ -559,13 +560,10 @@ mod tests {
             .unwrap();
         assert_eq!(
             e.query("last_key"),
-            Some(IntrospectValue::Text("Backspace".into()))
+            Ok(IntrospectValue::Text("Backspace".into()))
         );
         e.invoke("key", IntrospectValue::Text("F5".into())).unwrap();
-        assert_eq!(
-            e.query("last_key"),
-            Some(IntrospectValue::Text("F5".into()))
-        );
+        assert_eq!(e.query("last_key"), Ok(IntrospectValue::Text("F5".into())));
         assert_eq!(
             e.invoke("key", IntrospectValue::Int(3)),
             Err(InvokeError::TypeMismatch)

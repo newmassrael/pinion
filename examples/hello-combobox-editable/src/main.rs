@@ -271,16 +271,16 @@ fn read_combo_state(scene: &Scene) -> ComboViewState {
         return out;
     };
     out.selected = match intro.query("selected_index") {
-        Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+        Ok(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
         _ => None,
     };
     out.focused = match intro.query("focused_index") {
-        Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+        Ok(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
         _ => None,
     };
     for (i, slot) in out.options.iter_mut().enumerate() {
         *slot = match intro.query(&format!("state.{i}")) {
-            Some(IntrospectValue::Text(name)) => ListboxItemState::from_name_or_default(&name),
+            Ok(IntrospectValue::Text(name)) => ListboxItemState::from_name_or_default(&name),
             _ => ListboxItemState::Idle,
         };
     }

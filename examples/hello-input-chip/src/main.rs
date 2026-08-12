@@ -52,8 +52,8 @@ use std::rc::Rc;
 use pinion_a11y::{AccessNode, AccessState, AriaRole, WidgetA11y};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
-    ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership,
 };
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
@@ -477,11 +477,11 @@ impl ExternalIntrospect for ChipDeleteExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
             "count" => {
                 let n = self.chips.get().len();
-                Some(IntrospectValue::Int(
+                Ok(IntrospectValue::Int(
                     i64::try_from(n).expect("chip count must fit in i64"),
                 ))
             }
@@ -492,15 +492,18 @@ impl ExternalIntrospect for ChipDeleteExternal {
                     .iter()
                     .map(|item| serde_json::Value::from(item.id))
                     .collect();
-                Some(IntrospectValue::Json(serde_json::Value::Array(arr)))
+                Ok(IntrospectValue::Json(serde_json::Value::Array(arr)))
             }
             // `state:<id>` — the per-chip `×` button posture variant name.
-            _ => path.strip_prefix("state:").and_then(|id_str| {
-                let id: u64 = id_str.parse().ok()?;
-                Some(IntrospectValue::Text(
+            _ => {
+                let id_str = path
+                    .strip_prefix("state:")
+                    .ok_or(ReadRefusal::UnknownPath)?;
+                let id: u64 = id_str.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?;
+                Ok(IntrospectValue::Text(
                     self.state_of(id).as_name().to_string(),
                 ))
-            }),
+            }
         }
     }
 
@@ -587,7 +590,7 @@ impl WidgetCore for InputChipView {
             if let Some(intro) = node.handle.introspect() {
                 for (slot, posture) in out.close_states.iter_mut().enumerate() {
                     let id = u64::try_from(slot).expect("slot fits in u64") + 1;
-                    if let Some(IntrospectValue::Text(name)) = intro.query(&format!("state:{id}")) {
+                    if let Ok(IntrospectValue::Text(name)) = intro.query(&format!("state:{id}")) {
                         *posture = ButtonState::from_name_or_default(&name);
                     }
                 }
@@ -890,9 +893,9 @@ mod tests {
             let chips = use_chips();
             let mut ext = ChipDeleteExternal::new(chips);
             let n = i64::try_from(N).unwrap();
-            assert_eq!(ext.query("count"), Some(IntrospectValue::Int(n)));
+            assert_eq!(ext.query("count"), Ok(IntrospectValue::Int(n)));
             let _ = ext.invoke("delete", IntrospectValue::Int(5));
-            assert_eq!(ext.query("count"), Some(IntrospectValue::Int(n - 1)));
+            assert_eq!(ext.query("count"), Ok(IntrospectValue::Int(n - 1)));
             // `ids` no longer lists the removed id.
             let ids = ext.query("ids").expect("ids slot");
             if let IntrospectValue::Json(serde_json::Value::Array(arr)) = ids {

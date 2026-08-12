@@ -22,7 +22,7 @@ use std::rc::Rc;
 
 use pinion_core::external::{
     ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
-    SchemaField, int_of,
+    ReadRefusal, SchemaField, int_of,
 };
 use pinion_core::intent::Intent;
 
@@ -109,44 +109,43 @@ impl ExternalIntrospect for NarrativeExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         let cursor = self.state.cursor();
         match path {
-            "telling" => Some(IntrospectValue::Text(self.state.world().telling.clone())),
-            "world" => Some(IntrospectValue::Int(i64::from(cursor.world))),
-            "scene" => Some(IntrospectValue::Int(i64::from(cursor.scene))),
-            "world_count" => Some(IntrospectValue::Int(int_of(self.state.world_count()))),
-            "scene_count" => Some(IntrospectValue::Int(int_of(self.state.scene_count()))),
-            "branch_id" => Some(IntrospectValue::Text(
+            "telling" => Ok(IntrospectValue::Text(self.state.world().telling.clone())),
+            "world" => Ok(IntrospectValue::Int(i64::from(cursor.world))),
+            "scene" => Ok(IntrospectValue::Int(i64::from(cursor.scene))),
+            "world_count" => Ok(IntrospectValue::Int(int_of(self.state.world_count()))),
+            "scene_count" => Ok(IntrospectValue::Int(int_of(self.state.scene_count()))),
+            "branch_id" => Ok(IntrospectValue::Text(
                 self.state
                     .current_world_line()
                     .map(|w| w.branch_id.clone())
                     .unwrap_or_default(),
             )),
-            "title" => Some(IntrospectValue::Text(
+            "title" => Ok(IntrospectValue::Text(
                 self.state
                     .current_scene()
                     .map(|s| s.title.clone())
                     .unwrap_or_default(),
             )),
-            "intent" => Some(IntrospectValue::Text(
+            "intent" => Ok(IntrospectValue::Text(
                 self.state
                     .current_scene()
                     .map(|s| s.intent.clone())
                     .unwrap_or_default(),
             )),
-            "disclosure_count" => Some(IntrospectValue::Int(int_of(
+            "disclosure_count" => Ok(IntrospectValue::Int(int_of(
                 self.state
                     .current_scene()
                     .map_or(0, |s| s.disclosures.len()),
             ))),
-            "disclosures" => Some(
-                self.state
-                    .current_scene()
-                    .map_or(IntrospectValue::Null, |s| {
-                        IntrospectValue::json(&s.disclosures)
-                    }),
-            ),
+            "disclosures" => Ok(self
+                .state
+                .current_scene()
+                .map_or(IntrospectValue::Null, |s| {
+                    IntrospectValue::json(&s.disclosures)
+                })),
             "world_ids" => {
                 let ids: Vec<&str> = self
                     .state
@@ -155,10 +154,10 @@ impl ExternalIntrospect for NarrativeExternal {
                     .iter()
                     .map(|w| w.branch_id.as_str())
                     .collect();
-                Some(IntrospectValue::json(&ids))
+                Ok(IntrospectValue::json(&ids))
             }
-            "fork_tree" => Some(IntrospectValue::json(&self.state.world().fork_tree)),
-            _ => None,
+            "fork_tree" => Ok(IntrospectValue::json(&self.state.world().fork_tree)),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -275,16 +274,16 @@ mod tests {
         })
     }
 
-    fn text(v: Option<IntrospectValue>) -> String {
+    fn text(v: Result<IntrospectValue, ReadRefusal>) -> String {
         match v {
-            Some(IntrospectValue::Text(s)) => s,
+            Ok(IntrospectValue::Text(s)) => s,
             other => panic!("expected Text, got {other:?}"),
         }
     }
 
-    fn int(v: Option<IntrospectValue>) -> i64 {
+    fn int(v: Result<IntrospectValue, ReadRefusal>) -> i64 {
         match v {
-            Some(IntrospectValue::Int(n)) => n,
+            Ok(IntrospectValue::Int(n)) => n,
             other => panic!("expected Int, got {other:?}"),
         }
     }
@@ -298,7 +297,7 @@ mod tests {
             assert_eq!(int(ext.query("scene_count")), 2);
             assert_eq!(int(ext.query("world_count")), 2);
             assert_eq!(int(ext.query("disclosure_count")), 1);
-            assert!(ext.query("unknown_path").is_none());
+            assert!(ext.query("unknown_path").is_err());
         });
     }
 
@@ -360,7 +359,7 @@ mod tests {
     #[test]
     fn disclosures_query_is_json_array() {
         with_external(|ext| match ext.query("disclosures") {
-            Some(IntrospectValue::Json(serde_json::Value::Array(items))) => {
+            Ok(IntrospectValue::Json(serde_json::Value::Array(items))) => {
                 assert_eq!(items.len(), 1);
                 assert_eq!(items[0]["mode"], "plant");
             }

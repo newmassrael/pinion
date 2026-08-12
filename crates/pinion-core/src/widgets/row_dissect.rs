@@ -54,8 +54,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::external::{
-    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, SchemaArg,
-    SchemaField, query_proxy_external_impl,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    ReadRefusal, SchemaArg, SchemaField, query_proxy_external_impl,
 };
 use crate::reactive::{Owner, Signal, batch};
 use crate::widgets::tree_nav::{TreeNode, set_expanded_in, toggle_expanded};
@@ -556,37 +556,34 @@ impl ExternalIntrospect for RowDissectionExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         // Per-visible-row dissection fields: `<token>.<i>`.
         if let Some(rest) = path.strip_prefix("path.") {
-            return Some(self.flat_field(rest, |r| IntrospectValue::Text(r.path.clone())));
+            return Ok(self.flat_field(rest, |r| IntrospectValue::Text(r.path.clone())));
         }
         if let Some(rest) = path.strip_prefix("name.") {
-            return Some(self.flat_field(rest, |r| IntrospectValue::Text(r.name.clone())));
+            return Ok(self.flat_field(rest, |r| IntrospectValue::Text(r.name.clone())));
         }
         if let Some(rest) = path.strip_prefix("value.") {
-            return Some(self.flat_field(rest, |r| IntrospectValue::Text(r.value.clone())));
+            return Ok(self.flat_field(rest, |r| IntrospectValue::Text(r.value.clone())));
         }
         if let Some(rest) = path.strip_prefix("kind.") {
-            return Some(
-                self.flat_field(rest, |r| IntrospectValue::Text(r.kind.as_str().to_owned())),
-            );
+            return Ok(self.flat_field(rest, |r| IntrospectValue::Text(r.kind.as_str().to_owned())));
         }
         if let Some(rest) = path.strip_prefix("depth.") {
-            return Some(self.flat_field(rest, |r| IntrospectValue::Int(i64::from(r.depth))));
+            return Ok(self.flat_field(rest, |r| IntrospectValue::Int(i64::from(r.depth))));
         }
         match path {
-            "selected" => Some(
-                self.state
-                    .selected()
-                    .and_then(|r| i64::try_from(r).ok())
-                    .map_or(IntrospectValue::Null, IntrospectValue::Int),
-            ),
-            "row_count" => Some(IntrospectValue::Int(
+            "selected" => Ok(self
+                .state
+                .selected()
+                .and_then(|r| i64::try_from(r).ok())
+                .map_or(IntrospectValue::Null, IntrospectValue::Int)),
+            "row_count" => Ok(IntrospectValue::Int(
                 i64::try_from(self.state.row_count()).unwrap_or(i64::MAX),
             )),
-            "node_count" => Some(self.node_count_value()),
-            _ => None,
+            "node_count" => Ok(self.node_count_value()),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -888,40 +885,41 @@ mod tests {
     fn external_query_surfaces_selection_and_nodes() {
         Owner::new().run(|| {
             let mut e = ext();
-            assert_eq!(e.query("row_count"), Some(IntrospectValue::Int(3)));
-            assert_eq!(e.query("selected"), Some(IntrospectValue::Null));
-            assert_eq!(e.query("node_count"), Some(IntrospectValue::Int(0)));
+            assert_eq!(e.query("row_count"), Ok(IntrospectValue::Int(3)));
+            assert_eq!(e.query("selected"), Ok(IntrospectValue::Null));
+            assert_eq!(e.query("node_count"), Ok(IntrospectValue::Int(0)));
 
             e.invoke("select", IntrospectValue::Int(0)).unwrap();
-            assert_eq!(e.query("selected"), Some(IntrospectValue::Int(0)));
-            assert_eq!(e.query("node_count"), Some(IntrospectValue::Int(11)));
+            assert_eq!(e.query("selected"), Ok(IntrospectValue::Int(0)));
+            assert_eq!(e.query("node_count"), Ok(IntrospectValue::Int(11)));
 
             // Row 0, alphabetical field order: headers, latency, method, note,
             // secure, status, tags. headers is index 0 and is expanded.
             assert_eq!(
                 e.query("name.0"),
-                Some(IntrospectValue::Text("headers".into()))
+                Ok(IntrospectValue::Text("headers".into()))
             );
             assert_eq!(
                 e.query("kind.0"),
-                Some(IntrospectValue::Text("object".into()))
+                Ok(IntrospectValue::Text("object".into()))
             );
-            assert_eq!(e.query("depth.0"), Some(IntrospectValue::Int(0)));
+            assert_eq!(e.query("depth.0"), Ok(IntrospectValue::Int(0)));
             assert_eq!(
                 e.query("path.1"),
-                Some(IntrospectValue::Text("headers.accept".into()))
+                Ok(IntrospectValue::Text("headers.accept".into()))
             );
-            assert_eq!(e.query("depth.1"), Some(IntrospectValue::Int(1)));
-            assert_eq!(
-                e.query("value.1"),
-                Some(IntrospectValue::Text("*/*".into()))
-            );
+            assert_eq!(e.query("depth.1"), Ok(IntrospectValue::Int(1)));
+            assert_eq!(e.query("value.1"), Ok(IntrospectValue::Text("*/*".into())));
             assert_eq!(
                 e.query("name.99"),
-                Some(IntrospectValue::Null),
+                Ok(IntrospectValue::Null),
                 "out-of-range node is present-but-empty",
             );
-            assert_eq!(e.query("nope"), None, "undeclared path is genuinely absent");
+            assert_eq!(
+                e.query("nope"),
+                Err(ReadRefusal::UnknownPath),
+                "undeclared path is genuinely absent"
+            );
         });
     }
 
@@ -953,7 +951,7 @@ mod tests {
                 Ok(IntrospectValue::Int(0)),
                 "clear deselects",
             );
-            assert_eq!(e.query("selected"), Some(IntrospectValue::Null));
+            assert_eq!(e.query("selected"), Ok(IntrospectValue::Null));
             assert_eq!(
                 e.invoke("bogus", IntrospectValue::Null),
                 Err(InvokeError::UnknownPath)
@@ -973,7 +971,7 @@ mod tests {
                 .expect("select row 1");
             assert_eq!(e.state().selected(), Some(1));
             // Row 1 is { method, status } → 2 visible nodes.
-            assert_eq!(e.query("node_count"), Some(IntrospectValue::Int(2)));
+            assert_eq!(e.query("node_count"), Ok(IntrospectValue::Int(2)));
             e.intervene("selected", IntrospectValue::Null)
                 .expect("deselect");
             assert_eq!(e.state().selected(), None);

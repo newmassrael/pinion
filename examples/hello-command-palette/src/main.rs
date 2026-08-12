@@ -44,8 +44,8 @@ use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_core::composite_tag::send_activation_index;
 use pinion_core::external::query_proxy_external_impl;
 use pinion_core::external::{
-    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, SchemaArg,
-    SchemaField,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    ReadRefusal, SchemaArg, SchemaField,
 };
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -264,28 +264,42 @@ impl ExternalIntrospect for PaletteExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         let visible = self.visible();
         match path {
-            "query" => Some(IntrospectValue::Text(self.query.get())),
-            "result_count" => Some(IntrospectValue::Int(i64::try_from(visible.len()).ok()?)),
-            "selected" => Some(IntrospectValue::Int(i64::try_from(self.sel()).ok()?)),
+            "query" => Ok(IntrospectValue::Text(self.query.get())),
+            "result_count" => Ok(IntrospectValue::Int(
+                i64::try_from(visible.len()).map_err(|_| ReadRefusal::QueryTypeMismatch)?,
+            )),
+            "selected" => Ok(IntrospectValue::Int(
+                i64::try_from(self.sel()).map_err(|_| ReadRefusal::QueryTypeMismatch)?,
+            )),
             // Present-but-empty: the path always resolves; an empty
             // result list reports Null (not a Rust `None`, which the RPC
             // layer would surface as an UnknownPath error — R894).
-            "selected_command" => Some(match visible.get(self.sel()) {
+            "selected_command" => Ok(match visible.get(self.sel()) {
                 Some(&c) => IntrospectValue::Text(COMMANDS[c].to_owned()),
                 None => IntrospectValue::Null,
             }),
-            "last_executed" => Some(match self.last_executed.get() {
+            "last_executed" => Ok(match self.last_executed.get() {
                 Some(name) => IntrospectValue::Text(name),
                 None => IntrospectValue::Null,
             }),
             _ => {
-                let i: usize = path.strip_prefix("result.")?.parse().ok()?;
+                let i: usize = path
+                    .strip_prefix("result.")
+                    .ok_or(ReadRefusal::UnknownPath)?
+                    .parse()
+                    .map_err(|_| ReadRefusal::QueryTypeMismatch)?;
                 visible
                     .get(i)
                     .map(|&c| IntrospectValue::Text(COMMANDS[c].to_owned()))
+                    .ok_or_else(|| {
+                        ReadRefusal::no_such_member(format!(
+                            "result {i} is outside 0..{}",
+                            visible.len()
+                        ))
+                    })
             }
         }
     }
@@ -373,7 +387,7 @@ fn make_palette_external() -> PaletteExternal {
 /// ends. `None` for a non-nav key or empty results.
 fn resolve_target_index(intro: Option<&dyn ExternalIntrospect>, key: &str) -> Option<usize> {
     let intro = intro?;
-    let count = match intro.query("result_count")? {
+    let count = match intro.query("result_count").ok()? {
         IntrospectValue::Int(n) => usize::try_from(n).ok()?,
         _ => return None,
     };
@@ -381,7 +395,7 @@ fn resolve_target_index(intro: Option<&dyn ExternalIntrospect>, key: &str) -> Op
         return None;
     }
     let last = count - 1;
-    let cur = match intro.query("selected")? {
+    let cur = match intro.query("selected").ok()? {
         IntrospectValue::Int(n) => usize::try_from(n).unwrap_or(0),
         _ => 0,
     };
@@ -523,7 +537,7 @@ impl PaletteView {
     fn read_state(scene: &Scene) -> usize {
         if let Scene::External(node) = scene {
             if let Some(intro) = node.handle.introspect() {
-                if let Some(IntrospectValue::Int(n)) = intro.query("selected") {
+                if let Ok(IntrospectValue::Int(n)) = intro.query("selected") {
                     return usize::try_from(n).unwrap_or(0);
                 }
             }
@@ -632,7 +646,7 @@ mod tests {
         // A query that yields a single result clamps + resets selection.
         e.intervene("query", IntrospectValue::Text("Reload Window".to_owned()))
             .unwrap();
-        assert_eq!(e.query("result_count"), Some(IntrospectValue::Int(1)));
+        assert_eq!(e.query("result_count"), Ok(IntrospectValue::Int(1)));
         assert_eq!(e.sel(), 0, "set_query resets selection to the top result");
     }
 
@@ -643,13 +657,13 @@ mod tests {
             .unwrap();
         assert_eq!(
             e.query("selected_command"),
-            Some(IntrospectValue::Text("Save All".to_owned()))
+            Ok(IntrospectValue::Text("Save All".to_owned()))
         );
         let ran = e.invoke("execute", IntrospectValue::Null).unwrap();
         assert_eq!(ran, IntrospectValue::Text("Save All".to_owned()));
         assert_eq!(
             e.query("last_executed"),
-            Some(IntrospectValue::Text("Save All".to_owned()))
+            Ok(IntrospectValue::Text("Save All".to_owned()))
         );
     }
 
@@ -659,13 +673,13 @@ mod tests {
         // Hover/press do not run; the PointerUp activation edge does.
         e.invoke("send", IntrospectValue::Text("2:PointerEnter".to_owned()))
             .unwrap();
-        assert_eq!(e.query("last_executed"), Some(IntrospectValue::Null));
+        assert_eq!(e.query("last_executed"), Ok(IntrospectValue::Null));
         e.invoke("send", IntrospectValue::Text("2:PointerUp".to_owned()))
             .unwrap();
         // Result 2 in the empty-query list is "Save All".
         assert_eq!(
             e.query("last_executed"),
-            Some(IntrospectValue::Text("Save All".to_owned()))
+            Ok(IntrospectValue::Text("Save All".to_owned()))
         );
     }
 

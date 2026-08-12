@@ -102,8 +102,8 @@ use std::rc::Rc;
 use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
-    SchemaField, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
+    SchemaArg, SchemaField, ThreadOwnership,
 };
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect, TextNode};
@@ -576,10 +576,13 @@ impl ExternalIntrospect for DiffOracle {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
-        let state = self.state.as_ref()?;
-        let int = |v: usize| Some(IntrospectValue::Int(i64::try_from(v).unwrap_or(i64::MAX)));
-        let text = |s: String| Some(IntrospectValue::Text(s));
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
+        let state = self
+            .state
+            .as_ref()
+            .ok_or_else(|| ReadRefusal::unavailable("no diff has been computed yet"))?;
+        let int = |v: usize| Ok(IntrospectValue::Int(i64::try_from(v).unwrap_or(i64::MAX)));
+        let text = |s: String| Ok(IntrospectValue::Text(s));
         match path {
             "node_count" => int(NODES.len()),
             "link_count" => int(state.diff().len()),
@@ -618,7 +621,7 @@ impl ExternalIntrospect for DiffOracle {
             // a client stepping the animation cannot tell when it has come back
             // round, and would have to infer the period from the geometry.
             "flow_period" => int(Dash::DASHED.period() as usize),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 

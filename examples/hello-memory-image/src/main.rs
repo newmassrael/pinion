@@ -40,7 +40,8 @@
 use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use pinion_core::scene::{BoxNode, ContainerNode, ImageNode, Rect, TextNode};
 use pinion_core::style::{
@@ -251,9 +252,9 @@ fn read_oracle(scene: &Scene) -> (bool, Palette) {
     else {
         return (true, Palette::Cool);
     };
-    let present = matches!(intro.query("present"), Some(IntrospectValue::Bool(true)));
+    let present = matches!(intro.query("present"), Ok(IntrospectValue::Bool(true)));
     let palette = match intro.query("variant") {
-        Some(IntrospectValue::Text(name)) => Palette::from_name(&name).unwrap_or(Palette::Cool),
+        Ok(IntrospectValue::Text(name)) => Palette::from_name(&name).unwrap_or(Palette::Cool),
         _ => Palette::Cool,
     };
     (present, palette)
@@ -349,22 +350,22 @@ impl ExternalIntrospect for MemoryImageOracle {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         let int = |n: usize| IntrospectValue::Int(i64::try_from(n).unwrap_or(0));
         match path {
-            "image_source" => Some(IntrospectValue::Text(IMAGE_SOURCE.to_owned())),
-            "image_key" => Some(IntrospectValue::Text(MEMORY_KEY.to_owned())),
-            "variant" => Some(IntrospectValue::Text(self.palette.name().to_owned())),
-            "present" => Some(IntrospectValue::Bool(self.present)),
+            "image_source" => Ok(IntrospectValue::Text(IMAGE_SOURCE.to_owned())),
+            "image_key" => Ok(IntrospectValue::Text(MEMORY_KEY.to_owned())),
+            "variant" => Ok(IntrospectValue::Text(self.palette.name().to_owned())),
+            "present" => Ok(IntrospectValue::Bool(self.present)),
             // The store holds only this key, so this is 0 or 1 — the painter's
             // view of "is there a pixel source" as a count.
-            "registered" => Some(int(self.store.len())),
-            "width" | "height" => Some(IntrospectValue::Int(if self.present {
+            "registered" => Ok(int(self.store.len())),
+            "width" | "height" => Ok(IntrospectValue::Int(if self.present {
                 i64::from(IMG_SIDE)
             } else {
                 0
             })),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -578,23 +579,20 @@ mod tests {
         let o = oracle();
         assert_eq!(
             o.query("image_source"),
-            Some(IntrospectValue::Text(IMAGE_SOURCE.into()))
+            Ok(IntrospectValue::Text(IMAGE_SOURCE.into()))
         );
         assert_eq!(
             o.query("image_key"),
-            Some(IntrospectValue::Text(MEMORY_KEY.into()))
+            Ok(IntrospectValue::Text(MEMORY_KEY.into()))
         );
-        assert_eq!(
-            o.query("variant"),
-            Some(IntrospectValue::Text("cool".into()))
-        );
-        assert_eq!(o.query("present"), Some(IntrospectValue::Bool(true)));
-        assert_eq!(o.query("registered"), Some(IntrospectValue::Int(1)));
+        assert_eq!(o.query("variant"), Ok(IntrospectValue::Text("cool".into())));
+        assert_eq!(o.query("present"), Ok(IntrospectValue::Bool(true)));
+        assert_eq!(o.query("registered"), Ok(IntrospectValue::Int(1)));
         assert_eq!(
             o.query("width"),
-            Some(IntrospectValue::Int(i64::from(IMG_SIDE)))
+            Ok(IntrospectValue::Int(i64::from(IMG_SIDE)))
         );
-        assert_eq!(o.query("nope"), None);
+        assert_eq!(o.query("nope"), Err(ReadRefusal::UnknownPath));
     }
 
     #[test]
@@ -607,10 +605,7 @@ mod tests {
             o.invoke("send", IntrospectValue::Text("swap".into())),
             Ok(IntrospectValue::Text("warm".into()))
         );
-        assert_eq!(
-            o.query("variant"),
-            Some(IntrospectValue::Text("warm".into()))
-        );
+        assert_eq!(o.query("variant"), Ok(IntrospectValue::Text("warm".into())));
         assert!(
             o.store.contains(MEMORY_KEY),
             "still registered after a swap"
@@ -621,9 +616,9 @@ mod tests {
             o.invoke("send", IntrospectValue::Text("remove".into())),
             Ok(IntrospectValue::Text("absent".into()))
         );
-        assert_eq!(o.query("present"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(o.query("registered"), Some(IntrospectValue::Int(0)));
-        assert_eq!(o.query("width"), Some(IntrospectValue::Int(0)));
+        assert_eq!(o.query("present"), Ok(IntrospectValue::Bool(false)));
+        assert_eq!(o.query("registered"), Ok(IntrospectValue::Int(0)));
+        assert_eq!(o.query("width"), Ok(IntrospectValue::Int(0)));
         assert!(!o.store.contains(MEMORY_KEY), "removed from the store");
 
         // restore -> the last (warm) palette is registered again.
@@ -631,7 +626,7 @@ mod tests {
             o.invoke("send", IntrospectValue::Text("restore".into())),
             Ok(IntrospectValue::Text("warm".into()))
         );
-        assert_eq!(o.query("present"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(o.query("present"), Ok(IntrospectValue::Bool(true)));
         assert!(o.store.contains(MEMORY_KEY));
 
         // An unknown send is ignored; a non-text arg is a type error.
@@ -655,10 +650,7 @@ mod tests {
         // Set the palette by name.
         o.intervene("variant", IntrospectValue::Text("warm".into()))
             .unwrap();
-        assert_eq!(
-            o.query("variant"),
-            Some(IntrospectValue::Text("warm".into()))
-        );
+        assert_eq!(o.query("variant"), Ok(IntrospectValue::Text("warm".into())));
         // A bad name is a type error.
         assert_eq!(
             o.intervene("variant", IntrospectValue::Text("teal".into())),

@@ -82,8 +82,8 @@ use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_chart::{ChartStyle, Sparkline};
 use pinion_core::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
-    SchemaField, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
+    SchemaArg, SchemaField, ThreadOwnership,
 };
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect, TextNode};
@@ -1729,27 +1729,30 @@ impl ExternalIntrospect for ShellOracle {
         IntrospectSchema::new(FIELDS)
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
-        let state = self.state.as_ref()?;
-        let text = |s: String| Some(IntrospectValue::Text(s));
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
+        let state = self
+            .state
+            .as_ref()
+            .ok_or_else(|| ReadRefusal::unavailable("no capture is loaded"))?;
+        let text = |s: String| Ok(IntrospectValue::Text(s));
         let clock = &state.clock;
         match path {
             "source" => text(state.source.get()),
             "sources" => text(SOURCES.join(",")),
-            "capturing" => Some(IntrospectValue::Bool(state.capturing.get())),
+            "capturing" => Ok(IntrospectValue::Bool(state.capturing.get())),
             "search" => text(state.search.get()),
             "theme" => text(theme_word(&state.theme)),
             "tab" => text(state.tab.get()),
             "tabs" => text(TABS.join(",")),
             "rail" => text(RAIL.map(|(key, _)| key).join(",")),
             "nav" => text(state.nav.get()),
-            "editing" => Some(IntrospectValue::Bool(state.editing.get())),
+            "editing" => Ok(IntrospectValue::Bool(state.editing.get())),
             "config_open" => text(state.config_open.get().unwrap_or_default()),
             // The palette's twelve, so a client picks from what is offered.
             "catalogue" => text(DEFS.iter().map(|d| d.kind).collect::<Vec<_>>().join(",")),
             "cards" => text(state.card_ids()),
-            "card_count" => Some(IntrospectValue::Int(i64::from(u(state.cards.get().len())))),
-            "placed_count" => Some(IntrospectValue::Int(i64::from(u(state.placed().len())))),
+            "card_count" => Ok(IntrospectValue::Int(i64::from(u(state.cards.get().len())))),
+            "placed_count" => Ok(IntrospectValue::Int(i64::from(u(state.placed().len())))),
             "layout" => text(
                 serde_json::to_string(&state.board.get()).unwrap_or_else(|why| why.to_string()),
             ),
@@ -1773,14 +1776,14 @@ impl ExternalIntrospect for ShellOracle {
             ),
             "preset" => text(state.preset.get()),
             "presets" => text(state.preset_names()),
-            "preset_open" => Some(IntrospectValue::Bool(state.preset_open.get())),
+            "preset_open" => Ok(IntrospectValue::Bool(state.preset_open.get())),
             "transport" => text(transport_word(clock.status(), state.capturing.get())),
             #[allow(
                 clippy::cast_possible_truncation,
                 clippy::cast_sign_loss,
                 reason = "a playhead fraction is 0.0..=1.0, so per-mille is 0..=1000"
             )]
-            "playhead" => Some(IntrospectValue::Int(i64::from(
+            "playhead" => Ok(IntrospectValue::Int(i64::from(
                 (clock.position() * 1000.0).round() as i32,
             ))),
             "affordances" => text(CardAffordance::ALL.map(CardAffordance::wire).join(",")),
@@ -1816,7 +1819,7 @@ impl ExternalIntrospect for ShellOracle {
                     .collect::<Vec<_>>()
                     .join(","),
             ),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 

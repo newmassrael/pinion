@@ -139,7 +139,8 @@ use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::display::{DisplayHome, DisplayId, DisplayRect, DisplayTopology};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
@@ -515,11 +516,14 @@ impl ExternalIntrospect for DeskOracle {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
-        let state = self.state.as_ref()?;
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
+        let state = self
+            .state
+            .as_ref()
+            .ok_or_else(|| ReadRefusal::unavailable("no display set has been probed yet"))?;
         let desk = state.desk();
-        let int = |v: u64| Some(IntrospectValue::Int(i64::try_from(v).unwrap_or(i64::MAX)));
-        let text = |s: String| Some(IntrospectValue::Text(s));
+        let int = |v: u64| Ok(IntrospectValue::Int(i64::try_from(v).unwrap_or(i64::MAX)));
+        let text = |s: String| Ok(IntrospectValue::Text(s));
         match path {
             "display_count" => int(u64::try_from(desk.len()).unwrap_or(u64::MAX)),
             "display_ids" => text(
@@ -591,7 +595,7 @@ impl ExternalIntrospect for DeskOracle {
                     .join(","),
             ),
             "last_event" => text(state.last_event.get()),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 

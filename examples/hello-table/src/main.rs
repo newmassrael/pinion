@@ -308,7 +308,7 @@ fn active_cell(state: &TableState) -> (usize, usize) {
 fn read_order(intro: &dyn pinion_core::external::ExternalIntrospect, rows: usize) -> Vec<usize> {
     (0..rows)
         .map(|v| match intro.query(&format!("order.{v}")) {
-            Some(IntrospectValue::Int(d)) if d >= 0 => usize::try_from(d).unwrap_or(v),
+            Ok(IntrospectValue::Int(d)) if d >= 0 => usize::try_from(d).unwrap_or(v),
             _ => v,
         })
         .collect()
@@ -513,7 +513,7 @@ impl WidgetCore for TableView {
         // client running `scene/query /table/external/selected_row` sees
         // exactly the value the view fn renders.
         out.selected_row = match intro.query("selected_row") {
-            Some(IntrospectValue::Int(r)) if r >= 0 => usize::try_from(r).ok(),
+            Ok(IntrospectValue::Int(r)) if r >= 0 => usize::try_from(r).ok(),
             _ => None,
         };
         out.focused_row = read_focused_row(intro);
@@ -521,7 +521,7 @@ impl WidgetCore for TableView {
         let rows = read_rows(intro);
         for r in 0..rows {
             let st = match intro.query(&format!("state.{r}")) {
-                Some(IntrospectValue::Text(name)) => RadioState::from_name_or_default(&name),
+                Ok(IntrospectValue::Text(name)) => RadioState::from_name_or_default(&name),
                 _ => RadioState::Idle,
             };
             if let Some(slot) = out.row_states.get_mut(r) {
@@ -531,15 +531,16 @@ impl WidgetCore for TableView {
         // R730 §5.40 — sort key + visual→data permutation, read from the
         // coordinator (the single source of truth for both paint + a11y).
         let sort_col = match intro.query("sort_col") {
-            Some(IntrospectValue::Int(c)) if c >= 0 => usize::try_from(c).ok(),
+            Ok(IntrospectValue::Int(c)) if c >= 0 => usize::try_from(c).ok(),
             _ => None,
         };
         if let Some(col) = sort_col {
-            let ascending = matches!(intro.query("sort_dir"), Some(IntrospectValue::Text(d)) if d == "ascending");
+            let ascending =
+                matches!(intro.query("sort_dir"), Ok(IntrospectValue::Text(d)) if d == "ascending");
             out.sort = Some((col, ascending));
         }
         out.order = core::array::from_fn(|v| match intro.query(&format!("order.{v}")) {
-            Some(IntrospectValue::Int(d)) if d >= 0 => usize::try_from(d).unwrap_or(v),
+            Ok(IntrospectValue::Int(d)) if d >= 0 => usize::try_from(d).unwrap_or(v),
             _ => v,
         });
         out
@@ -803,7 +804,7 @@ mod tests {
             return None;
         };
         match node.handle.introspect()?.query("selected_row") {
-            Some(IntrospectValue::Int(r)) if r >= 0 => Some(r),
+            Ok(IntrospectValue::Int(r)) if r >= 0 => Some(r),
             _ => None,
         }
     }
@@ -814,11 +815,11 @@ mod tests {
         };
         let intro = node.handle.introspect().expect("introspect");
         let r = match intro.query("focused_row") {
-            Some(IntrospectValue::Int(r)) => r,
+            Ok(IntrospectValue::Int(r)) => r,
             _ => -1,
         };
         let c = match intro.query("focused_col") {
-            Some(IntrospectValue::Int(c)) => c,
+            Ok(IntrospectValue::Int(c)) => c,
             _ => -1,
         };
         (r, c)

@@ -90,7 +90,8 @@
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y, windowed_list_nodes};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use pinion_core::scene::{ContainerNode, Rect, ScrollNode, TextNode};
 use pinion_core::style::{
@@ -406,12 +407,12 @@ fn read_state(scene: &Scene) -> ScaleState {
         return ScaleState::default();
     };
     let rows = match intro.query("rows") {
-        Some(IntrospectValue::Int(i)) => usize::try_from(i).unwrap_or(LADDER[1]),
+        Ok(IntrospectValue::Int(i)) => usize::try_from(i).unwrap_or(LADDER[1]),
         _ => LADDER[1],
     };
-    let eager = matches!(intro.query("eager"), Some(IntrospectValue::Bool(true)));
+    let eager = matches!(intro.query("eager"), Ok(IntrospectValue::Bool(true)));
     let label_chars = match intro.query("label_chars") {
-        Some(IntrospectValue::Int(i)) => usize::try_from(i).unwrap_or(LABEL_LADDER[0]),
+        Ok(IntrospectValue::Int(i)) => usize::try_from(i).unwrap_or(LABEL_LADDER[0]),
         _ => LABEL_LADDER[0],
     };
     ScaleState {
@@ -568,22 +569,22 @@ impl ExternalIntrospect for SceneScaleExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "rows" => Some(IntrospectValue::Int(
+            "rows" => Ok(IntrospectValue::Int(
                 i64::try_from(self.state.rows).unwrap_or(i64::MAX),
             )),
-            "eager" => Some(IntrospectValue::Bool(self.state.eager)),
-            "label_chars" => Some(IntrospectValue::Int(
+            "eager" => Ok(IntrospectValue::Bool(self.state.eager)),
+            "label_chars" => Ok(IntrospectValue::Int(
                 i64::try_from(self.state.label_chars).unwrap_or(i64::MAX),
             )),
-            "max_label_chars" => Some(IntrospectValue::Int(
+            "max_label_chars" => Ok(IntrospectValue::Int(
                 i64::try_from(MAX_LABEL_CHARS).unwrap_or(i64::MAX),
             )),
-            "max_eager_rows" => Some(IntrospectValue::Int(
+            "max_eager_rows" => Ok(IntrospectValue::Int(
                 i64::try_from(MAX_EAGER_ROWS).unwrap_or(i64::MAX),
             )),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -994,7 +995,7 @@ mod tests {
         );
         assert_eq!(
             ext.query("rows"),
-            Some(IntrospectValue::Int(
+            Ok(IntrospectValue::Int(
                 i64::try_from(LADDER[1]).expect("rung fits i64")
             )),
             "and the refused write left the value alone",
@@ -1010,7 +1011,7 @@ mod tests {
             &ext.intervene("eager", IntrospectValue::Bool(true)),
             "lower rows first",
         );
-        assert_eq!(ext.query("eager"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(ext.query("eager"), Ok(IntrospectValue::Bool(false)));
     }
 
     #[test]
@@ -1051,12 +1052,12 @@ mod tests {
             .expect("virtual arm takes any size");
         assert_eq!(
             ext.query("rows"),
-            Some(IntrospectValue::Int(100_000)),
+            Ok(IntrospectValue::Int(100_000)),
             "the external holds what it was given",
         );
         assert_eq!(
             ext.query("max_eager_rows"),
-            Some(IntrospectValue::Int(
+            Ok(IntrospectValue::Int(
                 i64::try_from(MAX_EAGER_ROWS).expect("cap fits i64")
             )),
             "and publishes the bound rather than making a client discover it",

@@ -53,8 +53,8 @@ use pinion_a11y::{
 };
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
-    ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership,
 };
 use pinion_core::intent::Intent;
 use pinion_core::reactive::{Owner, Signal};
@@ -329,6 +329,19 @@ impl core::fmt::Debug for SelRowExternal {
     }
 }
 
+/// R1667 — the row a `<slot>.<index>` read addressed, or the refusal it owes.
+///
+/// The three indexed reads (`selected` / `label` / `id`) parse the same suffix
+/// and bound against the same snapshot; before this round each swallowed both
+/// failures into one `None`. Stated once so the two refusals cannot drift: a
+/// suffix that is not an index is a malformed ARGUMENT, and an index past the
+/// end is a missing MEMBER that names the range which is not.
+fn row_of<'a>(snap: &'a [SelItem], suffix: &str) -> Result<&'a SelItem, ReadRefusal> {
+    let i: usize = suffix.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?;
+    snap.get(i)
+        .ok_or_else(|| ReadRefusal::no_such_member(format!("row {i} is outside 0..{}", snap.len())))
+}
+
 impl ExternalIntrospect for SelRowExternal {
     fn schema(&self) -> IntrospectSchema {
         IntrospectSchema::new(
@@ -361,42 +374,41 @@ impl ExternalIntrospect for SelRowExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         let snap = self.items.get();
         match path {
-            "count" => Some(IntrospectValue::Int(i64::try_from(snap.len()).ok()?)),
-            "selected_count" => Some(IntrospectValue::Int(
-                i64::try_from(selected_count(&snap)).ok()?,
+            "count" => Ok(IntrospectValue::Int(
+                i64::try_from(snap.len()).map_err(|_| ReadRefusal::QueryTypeMismatch)?,
             )),
-            "focus" => Some(IntrospectValue::Int(
-                i64::try_from(self.effective_focus()).ok()?,
+            "selected_count" => Ok(IntrospectValue::Int(
+                i64::try_from(selected_count(&snap)).map_err(|_| ReadRefusal::QueryTypeMismatch)?,
             )),
-            "focused" => Some(IntrospectValue::Bool(self.group_focused)),
+            "focus" => Ok(IntrospectValue::Int(
+                i64::try_from(self.effective_focus())
+                    .map_err(|_| ReadRefusal::QueryTypeMismatch)?,
+            )),
+            "focused" => Ok(IntrospectValue::Bool(self.group_focused)),
             "ids_selected" => {
                 let arr: Vec<serde_json::Value> = snap
                     .iter()
                     .filter(|i| i.selected)
                     .map(|i| serde_json::Value::from(i.id))
                     .collect();
-                Some(IntrospectValue::Json(serde_json::Value::Array(arr)))
+                Ok(IntrospectValue::Json(serde_json::Value::Array(arr)))
             }
             _ => {
                 if let Some(s) = path.strip_prefix("selected.") {
-                    return Some(IntrospectValue::Bool(
-                        snap.get(s.parse::<usize>().ok()?)?.selected,
-                    ));
+                    return Ok(IntrospectValue::Bool(row_of(&snap, s)?.selected));
                 }
                 if let Some(s) = path.strip_prefix("label.") {
-                    return Some(IntrospectValue::Text(
-                        snap.get(s.parse::<usize>().ok()?)?.label.clone(),
-                    ));
+                    return Ok(IntrospectValue::Text(row_of(&snap, s)?.label.clone()));
                 }
                 if let Some(s) = path.strip_prefix("id.") {
-                    return Some(IntrospectValue::Int(
-                        i64::try_from(snap.get(s.parse::<usize>().ok()?)?.id).ok()?,
+                    return Ok(IntrospectValue::Int(
+                        i64::try_from(row_of(&snap, s)?.id).unwrap_or(i64::MAX),
                     ));
                 }
-                None
+                Err(ReadRefusal::UnknownPath)
             }
         }
     }
@@ -1017,10 +1029,10 @@ mod tests {
                 ext.invoke("send", IntrospectValue::Text("3:PointerUp".into())),
                 Ok(IntrospectValue::Bool(true))
             );
-            assert_eq!(ext.query("selected_count"), Some(IntrospectValue::Int(1)));
+            assert_eq!(ext.query("selected_count"), Ok(IntrospectValue::Int(1)));
             // A second release toggles it back off.
             let _ = ext.invoke("send", IntrospectValue::Text("3:PointerUp".into()));
-            assert_eq!(ext.query("selected_count"), Some(IntrospectValue::Int(0)));
+            assert_eq!(ext.query("selected_count"), Ok(IntrospectValue::Int(0)));
             // A stale id is a no-op reported as Bool(false).
             assert_eq!(
                 ext.invoke("send", IntrospectValue::Text("999:PointerUp".into())),
@@ -1038,7 +1050,7 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 ext.query("selected.1"),
-                Some(IntrospectValue::Bool(true)),
+                Ok(IntrospectValue::Bool(true)),
                 "read mirrors write"
             );
             // Idempotent: setting true again leaves it set (not a toggle).
@@ -1046,12 +1058,12 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 ext.query("selected_count"),
-                Some(IntrospectValue::Int(1)),
+                Ok(IntrospectValue::Int(1)),
                 "set is not a toggle"
             );
             ext.intervene("selected.1", IntrospectValue::Bool(false))
                 .unwrap();
-            assert_eq!(ext.query("selected_count"), Some(IntrospectValue::Int(0)));
+            assert_eq!(ext.query("selected_count"), Ok(IntrospectValue::Int(0)));
             // Out-of-range / type errors are reported, not silently dropped.
             assert_out_of_range_saying(
                 &ext.intervene("selected.99", IntrospectValue::Bool(true)),
@@ -1070,17 +1082,17 @@ mod tests {
             let mut ext = SelRowExternal::new(use_items());
             assert!(ext.apply_key("ArrowDown"));
             assert!(ext.apply_key("ArrowDown"));
-            assert_eq!(ext.query("focus"), Some(IntrospectValue::Int(2)));
+            assert_eq!(ext.query("focus"), Ok(IntrospectValue::Int(2)));
             assert!(ext.apply_key("Space"), "Space toggles the focused row");
-            assert_eq!(ext.query("selected_count"), Some(IntrospectValue::Int(1)));
-            assert_eq!(ext.query("selected.2"), Some(IntrospectValue::Bool(true)));
+            assert_eq!(ext.query("selected_count"), Ok(IntrospectValue::Int(1)));
+            assert_eq!(ext.query("selected.2"), Ok(IntrospectValue::Bool(true)));
             // Home / End clamp, no wrap.
             assert!(ext.apply_key("End"));
-            assert_eq!(ext.query("focus"), Some(IntrospectValue::Int(7)));
+            assert_eq!(ext.query("focus"), Ok(IntrospectValue::Int(7)));
             assert!(ext.apply_key("ArrowDown"));
             assert_eq!(
                 ext.query("focus"),
-                Some(IntrospectValue::Int(7)),
+                Ok(IntrospectValue::Int(7)),
                 "no wrap past the last row"
             );
         });
@@ -1094,10 +1106,10 @@ mod tests {
             // Select + delete several rows so the list shrinks under the cursor.
             ext.items
                 .set_with(|prev| prev.iter().filter(|i| i.id <= 3).cloned().collect());
-            assert_eq!(ext.query("count"), Some(IntrospectValue::Int(3)));
+            assert_eq!(ext.query("count"), Ok(IntrospectValue::Int(3)));
             assert_eq!(
                 ext.query("focus"),
-                Some(IntrospectValue::Int(2)),
+                Ok(IntrospectValue::Int(2)),
                 "stale focus clamps to the new last row"
             );
         });

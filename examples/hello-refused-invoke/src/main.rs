@@ -58,7 +58,7 @@
 use pinion_a11y::WidgetA11y;
 use pinion_core::external::{
     External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
-    SchemaArg, SchemaField, query_proxy_external_impl, read_only_or_unknown,
+    ReadRefusal, SchemaArg, SchemaField, query_proxy_external_impl, read_only_or_unknown,
 };
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{BoxStyle, Color, FlexDirection, LayoutStyle, TextStyle};
@@ -177,16 +177,16 @@ impl ExternalIntrospect for Host {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         if let Some(rest) = path.strip_prefix("has_pane.") {
-            let id: u32 = rest.parse().ok()?;
-            return Some(IntrospectValue::Bool(self.panes.contains(&id)));
+            let id: u32 = rest.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?;
+            return Ok(IntrospectValue::Bool(self.panes.contains(&id)));
         }
         match path {
-            "panes" => Some(IntrospectValue::Text(self.pane_list())),
-            "detector" => Some(IntrospectValue::Bool(self.detector)),
-            "reports" => Some(IntrospectValue::Int(self.reports)),
-            _ => None,
+            "panes" => Ok(IntrospectValue::Text(self.pane_list())),
+            "detector" => Ok(IntrospectValue::Bool(self.detector)),
+            "reports" => Ok(IntrospectValue::Int(self.reports)),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -375,7 +375,7 @@ mod tests {
         );
         assert_eq!(
             host.query("reports"),
-            Some(IntrospectValue::Int(0)),
+            Ok(IntrospectValue::Int(0)),
             "neither refusal ran the action",
         );
     }
@@ -409,15 +409,12 @@ mod tests {
         let mut host = Host::default();
         host.invoke("install_detector", IntrospectValue::Null)
             .expect("installs");
-        assert_eq!(
-            host.query("has_pane.99"),
-            Some(IntrospectValue::Bool(false))
-        );
+        assert_eq!(host.query("has_pane.99"), Ok(IntrospectValue::Bool(false)));
         assert_refused_saying(
             &host.invoke("report", IntrospectValue::Int(99)),
             "no pane 99",
         );
-        assert_eq!(host.query("has_pane.2"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(host.query("has_pane.2"), Ok(IntrospectValue::Bool(true)));
         assert!(
             host.invoke("report", IntrospectValue::Int(2)).is_ok(),
             "a pane the read reports present is one the action accepts",

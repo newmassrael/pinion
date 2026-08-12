@@ -144,9 +144,7 @@ impl WidgetCore for HelloNarrativeWalk {
 /// defaulting to `0` when absent or out of range.
 fn query_u16(intro: &dyn ExternalIntrospect, path: &str) -> u16 {
     match intro.query(path) {
-        Some(IntrospectValue::Int(n)) => {
-            u16::try_from(n.clamp(0, i64::from(u16::MAX))).unwrap_or(0)
-        }
+        Ok(IntrospectValue::Int(n)) => u16::try_from(n.clamp(0, i64::from(u16::MAX))).unwrap_or(0),
         _ => 0,
     }
 }

@@ -495,7 +495,7 @@ impl WidgetCore for PagedStreamView {
     fn read_state(scene: &Scene) -> ButtonState {
         if let Scene::External(node) = scene {
             if let Some(intro) = node.handle.introspect() {
-                if let Some(IntrospectValue::Text(name)) = intro.query("state") {
+                if let Ok(IntrospectValue::Text(name)) = intro.query("state") {
                     return ButtonState::from_name_or_default(&name);
                 }
             }

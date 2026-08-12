@@ -59,7 +59,8 @@ use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_chart::{CategoricalPalette, ChartStyle, ColorScale, Tile, Treemap};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
@@ -345,18 +346,18 @@ impl ExternalIntrospect for MarketMapOracle {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "encoding" => Some(IntrospectValue::Text(self.encoding().name().to_string())),
-            "domain_low" => Some(IntrospectValue::Float(DOMAIN_LOW)),
-            "domain_high" => Some(IntrospectValue::Float(DOMAIN_HIGH)),
-            "neutral" => Some(IntrospectValue::Float(NEUTRAL)),
-            "neutral_offset" => Some(IntrospectValue::Float(value_offset(NEUTRAL))),
-            "neutral_strip_offset" => Some(IntrospectValue::Float(strip_offset(NEUTRAL))),
-            "neutral_hex" => Some(IntrospectValue::Text(hex(scale().sample(0.5)))),
-            "area_order" => Some(IntrospectValue::Text(order_by(|&(_, w, _)| w))),
-            "change_order" => Some(IntrospectValue::Text(order_by(|&(_, _, c)| c))),
-            _ => None,
+            "encoding" => Ok(IntrospectValue::Text(self.encoding().name().to_string())),
+            "domain_low" => Ok(IntrospectValue::Float(DOMAIN_LOW)),
+            "domain_high" => Ok(IntrospectValue::Float(DOMAIN_HIGH)),
+            "neutral" => Ok(IntrospectValue::Float(NEUTRAL)),
+            "neutral_offset" => Ok(IntrospectValue::Float(value_offset(NEUTRAL))),
+            "neutral_strip_offset" => Ok(IntrospectValue::Float(strip_offset(NEUTRAL))),
+            "neutral_hex" => Ok(IntrospectValue::Text(hex(scale().sample(0.5)))),
+            "area_order" => Ok(IntrospectValue::Text(order_by(|&(_, w, _)| w))),
+            "change_order" => Ok(IntrospectValue::Text(order_by(|&(_, _, c)| c))),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 

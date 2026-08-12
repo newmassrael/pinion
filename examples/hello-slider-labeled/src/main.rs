@@ -447,6 +447,7 @@ mod tests {
             .introspect()
             .expect("introspect opted in")
             .query("value")
+            .ok()
             .and_then(|v| v.as_f32())
             .expect("value path returns Float")
     }
@@ -493,7 +494,7 @@ mod tests {
         };
         let intro = node.handle.introspect().unwrap();
         match intro.query("step") {
-            Some(IntrospectValue::Float(v)) => assert!((v - f64::from(STEP)).abs() < 1e-6),
+            Ok(IntrospectValue::Float(v)) => assert!((v - f64::from(STEP)).abs() < 1e-6),
             other => panic!("expected Float step, got {other:?}"),
         }
     }

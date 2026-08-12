@@ -71,8 +71,8 @@ use pinion_a11y::{
 use pinion_chart::{CellTable, ChartStyle, Field, LineChart, Mapped, ModelMapper, numeric};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
-    ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership,
 };
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
@@ -553,42 +553,58 @@ impl External for RecordsExternal {
     }
 }
 
+/// R1667 — the refusal a per-column read owes an index past the last column.
+fn out_of_cols(col: usize) -> ReadRefusal {
+    ReadRefusal::no_such_member(format!("column {col} is outside 0..{NCOLS}"))
+}
+
 impl ExternalIntrospect for RecordsExternal {
     fn schema(&self) -> IntrospectSchema {
         IntrospectSchema::new(RECORDS_SCHEMA_FIELDS)
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
             "row_count" => {
-                return Some(IntrospectValue::Int(
+                return Ok(IntrospectValue::Int(
                     i64::try_from(NROWS).unwrap_or(i64::MAX),
                 ));
             }
             "col_count" => {
-                return Some(IntrospectValue::Int(
+                return Ok(IntrospectValue::Int(
                     i64::try_from(NCOLS).unwrap_or(i64::MAX),
                 ));
             }
             _ => {}
         }
         if let Some(col) = path.strip_prefix("col_name.") {
-            let col: usize = col.parse().ok()?;
+            let col: usize = col.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?;
             return COL_NAMES
                 .get(col)
-                .map(|n| IntrospectValue::Text((*n).to_owned()));
+                .map(|n| IntrospectValue::Text((*n).to_owned()))
+                .ok_or_else(|| out_of_cols(col));
         }
         if let Some(col) = path.strip_prefix("col_kind.") {
-            let col: usize = col.parse().ok()?;
+            let col: usize = col.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?;
             return COL_KINDS
                 .get(col)
-                .map(|k| IntrospectValue::Text(k.name().to_owned()));
+                .map(|k| IntrospectValue::Text(k.name().to_owned()))
+                .ok_or_else(|| out_of_cols(col));
         }
-        let (row, col) = Self::cell_index(path.strip_prefix("value.")?)?;
+        let addr = path
+            .strip_prefix("value.")
+            .ok_or(ReadRefusal::UnknownPath)?;
+        let (row, col) = Self::cell_index(addr).ok_or(ReadRefusal::QueryTypeMismatch)?;
         let cells = self.cells.get();
         CellTable::new(&cells, NCOLS)
             .get(row, col)
             .map(CellValue::to_introspect)
+            .ok_or_else(|| {
+                ReadRefusal::no_such_member(format!(
+                    "cell {row}.{col} is outside {}.{NCOLS}",
+                    cells.len() / NCOLS
+                ))
+            })
     }
 
     /// Write one cell. The value must match the column's declared
@@ -1089,18 +1105,18 @@ mod tests {
         let owner = Owner::new();
         owner.run(|| {
             let ext = RecordsExternal { cells: use_cells() };
-            assert_eq!(ext.query("row_count"), Some(IntrospectValue::Int(8)));
-            assert_eq!(ext.query("col_count"), Some(IntrospectValue::Int(4)));
+            assert_eq!(ext.query("row_count"), Ok(IntrospectValue::Int(8)));
+            assert_eq!(ext.query("col_count"), Ok(IntrospectValue::Int(4)));
             assert_eq!(
                 ext.query("col_name.1"),
-                Some(IntrospectValue::Text("Revenue".to_owned()))
+                Ok(IntrospectValue::Text("Revenue".to_owned()))
             );
             assert_eq!(
                 ext.query("col_kind.0"),
-                Some(IntrospectValue::Text("text".to_owned()))
+                Ok(IntrospectValue::Text("text".to_owned()))
             );
-            assert!(ext.query("value.0.0").is_some());
-            assert!(ext.query("value.0.9").is_none(), "out of range reads None");
+            assert!(ext.query("value.0.0").is_ok());
+            assert!(ext.query("value.0.9").is_err(), "out of range reads None");
         });
     }
 

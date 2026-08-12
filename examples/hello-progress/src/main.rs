@@ -236,10 +236,14 @@ impl WidgetCore for ProgressView {
     fn read_state(scene: &Scene) -> (f32, bool) {
         if let Scene::External(node) = scene {
             if let Some(intro) = node.handle.introspect() {
-                let value = intro.query("value").and_then(|v| v.as_f32()).unwrap_or(0.0);
+                let value = intro
+                    .query("value")
+                    .ok()
+                    .and_then(|v| v.as_f32())
+                    .unwrap_or(0.0);
                 let indeterminate = matches!(
                     intro.query("indeterminate"),
-                    Some(pinion_core::external::IntrospectValue::Bool(true))
+                    Ok(pinion_core::external::IntrospectValue::Bool(true))
                 );
                 return (value, indeterminate);
             }

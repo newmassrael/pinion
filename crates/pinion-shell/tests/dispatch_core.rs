@@ -36,7 +36,8 @@ use pinion_a11y::{
 };
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use pinion_core::scene::{BoxNode, ContainerNode, Rect};
 use pinion_core::style::{BoxStyle, Color};
@@ -108,10 +109,10 @@ impl ExternalIntrospect for TestExternal {
     fn schema(&self) -> IntrospectSchema {
         IntrospectSchema::new(const { &[SchemaField::new("value", "i32")] })
     }
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "value" => Some(IntrospectValue::Int(i64::from(self.value))),
-            _ => None,
+            "value" => Ok(IntrospectValue::Int(i64::from(self.value))),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
     fn intervene(&mut self, _path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
@@ -275,7 +276,7 @@ impl WidgetCore for TestView {
     fn read_state(scene: &Scene) -> Self::State {
         match scene {
             Scene::External(node) => {
-                match node.handle.introspect().and_then(|i| i.query("value")) {
+                match node.handle.introspect().and_then(|i| i.query("value").ok()) {
                     Some(IntrospectValue::Int(v)) => i32::try_from(v).unwrap_or(0),
                     _ => 0,
                 }

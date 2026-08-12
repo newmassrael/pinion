@@ -68,7 +68,7 @@ use std::time::Duration;
 use pinion_a11y::WidgetA11y;
 use pinion_core::external::{
     External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
-    SchemaField, query_proxy_external_impl, read_only_or_unknown,
+    ReadRefusal, SchemaField, query_proxy_external_impl, read_only_or_unknown,
 };
 use pinion_core::reactive::Owner;
 use pinion_core::scene::{
@@ -132,11 +132,11 @@ impl ExternalIntrospect for Model {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "ticks" => Some(IntrospectValue::Int(self.ticks)),
-            "bumps" => Some(IntrospectValue::Int(self.bumps)),
-            _ => None,
+            "ticks" => Ok(IntrospectValue::Int(self.ticks)),
+            "bumps" => Ok(IntrospectValue::Int(self.bumps)),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -234,12 +234,12 @@ impl ExternalIntrospect for Sim {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "frames" => Some(IntrospectValue::Int(self.frames)),
-            "speed" => Some(IntrospectValue::Int(self.speed)),
-            "boosts" => Some(IntrospectValue::Int(self.boosts)),
-            _ => None,
+            "frames" => Ok(IntrospectValue::Int(self.frames)),
+            "speed" => Ok(IntrospectValue::Int(self.speed)),
+            "boosts" => Ok(IntrospectValue::Int(self.boosts)),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -318,11 +318,11 @@ impl ExternalIntrospect for Probe {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "stamped" => Some(IntrospectValue::Int(self.stamped)),
-            "restamps" => Some(IntrospectValue::Int(self.restamps)),
-            _ => None,
+            "stamped" => Ok(IntrospectValue::Int(self.stamped)),
+            "restamps" => Ok(IntrospectValue::Int(self.restamps)),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -596,10 +596,10 @@ mod tests {
             stamped: 7,
             restamps: 0,
         };
-        assert_eq!(probe.query("stamped"), Some(IntrospectValue::Int(7)));
+        assert_eq!(probe.query("stamped"), Ok(IntrospectValue::Int(7)));
         assert_eq!(
             probe.query("stamped"),
-            Some(IntrospectValue::Int(7)),
+            Ok(IntrospectValue::Int(7)),
             "a second read of the same node answers the same",
         );
     }
@@ -684,7 +684,7 @@ mod tests {
             probe.invoke("restamp", IntrospectValue::Null),
             Ok(IntrospectValue::Int(1)),
         );
-        assert_eq!(probe.query("restamps"), Some(IntrospectValue::Int(1)));
+        assert_eq!(probe.query("restamps"), Ok(IntrospectValue::Int(1)));
     }
 
     #[test]
@@ -698,15 +698,15 @@ mod tests {
             model.invoke("bump", IntrospectValue::Int(4)),
             Ok(IntrospectValue::Int(4)),
         );
-        assert_eq!(model.query("bumps"), Some(IntrospectValue::Int(1)));
-        assert_eq!(model.query("ticks"), Some(IntrospectValue::Int(4)));
+        assert_eq!(model.query("bumps"), Ok(IntrospectValue::Int(1)));
+        assert_eq!(model.query("ticks"), Ok(IntrospectValue::Int(4)));
 
         let mut sim = Sim::default();
         assert_eq!(
             sim.invoke("boost", IntrospectValue::Int(2)),
             Ok(IntrospectValue::Int(2)),
         );
-        assert_eq!(sim.query("boosts"), Some(IntrospectValue::Int(1)));
+        assert_eq!(sim.query("boosts"), Ok(IntrospectValue::Int(1)));
     }
 
     /// R1641.6 — every declared slot answers **on the channel it declares**.
@@ -767,13 +767,13 @@ mod tests {
         }
 
         let model = Model::default();
-        check("model", &model.schema(), |p| model.query(p));
+        check("model", &model.schema(), |p| model.query(p).ok());
         let sim = Sim::default();
-        check("sim", &sim.schema(), |p| sim.query(p));
+        check("sim", &sim.schema(), |p| sim.query(p).ok());
         let probe = Probe {
             stamped: 0,
             restamps: 0,
         };
-        check("probe", &probe.schema(), |p| probe.query(p));
+        check("probe", &probe.schema(), |p| probe.query(p).ok());
     }
 }

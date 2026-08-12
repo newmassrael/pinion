@@ -624,7 +624,7 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
                     // would turn every snapshot into a full table scan. A client
                     // that wants a member asks for it by name.
                     .filter(|f| f.args.is_empty())
-                    .filter_map(|f| intro.query(f.path).map(|v| (f.path.to_string(), v)))
+                    .filter_map(|f| intro.query(f.path).ok().map(|v| (f.path.to_string(), v)))
                     .collect()
             });
             SnapshotNode::External(ExternalSnapshot {

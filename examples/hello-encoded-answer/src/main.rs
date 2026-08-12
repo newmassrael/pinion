@@ -37,7 +37,7 @@
 use pinion_a11y::WidgetA11y;
 use pinion_core::external::{
     External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
-    RawJson, SchemaField, query_proxy_external_impl, read_only_or_unknown,
+    RawJson, ReadRefusal, SchemaField, query_proxy_external_impl, read_only_or_unknown,
 };
 use pinion_core::scene::{ContainerNode, ExternalNode, Rect, Scene, TextNode};
 use pinion_core::style::{BoxStyle, Color, FlexDirection, LayoutStyle, TextStyle};
@@ -140,20 +140,20 @@ impl ExternalIntrospect for FrameSource {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
             // The production answer: one encoding pass, no tree.
-            "frame" => Some(IntrospectValue::raw(&TerminalFrame::generate())),
+            "frame" => Ok(IntrospectValue::raw(&TerminalFrame::generate())),
             // The control this example exists to be compared against.
-            "frame_via_dom" => Some(IntrospectValue::json(&TerminalFrame::generate())),
-            "rows" => Some(IntrospectValue::Int(i64::try_from(ROWS).unwrap_or(0))),
+            "frame_via_dom" => Ok(IntrospectValue::json(&TerminalFrame::generate())),
+            "rows" => Ok(IntrospectValue::Int(i64::try_from(ROWS).unwrap_or(0))),
             // What the answer costs to carry, so a client can check that the
             // number it received is the number the producer meant to send
             // rather than trusting a length it computed on its own side.
-            "bytes" => Some(IntrospectValue::Int(
+            "bytes" => Ok(IntrospectValue::Int(
                 encoded_len(&TerminalFrame::generate()).unwrap_or(0),
             )),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 

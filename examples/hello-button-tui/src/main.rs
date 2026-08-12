@@ -118,7 +118,7 @@ impl WidgetCore for HelloButtonTui {
     fn read_state(scene: &Scene) -> Self::State {
         if let Scene::External(node) = scene
             && let Some(intro) = node.handle.introspect()
-            && let Some(IntrospectValue::Text(name)) = intro.query("state")
+            && let Ok(IntrospectValue::Text(name)) = intro.query("state")
         {
             return ButtonState::from_name_or_default(&name);
         }

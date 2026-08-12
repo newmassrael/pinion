@@ -63,7 +63,8 @@
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use crate::input::PointerWireEvent;
 use crate::intent::Intent;
@@ -250,13 +251,13 @@ impl ExternalIntrospect for TooltipExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "visible" => Some(IntrospectValue::Bool(self.visible())),
-            "hovered" => Some(IntrospectValue::Bool(self.hovered)),
-            "focused" => Some(IntrospectValue::Bool(self.focused)),
-            "dismissed" => Some(IntrospectValue::Bool(self.dismissed)),
-            _ => None,
+            "visible" => Ok(IntrospectValue::Bool(self.visible())),
+            "hovered" => Ok(IntrospectValue::Bool(self.hovered)),
+            "focused" => Ok(IntrospectValue::Bool(self.focused)),
+            "dismissed" => Ok(IntrospectValue::Bool(self.dismissed)),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -492,11 +493,11 @@ mod tests {
     fn query_reports_every_slot() {
         let mut t = TooltipExternal::new();
         send(&mut t, "PointerEnter");
-        assert_eq!(t.query("visible"), Some(IntrospectValue::Bool(true)));
-        assert_eq!(t.query("hovered"), Some(IntrospectValue::Bool(true)));
-        assert_eq!(t.query("focused"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(t.query("dismissed"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(t.query("nope"), None);
+        assert_eq!(t.query("visible"), Ok(IntrospectValue::Bool(true)));
+        assert_eq!(t.query("hovered"), Ok(IntrospectValue::Bool(true)));
+        assert_eq!(t.query("focused"), Ok(IntrospectValue::Bool(false)));
+        assert_eq!(t.query("dismissed"), Ok(IntrospectValue::Bool(false)));
+        assert_eq!(t.query("nope"), Err(ReadRefusal::UnknownPath));
     }
 
     #[test]

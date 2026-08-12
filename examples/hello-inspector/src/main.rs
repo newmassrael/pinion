@@ -85,8 +85,8 @@ use pinion_core::command::Command;
 use pinion_core::composite_tag::{prefixed_index, split_send_payload};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, CaptureNormalize, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
-    SchemaField, ThreadOwnership, read_only_or_unknown,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
+    SchemaArg, SchemaField, ThreadOwnership, read_only_or_unknown,
 };
 use pinion_core::input::{
     DRAG_CLICK_THRESHOLD_PX, DragCalibration, Modifiers, MultiSelectKeyOp, SelectionChord,
@@ -1509,6 +1509,12 @@ impl External for InspectorExternal {
     }
 }
 
+/// R1667 — the refusal a `<slot>.<index>` read owes an index past the shared
+/// property list, stated once because four reads bound against the same list.
+fn no_such_property(i: usize, len: usize) -> ReadRefusal {
+    ReadRefusal::no_such_member(format!("property {i} is outside 0..{len}"))
+}
+
 impl ExternalIntrospect for InspectorExternal {
     fn schema(&self) -> IntrospectSchema {
         IntrospectSchema::new(
@@ -1607,64 +1613,86 @@ impl ExternalIntrospect for InspectorExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         let objects = self.objects.get();
         let selection = self.selection_set();
         match path {
-            "object_count" => Some(IntrospectValue::Int(i64::try_from(objects.len()).ok()?)),
-            "selected" => Some(selected_to_value(self.cursor())),
-            "selection" => Some(selection_to_value(&selection)),
-            "selection_count" => Some(IntrospectValue::Int(i64::try_from(selection.len()).ok()?)),
-            "selection_summary" => Some(IntrospectValue::Text(selection_summary(
+            "object_count" => Ok(IntrospectValue::Int(
+                i64::try_from(objects.len()).map_err(|_| ReadRefusal::QueryTypeMismatch)?,
+            )),
+            "selected" => Ok(selected_to_value(self.cursor())),
+            "selection" => Ok(selection_to_value(&selection)),
+            "selection_count" => Ok(IntrospectValue::Int(
+                i64::try_from(selection.len()).map_err(|_| ReadRefusal::QueryTypeMismatch)?,
+            )),
+            "selection_summary" => Ok(IntrospectValue::Text(selection_summary(
                 &objects, &selection,
             ))),
-            "mode" => Some(IntrospectValue::Text("multi".to_owned())),
-            "row_count" => Some(IntrospectValue::Int(
-                i64::try_from(common_properties(&objects, &selection).len()).ok()?,
+            "mode" => Ok(IntrospectValue::Text("multi".to_owned())),
+            "row_count" => Ok(IntrospectValue::Int(
+                i64::try_from(common_properties(&objects, &selection).len())
+                    .map_err(|_| ReadRefusal::QueryTypeMismatch)?,
             )),
-            "any_modified" => Some(IntrospectValue::Bool(self.any_modified())),
+            "any_modified" => Ok(IntrospectValue::Bool(self.any_modified())),
             // R1224 — the keyboard-focus reads (the paint + a11y + AI all resolve
             // the active pane / property row through these).
-            "focus_region" => Some(IntrospectValue::Text(self.focus_region().wire().to_owned())),
-            "prop_cursor" => Some(selected_to_value(self.edit_cursor())),
+            "focus_region" => Ok(IntrospectValue::Text(self.focus_region().wire().to_owned())),
+            "prop_cursor" => Ok(selected_to_value(self.edit_cursor())),
             // R1249 — the inline editor's open row (Null when closed) + live
             // buffer, the read half of the type-in surface.
-            "editing" => Some(selected_to_value(self.editing_prop.get())),
-            "edit_text" => Some(IntrospectValue::Text(self.editor.text())),
+            "editing" => Ok(selected_to_value(self.editing_prop.get())),
+            "edit_text" => Ok(IntrospectValue::Text(self.editor.text())),
             // R1373 — is a numeric press-drag mid-scrub (past the click dead zone)?
-            "scrubbing" => Some(IntrospectValue::Bool(self.is_scrubbing())),
+            "scrubbing" => Ok(IntrospectValue::Bool(self.is_scrubbing())),
             _ => {
                 if let Some(j) = path.strip_prefix("object_name.") {
-                    let j: usize = j.parse().ok()?;
+                    let j: usize = j.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?;
                     return objects
                         .get(j)
-                        .map(|o| IntrospectValue::Text(o.name.clone()));
+                        .map(|o| IntrospectValue::Text(o.name.clone()))
+                        .ok_or_else(|| {
+                            ReadRefusal::no_such_member(format!(
+                                "object {j} is outside 0..{}",
+                                objects.len()
+                            ))
+                        });
                 }
                 let common = common_properties(&objects, &selection);
                 if let Some(i) = path.strip_prefix("name.") {
-                    let i: usize = i.parse().ok()?;
-                    return common.get(i).map(|c| IntrospectValue::Text(c.name.clone()));
-                }
-                if let Some(i) = path.strip_prefix("kind.") {
-                    let i: usize = i.parse().ok()?;
+                    let i: usize = i.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?;
                     return common
                         .get(i)
-                        .map(|c| IntrospectValue::Text(c.value.kind().name().to_owned()));
+                        .map(|c| IntrospectValue::Text(c.name.clone()))
+                        .ok_or_else(|| no_such_property(i, common.len()));
+                }
+                if let Some(i) = path.strip_prefix("kind.") {
+                    let i: usize = i.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?;
+                    return common
+                        .get(i)
+                        .map(|c| IntrospectValue::Text(c.value.kind().name().to_owned()))
+                        .ok_or_else(|| no_such_property(i, common.len()));
                 }
                 if let Some(i) = path.strip_prefix("value.") {
-                    let i: usize = i.parse().ok()?;
-                    return common.get(i).map(|c| c.value.to_introspect());
+                    let i: usize = i.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?;
+                    return common
+                        .get(i)
+                        .map(|c| c.value.to_introspect())
+                        .ok_or_else(|| no_such_property(i, common.len()));
                 }
                 if let Some(i) = path.strip_prefix("mixed.") {
-                    let i: usize = i.parse().ok()?;
-                    return common.get(i).map(|c| IntrospectValue::Bool(c.mixed));
+                    let i: usize = i.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?;
+                    return common
+                        .get(i)
+                        .map(|c| IntrospectValue::Bool(c.mixed))
+                        .ok_or_else(|| no_such_property(i, common.len()));
                 }
                 if let Some(i) = path.strip_prefix("modified.") {
-                    let i: usize = i.parse().ok()?;
+                    let i: usize = i.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?;
                     return (i < common.len())
-                        .then(|| IntrospectValue::Bool(self.common_modified(i)));
+                        .then(|| IntrospectValue::Bool(self.common_modified(i)))
+                        .ok_or_else(|| no_such_property(i, common.len()));
                 }
-                None
+                Err(ReadRefusal::UnknownPath)
             }
         }
     }
@@ -2756,7 +2784,7 @@ impl InspectorView {
 /// activation bound).
 fn read_count(intro: &dyn ExternalIntrospect) -> usize {
     match intro.query("object_count") {
-        Some(IntrospectValue::Int(n)) => usize::try_from(n).unwrap_or(0),
+        Ok(IntrospectValue::Int(n)) => usize::try_from(n).unwrap_or(0),
         _ => 0,
     }
 }
@@ -2765,7 +2793,7 @@ fn read_count(intro: &dyn ExternalIntrospect) -> usize {
 /// [`clamp_nav`] bound), mirroring [`read_count`] for the `row_count` query.
 fn read_row_count(intro: &dyn ExternalIntrospect) -> usize {
     match intro.query("row_count") {
-        Some(IntrospectValue::Int(n)) => usize::try_from(n).unwrap_or(0),
+        Ok(IntrospectValue::Int(n)) => usize::try_from(n).unwrap_or(0),
         _ => 0,
     }
 }
@@ -2775,7 +2803,7 @@ fn read_row_count(intro: &dyn ExternalIntrospect) -> usize {
 /// falls back to [`FocusRegion::Objects`], the boot pane.
 fn read_focus_region(intro: &dyn ExternalIntrospect) -> FocusRegion {
     match intro.query("focus_region") {
-        Some(IntrospectValue::Text(token)) => FocusRegion::from_wire(&token).unwrap_or_default(),
+        Ok(IntrospectValue::Text(token)) => FocusRegion::from_wire(&token).unwrap_or_default(),
         _ => FocusRegion::default(),
     }
 }
@@ -2784,7 +2812,7 @@ fn read_focus_region(intro: &dyn ExternalIntrospect) -> FocusRegion {
 /// External) off introspect; `Null` / absent is `None`.
 fn read_prop_cursor(intro: &dyn ExternalIntrospect) -> Option<usize> {
     match intro.query("prop_cursor") {
-        Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+        Ok(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
         _ => None,
     }
 }
@@ -2794,7 +2822,7 @@ fn read_prop_cursor(intro: &dyn ExternalIntrospect) -> Option<usize> {
 /// to the kind-appropriate edit; `None` when the row is absent.
 fn read_kind_at(intro: &dyn ExternalIntrospect, i: usize) -> Option<String> {
     match intro.query(&format!("kind.{i}")) {
-        Some(IntrospectValue::Text(k)) => Some(k),
+        Ok(IntrospectValue::Text(k)) => Some(k),
         _ => None,
     }
 }
@@ -3085,21 +3113,21 @@ mod tests {
         // Common base across all three: Visible(0), Layer(1), Locked(2).
         assert_eq!(
             e.query("name.1"),
-            Some(IntrospectValue::Text("Layer".to_owned()))
+            Ok(IntrospectValue::Text("Layer".to_owned()))
         );
         assert_eq!(
             e.query("modified.1"),
-            Some(IntrospectValue::Bool(false)),
+            Ok(IntrospectValue::Bool(false)),
             "boot Layer is at default",
         );
         // Edit Layer to 5 across all three -> each diverges from its own default.
         e.intervene("value.1", IntrospectValue::Int(5)).unwrap();
         assert_eq!(
             e.query("modified.1"),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
             "edited Layer is modified"
         );
-        assert_eq!(e.query("any_modified"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(e.query("any_modified"), Ok(IntrospectValue::Bool(true)));
         // Reset Layer -> each object restores its OWN default (1, 1, 2).
         assert_eq!(
             e.invoke("reset", IntrospectValue::Int(1)).unwrap(),
@@ -3107,14 +3135,14 @@ mod tests {
         );
         assert_eq!(
             e.query("modified.1"),
-            Some(IntrospectValue::Bool(false)),
+            Ok(IntrospectValue::Bool(false)),
             "reset clears modified"
         );
         // The per-object defaults differ (1, 1, 2), so the selection now reads
         // "Multiple Values" — reset-to-default is per object, not to a shared value.
         assert_eq!(
             e.query("mixed.1"),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
             "per-object defaults -> mixed after reset",
         );
         // Idempotent: a reset on an at-default row changes nothing.
@@ -3144,7 +3172,7 @@ mod tests {
         // Visible: Player=true, Camera=true, Light=false -> mixed.
         assert_eq!(
             e.query("mixed.0"),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
             "Visible starts mixed"
         );
         // R1223 — a MIXED Bool resolves to `true` (checked), the toolkit/the
@@ -3157,7 +3185,7 @@ mod tests {
         );
         assert_eq!(
             e.query("mixed.0"),
-            Some(IntrospectValue::Bool(false)),
+            Ok(IntrospectValue::Bool(false)),
             "toggle resolved the mix"
         );
         for obj in 0..3 {
@@ -3190,7 +3218,7 @@ mod tests {
         // (relative), so the mix is PRESERVED (1,1,2 -> 2,2,3), not collapsed.
         assert_eq!(
             e.query("mixed.1"),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
             "Layer starts mixed"
         );
         assert_eq!(
@@ -3215,7 +3243,7 @@ mod tests {
         );
         assert_eq!(
             e.query("mixed.1"),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
             "still mixed after a uniform shift"
         );
         // Step -2 shifts each back below the start.
@@ -3241,7 +3269,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             e.query("mixed.1"),
-            Some(IntrospectValue::Bool(false)),
+            Ok(IntrospectValue::Bool(false)),
             "agreeing Layer is not mixed"
         );
         e.invoke("step_property", IntrospectValue::Text("1,1".to_owned()))
@@ -3250,7 +3278,7 @@ mod tests {
         assert_eq!(obj_value(&e, 1, "Layer"), CellValue::Int(2));
         assert_eq!(
             e.query("mixed.1"),
-            Some(IntrospectValue::Bool(false)),
+            Ok(IntrospectValue::Bool(false)),
             "both shifted equally -> still uniform"
         );
     }
@@ -3267,7 +3295,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             e.query("mixed.2"),
-            Some(IntrospectValue::Bool(false)),
+            Ok(IntrospectValue::Bool(false)),
             "gesture toggled Locked across all"
         );
         // A +/- stepper click on Layer(1) arrives as `inc1` / `dec1`.
@@ -3331,7 +3359,7 @@ mod tests {
         e.select_all();
         assert_eq!(
             e.query("mixed.1"),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
             "Layer starts mixed (1,1,2)"
         );
         e.arm_scrub(1);
@@ -3353,7 +3381,7 @@ mod tests {
         assert_eq!(obj_value(&e, 2, "Layer"), CellValue::Int(5), "Light 2 + 3");
         assert_eq!(
             e.query("mixed.1"),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
             "still mixed after a uniform shift (4,4,5)"
         );
         assert!(e.end_scrub(), "end_scrub reports a real scrub ran");
@@ -3468,7 +3496,7 @@ mod tests {
         e.select(0);
         assert_eq!(
             e.query("scrubbing"),
-            Some(IntrospectValue::Bool(false)),
+            Ok(IntrospectValue::Bool(false)),
             "not scrubbing at rest"
         );
         e.arm_scrub(4);
@@ -3476,13 +3504,13 @@ mod tests {
         e.scrub_to(frac(100.0));
         assert_eq!(
             e.query("scrubbing"),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
             "mid-drag scrubbing = true"
         );
         e.end_scrub();
         assert_eq!(
             e.query("scrubbing"),
-            Some(IntrospectValue::Bool(false)),
+            Ok(IntrospectValue::Bool(false)),
             "released -> false"
         );
     }
@@ -3510,7 +3538,7 @@ mod tests {
         e.pointer_move(frac(100.0) as f32, 0.0); // +1.0
         assert_eq!(
             e.query("scrubbing"),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
             "the wire drag scrubs"
         );
         let CellValue::Float(v) = obj_value(&e, 0, "Speed") else {
@@ -3527,7 +3555,7 @@ mod tests {
         assert_eq!(e.scrub_armed.get(), None, "the release cleared the arm");
         assert_eq!(
             e.query("scrubbing"),
-            Some(IntrospectValue::Bool(false)),
+            Ok(IntrospectValue::Bool(false)),
             "the release cleared the scrub"
         );
         // A Colour typein press arms nothing.
@@ -3609,7 +3637,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             e.query("selected"),
-            Some(IntrospectValue::Int(2)),
+            Ok(IntrospectValue::Int(2)),
             "the press row (2) is selected, not row 0"
         );
     }
@@ -3693,16 +3721,16 @@ mod tests {
         e.intervene("value.0", IntrospectValue::Bool(false))
             .unwrap(); // Visible
         e.intervene("value.1", IntrospectValue::Int(9)).unwrap(); // Layer
-        assert_eq!(e.query("any_modified"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(e.query("any_modified"), Ok(IntrospectValue::Bool(true)));
         // reset_all returns the count of modified properties it cleared (Locked
         // was never touched, so only Visible + Layer = 2).
         assert_eq!(
             e.invoke("reset_all", IntrospectValue::Null).unwrap(),
             IntrospectValue::Int(2)
         );
-        assert_eq!(e.query("any_modified"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(e.query("modified.0"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(e.query("modified.1"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(e.query("any_modified"), Ok(IntrospectValue::Bool(false)));
+        assert_eq!(e.query("modified.0"), Ok(IntrospectValue::Bool(false)));
+        assert_eq!(e.query("modified.1"), Ok(IntrospectValue::Bool(false)));
     }
 
     #[test]
@@ -3746,12 +3774,12 @@ mod tests {
         assert_eq!(e.object_count(), 3);
         assert_eq!(e.cursor(), Some(0));
         assert!(
-            e.query("selected_name").is_none(),
+            e.query("selected_name").is_err(),
             "no selected_name slot (use selection_summary)"
         );
         assert_eq!(
             e.query("selection_summary"),
-            Some(IntrospectValue::Text("Player".to_owned()))
+            Ok(IntrospectValue::Text("Player".to_owned()))
         );
     }
 
@@ -3760,17 +3788,17 @@ mod tests {
         let mut e = ext();
         // Single selection: the common list IS that object's full schema.
         // Player has 7 props, Main Camera has 5.
-        assert_eq!(e.query("row_count"), Some(IntrospectValue::Int(7)));
+        assert_eq!(e.query("row_count"), Ok(IntrospectValue::Int(7)));
         e.invoke("select", IntrospectValue::Int(1)).unwrap();
         assert_eq!(e.cursor(), Some(1));
-        assert_eq!(e.query("row_count"), Some(IntrospectValue::Int(5)));
+        assert_eq!(e.query("row_count"), Ok(IntrospectValue::Int(5)));
         assert_eq!(
             e.query("selection_summary"),
-            Some(IntrospectValue::Text("Main Camera".to_owned()))
+            Ok(IntrospectValue::Text("Main Camera".to_owned()))
         );
         assert_eq!(
             e.query("name.0"),
-            Some(IntrospectValue::Text("Visible".to_owned()))
+            Ok(IntrospectValue::Text("Visible".to_owned()))
         );
     }
 
@@ -3790,14 +3818,14 @@ mod tests {
         let mut e = ext();
         // Single-selected Player: edit Health (index 3) to 42.
         e.intervene("value.3", IntrospectValue::Int(42)).unwrap();
-        assert_eq!(e.query("value.3"), Some(IntrospectValue::Int(42)));
+        assert_eq!(e.query("value.3"), Ok(IntrospectValue::Int(42)));
         // Camera (object 1) is untouched.
         e.invoke("select", IntrospectValue::Int(1)).unwrap();
         // Camera index 3 is Field of View (60.0), not Health.
-        assert_eq!(e.query("value.3"), Some(IntrospectValue::Float(60.0)));
+        assert_eq!(e.query("value.3"), Ok(IntrospectValue::Float(60.0)));
         // Re-select Player: the edit persisted.
         e.invoke("select", IntrospectValue::Int(0)).unwrap();
-        assert_eq!(e.query("value.3"), Some(IntrospectValue::Int(42)));
+        assert_eq!(e.query("value.3"), Ok(IntrospectValue::Int(42)));
     }
 
     #[test]
@@ -3808,25 +3836,25 @@ mod tests {
         e.invoke("select", IntrospectValue::Int(0)).unwrap();
         e.invoke("toggle", IntrospectValue::Int(1)).unwrap();
         assert_eq!(json_indices(&e.query("selection").unwrap()), vec![0, 1]);
-        assert_eq!(e.query("row_count"), Some(IntrospectValue::Int(3)));
+        assert_eq!(e.query("row_count"), Ok(IntrospectValue::Int(3)));
         assert_eq!(
             e.query("name.0"),
-            Some(IntrospectValue::Text("Visible".to_owned()))
+            Ok(IntrospectValue::Text("Visible".to_owned()))
         );
         assert_eq!(
             e.query("name.1"),
-            Some(IntrospectValue::Text("Layer".to_owned()))
+            Ok(IntrospectValue::Text("Layer".to_owned()))
         );
         assert_eq!(
             e.query("name.2"),
-            Some(IntrospectValue::Text("Locked".to_owned()))
+            Ok(IntrospectValue::Text("Locked".to_owned()))
         );
         // Player + Camera agree on every base property.
-        assert_eq!(e.query("mixed.0"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(e.query("mixed.1"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(e.query("mixed.0"), Ok(IntrospectValue::Bool(false)));
+        assert_eq!(e.query("mixed.1"), Ok(IntrospectValue::Bool(false)));
         assert_eq!(
             e.query("value.1"),
-            Some(IntrospectValue::Int(1)),
+            Ok(IntrospectValue::Int(1)),
             "both Layer 1"
         );
     }
@@ -3838,17 +3866,17 @@ mod tests {
         assert_eq!(json_indices(&e.query("selection").unwrap()), vec![0, 1, 2]);
         assert_eq!(
             e.query("selection_summary"),
-            Some(IntrospectValue::Text("3 objects selected".to_owned()))
+            Ok(IntrospectValue::Text("3 objects selected".to_owned()))
         );
         // All three: Visible (true,true,false) and Layer (1,1,2) differ.
         assert_eq!(
             e.query("mixed.0"),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
             "Visible mixed"
         );
         assert_eq!(
             e.query("mixed.1"),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
             "Layer mixed"
         );
     }
@@ -3860,14 +3888,14 @@ mod tests {
         // Set the common Layer (index 1) to 5 across all three objects.
         e.intervene("value.1", IntrospectValue::Int(5)).unwrap();
         // Now uniform → not mixed, value 5.
-        assert_eq!(e.query("mixed.1"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(e.query("value.1"), Some(IntrospectValue::Int(5)));
+        assert_eq!(e.query("mixed.1"), Ok(IntrospectValue::Bool(false)));
+        assert_eq!(e.query("value.1"), Ok(IntrospectValue::Int(5)));
         // Each object individually carries Layer 5.
         for obj in 0..3 {
             e.invoke("select", IntrospectValue::Int(obj)).unwrap();
             assert_eq!(
                 e.query("value.1"),
-                Some(IntrospectValue::Int(5)),
+                Ok(IntrospectValue::Int(5)),
                 "object {obj} Layer == 5"
             );
         }
@@ -3903,11 +3931,11 @@ mod tests {
             json_indices(&e.query("selection").unwrap()),
             Vec::<usize>::new()
         );
-        assert_eq!(e.query("selected"), Some(IntrospectValue::Null));
-        assert_eq!(e.query("row_count"), Some(IntrospectValue::Int(0)));
+        assert_eq!(e.query("selected"), Ok(IntrospectValue::Null));
+        assert_eq!(e.query("row_count"), Ok(IntrospectValue::Int(0)));
         assert_eq!(
             e.query("selection_summary"),
-            Some(IntrospectValue::Text("No selection".to_owned()))
+            Ok(IntrospectValue::Text("No selection".to_owned()))
         );
     }
 
@@ -3923,7 +3951,7 @@ mod tests {
         .unwrap();
         assert_eq!(json_indices(&e.query("selection").unwrap()), vec![0, 2]);
         // Player + Light share the base; Layer is 1 vs 2 → mixed.
-        assert_eq!(e.query("mixed.1"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(e.query("mixed.1"), Ok(IntrospectValue::Bool(true)));
     }
 
     #[test]
@@ -3945,13 +3973,16 @@ mod tests {
         let e = ext();
         assert_eq!(
             e.query("object_name.0"),
-            Some(IntrospectValue::Text("Player".to_owned()))
+            Ok(IntrospectValue::Text("Player".to_owned()))
         );
         assert_eq!(
             e.query("object_name.2"),
-            Some(IntrospectValue::Text("Sun Light".to_owned()))
+            Ok(IntrospectValue::Text("Sun Light".to_owned()))
         );
-        assert_eq!(e.query("object_name.9"), None);
+        assert!(matches!(
+            e.query("object_name.9"),
+            Err(ReadRefusal::NoSuchMember(_))
+        ));
     }
 
     #[test]
@@ -4170,7 +4201,7 @@ mod tests {
         // value.0 (the common "Mode") set to option index 2 across both.
         e.intervene("value.0", IntrospectValue::Int(2)).unwrap();
         let selected_index = |e: &InspectorExternal| match e.query("value.0") {
-            Some(IntrospectValue::Json(v)) => v["selected"].as_u64(),
+            Ok(IntrospectValue::Json(v)) => v["selected"].as_u64(),
             other => panic!("expected a Choice json, got {other:?}"),
         };
         e.invoke("select", IntrospectValue::Int(0)).unwrap();
@@ -4241,7 +4272,7 @@ mod tests {
         let mut e = ext();
         assert_eq!(
             e.query("focus_region"),
-            Some(IntrospectValue::Text("objects".to_owned())),
+            Ok(IntrospectValue::Text("objects".to_owned())),
             "boot pane is the object list"
         );
         assert_eq!(
@@ -4255,7 +4286,7 @@ mod tests {
         );
         assert_eq!(
             e.query("focus_region"),
-            Some(IntrospectValue::Text("details".to_owned()))
+            Ok(IntrospectValue::Text("details".to_owned()))
         );
         assert!(
             e.invoke(
@@ -4276,7 +4307,7 @@ mod tests {
     fn r1224_focus_property_clamps_focuses_details_and_tracks_row_count() {
         let mut e = ext();
         e.invoke("select_all", IntrospectValue::Null).unwrap();
-        assert_eq!(e.query("row_count"), Some(IntrospectValue::Int(3)));
+        assert_eq!(e.query("row_count"), Ok(IntrospectValue::Int(3)));
         // A cursor past the last row clamps to the last, and placing it focuses
         // the Details pane (the "focus this property" intent).
         assert_eq!(
@@ -4285,18 +4316,18 @@ mod tests {
             IntrospectValue::Int(2),
             "an out-of-range cursor clamps to the last row"
         );
-        assert_eq!(e.query("prop_cursor"), Some(IntrospectValue::Int(2)));
+        assert_eq!(e.query("prop_cursor"), Ok(IntrospectValue::Int(2)));
         assert_eq!(
             e.query("focus_region"),
-            Some(IntrospectValue::Text("details".to_owned())),
+            Ok(IntrospectValue::Text("details".to_owned())),
             "focus_property focuses the Details pane"
         );
         // Shrinking the panel re-clamps the reported cursor; an empty panel has none.
         e.invoke("clear", IntrospectValue::Null).unwrap();
-        assert_eq!(e.query("row_count"), Some(IntrospectValue::Int(0)));
+        assert_eq!(e.query("row_count"), Ok(IntrospectValue::Int(0)));
         assert_eq!(
             e.query("prop_cursor"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "an empty panel reports no property cursor"
         );
     }
@@ -4305,7 +4336,7 @@ mod tests {
     fn r1224_entering_details_seeds_the_first_property_cursor() {
         let mut e = ext();
         // Boot: object 0 selected, region Objects, no property cursor yet.
-        assert_eq!(e.query("prop_cursor"), Some(IntrospectValue::Null));
+        assert_eq!(e.query("prop_cursor"), Ok(IntrospectValue::Null));
         e.invoke(
             "set_focus_region",
             IntrospectValue::Text("details".to_owned()),
@@ -4313,7 +4344,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             e.query("prop_cursor"),
-            Some(IntrospectValue::Int(0)),
+            Ok(IntrospectValue::Int(0)),
             "entering the Details pane seeds the cursor at the first row"
         );
     }
@@ -4458,7 +4489,7 @@ mod tests {
         let mut e = ext(); // Player selected; Team (Red/Blue/Neutral) is common row 5.
         assert_eq!(
             e.query("kind.5"),
-            Some(IntrospectValue::Text("choice".to_owned())),
+            Ok(IntrospectValue::Text("choice".to_owned())),
             "row 5 is Team, a Choice"
         );
         assert_eq!(choice_sel(&obj_value(&e, 0, "Team")), 0, "Team starts Red");
@@ -4512,12 +4543,12 @@ mod tests {
         });
         assert_eq!(
             e.query("row_count"),
-            Some(IntrospectValue::Int(1)),
+            Ok(IntrospectValue::Int(1)),
             "Mode is common"
         );
         assert_eq!(
             e.query("mixed.0"),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
             "A vs C -> mixed"
         );
         // Cycle +1: each advances from its OWN option (A->B, C->A wrap), so they
@@ -4532,7 +4563,7 @@ mod tests {
         );
         assert_eq!(
             e.query("mixed.0"),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
             "still mixed -> the cycle is relative, not absolute"
         );
     }
@@ -4711,10 +4742,10 @@ mod tests {
         e.invoke("select_all", IntrospectValue::Null).unwrap();
         assert_eq!(
             e.query("name.1"),
-            Some(IntrospectValue::Text("Layer".to_owned()))
+            Ok(IntrospectValue::Text("Layer".to_owned()))
         );
         assert!(e.begin_edit(1), "a numeric row opens the editor");
-        assert_eq!(e.query("editing"), Some(IntrospectValue::Int(1)));
+        assert_eq!(e.query("editing"), Ok(IntrospectValue::Int(1)));
         // Seeded with the representative (first selected object's) value.
         assert_eq!(e.editor.text(), "1", "seeded with the representative value");
     }
@@ -4735,7 +4766,7 @@ mod tests {
         assert!(!e.begin_edit(99), "an out-of-range row is a benign miss");
         assert_eq!(
             e.query("editing"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "still closed"
         );
     }
@@ -4754,7 +4785,7 @@ mod tests {
         }
         assert_eq!(
             e.query("editing"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "closed after commit"
         );
         assert_eq!(e.editor.text(), "", "buffer wiped for the next edit");
@@ -4772,7 +4803,7 @@ mod tests {
         for obj in 0..3 {
             assert_eq!(obj_value(&e, obj, "Layer"), layer_default(obj));
         }
-        assert_eq!(e.query("editing"), Some(IntrospectValue::Null));
+        assert_eq!(e.query("editing"), Ok(IntrospectValue::Null));
     }
 
     #[test]
@@ -4784,7 +4815,7 @@ mod tests {
         for obj in 0..3 {
             assert_eq!(obj_value(&e, obj, "Layer"), layer_default(obj));
         }
-        assert_eq!(e.query("editing"), Some(IntrospectValue::Null));
+        assert_eq!(e.query("editing"), Ok(IntrospectValue::Null));
     }
 
     #[test]
@@ -4793,14 +4824,14 @@ mod tests {
         e.invoke("select_all", IntrospectValue::Null).unwrap();
         assert_eq!(
             e.query("editing"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "closed at boot"
         );
         e.begin_edit(1);
-        assert_eq!(e.query("editing"), Some(IntrospectValue::Int(1)));
+        assert_eq!(e.query("editing"), Ok(IntrospectValue::Int(1)));
         assert_eq!(
             e.query("edit_text"),
-            Some(IntrospectValue::Text("1".to_owned()))
+            Ok(IntrospectValue::Text("1".to_owned()))
         );
     }
 
@@ -4832,7 +4863,7 @@ mod tests {
             e.invoke("cancel_edit", IntrospectValue::Null).unwrap(),
             IntrospectValue::Null
         );
-        assert_eq!(e.query("editing"), Some(IntrospectValue::Null));
+        assert_eq!(e.query("editing"), Ok(IntrospectValue::Null));
     }
 
     #[test]
@@ -4848,7 +4879,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             e.query("editing"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "a single click does not open the editor"
         );
         // A double-click opens it.
@@ -4859,7 +4890,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             e.query("editing"),
-            Some(IntrospectValue::Int(1)),
+            Ok(IntrospectValue::Int(1)),
             "a double-click opens the editor"
         );
     }
@@ -4918,7 +4949,7 @@ mod tests {
 
     fn color_hex(e: &InspectorExternal, idx: usize) -> String {
         match e.query(&format!("value.{idx}")) {
-            Some(IntrospectValue::Json(v)) => v["hex"].as_str().unwrap().to_owned(),
+            Ok(IntrospectValue::Json(v)) => v["hex"].as_str().unwrap().to_owned(),
             other => panic!("expected a Colour json, got {other:?}"),
         }
     }
@@ -4928,14 +4959,14 @@ mod tests {
         let e = ext(); // boot: Player single-selected
         assert_eq!(
             e.query("name.6"),
-            Some(IntrospectValue::Text("Tint".to_owned()))
+            Ok(IntrospectValue::Text("Tint".to_owned()))
         );
         assert_eq!(
             e.query("kind.6"),
-            Some(IntrospectValue::Text("color".to_owned()))
+            Ok(IntrospectValue::Text("color".to_owned()))
         );
         assert!(e.begin_edit(TINT), "a Colour row opens the type-in editor");
-        assert_eq!(e.query("editing"), Some(IntrospectValue::Int(6)));
+        assert_eq!(e.query("editing"), Ok(IntrospectValue::Int(6)));
         // Seeded with the current hex (the property's edit_text).
         assert_eq!(e.editor.text(), color_hex(&e, TINT), "seeded with the hex");
     }
@@ -4949,7 +4980,7 @@ mod tests {
         // with_intervene wants. The direct mutate_selected write makes it work.
         assert!(e.commit_edit_text("#ff0000", true), "a valid hex commits");
         assert_eq!(color_hex(&e, TINT), "#ff0000", "Tint is now red");
-        assert_eq!(e.query("editing"), Some(IntrospectValue::Null));
+        assert_eq!(e.query("editing"), Ok(IntrospectValue::Null));
     }
 
     #[test]
@@ -4962,7 +4993,7 @@ mod tests {
             "a malformed hex is not written (no data loss)"
         );
         assert_eq!(color_hex(&e, TINT), before, "the prior colour is kept");
-        assert_eq!(e.query("editing"), Some(IntrospectValue::Null));
+        assert_eq!(e.query("editing"), Ok(IntrospectValue::Null));
     }
 
     #[test]
@@ -5012,21 +5043,21 @@ mod tests {
         e.invoke("select", IntrospectValue::Int(1)).unwrap();
         assert_eq!(
             e.query("name.3"),
-            Some(IntrospectValue::Text("Field of View".to_owned()))
+            Ok(IntrospectValue::Text("Field of View".to_owned()))
         );
         assert!(e.begin_edit(3), "open the Field of View editor");
-        assert_eq!(e.query("editing"), Some(IntrospectValue::Int(3)));
+        assert_eq!(e.query("editing"), Ok(IntrospectValue::Int(3)));
         // Switch to Sun Light (obj 2): common idx3 = "Intensity" (Float 1.2). This
         // MUST close the editor so the stale index cannot retarget Intensity.
         e.invoke("select", IntrospectValue::Int(2)).unwrap();
         assert_eq!(
             e.query("editing"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "the selection change closed the editor"
         );
         assert_eq!(
             e.query("name.3"),
-            Some(IntrospectValue::Text("Intensity".to_owned()))
+            Ok(IntrospectValue::Text("Intensity".to_owned()))
         );
         // A commit now writes nothing (no open editor); BOTH properties untouched.
         assert!(
@@ -5045,11 +5076,11 @@ mod tests {
     fn r1252_select_all_mid_edit_closes_the_editor() {
         let mut e = ext(); // boot: Player single-selected
         assert!(e.begin_edit(1), "open the Layer editor on Player");
-        assert_eq!(e.query("editing"), Some(IntrospectValue::Int(1)));
+        assert_eq!(e.query("editing"), Ok(IntrospectValue::Int(1)));
         e.invoke("select_all", IntrospectValue::Null).unwrap();
         assert_eq!(
             e.query("editing"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "select_all closed the open editor"
         );
     }

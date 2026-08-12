@@ -50,7 +50,7 @@ use std::cell::{Cell, RefCell};
 use crate::composite_tag::{require_pair, require_parsed_send_payload, split_subindex};
 use crate::external::{
     DragPayload, DropPoint, ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
-    SchemaField,
+    ReadRefusal, SchemaField,
 };
 use crate::input::PointerWireEvent;
 
@@ -276,11 +276,14 @@ impl ReorderModel {
     ];
 
     /// Reorder slots for [`ExternalIntrospect::query`]:
-    /// `order` / `preview` / `focused_index` / `grabbed`. Returns `None`
-    /// for any other path so an embedding consumer's own slots take
-    /// precedence.
-    #[must_use]
-    pub fn query(&self, path: &str) -> Option<IntrospectValue> {
+    /// `order` / `preview` / `focused_index` / `grabbed`. Refuses any other path
+    /// with [`ReadRefusal::UnknownPath`] so an embedding consumer's own slots
+    /// take precedence.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReadRefusal`] per the variants there.
+    pub fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
             "order" => {
                 let arr: Vec<serde_json::Value> = self
@@ -289,21 +292,21 @@ impl ReorderModel {
                     .iter()
                     .map(|&id| serde_json::Value::from(id))
                     .collect();
-                Some(IntrospectValue::Json(serde_json::Value::Array(arr)))
+                Ok(IntrospectValue::Json(serde_json::Value::Array(arr)))
             }
-            "preview" => Some(match *self.preview.borrow() {
+            "preview" => Ok(match *self.preview.borrow() {
                 Some(p) => IntrospectValue::Json(serde_json::json!({
                     "from_visual": p.from_visual,
                     "insert_at": p.insert_at,
                 })),
                 None => IntrospectValue::Null,
             }),
-            "focused_index" => Some(match self.focused.get() {
+            "focused_index" => Ok(match self.focused.get() {
                 Some(i) => IntrospectValue::Int(i64::try_from(i).unwrap_or(0)),
                 None => IntrospectValue::Null,
             }),
-            "grabbed" => Some(IntrospectValue::Bool(self.grabbed())),
-            _ => None,
+            "grabbed" => Ok(IntrospectValue::Bool(self.grabbed())),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -552,14 +555,14 @@ pub struct ReorderView {
 #[must_use]
 pub fn read_reorder(intro: &dyn ExternalIntrospect) -> ReorderView {
     let order = match intro.query("order") {
-        Some(IntrospectValue::Json(serde_json::Value::Array(a))) => a
+        Ok(IntrospectValue::Json(serde_json::Value::Array(a))) => a
             .iter()
             .filter_map(|v| v.as_u64().and_then(|n| usize::try_from(n).ok()))
             .collect(),
         _ => Vec::new(),
     };
     let preview = match intro.query("preview") {
-        Some(IntrospectValue::Json(v)) => {
+        Ok(IntrospectValue::Json(v)) => {
             let from = v.get("from_visual").and_then(serde_json::Value::as_u64);
             let at = v.get("insert_at").and_then(serde_json::Value::as_u64);
             match (from, at) {
@@ -573,10 +576,10 @@ pub fn read_reorder(intro: &dyn ExternalIntrospect) -> ReorderView {
         _ => None,
     };
     let focused = match intro.query("focused_index") {
-        Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+        Ok(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
         _ => None,
     };
-    let grabbed = matches!(intro.query("grabbed"), Some(IntrospectValue::Bool(true)));
+    let grabbed = matches!(intro.query("grabbed"), Ok(IntrospectValue::Bool(true)));
     ReorderView {
         order,
         preview,
@@ -764,10 +767,10 @@ mod tests {
     #[test]
     fn query_unknown_path_is_none() {
         let m = ReorderModel::new(2, ReorderAxis::Horizontal);
-        assert!(m.query("selected_id").is_none());
+        assert!(m.query("selected_id").is_err());
         assert!(matches!(
             m.query("grabbed"),
-            Some(IntrospectValue::Bool(false))
+            Ok(IntrospectValue::Bool(false))
         ));
     }
 
@@ -780,7 +783,7 @@ mod tests {
         fn schema(&self) -> crate::external::IntrospectSchema {
             crate::external::IntrospectSchema::new(const { &[] })
         }
-        fn query(&self, path: &str) -> Option<IntrospectValue> {
+        fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
             self.0.query(path)
         }
         fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {

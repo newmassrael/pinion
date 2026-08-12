@@ -58,8 +58,8 @@ pub use sm::{ColorAreaEvent, ColorAreaState};
 use crate::WidgetStateName;
 use crate::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
-    SchemaField, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
+    SchemaArg, SchemaField, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
@@ -329,12 +329,12 @@ impl ExternalIntrospect for ColorAreaExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "state" => Some(IntrospectValue::Text(self.state().as_name().to_string())),
-            "x" => Some(IntrospectValue::Float(f64::from(self.x()))),
-            "y" => Some(IntrospectValue::Float(f64::from(self.y()))),
-            _ => None,
+            "state" => Ok(IntrospectValue::Text(self.state().as_name().to_string())),
+            "x" => Ok(IntrospectValue::Float(f64::from(self.x()))),
+            "y" => Ok(IntrospectValue::Float(f64::from(self.y()))),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 

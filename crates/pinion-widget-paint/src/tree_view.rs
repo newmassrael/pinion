@@ -58,7 +58,8 @@ use pinion_core::composite_tag::GridTag;
 use pinion_core::composite_tag::compose_send_payload;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use pinion_core::input::PointerWireEvent;
 use pinion_core::input::{Modifiers, PointerButtons};
@@ -1150,17 +1151,17 @@ impl ExternalIntrospect for TreeRowClickExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "pressed_id" => Some(match &self.pressed_id {
+            "pressed_id" => Ok(match &self.pressed_id {
                 Some(id) => IntrospectValue::Text(id.clone()),
                 None => IntrospectValue::Null,
             }),
-            "hovered_id" => Some(match &self.hovered_id {
+            "hovered_id" => Ok(match &self.hovered_id {
                 Some(id) => IntrospectValue::Text(id.clone()),
                 None => IntrospectValue::Null,
             }),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 

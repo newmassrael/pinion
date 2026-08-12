@@ -58,8 +58,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::external::{
-    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, SchemaArg,
-    SchemaField, query_proxy_external_impl,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    ReadRefusal, SchemaArg, SchemaField, query_proxy_external_impl,
 };
 use crate::reactive::{Owner, Signal};
 use crate::widgets::grid_sort::{GridFilter, grid_filter_from_str, grid_filter_str};
@@ -440,11 +440,11 @@ impl ExternalIntrospect for RowSearchExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         // `match.<i>` resolves the i-th matching source row; an out-of-range
         // position reports Null (present-but-empty), never absence.
         if let Some(rest) = path.strip_prefix("match.") {
-            return Some(source_at_value(rest, |i| self.state.match_at(i)));
+            return Ok(source_at_value(rest, |i| self.state.match_at(i)));
         }
         // R1525 — `cell.<row>.<col>`: the SOURCE cell text this proxy searches.
         // The wire form `TableExternal` answers for the eager table and
@@ -453,33 +453,40 @@ impl ExternalIntrospect for RowSearchExternal {
         // says, so an agent cannot check that the row it was sent to actually
         // contains the query.
         if let Some(rest) = path.strip_prefix("cell.") {
-            let (row_str, col_str) = rest.split_once('.')?;
-            let row: usize = row_str.parse().ok()?;
-            let col: usize = col_str.parse().ok()?;
+            let (row_str, col_str) = rest.split_once('.').ok_or(ReadRefusal::QueryTypeMismatch)?;
+            let row: usize = row_str
+                .parse()
+                .map_err(|_| ReadRefusal::QueryTypeMismatch)?;
+            let col: usize = col_str
+                .parse()
+                .map_err(|_| ReadRefusal::QueryTypeMismatch)?;
             if row >= self.state.count() || col >= self.state.col_count() {
-                return None;
+                return Err(ReadRefusal::no_such_member(format!(
+                    "cell {row}.{col} is outside 0..{}.0..{}",
+                    self.state.count(),
+                    self.state.col_count()
+                )));
             }
-            return Some(IntrospectValue::Text(self.state.cell(row, col).to_string()));
+            return Ok(IntrospectValue::Text(self.state.cell(row, col).to_string()));
         }
         match path {
-            "query" => Some(IntrospectValue::Text(grid_filter_str(
+            "query" => Ok(IntrospectValue::Text(grid_filter_str(
                 self.state.query().as_ref(),
             ))),
-            "match_count" => Some(self.match_count_value()),
-            "current" => Some(
-                self.state
-                    .current_index()
-                    .and_then(|i| i64::try_from(i).ok())
-                    .map_or(IntrospectValue::Null, IntrospectValue::Int),
-            ),
-            "current_row" => Some(self.current_row_value()),
-            "count" => Some(IntrospectValue::Int(
+            "match_count" => Ok(self.match_count_value()),
+            "current" => Ok(self
+                .state
+                .current_index()
+                .and_then(|i| i64::try_from(i).ok())
+                .map_or(IntrospectValue::Null, IntrospectValue::Int)),
+            "current_row" => Ok(self.current_row_value()),
+            "count" => Ok(IntrospectValue::Int(
                 i64::try_from(self.state.count()).unwrap_or(i64::MAX),
             )),
-            "cols" => Some(IntrospectValue::Int(
+            "cols" => Ok(IntrospectValue::Int(
                 i64::try_from(self.state.col_count()).unwrap_or(i64::MAX),
             )),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -575,23 +582,21 @@ mod tests {
         e.invoke("set_query", IntrospectValue::Text("2=Done".into()))
             .unwrap();
         let row = match e.query("current_row") {
-            Some(IntrospectValue::Int(r)) => usize::try_from(r).unwrap(),
+            Ok(IntrospectValue::Int(r)) => usize::try_from(r).unwrap(),
             other => panic!("cursor row expected, got {other:?}"),
         };
         assert_eq!(
             e.query(&format!("cell.{row}.2")),
-            Some(IntrospectValue::Text("Done".into())),
+            Ok(IntrospectValue::Text("Done".into())),
             "the cell the search matched on is readable at the row it reports",
         );
-        assert_eq!(e.query("cols"), Some(IntrospectValue::Int(3)));
-        assert_eq!(
-            e.query("cell.12.0"),
-            None,
+        assert_eq!(e.query("cols"), Ok(IntrospectValue::Int(3)));
+        assert!(
+            matches!(e.query("cell.12.0"), Err(ReadRefusal::NoSuchMember(_))),
             "row beyond the dataset is absent"
         );
-        assert_eq!(
-            e.query("cell.0.3"),
-            None,
+        assert!(
+            matches!(e.query("cell.0.3"), Err(ReadRefusal::NoSuchMember(_))),
             "column beyond the grid is absent"
         );
     }
@@ -731,22 +736,23 @@ mod tests {
         let mut e = ext();
         e.invoke("set_query", IntrospectValue::Text("2=Done".into()))
             .unwrap();
-        assert_eq!(
-            e.query("query"),
-            Some(IntrospectValue::Text("2=Done".into()))
-        );
-        assert_eq!(e.query("match_count"), Some(IntrospectValue::Int(4)));
-        assert_eq!(e.query("current"), Some(IntrospectValue::Int(0)));
-        assert_eq!(e.query("current_row"), Some(IntrospectValue::Int(2)));
-        assert_eq!(e.query("count"), Some(IntrospectValue::Int(12)));
-        assert_eq!(e.query("match.0"), Some(IntrospectValue::Int(2)));
-        assert_eq!(e.query("match.3"), Some(IntrospectValue::Int(11)));
+        assert_eq!(e.query("query"), Ok(IntrospectValue::Text("2=Done".into())));
+        assert_eq!(e.query("match_count"), Ok(IntrospectValue::Int(4)));
+        assert_eq!(e.query("current"), Ok(IntrospectValue::Int(0)));
+        assert_eq!(e.query("current_row"), Ok(IntrospectValue::Int(2)));
+        assert_eq!(e.query("count"), Ok(IntrospectValue::Int(12)));
+        assert_eq!(e.query("match.0"), Ok(IntrospectValue::Int(2)));
+        assert_eq!(e.query("match.3"), Ok(IntrospectValue::Int(11)));
         assert_eq!(
             e.query("match.9"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "out-of-range match position is present-but-empty, not absent",
         );
-        assert_eq!(e.query("nope"), None, "undeclared path is genuinely absent");
+        assert_eq!(
+            e.query("nope"),
+            Err(ReadRefusal::UnknownPath),
+            "undeclared path is genuinely absent"
+        );
     }
 
     #[test]
@@ -774,8 +780,8 @@ mod tests {
             Ok(IntrospectValue::Int(0)),
             "clear returns match_count 0",
         );
-        assert_eq!(e.query("query"), Some(IntrospectValue::Text("none".into())));
-        assert_eq!(e.query("current"), Some(IntrospectValue::Null));
+        assert_eq!(e.query("query"), Ok(IntrospectValue::Text("none".into())));
+        assert_eq!(e.query("current"), Ok(IntrospectValue::Null));
         assert_eq!(
             e.invoke("bogus", IntrospectValue::Null),
             Err(InvokeError::UnknownPath)
@@ -817,7 +823,7 @@ mod tests {
             None,
             "phantom-column query collapses to no search"
         );
-        assert_eq!(e.query("match_count"), Some(IntrospectValue::Int(0)));
+        assert_eq!(e.query("match_count"), Ok(IntrospectValue::Int(0)));
     }
 
     #[test]

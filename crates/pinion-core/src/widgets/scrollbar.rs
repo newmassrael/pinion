@@ -358,8 +358,8 @@ use std::rc::Rc;
 use crate::WidgetStateName;
 use crate::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
-    SchemaField, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
+    SchemaArg, SchemaField, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::reactive::{Owner, Signal};
@@ -890,13 +890,13 @@ impl ExternalIntrospect for ScrollBarExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "state" => Some(IntrospectValue::Text(self.state().as_name().to_string())),
-            "orientation" => Some(IntrospectValue::Text(
+            "state" => Ok(IntrospectValue::Text(self.state().as_name().to_string())),
+            "orientation" => Ok(IntrospectValue::Text(
                 scroll_bar_orientation_name(self.orientation()).to_string(),
             )),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -1107,6 +1107,7 @@ mod r55_d2_tests {
     //! initial state + four-state transition graph + drag-end
     //! commit semantics + cancel-on-leave + introspect surface +
     //! orientation immutability.
+    use crate::external::ReadRefusal;
     use crate::external::{ArgForm, SchemaArg};
     use crate::test_fixtures::assert_refused_saying;
 
@@ -1300,7 +1301,7 @@ mod r55_d2_tests {
             IntrospectValue::Text("vertical".to_string()),
         );
         // Unknown path: None (introspect contract).
-        assert_eq!(sx.query("value"), None);
+        assert_eq!(sx.query("value"), Err(ReadRefusal::UnknownPath));
     }
 
     #[test]
@@ -1436,11 +1437,11 @@ mod r55_d2_tests {
         let h = ScrollBarExternal::with_orientation(ScrollBarOrientation::Horizontal);
         assert_eq!(
             v.query("orientation"),
-            Some(IntrospectValue::Text("vertical".to_string())),
+            Ok(IntrospectValue::Text("vertical".to_string())),
         );
         assert_eq!(
             h.query("orientation"),
-            Some(IntrospectValue::Text("horizontal".to_string())),
+            Ok(IntrospectValue::Text("horizontal".to_string())),
         );
     }
 

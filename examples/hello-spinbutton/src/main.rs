@@ -213,28 +213,28 @@ fn read_spin(scene: &Scene) -> SpinState {
     let Some(intro) = node.handle.introspect() else {
         return out;
     };
-    if let Some(IntrospectValue::Float(v)) = intro.query("value") {
+    if let Ok(IntrospectValue::Float(v)) = intro.query("value") {
         #[allow(clippy::cast_possible_truncation)]
         {
             out.value = v as f32;
         }
     }
-    if let Some(IntrospectValue::Float(v)) = intro.query("min") {
+    if let Ok(IntrospectValue::Float(v)) = intro.query("min") {
         #[allow(clippy::cast_possible_truncation)]
         {
             out.min = v as f32;
         }
     }
-    if let Some(IntrospectValue::Float(v)) = intro.query("max") {
+    if let Ok(IntrospectValue::Float(v)) = intro.query("max") {
         #[allow(clippy::cast_possible_truncation)]
         {
             out.max = v as f32;
         }
     }
-    if let Some(IntrospectValue::Text(name)) = intro.query("dec_state") {
+    if let Ok(IntrospectValue::Text(name)) = intro.query("dec_state") {
         out.dec = ButtonState::from_name_or_default(&name);
     }
-    if let Some(IntrospectValue::Text(name)) = intro.query("inc_state") {
+    if let Ok(IntrospectValue::Text(name)) = intro.query("inc_state") {
         out.inc = ButtonState::from_name_or_default(&name);
     }
     out

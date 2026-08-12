@@ -1556,7 +1556,7 @@ impl WidgetCore for DockPanelsEditorView {
     fn read_state(scene: &Scene) -> Self::State {
         if let Some(node) = scene.find_external_with_tag(VIEWPORT_BTN_TAG)
             && let Some(intro) = node.handle.introspect()
-            && let Some(IntrospectValue::Text(name)) = intro.query("state")
+            && let Ok(IntrospectValue::Text(name)) = intro.query("state")
         {
             return <Self::State as pinion_core::WidgetStateName>::from_name_or_default(&name);
         }
@@ -2421,7 +2421,7 @@ mod tests {
                     .iter()
                     .find(|e| e.tag.as_ref() == tag)
                     .and_then(|e| e.handle.introspect())
-                    .and_then(|i| i.query("lifecycle"))
+                    .and_then(|i| i.query("lifecycle").ok())
             };
             assert_eq!(
                 lifecycle(VIEWPORT_PANEL_TAG),
@@ -2468,7 +2468,7 @@ mod tests {
             assert_eq!(
                 viewport
                     .and_then(|e| e.handle.introspect())
-                    .and_then(|i| i.query("lifecycle")),
+                    .and_then(|i| i.query("lifecycle").ok()),
                 Some(IntrospectValue::Text("Floating".to_string())),
                 "the union'd external re-hydrates its chart to Floating",
             );

@@ -379,7 +379,7 @@ fn retained_refusal(scene: &Scene, source: SceneSource, raw_path: &str) -> Inter
 mod tests {
     use super::*;
     use pinion_core::Color;
-    use pinion_core::external::{CountedExternal, StubExternal};
+    use pinion_core::external::{CountedExternal, ReadRefusal, StubExternal};
     use pinion_core::scene::{BoxNode, ExternalNode, Rect};
 
     use pinion_core::external::{SchemaArg, SchemaField};
@@ -479,8 +479,10 @@ mod tests {
                 },
             )
         }
-        fn query(&self, path: &str) -> Option<IntrospectValue> {
-            (path == "speed").then_some(IntrospectValue::Int(self.speed))
+        fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
+            (path == "speed")
+                .then_some(IntrospectValue::Int(self.speed))
+                .ok_or(ReadRefusal::UnknownPath)
         }
         fn intervene(
             &mut self,
@@ -631,7 +633,7 @@ mod tests {
         // directly to confirm the write landed.
         if let Scene::External(node) = &scene {
             let intro = node.handle.introspect().expect("counted introspects");
-            assert_eq!(intro.query("count"), Some(IntrospectValue::Int(42)));
+            assert_eq!(intro.query("count"), Ok(IntrospectValue::Int(42)));
         } else {
             panic!("expected External at root");
         }
@@ -648,7 +650,7 @@ mod tests {
         .unwrap();
         if let Scene::External(node) = &scene {
             let intro = node.handle.introspect().expect("counted introspects");
-            assert_eq!(intro.query("count"), Some(IntrospectValue::Int(7)));
+            assert_eq!(intro.query("count"), Ok(IntrospectValue::Int(7)));
         }
     }
 

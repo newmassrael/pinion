@@ -114,8 +114,8 @@
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
-    ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership,
 };
 use crate::input::PointerWireEvent;
 use crate::intent::Intent;
@@ -765,6 +765,24 @@ impl MenuBarExternal {
         self.em.inner.menu_items_at(path).map(<[MenuItem]>::len)
     }
 
+    /// R1667 §5.15 — the [`MenuItem`] a per-item read addressed, or the
+    /// refusal that read owes its caller.
+    ///
+    /// The three per-item slots (`item_kind` / `checked` / `enabled`) parse the
+    /// same suffix and walk the same tree, and before this round all three
+    /// answered a bare `None` for both ways of missing. One helper so the two
+    /// refusals are decided once: a suffix that is not a path of indices is a
+    /// malformed ARGUMENT, and a well-formed path that reaches nothing is a
+    /// missing MEMBER — a distinction a client can act on, since only the
+    /// second means "ask `item_count` and try again".
+    fn item_or_refuse(&self, suffix: &str) -> Result<&MenuItem, ReadRefusal> {
+        let path = menu_path(suffix)?;
+        self.em
+            .inner
+            .item_at_path(&path)
+            .ok_or_else(|| no_such_menu(suffix))
+    }
+
     /// R805 — the [`MenuItem`] at `(menu, item)`, or `None` out of range.
     #[must_use]
     pub fn item(&self, menu: usize, item: usize) -> Option<MenuItem> {
@@ -1102,6 +1120,25 @@ pub fn parse_path(suffix: &str) -> Option<Vec<usize>> {
     suffix.split('.').map(|p| p.parse::<usize>().ok()).collect()
 }
 
+/// R1667 §5.15 — [`parse_path`] as a read's refusal: a suffix that is not a
+/// dot-separated run of indices is a **malformed argument**, not an unknown
+/// path. The family `item_kind.<path>` is declared; `item_kind.a.b` is a caller
+/// that spelled its argument wrong, and telling it "no such path" sends it
+/// looking for a slot that is right there.
+fn menu_path(suffix: &str) -> Result<Vec<usize>, ReadRefusal> {
+    parse_path(suffix).ok_or(ReadRefusal::QueryTypeMismatch)
+}
+
+/// R1667 §5.15 — the refusal for a well-formed menu path that reaches nothing.
+///
+/// Names the path it was given rather than a range, because this family is
+/// keyed by a *tree* address: "0.7 is outside 0..3" would be false at every
+/// level but the last, and the caller's own next move is to read `item_count`
+/// for the level it cares about.
+fn no_such_menu(suffix: &str) -> ReadRefusal {
+    ReadRefusal::no_such_member(format!("no menu item at `{suffix}`"))
+}
+
 /// `Some(i)` → `Int(i)`, `None` → `Null` — shared optional-index
 /// lowering for `query` / the `send` return value.
 fn open_value(idx: Option<usize>) -> IntrospectValue {
@@ -1218,50 +1255,51 @@ impl ExternalIntrospect for MenuBarExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "menu_count" => Some(IntrospectValue::Int(
+            "menu_count" => Ok(IntrospectValue::Int(
                 i64::try_from(self.menu_count()).expect("menu_count fits in i64"),
             )),
-            "open" => Some(open_value(self.open_menu())),
+            "open" => Ok(open_value(self.open_menu())),
             // R985 — dotted descent below the top dropdown (empty when none).
-            "open_path" => Some(IntrospectValue::Text(path_text(self.open_path()))),
-            "active" => Some(open_value(self.active_item())),
+            "open_path" => Ok(IntrospectValue::Text(path_text(self.open_path()))),
+            "active" => Ok(open_value(self.active_item())),
             // R985 — full absolute active path, or Null when nothing highlighted.
-            "active_path" => Some(match self.active_path() {
+            "active_path" => Ok(match self.active_path() {
                 Some(p) => IntrospectValue::Text(path_text(&p)),
                 None => IntrospectValue::Null,
             }),
-            "bar_focus" => Some(IntrospectValue::Int(
+            "bar_focus" => Ok(IntrospectValue::Int(
                 i64::try_from(self.bar_focus()).expect("bar_focus fits in i64"),
             )),
             _ => {
                 // R985 — `item_count.<path>` addresses a *menu* (path of length
                 // ≥1: `<menu>` = top, deeper = a submenu's item list).
                 if let Some(suffix) = path.strip_prefix("item_count.") {
-                    let p = parse_path(suffix)?;
-                    let count = self.item_count_at(&p)?;
-                    return Some(IntrospectValue::Int(
+                    let p = menu_path(suffix)?;
+                    let count = self.item_count_at(&p).ok_or_else(|| no_such_menu(suffix))?;
+                    return Ok(IntrospectValue::Int(
                         i64::try_from(count).expect("item_count fits in i64"),
                     ));
                 }
                 // R805 / R985 — per-item stateful slots, keyed by an absolute
                 // item `<path>` (length ≥2: `<menu>.<item>[.<sub>…]`).
                 if let Some(suffix) = path.strip_prefix("item_kind.") {
-                    let p = parse_path(suffix)?;
-                    return Some(IntrospectValue::Text(
-                        self.item_at_path(&p)?.kind_name().to_owned(),
+                    return Ok(IntrospectValue::Text(
+                        self.item_or_refuse(suffix)?.kind_name().to_owned(),
                     ));
                 }
                 if let Some(suffix) = path.strip_prefix("checked.") {
-                    let p = parse_path(suffix)?;
-                    return Some(IntrospectValue::Bool(self.item_at_path(&p)?.checked()));
+                    return Ok(IntrospectValue::Bool(
+                        self.item_or_refuse(suffix)?.checked(),
+                    ));
                 }
                 if let Some(suffix) = path.strip_prefix("enabled.") {
-                    let p = parse_path(suffix)?;
-                    return Some(IntrospectValue::Bool(self.item_at_path(&p)?.enabled()));
+                    return Ok(IntrospectValue::Bool(
+                        self.item_or_refuse(suffix)?.enabled(),
+                    ));
                 }
-                None
+                Err(ReadRefusal::UnknownPath)
             }
         }
     }
@@ -1668,13 +1706,16 @@ mod tests {
     #[test]
     fn external_query_initial() {
         let e = ext();
-        assert_eq!(e.query("menu_count"), Some(IntrospectValue::Int(3)));
-        assert_eq!(e.query("open"), Some(IntrospectValue::Null));
-        assert_eq!(e.query("active"), Some(IntrospectValue::Null));
-        assert_eq!(e.query("bar_focus"), Some(IntrospectValue::Int(0)));
-        assert_eq!(e.query("item_count.1"), Some(IntrospectValue::Int(5)));
-        assert_eq!(e.query("item_count.9"), None);
-        assert_eq!(e.query("nope"), None);
+        assert_eq!(e.query("menu_count"), Ok(IntrospectValue::Int(3)));
+        assert_eq!(e.query("open"), Ok(IntrospectValue::Null));
+        assert_eq!(e.query("active"), Ok(IntrospectValue::Null));
+        assert_eq!(e.query("bar_focus"), Ok(IntrospectValue::Int(0)));
+        assert_eq!(e.query("item_count.1"), Ok(IntrospectValue::Int(5)));
+        assert!(matches!(
+            e.query("item_count.9"),
+            Err(ReadRefusal::NoSuchMember(_))
+        ));
+        assert_eq!(e.query("nope"), Err(ReadRefusal::UnknownPath));
     }
 
     #[test]
@@ -2134,22 +2175,28 @@ mod tests {
         ]]);
         assert_eq!(
             e.query("item_kind.0.0"),
-            Some(IntrospectValue::Text("command".into()))
+            Ok(IntrospectValue::Text("command".into()))
         );
         assert_eq!(
             e.query("item_kind.0.1"),
-            Some(IntrospectValue::Text("checkbox".into()))
+            Ok(IntrospectValue::Text("checkbox".into()))
         );
         assert_eq!(
             e.query("item_kind.0.2"),
-            Some(IntrospectValue::Text("separator".into()))
+            Ok(IntrospectValue::Text("separator".into()))
         );
-        assert_eq!(e.query("checked.0.1"), Some(IntrospectValue::Bool(true)));
-        assert_eq!(e.query("checked.0.0"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(e.query("enabled.0.0"), Some(IntrospectValue::Bool(true)));
-        assert_eq!(e.query("enabled.0.3"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(e.query("checked.0.9"), None, "out-of-range item -> None");
-        assert_eq!(e.query("checked.9.0"), None, "out-of-range menu -> None");
+        assert_eq!(e.query("checked.0.1"), Ok(IntrospectValue::Bool(true)));
+        assert_eq!(e.query("checked.0.0"), Ok(IntrospectValue::Bool(false)));
+        assert_eq!(e.query("enabled.0.0"), Ok(IntrospectValue::Bool(true)));
+        assert_eq!(e.query("enabled.0.3"), Ok(IntrospectValue::Bool(false)));
+        assert!(
+            matches!(e.query("checked.0.9"), Err(ReadRefusal::NoSuchMember(_))),
+            "R1667 - the family is declared and this argument addresses nothing"
+        );
+        assert!(
+            matches!(e.query("checked.9.0"), Err(ReadRefusal::NoSuchMember(_))),
+            "R1667 - the family is declared and this argument addresses nothing"
+        );
     }
 
     #[test]
@@ -2157,7 +2204,7 @@ mod tests {
         let mut e = MenuBarExternal::with_items(vec![vec![MenuItem::checkbox(false)]]);
         e.intervene("checked.0.0", IntrospectValue::Bool(true))
             .unwrap();
-        assert_eq!(e.query("checked.0.0"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(e.query("checked.0.0"), Ok(IntrospectValue::Bool(true)));
         assert!(!e.is_dirty(), "intervene fires no command intent");
         assert_out_of_range_saying(
             &e.intervene("checked.0.9", IntrospectValue::Bool(true)),
@@ -2191,12 +2238,12 @@ mod tests {
             "separator has no writable checked slot"
         );
         // The command / separator still report checked = false.
-        assert_eq!(e.query("checked.0.0"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(e.query("checked.0.1"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(e.query("checked.0.0"), Ok(IntrospectValue::Bool(false)));
+        assert_eq!(e.query("checked.0.1"), Ok(IntrospectValue::Bool(false)));
         // The checkbox accepts it.
         e.intervene("checked.0.2", IntrospectValue::Bool(true))
             .unwrap();
-        assert_eq!(e.query("checked.0.2"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(e.query("checked.0.2"), Ok(IntrospectValue::Bool(true)));
     }
 
     #[test]
@@ -2407,27 +2454,29 @@ mod tests {
     fn r985_query_nested_structure() {
         let e = nested_ext();
         // Top-level structure.
-        assert_eq!(e.query("item_count.0"), Some(IntrospectValue::Int(3)));
+        assert_eq!(e.query("item_count.0"), Ok(IntrospectValue::Int(3)));
         assert_eq!(
             e.query("item_kind.0.1"),
-            Some(IntrospectValue::Text("submenu".into())),
+            Ok(IntrospectValue::Text("submenu".into())),
             "item 1 of menu 0 is a submenu",
         );
         // Nested submenu structure (path descends into the submenu).
-        assert_eq!(e.query("item_count.0.1"), Some(IntrospectValue::Int(2)));
+        assert_eq!(e.query("item_count.0.1"), Ok(IntrospectValue::Int(2)));
         assert_eq!(
             e.query("item_kind.0.1.0"),
-            Some(IntrospectValue::Text("command".into()))
+            Ok(IntrospectValue::Text("command".into()))
         );
         assert_eq!(
             e.query("item_kind.0.1.1"),
-            Some(IntrospectValue::Text("checkbox".into()))
+            Ok(IntrospectValue::Text("checkbox".into()))
         );
-        assert_eq!(e.query("checked.0.1.1"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(e.query("item_kind.0.9"), None, "out-of-range item");
-        assert_eq!(
-            e.query("item_count.0.0"),
-            None,
+        assert_eq!(e.query("checked.0.1.1"), Ok(IntrospectValue::Bool(false)));
+        assert!(
+            matches!(e.query("item_kind.0.9"), Err(ReadRefusal::NoSuchMember(_))),
+            "out-of-range item"
+        );
+        assert!(
+            matches!(e.query("item_count.0.0"), Err(ReadRefusal::NoSuchMember(_))),
             "a non-submenu has no item list"
         );
     }
@@ -2437,20 +2486,17 @@ mod tests {
         let mut e = nested_ext();
         assert_eq!(
             e.query("open_path"),
-            Some(IntrospectValue::Text(String::new()))
+            Ok(IntrospectValue::Text(String::new()))
         );
-        assert_eq!(e.query("active_path"), Some(IntrospectValue::Null));
+        assert_eq!(e.query("active_path"), Ok(IntrospectValue::Null));
         e.invoke("send", IntrospectValue::Text("t0:PointerUp".into()))
             .unwrap();
         e.invoke("send", IntrospectValue::Text("i1:PointerUp".into()))
             .unwrap(); // open submenu 1
-        assert_eq!(
-            e.query("open_path"),
-            Some(IntrospectValue::Text("1".into()))
-        );
+        assert_eq!(e.query("open_path"), Ok(IntrospectValue::Text("1".into())));
         assert_eq!(
             e.query("active_path"),
-            Some(IntrospectValue::Text("0.1.0".into())),
+            Ok(IntrospectValue::Text("0.1.0".into())),
             "deepest active = submenu first item",
         );
     }
@@ -2479,7 +2525,7 @@ mod tests {
         let mut e = nested_ext();
         e.intervene("checked.0.1.1", IntrospectValue::Bool(true))
             .unwrap();
-        assert_eq!(e.query("checked.0.1.1"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(e.query("checked.0.1.1"), Ok(IntrospectValue::Bool(true)));
         // A nested command has no writable checked slot.
         assert_eq!(
             e.intervene("checked.0.1.0", IntrospectValue::Bool(true)),

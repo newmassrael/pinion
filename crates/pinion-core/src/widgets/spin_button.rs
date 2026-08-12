@@ -29,7 +29,8 @@
 use crate::event::WheelStepper;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use crate::input::{AutoRepeat, Modifiers};
 use crate::widgets::button::{Button, ButtonEvent, ButtonState};
@@ -387,19 +388,19 @@ impl ExternalIntrospect for SpinButtonExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "value" => Some(IntrospectValue::Float(f64::from(self.value))),
-            "min" => Some(IntrospectValue::Float(f64::from(self.min))),
-            "max" => Some(IntrospectValue::Float(f64::from(self.max))),
-            "step" => Some(IntrospectValue::Float(f64::from(self.step))),
-            "dec_state" => Some(IntrospectValue::Text(
+            "value" => Ok(IntrospectValue::Float(f64::from(self.value))),
+            "min" => Ok(IntrospectValue::Float(f64::from(self.min))),
+            "max" => Ok(IntrospectValue::Float(f64::from(self.max))),
+            "step" => Ok(IntrospectValue::Float(f64::from(self.step))),
+            "dec_state" => Ok(IntrospectValue::Text(
                 self.dec.state().as_name().to_string(),
             )),
-            "inc_state" => Some(IntrospectValue::Text(
+            "inc_state" => Ok(IntrospectValue::Text(
                 self.inc.state().as_name().to_string(),
             )),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -646,11 +647,11 @@ mod tests {
     #[test]
     fn query_reports_value_and_range() {
         let s = SpinButtonExternal::new(3.0, 0.0, 10.0, 1.0);
-        assert_eq!(s.query("value"), Some(IntrospectValue::Float(3.0)));
-        assert_eq!(s.query("min"), Some(IntrospectValue::Float(0.0)));
-        assert_eq!(s.query("max"), Some(IntrospectValue::Float(10.0)));
-        assert_eq!(s.query("step"), Some(IntrospectValue::Float(1.0)));
-        assert_eq!(s.query("nope"), None);
+        assert_eq!(s.query("value"), Ok(IntrospectValue::Float(3.0)));
+        assert_eq!(s.query("min"), Ok(IntrospectValue::Float(0.0)));
+        assert_eq!(s.query("max"), Ok(IntrospectValue::Float(10.0)));
+        assert_eq!(s.query("step"), Ok(IntrospectValue::Float(1.0)));
+        assert_eq!(s.query("nope"), Err(ReadRefusal::UnknownPath));
     }
 
     #[test]
@@ -787,17 +788,17 @@ mod tests {
         let mut s = SpinButtonExternal::new(5.0, 0.0, 10.0, 1.0);
         assert_eq!(
             s.query("dec_state"),
-            Some(IntrospectValue::Text("Idle".into()))
+            Ok(IntrospectValue::Text("Idle".into()))
         );
         assert_eq!(
             s.query("inc_state"),
-            Some(IntrospectValue::Text("Idle".into()))
+            Ok(IntrospectValue::Text("Idle".into()))
         );
         s.invoke("send", IntrospectValue::Text("inc:PointerEnter".into()))
             .unwrap();
         assert_eq!(
             s.query("inc_state"),
-            Some(IntrospectValue::Text("Hover".into()))
+            Ok(IntrospectValue::Text("Hover".into()))
         );
     }
 
@@ -879,6 +880,6 @@ mod tests {
         // report of a wheel — the same field `intervene` and the arrows move.
         let mut s = SpinButtonExternal::new(5.0, 0.0, 10.0, 1.0);
         assert!(wheel(&mut s, NOTCH_UP));
-        assert_eq!(s.query("value"), Some(IntrospectValue::Float(6.0)));
+        assert_eq!(s.query("value"), Ok(IntrospectValue::Float(6.0)));
     }
 }

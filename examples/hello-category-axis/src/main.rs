@@ -55,7 +55,8 @@ use pinion_chart::{
 use pinion_core::Modifiers;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -327,28 +328,28 @@ impl ExternalIntrospect for CategoryWindowExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         let (from, to) = self.requested();
         let (lo, hi) = self.bounds();
         match path {
-            "from" => Some(IntrospectValue::Text(from.to_string())),
-            "to" => Some(IntrospectValue::Text(to.to_string())),
-            "lo" => Some(IntrospectValue::Int(lo)),
-            "hi" => Some(IntrospectValue::Int(hi)),
+            "from" => Ok(IntrospectValue::Text(from.to_string())),
+            "to" => Ok(IntrospectValue::Text(to.to_string())),
+            "lo" => Ok(IntrospectValue::Int(lo)),
+            "hi" => Ok(IntrospectValue::Int(hi)),
             // The count actually in view. The toolkit's `count()` answers every
             // category whatever the range is, so this number has no the
             // toolkit peer.
-            "visible" => Some(IntrospectValue::Int(match self.resolve() {
+            "visible" => Ok(IntrospectValue::Int(match self.resolve() {
                 Ok(Some(w)) => index_i64(w.len()),
                 _ => index_i64(axis_names(self.dense).len()),
             })),
-            "error" => Some(IntrospectValue::Text(
+            "error" => Ok(IntrospectValue::Text(
                 self.resolve().err().unwrap_or_default(),
             )),
             // R1633 — which axis is on. A bool and not a count, because the
             // count is derivable and this is the request.
-            "dense" => Some(IntrospectValue::Bool(self.dense)),
-            _ => None,
+            "dense" => Ok(IntrospectValue::Bool(self.dense)),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -441,11 +442,11 @@ fn read_window(scene: &Scene) -> WindowState {
         };
     };
     let text = |field: &str| match intro.query(field) {
-        Some(IntrospectValue::Text(t)) => t,
+        Ok(IntrospectValue::Text(t)) => t,
         _ => String::new(),
     };
     let int = |field: &str| match intro.query(field) {
-        Some(IntrospectValue::Int(i)) => i,
+        Ok(IntrospectValue::Int(i)) => i,
         _ => -1,
     };
     let (from, to) = (text("from"), text("to"));
@@ -453,7 +454,7 @@ fn read_window(scene: &Scene) -> WindowState {
     WindowState {
         window: (lo >= 0 && hi >= 0).then(|| CategoryWindow::new(usize_of(lo), usize_of(hi))),
         unresolved: !text("error").is_empty(),
-        dense: matches!(intro.query("dense"), Some(IntrospectValue::Bool(true))),
+        dense: matches!(intro.query("dense"), Ok(IntrospectValue::Bool(true))),
         active_preset: PRESETS.iter().position(|(_, _, r)| match r {
             None => from.is_empty() && to.is_empty(),
             Some((f, t)) => from == *f && to == *t,
@@ -891,7 +892,7 @@ mod tests {
             .expect("range is a known path");
         assert_eq!(ok, IntrospectValue::Text(String::new()), "resolved");
         assert_eq!(ext.bounds(), (3, 5));
-        assert_eq!(ext.query("visible"), Some(IntrospectValue::Int(3)));
+        assert_eq!(ext.query("visible"), Ok(IntrospectValue::Int(3)));
 
         let bad = ext
             .invoke(
@@ -906,7 +907,7 @@ mod tests {
         assert_eq!(ext.bounds(), (-1, -1), "an unresolved request is no window");
         assert_eq!(
             ext.query("visible"),
-            Some(IntrospectValue::Int(12)),
+            Ok(IntrospectValue::Int(12)),
             "so every category stays in view"
         );
 
@@ -933,11 +934,11 @@ mod tests {
         assert_eq!(ext.bounds(), (5, 7));
         assert_eq!(
             ext.query("from"),
-            Some(IntrospectValue::Text("Jun".to_string()))
+            Ok(IntrospectValue::Text("Jun".to_string()))
         );
         assert_eq!(
             ext.query("to"),
-            Some(IntrospectValue::Text("Aug".to_string()))
+            Ok(IntrospectValue::Text("Aug".to_string()))
         );
 
         // It stops at the end of the list rather than running off it, and says

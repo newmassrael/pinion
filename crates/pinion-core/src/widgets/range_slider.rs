@@ -57,7 +57,7 @@ use crate::WidgetStateName;
 use crate::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, CaptureNormalize, External,
     ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
-    RepaintOwner, SchemaArg, SchemaField, ThreadOwnership,
+    ReadRefusal, RepaintOwner, SchemaArg, SchemaField, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::slider::{SliderAxis, SliderEvent, SliderPolicy, SliderState};
@@ -507,16 +507,16 @@ impl ExternalIntrospect for RangeSliderExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "state" => Some(IntrospectValue::Text(self.state().as_name().to_string())),
-            "low" => Some(IntrospectValue::Float(f64::from(self.low()))),
-            "high" => Some(IntrospectValue::Float(f64::from(self.high()))),
-            "active" => Some(IntrospectValue::Text(self.active().as_name().to_string())),
-            "orientation" => Some(IntrospectValue::Text(
+            "state" => Ok(IntrospectValue::Text(self.state().as_name().to_string())),
+            "low" => Ok(IntrospectValue::Float(f64::from(self.low()))),
+            "high" => Ok(IntrospectValue::Float(f64::from(self.high()))),
+            "active" => Ok(IntrospectValue::Text(self.active().as_name().to_string())),
+            "orientation" => Ok(IntrospectValue::Text(
                 range_axis_name(self.axis()).to_string(),
             )),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -740,14 +740,14 @@ mod tests {
         let rx = RangeSliderExternal::with_values(0.25, 0.75);
         let intro = External::introspect(&rx).expect("opts in");
         assert!(
-            matches!(intro.query("low"), Some(IntrospectValue::Float(v)) if (v - 0.25).abs() < 1e-6)
+            matches!(intro.query("low"), Ok(IntrospectValue::Float(v)) if (v - 0.25).abs() < 1e-6)
         );
         assert!(
-            matches!(intro.query("high"), Some(IntrospectValue::Float(v)) if (v - 0.75).abs() < 1e-6)
+            matches!(intro.query("high"), Ok(IntrospectValue::Float(v)) if (v - 0.75).abs() < 1e-6)
         );
-        assert!(matches!(intro.query("active"), Some(IntrospectValue::Text(ref s)) if s == "high"));
+        assert!(matches!(intro.query("active"), Ok(IntrospectValue::Text(ref s)) if s == "high"));
         assert!(
-            matches!(intro.query("orientation"), Some(IntrospectValue::Text(ref s)) if s == "horizontal")
+            matches!(intro.query("orientation"), Ok(IntrospectValue::Text(ref s)) if s == "horizontal")
         );
     }
 

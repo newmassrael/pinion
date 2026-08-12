@@ -63,8 +63,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::external::{
-    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, SchemaArg,
-    SchemaField, query_proxy_external_impl,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    ReadRefusal, SchemaArg, SchemaField, query_proxy_external_impl,
 };
 use crate::reactive::{Owner, Signal};
 use crate::undo::{UndoCommand, UndoStack};
@@ -824,11 +824,11 @@ impl ExternalIntrospect for GridSortExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         // `source_at.<pos>` resolves the visual→source map; an out-of-range
         // position reports Null (present-but-empty), never absence.
         if let Some(rest) = path.strip_prefix("source_at.") {
-            return Some(source_at_value(rest, |p| self.state.source_at(p)));
+            return Ok(source_at_value(rest, |p| self.state.source_at(p)));
         }
         // R1525 — `cell.<row>.<col>`: the SOURCE cell text this proxy sorts and
         // filters on. The same wire form `TableExternal` answers for the eager
@@ -841,33 +841,41 @@ impl ExternalIntrospect for GridSortExternal {
         // (R1523 added the a11y column pair to `access.rs` for exactly this
         // reason: RPC is invariant #2's primary path.)
         if let Some(rest) = path.strip_prefix("cell.") {
-            let (row_str, col_str) = rest.split_once('.')?;
-            let row: usize = row_str.parse().ok()?;
-            let col: usize = col_str.parse().ok()?;
+            let (row_str, col_str) = rest.split_once('.').ok_or(ReadRefusal::QueryTypeMismatch)?;
+            let row: usize = row_str
+                .parse()
+                .map_err(|_| ReadRefusal::QueryTypeMismatch)?;
+            let col: usize = col_str
+                .parse()
+                .map_err(|_| ReadRefusal::QueryTypeMismatch)?;
             if row >= self.state.count() || col >= self.state.col_count() {
-                return None;
+                return Err(ReadRefusal::no_such_member(format!(
+                    "cell {row}.{col} is outside 0..{}.0..{}",
+                    self.state.count(),
+                    self.state.col_count()
+                )));
             }
-            return Some(IntrospectValue::Text(self.state.cell(row, col).to_string()));
+            return Ok(IntrospectValue::Text(self.state.cell(row, col).to_string()));
         }
         match path {
-            "sort" => Some(IntrospectValue::Text(grid_sort_str(self.state.sort()))),
-            "sort_col" => Some(self.sort_col_value()),
-            "sort_dir" => Some(IntrospectValue::Text(
+            "sort" => Ok(IntrospectValue::Text(grid_sort_str(self.state.sort()))),
+            "sort_col" => Ok(self.sort_col_value()),
+            "sort_dir" => Ok(IntrospectValue::Text(
                 sort_dir_str(self.state.sort().map(|(_, dir)| dir)).into(),
             )),
-            "filter" => Some(IntrospectValue::Text(grid_filter_str(
+            "filter" => Ok(IntrospectValue::Text(grid_filter_str(
                 self.state.filter().as_ref(),
             ))),
-            "view_len" => Some(IntrospectValue::Int(
+            "view_len" => Ok(IntrospectValue::Int(
                 i64::try_from(self.state.view_len()).unwrap_or(i64::MAX),
             )),
-            "count" => Some(IntrospectValue::Int(
+            "count" => Ok(IntrospectValue::Int(
                 i64::try_from(self.state.count()).unwrap_or(i64::MAX),
             )),
-            "cols" => Some(IntrospectValue::Int(
+            "cols" => Ok(IntrospectValue::Int(
                 i64::try_from(self.state.col_count()).unwrap_or(i64::MAX),
             )),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -966,27 +974,27 @@ mod tests {
         let e = GridSortExternal::new(Rc::new(state()));
         assert_eq!(
             e.query("cell.0.0"),
-            Some(IntrospectValue::Text("Menu".into())),
+            Ok(IntrospectValue::Text("Menu".into())),
         );
-        assert_eq!(
-            e.query("cell.2.1"),
-            Some(IntrospectValue::Text("707".into())),
-        );
-        assert_eq!(e.query("cols"), Some(IntrospectValue::Int(2)));
+        assert_eq!(e.query("cell.2.1"), Ok(IntrospectValue::Text("707".into())));
+        assert_eq!(e.query("cols"), Ok(IntrospectValue::Int(2)));
         // Out of range is ABSENT (None), matching `TableExternal`'s own
         // `cell.<row>.<col>` — unlike `source_at.<pos>`, which reports Null
         // because a position beyond the view is a meaningful "no source there".
-        assert_eq!(
-            e.query("cell.4.0"),
-            None,
+        assert!(
+            matches!(e.query("cell.4.0"), Err(ReadRefusal::NoSuchMember(_))),
             "row beyond the dataset is absent"
         );
-        assert_eq!(
-            e.query("cell.0.2"),
-            None,
+        assert!(
+            matches!(e.query("cell.0.2"), Err(ReadRefusal::NoSuchMember(_))),
             "column beyond the grid is absent"
         );
-        assert_eq!(e.query("cell.0"), None, "a malformed address is absent");
+        assert_eq!(
+            e.query("cell.0"),
+            Err(ReadRefusal::QueryTypeMismatch),
+            "R1667 - `cell.<row>.<col>` takes two arguments and got one, which \
+             is a malformed ARGUMENT and not a missing member",
+        );
     }
 
     fn cells() -> Vec<Vec<String>> {
@@ -1105,10 +1113,10 @@ mod tests {
             let mut ext = GridSortExternal::new(Rc::clone(&st));
             let out = ext.invoke("cycle_sort", IntrospectValue::Int(0)).unwrap();
             assert_eq!(out, IntrospectValue::Text("0:ascending".into()));
-            assert_eq!(ext.query("sort_col"), Some(IntrospectValue::Int(0)));
+            assert_eq!(ext.query("sort_col"), Ok(IntrospectValue::Int(0)));
             assert_eq!(
                 ext.query("sort"),
-                Some(IntrospectValue::Text("0:ascending".into()))
+                Ok(IntrospectValue::Text("0:ascending".into()))
             );
         });
     }
@@ -1415,19 +1423,16 @@ mod tests {
             // Boot: unfiltered, full view.
             assert_eq!(
                 ext.query("filter"),
-                Some(IntrospectValue::Text("none".into()))
+                Ok(IntrospectValue::Text("none".into()))
             );
-            assert_eq!(ext.query("view_len"), Some(IntrospectValue::Int(6)));
+            assert_eq!(ext.query("view_len"), Ok(IntrospectValue::Int(6)));
             // invoke set_filter returns the resulting view length in one trip.
             assert_eq!(
                 ext.invoke("set_filter", IntrospectValue::Text("0=A".into())),
                 Ok(IntrospectValue::Int(3)),
             );
-            assert_eq!(
-                ext.query("filter"),
-                Some(IntrospectValue::Text("0=A".into()))
-            );
-            assert_eq!(ext.query("view_len"), Some(IntrospectValue::Int(3)));
+            assert_eq!(ext.query("filter"), Ok(IntrospectValue::Text("0=A".into())));
+            assert_eq!(ext.query("view_len"), Ok(IntrospectValue::Int(3)));
             // A multi-facet conjunction over the wire (col0=A AND col1>=20).
             assert_eq!(
                 ext.invoke("set_filter", IntrospectValue::Text("0=A&1>=20".into())),
@@ -1435,7 +1440,7 @@ mod tests {
             );
             assert_eq!(
                 ext.query("filter"),
-                Some(IntrospectValue::Text("0=A&1>=20".into()))
+                Ok(IntrospectValue::Text("0=A&1>=20".into()))
             );
             // Null clears via invoke.
             assert_eq!(

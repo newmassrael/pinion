@@ -177,7 +177,7 @@ fn active_cell(state: &CellSelectState) -> (usize, usize) {
 fn parse_cell_bounds(
     intro: &dyn pinion_core::external::ExternalIntrospect,
 ) -> Option<(usize, usize, usize, usize)> {
-    let IntrospectValue::Text(s) = intro.query("cell_selection")? else {
+    let IntrospectValue::Text(s) = intro.query("cell_selection").ok()? else {
         return None;
     };
     let mut it = s.split(',').map(|p| p.trim().parse::<usize>().ok());
@@ -557,11 +557,11 @@ mod tests {
         };
         let intro = node.handle.introspect().expect("introspect");
         let r = match intro.query("focused_row") {
-            Some(IntrospectValue::Int(r)) => r,
+            Ok(IntrospectValue::Int(r)) => r,
             _ => -1,
         };
         let c = match intro.query("focused_col") {
-            Some(IntrospectValue::Int(c)) => c,
+            Ok(IntrospectValue::Int(c)) => c,
             _ => -1,
         };
         (r, c)
@@ -845,7 +845,7 @@ mod tests {
         // And the raw wire text is exactly the documented "r0,c0,r1,c1" form.
         assert_eq!(
             intro.query("cell_selection"),
-            Some(IntrospectValue::Text("1,0,3,2".to_string())),
+            Ok(IntrospectValue::Text("1,0,3,2".to_string())),
         );
     }
 
@@ -905,7 +905,7 @@ mod tests {
                 .unwrap()
                 .query("cell_selection_tsv")
             {
-                Some(IntrospectValue::Text(t)) => Some(t),
+                Ok(IntrospectValue::Text(t)) => Some(t),
                 _ => None,
             };
             assert!(expect.is_some(), "a selection serialises to TSV");

@@ -44,8 +44,8 @@
 use crate::WidgetStateName;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
-    ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership,
 };
 use crate::input::PointerWireEvent;
 use crate::intent::Intent;
@@ -548,28 +548,28 @@ impl ExternalIntrospect for DatePickerExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "year" => Some(IntrospectValue::Int(i64::from(self.displayed_year()))),
-            "month" => Some(IntrospectValue::Int(i64::from(self.displayed_month()))),
-            "days" => Some(IntrospectValue::Int(i64::from(
+            "year" => Ok(IntrospectValue::Int(i64::from(self.displayed_year()))),
+            "month" => Ok(IntrospectValue::Int(i64::from(self.displayed_month()))),
+            "days" => Ok(IntrospectValue::Int(i64::from(
                 self.days_in_displayed_month(),
             ))),
-            "selected" => Some(IntrospectValue::Bool(self.selected().is_some())),
-            "selected_year" => Some(IntrospectValue::Int(
+            "selected" => Ok(IntrospectValue::Bool(self.selected().is_some())),
+            "selected_year" => Ok(IntrospectValue::Int(
                 self.selected().map_or(-1, |d| i64::from(d.year)),
             )),
-            "selected_month" => Some(IntrospectValue::Int(
+            "selected_month" => Ok(IntrospectValue::Int(
                 self.selected().map_or(-1, |d| i64::from(d.month)),
             )),
-            "selected_day" => Some(IntrospectValue::Int(
+            "selected_day" => Ok(IntrospectValue::Int(
                 self.selected().map_or(-1, |d| i64::from(d.day)),
             )),
             // R704 §5.40 — the roving active descendant. `-1` until an
             // arrow / Home / End / activation lands a value (mirror of
             // `RadioGroup`'s `focused_index`, which uses `Null`; the
             // picker uses `-1` for parity with its other `int` day slots).
-            "focused_day" => Some(IntrospectValue::Int(
+            "focused_day" => Ok(IntrospectValue::Int(
                 self.focused_day().map_or(-1, i64::from),
             )),
             _ => {
@@ -578,20 +578,30 @@ impl ExternalIntrospect for DatePickerExternal {
                 // `selected.<d>` (the in-view selected bit). Out-of-
                 // range days and malformed suffixes return `None`.
                 if let Some(day_str) = path.strip_prefix("state.") {
-                    let day: u8 = day_str.parse().ok()?;
+                    let day: u8 = day_str
+                        .parse()
+                        .map_err(|_| ReadRefusal::QueryTypeMismatch)?;
                     if day < 1 || day > self.days_in_displayed_month() {
-                        return None;
+                        return Err(ReadRefusal::no_such_member(format!(
+                            "day {day} is outside 1..={} for the displayed month",
+                            self.days_in_displayed_month()
+                        )));
                     }
-                    return Some(IntrospectValue::Text(self.state(day).as_name().to_string()));
+                    return Ok(IntrospectValue::Text(self.state(day).as_name().to_string()));
                 }
                 if let Some(day_str) = path.strip_prefix("selected.") {
-                    let day: u8 = day_str.parse().ok()?;
+                    let day: u8 = day_str
+                        .parse()
+                        .map_err(|_| ReadRefusal::QueryTypeMismatch)?;
                     if day < 1 || day > self.days_in_displayed_month() {
-                        return None;
+                        return Err(ReadRefusal::no_such_member(format!(
+                            "day {day} is outside 1..={} for the displayed month",
+                            self.days_in_displayed_month()
+                        )));
                     }
-                    return Some(IntrospectValue::Bool(self.is_selected(day)));
+                    return Ok(IntrospectValue::Bool(self.is_selected(day)));
                 }
-                None
+                Err(ReadRefusal::UnknownPath)
             }
         }
     }
@@ -985,11 +995,11 @@ mod tests {
         // slot. `-1` until set; `Int(d)` validates against the month;
         // `Null` clears; out-of-range / wrong-variant rejected.
         let mut p = DatePickerExternal::new(2026, 5, None);
-        assert_eq!(p.query("focused_day"), Some(IntrospectValue::Int(-1)));
+        assert_eq!(p.query("focused_day"), Ok(IntrospectValue::Int(-1)));
         p.intervene("focused_day", IntrospectValue::Int(15))
             .unwrap();
         assert_eq!(p.focused_day(), Some(15));
-        assert_eq!(p.query("focused_day"), Some(IntrospectValue::Int(15)));
+        assert_eq!(p.query("focused_day"), Ok(IntrospectValue::Int(15)));
         // No `"selected"` intent — focused_day is navigation, not commit.
         assert!(!p.is_dirty());
         p.intervene("focused_day", IntrospectValue::Null).unwrap();
@@ -1038,18 +1048,26 @@ mod tests {
     fn external_introspect_round_trip() {
         let mut p = DatePickerExternal::new(2026, 5, None);
         activate_ext(&mut p, 15);
-        assert_eq!(p.query("year"), Some(IntrospectValue::Int(2026)));
-        assert_eq!(p.query("month"), Some(IntrospectValue::Int(5)));
-        assert_eq!(p.query("days"), Some(IntrospectValue::Int(31)));
-        assert_eq!(p.query("selected"), Some(IntrospectValue::Bool(true)));
-        assert_eq!(p.query("selected_year"), Some(IntrospectValue::Int(2026)));
-        assert_eq!(p.query("selected_month"), Some(IntrospectValue::Int(5)));
-        assert_eq!(p.query("selected_day"), Some(IntrospectValue::Int(15)));
-        assert_eq!(p.query("selected.15"), Some(IntrospectValue::Bool(true)));
-        assert_eq!(p.query("selected.14"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(p.query("selected.99"), None);
-        assert_eq!(p.query("state.99"), None);
-        assert_eq!(p.query("bogus"), None);
+        assert_eq!(p.query("year"), Ok(IntrospectValue::Int(2026)));
+        assert_eq!(p.query("month"), Ok(IntrospectValue::Int(5)));
+        assert_eq!(p.query("days"), Ok(IntrospectValue::Int(31)));
+        assert_eq!(p.query("selected"), Ok(IntrospectValue::Bool(true)));
+        assert_eq!(p.query("selected_year"), Ok(IntrospectValue::Int(2026)));
+        assert_eq!(p.query("selected_month"), Ok(IntrospectValue::Int(5)));
+        assert_eq!(p.query("selected_day"), Ok(IntrospectValue::Int(15)));
+        assert_eq!(p.query("selected.15"), Ok(IntrospectValue::Bool(true)));
+        assert_eq!(p.query("selected.14"), Ok(IntrospectValue::Bool(false)));
+        assert!(matches!(
+            p.query("selected.99"),
+            Err(ReadRefusal::NoSuchMember(_))
+        ));
+        assert!(matches!(
+            p.query("state.99"),
+            Err(ReadRefusal::NoSuchMember(_))
+        ),);
+        // R1667 - an undeclared NAME is a different refusal from an index the
+        // declared family does not have.
+        assert_eq!(p.query("bogus"), Err(ReadRefusal::UnknownPath));
     }
 
     #[test]
@@ -1058,7 +1076,7 @@ mod tests {
         activate_ext(&mut p, 15);
         p.step_month(1); // June
         // No June day reports selected, but the date is preserved.
-        assert_eq!(p.query("selected.15"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(p.query("selected_month"), Some(IntrospectValue::Int(5)));
+        assert_eq!(p.query("selected.15"), Ok(IntrospectValue::Bool(false)));
+        assert_eq!(p.query("selected_month"), Ok(IntrospectValue::Int(5)));
     }
 }

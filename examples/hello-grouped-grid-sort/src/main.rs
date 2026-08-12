@@ -43,8 +43,8 @@ use pinion_a11y::{
     grouped_grid_access_nodes,
 };
 use pinion_core::external::{
-    External, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource, SchemaArg,
-    SchemaField, int_of,
+    External, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource, ReadRefusal,
+    SchemaArg, SchemaField, int_of,
 };
 use pinion_core::reactive::Owner;
 use pinion_core::scene::{ContainerNode, Rect, TextNode, TextRole};
@@ -196,27 +196,40 @@ impl QuerySource for GroupAggregates {
         )
     }
 
-    fn introspect_query(&self, path: &str) -> Option<IntrospectValue> {
+    fn introspect_query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "group_count" => Some(IntrospectValue::Int(int_of(self.groups.group_count()))),
-            "total_count" => Some(IntrospectValue::Int(int_of(self.groups.count()))),
-            "total_size" => Some(IntrospectValue::Int(
+            "group_count" => Ok(IntrospectValue::Int(int_of(self.groups.group_count()))),
+            "total_count" => Ok(IntrospectValue::Int(int_of(self.groups.count()))),
+            "total_size" => Ok(IntrospectValue::Int(
                 i64::try_from(self.total_size.iter().sum::<u64>()).unwrap_or(i64::MAX),
             )),
             _ => {
-                let (g_str, field) = path.strip_prefix("group.")?.split_once('.')?;
-                let g: usize = g_str.parse().ok()?;
+                let (g_str, field) = path
+                    .strip_prefix("group.")
+                    .ok_or(ReadRefusal::UnknownPath)?
+                    .split_once('.')
+                    .ok_or(ReadRefusal::QueryTypeMismatch)?;
+                let g: usize = g_str.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?;
+                // R1667 — the out-of-range gate stays (`total_member_count`
+                // answers 0 for an id that does not exist, and reporting that
+                // would fabricate an empty group), and it now says which id
+                // range does exist instead of "no such path".
+                let no_group = || {
+                    ReadRefusal::no_such_member(format!(
+                        "group {g} is outside 0..{}",
+                        self.groups.group_count()
+                    ))
+                };
                 match field {
-                    // Count from the membership SSOT. `total_member_count` returns
-                    // 0 for an out-of-range id, so gate on `group_count` to keep
-                    // the out-of-range path a None (an RPC UnknownPath error).
                     "count" => (g < self.groups.group_count())
-                        .then(|| IntrospectValue::Int(int_of(self.groups.total_member_count(g)))),
+                        .then(|| IntrospectValue::Int(int_of(self.groups.total_member_count(g))))
+                        .ok_or_else(no_group),
                     "size" => self
                         .total_size
                         .get(g)
-                        .map(|&s| IntrospectValue::Int(i64::try_from(s).unwrap_or(i64::MAX))),
-                    _ => None,
+                        .map(|&s| IntrospectValue::Int(i64::try_from(s).unwrap_or(i64::MAX)))
+                        .ok_or_else(no_group),
+                    _ => Err(ReadRefusal::UnknownPath),
                 }
             }
         }
@@ -803,35 +816,41 @@ mod tests {
             let agg = use_group_aggregates();
             assert_eq!(
                 agg.introspect_query("group_count"),
-                Some(IntrospectValue::Int(int_of(GROUPS.len()))),
+                Ok(IntrospectValue::Int(int_of(GROUPS.len()))),
             );
             assert_eq!(
                 agg.introspect_query("total_count"),
-                Some(IntrospectValue::Int(int_of(N)))
+                Ok(IntrospectValue::Int(int_of(N)))
             );
             let total: u64 = agg.total_size.iter().sum();
             assert_eq!(
                 agg.introspect_query("total_size"),
-                Some(IntrospectValue::Int(i64::try_from(total).unwrap())),
+                Ok(IntrospectValue::Int(i64::try_from(total).unwrap())),
             );
             // group count delegates to the membership SSOT (R856).
             let g0 = agg.groups.total_member_count(0);
             assert_eq!(
                 agg.introspect_query("group.0.count"),
-                Some(IntrospectValue::Int(int_of(g0)))
+                Ok(IntrospectValue::Int(int_of(g0)))
             );
             assert_eq!(
                 agg.introspect_query("group.0.size"),
-                Some(IntrospectValue::Int(
+                Ok(IntrospectValue::Int(
                     i64::try_from(agg.total_size[0]).unwrap()
                 )),
             );
-            assert_eq!(
-                agg.introspect_query("group.99.count"),
-                None,
-                "out-of-range group is None"
+            assert!(
+                matches!(
+                    agg.introspect_query("group.99.count"),
+                    Err(ReadRefusal::NoSuchMember(_))
+                ),
+                "R1667 - the group family is declared and 99 addresses nothing"
             );
-            assert_eq!(agg.introspect_query("bogus"), None, "unknown path is None");
+            assert_eq!(
+                agg.introspect_query("bogus"),
+                Err(ReadRefusal::UnknownPath),
+                "unknown path is Err(ReadRefusal::UnknownPath)"
+            );
         });
     }
 
@@ -843,15 +862,15 @@ mod tests {
             let intro = External::introspect(&ext).expect("query-only introspectable");
             assert_eq!(
                 intro.query("group_count"),
-                Some(IntrospectValue::Int(int_of(GROUPS.len()))),
+                Ok(IntrospectValue::Int(int_of(GROUPS.len()))),
             );
             assert_eq!(
                 intro.query("total_count"),
-                Some(IntrospectValue::Int(int_of(N)))
+                Ok(IntrospectValue::Int(int_of(N)))
             );
             assert_eq!(
                 intro.query("group.0.size"),
-                Some(IntrospectValue::Int(
+                Ok(IntrospectValue::Int(
                     i64::try_from(agg.total_size[0]).unwrap()
                 )),
             );

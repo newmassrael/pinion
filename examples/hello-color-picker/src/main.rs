@@ -391,11 +391,19 @@ fn read_sv(scene: &Scene) -> (ColorAreaState, f32, f32) {
     if let Some(node) = scene.find_external_with_tag(SV_TAG) {
         if let Some(intro) = node.handle.introspect() {
             let st = match intro.query("state") {
-                Some(IntrospectValue::Text(name)) => ColorAreaState::from_name_or_default(&name),
+                Ok(IntrospectValue::Text(name)) => ColorAreaState::from_name_or_default(&name),
                 _ => ColorAreaState::Idle,
             };
-            let x = intro.query("x").and_then(|v| v.as_f32()).unwrap_or(0.0);
-            let y = intro.query("y").and_then(|v| v.as_f32()).unwrap_or(0.0);
+            let x = intro
+                .query("x")
+                .ok()
+                .and_then(|v| v.as_f32())
+                .unwrap_or(0.0);
+            let y = intro
+                .query("y")
+                .ok()
+                .and_then(|v| v.as_f32())
+                .unwrap_or(0.0);
             return (st, x, y);
         }
     }
@@ -407,7 +415,7 @@ fn read_hue(scene: &Scene) -> f32 {
     scene
         .find_external_with_tag(HUE_TAG)
         .and_then(|node| node.handle.introspect())
-        .and_then(|intro| intro.query("value"))
+        .and_then(|intro| intro.query("value").ok())
         .and_then(|v| v.as_f32())
         .unwrap_or(0.0)
 }
@@ -490,8 +498,16 @@ fn nudge_sv(scene: &mut Scene, key: &str) -> bool {
     let Some(intro) = node.handle.introspect_mut() else {
         return false;
     };
-    let x = intro.query("x").and_then(|v| v.as_f32()).unwrap_or(0.0);
-    let y = intro.query("y").and_then(|v| v.as_f32()).unwrap_or(0.0);
+    let x = intro
+        .query("x")
+        .ok()
+        .and_then(|v| v.as_f32())
+        .unwrap_or(0.0);
+    let y = intro
+        .query("y")
+        .ok()
+        .and_then(|v| v.as_f32())
+        .unwrap_or(0.0);
     let (axis, next) = match key {
         "ArrowLeft" => ("x", (x - STEP).clamp(0.0, 1.0)),
         "ArrowRight" => ("x", (x + STEP).clamp(0.0, 1.0)),
@@ -516,7 +532,11 @@ fn nudge_axis(scene: &mut Scene, tag: &str, path: &str, key: &str) -> bool {
     let Some(intro) = node.handle.introspect_mut() else {
         return false;
     };
-    let cur = intro.query(path).and_then(|v| v.as_f32()).unwrap_or(0.0);
+    let cur = intro
+        .query(path)
+        .ok()
+        .and_then(|v| v.as_f32())
+        .unwrap_or(0.0);
     let next = match key {
         "ArrowLeft" | "ArrowDown" => (cur - STEP).clamp(0.0, 1.0),
         "ArrowRight" | "ArrowUp" => (cur + STEP).clamp(0.0, 1.0),

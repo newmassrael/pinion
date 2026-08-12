@@ -534,7 +534,7 @@ pub fn read_button_state(scene: &Scene, tag: &str) -> ButtonState {
     scene
         .find_external_with_tag(tag)
         .and_then(|node| node.handle.introspect())
-        .and_then(|intro| intro.query("state"))
+        .and_then(|intro| intro.query("state").ok())
         .map_or(ButtonState::Idle, |v| match v {
             IntrospectValue::Text(s) => ButtonState::from_name_or_default(&s),
             _ => ButtonState::Idle,
@@ -574,7 +574,7 @@ pub fn read_button_focused(scene: &Scene, tag: &str) -> bool {
     scene
         .find_external_with_tag(tag)
         .and_then(|node| node.handle.introspect())
-        .and_then(|intro| intro.query("focused"))
+        .and_then(|intro| intro.query("focused").ok())
         .is_some_and(|v| matches!(v, IntrospectValue::Bool(true)))
 }
 

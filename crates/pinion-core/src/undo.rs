@@ -64,7 +64,8 @@ use serde::de::DeserializeOwned;
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use crate::input::Modifiers;
 use crate::reactive::{Owner, Signal};
@@ -687,7 +688,7 @@ impl ExternalIntrospect for UndoStackExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         // Every slot delegates to the shared [`UndoStack`]'s public API —
         // the single source of truth for "what does can_undo / a label
         // mean". The reactive accessors are safe to call from the RPC path:
@@ -695,15 +696,15 @@ impl ExternalIntrospect for UndoStackExternal {
         // returns the value (so there is no separate non-reactive branch to
         // keep in step).
         match path {
-            "can_undo" => Some(IntrospectValue::Bool(self.stack.can_undo())),
-            "can_redo" => Some(IntrospectValue::Bool(self.stack.can_redo())),
-            "index" => Some(self.index_value()),
-            "count" => Some(IntrospectValue::Int(
+            "can_undo" => Ok(IntrospectValue::Bool(self.stack.can_undo())),
+            "can_redo" => Ok(IntrospectValue::Bool(self.stack.can_redo())),
+            "index" => Ok(self.index_value()),
+            "count" => Ok(IntrospectValue::Int(
                 i64::try_from(self.stack.len()).unwrap_or(i64::MAX),
             )),
-            "undo_label" => Some(Self::label_value(self.stack.undo_label())),
-            "redo_label" => Some(Self::label_value(self.stack.redo_label())),
-            _ => None,
+            "undo_label" => Ok(Self::label_value(self.stack.undo_label())),
+            "redo_label" => Ok(Self::label_value(self.stack.redo_label())),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -972,15 +973,15 @@ mod tests {
             stack.record(SignalEdit::to(&counter, 7, "set 7"));
             let mut ext = UndoStackExternal::new(Rc::clone(&stack));
 
-            assert_eq!(ext.query("can_undo"), Some(IntrospectValue::Bool(true)));
-            assert_eq!(ext.query("can_redo"), Some(IntrospectValue::Bool(false)));
-            assert_eq!(ext.query("index"), Some(IntrospectValue::Int(1)));
-            assert_eq!(ext.query("count"), Some(IntrospectValue::Int(1)));
+            assert_eq!(ext.query("can_undo"), Ok(IntrospectValue::Bool(true)));
+            assert_eq!(ext.query("can_redo"), Ok(IntrospectValue::Bool(false)));
+            assert_eq!(ext.query("index"), Ok(IntrospectValue::Int(1)));
+            assert_eq!(ext.query("count"), Ok(IntrospectValue::Int(1)));
             assert_eq!(
                 ext.query("undo_label"),
-                Some(IntrospectValue::Text(String::from("set 7"))),
+                Ok(IntrospectValue::Text(String::from("set 7"))),
             );
-            assert_eq!(ext.query("redo_label"), Some(IntrospectValue::Null));
+            assert_eq!(ext.query("redo_label"), Ok(IntrospectValue::Null));
 
             // invoke undo → value reverts, cursor steps back.
             assert_eq!(
@@ -988,7 +989,7 @@ mod tests {
                 Ok(IntrospectValue::Bool(true))
             );
             assert_eq!(counter.get(), 0);
-            assert_eq!(ext.query("index"), Some(IntrospectValue::Int(0)));
+            assert_eq!(ext.query("index"), Ok(IntrospectValue::Int(0)));
             // invoke redo → value re-applies.
             assert_eq!(
                 ext.invoke("redo", IntrospectValue::Null),
@@ -1000,7 +1001,7 @@ mod tests {
                 ext.invoke("clear", IntrospectValue::Null),
                 Ok(IntrospectValue::Int(0))
             );
-            assert_eq!(ext.query("count"), Some(IntrospectValue::Int(0)));
+            assert_eq!(ext.query("count"), Ok(IntrospectValue::Int(0)));
 
             assert_eq!(
                 ext.intervene("index", IntrospectValue::Int(3)),

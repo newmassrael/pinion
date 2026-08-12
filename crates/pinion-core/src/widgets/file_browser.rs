@@ -35,8 +35,8 @@ use crate::composite_tag::split_subindex;
 use crate::directory::{DirEntry, Directory};
 use crate::external::{
     Backend, BackendFallback, BackendSupport, DragPayload, DropPoint, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
-    SchemaField, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
+    SchemaArg, SchemaField, ThreadOwnership,
 };
 use crate::input::{PointerWireEvent, is_activation_event};
 use crate::reactive::{Owner, Signal};
@@ -942,49 +942,60 @@ impl ExternalIntrospect for DirectoryExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         // Indexed entry fields: `name.<i>` / `is_dir.<i>`.
         if let Some(rest) = path.strip_prefix("name.") {
-            let i: usize = rest.parse().ok()?;
+            let i: usize = rest.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?;
             return self
                 .state
                 .entries()
                 .get(i)
-                .map(|e| IntrospectValue::Text(e.name.clone()));
+                .map(|e| IntrospectValue::Text(e.name.clone()))
+                .ok_or_else(|| {
+                    ReadRefusal::no_such_member(format!(
+                        "entry {i} is outside 0..{}",
+                        self.state.entries().len()
+                    ))
+                });
         }
         if let Some(rest) = path.strip_prefix("is_dir.") {
-            let i: usize = rest.parse().ok()?;
+            let i: usize = rest.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?;
             return self
                 .state
                 .entries()
                 .get(i)
-                .map(|e| IntrospectValue::Bool(e.is_dir));
+                .map(|e| IntrospectValue::Bool(e.is_dir))
+                .ok_or_else(|| {
+                    ReadRefusal::no_such_member(format!(
+                        "entry {i} is outside 0..{}",
+                        self.state.entries().len()
+                    ))
+                });
         }
         match path {
-            "cwd" => Some(IntrospectValue::Text(self.state.cwd())),
-            "count" => Some(IntrospectValue::Int(
+            "cwd" => Ok(IntrospectValue::Text(self.state.cwd())),
+            "count" => Ok(IntrospectValue::Int(
                 i64::try_from(self.state.count()).unwrap_or(i64::MAX),
             )),
-            "entries" => Some(IntrospectValue::Text(entries_wire(&self.state.entries()))),
-            "selected" => Some(match self.state.selected() {
+            "entries" => Ok(IntrospectValue::Text(entries_wire(&self.state.entries()))),
+            "selected" => Ok(match self.state.selected() {
                 Some(p) => IntrospectValue::Text(p),
                 None => IntrospectValue::Null,
             }),
             // R792 — the effective keyboard-cursor row (Null only when empty).
-            "cursor" => Some(
-                self.state
-                    .cursor()
-                    .and_then(|i| i64::try_from(i).ok())
-                    .map_or(IntrospectValue::Null, IntrospectValue::Int),
-            ),
+            "cursor" => Ok(self
+                .state
+                .cursor()
+                .and_then(|i| i64::try_from(i).ok())
+                .map_or(IntrospectValue::Null, IntrospectValue::Int)),
             // R794 — the in-flight drag-to-move state.
-            "dragging" => Some(IntrospectValue::Bool(self.state.pressed().is_some())),
-            "drop_target" => Some(match self.state.drop_target() {
+            "dragging" => Ok(IntrospectValue::Bool(self.state.pressed().is_some())),
+            "drop_target" => Ok(match self.state.drop_target() {
                 Some(FileDropTarget::Row(i)) => IntrospectValue::Text(format!("row:{i}")),
                 Some(FileDropTarget::Up) => IntrospectValue::Text("up".into()),
                 None => IntrospectValue::Null,
             }),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -1200,24 +1211,21 @@ mod tests {
     fn r787_external_query_surface() {
         let st = Rc::new(state());
         let ext = DirectoryExternal::new(Rc::clone(&st));
-        assert_eq!(
-            ext.query("cwd"),
-            Some(IntrospectValue::Text("/proj".into()))
-        );
-        assert_eq!(ext.query("count"), Some(IntrospectValue::Int(3)));
+        assert_eq!(ext.query("cwd"), Ok(IntrospectValue::Text("/proj".into())));
+        assert_eq!(ext.query("count"), Ok(IntrospectValue::Int(3)));
         assert_eq!(
             ext.query("entries"),
-            Some(IntrospectValue::Text("src/\nCargo.toml\nREADME.md".into())),
+            Ok(IntrospectValue::Text("src/\nCargo.toml\nREADME.md".into())),
             "dirs suffixed '/' in the wire listing",
         );
-        assert_eq!(
-            ext.query("name.0"),
-            Some(IntrospectValue::Text("src".into()))
+        assert_eq!(ext.query("name.0"), Ok(IntrospectValue::Text("src".into())));
+        assert_eq!(ext.query("is_dir.0"), Ok(IntrospectValue::Bool(true)));
+        assert_eq!(ext.query("is_dir.1"), Ok(IntrospectValue::Bool(false)));
+        assert_eq!(ext.query("selected"), Ok(IntrospectValue::Null));
+        assert!(
+            matches!(ext.query("name.9"), Err(ReadRefusal::NoSuchMember(_))),
+            "R1667 - the family is declared and this argument addresses nothing"
         );
-        assert_eq!(ext.query("is_dir.0"), Some(IntrospectValue::Bool(true)));
-        assert_eq!(ext.query("is_dir.1"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(ext.query("selected"), Some(IntrospectValue::Null));
-        assert_eq!(ext.query("name.9"), None, "out-of-range index = None");
     }
 
     #[test]
@@ -1701,11 +1709,11 @@ mod tests {
         let st = Rc::new(state());
         let mut ext = DirectoryExternal::new(Rc::clone(&st));
         // Effective cursor defaults to the first row.
-        assert_eq!(ext.query("cursor"), Some(IntrospectValue::Int(0)));
+        assert_eq!(ext.query("cursor"), Ok(IntrospectValue::Int(0)));
         st.move_cursor("End", 5);
         assert_eq!(
             ext.query("cursor"),
-            Some(IntrospectValue::Int(2)),
+            Ok(IntrospectValue::Int(2)),
             "query tracks the moved cursor"
         );
         // Admin set via intervene.
@@ -1924,14 +1932,14 @@ mod tests {
     fn r794_external_drag_hooks_and_introspection() {
         let st = Rc::new(state()); // [src(dir)@0, Cargo.toml@1, README.md@2]
         let mut ext = DirectoryExternal::new(Rc::clone(&st));
-        assert_eq!(ext.query("dragging"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(ext.query("drop_target"), Some(IntrospectValue::Null));
+        assert_eq!(ext.query("dragging"), Ok(IntrospectValue::Bool(false)));
+        assert_eq!(ext.query("drop_target"), Ok(IntrospectValue::Null));
         // A row PointerDown arms the drag (the router's begin_drag source).
         ext.invoke("send", IntrospectValue::Text("2:PointerDown".into()))
             .unwrap();
         assert_eq!(
             ext.query("dragging"),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
             "armed after PointerDown"
         );
         let payload = ext
@@ -1941,7 +1949,7 @@ mod tests {
         ext.drag_to(&payload, Some(drop_at("fb#0")));
         assert_eq!(
             ext.query("drop_target"),
-            Some(IntrospectValue::Text("row:0".into())),
+            Ok(IntrospectValue::Text("row:0".into())),
             "the in-flight target is scene-as-data",
         );
         // release commits the move and clears the transient state.
@@ -1952,12 +1960,12 @@ mod tests {
         );
         assert_eq!(
             ext.query("dragging"),
-            Some(IntrospectValue::Bool(false)),
+            Ok(IntrospectValue::Bool(false)),
             "disarmed after drop"
         );
         assert_eq!(
             ext.query("drop_target"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "highlight cleared after drop"
         );
         // The drag introspection slots are read-only.
@@ -1982,7 +1990,7 @@ mod tests {
         ext.drag_to(&payload, Some(drop_at("fb#up")));
         assert_eq!(
             ext.query("drop_target"),
-            Some(IntrospectValue::Text("up".into())),
+            Ok(IntrospectValue::Text("up".into())),
             "Up reports as text"
         );
     }

@@ -37,7 +37,8 @@ use core::fmt;
 use pinion_a11y::WidgetA11y;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use pinion_core::scene::{BoxNode, ContainerNode, Rect};
 use pinion_core::style::{BoxStyle, Color};
@@ -204,10 +205,10 @@ impl ExternalIntrospect for SmokeExternal {
     fn schema(&self) -> IntrospectSchema {
         IntrospectSchema::new(const { &[SchemaField::new("value", "bool")] })
     }
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "value" => Some(IntrospectValue::Bool(self.value)),
-            _ => None,
+            "value" => Ok(IntrospectValue::Bool(self.value)),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
     fn intervene(&mut self, _path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {

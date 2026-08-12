@@ -43,7 +43,8 @@ use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_chart::{ColorScale, readable_ink};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use pinion_core::scene::{ContainerNode, Rect, TextGridNode, TextNode};
 use pinion_core::style::{BoxStyle, Color, LayoutStyle, Size, TextStyle};
@@ -189,7 +190,7 @@ fn read_hover(scene: &Scene) -> Option<Hover> {
         .find_external_with_tag(GRID_TAG)?
         .handle
         .introspect()?;
-    let field = |name: &str| match intro.query(name)? {
+    let field = |name: &str| match intro.query(name).ok()? {
         IntrospectValue::Int(i) => usize::try_from(i).ok(),
         _ => None,
     };
@@ -435,18 +436,18 @@ impl ExternalIntrospect for HeatmapOracle {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         let int = |n: usize| IntrospectValue::Int(i64::try_from(n).unwrap_or(0));
         match path {
-            "rows" => Some(int(ROWS)),
-            "cols" => Some(int(COLS)),
-            "max_value" => Some(int(usize::from(MAX))),
-            "hovered_row" => Some(self.hover.map_or(IntrospectValue::Null, |h| int(h.row))),
-            "hovered_col" => Some(self.hover.map_or(IntrospectValue::Null, |h| int(h.col))),
-            "hovered_value" => Some(self.hover.map_or(IntrospectValue::Null, |h| {
+            "rows" => Ok(int(ROWS)),
+            "cols" => Ok(int(COLS)),
+            "max_value" => Ok(int(usize::from(MAX))),
+            "hovered_row" => Ok(self.hover.map_or(IntrospectValue::Null, |h| int(h.row))),
+            "hovered_col" => Ok(self.hover.map_or(IntrospectValue::Null, |h| int(h.col))),
+            "hovered_value" => Ok(self.hover.map_or(IntrospectValue::Null, |h| {
                 int(usize::from(self.value_of(h)))
             })),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -737,11 +738,11 @@ mod tests {
     #[test]
     fn oracle_reports_the_model_and_the_hover() {
         let mut o = HeatmapOracle::new();
-        assert_eq!(o.query("rows"), Some(IntrospectValue::Int(8)));
-        assert_eq!(o.query("cols"), Some(IntrospectValue::Int(12)));
-        assert_eq!(o.query("max_value"), Some(IntrospectValue::Int(100)));
-        assert_eq!(o.query("hovered_row"), Some(IntrospectValue::Null));
-        assert_eq!(o.query("nope"), None);
+        assert_eq!(o.query("rows"), Ok(IntrospectValue::Int(8)));
+        assert_eq!(o.query("cols"), Ok(IntrospectValue::Int(12)));
+        assert_eq!(o.query("max_value"), Ok(IntrospectValue::Int(100)));
+        assert_eq!(o.query("hovered_row"), Ok(IntrospectValue::Null));
+        assert_eq!(o.query("nope"), Err(ReadRefusal::UnknownPath));
 
         // value_at reads the whole matrix; it matches the internal matrix.
         let m = matrix();
@@ -759,15 +760,15 @@ mod tests {
         // reflect it.
         o.intervene("hovered_cell", IntrospectValue::Text("2,8".into()))
             .unwrap();
-        assert_eq!(o.query("hovered_row"), Some(IntrospectValue::Int(2)));
-        assert_eq!(o.query("hovered_col"), Some(IntrospectValue::Int(8)));
+        assert_eq!(o.query("hovered_row"), Ok(IntrospectValue::Int(2)));
+        assert_eq!(o.query("hovered_col"), Ok(IntrospectValue::Int(8)));
         assert_eq!(
             o.query("hovered_value"),
-            Some(IntrospectValue::Int(i64::from(m[2][8]))),
+            Ok(IntrospectValue::Int(i64::from(m[2][8]))),
         );
         // Null clears; out-of-range and read-only are rejected.
         o.intervene("hovered_cell", IntrospectValue::Null).unwrap();
-        assert_eq!(o.query("hovered_row"), Some(IntrospectValue::Null));
+        assert_eq!(o.query("hovered_row"), Ok(IntrospectValue::Null));
         assert_out_of_range_saying(
             &o.intervene("hovered_cell", IntrospectValue::Text("8,0".into())),
             "no cell (8, 0) in this heatmap",

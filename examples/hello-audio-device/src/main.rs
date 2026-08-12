@@ -129,7 +129,7 @@ use pinion_audio::{
 };
 use pinion_core::external::{
     External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
-    SchemaField, forward_intents, read_only_or_unknown,
+    ReadRefusal, SchemaField, forward_intents, read_only_or_unknown,
 };
 use pinion_core::intent::Intent;
 use pinion_core::reactive::Owner;
@@ -471,9 +471,9 @@ impl ExternalIntrospect for DeviceAudioExternal {
         IntrospectSchema::new(&SCHEMA_FIELDS)
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "device" => Some(IntrospectValue::Text(
+            "device" => Ok(IntrospectValue::Text(
                 self.rig.out.borrow().device_name().to_owned(),
             )),
             // What the host offers — the list a settings panel is built on. Read
@@ -482,31 +482,31 @@ impl ExternalIntrospect for DeviceAudioExternal {
             // job is telling "nothing there" apart from "the thing is broken",
             // collapsing an error into an empty list is the same lie it exists to
             // prevent.
-            "devices" => Some(match CpalOutput::output_device_names() {
+            "devices" => Ok(match CpalOutput::output_device_names() {
                 Ok(names) => IntrospectValue::json(&names),
                 Err(_) => IntrospectValue::Null,
             }),
-            "sample_rate" => Some(IntrospectValue::Int(i64::from(
+            "sample_rate" => Ok(IntrospectValue::Int(i64::from(
                 self.rig.out.borrow().sample_rate(),
             ))),
-            "channels" => Some(IntrospectValue::Int(i64::from(
+            "channels" => Ok(IntrospectValue::Int(i64::from(
                 self.rig.out.borrow().channels(),
             ))),
             // A stable wire token, not `Debug` of a foreign `#[non_exhaustive]`
             // enum — cpal's rendering is not ours to promise.
-            "sample_format" => Some(IntrospectValue::Text(
+            "sample_format" => Ok(IntrospectValue::Text(
                 self.rig.out.borrow().sample_format_wire().to_owned(),
             )),
             // Non-zero means the output has faulted — the only reading that tells
             // "nothing is playing" apart from "the device is gone".
-            "stream_errors" => Some(IntrospectValue::Int(
+            "stream_errors" => Ok(IntrospectValue::Int(
                 i64::try_from(self.rig.out.borrow().stream_errors()).unwrap_or(i64::MAX),
             )),
             // Where the game's camera is. Compare it with `listener` to watch the
             // per-frame clock catch up: `set_camera` moves THIS, and only the
             // frame tick moves the listener to match.
-            "camera" => Some(IntrospectValue::json(&self.rig.world.listener().position)),
-            "frame_ticks" => Some(IntrospectValue::Int(
+            "camera" => Ok(IntrospectValue::json(&self.rig.world.listener().position)),
+            "frame_ticks" => Ok(IntrospectValue::Int(
                 i64::try_from(self.rig.world.ticks()).unwrap_or(i64::MAX),
             )),
             // Everything else is the RT surface's, read lock-free off the
@@ -640,7 +640,7 @@ impl WidgetCore for HelloAudioDevice {
         scene
             .primary_external()
             .and_then(|node| node.handle.introspect())
-            .and_then(|intro| intro.query("voice_count"))
+            .and_then(|intro| intro.query("voice_count").ok())
             // `IntrospectValue::as_i64` is core's own typed extractor — no reason
             // to hand-roll the match.
             .and_then(|v| v.as_i64())

@@ -32,8 +32,8 @@
 use std::rc::Rc;
 
 use crate::external::{
-    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, SchemaArg,
-    SchemaField, query_proxy_external_impl,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    ReadRefusal, SchemaArg, SchemaField, query_proxy_external_impl,
 };
 use crate::reactive::{Owner, Signal};
 use crate::style::Color;
@@ -415,20 +415,23 @@ impl ExternalIntrospect for RowStyleExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         if let Some(rest) = path.strip_prefix("rule.") {
-            let i = rest.parse::<usize>().ok()?;
-            return Some(
-                self.state
-                    .rules()
-                    .get(i)
-                    .map_or(IntrospectValue::Null, |r| {
-                        IntrospectValue::Text(r.to_wire())
-                    }),
-            );
+            let i = rest
+                .parse::<usize>()
+                .map_err(|_| ReadRefusal::QueryTypeMismatch)?;
+            return Ok(self
+                .state
+                .rules()
+                .get(i)
+                .map_or(IntrospectValue::Null, |r| {
+                    IntrospectValue::Text(r.to_wire())
+                }));
         }
         if let Some(rest) = path.strip_prefix("match.") {
-            let row = rest.parse::<usize>().ok()?;
+            let row = rest
+                .parse::<usize>()
+                .map_err(|_| ReadRefusal::QueryTypeMismatch)?;
             // (R1353.1) A row past the dataset is ABSENT, not "matches no rule".
             // `-1` is a real answer — it means "this row exists and no rule
             // applies" — so returning it for row 99 of a 3-row grid invents a
@@ -436,37 +439,45 @@ impl ExternalIntrospect for RowStyleExternal {
             // and the declared `IndexOf("rows")` domain is only true with this
             // guard.
             if row >= self.row_count {
-                return None;
+                return Err(ReadRefusal::no_such_member(format!(
+                    "row {row} is outside 0..{}",
+                    self.row_count
+                )));
             }
             let idx = self.match_index(row).and_then(|i| i64::try_from(i).ok());
-            return Some(IntrospectValue::Int(idx.unwrap_or(-1)));
+            return Ok(IntrospectValue::Int(idx.unwrap_or(-1)));
         }
         if let Some(rest) = path.strip_prefix("tint.") {
-            let row = rest.parse::<usize>().ok()?;
+            let row = rest
+                .parse::<usize>()
+                .map_err(|_| ReadRefusal::QueryTypeMismatch)?;
             // Same guard, same reason as `match.<row>` above: `"none"` means
             // "this row exists and no rule tints it", so answering it for a row
             // past the dataset fabricates one.
             if row >= self.row_count {
-                return None;
+                return Err(ReadRefusal::no_such_member(format!(
+                    "row {row} is outside 0..{}",
+                    self.row_count
+                )));
             }
             let wire = self
                 .match_index(row)
                 .and_then(|i| self.state.rules().get(i).map(|r| r.tint.to_wire()))
                 .unwrap_or_else(|| "none".to_string());
-            return Some(IntrospectValue::Text(wire));
+            return Ok(IntrospectValue::Text(wire));
         }
         match path {
-            "rules" => Some(IntrospectValue::Text(self.rules_wire())),
-            "rule_count" => Some(IntrospectValue::Int(
+            "rules" => Ok(IntrospectValue::Text(self.rules_wire())),
+            "rule_count" => Ok(IntrospectValue::Int(
                 i64::try_from(self.state.rule_count()).unwrap_or(i64::MAX),
             )),
-            "rows" => Some(IntrospectValue::Int(
+            "rows" => Ok(IntrospectValue::Int(
                 i64::try_from(self.row_count).unwrap_or(i64::MAX),
             )),
-            "matched_rows" => Some(IntrospectValue::Int(
+            "matched_rows" => Ok(IntrospectValue::Int(
                 i64::try_from(self.matched_rows()).unwrap_or(i64::MAX),
             )),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -628,12 +639,9 @@ mod tests {
             let mut ext = RowStyleExternal::new(Rc::clone(&st))
                 .with_source(rows.len(), move |row| rows[row].clone());
             // Boot: empty.
-            assert_eq!(ext.query("rule_count"), Some(IntrospectValue::Int(0)));
-            assert_eq!(
-                ext.query("rules"),
-                Some(IntrospectValue::Text("none".into()))
-            );
-            assert_eq!(ext.query("rows"), Some(IntrospectValue::Int(4)));
+            assert_eq!(ext.query("rule_count"), Ok(IntrospectValue::Int(0)));
+            assert_eq!(ext.query("rules"), Ok(IntrospectValue::Text("none".into())));
+            assert_eq!(ext.query("rows"), Ok(IntrospectValue::Int(4)));
             // add_rule returns the new count.
             assert_eq!(
                 ext.invoke(
@@ -651,35 +659,35 @@ mod tests {
             );
             assert_eq!(
                 ext.query("rule.0"),
-                Some(IntrospectValue::Text("0=A;#ff3030;#ffffff".into()))
+                Ok(IntrospectValue::Text("0=A;#ff3030;#ffffff".into()))
             );
             // match.<row>: row 0 (A,30) → rule 0; row 3 (C,700) → rule 1; row 1 → -1.
-            assert_eq!(ext.query("match.0"), Some(IntrospectValue::Int(0)));
-            assert_eq!(ext.query("match.3"), Some(IntrospectValue::Int(1)));
-            assert_eq!(ext.query("match.1"), Some(IntrospectValue::Int(-1)));
+            assert_eq!(ext.query("match.0"), Ok(IntrospectValue::Int(0)));
+            assert_eq!(ext.query("match.3"), Ok(IntrospectValue::Int(1)));
+            assert_eq!(ext.query("match.1"), Ok(IntrospectValue::Int(-1)));
             assert_eq!(
                 ext.query("tint.0"),
-                Some(IntrospectValue::Text("#ff3030;#ffffff".into()))
+                Ok(IntrospectValue::Text("#ff3030;#ffffff".into()))
             );
             assert_eq!(
                 ext.query("tint.1"),
-                Some(IntrospectValue::Text("none".into()))
+                Ok(IntrospectValue::Text("none".into()))
             );
             // matched_rows: rows 0,2 (A) + row 3 (700) = 3.
-            assert_eq!(ext.query("matched_rows"), Some(IntrospectValue::Int(3)));
+            assert_eq!(ext.query("matched_rows"), Ok(IntrospectValue::Int(3)));
             // rules wire round-trips through intervene (to_hex emits lowercase).
             let wire = match ext.query("rules") {
-                Some(IntrospectValue::Text(s)) => s,
+                Ok(IntrospectValue::Text(s)) => s,
                 other => panic!("expected text, got {other:?}"),
             };
             assert_eq!(wire, "0=A;#ff3030;#ffffff|1>=100;#30ff30;#000000");
             ext.intervene("rules", IntrospectValue::Null).unwrap();
-            assert_eq!(ext.query("rule_count"), Some(IntrospectValue::Int(0)));
+            assert_eq!(ext.query("rule_count"), Ok(IntrospectValue::Int(0)));
             ext.intervene("rules", IntrospectValue::Text(wire.clone()))
                 .unwrap();
             assert_eq!(
                 ext.query("rule_count"),
-                Some(IntrospectValue::Int(2)),
+                Ok(IntrospectValue::Int(2)),
                 "restore"
             );
             // clear via invoke.
@@ -687,7 +695,7 @@ mod tests {
                 ext.invoke("clear", IntrospectValue::Null),
                 Ok(IntrospectValue::Int(0))
             );
-            assert_eq!(ext.query("rule_count"), Some(IntrospectValue::Int(0)));
+            assert_eq!(ext.query("rule_count"), Ok(IntrospectValue::Int(0)));
             // read-only slots reject intervene.
             assert_eq!(
                 ext.intervene("rule_count", IntrospectValue::Int(1)),

@@ -53,7 +53,8 @@ use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_chart::{ChartStyle, ColorScale, DataPoint, LineChart, Series};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
@@ -327,7 +328,7 @@ impl ExternalIntrospect for TraceOracle {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         let index_of = |key: fn(&Sample) -> f64| {
             let mut best = 0;
             for (i, s) in PROFILE.iter().enumerate() {
@@ -338,24 +339,24 @@ impl ExternalIntrospect for TraceOracle {
             f64::from(u32::try_from(best).unwrap_or(u32::MAX))
         };
         match path {
-            "encoding" => Some(IntrospectValue::Text(self.encoding().name().to_string())),
-            "filled" => Some(IntrospectValue::Bool(self.filled())),
-            "domain_low" => Some(IntrospectValue::Float(DOMAIN_LOW)),
-            "domain_high" => Some(IntrospectValue::Float(DOMAIN_HIGH)),
-            "neutral" => Some(IntrospectValue::Float(NEUTRAL)),
-            "neutral_offset" => Some(IntrospectValue::Float(
+            "encoding" => Ok(IntrospectValue::Text(self.encoding().name().to_string())),
+            "filled" => Ok(IntrospectValue::Bool(self.filled())),
+            "domain_low" => Ok(IntrospectValue::Float(DOMAIN_LOW)),
+            "domain_high" => Ok(IntrospectValue::Float(DOMAIN_HIGH)),
+            "neutral" => Ok(IntrospectValue::Float(NEUTRAL)),
+            "neutral_offset" => Ok(IntrospectValue::Float(
                 (NEUTRAL - DOMAIN_LOW) / (DOMAIN_HIGH - DOMAIN_LOW),
             )),
-            "neutral_hex" => Some(IntrospectValue::Text(hex(scale().sample(0.5)))),
-            "sample_count" => Some(IntrospectValue::Float(f64::from(
+            "neutral_hex" => Ok(IntrospectValue::Text(hex(scale().sample(0.5)))),
+            "sample_count" => Ok(IntrospectValue::Float(f64::from(
                 u32::try_from(PROFILE.len()).unwrap_or(u32::MAX),
             ))),
-            "segment_count" => Some(IntrospectValue::Float(f64::from(
+            "segment_count" => Ok(IntrospectValue::Float(f64::from(
                 u32::try_from(PROFILE.len().saturating_sub(1)).unwrap_or(u32::MAX),
             ))),
-            "peak_index" => Some(IntrospectValue::Float(index_of(|s| s.1))),
-            "steepest_index" => Some(IntrospectValue::Float(index_of(|s| s.2))),
-            _ => None,
+            "peak_index" => Ok(IntrospectValue::Float(index_of(|s| s.1))),
+            "steepest_index" => Ok(IntrospectValue::Float(index_of(|s| s.2))),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 

@@ -61,7 +61,8 @@
 use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode, capture_surface};
 use pinion_core::style::{Border, BoxStyle, LayoutStyle, Size, TextStyle};
@@ -530,7 +531,7 @@ fn read_sink(scene: &Scene) -> SinkState {
         return SinkState::default();
     };
     let count = match intro.query("report_count") {
-        Some(IntrospectValue::Int(n)) => usize::try_from(n).unwrap_or(0),
+        Ok(IntrospectValue::Int(n)) => usize::try_from(n).unwrap_or(0),
         _ => 0,
     };
     let last = read_last_report(intro);
@@ -546,7 +547,7 @@ fn read_sink(scene: &Scene) -> SinkState {
         tangential: query_frac(intro, "tangential").unwrap_or(0.0),
         height: query_frac(intro, "height").unwrap_or(0.0),
         kind: match intro.query("pointer_type") {
-            Some(IntrospectValue::Text(s)) => {
+            Ok(IntrospectValue::Text(s)) => {
                 PointerKind::from_wire_name(&s).unwrap_or(PointerKind::Mouse)
             }
             _ => PointerKind::Mouse,
@@ -558,23 +559,23 @@ fn read_sink(scene: &Scene) -> SinkState {
 /// surface — the same fields the AI-first `scene/query` client reads.
 fn read_last_report(intro: &dyn ExternalIntrospect) -> Option<ButtonReport> {
     let button = match intro.query("last_button") {
-        Some(IntrospectValue::Text(s)) => PointerButton::from_wire_name(&s)?,
+        Ok(IntrospectValue::Text(s)) => PointerButton::from_wire_name(&s)?,
         _ => return None,
     };
     let edge = match intro.query("last_edge") {
-        Some(IntrospectValue::Text(s)) => PointerEdge::from_wire_name(&s)?,
+        Ok(IntrospectValue::Text(s)) => PointerEdge::from_wire_name(&s)?,
         _ => return None,
     };
     let modifiers = match intro.query("last_mods") {
-        Some(IntrospectValue::Text(s)) => Modifiers::from_wire_token(&s).unwrap_or_default(),
+        Ok(IntrospectValue::Text(s)) => Modifiers::from_wire_token(&s).unwrap_or_default(),
         _ => Modifiers::empty(),
     };
     let buttons = match intro.query("last_buttons") {
-        Some(IntrospectValue::Text(s)) => PointerButtons::from_wire_token(&s).unwrap_or_default(),
+        Ok(IntrospectValue::Text(s)) => PointerButtons::from_wire_token(&s).unwrap_or_default(),
         _ => PointerButtons::empty(),
     };
     let click_count = match intro.query("last_clicks") {
-        Some(IntrospectValue::Int(n)) => u8::try_from(n).unwrap_or(1),
+        Ok(IntrospectValue::Int(n)) => u8::try_from(n).unwrap_or(1),
         _ => 1,
     };
     Some(ButtonReport {
@@ -594,7 +595,7 @@ fn read_last_report(intro: &dyn ExternalIntrospect) -> Option<ButtonReport> {
 )]
 fn query_frac(intro: &dyn ExternalIntrospect, path: &str) -> Option<f32> {
     match intro.query(path) {
-        Some(IntrospectValue::Float(f)) => Some(f as f32),
+        Ok(IntrospectValue::Float(f)) => Some(f as f32),
         _ => None,
     }
 }
@@ -794,61 +795,55 @@ impl ExternalIntrospect for RawPointerSink {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         let last = self.last();
         match path {
-            "report_count" => Some(IntrospectValue::Int(
+            "report_count" => Ok(IntrospectValue::Int(
                 i64::try_from(self.reports.len()).unwrap_or(i64::MAX),
             )),
-            "last" => {
-                Some(last.map_or(IntrospectValue::Null, |r| IntrospectValue::Text(r.label())))
-            }
-            "last_button" => Some(last.map_or(IntrospectValue::Null, |r| {
+            "last" => Ok(last.map_or(IntrospectValue::Null, |r| IntrospectValue::Text(r.label()))),
+            "last_button" => Ok(last.map_or(IntrospectValue::Null, |r| {
                 IntrospectValue::Text(r.button.as_wire_name().to_owned())
             })),
-            "last_edge" => Some(last.map_or(IntrospectValue::Null, |r| {
+            "last_edge" => Ok(last.map_or(IntrospectValue::Null, |r| {
                 IntrospectValue::Text(r.edge.as_wire_name().to_owned())
             })),
-            "last_mods" => Some(last.map_or(IntrospectValue::Null, |r| {
+            "last_mods" => Ok(last.map_or(IntrospectValue::Null, |r| {
                 IntrospectValue::Text(r.modifiers.as_wire_token())
             })),
-            "last_buttons" => Some(last.map_or(IntrospectValue::Null, |r| {
+            "last_buttons" => Ok(last.map_or(IntrospectValue::Null, |r| {
                 IntrospectValue::Text(r.buttons.as_wire_token())
             })),
-            "last_clicks" => Some(last.map_or(IntrospectValue::Null, |r| {
+            "last_clicks" => Ok(last.map_or(IntrospectValue::Null, |r| {
                 IntrospectValue::Int(i64::from(r.click_count))
             })),
-            "last_x" => Some(
-                last.and_then(|r| r.x_frac)
-                    .map_or(IntrospectValue::Null, |f| IntrospectValue::Float(f.into())),
-            ),
-            "last_y" => Some(
-                last.and_then(|r| r.y_frac)
-                    .map_or(IntrospectValue::Null, |f| IntrospectValue::Float(f.into())),
-            ),
-            "x_frac" => Some(
-                self.x_frac
-                    .map_or(IntrospectValue::Null, |f| IntrospectValue::Float(f.into())),
-            ),
-            "y_frac" => Some(
-                self.y_frac
-                    .map_or(IntrospectValue::Null, |f| IntrospectValue::Float(f.into())),
-            ),
-            "pressure" => Some(IntrospectValue::Float(self.pressure.into())),
-            "tilt_x" => Some(IntrospectValue::Float(self.tilt_x.into())),
-            "tilt_y" => Some(IntrospectValue::Float(self.tilt_y.into())),
-            "twist" => Some(IntrospectValue::Float(self.twist.into())),
-            "tangential" => Some(IntrospectValue::Float(self.tangential.into())),
-            "height" => Some(IntrospectValue::Float(self.height.into())),
-            "pointer_type" => Some(IntrospectValue::Text(self.kind.as_wire_name().to_owned())),
-            "log" => Some(IntrospectValue::Text(
+            "last_x" => Ok(last
+                .and_then(|r| r.x_frac)
+                .map_or(IntrospectValue::Null, |f| IntrospectValue::Float(f.into()))),
+            "last_y" => Ok(last
+                .and_then(|r| r.y_frac)
+                .map_or(IntrospectValue::Null, |f| IntrospectValue::Float(f.into()))),
+            "x_frac" => Ok(self
+                .x_frac
+                .map_or(IntrospectValue::Null, |f| IntrospectValue::Float(f.into()))),
+            "y_frac" => Ok(self
+                .y_frac
+                .map_or(IntrospectValue::Null, |f| IntrospectValue::Float(f.into()))),
+            "pressure" => Ok(IntrospectValue::Float(self.pressure.into())),
+            "tilt_x" => Ok(IntrospectValue::Float(self.tilt_x.into())),
+            "tilt_y" => Ok(IntrospectValue::Float(self.tilt_y.into())),
+            "twist" => Ok(IntrospectValue::Float(self.twist.into())),
+            "tangential" => Ok(IntrospectValue::Float(self.tangential.into())),
+            "height" => Ok(IntrospectValue::Float(self.height.into())),
+            "pointer_type" => Ok(IntrospectValue::Text(self.kind.as_wire_name().to_owned())),
+            "log" => Ok(IntrospectValue::Text(
                 self.reports
                     .iter()
                     .map(ButtonReport::label)
                     .collect::<Vec<_>>()
                     .join(";"),
             )),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -1064,7 +1059,7 @@ mod tests {
         });
         assert_eq!(
             sink.query("last_buttons"),
-            Some(IntrospectValue::Text("lr".to_owned())),
+            Ok(IntrospectValue::Text("lr".to_owned())),
             "the held set is exposed as an lmr wire token"
         );
     }
@@ -1085,7 +1080,7 @@ mod tests {
         });
         assert_eq!(
             sink.query("last_clicks"),
-            Some(IntrospectValue::Int(2)),
+            Ok(IntrospectValue::Int(2)),
             "the double-click count is exposed as `last_clicks`"
         );
         let state = SinkState {
@@ -1119,7 +1114,7 @@ mod tests {
             PointerEdge::Down,
             Modifiers::empty(),
         );
-        assert_eq!(sink.query("last_clicks"), Some(IntrospectValue::Int(1)));
+        assert_eq!(sink.query("last_clicks"), Ok(IntrospectValue::Int(1)));
         let state = SinkState {
             count: 1,
             last: sink.last().copied(),
@@ -1148,13 +1143,13 @@ mod tests {
         sink.pointer_pressure(0.6);
         assert_eq!(
             sink.query("pressure"),
-            Some(IntrospectValue::Float(0.6_f32.into())),
+            Ok(IntrospectValue::Float(0.6_f32.into())),
             "the live pressure is exposed"
         );
         sink.pointer_pressure(5.0); // out of range → clamped
         assert_eq!(
             sink.query("pressure"),
-            Some(IntrospectValue::Float(1.0_f32.into())),
+            Ok(IntrospectValue::Float(1.0_f32.into())),
             "pressure clamps to 1.0"
         );
         assert_eq!(
@@ -1249,23 +1244,23 @@ mod tests {
         sink.pointer_tilt(30.0, -45.0);
         assert_eq!(
             sink.query("tilt_x"),
-            Some(IntrospectValue::Float(30.0_f32.into())),
+            Ok(IntrospectValue::Float(30.0_f32.into())),
             "the live tilt_x is exposed"
         );
         assert_eq!(
             sink.query("tilt_y"),
-            Some(IntrospectValue::Float((-45.0_f32).into())),
+            Ok(IntrospectValue::Float((-45.0_f32).into())),
             "the live tilt_y is exposed"
         );
         sink.pointer_tilt(120.0, -120.0); // out of range → clamped to the axis limits
         assert_eq!(
             sink.query("tilt_x"),
-            Some(IntrospectValue::Float(90.0_f32.into())),
+            Ok(IntrospectValue::Float(90.0_f32.into())),
             "tilt_x clamps to +90"
         );
         assert_eq!(
             sink.query("tilt_y"),
-            Some(IntrospectValue::Float((-90.0_f32).into())),
+            Ok(IntrospectValue::Float((-90.0_f32).into())),
             "tilt_y clamps to -90"
         );
         for path in ["tilt_x", "tilt_y"] {
@@ -1382,17 +1377,17 @@ mod tests {
         sink.pointer_height(-5.0); // -5 -> 0 (floored)
         assert_eq!(
             sink.query("twist"),
-            Some(IntrospectValue::Float(40.0_f32.into())),
+            Ok(IntrospectValue::Float(40.0_f32.into())),
             "twist wraps into 0..360"
         );
         assert_eq!(
             sink.query("tangential"),
-            Some(IntrospectValue::Float(1.0_f32.into())),
+            Ok(IntrospectValue::Float(1.0_f32.into())),
             "tangential clamps to 1.0"
         );
         assert_eq!(
             sink.query("height"),
-            Some(IntrospectValue::Float(0.0_f32.into())),
+            Ok(IntrospectValue::Float(0.0_f32.into())),
             "height floors at 0.0"
         );
         for path in ["twist", "tangential", "height"] {
@@ -1535,13 +1530,13 @@ mod tests {
         let mut sink = RawPointerSink::new();
         assert_eq!(
             sink.query("pointer_type"),
-            Some(IntrospectValue::Text("mouse".to_owned())),
+            Ok(IntrospectValue::Text("mouse".to_owned())),
             "the default device is a mouse"
         );
         sink.pointer_kind(PointerKind::Eraser);
         assert_eq!(
             sink.query("pointer_type"),
-            Some(IntrospectValue::Text("eraser".to_owned())),
+            Ok(IntrospectValue::Text("eraser".to_owned())),
             "the eraser device is exposed"
         );
         assert_eq!(
@@ -1610,12 +1605,12 @@ mod tests {
         }
         assert_eq!(
             sink.query("log"),
-            Some(IntrospectValue::Text(
+            Ok(IntrospectValue::Text(
                 "left:down:;left:up:;middle:down:;middle:up:;right:down:;right:up:".to_owned()
             )),
             "all three buttons on both edges, each identified"
         );
-        assert_eq!(sink.query("report_count"), Some(IntrospectValue::Int(6)));
+        assert_eq!(sink.query("report_count"), Ok(IntrospectValue::Int(6)));
     }
 
     #[test]
@@ -1626,12 +1621,12 @@ mod tests {
         edge(&mut sink, PointerButton::Right, PointerEdge::Down, shift());
         assert_eq!(
             sink.query("last"),
-            Some(IntrospectValue::Text("right:down:s".to_owned())),
+            Ok(IntrospectValue::Text("right:down:s".to_owned())),
             "the right PRESS carries the Shift modifier"
         );
         assert_eq!(
             sink.query("last_mods"),
-            Some(IntrospectValue::Text("s".to_owned()))
+            Ok(IntrospectValue::Text("s".to_owned()))
         );
     }
 
@@ -1647,12 +1642,12 @@ mod tests {
         );
         assert_eq!(
             sink.query("last_x"),
-            Some(IntrospectValue::Float(0.25_f32.into())),
+            Ok(IntrospectValue::Float(0.25_f32.into())),
             "the report stamps the live hover x"
         );
         assert_eq!(
             sink.query("last_y"),
-            Some(IntrospectValue::Float(0.75_f32.into()))
+            Ok(IntrospectValue::Float(0.75_f32.into()))
         );
     }
 
@@ -1670,12 +1665,12 @@ mod tests {
             .expect("send is infallible");
         assert_eq!(
             sink.query("x_frac"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "the live position clears on leave"
         );
         assert_eq!(
             sink.query("report_count"),
-            Some(IntrospectValue::Int(1)),
+            Ok(IntrospectValue::Int(1)),
             "the recorded reports survive a leave"
         );
     }
@@ -1689,11 +1684,11 @@ mod tests {
             PointerEdge::Down,
             Modifiers::empty(),
         );
-        assert_eq!(sink.query("report_count"), Some(IntrospectValue::Int(1)));
+        assert_eq!(sink.query("report_count"), Ok(IntrospectValue::Int(1)));
         sink.invoke("clear", IntrospectValue::Null)
             .expect("clear is infallible");
-        assert_eq!(sink.query("report_count"), Some(IntrospectValue::Int(0)));
-        assert_eq!(sink.query("last"), Some(IntrospectValue::Null));
+        assert_eq!(sink.query("report_count"), Ok(IntrospectValue::Int(0)));
+        assert_eq!(sink.query("last"), Ok(IntrospectValue::Null));
     }
 
     #[test]

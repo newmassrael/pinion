@@ -157,7 +157,7 @@ impl PickerState {
 /// introspect surface (`-1` / absent → `None`).
 fn read_focused_day(intro: &dyn pinion_core::external::ExternalIntrospect) -> Option<u8> {
     match intro.query("focused_day") {
-        Some(IntrospectValue::Int(d)) if d >= 1 => u8::try_from(d).ok(),
+        Ok(IntrospectValue::Int(d)) if d >= 1 => u8::try_from(d).ok(),
         _ => None,
     }
 }
@@ -166,7 +166,7 @@ fn read_focused_day(intro: &dyn pinion_core::external::ExternalIntrospect) -> Op
 /// (defaults to 28 if unavailable — the safe lower bound).
 fn read_days(intro: &dyn pinion_core::external::ExternalIntrospect) -> u8 {
     match intro.query("days") {
-        Some(IntrospectValue::Int(d)) => u8::try_from(d).unwrap_or(28),
+        Ok(IntrospectValue::Int(d)) => u8::try_from(d).unwrap_or(28),
         _ => 28,
     }
 }
@@ -275,23 +275,23 @@ impl WidgetCore for DatePickerView {
         // client running `scene/query /datepicker/external/year` sees
         // exactly the value the view fn renders.
         out.year = match intro.query("year") {
-            Some(IntrospectValue::Int(y)) => i32::try_from(y).unwrap_or(INITIAL_YEAR),
+            Ok(IntrospectValue::Int(y)) => i32::try_from(y).unwrap_or(INITIAL_YEAR),
             _ => INITIAL_YEAR,
         };
         out.month = match intro.query("month") {
-            Some(IntrospectValue::Int(m)) => u8::try_from(m).unwrap_or(INITIAL_MONTH),
+            Ok(IntrospectValue::Int(m)) => u8::try_from(m).unwrap_or(INITIAL_MONTH),
             _ => INITIAL_MONTH,
         };
-        out.selected = if matches!(intro.query("selected"), Some(IntrospectValue::Bool(true))) {
-            let year = intro.query("selected_year").and_then(|v| match v {
+        out.selected = if matches!(intro.query("selected"), Ok(IntrospectValue::Bool(true))) {
+            let year = intro.query("selected_year").ok().and_then(|v| match v {
                 IntrospectValue::Int(y) => i32::try_from(y).ok(),
                 _ => None,
             });
-            let month = intro.query("selected_month").and_then(|v| match v {
+            let month = intro.query("selected_month").ok().and_then(|v| match v {
                 IntrospectValue::Int(m) => u8::try_from(m).ok(),
                 _ => None,
             });
-            let day = intro.query("selected_day").and_then(|v| match v {
+            let day = intro.query("selected_day").ok().and_then(|v| match v {
                 IntrospectValue::Int(d) => u8::try_from(d).ok(),
                 _ => None,
             });
@@ -306,7 +306,7 @@ impl WidgetCore for DatePickerView {
         let days = days_in_month(out.year, out.month);
         for d in 1..=days {
             let st = match intro.query(&format!("state.{d}")) {
-                Some(IntrospectValue::Text(name)) => RadioState::from_name_or_default(&name),
+                Ok(IntrospectValue::Text(name)) => RadioState::from_name_or_default(&name),
                 _ => RadioState::Idle,
             };
             if let Some(slot) = out.day_states.get_mut(usize::from(d - 1)) {
@@ -584,7 +584,7 @@ impl WidgetA11y for DatePickerView {
         };
         // Bounds-check against the displayed month.
         let days = match intro.query("days") {
-            Some(IntrospectValue::Int(d)) => u8::try_from(d).unwrap_or(0),
+            Ok(IntrospectValue::Int(d)) => u8::try_from(d).unwrap_or(0),
             _ => 0,
         };
         if day < 1 || day > days {
@@ -636,11 +636,11 @@ mod tests {
         };
         let intro = node.handle.introspect().expect("introspect");
         let year = match intro.query("year") {
-            Some(IntrospectValue::Int(y)) => i32::try_from(y).unwrap_or(0),
+            Ok(IntrospectValue::Int(y)) => i32::try_from(y).unwrap_or(0),
             _ => 0,
         };
         let month = match intro.query("month") {
-            Some(IntrospectValue::Int(m)) => u8::try_from(m).unwrap_or(0),
+            Ok(IntrospectValue::Int(m)) => u8::try_from(m).unwrap_or(0),
             _ => 0,
         };
         (year, month)
@@ -651,7 +651,7 @@ mod tests {
             return None;
         };
         match node.handle.introspect()?.query("selected_day") {
-            Some(IntrospectValue::Int(d)) if d >= 1 => Some(d),
+            Ok(IntrospectValue::Int(d)) if d >= 1 => Some(d),
             _ => None,
         }
     }
@@ -684,7 +684,7 @@ mod tests {
             return None;
         };
         match node.handle.introspect()?.query("focused_day") {
-            Some(IntrospectValue::Int(d)) if d >= 1 => Some(d),
+            Ok(IntrospectValue::Int(d)) if d >= 1 => Some(d),
             _ => None,
         }
     }

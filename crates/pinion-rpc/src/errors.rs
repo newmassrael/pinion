@@ -35,7 +35,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::dispatch::{ACTION_REFUSED, VALUE_OUT_OF_RANGE};
+use crate::dispatch::{ACTION_REFUSED, NO_SUCH_MEMBER, READ_UNAVAILABLE, VALUE_OUT_OF_RANGE};
 
 /// One published error code.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -140,6 +140,11 @@ const VOCABULARY_32602: &[&str] = &[
     "PaintProducerUnavailable",
     "PathIsAReadSlot",
     "PathIsAnAction",
+    // R1667 — the read channel's malformed-ARGUMENT word, the peer of
+    // `InterveneTypeMismatch` and `InvokeTypeMismatch`. Its two reason-carrying
+    // siblings (`NoSuchMember` / `Unavailable`) are not here on purpose: they
+    // ride application codes, and this list is the closed `-32602` vocabulary.
+    "QueryTypeMismatch",
     "ReadOnly",
     "RenderBackendUnavailable",
     "RetainedNodeNotWritable",
@@ -262,6 +267,28 @@ fn entries() -> Vec<ErrorEntry> {
             true,
             false,
         ),
+        e(
+            NO_SUCH_MEMBER,
+            "No such member",
+            "the PATH is declared and its ARGUMENT addresses nothing — \
+             `width.999` on a 3-column grid. Distinct from -32602 \
+             UnknownIntrospectPath, which means the name itself is not on this \
+             surface: this one says read the family's count path and ask again. \
+             error.data is the surface's own sentence naming the range that has \
+             members",
+            true,
+            false,
+        ),
+        e(
+            READ_UNAVAILABLE,
+            "Read unavailable",
+            "the path is declared, the call is well formed, and THIS INSTANCE \
+             holds no state to answer it from — a text field with no editing \
+             state attached. Nothing the caller varies about the call will help; \
+             error.data is the surface's own sentence naming what is unbound",
+            true,
+            false,
+        ),
     ]
 }
 
@@ -341,7 +368,12 @@ mod tests {
         // `ACTION_REFUSED` reaches `RpcError::new` through the constant, so the
         // scan sees no literal for it; assert it explicitly rather than
         // loosening the scan, which would let a real omission through.
-        for (code, round) in [(ACTION_REFUSED, "R1564"), (VALUE_OUT_OF_RANGE, "R1565")] {
+        for (code, round) in [
+            (ACTION_REFUSED, "R1564"),
+            (VALUE_OUT_OF_RANGE, "R1565"),
+            (NO_SUCH_MEMBER, "R1667"),
+            (READ_UNAVAILABLE, "R1667"),
+        ] {
             assert!(
                 published.contains(&code),
                 "the code {round} allocated is published",

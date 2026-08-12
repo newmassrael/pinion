@@ -50,8 +50,8 @@ use std::rc::Rc;
 use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
-    ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership,
 };
 use pinion_core::reactive::Signal;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
@@ -1463,12 +1463,18 @@ impl ExternalIntrospect for ViewOracle {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
-        let state = self.state.as_ref()?;
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
+        let state = self
+            .state
+            .as_ref()
+            .ok_or_else(|| ReadRefusal::unavailable("no capture is loaded"))?;
         if let Some(rest) = path.strip_prefix("hit.") {
-            let (x, y) = rest.split_once('.')?;
-            let (px, py) = (x.parse().ok()?, y.parse().ok()?);
-            return Some(IntrospectValue::Text(match Hit::at(state, px, py) {
+            let (x, y) = rest.split_once('.').ok_or(ReadRefusal::QueryTypeMismatch)?;
+            let (px, py) = (
+                x.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?,
+                y.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?,
+            );
+            return Ok(IntrospectValue::Text(match Hit::at(state, px, py) {
                 Hit::Message(n) => format!("message.{n}"),
                 Hit::Field(p) => format!("field.{p}"),
                 Hit::Byte(b) => format!("byte.{b}"),
@@ -1478,39 +1484,39 @@ impl ExternalIntrospect for ViewOracle {
             }));
         }
         match path {
-            "spec" => Some(IntrospectValue::Json(spec_json())),
-            "row_count" => Some(IntrospectValue::Int(
+            "spec" => Ok(IntrospectValue::Json(spec_json())),
+            "row_count" => Ok(IntrospectValue::Int(
                 i64::try_from(spec::ROWS.len()).unwrap_or(i64::MAX),
             )),
-            "selected_row" => Some(IntrospectValue::Int(
+            "selected_row" => Ok(IntrospectValue::Int(
                 i64::try_from(state.row.get()).unwrap_or(i64::MAX),
             )),
-            "selected_field" => Some(IntrospectValue::Text(state.field.get())),
-            "selected_span" => Some(state.lit_selection().map_or(IntrospectValue::Null, |sel| {
+            "selected_field" => Ok(IntrospectValue::Text(state.field.get())),
+            "selected_span" => Ok(state.lit_selection().map_or(IntrospectValue::Null, |sel| {
                 IntrospectValue::Json(serde_json::json!({
                     "start": sel.start(),
                     "end": sel.end(),
                 }))
             })),
-            "visible_fields" => Some(IntrospectValue::Json(serde_json::Value::Array(
+            "visible_fields" => Ok(IntrospectValue::Json(serde_json::Value::Array(
                 visible_fields(state)
                     .into_iter()
                     .map(|(p, ..)| serde_json::Value::String(p))
                     .collect(),
             ))),
-            "saved" => Some(IntrospectValue::Json(serde_json::json!(state.saved.get()))),
-            "folded" => Some(IntrospectValue::Json(serde_json::json!(state.folded.get()))),
-            "said" => Some(IntrospectValue::Text(state.said.borrow().clone())),
+            "saved" => Ok(IntrospectValue::Json(serde_json::json!(state.saved.get()))),
+            "folded" => Ok(IntrospectValue::Json(serde_json::json!(state.folded.get()))),
+            "said" => Ok(IntrospectValue::Text(state.said.borrow().clone())),
             "cursor" => {
                 let (x, y) = state.cursor.get();
-                Some(IntrospectValue::Json(serde_json::json!({"x": x, "y": y})))
+                Ok(IntrospectValue::Json(serde_json::json!({"x": x, "y": y})))
             }
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
     fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
-        if self.query(path).is_some() {
+        if self.query(path).is_ok() {
             Err(InterveneError::ReadOnly)
         } else {
             Err(InterveneError::UnknownPath)

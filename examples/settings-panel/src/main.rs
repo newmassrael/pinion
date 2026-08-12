@@ -38,7 +38,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use pinion_a11y::{AccessNode, NavLink, WidgetA11y, navigation_link_nodes};
-use pinion_core::external::{External, ExternalIntrospect, IntrospectValue};
+use pinion_core::external::{External, ExternalIntrospect, IntrospectValue, ReadRefusal};
 use pinion_core::intent::Intent;
 use pinion_core::reactive::{Effect, Owner, Signal, batch};
 use pinion_core::scene::{ContainerNode, Rect, ScrollNode, TextNode};
@@ -569,14 +569,14 @@ fn read_nav_radio_states(scene: &Scene) -> NavRadioStates {
     let Some(intro) = node.handle.introspect() else {
         return out;
     };
-    if let Some(IntrospectValue::Int(sel)) = intro.query("selected_index") {
+    if let Ok(IntrospectValue::Int(sel)) = intro.query("selected_index") {
         if let Ok(s) = usize::try_from(sel) {
             out.selected = s.min(NAV_COUNT - 1);
         }
     }
     for (i, slot) in out.states.iter_mut().enumerate() {
         let key = format!("state.{i}");
-        if let Some(IntrospectValue::Text(s)) = intro.query(&key) {
+        if let Ok(IntrospectValue::Text(s)) = intro.query(&key) {
             *slot = RadioState::from_name_or_default(&s);
         }
     }
@@ -595,11 +595,11 @@ fn read_theme_toggle(scene: &Scene) -> (ToggleState, bool) {
     let state = intro
         .query("state")
         .and_then(|v| match v {
-            IntrospectValue::Text(s) => Some(ToggleState::from_name_or_default(&s)),
-            _ => None,
+            IntrospectValue::Text(s) => Ok(ToggleState::from_name_or_default(&s)),
+            _ => Err(ReadRefusal::UnknownPath),
         })
         .unwrap_or(ToggleState::Idle);
-    let on = matches!(intro.query("value"), Some(IntrospectValue::Bool(true)));
+    let on = matches!(intro.query("value"), Ok(IntrospectValue::Bool(true)));
     (state, on)
 }
 
@@ -1010,7 +1010,7 @@ fn read_notification_states(scene: &Scene) -> [CheckboxState; NOTIFICATION_COUNT
     for (i, tag) in NOTIF_INSTANCE_TAGS.iter().enumerate() {
         if let Some(node) = scene.find_external_with_tag(tag) {
             if let Some(intro) = node.handle.introspect() {
-                if let Some(IntrospectValue::Text(s)) = intro.query("state") {
+                if let Ok(IntrospectValue::Text(s)) = intro.query("state") {
                     out[i] = CheckboxState::from_name_or_default(&s);
                 }
             }
@@ -1035,7 +1035,7 @@ fn read_notification_checked(scene: &Scene) -> [bool; NOTIFICATION_COUNT] {
     for (i, tag) in NOTIF_INSTANCE_TAGS.iter().enumerate() {
         if let Some(node) = scene.find_external_with_tag(tag) {
             if let Some(intro) = node.handle.introspect() {
-                if let Some(IntrospectValue::Bool(v)) = intro.query("value") {
+                if let Ok(IntrospectValue::Bool(v)) = intro.query("value") {
                     out[i] = v;
                 }
             }

@@ -86,8 +86,8 @@ use pinion_a11y::{
 };
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, CaptureNormalize, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField,
-    ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
+    SchemaField, ThreadOwnership,
 };
 use pinion_core::input::Modifiers;
 use pinion_core::reactive::{Owner, Signal};
@@ -788,20 +788,24 @@ impl ExternalIntrospect for DashboardOracle {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
-        let state = self.bound()?;
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
+        let state = self
+            .bound()
+            .ok_or_else(|| ReadRefusal::unavailable("no dashboard state is bound"))?;
         let grid = state.grid.get();
-        let count = |n: usize| Some(IntrospectValue::Int(i64::try_from(n).unwrap_or(i64::MAX)));
+        let count = |n: usize| Ok(IntrospectValue::Int(i64::try_from(n).unwrap_or(i64::MAX)));
         match path {
-            "columns" => Some(IntrospectValue::Int(i64::from(grid.columns()))),
-            "row_count" => Some(IntrospectValue::Int(i64::from(Self::painted_rows(&grid)))),
+            "columns" => Ok(IntrospectValue::Int(i64::from(grid.columns()))),
+            "row_count" => Ok(IntrospectValue::Int(i64::from(Self::painted_rows(&grid)))),
             "tile_count" => count(grid.tiles().len()),
-            "layout" => serde_json::to_value(&grid).ok().map(IntrospectValue::Json),
-            "tiles" => Some(IntrospectValue::Text(Self::tiles_text(&grid))),
-            "last_reflow" => Some(IntrospectValue::Text(state.last_reflow.get())),
-            "last_refusal" => Some(IntrospectValue::Text(state.refusal.get())),
+            "layout" => Ok(
+                serde_json::to_value(&grid).map_or(IntrospectValue::Null, IntrospectValue::Json)
+            ),
+            "tiles" => Ok(IntrospectValue::Text(Self::tiles_text(&grid))),
+            "last_reflow" => Ok(IntrospectValue::Text(state.last_reflow.get())),
+            "last_refusal" => Ok(IntrospectValue::Text(state.refusal.get())),
             "violations" => count(grid.violations().len()),
-            "dragging" => Some(IntrospectValue::Text(
+            "dragging" => Ok(IntrospectValue::Text(
                 state
                     .grab
                     .get()
@@ -810,13 +814,13 @@ impl ExternalIntrospect for DashboardOracle {
             // R1609 — the roving current card, defaulted the same way a chord
             // defaults it so the wire and the keyboard never disagree about what
             // is selected.
-            "current" => Some(IntrospectValue::Text(
+            "current" => Ok(IntrospectValue::Text(
                 Self::current_id(state).map_or_else(String::new, |id| id.to_string()),
             )),
             // Which handle the live press grabbed, empty for an interior drag
             // or no press. `Operation` is private, so the toolkit cannot be asked this
             // at all.
-            "handle" => Some(IntrospectValue::Text(
+            "handle" => Ok(IntrospectValue::Text(
                 state
                     .grab
                     .get()
@@ -825,7 +829,7 @@ impl ExternalIntrospect for DashboardOracle {
             )),
             // The open session's card, empty when no edit is in flight — the
             // difference between "Escape restores something" and "Escape is inert".
-            "editing" => Some(IntrospectValue::Text(
+            "editing" => Ok(IntrospectValue::Text(
                 state
                     .session
                     .get()
@@ -833,7 +837,7 @@ impl ExternalIntrospect for DashboardOracle {
             )),
             // What the whole session has displaced, as a DIFFERENCE against the
             // arrangement it opened on rather than a sum over its chords.
-            "session_reflow" => Some(IntrospectValue::Text(
+            "session_reflow" => Ok(IntrospectValue::Text(
                 state
                     .session
                     .get()
@@ -842,12 +846,12 @@ impl ExternalIntrospect for DashboardOracle {
             // The live region's text: what an AT will say. Readable because a
             // live region is declared, where the toolkit's announcement is a
             // fired event that leaves nothing behind to ask about.
-            "announcement" => Some(IntrospectValue::Text(state.announcement.get())),
+            "announcement" => Ok(IntrospectValue::Text(state.announcement.get())),
             // Every handle a card offers, with the cursor each asks for —
             // derived from `TileHandle::ALL`, so a client can enumerate the resize
             // affordances. The toolkit's operation map is private and its enum
             // is in a `_p.h`.
-            "handles" => Some(IntrospectValue::Text(
+            "handles" => Ok(IntrospectValue::Text(
                 TileHandle::ALL
                     .iter()
                     .map(|h| format!("{h:?}:{:?}", h.cursor()))
@@ -856,22 +860,24 @@ impl ExternalIntrospect for DashboardOracle {
             )),
             // Where each arrow key would take the selection — the spatial
             // relation `activateNextSubWindow` does not have.
-            "neighbours" => Self::current_id(state).map(|id| {
-                IntrospectValue::Text(
-                    TileDirection::ALL
-                        .iter()
-                        .map(|dir| {
-                            let to = grid
-                                .neighbour(&id, *dir)
-                                .map_or("-", |t| t.id.as_str())
-                                .to_owned();
-                            format!("{dir:?}:{to}")
-                        })
-                        .collect::<Vec<_>>()
-                        .join(" "),
-                )
-            }),
-            _ => None,
+            "neighbours" => Self::current_id(state)
+                .map(|id| {
+                    IntrospectValue::Text(
+                        TileDirection::ALL
+                            .iter()
+                            .map(|dir| {
+                                let to = grid
+                                    .neighbour(&id, *dir)
+                                    .map_or("-", |t| t.id.as_str())
+                                    .to_owned();
+                                format!("{dir:?}:{to}")
+                            })
+                            .collect::<Vec<_>>()
+                            .join(" "),
+                    )
+                })
+                .ok_or_else(|| ReadRefusal::unavailable("no tile is current")),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -879,7 +885,7 @@ impl ExternalIntrospect for DashboardOracle {
     /// writable field — and a read-only refusal is told apart from an unknown
     /// path, which is R1566's rule rather than this binding's invention.
     fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
-        if self.query(path).is_some() || self.schema().field_for(path).is_some() {
+        if self.query(path).is_ok() || self.schema().field_for(path).is_some() {
             return Err(InterveneError::ReadOnly);
         }
         Err(InterveneError::UnknownPath)
@@ -1364,7 +1370,7 @@ mod tests {
 
     fn text(oracle: &DashboardOracle, path: &str) -> String {
         match oracle.query(path) {
-            Some(IntrospectValue::Text(s)) => s,
+            Ok(IntrospectValue::Text(s)) => s,
             other => panic!("{path} answered {other:?}"),
         }
     }
@@ -1378,16 +1384,16 @@ mod tests {
     #[test]
     fn the_seed_board_is_the_arrangement_the_layout_measurement_lays_out() {
         drive(|oracle| {
-            assert_eq!(oracle.query("columns"), Some(IntrospectValue::Int(12)));
-            assert_eq!(oracle.query("tile_count"), Some(IntrospectValue::Int(5)));
-            assert_eq!(oracle.query("violations"), Some(IntrospectValue::Int(0)));
+            assert_eq!(oracle.query("columns"), Ok(IntrospectValue::Int(12)));
+            assert_eq!(oracle.query("tile_count"), Ok(IntrospectValue::Int(5)));
+            assert_eq!(oracle.query("violations"), Ok(IntrospectValue::Int(0)));
             assert_eq!(
                 text(oracle, "tiles"),
                 "throughput@0,0+12x1 latency@0,1+6x1 loss@6,1+6x1 topology@0,2+4x2 alarms@4,2+8x1"
             );
             assert_eq!(
                 oracle.query("row_count"),
-                Some(IntrospectValue::Int(5)),
+                Ok(IntrospectValue::Int(5)),
                 "four rows of cards, floored at MIN_ROWS so there is board to drag into"
             );
         });
@@ -1396,7 +1402,7 @@ mod tests {
     #[test]
     fn the_whole_arrangement_is_one_json_read() {
         drive(|oracle| {
-            let Some(IntrospectValue::Json(value)) = oracle.query("layout") else {
+            let Ok(IntrospectValue::Json(value)) = oracle.query("layout") else {
                 panic!("layout is a document")
             };
             let back: TileGrid = serde_json::from_value(value).unwrap();
@@ -1422,7 +1428,7 @@ mod tests {
                 "the reflow is TRANSITIVE: alarms was pushed by the throughput \
                  that topology pushed, and then again by the latency below it"
             );
-            assert_eq!(oracle.query("violations"), Some(IntrospectValue::Int(0)));
+            assert_eq!(oracle.query("violations"), Ok(IntrospectValue::Int(0)));
         });
     }
 
@@ -1544,7 +1550,7 @@ mod tests {
             oracle.pointer_move(0.02, 0.02); // drag it to the top-left
             assert!(text(oracle, "tiles").contains("topology@0,0"));
             assert_ne!(text(oracle, "last_reflow"), "clean");
-            assert_eq!(oracle.query("violations"), Some(IntrospectValue::Int(0)));
+            assert_eq!(oracle.query("violations"), Ok(IntrospectValue::Int(0)));
         });
     }
 
@@ -1675,7 +1681,7 @@ mod tests {
             assert!(text(oracle, "tiles").contains("topology@0,2+5x3"));
             assert!(key(oracle, "Alt+Shift+ArrowUp"));
             assert!(text(oracle, "tiles").contains("topology@0,3+5x2"));
-            assert_eq!(oracle.query("violations"), Some(IntrospectValue::Int(0)));
+            assert_eq!(oracle.query("violations"), Ok(IntrospectValue::Int(0)));
         });
     }
 
@@ -1850,7 +1856,7 @@ mod tests {
                 "the card moved and kept its size. Got {}",
                 text(oracle, "tiles")
             );
-            assert_eq!(oracle.query("violations"), Some(IntrospectValue::Int(0)));
+            assert_eq!(oracle.query("violations"), Ok(IntrospectValue::Int(0)));
         });
     }
 
@@ -1902,7 +1908,7 @@ mod tests {
                         IntrospectValue::Text(format!("topology,{name},2,2")),
                     )
                     .unwrap_or_else(|e| panic!("{name} refused: {e:?}"));
-                assert_eq!(oracle.query("violations"), Some(IntrospectValue::Int(0)));
+                assert_eq!(oracle.query("violations"), Ok(IntrospectValue::Int(0)));
             }
 
             // A name outside the published set is refused, so the accepted and

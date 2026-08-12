@@ -306,7 +306,7 @@ fn read_completer_state(scene: &Scene) -> CompleterViewState {
     };
     for (i, slot) in out.options.iter_mut().enumerate() {
         *slot = match intro.query(&format!("state.{i}")) {
-            Some(IntrospectValue::Text(name)) => ListboxItemState::from_name_or_default(&name),
+            Ok(IntrospectValue::Text(name)) => ListboxItemState::from_name_or_default(&name),
             _ => ListboxItemState::Idle,
         };
     }

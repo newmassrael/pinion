@@ -117,7 +117,7 @@ fn read_anchor(scene: &Scene, tag: &str) -> AnchorState {
     else {
         return AnchorState::default();
     };
-    let bool_slot = |path: &str| matches!(intro.query(path), Some(IntrospectValue::Bool(true)));
+    let bool_slot = |path: &str| matches!(intro.query(path), Ok(IntrospectValue::Bool(true)));
     AnchorState {
         visible: bool_slot("visible"),
         focused: bool_slot("focused"),
@@ -309,7 +309,7 @@ impl WidgetCore for RichTooltipView {
         else {
             return false;
         };
-        if matches!(intro.query("visible"), Some(IntrospectValue::Bool(true))) {
+        if matches!(intro.query("visible"), Ok(IntrospectValue::Bool(true))) {
             let _ = intro.invoke("dismiss", IntrospectValue::Null);
             true
         } else {

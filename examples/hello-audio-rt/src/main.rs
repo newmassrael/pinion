@@ -128,7 +128,7 @@ use pinion_audio::{
 use pinion_core::external::SchemaField;
 use pinion_core::external::{
     External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
-    forward_intents,
+    ReadRefusal, forward_intents,
 };
 use pinion_core::intent::Intent;
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
@@ -281,7 +281,7 @@ impl ExternalIntrospect for RtAudioDemoExternal {
         IntrospectSchema::new(&SCHEMA_FIELDS)
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         self.inner.query(path)
     }
 
@@ -389,7 +389,7 @@ impl ExternalIntrospect for EngineDemoExternal {
         IntrospectSchema::new(&ENGINE_SCHEMA_FIELDS)
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         self.inner.query(path)
     }
 
@@ -464,7 +464,7 @@ impl WidgetCore for HelloAudioRt {
         scene
             .primary_external()
             .and_then(|node| node.handle.introspect())
-            .and_then(|intro| intro.query("voice_count"))
+            .and_then(|intro| intro.query("voice_count").ok())
             .and_then(|v| v.as_i64())
             .map_or(0, |n| {
                 u16::try_from(n.clamp(0, i64::from(u16::MAX))).unwrap_or(0)
@@ -639,7 +639,7 @@ mod tests {
         );
         assert!(matches!(
             ext.query("voice_count"),
-            Some(IntrospectValue::Int(0))
+            Ok(IntrospectValue::Int(0))
         ));
         // One render block applies it and publishes the snapshot the reads see.
         assert!(matches!(
@@ -648,11 +648,11 @@ mod tests {
         ));
         assert!(matches!(
             ext.query("voice_count"),
-            Some(IntrospectValue::Int(1))
+            Ok(IntrospectValue::Int(1))
         ));
         assert!(matches!(
             ext.query("frames_rendered"),
-            Some(IntrospectValue::Int(256))
+            Ok(IntrospectValue::Int(256))
         ));
         // The inner controller's `audio.play` intent is forwarded to the
         // wrapper's own §5.20 drain.
@@ -669,7 +669,7 @@ mod tests {
         ));
         assert!(matches!(
             ext.query("frames_rendered"),
-            Some(IntrospectValue::Int(256))
+            Ok(IntrospectValue::Int(256))
         ));
         // A non-int render count is a type error, not a silent no-op.
         assert!(matches!(
@@ -709,7 +709,7 @@ mod tests {
         // Retained play applies synchronously — no render.
         assert!(matches!(
             ext.query("voice_count"),
-            Some(IntrospectValue::Int(1))
+            Ok(IntrospectValue::Int(1))
         ));
         // Stop marks it finished but does not reap; the count holds until render.
         assert!(matches!(
@@ -718,7 +718,7 @@ mod tests {
         ));
         assert!(matches!(
             ext.query("voice_count"),
-            Some(IntrospectValue::Int(1))
+            Ok(IntrospectValue::Int(1))
         ));
         // The wrapper's `render` steps AudioEngine::render, which reaps it (no
         // double-borrow of the shared engine RefCell).
@@ -728,7 +728,7 @@ mod tests {
         ));
         assert!(matches!(
             ext.query("voice_count"),
-            Some(IntrospectValue::Int(0))
+            Ok(IntrospectValue::Int(0))
         ));
     }
 }

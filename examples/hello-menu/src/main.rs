@@ -326,7 +326,7 @@ impl WidgetCore for MenuView {
         out.open = query_index(intro, "open");
         out.active = query_index(intro, "active");
         out.bar_focus = match intro.query("bar_focus") {
-            Some(IntrospectValue::Int(i)) => usize::try_from(i).unwrap_or(0),
+            Ok(IntrospectValue::Int(i)) => usize::try_from(i).unwrap_or(0),
             _ => 0,
         };
         // R805 — snapshot the open menu's live checked state so the paint
@@ -336,7 +336,7 @@ impl WidgetCore for MenuView {
             for i in 0..count {
                 if matches!(
                     intro.query(&format!("checked.{m}.{i}")),
-                    Some(IntrospectValue::Bool(true))
+                    Ok(IntrospectValue::Bool(true))
                 ) {
                     out.checked |= 1 << i;
                 }
@@ -545,7 +545,7 @@ impl WidgetView for MenuView {
 /// `Int(i)` → `Some(i)`, `Null` (or anything else) → `None`.
 fn query_index(intro: &dyn ExternalIntrospect, path: &str) -> Option<usize> {
     match intro.query(path) {
-        Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+        Ok(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
         _ => None,
     }
 }
@@ -782,7 +782,7 @@ mod key_tests {
             return None;
         };
         match node.handle.introspect()?.query("open") {
-            Some(IntrospectValue::Int(i)) => Some(i),
+            Ok(IntrospectValue::Int(i)) => Some(i),
             _ => None,
         }
     }

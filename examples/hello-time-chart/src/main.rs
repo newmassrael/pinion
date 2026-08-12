@@ -45,7 +45,7 @@ use pinion_chart::{ChartStyle, DataPoint, LineChart, PlotWindow, Series, map_win
 use pinion_core::event::LINE_HEIGHT_PX;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, IntrospectSchema,
-    IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use pinion_core::input::Modifiers;
 use pinion_core::scene::{ContainerNode, Rect, TextNode, capture_surface};
@@ -392,12 +392,12 @@ impl ExternalIntrospect for PlotZoomExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "low" => Some(IntrospectValue::Float(f64::from(self.window.low()))),
-            "high" => Some(IntrospectValue::Float(f64::from(self.window.high()))),
-            "span" => Some(IntrospectValue::Float(f64::from(self.window.span()))),
-            _ => None,
+            "low" => Ok(IntrospectValue::Float(f64::from(self.window.low()))),
+            "high" => Ok(IntrospectValue::Float(f64::from(self.window.high()))),
+            "span" => Ok(IntrospectValue::Float(f64::from(self.window.span()))),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -445,8 +445,8 @@ fn read_window(scene: &Scene) -> (f32, f32) {
         intro
             .query(field)
             .and_then(|v| match v {
-                IntrospectValue::Float(f) => Some(f as f32),
-                _ => None,
+                IntrospectValue::Float(f) => Ok(f as f32),
+                _ => Err(ReadRefusal::UnknownPath),
             })
             .unwrap_or(fallback)
     };

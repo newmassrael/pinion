@@ -211,11 +211,11 @@ impl WidgetCore for TabsView {
             return out;
         };
         out.selected = match intro.query("selected_index") {
-            Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+            Ok(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
             _ => None,
         };
         out.focused = match intro.query("focused_index") {
-            Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+            Ok(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
             _ => None,
         };
         out
@@ -407,13 +407,12 @@ fn resolve_target_index(intro: Option<&dyn ExternalIntrospect>, key: &str) -> Op
 /// (ArrowRight) or `-1` (ArrowLeft); wraps at the ends. With no tab
 /// selected, ArrowRight lands on `0` and ArrowLeft on `N - 1`.
 fn arrow_step(intro: Option<&dyn ExternalIntrospect>, direction: i32) -> usize {
-    let current: Option<usize> =
-        intro
-            .and_then(|i| i.query("selected_index"))
-            .and_then(|v| match v {
-                IntrospectValue::Int(i) => usize::try_from(i).ok(),
-                _ => None,
-            });
+    let current: Option<usize> = intro
+        .and_then(|i| i.query("selected_index").ok())
+        .and_then(|v| match v {
+            IntrospectValue::Int(i) => usize::try_from(i).ok(),
+            _ => None,
+        });
     match (current, direction) {
         (Some(c), 1) => (c + 1) % N,
         (Some(c), -1) => (c + N - 1) % N,
@@ -563,6 +562,7 @@ mod key_tests {
         node.handle
             .introspect()?
             .query("selected_index")
+            .ok()
             .and_then(|v| match v {
                 IntrospectValue::Int(i) => Some(i),
                 _ => None,

@@ -74,8 +74,8 @@ use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_core::QUIT_SINK;
 use pinion_core::external::query_proxy_external_impl;
 use pinion_core::external::{
-    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, SchemaArg,
-    SchemaField,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    ReadRefusal, SchemaArg, SchemaField,
 };
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -413,46 +413,52 @@ impl ExternalIntrospect for TrayExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         let model = self.model();
         match path {
-            "available" => Some(IntrospectValue::Bool(self.backend.is_available())),
-            "publish_count" => Some(IntrospectValue::Int(i64::from(
+            "available" => Ok(IntrospectValue::Bool(self.backend.is_available())),
+            "publish_count" => Ok(IntrospectValue::Int(i64::from(
                 self.backend.publish_count(),
             ))),
             // Whether the last published model matches the live model — the
             // AI-first "is the OS showing what the app thinks it is" read.
-            "published_in_sync" => Some(IntrospectValue::Bool(
+            "published_in_sync" => Ok(IntrospectValue::Bool(
                 self.backend.published().as_ref() == Some(&model),
             )),
-            "title" => Some(IntrospectValue::Text(model.title)),
-            "icon" => Some(IntrospectValue::Text(model.icon_name)),
-            "status" => Some(IntrospectValue::Text(model.status.as_str().to_owned())),
-            "tooltip" => Some(IntrospectValue::Text(model.tooltip)),
-            "menu" => Some(IntrospectValue::Text(menu_summary(&model))),
-            "menu_count" => Some(IntrospectValue::Int(i64::try_from(model.menu.len()).ok()?)),
-            "window_visible" => Some(IntrospectValue::Bool(self.visible.get())),
-            "dark_mode" => Some(IntrospectValue::Bool(self.dark.get())),
-            "build_running" => Some(IntrospectValue::Bool(self.building.get())),
-            "quit_requested" => Some(IntrospectValue::Bool(self.quit.get())),
+            "title" => Ok(IntrospectValue::Text(model.title)),
+            "icon" => Ok(IntrospectValue::Text(model.icon_name)),
+            "status" => Ok(IntrospectValue::Text(model.status.as_str().to_owned())),
+            "tooltip" => Ok(IntrospectValue::Text(model.tooltip)),
+            "menu" => Ok(IntrospectValue::Text(menu_summary(&model))),
+            "menu_count" => Ok(IntrospectValue::Int(
+                i64::try_from(model.menu.len()).unwrap_or(i64::MAX),
+            )),
+            "window_visible" => Ok(IntrospectValue::Bool(self.visible.get())),
+            "dark_mode" => Ok(IntrospectValue::Bool(self.dark.get())),
+            "build_running" => Ok(IntrospectValue::Bool(self.building.get())),
+            "quit_requested" => Ok(IntrospectValue::Bool(self.quit.get())),
             _ => {
                 // `item.<id>.<field>` — id-addressed menu introspection.
-                let rest = path.strip_prefix("item.")?;
-                let (id, field) = rest.rsplit_once('.')?;
+                let rest = path.strip_prefix("item.").ok_or(ReadRefusal::UnknownPath)?;
+                let (id, field) = rest
+                    .rsplit_once('.')
+                    .ok_or(ReadRefusal::QueryTypeMismatch)?;
                 // `activatable` answers for any id (including unknown / disabled).
                 if field == "activatable" {
-                    return Some(IntrospectValue::Bool(model.can_activate(id)));
+                    return Ok(IntrospectValue::Bool(model.can_activate(id)));
                 }
                 // The other fields require the id to name a real item.
-                let item = find_item(&model.menu, id)?;
-                Some(match field {
+                let item = find_item(&model.menu, id).ok_or_else(|| {
+                    ReadRefusal::no_such_member(format!("no menu item has the id `{id}`"))
+                })?;
+                Ok(match field {
                     "label" => IntrospectValue::Text(menu_item_label(item)),
                     "checked" => IntrospectValue::Bool(matches!(
                         item,
                         TrayMenuItem::Check { checked: true, .. }
                     )),
                     "enabled" => IntrospectValue::Bool(menu_item_enabled(item)),
-                    _ => return None,
+                    _ => return Err(ReadRefusal::UnknownPath),
                 })
             }
         }
@@ -637,7 +643,7 @@ impl TrayView {
     fn read_state(scene: &Scene) -> bool {
         if let Scene::External(node) = scene {
             if let Some(intro) = node.handle.introspect() {
-                if let Some(IntrospectValue::Bool(b)) = intro.query("dark_mode") {
+                if let Ok(IntrospectValue::Bool(b)) = intro.query("dark_mode") {
                     return b;
                 }
             }
@@ -708,25 +714,25 @@ mod tests {
     #[test]
     fn r949_boot_model_is_active_with_full_menu() {
         let e = ext();
-        assert_eq!(e.query("available"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(e.query("available"), Ok(IntrospectValue::Bool(true)));
         assert_eq!(
             e.query("title"),
-            Some(IntrospectValue::Text("Pinion".to_owned()))
+            Ok(IntrospectValue::Text("Pinion".to_owned()))
         );
         assert_eq!(
             e.query("status"),
-            Some(IntrospectValue::Text("Active".to_owned()))
+            Ok(IntrospectValue::Text("Active".to_owned()))
         );
         assert_eq!(
             e.query("icon"),
-            Some(IntrospectValue::Text("applications-games".to_owned()))
+            Ok(IntrospectValue::Text("applications-games".to_owned()))
         );
-        assert_eq!(e.query("menu_count"), Some(IntrospectValue::Int(5)));
+        assert_eq!(e.query("menu_count"), Ok(IntrospectValue::Int(5)));
         // Nothing published until an explicit publish / activation.
-        assert_eq!(e.query("publish_count"), Some(IntrospectValue::Int(0)));
+        assert_eq!(e.query("publish_count"), Ok(IntrospectValue::Int(0)));
         assert_eq!(
             e.query("published_in_sync"),
-            Some(IntrospectValue::Bool(false))
+            Ok(IntrospectValue::Bool(false))
         );
     }
 
@@ -739,7 +745,7 @@ mod tests {
         );
         assert_eq!(
             e.query("published_in_sync"),
-            Some(IntrospectValue::Bool(true))
+            Ok(IntrospectValue::Bool(true))
         );
         assert_eq!(
             e.invoke("republish", IntrospectValue::Null),
@@ -750,10 +756,10 @@ mod tests {
     #[test]
     fn r949_dark_toggle_flips_check_and_republishes() {
         let mut e = ext();
-        assert_eq!(e.query("dark_mode"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(e.query("dark_mode"), Ok(IntrospectValue::Bool(false)));
         assert_eq!(
             e.query("item.dark.checked"),
-            Some(IntrospectValue::Bool(false))
+            Ok(IntrospectValue::Bool(false))
         );
         assert_eq!(
             e.invoke("menu_item", IntrospectValue::Text("dark".to_owned())),
@@ -761,52 +767,49 @@ mod tests {
         );
         assert_eq!(
             e.query("dark_mode"),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
             "menu flipped app state"
         );
         assert_eq!(
             e.query("item.dark.checked"),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
             "the check reflects it"
         );
         assert_eq!(
             e.query("publish_count"),
-            Some(IntrospectValue::Int(1)),
+            Ok(IntrospectValue::Int(1)),
             "the activation re-published"
         );
         assert_eq!(
             e.query("published_in_sync"),
-            Some(IntrospectValue::Bool(true))
+            Ok(IntrospectValue::Bool(true))
         );
     }
 
     #[test]
     fn r949_toggle_window_relabels_and_activate_is_icon_click() {
         let mut e = ext();
-        assert_eq!(e.query("window_visible"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(e.query("window_visible"), Ok(IntrospectValue::Bool(true)));
         assert_eq!(
             e.query("item.toggle_window.label"),
-            Some(IntrospectValue::Text("Hide window".to_owned()))
+            Ok(IntrospectValue::Text("Hide window".to_owned()))
         );
         e.invoke(
             "menu_item",
             IntrospectValue::Text("toggle_window".to_owned()),
         )
         .unwrap();
-        assert_eq!(
-            e.query("window_visible"),
-            Some(IntrospectValue::Bool(false))
-        );
+        assert_eq!(e.query("window_visible"), Ok(IntrospectValue::Bool(false)));
         assert_eq!(
             e.query("item.toggle_window.label"),
-            Some(IntrospectValue::Text("Show window".to_owned())),
+            Ok(IntrospectValue::Text("Show window".to_owned())),
             "label tracks state"
         );
         // The icon (primary) click toggles the window too.
         e.invoke("activate", IntrospectValue::Null).unwrap();
         assert_eq!(
             e.query("window_visible"),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
             "activate is an icon click"
         );
     }
@@ -816,18 +819,18 @@ mod tests {
         let mut e = ext();
         e.invoke("menu_item", IntrospectValue::Text("bake".to_owned()))
             .unwrap();
-        assert_eq!(e.query("build_running"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(e.query("build_running"), Ok(IntrospectValue::Bool(true)));
         assert_eq!(
             e.query("status"),
-            Some(IntrospectValue::Text("NeedsAttention".to_owned()))
+            Ok(IntrospectValue::Text("NeedsAttention".to_owned()))
         );
         assert_eq!(
             e.query("icon"),
-            Some(IntrospectValue::Text("emblem-synchronizing".to_owned()))
+            Ok(IntrospectValue::Text("emblem-synchronizing".to_owned()))
         );
         assert_eq!(
             e.query("item.bake.label"),
-            Some(IntrospectValue::Text("Cancel bake".to_owned()))
+            Ok(IntrospectValue::Text("Cancel bake".to_owned()))
         );
     }
 
@@ -837,7 +840,7 @@ mod tests {
         // `ship` is present but disabled.
         assert_eq!(
             e.query("item.ship.activatable"),
-            Some(IntrospectValue::Bool(false))
+            Ok(IntrospectValue::Bool(false))
         );
         assert_eq!(
             e.invoke("menu_item", IntrospectValue::Text("ship".to_owned())),
@@ -850,7 +853,7 @@ mod tests {
         );
         assert_eq!(
             e.query("publish_count"),
-            Some(IntrospectValue::Int(0)),
+            Ok(IntrospectValue::Int(0)),
             "a rejected activation publishes nothing"
         );
     }
@@ -858,13 +861,10 @@ mod tests {
     #[test]
     fn r949_quit_sets_quit_requested() {
         let mut e = ext();
-        assert_eq!(
-            e.query("quit_requested"),
-            Some(IntrospectValue::Bool(false))
-        );
+        assert_eq!(e.query("quit_requested"), Ok(IntrospectValue::Bool(false)));
         e.invoke("menu_item", IntrospectValue::Text("quit".to_owned()))
             .unwrap();
-        assert_eq!(e.query("quit_requested"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(e.query("quit_requested"), Ok(IntrospectValue::Bool(true)));
     }
 
     /// R1363 §5.55 — `Quit` asks the APP to end; it is not a window op.
@@ -948,7 +948,7 @@ mod tests {
         let mut e = ext();
         assert_eq!(
             e.query("menu"),
-            Some(IntrospectValue::Text(
+            Ok(IntrospectValue::Text(
                 "Hide window | Dark mode | — | Build ▸ | Quit".to_owned()
             )),
         );
@@ -956,7 +956,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             e.query("menu"),
-            Some(IntrospectValue::Text(
+            Ok(IntrospectValue::Text(
                 "Hide window | Dark mode ✓ | — | Build ▸ | Quit".to_owned()
             )),
             "the summary shows the dark check",

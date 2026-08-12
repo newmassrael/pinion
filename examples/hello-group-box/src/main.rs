@@ -140,10 +140,10 @@ fn read_checkbox(scene: &Scene, tag: &str) -> (CheckboxState, bool) {
         return (CheckboxState::Idle, false);
     };
     let state = match intro.query("state") {
-        Some(IntrospectValue::Text(name)) => CheckboxState::from_name_or_default(&name),
+        Ok(IntrospectValue::Text(name)) => CheckboxState::from_name_or_default(&name),
         _ => CheckboxState::Idle,
     };
-    let checked = matches!(intro.query("checked"), Some(IntrospectValue::Bool(true)));
+    let checked = matches!(intro.query("checked"), Ok(IntrospectValue::Bool(true)));
     (state, checked)
 }
 

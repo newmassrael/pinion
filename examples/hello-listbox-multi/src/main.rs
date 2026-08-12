@@ -216,19 +216,19 @@ impl WidgetCore for ListBoxMultiView {
         };
         for (i, slot) in out.rows.iter_mut().enumerate() {
             let state = match intro.query(&format!("state.{i}")) {
-                Some(IntrospectValue::Text(name)) => ListboxItemState::from_name_or_default(&name),
+                Ok(IntrospectValue::Text(name)) => ListboxItemState::from_name_or_default(&name),
                 _ => ListboxItemState::Idle,
             };
             // Multi-mode: per-row selected bool (selected_index is
             // null because no single index applies).
             let selected = matches!(
                 intro.query(&format!("selected.{i}")),
-                Some(IntrospectValue::Bool(true)),
+                Ok(IntrospectValue::Bool(true)),
             );
             *slot = (state, selected);
         }
         out.focused = match intro.query("focused_index") {
-            Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+            Ok(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
             _ => None,
         };
         out
@@ -395,7 +395,7 @@ fn move_focus(node: &mut pinion_core::scene::ExternalNode, direction: i32) -> bo
     let current: Option<usize> = node
         .handle
         .introspect()
-        .and_then(|i| i.query("focused_index"))
+        .and_then(|i| i.query("focused_index").ok())
         .and_then(|v| match v {
             IntrospectValue::Int(i) => usize::try_from(i).ok(),
             _ => None,
@@ -431,7 +431,7 @@ fn commit_focused(node: &mut pinion_core::scene::ExternalNode) -> bool {
     let current: Option<usize> = node
         .handle
         .introspect()
-        .and_then(|i| i.query("focused_index"))
+        .and_then(|i| i.query("focused_index").ok())
         .and_then(|v| match v {
             IntrospectValue::Int(i) => usize::try_from(i).ok(),
             _ => None,
@@ -472,7 +472,7 @@ fn type_ahead_jump(node: &mut pinion_core::scene::ExternalNode, key: &str) -> bo
     let current = node
         .handle
         .introspect()
-        .and_then(|i| i.query("focused_index"))
+        .and_then(|i| i.query("focused_index").ok())
         .and_then(|v| match v {
             IntrospectValue::Int(i) => usize::try_from(i).ok(),
             _ => None,

@@ -360,12 +360,12 @@ impl WidgetCore for MenuView {
         out.open = query_index(intro, "open");
         out.active = query_index(intro, "active");
         out.bar_focus = match intro.query("bar_focus") {
-            Some(IntrospectValue::Int(i)) => usize::try_from(i).unwrap_or(0),
+            Ok(IntrospectValue::Int(i)) => usize::try_from(i).unwrap_or(0),
             _ => 0,
         };
         // R985 — the open submenu descent ("1.2" -> [1, 2]), decoded via the
         // core wire codec (R985.1: one parse home, not a re-rolled split).
-        if let Some(IntrospectValue::Text(s)) = intro.query("open_path") {
+        if let Ok(IntrospectValue::Text(s)) = intro.query("open_path") {
             if let Some(descent) = parse_path(&s) {
                 for &idx in descent.iter().take(MAX_OPEN_DEPTH) {
                     out.open_path[out.open_depth] = idx;
@@ -379,7 +379,7 @@ impl WidgetCore for MenuView {
             for i in 0..count {
                 if matches!(
                     intro.query(&format!("checked.{m}.{i}")),
-                    Some(IntrospectValue::Bool(true))
+                    Ok(IntrospectValue::Bool(true))
                 ) {
                     out.checked |= 1 << i;
                 }
@@ -601,7 +601,7 @@ impl WidgetView for MenuView {
 /// Read an optional-index introspect slot (`open` / `active`).
 fn query_index(intro: &dyn ExternalIntrospect, path: &str) -> Option<usize> {
     match intro.query(path) {
-        Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+        Ok(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
         _ => None,
     }
 }

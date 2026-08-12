@@ -61,8 +61,8 @@ use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::containment::line_box;
 use pinion_core::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
-    SchemaField, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
+    SchemaArg, SchemaField, ThreadOwnership,
 };
 use pinion_core::reactive::{Signal, Tracked};
 use pinion_core::scene::{
@@ -2916,9 +2916,12 @@ impl ExternalIntrospect for LabOracle {
     }
 
     #[allow(clippy::too_many_lines, reason = "one arm per published read")]
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
-        let state = self.state.as_ref()?;
-        let text = |s: String| Some(IntrospectValue::Text(s));
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
+        let state = self
+            .state
+            .as_ref()
+            .ok_or_else(|| ReadRefusal::unavailable("the lab holds no document yet"))?;
+        let text = |s: String| Ok(IntrospectValue::Text(s));
         match path {
             "spec" => text(spec_json().to_string()),
             "graph" => text(spec::GRAPH_NAME.to_owned()),
@@ -2930,13 +2933,13 @@ impl ExternalIntrospect for LabOracle {
                     .map(|l| l.0.to_string())
                     .unwrap_or_default(),
             ),
-            "zoom" => Some(IntrospectValue::Int(i64::from(state.zoom.get()))),
+            "zoom" => Ok(IntrospectValue::Int(i64::from(state.zoom.get()))),
             "pan" => {
                 let (x, y) = state.pan.get();
                 text(format!("{x},{y}"))
             }
-            "running" => Some(IntrospectValue::Bool(state.running.get())),
-            "discovery" => Some(IntrospectValue::Bool(state.discovery.get())),
+            "running" => Ok(IntrospectValue::Bool(state.running.get())),
+            "discovery" => Ok(IntrospectValue::Bool(state.discovery.get())),
             "cursor" => {
                 let (x, y) = state.cursor.get();
                 text(format!("{x},{y}"))
@@ -2966,7 +2969,8 @@ impl ExternalIntrospect for LabOracle {
                 .to_string(),
             ),
             "form" => {
-                let form = selected_form(state)?;
+                let form = selected_form(state)
+                .ok_or_else(|| ReadRefusal::unavailable("no node is selected"))?;
                 text(
                     serde_json::Value::Array(
                         form.fields()
@@ -2987,7 +2991,8 @@ impl ExternalIntrospect for LabOracle {
                 )
             }
             "document" => {
-                let form = selected_form(state)?;
+                let form = selected_form(state)
+                .ok_or_else(|| ReadRefusal::unavailable("no node is selected"))?;
                 match form.document() {
                     Ok(document) => text(document.to_string()),
                     Err(why) => text(serde_json::json!({ "refused": why.to_string() }).to_string()),
@@ -3003,7 +3008,9 @@ impl ExternalIntrospect for LabOracle {
             ),
             "links" => {
                 let doc = state.doc.borrow();
-                let tree = doc.tree(ROOT)?;
+                let tree = doc
+                .tree(ROOT)
+                .ok_or_else(|| ReadRefusal::no_such_member("the document has no root tree"))?;
                 text(
                     serde_json::Value::Array(
                         tree.links()
@@ -3028,7 +3035,7 @@ impl ExternalIntrospect for LabOracle {
                     .join(","),
             ),
             "toast" => text(state.toast.get()),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 

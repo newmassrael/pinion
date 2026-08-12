@@ -8,7 +8,9 @@
 //! derived geometry, so there is nothing to author here; re-solving means
 //! re-reading the graph upstream.
 
-use pinion_core::external::{IntrospectSchema, IntrospectValue, QuerySource, SchemaField, int_of};
+use pinion_core::external::{
+    IntrospectSchema, IntrospectValue, QuerySource, ReadRefusal, SchemaField, int_of,
+};
 use serde::Serialize;
 
 use crate::place::layout::PlaceLayout;
@@ -41,10 +43,10 @@ impl QuerySource for PlaceLayout {
         )
     }
 
-    fn introspect_query(&self, path: &str) -> Option<IntrospectValue> {
+    fn introspect_query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "node_count" => Some(IntrospectValue::Int(int_of(self.nodes.len()))),
-            "edge_count" => Some(IntrospectValue::Int(int_of(self.edges.len()))),
+            "node_count" => Ok(IntrospectValue::Int(int_of(self.nodes.len()))),
+            "edge_count" => Ok(IntrospectValue::Int(int_of(self.edges.len()))),
             "nodes" => {
                 let geoms: Vec<NodeGeom> = self
                     .nodes
@@ -61,10 +63,10 @@ impl QuerySource for PlaceLayout {
                         contained_by: n.contained_by.map(|pi| self.nodes[pi].id.as_str()),
                     })
                     .collect();
-                Some(IntrospectValue::json(&geoms))
+                Ok(IntrospectValue::json(&geoms))
             }
-            "edges" => Some(IntrospectValue::json(&self.edges)),
-            _ => None,
+            "edges" => Ok(IntrospectValue::json(&self.edges)),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 }
@@ -111,20 +113,20 @@ mod tests {
         let layout = sample_layout();
         assert!(matches!(
             layout.introspect_query("node_count"),
-            Some(IntrospectValue::Int(3))
+            Ok(IntrospectValue::Int(3))
         ));
         assert!(matches!(
             layout.introspect_query("edge_count"),
-            Some(IntrospectValue::Int(1))
+            Ok(IntrospectValue::Int(1))
         ));
-        assert!(layout.introspect_query("unknown").is_none());
+        assert!(layout.introspect_query("unknown").is_err());
     }
 
     #[test]
     fn nodes_query_carries_geometry_and_containment() {
         let layout = sample_layout();
         match layout.introspect_query("nodes") {
-            Some(IntrospectValue::Json(serde_json::Value::Array(items))) => {
+            Ok(IntrospectValue::Json(serde_json::Value::Array(items))) => {
                 assert_eq!(items.len(), 3);
                 let shrine = items
                     .iter()
@@ -143,7 +145,7 @@ mod tests {
         let intro = node.introspect().expect("introspectable");
         assert!(matches!(
             intro.query("node_count"),
-            Some(IntrospectValue::Int(3))
+            Ok(IntrospectValue::Int(3))
         ));
         // A declared path refuses writes; an undeclared one is unknown.
         let mut node = node;

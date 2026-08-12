@@ -56,8 +56,8 @@
 use crate::WidgetStateName;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
-    ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::disclosure::{Disclosure, DisclosureEvent, DisclosureState};
@@ -346,12 +346,12 @@ impl ExternalIntrospect for DisclosureGroupExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "count" => Some(IntrospectValue::Int(
+            "count" => Ok(IntrospectValue::Int(
                 i64::try_from(self.count()).expect("DisclosureGroup count must fit in i64"),
             )),
-            "expanded_index" => Some(match self.expanded_index() {
+            "expanded_index" => Ok(match self.expanded_index() {
                 Some(idx) => IntrospectValue::Int(i64::try_from(idx).expect("index fits in i64")),
                 None => IntrospectValue::Null,
             }),
@@ -361,20 +361,30 @@ impl ExternalIntrospect for DisclosureGroupExternal {
                 // and `expanded.<i>` (boolean expanded bit). Out-of-
                 // range indices and malformed suffixes return `None`.
                 if let Some(idx_str) = path.strip_prefix("state.") {
-                    let idx: usize = idx_str.parse().ok()?;
+                    let idx: usize = idx_str
+                        .parse()
+                        .map_err(|_| ReadRefusal::QueryTypeMismatch)?;
                     if idx >= self.count() {
-                        return None;
+                        return Err(ReadRefusal::no_such_member(format!(
+                            "section {idx} is outside 0..{}",
+                            self.count()
+                        )));
                     }
-                    return Some(IntrospectValue::Text(self.state(idx).as_name().to_string()));
+                    return Ok(IntrospectValue::Text(self.state(idx).as_name().to_string()));
                 }
                 if let Some(idx_str) = path.strip_prefix("expanded.") {
-                    let idx: usize = idx_str.parse().ok()?;
+                    let idx: usize = idx_str
+                        .parse()
+                        .map_err(|_| ReadRefusal::QueryTypeMismatch)?;
                     if idx >= self.count() {
-                        return None;
+                        return Err(ReadRefusal::no_such_member(format!(
+                            "section {idx} is outside 0..{}",
+                            self.count()
+                        )));
                     }
-                    return Some(IntrospectValue::Bool(self.is_expanded(idx)));
+                    return Ok(IntrospectValue::Bool(self.is_expanded(idx)));
                 }
-                None
+                Err(ReadRefusal::UnknownPath)
             }
         }
     }
@@ -586,20 +596,28 @@ mod tests {
     #[test]
     fn query_count_expanded_index_and_per_section() {
         let mut ext = DisclosureGroupExternal::new(2);
-        assert_eq!(ext.query("count"), Some(IntrospectValue::Int(2)));
-        assert_eq!(ext.query("expanded_index"), Some(IntrospectValue::Null));
+        assert_eq!(ext.query("count"), Ok(IntrospectValue::Int(2)));
+        assert_eq!(ext.query("expanded_index"), Ok(IntrospectValue::Null));
         assert_eq!(
             ext.query("state.0"),
-            Some(IntrospectValue::Text("Idle".to_string()))
+            Ok(IntrospectValue::Text("Idle".to_string()))
         );
-        assert_eq!(ext.query("expanded.1"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(ext.query("expanded.1"), Ok(IntrospectValue::Bool(false)));
         click_ext(&mut ext, 1);
-        assert_eq!(ext.query("expanded_index"), Some(IntrospectValue::Int(1)));
-        assert_eq!(ext.query("expanded.1"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(ext.query("expanded_index"), Ok(IntrospectValue::Int(1)));
+        assert_eq!(ext.query("expanded.1"), Ok(IntrospectValue::Bool(true)));
         // Out-of-range per-section query -> None.
-        assert_eq!(ext.query("expanded.9"), None);
-        assert_eq!(ext.query("state.9"), None);
-        assert_eq!(ext.query("bogus"), None);
+        assert!(matches!(
+            ext.query("expanded.9"),
+            Err(ReadRefusal::NoSuchMember(_))
+        ));
+        assert!(matches!(
+            ext.query("state.9"),
+            Err(ReadRefusal::NoSuchMember(_))
+        ),);
+        // R1667 - an undeclared NAME is a different refusal from an index the
+        // declared family does not have.
+        assert_eq!(ext.query("bogus"), Err(ReadRefusal::UnknownPath));
     }
 
     #[test]

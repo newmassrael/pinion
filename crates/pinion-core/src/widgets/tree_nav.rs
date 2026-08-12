@@ -32,8 +32,8 @@ use super::virtual_list::scroll_offset_to_reveal;
 use super::virtual_select::clamp_nav;
 use crate::Signal;
 use crate::external::{
-    IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource, SchemaArg, SchemaField,
-    at_index,
+    IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource, ReadRefusal, SchemaArg,
+    SchemaField, at_index,
 };
 use crate::reactive::batch;
 use crate::widget_core::ExtraExternal;
@@ -714,23 +714,23 @@ impl QuerySource for TreeViewIntrospect {
         )
     }
 
-    fn introspect_query(&self, path: &str) -> Option<IntrospectValue> {
+    fn introspect_query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         let rows = (self.rows)();
         if let Some(rest) = path.strip_prefix("id_at.") {
-            return Some(row_at(rest, &rows, |r| IntrospectValue::Text(r.id.clone())));
+            return Ok(row_at(rest, &rows, |r| IntrospectValue::Text(r.id.clone())));
         }
         if let Some(rest) = path.strip_prefix("label_at.") {
-            return Some(row_at(rest, &rows, |r| {
+            return Ok(row_at(rest, &rows, |r| {
                 IntrospectValue::Text(r.label.clone())
             }));
         }
         if let Some(rest) = path.strip_prefix("level_at.") {
-            return Some(row_at(rest, &rows, |r| {
+            return Ok(row_at(rest, &rows, |r| {
                 IntrospectValue::Int(i64::from(r.depth) + 1)
             }));
         }
         if let Some(rest) = path.strip_prefix("expanded_at.") {
-            return Some(row_at(rest, &rows, |r| {
+            return Ok(row_at(rest, &rows, |r| {
                 // aria-expanded is undefined (Null) for a leaf, Bool for a branch.
                 if r.has_children {
                     IntrospectValue::Bool(r.expanded)
@@ -740,17 +740,17 @@ impl QuerySource for TreeViewIntrospect {
             }));
         }
         match path {
-            "row_count" => Some(IntrospectValue::Int(
+            "row_count" => Ok(IntrospectValue::Int(
                 i64::try_from(rows.len()).unwrap_or(i64::MAX),
             )),
-            "cursor" => Some((self.cursor)().map_or(IntrospectValue::Null, IntrospectValue::Text)),
+            "cursor" => Ok((self.cursor)().map_or(IntrospectValue::Null, IntrospectValue::Text)),
             "cursor_index" => {
                 let index = (self.cursor)().and_then(|id| rows.iter().position(|r| r.id == id));
-                Some(index.map_or(IntrospectValue::Null, |i| {
+                Ok(index.map_or(IntrospectValue::Null, |i| {
                     IntrospectValue::Int(i64::try_from(i).unwrap_or(i64::MAX))
                 }))
             }
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 }
@@ -784,6 +784,7 @@ mod tests {
     //! cache). Ported from `hello-tree-view`'s R809 nav tests when the
     //! resolver was lifted here at R811; the example now exercises only
     //! its `FileNode` [`TreeNode`] glue.
+    use crate::external::ReadRefusal;
 
     use super::{
         MutableTreeNode, TreeKey, TreeNode, VisibleRow, apply_tree_key, effective_cursor,
@@ -1278,54 +1279,51 @@ mod tests {
         );
         assert_eq!(
             src.introspect_query("row_count"),
-            Some(IntrospectValue::Int(6))
+            Ok(IntrospectValue::Int(6))
         );
         assert_eq!(
             src.introspect_query("cursor"),
-            Some(IntrospectValue::Text("src/lib.rs".into()))
+            Ok(IntrospectValue::Text("src/lib.rs".into()))
         );
         assert_eq!(
             src.introspect_query("cursor_index"),
-            Some(IntrospectValue::Int(2))
+            Ok(IntrospectValue::Int(2))
         );
         // Per-position id / label.
         assert_eq!(
             src.introspect_query("id_at.0"),
-            Some(IntrospectValue::Text("src".into()))
+            Ok(IntrospectValue::Text("src".into()))
         );
         assert_eq!(
             src.introspect_query("label_at.1"),
-            Some(IntrospectValue::Text("main.rs".into()))
+            Ok(IntrospectValue::Text("main.rs".into()))
         );
         // aria-level = depth + 1; aria-expanded = Bool for a branch.
         assert_eq!(
             src.introspect_query("level_at.0"),
-            Some(IntrospectValue::Int(1))
+            Ok(IntrospectValue::Int(1))
         );
         assert_eq!(
             src.introspect_query("expanded_at.0"),
-            Some(IntrospectValue::Bool(true))
+            Ok(IntrospectValue::Bool(true))
         );
         // src/widgets is a collapsed branch one level deeper.
         assert_eq!(
             src.introspect_query("level_at.3"),
-            Some(IntrospectValue::Int(2))
+            Ok(IntrospectValue::Int(2))
         );
         assert_eq!(
             src.introspect_query("expanded_at.3"),
-            Some(IntrospectValue::Bool(false))
+            Ok(IntrospectValue::Bool(false))
         );
         // A leaf's aria-expanded is undefined (Null).
         assert_eq!(
             src.introspect_query("expanded_at.1"),
-            Some(IntrospectValue::Null)
+            Ok(IntrospectValue::Null)
         );
         // Out-of-range position is present-but-empty; undeclared path is absent.
-        assert_eq!(
-            src.introspect_query("id_at.99"),
-            Some(IntrospectValue::Null)
-        );
-        assert_eq!(src.introspect_query("nope"), None);
+        assert_eq!(src.introspect_query("id_at.99"), Ok(IntrospectValue::Null));
+        assert_eq!(src.introspect_query("nope"), Err(ReadRefusal::UnknownPath));
     }
 
     #[test]
@@ -1353,10 +1351,10 @@ mod tests {
         use super::TreeViewIntrospect;
         use crate::external::{IntrospectValue, QuerySource};
         let none = TreeViewIntrospect::new(|| flat_visible(&sample()), || None);
-        assert_eq!(none.introspect_query("cursor"), Some(IntrospectValue::Null));
+        assert_eq!(none.introspect_query("cursor"), Ok(IntrospectValue::Null));
         assert_eq!(
             none.introspect_query("cursor_index"),
-            Some(IntrospectValue::Null)
+            Ok(IntrospectValue::Null)
         );
         // A cursor on a collapsed-away id is reported but has no visible index.
         let hidden = TreeViewIntrospect::new(
@@ -1365,11 +1363,11 @@ mod tests {
         );
         assert_eq!(
             hidden.introspect_query("cursor"),
-            Some(IntrospectValue::Text("tests/it.rs".into()))
+            Ok(IntrospectValue::Text("tests/it.rs".into()))
         );
         assert_eq!(
             hidden.introspect_query("cursor_index"),
-            Some(IntrospectValue::Null)
+            Ok(IntrospectValue::Null)
         );
     }
 

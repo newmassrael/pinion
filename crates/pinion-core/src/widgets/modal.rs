@@ -39,7 +39,7 @@
 use std::rc::Rc;
 
 use crate::external::{
-    IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource, SchemaField,
+    IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource, ReadRefusal, SchemaField,
 };
 use crate::reactive::{Owner, Signal};
 use crate::widget_core::ExtraExternal;
@@ -131,8 +131,10 @@ impl QuerySource for ModalState {
         IntrospectSchema::new(const { &[SchemaField::new("open", "bool")] })
     }
 
-    fn introspect_query(&self, path: &str) -> Option<IntrospectValue> {
-        (path == "open").then(|| IntrospectValue::Bool(self.is_open()))
+    fn introspect_query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
+        (path == "open")
+            .then(|| IntrospectValue::Bool(self.is_open()))
+            .ok_or(ReadRefusal::UnknownPath)
     }
 }
 
@@ -242,21 +244,21 @@ mod tests {
 
             assert_eq!(
                 node.query("open"),
-                Some(IntrospectValue::Bool(false)),
+                Ok(IntrospectValue::Bool(false)),
                 "a fresh modal introspects as closed",
             );
 
             m.open(vec!["ok".to_string()]);
             assert_eq!(
                 node.query("open"),
-                Some(IntrospectValue::Bool(true)),
+                Ok(IntrospectValue::Bool(true)),
                 "open() flips the introspected flag (shared SSOT, no second copy)",
             );
 
             m.close();
             assert_eq!(
                 node.query("open"),
-                Some(IntrospectValue::Bool(false)),
+                Ok(IntrospectValue::Bool(false)),
                 "close() lowers the introspected flag",
             );
         });
@@ -278,13 +280,13 @@ mod tests {
                 .expect("the modal node exposes a query-only introspection face");
             assert_eq!(
                 introspect.query("open"),
-                Some(IntrospectValue::Bool(false)),
+                Ok(IntrospectValue::Bool(false)),
                 "the registered node reports the shared closed flag",
             );
             m.open(vec!["ok".to_string()]);
             assert_eq!(
                 introspect.query("open"),
-                Some(IntrospectValue::Bool(true)),
+                Ok(IntrospectValue::Bool(true)),
                 "opening the shared ModalState flips the registered node (one SSOT)",
             );
         });
@@ -294,7 +296,11 @@ mod tests {
     fn r795_introspect_unknown_path_is_none() {
         Owner::new().run(|| {
             let node = ModalIntrospect::new(use_modal("m"));
-            assert_eq!(node.query("members"), None, "only `open` is a query slot");
+            assert_eq!(
+                node.query("members"),
+                Err(ReadRefusal::UnknownPath),
+                "only `open` is a query slot"
+            );
         });
     }
 

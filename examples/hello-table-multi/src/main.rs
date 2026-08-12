@@ -326,11 +326,11 @@ impl WidgetCore for TableMultiView {
             if let Some(slot) = out.row_selected.get_mut(r) {
                 *slot = matches!(
                     intro.query(&format!("selected.{r}")),
-                    Some(IntrospectValue::Bool(true))
+                    Ok(IntrospectValue::Bool(true))
                 );
             }
             let st = match intro.query(&format!("state.{r}")) {
-                Some(IntrospectValue::Text(name)) => RadioState::from_name_or_default(&name),
+                Ok(IntrospectValue::Text(name)) => RadioState::from_name_or_default(&name),
                 _ => RadioState::Idle,
             };
             if let Some(slot) = out.row_states.get_mut(r) {
@@ -577,7 +577,7 @@ mod tests {
             .filter(|&r| {
                 matches!(
                     intro.query(&format!("selected.{r}")),
-                    Some(IntrospectValue::Bool(true))
+                    Ok(IntrospectValue::Bool(true))
                 )
             })
             .collect()
@@ -589,11 +589,11 @@ mod tests {
         };
         let intro = node.handle.introspect().expect("introspect");
         let r = match intro.query("focused_row") {
-            Some(IntrospectValue::Int(r)) => r,
+            Ok(IntrospectValue::Int(r)) => r,
             _ => -1,
         };
         let c = match intro.query("focused_col") {
-            Some(IntrospectValue::Int(c)) => c,
+            Ok(IntrospectValue::Int(c)) => c,
             _ => -1,
         };
         (r, c)
@@ -613,12 +613,12 @@ mod tests {
         };
         assert_eq!(
             node.handle.introspect().unwrap().query("selected_row"),
-            Some(IntrospectValue::Int(-1)),
+            Ok(IntrospectValue::Int(-1)),
             "multi-mode selected_row is the -1 sentinel",
         );
         assert_eq!(
             node.handle.introspect().unwrap().query("multiselect"),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
         );
     }
 

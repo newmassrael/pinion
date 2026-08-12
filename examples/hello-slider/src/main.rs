@@ -376,6 +376,7 @@ mod tests {
         let intro = node.handle.introspect().expect("introspect opted in");
         intro
             .query("value")
+            .ok()
             .and_then(|v| v.as_f32())
             .expect("value path returns Float")
     }

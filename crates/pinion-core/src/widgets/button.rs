@@ -36,8 +36,8 @@ pub use sm::{ButtonEvent, ButtonState};
 use crate::WidgetStateName;
 use crate::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
-    SchemaField, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
+    SchemaArg, SchemaField, ThreadOwnership,
 };
 use crate::input::AutoRepeat;
 use crate::intent::Intent;
@@ -286,12 +286,12 @@ impl ExternalIntrospect for ButtonExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "state" => Some(IntrospectValue::Text(self.state().as_name().to_string())),
+            "state" => Ok(IntrospectValue::Text(self.state().as_name().to_string())),
             // R694 §5.39 — keyboard-focus posture for the focus-ring read.
-            "focused" => Some(IntrospectValue::Bool(self.focused)),
-            _ => None,
+            "focused" => Ok(IntrospectValue::Bool(self.focused)),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -396,10 +396,10 @@ impl ExternalIntrospect for ButtonStateSnapshot {
         IntrospectSchema::new(const { &[SchemaField::new("state", "string")] })
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "state" => Some(IntrospectValue::Text(self.state.as_name().to_string())),
-            _ => None,
+            "state" => Ok(IntrospectValue::Text(self.state.as_name().to_string())),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -713,7 +713,7 @@ mod tests {
     #[test]
     fn button_external_unknown_query_path_returns_none() {
         let bx = ButtonExternal::new();
-        assert!(bx.query("nope").is_none());
+        assert!(bx.query("nope").is_err());
     }
 
     #[test]
@@ -721,16 +721,16 @@ mod tests {
         use crate::external::External;
         let mut bx = ButtonExternal::new();
         assert!(!bx.focused(), "buttons boot unfocused");
-        assert_eq!(bx.query("focused"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(bx.query("focused"), Ok(IntrospectValue::Bool(false)));
         bx.on_focus_change(true);
         assert!(bx.focused(), "focus posture follows the shell");
         assert_eq!(
             bx.query("focused"),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
             "focus posture surfaces on the introspect slot for the ring read",
         );
         bx.on_focus_change(false);
-        assert_eq!(bx.query("focused"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(bx.query("focused"), Ok(IntrospectValue::Bool(false)));
     }
 
     #[test]

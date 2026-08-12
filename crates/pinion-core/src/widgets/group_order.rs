@@ -80,8 +80,8 @@ use std::collections::{BTreeSet, HashMap};
 use std::rc::Rc;
 
 use crate::external::{
-    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, SchemaArg,
-    SchemaField, at_index, query_proxy_external_impl,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    ReadRefusal, SchemaArg, SchemaField, at_index, query_proxy_external_impl,
 };
 use crate::reactive::{Owner, Signal};
 use crate::scene::Scene;
@@ -629,7 +629,7 @@ pub fn use_group_order_with_source(
 #[must_use]
 pub fn read_cursor(intro: &dyn ExternalIntrospect) -> Option<usize> {
     match intro.query("cursor") {
-        Some(IntrospectValue::Int(v)) => usize::try_from(v).ok(),
+        Ok(IntrospectValue::Int(v)) => usize::try_from(v).ok(),
         _ => None,
     }
 }
@@ -940,23 +940,23 @@ impl ExternalIntrospect for GroupOrderExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         let rows = self.state.rows();
         let row_get = |i: usize| rows.get(i).copied();
         if let Some(rest) = path.strip_prefix("kind_at.") {
-            return Some(at_index(rest, row_get, |r| {
+            return Ok(at_index(rest, row_get, |r| {
                 IntrospectValue::Text(r.kind_str().into())
             }));
         }
         if let Some(rest) = path.strip_prefix("source_at.") {
-            return Some(at_index(rest, row_get, |r| {
+            return Ok(at_index(rest, row_get, |r| {
                 r.source()
                     .and_then(|s| i64::try_from(s).ok())
                     .map_or(IntrospectValue::Null, IntrospectValue::Int)
             }));
         }
         if let Some(rest) = path.strip_prefix("group_at.") {
-            return Some(at_index(rest, row_get, |r| match r {
+            return Ok(at_index(rest, row_get, |r| match r {
                 GroupRow::Header { group, .. } => {
                     i64::try_from(group).map_or(IntrospectValue::Null, IntrospectValue::Int)
                 }
@@ -964,7 +964,7 @@ impl ExternalIntrospect for GroupOrderExternal {
             }));
         }
         if let Some(rest) = path.strip_prefix("label_at.") {
-            return Some(at_index(rest, row_get, |r| match r {
+            return Ok(at_index(rest, row_get, |r| match r {
                 GroupRow::Header { group, .. } => self
                     .state
                     .group_label(group)
@@ -973,7 +973,7 @@ impl ExternalIntrospect for GroupOrderExternal {
             }));
         }
         if let Some(rest) = path.strip_prefix("member_count_at.") {
-            return Some(at_index(rest, row_get, |r| match r {
+            return Ok(at_index(rest, row_get, |r| match r {
                 GroupRow::Header { member_count, .. } => {
                     i64::try_from(member_count).map_or(IntrospectValue::Null, IntrospectValue::Int)
                 }
@@ -981,7 +981,7 @@ impl ExternalIntrospect for GroupOrderExternal {
             }));
         }
         if let Some(rest) = path.strip_prefix("collapsed_at.") {
-            return Some(at_index(rest, row_get, |r| match r {
+            return Ok(at_index(rest, row_get, |r| match r {
                 GroupRow::Header { collapsed, .. } => IntrospectValue::Bool(collapsed),
                 GroupRow::Data { .. } => IntrospectValue::Null,
             }));
@@ -989,31 +989,29 @@ impl ExternalIntrospect for GroupOrderExternal {
         if let Some(rest) = path.strip_prefix("collapsed.") {
             // A per-group collapse flag; an out-of-range group is
             // present-but-empty (Null), the §5.12 convention.
-            return Some(
-                rest.parse::<usize>()
-                    .ok()
-                    .filter(|&g| g < self.state.group_count())
-                    .map_or(IntrospectValue::Null, |g| {
-                        IntrospectValue::Bool(self.state.is_collapsed(g))
-                    }),
-            );
+            return Ok(rest
+                .parse::<usize>()
+                .ok()
+                .filter(|&g| g < self.state.group_count())
+                .map_or(IntrospectValue::Null, |g| {
+                    IntrospectValue::Bool(self.state.is_collapsed(g))
+                }));
         }
         match path {
-            "visible_len" => Some(self.visible_len_value()),
-            "count" => Some(IntrospectValue::Int(
+            "visible_len" => Ok(self.visible_len_value()),
+            "count" => Ok(IntrospectValue::Int(
                 i64::try_from(self.state.count()).unwrap_or(i64::MAX),
             )),
-            "group_count" => Some(IntrospectValue::Int(
+            "group_count" => Ok(IntrospectValue::Int(
                 i64::try_from(self.state.group_count()).unwrap_or(i64::MAX),
             )),
             // The roving keyboard cursor's visual position, Null when unset.
-            "cursor" => Some(
-                self.state
-                    .cursor()
-                    .and_then(|c| i64::try_from(c).ok())
-                    .map_or(IntrospectValue::Null, IntrospectValue::Int),
-            ),
-            _ => None,
+            "cursor" => Ok(self
+                .state
+                .cursor()
+                .and_then(|c| i64::try_from(c).ok())
+                .map_or(IntrospectValue::Null, IntrospectValue::Int)),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -1294,51 +1292,48 @@ mod tests {
     #[test]
     fn query_surfaces_structure_and_per_position_axes() {
         let e = ext();
-        assert_eq!(e.query("visible_len"), Some(IntrospectValue::Int(15)));
-        assert_eq!(e.query("count"), Some(IntrospectValue::Int(12)));
-        assert_eq!(e.query("group_count"), Some(IntrospectValue::Int(3)));
+        assert_eq!(e.query("visible_len"), Ok(IntrospectValue::Int(15)));
+        assert_eq!(e.query("count"), Ok(IntrospectValue::Int(12)));
+        assert_eq!(e.query("group_count"), Ok(IntrospectValue::Int(3)));
         // pos 0 = group 0 header.
         assert_eq!(
             e.query("kind_at.0"),
-            Some(IntrospectValue::Text("header".into()))
+            Ok(IntrospectValue::Text("header".into()))
         );
-        assert_eq!(e.query("group_at.0"), Some(IntrospectValue::Int(0)));
+        assert_eq!(e.query("group_at.0"), Ok(IntrospectValue::Int(0)));
         assert_eq!(
             e.query("label_at.0"),
-            Some(IntrospectValue::Text("Alpha".into()))
+            Ok(IntrospectValue::Text("Alpha".into()))
         );
-        assert_eq!(e.query("member_count_at.0"), Some(IntrospectValue::Int(4)));
-        assert_eq!(
-            e.query("collapsed_at.0"),
-            Some(IntrospectValue::Bool(false))
-        );
+        assert_eq!(e.query("member_count_at.0"), Ok(IntrospectValue::Int(4)));
+        assert_eq!(e.query("collapsed_at.0"), Ok(IntrospectValue::Bool(false)));
         assert_eq!(
             e.query("source_at.0"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "a header has no source"
         );
         // pos 1 = group 0's first data row (source 0).
         assert_eq!(
             e.query("kind_at.1"),
-            Some(IntrospectValue::Text("data".into()))
+            Ok(IntrospectValue::Text("data".into()))
         );
-        assert_eq!(e.query("source_at.1"), Some(IntrospectValue::Int(0)));
+        assert_eq!(e.query("source_at.1"), Ok(IntrospectValue::Int(0)));
         assert_eq!(
             e.query("group_at.1"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "a data row reports no group id"
         );
-        assert_eq!(e.query("label_at.1"), Some(IntrospectValue::Null));
+        assert_eq!(e.query("label_at.1"), Ok(IntrospectValue::Null));
         // Per-group collapse flag.
-        assert_eq!(e.query("collapsed.0"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(e.query("collapsed.0"), Ok(IntrospectValue::Bool(false)));
         assert_eq!(
             e.query("collapsed.99"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "out-of-range group → Null"
         );
         // Out-of-range position is present-but-empty; undeclared path is absent.
-        assert_eq!(e.query("kind_at.999"), Some(IntrospectValue::Null));
-        assert_eq!(e.query("nope"), None);
+        assert_eq!(e.query("kind_at.999"), Ok(IntrospectValue::Null));
+        assert_eq!(e.query("nope"), Err(ReadRefusal::UnknownPath));
     }
 
     #[test]
@@ -1688,12 +1683,12 @@ mod tests {
         let mut e = ext();
         assert_eq!(
             e.query("cursor"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "cursor unset at boot"
         );
         e.intervene("cursor", IntrospectValue::Int(4))
             .expect("set cursor");
-        assert_eq!(e.query("cursor"), Some(IntrospectValue::Int(4)));
+        assert_eq!(e.query("cursor"), Ok(IntrospectValue::Int(4)));
         assert_eq!(
             e.state().cursor(),
             Some(4),
@@ -1701,7 +1696,7 @@ mod tests {
         );
         e.intervene("cursor", IntrospectValue::Null)
             .expect("clear cursor");
-        assert_eq!(e.query("cursor"), Some(IntrospectValue::Null));
+        assert_eq!(e.query("cursor"), Ok(IntrospectValue::Null));
         // A negative Int or a non-Int/Null value is a type mismatch, not a clear.
         assert_eq!(
             e.intervene("cursor", IntrospectValue::Int(-1)),

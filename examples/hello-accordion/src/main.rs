@@ -166,10 +166,10 @@ fn read_section(scene: &Scene, tag: &str) -> (DisclosureState, bool) {
         return (DisclosureState::Idle, false);
     };
     let state = match intro.query("state") {
-        Some(IntrospectValue::Text(name)) => DisclosureState::from_name_or_default(&name),
+        Ok(IntrospectValue::Text(name)) => DisclosureState::from_name_or_default(&name),
         _ => DisclosureState::Idle,
     };
-    let expanded = matches!(intro.query("expanded"), Some(IntrospectValue::Bool(true)));
+    let expanded = matches!(intro.query("expanded"), Ok(IntrospectValue::Bool(true)));
     (state, expanded)
 }
 

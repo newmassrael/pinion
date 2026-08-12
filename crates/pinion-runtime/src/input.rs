@@ -4893,6 +4893,7 @@ fn round_clamp_i32(v: f32) -> i32 {
 
 #[cfg(test)]
 mod tests {
+    use pinion_core::external::ReadRefusal;
     use std::sync::{Arc, Mutex};
 
     use super::*;
@@ -4951,8 +4952,8 @@ mod tests {
         fn schema(&self) -> IntrospectSchema {
             IntrospectSchema::new(const { &[] })
         }
-        fn query(&self, _path: &str) -> Option<IntrospectValue> {
-            None
+        fn query(&self, _path: &str) -> Result<IntrospectValue, ReadRefusal> {
+            Err(ReadRefusal::UnknownPath)
         }
         fn intervene(
             &mut self,
@@ -5871,7 +5872,7 @@ mod tests {
             };
             matches!(
                 node.handle.introspect().unwrap().query("value"),
-                Some(IntrospectValue::Bool(true))
+                Ok(IntrospectValue::Bool(true))
             )
         }
         fn fresh() -> (InputRouter, Scene) {
@@ -6087,7 +6088,7 @@ mod tests {
                 .expect("introspect")
                 .query("selection")
             {
-                Some(IntrospectValue::Json(list)) => list.to_string(),
+                Ok(IntrospectValue::Json(list)) => list.to_string(),
                 other => panic!("selection query answered {other:?}"),
             }
         }
@@ -6216,7 +6217,7 @@ mod tests {
                 .expect("introspect")
                 .query("selection")
             {
-                Some(IntrospectValue::Json(list)) => list.to_string(),
+                Ok(IntrospectValue::Json(list)) => list.to_string(),
                 other => panic!("selection query answered {other:?}"),
             }
         }
@@ -7000,7 +7001,7 @@ mod tests {
             .query("value");
         assert_eq!(
             value,
-            Some(pinion_core::external::IntrospectValue::Float(10.0)),
+            Ok(pinion_core::external::IntrospectValue::Float(10.0)),
             "it stopped at max, not past it",
         );
         assert_eq!(
@@ -7073,7 +7074,7 @@ mod tests {
                 .introspect()
                 .expect("introspects")
                 .query("value"),
-            Some(pinion_core::external::IntrospectValue::Float(3.0)),
+            Ok(pinion_core::external::IntrospectValue::Float(3.0)),
             "and in particular it did not start stepping the OTHER arrow",
         );
     }
@@ -7328,8 +7329,8 @@ mod tests {
         fn schema(&self) -> IntrospectSchema {
             IntrospectSchema::new(const { &[] })
         }
-        fn query(&self, _path: &str) -> Option<IntrospectValue> {
-            None
+        fn query(&self, _path: &str) -> Result<IntrospectValue, ReadRefusal> {
+            Err(ReadRefusal::UnknownPath)
         }
         fn intervene(
             &mut self,
@@ -11690,8 +11691,8 @@ mod tests {
         fn schema(&self) -> IntrospectSchema {
             IntrospectSchema::new(const { &[] })
         }
-        fn query(&self, _path: &str) -> Option<IntrospectValue> {
-            None
+        fn query(&self, _path: &str) -> Result<IntrospectValue, ReadRefusal> {
+            Err(ReadRefusal::UnknownPath)
         }
         fn intervene(
             &mut self,

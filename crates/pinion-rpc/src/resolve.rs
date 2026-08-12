@@ -388,14 +388,14 @@ mod tests {
     fn introspect_mut_at_root_external_reaches_query_channel() {
         let mut scene = counted_scene(7);
         let intro = introspect_mut_at(&mut scene, &[]).unwrap();
-        assert_eq!(intro.query("count"), Some(IntrospectValue::Int(7)));
+        assert_eq!(intro.query("count"), Ok(IntrospectValue::Int(7)));
     }
 
     #[test]
     fn introspect_mut_at_tagged_descendant() {
         let mut scene = container_with_tagged_counted("counter", 11);
         let intro = introspect_mut_at(&mut scene, &["counter".to_string()]).unwrap();
-        assert_eq!(intro.query("count"), Some(IntrospectValue::Int(11)));
+        assert_eq!(intro.query("count"), Ok(IntrospectValue::Int(11)));
     }
 
     /// `&mut dyn ExternalIntrospect` is not `Debug`, so `unwrap_err` is
@@ -432,14 +432,14 @@ mod tests {
     fn introspect_at_read_only_path_succeeds() {
         let scene = counted_scene(42);
         let intro = introspect_at(&scene, &[]).unwrap();
-        assert_eq!(intro.query("count"), Some(IntrospectValue::Int(42)));
+        assert_eq!(intro.query("count"), Ok(IntrospectValue::Int(42)));
     }
 
     #[test]
     fn introspect_at_descendant_tag_resolves() {
         let scene = container_with_tagged_counted("counter", 99);
         let intro = introspect_at(&scene, &["counter".to_string()]).unwrap();
-        assert_eq!(intro.query("count"), Some(IntrospectValue::Int(99)));
+        assert_eq!(intro.query("count"), Ok(IntrospectValue::Int(99)));
     }
 
     #[test]
@@ -447,7 +447,7 @@ mod tests {
         let mut scene = container_with_tagged_counted("counter", 5);
         let (intro, intro_path) =
             resolve_external_introspect_mut(&mut scene, "/counter/external/count").unwrap();
-        assert_eq!(intro.query(&intro_path), Some(IntrospectValue::Int(5)));
+        assert_eq!(intro.query(&intro_path), Ok(IntrospectValue::Int(5)));
     }
 
     #[test]
@@ -455,7 +455,7 @@ mod tests {
         let scene = container_with_tagged_counted("counter", 13);
         let (intro, intro_path) =
             resolve_external_introspect(&scene, "/window[main]/counter/external/count").unwrap();
-        assert_eq!(intro.query(&intro_path), Some(IntrospectValue::Int(13)));
+        assert_eq!(intro.query(&intro_path), Ok(IntrospectValue::Int(13)));
     }
 
     // ---- R1483 §5.34 §2 #2 — one name for one surface, both compositions ----
@@ -499,7 +499,7 @@ mod tests {
                 .unwrap_or_else(|e| panic!("{what}: {e:?}"));
             assert_eq!(
                 intro.query("count"),
-                Some(IntrospectValue::Int(1)),
+                Ok(IntrospectValue::Int(1)),
                 "{what}: the tag must reach the primary",
             );
         }
@@ -511,7 +511,7 @@ mod tests {
         // the alias is added beside it, not instead of it.
         for scene in [bare_root_primary("model", 4), wrapped_primary("model", 4)] {
             let intro = introspect_at(&scene, &[]).expect("bare /external resolves");
-            assert_eq!(intro.query("count"), Some(IntrospectValue::Int(4)));
+            assert_eq!(intro.query("count"), Ok(IntrospectValue::Int(4)));
         }
     }
 
@@ -541,7 +541,7 @@ mod tests {
         let intro = introspect_at(&scene, &["dup".to_string()]).expect("resolves");
         assert_eq!(
             intro.query("count"),
-            Some(IntrospectValue::Int(7)),
+            Ok(IntrospectValue::Int(7)),
             "the child named `dup`, not the root's first external",
         );
     }
@@ -598,12 +598,12 @@ mod tests {
         fn reached(scene: &Scene, name: &str) -> Option<IntrospectValue> {
             introspect_at(scene, &[name.to_string()])
                 .ok()
-                .and_then(|i| i.query("count"))
+                .and_then(|i| i.query("count").ok())
         }
         fn reached_mut(scene: &mut Scene, name: &str) -> Option<IntrospectValue> {
             introspect_mut_at(scene, &[name.to_string()])
                 .ok()
-                .and_then(|i| i.query("count"))
+                .and_then(|i| i.query("count").ok())
         }
         let cases = [
             ("bare root", bare_root_primary("model", 1)),

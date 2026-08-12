@@ -83,8 +83,8 @@ use pinion_a11y::{AccessFocus, AccessNode, TreeGridSelection, WidgetA11y, treegr
 use pinion_core::composite_tag::{GridTag, split_send_payload};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, QueryOnlyIntrospect, QuerySource, RepaintOwner,
-    SchemaArg, SchemaField, StubExternal, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, QueryOnlyIntrospect, QuerySource, ReadRefusal,
+    RepaintOwner, SchemaArg, SchemaField, StubExternal, ThreadOwnership,
 };
 use pinion_core::intent::Intent;
 use pinion_core::intent_tag;
@@ -330,27 +330,29 @@ impl QuerySource for CellsIntrospect {
         )
     }
 
-    fn introspect_query(&self, path: &str) -> Option<IntrospectValue> {
+    fn introspect_query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         if path == "col_count" {
-            return Some(IntrospectValue::Int(
+            return Ok(IntrospectValue::Int(
                 i64::try_from(DATA_HEADERS.len()).unwrap_or(i64::MAX),
             ));
         }
-        let rest = path.strip_prefix("cell_at.")?;
+        let rest = path
+            .strip_prefix("cell_at.")
+            .ok_or(ReadRefusal::UnknownPath)?;
         // `cell_at.<pos>.<col>` — two indices. A malformed or out-of-range
         // address reports Null (present-but-empty), the convention the tree
         // structural introspection uses for an off-the-end position.
         let Some((pos_s, col_s)) = rest.split_once('.') else {
-            return Some(IntrospectValue::Null);
+            return Ok(IntrospectValue::Null);
         };
         let (Ok(pos), Ok(col)) = (pos_s.parse::<usize>(), col_s.parse::<usize>()) else {
-            return Some(IntrospectValue::Null);
+            return Ok(IntrospectValue::Null);
         };
         if col >= DATA_HEADERS.len() {
-            return Some(IntrospectValue::Null);
+            return Ok(IntrospectValue::Null);
         }
         let rows = (self.rows)();
-        Some(match rows.get(pos) {
+        Ok(match rows.get(pos) {
             Some(row) => IntrospectValue::Text(cell_data(&row.id, col)),
             None => IntrospectValue::Null,
         })
@@ -862,19 +864,18 @@ impl ExternalIntrospect for TreeSelectExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "selection" => Some(self.selection_value()),
-            "count" => Some(IntrospectValue::Int(
+            "selection" => Ok(self.selection_value()),
+            "count" => Ok(IntrospectValue::Int(
                 i64::try_from(self.state.selection.get().len()).unwrap_or(i64::MAX),
             )),
-            "anchor" => Some(
-                self.state
-                    .anchor
-                    .get()
-                    .map_or(IntrospectValue::Null, IntrospectValue::Text),
-            ),
-            _ => None,
+            "anchor" => Ok(self
+                .state
+                .anchor
+                .get()
+                .map_or(IntrospectValue::Null, IntrospectValue::Text)),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -1578,7 +1579,7 @@ mod tests {
         // col_count mirrors the metadata header count.
         assert_eq!(
             src.introspect_query("col_count"),
-            Some(IntrospectValue::Int(
+            Ok(IntrospectValue::Int(
                 i64::try_from(DATA_HEADERS.len()).unwrap()
             )),
         );
@@ -1587,25 +1588,29 @@ mod tests {
         let expected = cell_data(&rows[pos].id, 1);
         assert_eq!(
             src.introspect_query(&format!("cell_at.{pos}.1")),
-            Some(IntrospectValue::Text(expected)),
+            Ok(IntrospectValue::Text(expected)),
         );
         // Out-of-range column / position / malformed address -> Null.
         assert_eq!(
             src.introspect_query("cell_at.0.99"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "col OOR"
         );
         assert_eq!(
             src.introspect_query("cell_at.99999.0"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "pos OOR"
         );
         assert_eq!(
             src.introspect_query("cell_at.0"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "no column"
         );
-        assert_eq!(src.introspect_query("bogus"), None, "unknown path");
+        assert_eq!(
+            src.introspect_query("bogus"),
+            Err(ReadRefusal::UnknownPath),
+            "unknown path"
+        );
     }
 
     // ── R866 aria-activedescendant (roving composite focus) ──────────
@@ -1918,15 +1923,12 @@ mod tests {
                 state: use_tree_state(),
             };
             // boot: {f0}. Read mirrors the state.
-            assert_eq!(ext.query("count"), Some(IntrospectValue::Int(1)));
+            assert_eq!(ext.query("count"), Ok(IntrospectValue::Int(1)));
             assert_eq!(
                 ext.query("selection"),
-                Some(IntrospectValue::Json(serde_json::json!(["f0"])))
+                Ok(IntrospectValue::Json(serde_json::json!(["f0"])))
             );
-            assert_eq!(
-                ext.query("anchor"),
-                Some(IntrospectValue::Text("f0".into()))
-            );
+            assert_eq!(ext.query("anchor"), Ok(IntrospectValue::Text("f0".into())));
             // invoke toggle adds a row and returns the resulting set.
             assert_eq!(
                 ext.invoke("toggle", IntrospectValue::Text("f5".into())),
@@ -1941,7 +1943,7 @@ mod tests {
             .expect("array replaces");
             assert_eq!(
                 ext.query("selection"),
-                Some(IntrospectValue::Json(serde_json::json!(["f3"]))),
+                Ok(IntrospectValue::Json(serde_json::json!(["f3"]))),
                 "the unknown id is dropped on the write path",
             );
             // clear via invoke returns the empty set; read-only axes + unknown

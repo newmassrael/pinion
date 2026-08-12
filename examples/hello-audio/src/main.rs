@@ -103,7 +103,7 @@ impl WidgetCore for HelloAudio {
     fn read_state(scene: &Scene) -> u16 {
         if let Scene::External(node) = scene
             && let Some(intro) = node.handle.introspect()
-            && let Some(IntrospectValue::Int(n)) = intro.query("voice_count")
+            && let Ok(IntrospectValue::Int(n)) = intro.query("voice_count")
         {
             return u16::try_from(n.clamp(0, i64::from(u16::MAX))).unwrap_or(0);
         }

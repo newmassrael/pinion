@@ -33,8 +33,8 @@ use std::borrow::Cow;
 use pinion_a11y::{AccessAction, AccessFocus, AccessNode, AccessState, AriaRole, WidgetA11y};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, DragPayload, DropPoint, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField,
-    ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
+    SchemaField, ThreadOwnership,
 };
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -215,7 +215,7 @@ impl ExternalIntrospect for ReorderListExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
             // List-specific observable; everything else is a reorder slot.
             "labels" => {
@@ -224,7 +224,7 @@ impl ExternalIntrospect for ReorderListExternal {
                     .into_iter()
                     .map(serde_json::Value::from)
                     .collect();
-                Some(IntrospectValue::Json(serde_json::Value::Array(arr)))
+                Ok(IntrospectValue::Json(serde_json::Value::Array(arr)))
             }
             other => self.model.query(other),
         }
@@ -360,7 +360,7 @@ fn view(state: ListState) -> Scene {
 fn cursor(node: &pinion_core::scene::ExternalNode) -> Option<usize> {
     node.handle
         .introspect()
-        .and_then(|i| i.query("focused_index"))
+        .and_then(|i| i.query("focused_index").ok())
         .and_then(|v| v.as_usize())
 }
 
@@ -405,7 +405,7 @@ fn move_item(node: &mut pinion_core::scene::ExternalNode, delta: i64) -> bool {
 fn is_grabbed(node: &pinion_core::scene::ExternalNode) -> bool {
     node.handle
         .introspect()
-        .and_then(|i| i.query("grabbed"))
+        .and_then(|i| i.query("grabbed").ok())
         .and_then(|v| v.as_bool())
         .unwrap_or(false)
 }
@@ -706,13 +706,13 @@ mod tests {
         let pl = payload(0);
         ext.drag_to(&pl, Some(drop_at(2, 0.8))); // → gap 3
         assert!(
-            matches!(ext.query("preview"), Some(IntrospectValue::Json(_))),
+            matches!(ext.query("preview"), Ok(IntrospectValue::Json(_))),
             "preview is in flight (queryable as scene-as-data)"
         );
         ext.drag_release(&pl, Some(drop_at(2, 0.8)));
         assert_eq!(ext.model.order(), [1, 2, 0, 3], "row 0 dropped below row 2");
         assert!(
-            matches!(ext.query("preview"), Some(IntrospectValue::Null)),
+            matches!(ext.query("preview"), Ok(IntrospectValue::Null)),
             "preview cleared"
         );
         assert!(ext.begin_drag().is_none(), "press cleared on drop");
@@ -727,7 +727,7 @@ mod tests {
         // labels follow the new order [1,2,0,3] = Bravo, Charlie, Alpha,
         // Delta.
         match ext.query("labels") {
-            Some(IntrospectValue::Json(serde_json::Value::Array(a))) => {
+            Ok(IntrospectValue::Json(serde_json::Value::Array(a))) => {
                 let got: Vec<&str> = a.iter().filter_map(serde_json::Value::as_str).collect();
                 assert_eq!(got, ["Bravo", "Charlie", "Alpha", "Delta"]);
             }

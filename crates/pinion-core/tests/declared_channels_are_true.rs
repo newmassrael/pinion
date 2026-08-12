@@ -31,7 +31,7 @@
 
 use std::rc::Rc;
 
-use pinion_core::external::{ExternalIntrospect, SchemaChannel};
+use pinion_core::external::{ExternalIntrospect, ReadRefusal, SchemaChannel};
 
 /// Assert one surface answers on the channels it declares. Returns
 /// `(reads, actions)` — the counts checked, so a caller can prove the fixture
@@ -46,7 +46,7 @@ fn check(label: &str, surface: &dyn ExternalIntrospect) -> (usize, usize) {
             actions += 1;
             assert_eq!(
                 surface.query(field.path),
-                None,
+                Err(ReadRefusal::UnknownPath),
                 "{label}: {:?} is declared an ACTION and also answers a read — \
                  `SchemaChannel` is what tells an agent which call to make",
                 field.path,
@@ -54,7 +54,7 @@ fn check(label: &str, surface: &dyn ExternalIntrospect) -> (usize, usize) {
         } else {
             reads += 1;
             assert!(
-                surface.query(field.path).is_some(),
+                surface.query(field.path).is_ok(),
                 "{label}: {:?} is declared READABLE and answers nothing — the \
                  surface publishes a name and then says it does not exist \
                  (R1566: this was true of 102 declarations in this crate)",

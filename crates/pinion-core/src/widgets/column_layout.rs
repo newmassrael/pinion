@@ -73,7 +73,7 @@ use std::rc::Rc;
 use crate::composite_tag::{require_pair, split_send_payload};
 use crate::external::{
     DragPayload, DropPoint, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue,
-    InvokeError, SchemaArg, SchemaField, read_only_or_unknown,
+    InvokeError, ReadRefusal, SchemaArg, SchemaField, read_only_or_unknown,
 };
 use crate::input::PointerWireEvent;
 use crate::reactive::{Owner, Signal};
@@ -2432,10 +2432,14 @@ impl ColumnLayout {
     /// - `section_size.<logical>` / `section_hidden.<logical>` /
     ///   `section_position.<logical>` / `logical_index_at.<x>`
     ///
-    /// `None` for anything else, so an embedding consumer's own slots take
-    /// precedence exactly as they do over the reorder model's.
-    #[must_use]
-    pub fn query(&self, path: &str) -> Option<IntrospectValue> {
+    /// [`ReadRefusal::UnknownPath`] for anything else, so an embedding
+    /// consumer's own slots take precedence exactly as they do over the reorder
+    /// model's — and that exact word is what the fall-through keys off.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReadRefusal`] per the variants there.
+    pub fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         fn json_of<T: Into<serde_json::Value>>(
             items: impl IntoIterator<Item = T>,
         ) -> IntrospectValue {
@@ -2456,56 +2460,58 @@ impl ColumnLayout {
         // round that adds it rather than shipping as a surface `$schema` denies
         // exists. Costs one linear pass over ~50 `&'static str` per read, which
         // is a wire-rate path, not a frame-rate one.
-        Self::SCHEMA.field_for(path)?;
+        Self::SCHEMA
+            .field_for(path)
+            .ok_or(ReadRefusal::UnknownPath)?;
 
         match path {
-            "state" => Some(IntrospectValue::Json(self.save_state().to_json())),
+            "state" => Ok(IntrospectValue::Json(self.save_state().to_json())),
             // R1501 — the section count, answered here rather than left to the
             // consumer so the parametric families above can name a domain this
             // surface publishes. A consumer that also answers it wins, and
             // agrees by construction: both report the same sections.
-            "count" => Some(int(self.count)),
+            "count" => Ok(int(self.count)),
             // The STORED sizes — what a restore replays. Its effective peer is
             // `section_sizes`, and a client that wants the painted row wants
             // that one (R1493).
-            "sizes" => Some(json_of((0..self.count).map(|l| self.sizes.width(l)))),
-            "section_sizes" => Some(json_of(self.section_sizes())),
+            "sizes" => Ok(json_of((0..self.count).map(|l| self.sizes.width(l)))),
+            "section_sizes" => Ok(json_of(self.section_sizes())),
             "default_section_size" => {
-                Some(IntrospectValue::Int(i64::from(self.default_section_size())))
+                Ok(IntrospectValue::Int(i64::from(self.default_section_size())))
             }
-            "default_alignment" => Some(IntrospectValue::Text(
+            "default_alignment" => Ok(IntrospectValue::Text(
                 self.default_alignment().as_wire().to_string(),
             )),
             // The effective alignment of every section, in logical order — the
             // peer of `section_sizes` against `sizes`.
             "alignments" => {
-                Some(json_of((0..self.count).filter_map(|l| {
+                Ok(json_of((0..self.count).filter_map(|l| {
                     self.section_alignment(l).map(TextAlign::as_wire)
                 })))
             }
             // R1510 — the rule, and the two rows it stands between: what the
             // consumer published, and what this header makes of it.
-            "highlight_sections" => Some(IntrospectValue::Bool(self.highlight_sections())),
-            "selections" => Some(self.selection_row(ColumnLayout::section_selection)),
-            "highlights" => Some(self.selection_row(ColumnLayout::section_highlight)),
+            "highlight_sections" => Ok(IntrospectValue::Bool(self.highlight_sections())),
+            "selections" => Ok(self.selection_row(ColumnLayout::section_selection)),
+            "highlights" => Ok(self.selection_row(ColumnLayout::section_highlight)),
             "cascading_section_resizes" => {
-                Some(IntrospectValue::Bool(self.cascading_section_resizes()))
+                Ok(IntrospectValue::Bool(self.cascading_section_resizes()))
             }
             // R1498 — the layout rule that is keyed by position rather than by
             // column, which is why no per-section slot can report it.
-            "stretch_last_section" => Some(IntrospectValue::Bool(self.stretch_last_section())),
+            "stretch_last_section" => Ok(IntrospectValue::Bool(self.stretch_last_section())),
             // R1496 — the two permissions, readable so a client can tell a
             // header that refused a drag from one that has no drag to give.
-            "sections_movable" => Some(IntrospectValue::Bool(self.sections_movable())),
-            "sections_clickable" => Some(IntrospectValue::Bool(self.sections_clickable())),
-            "hidden" => Some(json_of(self.hidden.get())),
-            "visible_sections" => Some(json_of(self.visible_sections())),
-            "visible_widths" => Some(json_of(self.visible_widths())),
+            "sections_movable" => Ok(IntrospectValue::Bool(self.sections_movable())),
+            "sections_clickable" => Ok(IntrospectValue::Bool(self.sections_clickable())),
+            "hidden" => Ok(json_of(self.hidden.get())),
+            "visible_sections" => Ok(json_of(self.visible_sections())),
+            "visible_widths" => Ok(json_of(self.visible_widths())),
             // The painted geometry as data — an agent aims a drag or a click
             // at a section from this without re-deriving a single offset, and
             // without a screenshot. The toolkit exposes the equivalent only
             // through per-section C++ calls against a live widget.
-            "placements" => Some(IntrospectValue::Json(serde_json::Value::Array(
+            "placements" => Ok(IntrospectValue::Json(serde_json::Value::Array(
                 self.visible_placements()
                     .iter()
                     .map(|p| {
@@ -2518,12 +2524,12 @@ impl ColumnLayout {
                     })
                     .collect(),
             ))),
-            "visible_total" => Some(IntrospectValue::Int(i64::from(self.visible_total()))),
-            "hidden_count" => Some(int(self.hidden_section_count())),
+            "visible_total" => Ok(IntrospectValue::Int(i64::from(self.visible_total()))),
+            "hidden_count" => Ok(int(self.hidden_section_count())),
             // R1452 — the sizing policy, and the two inputs the derived modes
             // read. `sizes` above is what is STORED; these say where a painted
             // width actually came from.
-            "resize_modes" => Some(IntrospectValue::Json(serde_json::Value::Array(
+            "resize_modes" => Ok(IntrospectValue::Json(serde_json::Value::Array(
                 self.modes
                     .get()
                     .iter()
@@ -2534,48 +2540,50 @@ impl ColumnLayout {
             // reason `section_sizes` sits beside `sizes`: a client reading only
             // the plural was the R1493 defect, and a rule that overrides a mode
             // would have re-created it in the vocabulary next door.
-            "effective_resize_modes" => Some(IntrospectValue::Json(serde_json::Value::Array(
+            "effective_resize_modes" => Ok(IntrospectValue::Json(serde_json::Value::Array(
                 (0..self.count)
                     .map(|l| serde_json::Value::from(self.effective_resize_mode(l).as_wire()))
                     .collect(),
             ))),
-            "content_widths" => Some(json_of(self.content_widths.get())),
+            "content_widths" => Ok(json_of(self.content_widths.get())),
             // R1491 — the header's own sort state. `sort_indicator` is the compound string
             // the grid proxy already speaks; `sort_indicator_ section` and `_order` are the toolkit's two
             // separate getters, kept because an agent filtering on "which
             // column" should not have to parse.
-            "sort_indicator" => Some(IntrospectValue::Text(grid_sort_str(self.sort_indicator()))),
-            "sort_indicator_section" => Some(opt_int(self.sort_indicator().map(|(l, _)| l))),
-            "sort_indicator_order" => Some(IntrospectValue::Text(
+            "sort_indicator" => Ok(IntrospectValue::Text(grid_sort_str(self.sort_indicator()))),
+            "sort_indicator_section" => Ok(opt_int(self.sort_indicator().map(|(l, _)| l))),
+            "sort_indicator_order" => Ok(IntrospectValue::Text(
                 sort_dir_str(self.sort_indicator().map(|(_, d)| d)).to_string(),
             )),
-            "sort_indicator_shown" => Some(IntrospectValue::Bool(self.is_sort_indicator_shown())),
+            "sort_indicator_shown" => Ok(IntrospectValue::Bool(self.is_sort_indicator_shown())),
             // R1492 — the bounds every size path applies. Readable is the
             // point: before this, a client could watch a resize get clamped and
             // had no way to learn the rule, so "you asked 5 and got 40" and
             // "you asked 300 of a stretch section and got 40" were the same
             // answer. With these two slots and `resize_mode`, the three causes
             // are distinguishable without a new channel.
-            "min_section_size" => {
-                Some(IntrospectValue::Int(i64::from(self.minimum_section_size())))
-            }
-            "max_section_size" => {
-                Some(IntrospectValue::Int(i64::from(self.maximum_section_size())))
-            }
-            "resize_contents_precision" => Some(int(self.resize_contents_precision())),
-            "available_width" => Some(
-                self.available_width
-                    .get()
-                    .map_or(IntrospectValue::Null, |w| {
-                        IntrospectValue::Int(i64::from(w))
-                    }),
-            ),
+            "min_section_size" => Ok(IntrospectValue::Int(i64::from(self.minimum_section_size()))),
+            "max_section_size" => Ok(IntrospectValue::Int(i64::from(self.maximum_section_size()))),
+            "resize_contents_precision" => Ok(int(self.resize_contents_precision())),
+            "available_width" => Ok(self
+                .available_width
+                .get()
+                .map_or(IntrospectValue::Null, |w| {
+                    IntrospectValue::Int(i64::from(w))
+                })),
             // NB: no `?` in this arm — an early return here would skip the
             // reorder fall-through below, which is exactly how `order` first
             // came back `None` from a layout that holds one.
             _ => self.query_parametric(path),
         }
-        .or_else(|| self.sections.query(path))
+        // R1667 — only an UNDECLARED path falls through to the sections
+        // sub-object. A malformed argument to a family this surface owns is
+        // this surface's answer; forwarding it would let the neighbour refuse
+        // for a different reason and hide which one was asked.
+        .or_else(|e| match e {
+            ReadRefusal::UnknownPath => self.sections.query(path),
+            other => Err(other),
+        })
     }
 
     /// The `<slot>.<arg>` half of [`query`](Self::query) — every per-section
@@ -2585,7 +2593,7 @@ impl ColumnLayout {
     /// question and only one of them grows when a per-section fact is added.
     /// `None` for an unknown head or an unparsable argument, so the caller's
     /// reorder fall-through still runs.
-    fn query_parametric(&self, path: &str) -> Option<IntrospectValue> {
+    fn query_parametric(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         fn opt_int(v: Option<usize>) -> IntrospectValue {
             v.map_or(IntrospectValue::Null, |n| {
                 IntrospectValue::Int(i64::try_from(n).unwrap_or(0))
@@ -2603,16 +2611,24 @@ impl ColumnLayout {
         // out — the same read-forgot-what-the-write-kept shape R1487 and R1493
         // found in this file, now caught by the R1353.1 audit, which could only
         // reach the layout once the declaration lived here (R1501).
+        // R1667 — the two ways this can fail were one `None` until now: an
+        // argument that is not an index at all, and an index this layout does
+        // not have. The second keeps answering `Null` rather than refusing —
+        // that was already this surface's choice (an out-of-range section is
+        // "present and empty" here, the `at_index` spelling) and the round did
+        // not relitigate it; what changed is that the FIRST is now sayable.
         let per_section = |arg: &str, f: &dyn Fn(usize) -> IntrospectValue| {
-            arg.parse::<usize>().ok().map(|l| {
-                if l < self.count {
-                    f(l)
-                } else {
-                    IntrospectValue::Null
-                }
-            })
+            arg.parse::<usize>()
+                .map_err(|_| ReadRefusal::QueryTypeMismatch)
+                .map(|l| {
+                    if l < self.count {
+                        f(l)
+                    } else {
+                        IntrospectValue::Null
+                    }
+                })
         };
-        let (head, arg) = path.split_once('.')?;
+        let (head, arg) = path.split_once('.').ok_or(ReadRefusal::UnknownPath)?;
         match head {
             "visual_index" => per_section(arg, &|l| opt_int(self.visual_index(l))),
             "logical_index" => per_section(arg, &|v| opt_int(self.logical_index(v))),
@@ -2665,7 +2681,10 @@ impl ColumnLayout {
             // so `count` is not its bound — the declaration names
             // `visible_total`, and the accessor already answers `Null` for a
             // coordinate no section covers.
-            "logical_index_at" => arg.parse().ok().map(|x| opt_int(self.logical_index_at(x))),
+            "logical_index_at" => arg
+                .parse()
+                .map_err(|_| ReadRefusal::QueryTypeMismatch)
+                .map(|x| opt_int(self.logical_index_at(x))),
             "resize_mode" => per_section(arg, &|l| {
                 IntrospectValue::Text(self.resize_mode(l).as_wire().to_string())
             }),
@@ -2675,7 +2694,10 @@ impl ColumnLayout {
             "content_width" => per_section(arg, &|l| {
                 IntrospectValue::Int(i64::from(self.content_width(l)))
             }),
-            _ => None,
+            // Not one of this half's heads. `UnknownPath` and not a member
+            // refusal, because the caller's fall-through to `sections` depends
+            // on this exact word (see `query`).
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -3261,11 +3283,11 @@ pub struct ColumnLayoutView {
 #[must_use]
 pub fn read_column_layout(intro: &dyn ExternalIntrospect) -> ColumnLayoutView {
     let state = match intro.query("state") {
-        Some(IntrospectValue::Json(v)) => ColumnLayoutState::from_json(&v).unwrap_or_default(),
+        Ok(IntrospectValue::Json(v)) => ColumnLayoutState::from_json(&v).unwrap_or_default(),
         _ => ColumnLayoutState::default(),
     };
     let placements = match intro.query("placements") {
-        Some(IntrospectValue::Json(serde_json::Value::Array(a))) => a
+        Ok(IntrospectValue::Json(serde_json::Value::Array(a))) => a
             .iter()
             .filter_map(|p| {
                 let field = |k: &str| p.get(k)?.as_u64();
@@ -3284,6 +3306,7 @@ pub fn read_column_layout(intro: &dyn ExternalIntrospect) -> ColumnLayoutView {
 
 #[cfg(test)]
 mod tests {
+    use crate::external::ReadRefusal;
     use crate::test_fixtures::assert_out_of_range_saying;
     use crate::test_fixtures::assert_refused_saying;
     use std::borrow::Cow;
@@ -3395,11 +3418,11 @@ mod tests {
         assert!(!l.set_section_alignment(out, Some(TextAlign::Center)));
         assert_eq!(
             l.query(&format!("section_alignment.{out}")),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
         );
         assert_eq!(
             l.query(&format!("section_alignment_override.{out}")),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
         );
     }
 
@@ -3408,21 +3431,21 @@ mod tests {
     #[test]
     fn r1504_the_header_reads_and_writes_its_alignment_over_the_wire() {
         let l = layout();
-        assert_eq!(l.query("default_alignment"), Some(text("Center")));
+        assert_eq!(l.query("default_alignment"), Ok(text("Center")));
 
         l.intervene("default_alignment", &text("End"))
             .expect("a known spelling is accepted");
-        assert_eq!(l.query("default_alignment"), Some(text("End")));
+        assert_eq!(l.query("default_alignment"), Ok(text("End")));
         assert!(
             l.intervene("default_alignment", &text("middle")).is_err(),
             "an unknown spelling is refused, not silently defaulted",
         );
-        assert_eq!(l.query("default_alignment"), Some(text("End")));
+        assert_eq!(l.query("default_alignment"), Ok(text("End")));
 
         l.invoke("set_section_alignment", &text("2:Start"))
             .expect("a section takes an exception");
-        assert_eq!(l.query("section_alignment.2"), Some(text("Start")));
-        assert_eq!(l.query("section_alignment_override.2"), Some(text("Start")));
+        assert_eq!(l.query("section_alignment.2"), Ok(text("Start")));
+        assert_eq!(l.query("section_alignment_override.2"), Ok(text("Start")));
 
         // The projection reports what every section paints with.
         let IntrospectValue::Json(all) = l.query("alignments").expect("alignments answers") else {
@@ -3438,7 +3461,7 @@ mod tests {
             .expect("`default` hands the section back");
         assert_eq!(
             l.query("section_alignment_override.2"),
-            Some(IntrospectValue::Null)
+            Ok(IntrospectValue::Null)
         );
         assert!(
             l.invoke("set_section_alignment", &text("2:middle"))
@@ -3544,11 +3567,11 @@ mod tests {
         assert!(!l.set_section_selection(past, SectionSelection::Full));
         assert_eq!(
             l.query(&format!("section_selection.{past}")),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
         );
         assert_eq!(
             l.query(&format!("section_highlight.{past}")),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
         );
     }
 
@@ -3626,7 +3649,7 @@ mod tests {
         let l = layout();
         assert_eq!(
             l.query("highlight_sections"),
-            Some(IntrospectValue::Bool(false)),
+            Ok(IntrospectValue::Bool(false)),
         );
         l.intervene("highlight_sections", &IntrospectValue::Bool(true))
             .expect("the rule is writable");
@@ -3640,7 +3663,7 @@ mod tests {
         assert!(l.set_section_selection(0, SectionSelection::Partial));
         assert!(l.set_section_selection(1, SectionSelection::Full));
         let wire = |path: &str| match l.query(path) {
-            Some(IntrospectValue::Json(v)) => v.to_string(),
+            Ok(IntrospectValue::Json(v)) => v.to_string(),
             other => panic!("{path} answers json, got {other:?}"),
         };
         // Built from the fixture's own count: a hardcoded length measures the
@@ -3737,7 +3760,7 @@ mod tests {
             // remember.
             if f.channel == SchemaChannel::Invoke {
                 assert!(
-                    l.query(f.path).is_none(),
+                    l.query(f.path).is_err(),
                     "{:?} is declared as an invoke channel but answers a read",
                     f.path,
                 );
@@ -3751,7 +3774,7 @@ mod tests {
                 format!("{}0", f.literal_prefix())
             };
             assert!(
-                l.query(&probe).is_some(),
+                l.query(&probe).is_ok(),
                 "{:?} is declared but {probe:?} does not answer",
                 f.path,
             );
@@ -3785,20 +3808,20 @@ mod tests {
         ] {
             assert_eq!(
                 l.query(p),
-                Some(IntrospectValue::Null),
+                Ok(IntrospectValue::Null),
                 "{p:?} is outside the declared domain and must not read as a value",
             );
         }
         // In range, all nine still answer for real.
-        assert_eq!(l.query("section_size.2"), Some(IntrospectValue::Int(100)));
-        assert_eq!(l.query("resize_mode.2"), Some(text("interactive")));
+        assert_eq!(l.query("section_size.2"), Ok(IntrospectValue::Int(100)));
+        assert_eq!(l.query("resize_mode.2"), Ok(text("interactive")));
     }
 
     #[test]
     fn r1501_the_layout_publishes_the_bound_its_families_declare() {
         // `IndexOf("count")` is a dead end unless this surface answers `count`.
         let l = layout();
-        assert_eq!(l.query("count"), Some(IntrospectValue::Int(4)));
+        assert_eq!(l.query("count"), Ok(IntrospectValue::Int(4)));
         // And `logical_index_at` is bounded by pixels, not sections, which is
         // the domain it declares.
         let f = ColumnLayout::SCHEMA
@@ -3809,7 +3832,7 @@ mod tests {
             f.args[0].domain,
             ArgDomain::IndexOf("visible_total")
         ));
-        assert_eq!(l.query("visible_total"), Some(IntrospectValue::Int(520)));
+        assert_eq!(l.query("visible_total"), Ok(IntrospectValue::Int(520)));
     }
 
     #[test]
@@ -4118,7 +4141,7 @@ mod tests {
         l.resize_section(1, 180);
         l.set_section_hidden(0, true);
         l.swap_sections(0, 2);
-        let Some(IntrospectValue::Json(json)) = l.query("state") else {
+        let Ok(IntrospectValue::Json(json)) = l.query("state") else {
             panic!("state query");
         };
 
@@ -4156,51 +4179,51 @@ mod tests {
         );
         assert!(matches!(
             l.query("visible_total"),
-            Some(IntrospectValue::Int(460))
+            Ok(IntrospectValue::Int(460))
         ));
         assert!(matches!(
             l.query("hidden_count"),
-            Some(IntrospectValue::Int(1))
+            Ok(IntrospectValue::Int(1))
         ));
         assert!(matches!(
             l.query("visual_index.0"),
-            Some(IntrospectValue::Int(2))
+            Ok(IntrospectValue::Int(2))
         ));
         assert!(matches!(
             l.query("logical_index.0"),
-            Some(IntrospectValue::Int(1))
+            Ok(IntrospectValue::Int(1))
         ));
         assert!(matches!(
             l.query("section_size.0"),
-            Some(IntrospectValue::Int(200))
+            Ok(IntrospectValue::Int(200))
         ));
         assert!(matches!(
             l.query("section_hidden.3"),
-            Some(IntrospectValue::Bool(true))
+            Ok(IntrospectValue::Bool(true))
         ));
         assert!(matches!(
             l.query("section_position.0"),
-            Some(IntrospectValue::Int(260))
+            Ok(IntrospectValue::Int(260))
         ));
         assert!(
-            matches!(l.query("section_position.3"), Some(IntrospectValue::Null)),
+            matches!(l.query("section_position.3"), Ok(IntrospectValue::Null)),
             "a hidden section is painted nowhere"
         );
         assert!(matches!(
             l.query("logical_index_at.300"),
-            Some(IntrospectValue::Int(0))
+            Ok(IntrospectValue::Int(0))
         ));
         assert!(matches!(
             l.query("logical_index_at.900"),
-            Some(IntrospectValue::Null)
+            Ok(IntrospectValue::Null)
         ));
         // Reorder slots fall through, and an unknown path is still None.
         assert!(matches!(
             l.query("grabbed"),
-            Some(IntrospectValue::Bool(false))
+            Ok(IntrospectValue::Bool(false))
         ));
-        assert!(l.query("selected_id").is_none());
-        assert!(l.query("section_size.zz").is_none());
+        assert!(l.query("selected_id").is_err());
+        assert!(l.query("section_size.zz").is_err());
     }
 
     #[test]
@@ -4343,7 +4366,7 @@ mod tests {
         fn schema(&self) -> crate::external::IntrospectSchema {
             ColumnLayout::SCHEMA
         }
-        fn query(&self, path: &str) -> Option<IntrospectValue> {
+        fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
             self.0.query(path)
         }
         fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
@@ -4553,7 +4576,7 @@ mod tests {
         assert_eq!(ints(&widths), vec![100, 120, 140, 240]);
         assert!(matches!(
             l.query("resize_mode.3"),
-            Some(IntrospectValue::Text(ref m)) if m == "stretch"
+            Ok(IntrospectValue::Text(ref m)) if m == "stretch"
         ));
 
         let widths = l
@@ -4584,13 +4607,13 @@ mod tests {
         let l = layout();
         assert!(matches!(
             l.query("available_width"),
-            Some(IntrospectValue::Null)
+            Ok(IntrospectValue::Null)
         ));
         l.intervene("available_width", &IntrospectValue::Int(600))
             .expect("publish a viewport");
         assert!(matches!(
             l.query("available_width"),
-            Some(IntrospectValue::Int(600))
+            Ok(IntrospectValue::Int(600))
         ));
         l.intervene(
             "content_widths",
@@ -4603,7 +4626,7 @@ mod tests {
         );
         assert!(matches!(
             l.query("content_width.0"),
-            Some(IntrospectValue::Int(210))
+            Ok(IntrospectValue::Int(210))
         ));
         // Wrong length is a value error, wrong shape is a type error.
         assert!(matches!(
@@ -4623,7 +4646,7 @@ mod tests {
         assert_eq!(l.available_width(), None);
         // The mode vector reads as its wire spellings.
         l.set_resize_mode(0, SectionResizeMode::ResizeToContents);
-        let Some(IntrospectValue::Json(serde_json::Value::Array(modes))) = l.query("resize_modes")
+        let Ok(IntrospectValue::Json(serde_json::Value::Array(modes))) = l.query("resize_modes")
         else {
             panic!("resize_modes")
         };
@@ -4646,7 +4669,7 @@ mod tests {
         );
         assert!(matches!(
             l.query("resize_contents_precision"),
-            Some(IntrospectValue::Int(1000))
+            Ok(IntrospectValue::Int(1000))
         ));
 
         l.set_resize_contents_precision(0);
@@ -5094,11 +5117,11 @@ mod tests {
         let l = layout();
         assert_eq!(
             l.query("sections_movable"),
-            Some(IntrospectValue::Bool(false))
+            Ok(IntrospectValue::Bool(false))
         );
         assert_eq!(
             l.query("sections_clickable"),
-            Some(IntrospectValue::Bool(false))
+            Ok(IntrospectValue::Bool(false))
         );
 
         l.intervene("sections_movable", &IntrospectValue::Bool(true))
@@ -5158,15 +5181,12 @@ mod tests {
     #[test]
     fn the_header_reads_and_writes_its_sort_over_the_wire() {
         let l = layout();
-        assert_eq!(l.query("sort_indicator"), Some(text("none")));
-        assert_eq!(
-            l.query("sort_indicator_section"),
-            Some(IntrospectValue::Null)
-        );
-        assert_eq!(l.query("sort_indicator_order"), Some(text("none")));
+        assert_eq!(l.query("sort_indicator"), Ok(text("none")));
+        assert_eq!(l.query("sort_indicator_section"), Ok(IntrospectValue::Null));
+        assert_eq!(l.query("sort_indicator_order"), Ok(text("none")));
         assert_eq!(
             l.query("sort_indicator_shown"),
-            Some(IntrospectValue::Bool(false))
+            Ok(IntrospectValue::Bool(false))
         );
 
         // The cycle reports where it landed, which is the whole reason it
@@ -5181,9 +5201,9 @@ mod tests {
         );
         assert_eq!(
             l.query("sort_indicator_section"),
-            Some(IntrospectValue::Int(2))
+            Ok(IntrospectValue::Int(2))
         );
-        assert_eq!(l.query("sort_indicator_order"), Some(text("descending")));
+        assert_eq!(l.query("sort_indicator_order"), Ok(text("descending")));
 
         assert_eq!(
             l.invoke("set_sort_indicator", &text("0:true")),
@@ -5290,11 +5310,11 @@ mod tests {
         let l = layout();
         assert_eq!(
             l.query("min_section_size"),
-            Some(IntrospectValue::Int(i64::from(DEFAULT_MIN_COL_WIDTH)))
+            Ok(IntrospectValue::Int(i64::from(DEFAULT_MIN_COL_WIDTH)))
         );
         assert_eq!(
             l.query("max_section_size"),
-            Some(IntrospectValue::Int(i64::from(DEFAULT_MAX_COL_WIDTH))),
+            Ok(IntrospectValue::Int(i64::from(DEFAULT_MAX_COL_WIDTH))),
             "unbounded, said out loud rather than by omitting the slot"
         );
         l.intervene("max_section_size", &IntrospectValue::Int(120))
@@ -5475,15 +5495,15 @@ mod tests {
             .expect("the snapshot describes this header");
         assert_eq!(
             other.query("min_section_size"),
-            Some(IntrospectValue::Int(60))
+            Ok(IntrospectValue::Int(60))
         );
         assert_eq!(
             other.query("max_section_size"),
-            Some(IntrospectValue::Int(150))
+            Ok(IntrospectValue::Int(150))
         );
         assert_eq!(
             other.query("default_section_size"),
-            Some(IntrospectValue::Int(80))
+            Ok(IntrospectValue::Int(80))
         );
         assert_eq!(
             other.save_state(),
@@ -5588,7 +5608,7 @@ mod tests {
             .expect("the default is writable");
         assert_eq!(
             l.query("default_section_size"),
-            Some(IntrospectValue::Int(70))
+            Ok(IntrospectValue::Int(70))
         );
         assert_eq!(
             l.intervene("default_section_size", &text("wide")),
@@ -5787,7 +5807,7 @@ mod tests {
         let l = layout();
         assert_eq!(
             l.query("cascading_section_resizes"),
-            Some(IntrospectValue::Bool(false))
+            Ok(IntrospectValue::Bool(false))
         );
         l.intervene("cascading_section_resizes", &IntrospectValue::Bool(true))
             .expect("the toolkit's property has a wire peer");
@@ -5871,7 +5891,7 @@ mod tests {
 
     fn effective_modes(l: &ColumnLayout) -> Vec<String> {
         match l.query("effective_resize_modes") {
-            Some(IntrospectValue::Json(serde_json::Value::Array(a))) => a
+            Ok(IntrospectValue::Json(serde_json::Value::Array(a))) => a
                 .iter()
                 .map(|m| m.as_str().unwrap_or_default().to_string())
                 .collect(),
@@ -5971,12 +5991,12 @@ mod tests {
         );
         assert_eq!(
             l.query("effective_resize_mode.3"),
-            Some(text("stretch")),
+            Ok(text("stretch")),
             "and both faces are on the wire"
         );
         assert_eq!(
             l.query("resize_mode.3"),
-            Some(text("fixed")),
+            Ok(text("fixed")),
             "beside the stored one, which a mode cycle still reads"
         );
     }
@@ -6090,7 +6110,7 @@ mod tests {
         let l = filled();
         assert_eq!(
             l.query("stretch_last_section"),
-            Some(IntrospectValue::Bool(false))
+            Ok(IntrospectValue::Bool(false))
         );
         l.intervene("stretch_last_section", &IntrospectValue::Bool(true))
             .expect("the toolkit's property has a wire peer");
@@ -6150,7 +6170,7 @@ mod tests {
             Ok(()),
             "a reorder slot still falls through"
         );
-        assert_eq!(l.query("focused_index"), Some(IntrospectValue::Int(2)));
+        assert_eq!(l.query("focused_index"), Ok(IntrospectValue::Int(2)));
         assert_eq!(
             l.intervene("no_such_rule", &IntrospectValue::Bool(true)),
             Err(InterveneError::UnknownPath)

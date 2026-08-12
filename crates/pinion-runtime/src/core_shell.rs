@@ -4182,7 +4182,7 @@ mod tests {
         core.root_owner().register_animation(recorder.clone());
         core.tick_animations(0.016_666_67);
         assert_eq!(recorder.ticks.get(), 1);
-        assert_eq!(recorder.last_dt.get().to_bits(), 0.016_666_67_f32.to_bits());
+        assert_eq!(recorder.last_dt.get().to_bits(), 0.016_666_67_f32.to_bits(),);
     }
 
     #[test]
@@ -6521,7 +6521,7 @@ mod tests {
     /// The `count` slot of the `CountedExternal` tagged `tag`.
     fn recon_count(scene: &Scene, tag: &str) -> Option<i64> {
         let node = scene.find_external_with_tag(tag)?;
-        match node.handle.introspect()?.query("count")? {
+        match node.handle.introspect()?.query("count").ok()? {
             IntrospectValue::Int(n) => Some(n),
             _ => None,
         }
@@ -6711,7 +6711,7 @@ mod tests {
 
     use pinion_core::external::{
         Backend, BackendFallback, BackendSupport, ExternalIntrospect, InterveneError,
-        IntrospectSchema, RepaintOwner, SchemaField, ThreadOwnership,
+        IntrospectSchema, ReadRefusal, RepaintOwner, SchemaField, ThreadOwnership,
     };
 
     thread_local! {
@@ -6754,7 +6754,7 @@ mod tests {
             // identity the preserve keeps). Reads through the introspection
             // channel, exactly like `DockPanelExternal` reads movable / floatable.
             if let Some(intro) = fresh.introspect()
-                && let Some(IntrospectValue::Int(p)) = intro.query("policy")
+                && let Ok(IntrospectValue::Int(p)) = intro.query("policy")
             {
                 self.policy = p;
             }
@@ -6773,11 +6773,11 @@ mod tests {
             )
         }
 
-        fn query(&self, path: &str) -> Option<IntrospectValue> {
+        fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
             match path {
-                "seq" => Some(IntrospectValue::Int(self.seq)),
-                "policy" => Some(IntrospectValue::Int(self.policy)),
-                _ => None,
+                "seq" => Ok(IntrospectValue::Int(self.seq)),
+                "policy" => Ok(IntrospectValue::Int(self.policy)),
+                _ => Err(ReadRefusal::UnknownPath),
             }
         }
 
@@ -6848,7 +6848,8 @@ mod tests {
             .find_external_with_tag(tag)?
             .handle
             .introspect()?
-            .query(slot)?
+            .query(slot)
+            .ok()?
         {
             IntrospectValue::Int(n) => Some(n),
             _ => None,
@@ -7135,10 +7136,10 @@ mod tests {
                 },
             )
         }
-        fn query(&self, path: &str) -> Option<IntrospectValue> {
+        fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
             match path {
-                "last_send" => Some(IntrospectValue::Text(self.last_send.clone())),
-                _ => None,
+                "last_send" => Ok(IntrospectValue::Text(self.last_send.clone())),
+                _ => Err(ReadRefusal::UnknownPath),
             }
         }
         fn intervene(
@@ -7220,7 +7221,7 @@ mod tests {
             .scene()
             .find_external_with_tag("spy")
             .and_then(|n| n.handle.introspect())
-            .and_then(|i| i.query("last_send"));
+            .and_then(|i| i.query("last_send").ok());
         assert_eq!(
             recorded,
             Some(IntrospectValue::Text(String::new())),
@@ -7237,7 +7238,7 @@ mod tests {
             .scene()
             .find_external_with_tag("spy")
             .and_then(|n| n.handle.introspect())
-            .and_then(|i| i.query("last_send"));
+            .and_then(|i| i.query("last_send").ok());
         assert_eq!(after, Some(IntrospectValue::Text("direct".to_string())));
     }
 }

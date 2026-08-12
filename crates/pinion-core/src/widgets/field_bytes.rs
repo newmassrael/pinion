@@ -117,8 +117,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::json;
 
 use crate::external::{
-    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, SchemaArg,
-    SchemaField, query_proxy_external_impl,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    ReadRefusal, SchemaArg, SchemaField, query_proxy_external_impl,
 };
 use crate::marks::{Mark, MarkSet, domain};
 use crate::reactive::{Owner, Signal};
@@ -1030,47 +1030,43 @@ impl ExternalIntrospect for ByteMapExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         let map = self.state.map();
         if let Some(rest) = path.strip_prefix("source_name.") {
-            return Some(
-                rest.parse::<usize>()
-                    .ok()
-                    .and_then(|i| map.sources().get(i))
-                    .map_or(IntrospectValue::Null, |s| {
-                        IntrospectValue::Text(s.name().to_owned())
-                    }),
-            );
+            return Ok(rest
+                .parse::<usize>()
+                .ok()
+                .and_then(|i| map.sources().get(i))
+                .map_or(IntrospectValue::Null, |s| {
+                    IntrospectValue::Text(s.name().to_owned())
+                }));
         }
         if let Some(rest) = path.strip_prefix("source_len.") {
-            return Some(
-                rest.parse::<usize>()
-                    .ok()
-                    .and_then(|i| map.sources().get(i))
-                    .map_or(IntrospectValue::Null, |s| {
-                        IntrospectValue::Int(i64::try_from(s.len()).unwrap_or(i64::MAX))
-                    }),
-            );
+            return Ok(rest
+                .parse::<usize>()
+                .ok()
+                .and_then(|i| map.sources().get(i))
+                .map_or(IntrospectValue::Null, |s| {
+                    IntrospectValue::Int(i64::try_from(s.len()).unwrap_or(i64::MAX))
+                }));
         }
         if let Some(rest) = path.strip_prefix("unmapped_bytes.") {
-            return Some(
-                rest.parse::<u16>()
-                    .ok()
-                    .map_or(IntrospectValue::Null, |src| {
-                        IntrospectValue::Int(
-                            i64::try_from(map.unmapped_bytes(SourceId::new(src)))
-                                .unwrap_or(i64::MAX),
-                        )
-                    }),
-            );
+            return Ok(rest
+                .parse::<u16>()
+                .ok()
+                .map_or(IntrospectValue::Null, |src| {
+                    IntrospectValue::Int(
+                        i64::try_from(map.unmapped_bytes(SourceId::new(src))).unwrap_or(i64::MAX),
+                    )
+                }));
         }
         if let Some(rest) = path.strip_prefix("origin.") {
-            return Some(map.origin_of(rest).map_or(IntrospectValue::Null, |o| {
+            return Ok(map.origin_of(rest).map_or(IntrospectValue::Null, |o| {
                 IntrospectValue::Text(o.as_str().to_owned())
             }));
         }
         if let Some(rest) = path.strip_prefix("extent.") {
-            return Some(map.extent_of(rest).map_or(IntrospectValue::Null, |(s, e)| {
+            return Ok(map.extent_of(rest).map_or(IntrospectValue::Null, |(s, e)| {
                 IntrospectValue::Json(json!({
                     "source": s.index(),
                     "at": e.at(),
@@ -1079,33 +1075,30 @@ impl ExternalIntrospect for ByteMapExternal {
             }));
         }
         if let Some(rest) = path.strip_prefix("selection.") {
-            return Some(
-                map.selection_for(rest)
-                    .map_or(IntrospectValue::Null, |(s, sel)| {
-                        IntrospectValue::Json(json!({
-                            "source": s.index(),
-                            "start": sel.start(),
-                            "end": sel.end(),
-                        }))
-                    }),
-            );
+            return Ok(map
+                .selection_for(rest)
+                .map_or(IntrospectValue::Null, |(s, sel)| {
+                    IntrospectValue::Json(json!({
+                        "source": s.index(),
+                        "start": sel.start(),
+                        "end": sel.end(),
+                    }))
+                }));
         }
         if let Some(rest) = path.strip_prefix("coverage.") {
-            return Some(Self::address(rest).map_or(IntrospectValue::Null, |(s, b)| {
+            return Ok(Self::address(rest).map_or(IntrospectValue::Null, |(s, b)| {
                 IntrospectValue::Text(map.coverage_at(s, b).as_str().to_owned())
             }));
         }
         if let Some(rest) = path.strip_prefix("owner.") {
-            return Some(
-                Self::address(rest)
-                    .and_then(|(s, b)| map.owner_at(s, b))
-                    .map_or(IntrospectValue::Null, |span| {
-                        IntrospectValue::Text(span.path().to_owned())
-                    }),
-            );
+            return Ok(Self::address(rest)
+                .and_then(|(s, b)| map.owner_at(s, b))
+                .map_or(IntrospectValue::Null, |span| {
+                    IntrospectValue::Text(span.path().to_owned())
+                }));
         }
         if let Some(rest) = path.strip_prefix("layers.") {
-            return Some(Self::address(rest).map_or(IntrospectValue::Null, |(s, b)| {
+            return Ok(Self::address(rest).map_or(IntrospectValue::Null, |(s, b)| {
                 IntrospectValue::Json(serde_json::Value::Array(
                     map.layers_at(s, b)
                         .into_iter()
@@ -1115,26 +1108,26 @@ impl ExternalIntrospect for ByteMapExternal {
             }));
         }
         match path {
-            "source_count" => Some(IntrospectValue::Int(
+            "source_count" => Ok(IntrospectValue::Int(
                 i64::try_from(map.sources().len()).unwrap_or(i64::MAX),
             )),
-            "field_count" => Some(IntrospectValue::Int(
+            "field_count" => Ok(IntrospectValue::Int(
                 i64::try_from(map.fields().len()).unwrap_or(i64::MAX),
             )),
-            "field_paths" => Some(IntrospectValue::Json(serde_json::Value::Array(
+            "field_paths" => Ok(IntrospectValue::Json(serde_json::Value::Array(
                 map.fields()
                     .iter()
                     .map(|s| serde_json::Value::String(s.path().to_owned()))
                     .collect(),
             ))),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
     fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
         // Everything here is derived from a decode. A client that could write
         // it could make the screen disagree with the bytes it is showing.
-        if self.query(path).is_some() {
+        if self.query(path).is_ok() {
             Err(InterveneError::ReadOnly)
         } else {
             Err(InterveneError::UnknownPath)
@@ -1628,21 +1621,30 @@ mod tests {
     #[test]
     fn the_external_answers_both_directions() {
         let ext = ByteMapExternal::new(Rc::new(ByteMapState::new(sample())));
-        assert_eq!(ext.query("field_count").and_then(|v| v.as_i64()), Some(8));
-        assert_eq!(ext.query("source_count").and_then(|v| v.as_i64()), Some(2));
+        assert_eq!(
+            ext.query("field_count").ok().and_then(|v| v.as_i64()),
+            Some(8)
+        );
+        assert_eq!(
+            ext.query("source_count").ok().and_then(|v| v.as_i64()),
+            Some(2)
+        );
         assert_eq!(
             ext.query("source_name.1")
+                .ok()
                 .and_then(|v| v.as_str().map(str::to_owned)),
             Some("reassembled payload".to_owned())
         );
         // Forward.
         assert_eq!(
             ext.query("origin.l1.sn")
+                .ok()
                 .and_then(|v| v.as_str().map(str::to_owned)),
             Some("bytes".to_owned())
         );
         assert_eq!(
             ext.query("origin.l3.resolved")
+                .ok()
                 .and_then(|v| v.as_str().map(str::to_owned)),
             Some("derived".to_owned())
         );
@@ -1659,6 +1661,7 @@ mod tests {
         // Inverse.
         assert_eq!(
             ext.query("owner.0.13")
+                .ok()
                 .and_then(|v| v.as_str().map(str::to_owned)),
             Some("l1.sn".to_owned())
         );
@@ -1666,19 +1669,21 @@ mod tests {
         // first address past it and 48 is still inside (and unmapped).
         assert_eq!(
             ext.query("coverage.0.72")
+                .ok()
                 .and_then(|v| v.as_str().map(str::to_owned)),
             Some("out-of-buffer".to_owned())
         );
         assert_eq!(
             ext.query("coverage.0.48")
+                .ok()
                 .and_then(|v| v.as_str().map(str::to_owned)),
             Some("unmapped".to_owned())
         );
         assert_eq!(
             ext.query("layers.0.12"),
-            Some(IntrospectValue::Json(json!(["l1", "l1.sn"])))
+            Ok(IntrospectValue::Json(json!(["l1", "l1.sn"])))
         );
-        assert_eq!(ext.query("no_such_path"), None);
+        assert_eq!(ext.query("no_such_path"), Err(ReadRefusal::UnknownPath));
     }
 
     /// Every declared path answers, and every answering path is declared —
@@ -1703,7 +1708,7 @@ mod tests {
                 plain => plain.to_owned(),
             };
             assert!(
-                ext.query(&probe).is_some(),
+                ext.query(&probe).is_ok(),
                 "declared path `{}` did not answer at `{probe}`",
                 field.path
             );

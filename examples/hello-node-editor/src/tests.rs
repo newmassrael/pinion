@@ -111,7 +111,7 @@ fn graph_intro(scene: &Scene) -> &dyn ExternalIntrospect {
 
 fn query_int(scene: &Scene, path: &str) -> i64 {
     match graph_intro(scene).query(path) {
-        Some(IntrospectValue::Int(v)) => v,
+        Ok(IntrospectValue::Int(v)) => v,
         other => panic!("expected Int at {path}, got {other:?}"),
     }
 }
@@ -121,9 +121,12 @@ fn query_int(scene: &Scene, path: &str) -> i64 {
 /// wiring and that the grabbed edge's old id is retired.
 fn edge_str(scene: &Scene, id: u32) -> Option<String> {
     match graph_intro(scene).query(&format!("edge.{id}")) {
-        Some(IntrospectValue::Text(s)) => Some(s),
-        None => None,
-        other => panic!("expected Text or None at edge.{id}, got {other:?}"),
+        Ok(IntrospectValue::Text(s)) => Some(s),
+        // R1667 — a refusal is the "no such edge" answer this helper models;
+        // an `Ok` of any other variant would be the surface contradicting its
+        // own declaration, which is worth a panic rather than a silent `None`.
+        Err(_) => None,
+        other => panic!("expected Text or a refusal at edge.{id}, got {other:?}"),
     }
 }
 
@@ -166,20 +169,26 @@ fn r838_shape_and_defaults() {
     Owner::new().run(|| {
         let scene = boot_scene();
         let intro = graph_intro(&scene);
-        assert_eq!(intro.query("node_count"), Some(IntrospectValue::Int(4)));
-        assert_eq!(intro.query("edge_count"), Some(IntrospectValue::Int(3)));
-        assert_eq!(intro.query("selected"), Some(IntrospectValue::Null));
+        assert_eq!(intro.query("node_count"), Ok(IntrospectValue::Int(4)));
+        assert_eq!(intro.query("edge_count"), Ok(IntrospectValue::Int(3)));
+        assert_eq!(intro.query("selected"), Ok(IntrospectValue::Null));
         assert_eq!(
             intro.query("node.2.title"),
-            Some(IntrospectValue::Text("Multiply".to_owned()))
+            Ok(IntrospectValue::Text("Multiply".to_owned()))
         );
-        assert_eq!(intro.query("node.2.inputs"), Some(IntrospectValue::Int(2)));
-        assert_eq!(intro.query("node.3.outputs"), Some(IntrospectValue::Int(0)));
+        assert_eq!(intro.query("node.2.inputs"), Ok(IntrospectValue::Int(2)));
+        assert_eq!(intro.query("node.3.outputs"), Ok(IntrospectValue::Int(0)));
         assert_eq!(
             intro.query("edge.0"),
-            Some(IntrospectValue::Text("0:0->2:0".to_owned()))
+            Ok(IntrospectValue::Text("0:0->2:0".to_owned()))
         );
-        assert_eq!(intro.query("node.9.title"), None, "out-of-range -> None");
+        assert!(
+            matches!(
+                intro.query("node.9.title"),
+                Err(ReadRefusal::NoSuchMember(_))
+            ),
+            "out-of-range -> Err(ReadRefusal::UnknownPath)"
+        );
     });
 }
 
@@ -193,11 +202,11 @@ fn r916_detail_reflects_single_selected_node() {
         // Nothing selected at boot -> the panel has no node to inspect.
         assert_eq!(
             graph_intro(&scene).query("detail.node"),
-            Some(IntrospectValue::Null)
+            Ok(IntrospectValue::Null)
         );
         assert_eq!(
             graph_intro(&scene).query("detail.title"),
-            Some(IntrospectValue::Null)
+            Ok(IntrospectValue::Null)
         );
         // Select node 2 (Multiply, 2 Vector inputs at x=250).
         {
@@ -214,15 +223,15 @@ fn r916_detail_reflects_single_selected_node() {
         let intro = graph_intro(&scene);
         assert_eq!(
             intro.query("detail.node"),
-            Some(IntrospectValue::Int(2)),
+            Ok(IntrospectValue::Int(2)),
             "the single selected id"
         );
         assert_eq!(
             intro.query("detail.title"),
-            Some(IntrospectValue::Text("Multiply".to_owned()))
+            Ok(IntrospectValue::Text("Multiply".to_owned()))
         );
-        assert_eq!(intro.query("detail.x"), Some(IntrospectValue::Int(250)));
-        assert_eq!(intro.query("detail.inputs"), Some(IntrospectValue::Int(2)));
+        assert_eq!(intro.query("detail.x"), Ok(IntrospectValue::Int(250)));
+        assert_eq!(intro.query("detail.inputs"), Ok(IntrospectValue::Int(2)));
         // The alias equals the absolute address of the selected node.
         assert_eq!(intro.query("detail.title"), intro.query("node.2.title"));
         assert_eq!(intro.query("detail.x"), intro.query("node.2.x"));
@@ -253,14 +262,14 @@ fn r916_detail_null_when_not_single_selection() {
         let intro = graph_intro(&scene);
         assert_eq!(
             intro.query("detail.node"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "multi-select has no single detail node"
         );
-        assert_eq!(intro.query("detail.title"), Some(IntrospectValue::Null));
-        assert_eq!(intro.query("detail.x"), Some(IntrospectValue::Null));
+        assert_eq!(intro.query("detail.title"), Ok(IntrospectValue::Null));
+        assert_eq!(intro.query("detail.x"), Ok(IntrospectValue::Null));
         assert_eq!(
             intro.query("detail.input_default.0"),
-            Some(IntrospectValue::Null)
+            Ok(IntrospectValue::Null)
         );
     });
 }
@@ -298,13 +307,13 @@ fn r916_detail_intervene_edits_the_selected_node() {
             let intro = graph_intro(&scene);
             assert_eq!(
                 intro.query("node.0.title"),
-                Some(IntrospectValue::Text("Albedo".to_owned())),
+                Ok(IntrospectValue::Text("Albedo".to_owned())),
                 "detail.title wrote node 0"
             );
-            assert_eq!(intro.query("node.0.x"), Some(IntrospectValue::Int(88)));
+            assert_eq!(intro.query("node.0.x"), Ok(IntrospectValue::Int(88)));
             assert_eq!(
                 intro.query("detail.title"),
-                Some(IntrospectValue::Text("Albedo".to_owned())),
+                Ok(IntrospectValue::Text("Albedo".to_owned())),
                 "the panel reflects the edit"
             );
         }
@@ -360,7 +369,7 @@ fn r917_detail_mirror_is_complete_and_schema_declared() {
         );
         assert_eq!(
             intro.query("detail.outputs"),
-            Some(IntrospectValue::Int(1)),
+            Ok(IntrospectValue::Int(1)),
             "Multiply has 1 output"
         );
         // The schema declares the full mirror (no undeclared-but-resolvable path).
@@ -408,8 +417,8 @@ fn r838_intervene_moves_node_clamped() {
                 .intervene("node.0.y", IntrospectValue::Int(90))
                 .is_ok()
         );
-        assert_eq!(intro.query("node.0.x"), Some(IntrospectValue::Int(120)));
-        assert_eq!(intro.query("node.0.y"), Some(IntrospectValue::Int(90)));
+        assert_eq!(intro.query("node.0.x"), Ok(IntrospectValue::Int(120)));
+        assert_eq!(intro.query("node.0.y"), Ok(IntrospectValue::Int(90)));
         // An out-of-world request clamps to the WORLD extent (R877: the
         // canvas pans, so the clamp is the world edge, not the window).
         assert!(
@@ -418,10 +427,7 @@ fn r838_intervene_moves_node_clamped() {
                 .is_ok()
         );
         let x = intro.query("node.0.x");
-        assert_eq!(
-            x,
-            Some(IntrospectValue::Int(i64::from(clamp_node_x(99999))))
-        );
+        assert_eq!(x, Ok(IntrospectValue::Int(i64::from(clamp_node_x(99999)))));
     });
 }
 
@@ -475,11 +481,14 @@ fn r838_add_edge_validates_and_dedups_input() {
             Ok(IntrospectValue::Bool(true)),
         );
         // Input (3,0) now has exactly one wire — still 3 edges total.
-        assert_eq!(intro.query("edge_count"), Some(IntrospectValue::Int(3)));
-        assert_eq!(intro.query("edge.2"), None, "old wire id 2 was replaced");
+        assert_eq!(intro.query("edge_count"), Ok(IntrospectValue::Int(3)));
+        assert!(
+            matches!(intro.query("edge.2"), Err(ReadRefusal::NoSuchMember(_))),
+            "old wire id 2 was replaced"
+        );
         assert_eq!(
             intro.query("edge.3"),
-            Some(IntrospectValue::Text("0:0->3:0".to_owned()))
+            Ok(IntrospectValue::Text("0:0->3:0".to_owned()))
         );
     });
 }
@@ -546,16 +555,16 @@ fn r898_typed_ports_are_ai_readable_and_read_only() {
         // Multiply (node 2): two `Vector` inputs, one `Vector` output.
         assert_eq!(
             intro.query("node.2.input_types"),
-            Some(IntrospectValue::Text("Vector,Vector".to_owned())),
+            Ok(IntrospectValue::Text("Vector,Vector".to_owned())),
         );
         assert_eq!(
             intro.query("node.2.output_types"),
-            Some(IntrospectValue::Text("Vector".to_owned())),
+            Ok(IntrospectValue::Text("Vector".to_owned())),
         );
         // Texture (node 0): a source — no input types.
         assert_eq!(
             intro.query("node.0.input_types"),
-            Some(IntrospectValue::Text(String::new())),
+            Ok(IntrospectValue::Text(String::new())),
         );
         // The typed-port lists are read-only (ports are the node kind's).
         assert_eq!(
@@ -603,7 +612,7 @@ fn r899_input_default_is_ai_read_write_and_type_checked() {
             .expect("present");
         let intro = node.handle.introspect_mut().expect("introspectable");
         // The Vector input's default reads as a Color object.
-        let Some(IntrospectValue::Json(j)) = intro.query("node.2.input_default.0") else {
+        let Ok(IntrospectValue::Json(j)) = intro.query("node.2.input_default.0") else {
             panic!("Vector default reads as a JSON colour object");
         };
         assert_eq!(
@@ -619,7 +628,7 @@ fn r899_input_default_is_ai_read_write_and_type_checked() {
             ),
             Ok(()),
         );
-        let Some(IntrospectValue::Json(j)) = intro.query("node.2.input_default.0") else {
+        let Ok(IntrospectValue::Json(j)) = intro.query("node.2.input_default.0") else {
             panic!("re-read after the typed write");
         };
         assert_eq!(
@@ -638,7 +647,10 @@ fn r899_input_default_is_ai_read_write_and_type_checked() {
             Err(InterveneError::TypeMismatch),
         );
         // An out-of-range port: query is absent, write is UnknownPath.
-        assert_eq!(intro.query("node.2.input_default.9"), None);
+        assert!(matches!(
+            intro.query("node.2.input_default.9"),
+            Err(ReadRefusal::NoSuchMember(_))
+        ),);
         assert_eq!(
             intro.intervene(
                 "node.2.input_default.9",
@@ -873,11 +885,11 @@ fn r901_editing_read_and_renaming_degenerate_projection() {
         // Idle: both reads are Null.
         assert_eq!(
             graph_intro(&scene).query("editing"),
-            Some(IntrospectValue::Null)
+            Ok(IntrospectValue::Null)
         );
         assert_eq!(
             graph_intro(&scene).query("renaming"),
-            Some(IntrospectValue::Null)
+            Ok(IntrospectValue::Null)
         );
         // A title edit: `editing` is a title object, `renaming` is the id.
         {
@@ -892,7 +904,7 @@ fn r901_editing_read_and_renaming_degenerate_projection() {
                 Ok(IntrospectValue::Bool(true))
             );
         }
-        let Some(IntrospectValue::Json(j)) = graph_intro(&scene).query("editing") else {
+        let Ok(IntrospectValue::Json(j)) = graph_intro(&scene).query("editing") else {
             panic!("editing reads as a JSON object for a title edit");
         };
         assert_eq!(
@@ -902,7 +914,7 @@ fn r901_editing_read_and_renaming_degenerate_projection() {
         assert_eq!(j.get("node").and_then(serde_json::Value::as_u64), Some(2));
         assert_eq!(
             graph_intro(&scene).query("renaming"),
-            Some(IntrospectValue::Int(2))
+            Ok(IntrospectValue::Int(2))
         );
         // A port-default edit: `editing` is a port_default object, but
         // `renaming` is Null (the degenerate projection). R901.1 — a wired
@@ -929,7 +941,7 @@ fn r901_editing_read_and_renaming_degenerate_projection() {
             );
             id
         };
-        let Some(IntrospectValue::Json(j)) = graph_intro(&scene).query("editing") else {
+        let Ok(IntrospectValue::Json(j)) = graph_intro(&scene).query("editing") else {
             panic!("editing reads as a JSON object for a port-default edit");
         };
         assert_eq!(
@@ -943,7 +955,7 @@ fn r901_editing_read_and_renaming_degenerate_projection() {
         assert_eq!(j.get("port").and_then(serde_json::Value::as_u64), Some(2));
         assert_eq!(
             graph_intro(&scene).query("renaming"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "a port-default edit is not a rename",
         );
     });
@@ -1184,7 +1196,7 @@ fn r918_panel_row_click_opens_editor() {
             panel(EditTarget::PosX(NodeId(2))),
             "the panel row opened a PosX edit"
         );
-        let Some(IntrospectValue::Json(j)) = graph_intro(&scene).query("editing") else {
+        let Ok(IntrospectValue::Json(j)) = graph_intro(&scene).query("editing") else {
             panic!("editing reads as json while an edit is in flight");
         };
         assert_eq!(j["kind"], serde_json::json!("pos_x"));
@@ -1353,7 +1365,7 @@ fn r918_begin_edit_detail_rpc_pair() {
             );
         }
         assert_eq!(use_active_edit().get(), panel(EditTarget::PosY(NodeId(2))));
-        let Some(IntrospectValue::Json(j)) = graph_intro(&scene).query("editing") else {
+        let Ok(IntrospectValue::Json(j)) = graph_intro(&scene).query("editing") else {
             panic!("editing reads as json");
         };
         assert_eq!(
@@ -1523,7 +1535,7 @@ fn r838_remove_edge_by_id() {
             intro.invoke("remove_edge", IntrospectValue::Int(0)),
             Ok(IntrospectValue::Bool(true)),
         );
-        assert_eq!(intro.query("edge_count"), Some(IntrospectValue::Int(2)));
+        assert_eq!(intro.query("edge_count"), Ok(IntrospectValue::Int(2)));
         assert_eq!(
             intro.invoke("remove_edge", IntrospectValue::Int(9)),
             Ok(IntrospectValue::Bool(false)),
@@ -1545,24 +1557,26 @@ fn r841_delete_node_keeps_stable_ids_over_rpc() {
             intro.invoke("delete_node", IntrospectValue::Int(1)),
             Ok(IntrospectValue::Bool(true)),
         );
-        assert_eq!(intro.query("node_count"), Some(IntrospectValue::Int(3)));
-        assert_eq!(intro.query("edge_count"), Some(IntrospectValue::Int(2)));
+        assert_eq!(intro.query("node_count"), Ok(IntrospectValue::Int(3)));
+        assert_eq!(intro.query("edge_count"), Ok(IntrospectValue::Int(2)));
         // Multiply is STILL id 2; edge id 0 still reads 0:0->2:0 (not renumbered).
         assert_eq!(
             intro.query("node.2.title"),
-            Some(IntrospectValue::Text("Multiply".to_owned()))
+            Ok(IntrospectValue::Text("Multiply".to_owned()))
         );
-        assert_eq!(
-            intro.query("node.1.title"),
-            None,
+        assert!(
+            matches!(
+                intro.query("node.1.title"),
+                Err(ReadRefusal::NoSuchMember(_))
+            ),
             "id 1 is gone, not reused"
         );
         assert_eq!(
             intro.query("edge.0"),
-            Some(IntrospectValue::Text("0:0->2:0".to_owned()))
+            Ok(IntrospectValue::Text("0:0->2:0".to_owned()))
         );
         // Selection (Output id 3) is untouched — it did not shift to 2.
-        assert_eq!(intro.query("selected"), Some(IntrospectValue::Int(3)));
+        assert_eq!(intro.query("selected"), Ok(IntrospectValue::Int(3)));
     });
 }
 
@@ -1579,10 +1593,10 @@ fn r838_send_selects_node_on_release() {
             IntrospectValue::Text("node_2:PointerDown".to_owned()),
         );
         let _ = intro.invoke("send", IntrospectValue::Text("node_2:PointerUp".to_owned()));
-        assert_eq!(intro.query("selected"), Some(IntrospectValue::Int(2)));
+        assert_eq!(intro.query("selected"), Ok(IntrospectValue::Int(2)));
         // Background release deselects.
         let _ = intro.invoke("send", IntrospectValue::Text("PointerUp".to_owned()));
-        assert_eq!(intro.query("selected"), Some(IntrospectValue::Null));
+        assert_eq!(intro.query("selected"), Ok(IntrospectValue::Null));
     });
 }
 
@@ -1816,11 +1830,11 @@ fn r838_keyboard_nudges_and_deletes_selected() {
         ));
         assert_eq!(
             graph_intro(&scene).query("node_count"),
-            Some(IntrospectValue::Int(3))
+            Ok(IntrospectValue::Int(3))
         );
         assert_eq!(
             graph_intro(&scene).query("selected"),
-            Some(IntrospectValue::Null)
+            Ok(IntrospectValue::Null)
         );
     });
 }
@@ -1846,7 +1860,7 @@ fn r838_escape_clears_selection() {
         ));
         assert_eq!(
             graph_intro(&scene).query("selected"),
-            Some(IntrospectValue::Null)
+            Ok(IntrospectValue::Null)
         );
     });
 }
@@ -1890,7 +1904,7 @@ fn coordinator() -> NodeGraphExternal {
 /// The `query pin_create` JSON `candidates` array as owned strings.
 fn menu_candidates(coord: &NodeGraphExternal) -> Vec<String> {
     match coord.query("pin_create") {
-        Some(IntrospectValue::Json(v)) => v["candidates"]
+        Ok(IntrospectValue::Json(v)) => v["candidates"]
             .as_array()
             .map(|a| {
                 a.iter()
@@ -2247,7 +2261,7 @@ fn r1220_filter_narrows_and_highlight_roves_wrapping() {
         assert!(coord.move_pin_highlight(-1), "up from 0 wraps to the last");
         let last = pin_create_candidates(PortType::Vector, "").len() - 1;
         match coord.query("pin_create") {
-            Some(IntrospectValue::Json(v)) => {
+            Ok(IntrospectValue::Json(v)) => {
                 assert_eq!(
                     v["highlight"].as_u64(),
                     Some(last as u64),
@@ -2304,7 +2318,7 @@ fn r1220_rpc_surface_open_filter_commit_cancel_and_schema() {
         }
         assert_eq!(
             coord.query("pin_create"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "closed = Null"
         );
         // Open for Texture(0) output 0 via the RPC verb.
@@ -2338,7 +2352,7 @@ fn r1220_rpc_surface_open_filter_commit_cancel_and_schema() {
         assert_eq!(coord.edges().len(), edges0 + 1, "auto-wired");
         assert_eq!(
             coord.query("pin_create"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "closed after commit"
         );
         // cancel with no menu open is a benign false.
@@ -2393,7 +2407,7 @@ fn r1223_menu_command_chord_does_not_leak_into_filter() {
             match scene
                 .find_external_with_tag(GRAPH_TAG)
                 .and_then(|n| n.handle.introspect())
-                .and_then(|i| i.query("pin_create"))
+                .and_then(|i| i.query("pin_create").ok())
             {
                 Some(IntrospectValue::Json(v)) => v["filter"].as_str().unwrap_or("").to_owned(),
                 other => panic!("expected open menu Json, got {other:?}"),
@@ -2441,7 +2455,7 @@ fn r1223_menu_source_deleted_reads_closed_and_untraps_keyboard() {
                 Ok(IntrospectValue::Bool(true)),
             );
             assert!(
-                matches!(intro.query("pin_create"), Some(IntrospectValue::Json(_))),
+                matches!(intro.query("pin_create"), Ok(IntrospectValue::Json(_))),
                 "menu opens",
             );
             // Delete the source node out from under the open menu.
@@ -2451,7 +2465,7 @@ fn r1223_menu_source_deleted_reads_closed_and_untraps_keyboard() {
             );
             assert_eq!(
                 intro.query("pin_create"),
-                Some(IntrospectValue::Null),
+                Ok(IntrospectValue::Null),
                 "stale-source menu reads CLOSED (paint/a11y/introspect share the gate)",
             );
         }
@@ -2682,24 +2696,24 @@ fn r849_add_node_rpc_returns_the_new_id_and_rejects_unknown_kinds() {
             other => panic!("expected the new id, got {other:?}"),
         };
         assert_eq!(id, i64::from(first_dynamic_node_id()));
-        assert_eq!(intro.query("node_count"), Some(IntrospectValue::Int(5)));
+        assert_eq!(intro.query("node_count"), Ok(IntrospectValue::Int(5)));
         assert_eq!(
             intro.query(&format!("node.{id}.title")),
-            Some(IntrospectValue::Text("Add".to_owned())),
+            Ok(IntrospectValue::Text("Add".to_owned())),
         );
         assert_eq!(
             intro.query(&format!("node.{id}.inputs")),
-            Some(IntrospectValue::Int(2))
+            Ok(IntrospectValue::Int(2))
         );
         // An unknown kind is Rejected; the graph is unchanged.
         assert_refused_saying(
             &intro.invoke("add_node", IntrospectValue::Text("Bogus".to_owned())),
             "\"Bogus\" is not a node kind",
         );
-        assert_eq!(intro.query("node_count"), Some(IntrospectValue::Int(5)));
+        assert_eq!(intro.query("node_count"), Ok(IntrospectValue::Int(5)));
         // node_ids enumerates the new sparse id (read/write symmetry).
         match intro.query("node_ids") {
-            Some(IntrospectValue::Text(s)) => {
+            Ok(IntrospectValue::Text(s)) => {
                 assert!(
                     s.split(',').any(|t| t == id.to_string()),
                     "node_ids lists the added id: {s}"
@@ -2734,7 +2748,7 @@ fn r849_palette_card_release_adds_a_node() {
 /// Test helper — the live edge id set via the RPC enumeration.
 fn live_edge_ids(coord: &NodeGraphExternal) -> Vec<u32> {
     match coord.query("edge_ids") {
-        Some(IntrospectValue::Text(s)) if !s.is_empty() => {
+        Ok(IntrospectValue::Text(s)) if !s.is_empty() => {
             s.split(',').map(|x| x.parse().unwrap()).collect()
         }
         _ => Vec::new(),
@@ -2747,17 +2761,17 @@ fn r841_node_ids_and_edge_ids_enumerate_the_sparse_space() {
         let coord = coordinator();
         assert_eq!(
             coord.query("node_ids"),
-            Some(IntrospectValue::Text("0,1,2,3".to_owned()))
+            Ok(IntrospectValue::Text("0,1,2,3".to_owned()))
         );
         assert_eq!(
             coord.query("edge_ids"),
-            Some(IntrospectValue::Text("0,1,2".to_owned()))
+            Ok(IntrospectValue::Text("0,1,2".to_owned()))
         );
         // Delete node id 1 → the id space stays sparse, no renumber.
         coord.delete_node(NodeId(1));
         assert_eq!(
             coord.query("node_ids"),
-            Some(IntrospectValue::Text("0,2,3".to_owned())),
+            Ok(IntrospectValue::Text("0,2,3".to_owned())),
             "sparse, no renumber",
         );
     });
@@ -2780,7 +2794,7 @@ fn r839_background_press_probe_selects_a_wire() {
         assert_eq!(query_int(&scene, "selected_edge"), 0, "wire selected");
         assert_eq!(
             graph_intro(&scene).query("selected"),
-            Some(IntrospectValue::Null)
+            Ok(IntrospectValue::Null)
         );
         // A bare press on empty space deselects.
         send(&mut scene, "PointerDown");
@@ -2793,7 +2807,7 @@ fn r839_background_press_probe_selects_a_wire() {
         send(&mut scene, "PointerUp");
         assert_eq!(
             graph_intro(&scene).query("selected_edge"),
-            Some(IntrospectValue::Null)
+            Ok(IntrospectValue::Null)
         );
     });
 }
@@ -2813,7 +2827,7 @@ fn bg_move(scene: &mut Scene, gx: f64, gy: f64) {
 
 fn selected_ids_of(scene: &Scene) -> String {
     match graph_intro(scene).query("selected_ids") {
-        Some(IntrospectValue::Text(t)) => t,
+        Ok(IntrospectValue::Text(t)) => t,
         other => panic!("expected Text at selected_ids, got {other:?}"),
     }
 }
@@ -2903,7 +2917,7 @@ fn r880_jittery_background_click_stays_a_click() {
         send(&mut scene, "PointerUp");
         assert_eq!(
             graph_intro(&scene).query("selected_edge"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "moved gesture skips the edge-click probe",
         );
     });
@@ -3132,6 +3146,7 @@ fn undo_ext_query(scene: &Scene, slot: &str) -> Option<IntrospectValue> {
         .and_then(|n| n.handle.introspect())
         .expect("undo external present")
         .query(slot)
+        .ok()
 }
 
 #[test]
@@ -3197,7 +3212,7 @@ fn r851_delete_node_undo_restores_node_and_all_incident_edges() {
         assert_eq!(coord.edges().len(), 3, "every incident edge is restored");
         assert_eq!(
             coord.query("edge.0"),
-            Some(IntrospectValue::Text("0:0->2:0".to_owned())),
+            Ok(IntrospectValue::Text("0:0->2:0".to_owned())),
             "a restored edge keeps its stable id + endpoints",
         );
 
@@ -3221,7 +3236,7 @@ fn r851_connect_and_disconnect_round_trip_through_undo() {
         assert_eq!(coord.edges().len(), 3, "the wire is back");
         assert_eq!(
             coord.query("edge.1"),
-            Some(IntrospectValue::Text("1:0->2:1".to_owned())),
+            Ok(IntrospectValue::Text("1:0->2:1".to_owned())),
             "edge 1 is restored verbatim",
         );
         // Now re-make a connection and undo it.
@@ -3252,13 +3267,16 @@ fn r851_connect_displacing_a_wire_undo_restores_the_displaced_wire() {
             "connect into an occupied input"
         );
         assert_eq!(coord.edges().len(), 3, "one in, one out: count unchanged");
-        assert_eq!(coord.query("edge.0"), None, "edge 0 was displaced");
+        assert!(
+            matches!(coord.query("edge.0"), Err(ReadRefusal::NoSuchMember(_))),
+            "edge 0 was displaced"
+        );
 
         assert!(stack.undo(), "undo the displacing connect");
         assert_eq!(coord.edges().len(), 3);
         assert_eq!(
             coord.query("edge.0"),
-            Some(IntrospectValue::Text("0:0->2:0".to_owned())),
+            Ok(IntrospectValue::Text("0:0->2:0".to_owned())),
             "the displaced wire is restored",
         );
     });
@@ -3354,7 +3372,7 @@ fn r929_reconnect_rejects_self_loop_and_type_mismatch_and_noops_on_same() {
         let edge0 = "0:0->2:0";
         assert_eq!(
             coord.query("edge.0"),
-            Some(IntrospectValue::Text(edge0.to_owned()))
+            Ok(IntrospectValue::Text(edge0.to_owned()))
         );
         // Vector source -> lerp.2 (Float): narrowing, rejected; edge unchanged.
         assert!(
@@ -3363,7 +3381,7 @@ fn r929_reconnect_rejects_self_loop_and_type_mismatch_and_noops_on_same() {
         );
         assert_eq!(
             coord.query("edge.0"),
-            Some(IntrospectValue::Text(edge0.to_owned()))
+            Ok(IntrospectValue::Text(edge0.to_owned()))
         );
         // Self-loop: reconnect onto an input of the edge's own source node.
         assert!(
@@ -3372,7 +3390,7 @@ fn r929_reconnect_rejects_self_loop_and_type_mismatch_and_noops_on_same() {
         );
         assert_eq!(
             coord.query("edge.0"),
-            Some(IntrospectValue::Text(edge0.to_owned()))
+            Ok(IntrospectValue::Text(edge0.to_owned()))
         );
         // Re-dropping on its own input is a no-op success (no graph change).
         assert!(
@@ -3381,7 +3399,7 @@ fn r929_reconnect_rejects_self_loop_and_type_mismatch_and_noops_on_same() {
         );
         assert_eq!(
             coord.query("edge.0"),
-            Some(IntrospectValue::Text(edge0.to_owned())),
+            Ok(IntrospectValue::Text(edge0.to_owned())),
             "still the same wire"
         );
         // An unknown edge id is a no-op false.
@@ -3719,7 +3737,7 @@ fn r852_save_load_set_graph_over_rpc_invoke() {
         let mut scene = boot_scene();
         // serialized query returns JSON.
         let json = match graph_intro(&scene).query("serialized") {
-            Some(IntrospectValue::Text(s)) => s,
+            Ok(IntrospectValue::Text(s)) => s,
             other => panic!("expected serialized JSON, got {other:?}"),
         };
         assert!(
@@ -4170,7 +4188,7 @@ fn r877_viewport_zoom_intervene_clamps_and_round_trips() {
         );
         assert_eq!(
             intro.query("viewport.zoom"),
-            Some(IntrospectValue::Float(2.0))
+            Ok(IntrospectValue::Float(2.0))
         );
         // Out-of-range writes clamp (the setter-returns-outcome read-back).
         assert!(
@@ -4180,7 +4198,7 @@ fn r877_viewport_zoom_intervene_clamps_and_round_trips() {
         );
         assert_eq!(
             intro.query("viewport.zoom"),
-            Some(IntrospectValue::Float(ZOOM_MAX))
+            Ok(IntrospectValue::Float(ZOOM_MAX))
         );
         assert!(
             intro
@@ -4189,7 +4207,7 @@ fn r877_viewport_zoom_intervene_clamps_and_round_trips() {
         );
         assert_eq!(
             intro.query("viewport.zoom"),
-            Some(IntrospectValue::Float(ZOOM_MIN))
+            Ok(IntrospectValue::Float(ZOOM_MIN))
         );
         // Type mismatch is rejected.
         assert_eq!(
@@ -4226,14 +4244,8 @@ fn r877_viewport_pan_intervene_is_graph_units_and_clamps() {
                 .intervene("viewport.y", IntrospectValue::Float(50.0))
                 .is_ok()
         );
-        assert_eq!(
-            intro.query("viewport.x"),
-            Some(IntrospectValue::Float(100.0))
-        );
-        assert_eq!(
-            intro.query("viewport.y"),
-            Some(IntrospectValue::Float(50.0))
-        );
+        assert_eq!(intro.query("viewport.x"), Ok(IntrospectValue::Float(100.0)));
+        assert_eq!(intro.query("viewport.y"), Ok(IntrospectValue::Float(50.0)));
         // A huge pan clamps against the world maxima.
         assert!(
             intro
@@ -4241,7 +4253,7 @@ fn r877_viewport_pan_intervene_is_graph_units_and_clamps() {
                 .is_ok()
         );
         let clamped = match intro.query("viewport.x") {
-            Some(IntrospectValue::Float(v)) => v,
+            Ok(IntrospectValue::Float(v)) => v,
             other => panic!("expected Float, got {other:?}"),
         };
         assert!(
@@ -4463,7 +4475,7 @@ fn r877_keyboard_zoom_steps_and_resets() {
         ));
         let intro = graph_intro(&scene);
         let zoomed = match intro.query("viewport.zoom") {
-            Some(IntrospectValue::Float(v)) => v,
+            Ok(IntrospectValue::Float(v)) => v,
             other => panic!("expected Float, got {other:?}"),
         };
         assert!(
@@ -4478,7 +4490,7 @@ fn r877_keyboard_zoom_steps_and_resets() {
         ));
         assert_eq!(
             graph_intro(&scene).query("viewport.zoom"),
-            Some(IntrospectValue::Float(1.0)),
+            Ok(IntrospectValue::Float(1.0)),
             "Ctrl+0 resets to 100%",
         );
         // 'f' frames the graph (zoom moves off 1.0).
@@ -4489,7 +4501,7 @@ fn r877_keyboard_zoom_steps_and_resets() {
             mods(false, false)
         ));
         let framed = match graph_intro(&scene).query("viewport.zoom") {
-            Some(IntrospectValue::Float(v)) => v,
+            Ok(IntrospectValue::Float(v)) => v,
             other => panic!("expected Float, got {other:?}"),
         };
         assert!(
@@ -4696,13 +4708,13 @@ fn r878_begin_rename_rpc_targets_id_or_selection_and_validates() {
         assert_eq!(use_active_edit().get(), card(EditTarget::Title(NodeId(0))));
         assert_eq!(
             graph_intro(&scene).query("renaming"),
-            Some(IntrospectValue::Int(0)),
+            Ok(IntrospectValue::Int(0)),
             "the read twin reports the in-flight target",
         );
         end_edit_mode(false);
         assert_eq!(
             graph_intro(&scene).query("renaming"),
-            Some(IntrospectValue::Null)
+            Ok(IntrospectValue::Null)
         );
         // Null with a selection → the F2 path.
         use_selection().set(Selection::single(NodeId(3)));
@@ -4824,14 +4836,14 @@ fn r878_intervene_title_is_the_undoable_write_twin() {
         }
         assert_eq!(
             graph_intro(&scene).query("node.2.title"),
-            Some(IntrospectValue::Text("Blend".to_owned())),
+            Ok(IntrospectValue::Text("Blend".to_owned())),
             "the query twin reads the trimmed rename back",
         );
         assert_eq!(stack.undo_label().as_deref(), Some("Rename node"));
         assert!(stack.undo());
         assert_eq!(
             graph_intro(&scene).query("node.2.title"),
-            Some(IntrospectValue::Text("Multiply".to_owned())),
+            Ok(IntrospectValue::Text("Multiply".to_owned())),
             "the RPC rename undoes like an interactive one",
         );
     });
@@ -5156,19 +5168,19 @@ fn r879_selected_is_exact_one_and_selected_ids_is_the_set() {
         let intro = graph_intro(&scene);
         assert_eq!(
             intro.query("selected"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "a multi-selection has no single `selected`",
         );
         assert_eq!(
             intro.query("selected_ids"),
-            Some(IntrospectValue::Text("1,3".to_owned())),
+            Ok(IntrospectValue::Text("1,3".to_owned())),
             "the set reads back as an id-ordered CSV",
         );
         use_selection().set(Selection::single(NodeId(2)));
-        assert_eq!(intro.query("selected"), Some(IntrospectValue::Int(2)));
+        assert_eq!(intro.query("selected"), Ok(IntrospectValue::Int(2)));
         assert_eq!(
             intro.query("selected_ids"),
-            Some(IntrospectValue::Text("2".to_owned()))
+            Ok(IntrospectValue::Text("2".to_owned()))
         );
     });
 }
@@ -5984,22 +5996,22 @@ fn r1227_frame_introspection_contains_and_verb_schema() {
         let coord = coordinator();
         coord.set_selection(Selection::Nodes(BTreeSet::from([NodeId(0), NodeId(1)])));
         let id = coord.add_frame().unwrap();
-        assert_eq!(coord.query("frame_count"), Some(IntrospectValue::Int(1)));
+        assert_eq!(coord.query("frame_count"), Ok(IntrospectValue::Int(1)));
         // R1596 — a frame is a NODE, so it mints from the node counter: the
         // seed graph holds four, and the frame is the fifth thing in the tree.
         assert_eq!(
             coord.query("frame_ids"),
-            Some(IntrospectValue::Text("4".to_owned()))
+            Ok(IntrospectValue::Text("4".to_owned()))
         );
         assert_eq!(
             coord.query(&format!("frame.{}.title", id.0)),
-            Some(IntrospectValue::Text("Comment 1".to_owned()))
+            Ok(IntrospectValue::Text("Comment 1".to_owned()))
         );
         // R1596 — `contains` is the RELATION (`Node::parent`) the framing wrote,
         // not a rectangle re-tested on every read.
         assert_eq!(
             coord.query(&format!("frame.{}.contains", id.0)),
-            Some(IntrospectValue::Text("0,1".to_owned()))
+            Ok(IntrospectValue::Text("0,1".to_owned()))
         );
         // The AI-first verbs + read handles are schema-declared.
         let fields: Vec<&str> = coord.schema().fields.iter().map(|f| f.path).collect();
@@ -6195,7 +6207,7 @@ fn r1234_frame_resize_changes_size_not_positions_and_recomputes_membership() {
         let contains = format!("frame.{}.contains", id.0);
         assert_eq!(
             coord.query(&contains),
-            Some(IntrospectValue::Text("0,1".to_owned())),
+            Ok(IntrospectValue::Text("0,1".to_owned())),
             "only the two framed nodes to start"
         );
         let (n0, n2) = (
@@ -6232,7 +6244,7 @@ fn r1234_frame_resize_changes_size_not_positions_and_recomputes_membership() {
         // `attach` performs.
         assert_eq!(
             coord.query(&contains),
-            Some(IntrospectValue::Text("0,1".to_owned())),
+            Ok(IntrospectValue::Text("0,1".to_owned())),
             "a resize changes the box, not what the frame holds"
         );
         assert_eq!(
@@ -6243,7 +6255,7 @@ fn r1234_frame_resize_changes_size_not_positions_and_recomputes_membership() {
         assert!(use_undo().undo(), "undo the resize");
         assert_eq!(
             coord.query(&contains),
-            Some(IntrospectValue::Text("0,1".to_owned())),
+            Ok(IntrospectValue::Text("0,1".to_owned())),
             "and undoing it leaves membership alone too"
         );
         // The nodes ARE inside the widened box geometrically — which is the
@@ -6260,7 +6272,7 @@ fn r1234_frame_resize_changes_size_not_positions_and_recomputes_membership() {
         );
         assert_eq!(
             coord.query(&contains),
-            Some(IntrospectValue::Text("0,1,2,3".to_owned())),
+            Ok(IntrospectValue::Text("0,1,2,3".to_owned())),
             "and now the frame holds all four"
         );
     });
@@ -6332,12 +6344,12 @@ fn r1235_add_reroute_splices_edge_as_one_undo_step() {
         let _ = boot_scene();
         let coord = coordinator();
         // Seed edge 0: node0.out0 -> node2.in0 (a Vector wire).
-        assert_eq!(coord.query("node_count"), Some(IntrospectValue::Int(4)));
-        assert_eq!(coord.query("edge_count"), Some(IntrospectValue::Int(3)));
+        assert_eq!(coord.query("node_count"), Ok(IntrospectValue::Int(4)));
+        assert_eq!(coord.query("edge_count"), Ok(IntrospectValue::Int(3)));
         let rid = coord.add_reroute(EdgeId(0)).expect("edge 0 exists");
         // A fifth node (the reroute) and a net +1 edge (removed 1, added 2).
-        assert_eq!(coord.query("node_count"), Some(IntrospectValue::Int(5)));
-        assert_eq!(coord.query("edge_count"), Some(IntrospectValue::Int(4)));
+        assert_eq!(coord.query("node_count"), Ok(IntrospectValue::Int(5)));
+        assert_eq!(coord.query("edge_count"), Ok(IntrospectValue::Int(4)));
         // The spliced edge is gone; the path now routes node0 -> R -> node2.
         let edges = coord.edges();
         assert!(
@@ -6363,14 +6375,14 @@ fn r1235_add_reroute_splices_edge_as_one_undo_step() {
             "the splice is a single labelled step"
         );
         assert!(use_undo().undo(), "one undo reverts the splice");
-        assert_eq!(coord.query("node_count"), Some(IntrospectValue::Int(4)));
-        assert_eq!(coord.query("edge_count"), Some(IntrospectValue::Int(3)));
+        assert_eq!(coord.query("node_count"), Ok(IntrospectValue::Int(4)));
+        assert_eq!(coord.query("edge_count"), Ok(IntrospectValue::Int(3)));
         assert!(
             coord.edges().iter().any(|e| e.id == EdgeId(0)),
             "the original edge is restored"
         );
         assert!(use_undo().redo(), "redo re-splices in one step");
-        assert_eq!(coord.query("node_count"), Some(IntrospectValue::Int(5)));
+        assert_eq!(coord.query("node_count"), Ok(IntrospectValue::Int(5)));
     });
 }
 
@@ -6464,17 +6476,17 @@ fn r1236_dissolve_reroute_reconnects_the_wire() {
         let coord = coordinator();
         // Splice a reroute into edge 0 (node0 -> node2.in0), then dissolve it.
         let rid = coord.add_reroute(EdgeId(0)).expect("splice");
-        assert_eq!(coord.query("node_count"), Some(IntrospectValue::Int(5)));
+        assert_eq!(coord.query("node_count"), Ok(IntrospectValue::Int(5)));
         assert!(coord.dissolve_node(rid), "the reroute dissolves");
         // The reroute + its two edges are gone; the wire node0 -> node2 is bridged.
         assert_eq!(
             coord.query("node_count"),
-            Some(IntrospectValue::Int(4)),
+            Ok(IntrospectValue::Int(4)),
             "the reroute node is removed"
         );
         assert_eq!(
             coord.query("edge_count"),
-            Some(IntrospectValue::Int(3)),
+            Ok(IntrospectValue::Int(3)),
             "net -1 edge (removed 2, added 1 bridge)"
         );
         assert!(coord.node_by_id(rid).is_none(), "the reroute is gone");
@@ -6485,7 +6497,7 @@ fn r1236_dissolve_reroute_reconnects_the_wire() {
         // ONE undo restores the whole hop (the reroute + its two edges).
         assert_eq!(use_undo().undo_label().as_deref(), Some("Dissolve node"));
         assert!(use_undo().undo(), "one undo restores the hop");
-        assert_eq!(coord.query("node_count"), Some(IntrospectValue::Int(5)));
+        assert_eq!(coord.query("node_count"), Ok(IntrospectValue::Int(5)));
         assert!(coord.node_by_id(rid).is_some(), "the reroute is back");
     });
 }
@@ -6549,8 +6561,8 @@ fn r1236_dissolve_is_general_and_names_what_it_would_cut() {
             "unknown id -> no dissolve"
         );
         // The graph is back where it started.
-        assert_eq!(coord.query("node_count"), Some(IntrospectValue::Int(4)));
-        assert_eq!(coord.query("edge_count"), Some(IntrospectValue::Int(3)));
+        assert_eq!(coord.query("node_count"), Ok(IntrospectValue::Int(4)));
+        assert_eq!(coord.query("edge_count"), Ok(IntrospectValue::Int(3)));
     });
 }
 
@@ -6618,7 +6630,7 @@ fn r1236_alt_delete_dissolves_the_selected_node() {
         }
         assert_eq!(
             graph_intro(&scene).query("node_count"),
-            Some(IntrospectValue::Int(5)),
+            Ok(IntrospectValue::Int(5)),
             "the reroute was spliced in"
         );
         let alt = Modifiers {
@@ -6634,12 +6646,12 @@ fn r1236_alt_delete_dissolves_the_selected_node() {
         ));
         assert_eq!(
             graph_intro(&scene).query("node_count"),
-            Some(IntrospectValue::Int(4)),
+            Ok(IntrospectValue::Int(4)),
             "the reroute node was removed"
         );
         assert_eq!(
             graph_intro(&scene).query("edge_count"),
-            Some(IntrospectValue::Int(3)),
+            Ok(IntrospectValue::Int(3)),
             "the wire survived the removed hop (bridged, net -1 edge)"
         );
     });
@@ -6672,7 +6684,7 @@ fn r1240_empty_frame_move_keeps_the_whole_rect_on_world() {
         );
         assert_eq!(
             coord.query(&format!("frame.{}.contains", id.0)),
-            Some(IntrospectValue::Text(String::new())),
+            Ok(IntrospectValue::Text(String::new())),
             "the frame now holds nothing"
         );
         // Push it far past the right / bottom: the whole RECT must stay on-world
@@ -6761,11 +6773,11 @@ fn r1241_dissolvable_query_matches_the_verb() {
         // The RPC reads mirror the method.
         assert_eq!(
             coord.query(&format!("dissolvable.{}", rid.0)),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
         );
         assert_eq!(
             coord.query("dissolvable.0"),
-            Some(IntrospectValue::Bool(false)),
+            Ok(IntrospectValue::Bool(false)),
             "the source is the lossy one"
         );
         // Derived, not written down: the reroute splice retired the seed's
@@ -6779,7 +6791,7 @@ fn r1241_dissolvable_query_matches_the_verb() {
             .expect("the source is wired");
         assert_eq!(
             coord.query("dissolve_severs.0"),
-            Some(IntrospectValue::Text(leaving.to_string())),
+            Ok(IntrospectValue::Text(leaving.to_string())),
             "and the read names the wire it would cut"
         );
         // Eligibility predicts the verb: dissolvable -> the verb succeeds -> gone.
@@ -6827,12 +6839,12 @@ fn r1242_reroute_is_a_first_class_model_identity_not_a_title() {
         );
         assert_eq!(
             coord.query(&format!("node.{}.is_reroute", rid.0)),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
         );
         // A seed op node is NOT a reroute...
         assert_eq!(
             coord.query("node.2.is_reroute"),
-            Some(IntrospectValue::Bool(false)),
+            Ok(IntrospectValue::Bool(false)),
         );
         // ...and the identity is NOT the title: renaming the knot keeps it a
         // reroute, and renaming an op node "Reroute" does NOT make it one.
@@ -6856,7 +6868,7 @@ fn r1242_reroute_is_a_first_class_model_identity_not_a_title() {
         // The enumeration finds exactly the reroute.
         assert_eq!(
             coord.query("reroute_ids"),
-            Some(IntrospectValue::Text(rid.0.to_string())),
+            Ok(IntrospectValue::Text(rid.0.to_string())),
         );
     });
 }
@@ -6877,7 +6889,7 @@ fn r1242_reroute_identity_survives_serialize_reload() {
         );
         assert_eq!(
             coord.query("reroute_ids"),
-            Some(IntrospectValue::Text(rid.0.to_string())),
+            Ok(IntrospectValue::Text(rid.0.to_string())),
         );
     });
 }
@@ -7085,25 +7097,27 @@ fn r1243_double_click_on_a_wire_splices_a_reroute() {
         );
         // The new node is a reroute, and the original edge is gone.
         let reroute_ids = match graph_intro(&scene).query("reroute_ids") {
-            Some(IntrospectValue::Text(t)) => t,
+            Ok(IntrospectValue::Text(t)) => t,
             other => panic!("expected Text at reroute_ids, got {other:?}"),
         };
         assert_eq!(reroute_ids, "4", "the double-click minted reroute node 4");
-        assert_eq!(
-            graph_intro(&scene).query("edge.0"),
-            None,
-            "the double-clicked edge 0 was removed",
+        assert!(
+            matches!(
+                graph_intro(&scene).query("edge.0"),
+                Err(ReadRefusal::NoSuchMember(_))
+            ),
+            "the double-clicked edge 0 was removed"
         );
         // The in-place release that spliced also left the NEW KNOT selected
         // (not a stale edge, not the fresh A->R wire under the cursor).
         assert_eq!(
             graph_intro(&scene).query("selected_edge"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "no edge is selected after the splice",
         );
         assert_eq!(
             graph_intro(&scene).query("selected"),
-            Some(IntrospectValue::Int(4)),
+            Ok(IntrospectValue::Int(4)),
             "the new reroute knot is the selection",
         );
     });
@@ -7136,7 +7150,7 @@ fn r1243_double_click_then_drag_marquees_instead_of_splicing() {
         );
         assert_eq!(
             graph_intro(&scene).query("reroute_ids"),
-            Some(IntrospectValue::Text(String::new())),
+            Ok(IntrospectValue::Text(String::new())),
             "no reroute was spliced by the dragged double-click",
         );
     });
@@ -7217,7 +7231,7 @@ fn r1246_double_click_a_knot_is_a_noop() {
         );
         assert_eq!(
             graph_intro(&scene).query("reroute_ids"),
-            Some(IntrospectValue::Text(rid.0.to_string())),
+            Ok(IntrospectValue::Text(rid.0.to_string())),
             "the knot is still there",
         );
         assert_eq!(
@@ -7305,7 +7319,7 @@ fn r1246_dissolve_verb_still_removes_a_knot() {
         assert!(coord.dissolve_node(rid), "the dissolve verb still works");
         assert_eq!(
             coord.query("node_count"),
-            Some(IntrospectValue::Int(4)),
+            Ok(IntrospectValue::Int(4)),
             "the knot is gone",
         );
         let bridged = coord.edges().iter().any(|e| {
@@ -7578,23 +7592,23 @@ fn r1255_query_reads_the_evaluated_graph() {
         // Output (node 3) reports its resolved input = the Multiply result.
         assert_eq!(
             intro.query("node.3.value"),
-            Some(terminal.clone()),
+            Ok(terminal.clone()),
             "node.3.value"
         );
         assert_eq!(
             intro.query("eval.output"),
-            Some(terminal),
+            Ok(terminal),
             "eval.output = terminal"
         );
         assert_eq!(
             intro.query("eval.acyclic"),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
             "seed graph is a DAG"
         );
         // A source (Texture, node 0) reports its Vector constant.
         assert_eq!(
             intro.query("node.0.value"),
-            Some(PortType::Vector.default_value().to_introspect()),
+            Ok(PortType::Vector.default_value().to_introspect()),
             "a source reads its constant",
         );
     });
@@ -7662,11 +7676,11 @@ fn r1256_node_op_read_distinguishes_same_signature_ops() {
         // reads cannot tell them apart, but `op` can.
         assert_eq!(
             intro.query("node.0.op"),
-            Some(IntrospectValue::Text("Texture".into()))
+            Ok(IntrospectValue::Text("Texture".into()))
         );
         assert_eq!(
             intro.query("node.1.op"),
-            Some(IntrospectValue::Text("Color".into()))
+            Ok(IntrospectValue::Text("Color".into()))
         );
         assert_eq!(
             intro.query("node.0.input_types"),
@@ -7681,7 +7695,7 @@ fn r1256_node_op_read_distinguishes_same_signature_ops() {
         // Multiply (node 2) vs a fresh Add: identical (Vector,Vector)->Vector.
         assert_eq!(
             intro.query("node.2.op"),
-            Some(IntrospectValue::Text("Multiply".into()))
+            Ok(IntrospectValue::Text("Multiply".into()))
         );
         let add = intro
             .invoke("add_node", IntrospectValue::Text("Add".into()))
@@ -7691,7 +7705,7 @@ fn r1256_node_op_read_distinguishes_same_signature_ops() {
         };
         assert_eq!(
             intro.query(&format!("node.{add_id}.op")),
-            Some(IntrospectValue::Text("Add".into())),
+            Ok(IntrospectValue::Text("Add".into())),
             "the new node reads op=Add (not derivable from its signature)",
         );
         // detail.op mirrors the selected node.
@@ -7700,7 +7714,7 @@ fn r1256_node_op_read_distinguishes_same_signature_ops() {
             .expect("select");
         assert_eq!(
             intro.query("detail.op"),
-            Some(IntrospectValue::Text("Multiply".into()))
+            Ok(IntrospectValue::Text("Multiply".into()))
         );
     });
 }
@@ -7890,12 +7904,12 @@ fn r1257_intervene_source_value_authors_it_and_reevaluates() {
         // Boot: Texture(grey) x Color(grey) -> Multiply -> Output; terminal grey64.
         assert_eq!(
             intro.query("node.0.is_source"),
-            Some(IntrospectValue::Bool(true))
+            Ok(IntrospectValue::Bool(true))
         );
         let grey = Color::rgb(0x80, 0x80, 0x80);
         assert_eq!(
             intro.query("node.0.value"),
-            Some(CellValue::Color(grey).to_introspect()),
+            Ok(CellValue::Color(grey).to_introspect()),
             "the Texture source reads its (default) constant",
         );
         // Author the Texture source red; the whole graph re-evaluates.
@@ -7905,19 +7919,19 @@ fn r1257_intervene_source_value_authors_it_and_reevaluates() {
         let red = Color::rgb(0xff, 0, 0);
         assert_eq!(
             intro.query("node.0.value"),
-            Some(CellValue::Color(red).to_introspect()),
+            Ok(CellValue::Color(red).to_introspect()),
             "the source now emits the authored red",
         );
         // Multiply(red, grey) = (255*128/255, 0, 0) = (128, 0, 0); terminal follows.
         let expected = CellValue::Color(color_mul(red, grey)).to_introspect();
         assert_eq!(
             intro.query("node.2.value"),
-            Some(expected.clone()),
+            Ok(expected.clone()),
             "Multiply re-evaluated"
         );
         assert_eq!(
             intro.query("eval.output"),
-            Some(expected),
+            Ok(expected),
             "the terminal followed the source edit"
         );
     });
@@ -7935,7 +7949,7 @@ fn r1257_value_write_is_readonly_on_a_derived_node() {
         // DERIVED value — authoring it is rejected.
         assert_eq!(
             intro.query("node.2.is_source"),
-            Some(IntrospectValue::Bool(false))
+            Ok(IntrospectValue::Bool(false))
         );
         assert_eq!(
             intro.intervene("node.2.value", IntrospectValue::Text("#ff0000".into())),
@@ -8000,7 +8014,7 @@ fn r1257_scalar_source_value_is_type_checked() {
         );
         assert_eq!(
             intro.query(&format!("node.{scalar}.value")),
-            Some(IntrospectValue::Float(0.5))
+            Ok(IntrospectValue::Float(0.5))
         );
         assert_eq!(
             intro.intervene(
@@ -8062,7 +8076,7 @@ fn r1264_source_const_inline_editor_begins_seeds_and_commits() {
         // `query editing` reports the source-value target on the card surface.
         assert_eq!(
             graph_intro(&scene).query("editing"),
-            Some(IntrospectValue::Json(serde_json::json!({
+            Ok(IntrospectValue::Json(serde_json::json!({
                 "kind": "source_value", "node": 1, "surface": "card"
             }))),
         );
@@ -8076,7 +8090,7 @@ fn r1264_source_const_inline_editor_begins_seeds_and_commits() {
         );
         assert_eq!(
             graph_intro(&scene).query("node.1.value"),
-            Some(CellValue::Color(Color::rgb(0x33, 0x66, 0xcc)).to_introspect()),
+            Ok(CellValue::Color(Color::rgb(0x33, 0x66, 0xcc)).to_introspect()),
             "the source now evaluates to the authored colour",
         );
         assert_eq!(
@@ -8632,18 +8646,16 @@ fn r1260_query_resolved_input_and_localises_a_cycle() {
         let grey = CellValue::Color(Color::rgb(0x80, 0x80, 0x80)).to_introspect();
         assert_eq!(
             intro.query("node.2.resolved_input.0"),
-            Some(grey.clone()),
+            Ok(grey.clone()),
             "in0 resolves the wired grey"
         );
-        assert_eq!(
-            intro.query("node.2.resolved_input.1"),
-            Some(grey),
-            "in1 too"
-        );
-        assert_eq!(
-            intro.query("node.2.resolved_input.9"),
-            None,
-            "an out-of-range port is UnknownPath"
+        assert_eq!(intro.query("node.2.resolved_input.1"), Ok(grey), "in1 too");
+        assert!(
+            matches!(
+                intro.query("node.2.resolved_input.9"),
+                Err(ReadRefusal::NoSuchMember(_))
+            ),
+            "R1667 - the family is declared and this argument addresses nothing"
         );
         // detail.resolved_input mirrors the selected node.
         intro
@@ -8657,7 +8669,7 @@ fn r1260_query_resolved_input_and_localises_a_cycle() {
         // The seed graph is a DAG: cycle_nodes is empty.
         assert_eq!(
             intro.query("eval.cycle_nodes"),
-            Some(IntrospectValue::Text(String::new())),
+            Ok(IntrospectValue::Text(String::new())),
             "no cycle at boot"
         );
         // ★R1596 — a cycle CANNOT BE AUTHORED any more. The editor's own gate
@@ -8683,7 +8695,7 @@ fn r1260_query_resolved_input_and_localises_a_cycle() {
         );
         assert_eq!(
             intro.query("eval.acyclic"),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
             "so the graph is still a DAG"
         );
     });
@@ -8698,18 +8710,18 @@ fn r1260_query_resolved_input_and_localises_a_cycle() {
         coord.document.set(looped);
         assert_eq!(
             coord.query("eval.acyclic"),
-            Some(IntrospectValue::Bool(false)),
+            Ok(IntrospectValue::Bool(false)),
             "now cyclic"
         );
         assert_eq!(
             coord.query("eval.cycle_nodes"),
-            Some(IntrospectValue::Text(format!("{},{}", a.0, b.0))),
+            Ok(IntrospectValue::Text(format!("{},{}", a.0, b.0))),
             "cycle_nodes localises exactly the two knots",
         );
         // A cycle node's resolved input is null (uncomputable).
         assert_eq!(
             coord.query(&format!("node.{}.resolved_input.0", a.0)),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "a cycle-fed input reads null",
         );
     });
@@ -8982,7 +8994,7 @@ fn r1598_swap_keeps_the_id_and_reports_what_it_cost() {
         // ★ The id survived, which is what the DCC's swap cannot do.
         assert_eq!(
             coord.query("node.2.op"),
-            Some(IntrospectValue::Text("Add".to_owned())),
+            Ok(IntrospectValue::Text("Add".to_owned())),
             "the node at id 2 is an Add now"
         );
         assert_eq!(
@@ -8993,7 +9005,7 @@ fn r1598_swap_keeps_the_id_and_reports_what_it_cost() {
         assert!(stack.undo(), "and it undoes");
         assert_eq!(
             coord.query("node.2.op"),
-            Some(IntrospectValue::Text("Multiply".to_owned())),
+            Ok(IntrospectValue::Text("Multiply".to_owned())),
         );
     });
 }

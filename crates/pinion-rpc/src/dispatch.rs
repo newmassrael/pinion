@@ -33,7 +33,7 @@ use pinion_core::region::{Region, RegionFit};
 
 use crate::displays::AnchoredOutcome;
 use pinion_core::event::WheelDelta;
-use pinion_core::external::{IntrospectValue, RawJson};
+use pinion_core::external::{IntrospectValue, RawJson, ReadRefusal};
 use pinion_core::input::{GesturePhase, PointerButton, PointerEdge, PointerKind};
 use pinion_core::intent::Intent;
 use pinion_core::style::{Border, BoxStyle, Color};
@@ -9220,6 +9220,36 @@ pub const ACTION_REFUSED: i32 = -32005;
 /// `error.data` knows which kind of thing it is holding.
 pub const VALUE_OUT_OF_RANGE: i32 = -32006;
 
+/// R1667 §5.15 §2 #2 — JSON-RPC error code for **a declared parametric family
+/// whose argument addresses nothing**: `width.999` on a 3-column grid.
+///
+/// The read channel's first application code, and the reason it is one is the
+/// rule the two above established: `error.data` here is the *surface's* sentence
+/// ("column 999 is outside 0..3"), not a word this crate authored, and
+/// `rpc/errors` publishes that `-32602` carries only the closed vocabulary.
+///
+/// What it buys a client is the distinction R1667 exists for. `-32602
+/// UnknownIntrospectPath` means *that name is not on this surface* — stop
+/// asking. This means *the name is right and the index is not* — read the
+/// family's `count` path and ask again. Those are opposite instructions, and
+/// they arrived as the same bytes until this round.
+pub const NO_SUCH_MEMBER: i32 = -32007;
+
+/// R1667 §5.15 §2 #2 — JSON-RPC error code for **a declared path this instance
+/// cannot answer**: a `TextField` with no `TextEditState` attached has a
+/// `caret` in its schema and nothing to read it from.
+///
+/// Peer of [`ACTION_REFUSED`] on the read side, and split from
+/// [`NO_SUCH_MEMBER`] for the same reason that one is split from `-32602`: the
+/// caller's next move differs. A missing member says *try another index*; this
+/// says *the argument was never the problem* — nothing the client can vary
+/// about the call will help until the surface is bound.
+///
+/// `text_field`'s doc has promised clients this distinction since R56.1.f.3
+/// ("distinguish *no state bound* from *no selection*"). It was unkeepable:
+/// both were `None`, and both left as `UnknownIntrospectPath`.
+pub const READ_UNAVAILABLE: i32 = -32008;
+
 /// R1564 — a refusal's wire form: the JSON-RPC code **and** the detail string,
 /// decided together.
 ///
@@ -9254,6 +9284,8 @@ fn fault_message(code: i32) -> &'static str {
     match code {
         ACTION_REFUSED => "Action refused",
         VALUE_OUT_OF_RANGE => "Value out of range",
+        NO_SUCH_MEMBER => "No such member",
+        READ_UNAVAILABLE => "Read unavailable",
         _ => "Invalid params",
     }
 }
@@ -9657,9 +9689,13 @@ fn json_to_introspect_value(v: &Value) -> Option<IntrospectValue> {
 /// into provenance cannot silently rename a reason a client already
 /// matches on.
 fn query_error_reason(err: &QueryError) -> WireFault {
-    // R1564 — a READ cannot be refused by a producer: `query` answers
+    // R1564 said "a READ cannot be refused by a producer: `query` answers
     // `Option`, so every failure here is the transport's own classification and
-    // every one is `-32602`.
+    // every one is `-32602`." R1667 made the first clause false on purpose —
+    // `query` answers `Result<_, ReadRefusal>` — so the second clause goes with
+    // it, on exactly the rule the other two channels already follow: a word
+    // from this crate's closed vocabulary rides `-32602`, and a producer's own
+    // sentence rides an application code.
     match err {
         QueryError::Path(inner) => WireFault::params(inner.wire_tag()),
         QueryError::UnsupportedPath => WireFault::params("UnsupportedPath"),
@@ -9667,6 +9703,22 @@ fn query_error_reason(err: &QueryError) -> WireFault {
         QueryError::IntrospectionOptedOut => WireFault::params("IntrospectionOptedOut"),
         QueryError::UnknownIntrospectPath => WireFault::params("UnknownIntrospectPath"),
         QueryError::PathIsAnAction => WireFault::params("PathIsAnAction"),
+        // A malformed argument is fully determined by its variant (`$schema`
+        // publishes the type the caller got wrong), so it stays a word.
+        QueryError::Refused(ReadRefusal::QueryTypeMismatch) => {
+            WireFault::params("QueryTypeMismatch")
+        }
+        QueryError::Refused(ReadRefusal::NoSuchMember(reason)) => WireFault {
+            code: NO_SUCH_MEMBER,
+            reason: reason.clone().into_cow(),
+        },
+        QueryError::Refused(ReadRefusal::Unavailable(reason)) => WireFault {
+            code: READ_UNAVAILABLE,
+            reason: reason.clone().into_cow(),
+        },
+        // `ReadRefusal` is `#[non_exhaustive]`: an arm this transport has not
+        // been taught must not be silently folded into a neighbour's word.
+        QueryError::Refused(_) => WireFault::params("UnmappedSurfaceError"),
     }
 }
 

@@ -244,7 +244,7 @@ fn read_button_state(scene: &Scene, tag: &str) -> ButtonState {
         return ButtonState::Idle;
     };
     match intro.query("state") {
-        Some(IntrospectValue::Text(name)) => ButtonState::from_name_or_default(&name),
+        Ok(IntrospectValue::Text(name)) => ButtonState::from_name_or_default(&name),
         _ => ButtonState::Idle,
     }
 }

@@ -74,7 +74,7 @@ fn read_pane_count(scene: &Scene, tag: &str) -> i64 {
     scene
         .find_external_with_tag(tag)
         .and_then(|node| node.handle.introspect())
-        .and_then(|intro| intro.query("count"))
+        .and_then(|intro| intro.query("count").ok())
         .and_then(|value| value.as_i64())
         .unwrap_or(0)
 }

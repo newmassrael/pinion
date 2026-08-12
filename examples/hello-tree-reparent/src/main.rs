@@ -65,8 +65,8 @@ use pinion_a11y::{
 use pinion_core::composite_tag::split_subindex;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, DragPayload, DropPoint, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
-    SchemaField, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
+    SchemaArg, SchemaField, ThreadOwnership,
 };
 use pinion_core::input::PointerWireEvent;
 use pinion_core::reactive::{Owner, Signal};
@@ -487,37 +487,37 @@ impl ExternalIntrospect for OutlinerExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         let tree = self.state.nodes.get();
         if path == "row_count" {
             let n = flat_visible(&tree).len();
-            return Some(IntrospectValue::Int(i64::try_from(n).unwrap_or(i64::MAX)));
+            return Ok(IntrospectValue::Int(i64::try_from(n).unwrap_or(i64::MAX)));
         }
         if let Some(n) = path.strip_prefix("id_at.") {
             let rows = flat_visible(&tree);
-            let idx: usize = n.parse().ok()?;
-            return Some(match rows.get(idx) {
+            let idx: usize = n.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?;
+            return Ok(match rows.get(idx) {
                 Some(r) => IntrospectValue::Text(r.id.clone()),
                 None => IntrospectValue::Null,
             });
         }
         if let Some(n) = path.strip_prefix("depth_at.") {
             let rows = flat_visible(&tree);
-            let idx: usize = n.parse().ok()?;
-            return Some(match rows.get(idx) {
+            let idx: usize = n.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?;
+            return Ok(match rows.get(idx) {
                 Some(r) => IntrospectValue::Int(i64::from(r.depth)),
                 None => IntrospectValue::Null,
             });
         }
         if let Some(id) = path.strip_prefix("parent_of.") {
             // Absent node → Null; root node → empty string (present, no parent).
-            return Some(match find_node(&tree, id) {
+            return Ok(match find_node(&tree, id) {
                 Some(_) => IntrospectValue::Text(parent_of(&tree, id).unwrap_or_default()),
                 None => IntrospectValue::Null,
             });
         }
         match path {
-            "preview" => Some(match self.state.preview.get() {
+            "preview" => Ok(match self.state.preview.get() {
                 Some(p) => IntrospectValue::Json(serde_json::json!({
                     "drag_id": p.drag_id,
                     "target": p.target,
@@ -525,11 +525,11 @@ impl ExternalIntrospect for OutlinerExternal {
                 })),
                 None => IntrospectValue::Null,
             }),
-            "focused" => Some(match self.state.focused.get() {
+            "focused" => Ok(match self.state.focused.get() {
                 Some(id) => IntrospectValue::Text(id),
                 None => IntrospectValue::Null,
             }),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -987,18 +987,18 @@ mod tests {
             );
             ext.drag_to(&payload, Some(drop_point("props", 0.5)));
             assert!(
-                matches!(ext.query("preview"), Some(IntrospectValue::Json(_))),
+                matches!(ext.query("preview"), Ok(IntrospectValue::Json(_))),
                 "preview is in flight (scene-as-data)"
             );
             ext.drag_release(&payload, Some(drop_point("props", 0.5)));
             // light reparented under props; drag state cleared.
             assert_eq!(
                 ext.query("parent_of.light"),
-                Some(IntrospectValue::Text("props".into()))
+                Ok(IntrospectValue::Text("props".into()))
             );
             assert_eq!(
                 ext.query("preview"),
-                Some(IntrospectValue::Null),
+                Ok(IntrospectValue::Null),
                 "preview cleared"
             );
             assert!(ext.begin_drag().is_none(), "press cleared on release");
@@ -1009,24 +1009,24 @@ mod tests {
     fn external_query_reports_structure_and_rejects_cycle_drag() {
         Owner::new().run(|| {
             let mut ext = OutlinerExternal::new();
-            assert_eq!(ext.query("row_count"), Some(IntrospectValue::Int(8)));
+            assert_eq!(ext.query("row_count"), Ok(IntrospectValue::Int(8)));
             assert_eq!(
                 ext.query("id_at.0"),
-                Some(IntrospectValue::Text("world".into()))
+                Ok(IntrospectValue::Text("world".into()))
             );
             assert_eq!(
                 ext.query("depth_at.3"),
-                Some(IntrospectValue::Int(2)),
+                Ok(IntrospectValue::Int(2)),
                 "camera is depth 2"
             );
             assert_eq!(
                 ext.query("parent_of.world"),
-                Some(IntrospectValue::Text(String::new())),
+                Ok(IntrospectValue::Text(String::new())),
                 "root"
             );
             assert_eq!(
                 ext.query("parent_of.nope"),
-                Some(IntrospectValue::Null),
+                Ok(IntrospectValue::Null),
                 "absent → Null"
             );
             // Drag "player" onto its own child "camera" → rejected, no change.
@@ -1036,7 +1036,7 @@ mod tests {
             ext.drag_release(&p, Some(drop_point("camera", 0.5)));
             assert_eq!(
                 ext.query("parent_of.camera"),
-                Some(IntrospectValue::Text("player".into())),
+                Ok(IntrospectValue::Text("player".into())),
                 "cycle drop rejected — camera still under player",
             );
         });

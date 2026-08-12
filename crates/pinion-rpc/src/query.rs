@@ -23,7 +23,7 @@
 //! module exposes the typed dispatcher only.
 
 use pinion_core::Scene;
-use pinion_core::external::{ExternalIntrospect, IntrospectValue, SchemaChannel};
+use pinion_core::external::{ExternalIntrospect, IntrospectValue, ReadRefusal, SchemaChannel};
 use serde_json::Value;
 
 use crate::origin::{AnswerOrigin, QueryRefusal, SceneSource};
@@ -74,10 +74,16 @@ pub const SCHEMA_PATH: &str = "$schema";
 /// mention it. A surface cannot be scene-as-data through a path the scene's
 /// own contract omits.
 ///
-/// The asymmetry R1566 named is preserved and now falls out of the order rather
-/// than being special-cased: a declared parametric family whose index addresses
-/// nothing is still `UnknownIntrospectPath`, because the gate passes (the
-/// template matches) and the surface then answers `None`.
+/// The asymmetry R1566 named falls out of the order rather than being
+/// special-cased: the gate answers only "is this declared, and on which
+/// channel", and everything past that is the surface's to say.
+///
+/// R1667 — and what the surface says now reaches the caller. Until this round
+/// the line below was `.ok_or(QueryError::UnknownIntrospectPath)`, so a declared
+/// family whose index addressed nothing answered the same word as a name that
+/// was never declared at all. Both were true statements about *something*, and
+/// a client could not tell which it had been told. See
+/// [`ReadRefusal`].
 fn introspect_or_schema(
     intro: &dyn ExternalIntrospect,
     introspect_path: &str,
@@ -86,9 +92,12 @@ fn introspect_or_schema(
         return Ok(schema_value(intro));
     }
     match intro.schema().field_for(introspect_path).map(|f| f.channel) {
-        Some(SchemaChannel::Read) => intro
-            .query(introspect_path)
-            .ok_or(QueryError::UnknownIntrospectPath),
+        // R1667 — the surface's own refusal, forwarded. This used to be
+        // `.ok_or(UnknownIntrospectPath)`: the transport manufactured one word
+        // for every way a declared read could fail, so "no such index" and
+        // "that argument is not an int" and "this instance holds no state"
+        // reached a client as the same bytes as "no such path".
+        Some(SchemaChannel::Read) => intro.query(introspect_path).map_err(QueryError::from),
         Some(SchemaChannel::Invoke) => Err(QueryError::PathIsAnAction),
         // `None` — undeclared. The wildcard is `SchemaChannel` being
         // `#[non_exhaustive]`: a channel this transport has not been taught is
@@ -201,11 +210,37 @@ pub enum QueryError {
     /// method name, which is the same value it answers for a name that is not
     /// in the meta-object at all.
     PathIsAnAction,
+    /// R1667 §5.15 §2 #7 — the path is declared and readable, and the
+    /// **surface** refused. Carries that surface's own
+    /// [`ReadRefusal`] verbatim.
+    ///
+    /// The read channel's peer of
+    /// [`InterveneError`](pinion_core::external::InterveneError) reaching the
+    /// wire on the write side. Before this round the read channel had no such
+    /// variant *and could not have used one*: `query` answered `Option`, so the
+    /// only failure the transport could report was its own.
+    ///
+    /// Each arm keeps its own wire word (and, for the two that carry a
+    /// sentence, its own error code) — see `query_error_reason` in
+    /// [`mod@crate::dispatch`].
+    Refused(ReadRefusal),
 }
 
 impl From<PathError> for QueryError {
     fn from(err: PathError) -> Self {
         QueryError::Path(err)
+    }
+}
+
+impl From<ReadRefusal> for QueryError {
+    /// R1667 — a surface's `UnknownPath` keeps the transport's own word for the
+    /// same fact, so the wire vocabulary does not grow a synonym. Every other
+    /// arm is new information and travels as itself.
+    fn from(err: ReadRefusal) -> Self {
+        match err {
+            ReadRefusal::UnknownPath => QueryError::UnknownIntrospectPath,
+            other => QueryError::Refused(other),
+        }
     }
 }
 
@@ -332,8 +367,10 @@ mod tests {
                 },
             )
         }
-        fn query(&self, path: &str) -> Option<IntrospectValue> {
-            (path == "depth").then_some(IntrospectValue::Int(3))
+        fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
+            (path == "depth")
+                .then_some(IntrospectValue::Int(3))
+                .ok_or(ReadRefusal::UnknownPath)
         }
         fn intervene(
             &mut self,
@@ -692,11 +729,11 @@ mod tests {
         fn schema(&self) -> IntrospectSchema {
             IntrospectSchema::new(const { &[SchemaField::new("declared", "int")] })
         }
-        fn query(&self, path: &str) -> Option<IntrospectValue> {
+        fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
             match path {
-                "declared" => Some(IntrospectValue::Int(1)),
-                "smuggled" => Some(IntrospectValue::Int(2)),
-                _ => None,
+                "declared" => Ok(IntrospectValue::Int(1)),
+                "smuggled" => Ok(IntrospectValue::Int(2)),
+                _ => Err(ReadRefusal::UnknownPath),
             }
         }
         fn intervene(&mut self, _: &str, _: IntrospectValue) -> Result<(), InterveneError> {
@@ -752,8 +789,10 @@ mod tests {
                 },
             )
         }
-        fn query(&self, path: &str) -> Option<IntrospectValue> {
-            (path == "total").then_some(IntrospectValue::Int(1))
+        fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
+            (path == "total")
+                .then_some(IntrospectValue::Int(1))
+                .ok_or(ReadRefusal::UnknownPath)
         }
         fn intervene(&mut self, _: &str, _: IntrospectValue) -> Result<(), InterveneError> {
             Err(InterveneError::ReadOnly)
@@ -899,8 +938,10 @@ mod tests {
         fn schema(&self) -> IntrospectSchema {
             IntrospectSchema::new(const { &[SchemaField::new("pos", "float")] })
         }
-        fn query(&self, path: &str) -> Option<IntrospectValue> {
-            (path == "pos").then_some(IntrospectValue::Float(self.pos))
+        fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
+            (path == "pos")
+                .then_some(IntrospectValue::Float(self.pos))
+                .ok_or(ReadRefusal::UnknownPath)
         }
         fn intervene(&mut self, _: &str, _: IntrospectValue) -> Result<(), InterveneError> {
             Err(InterveneError::ReadOnly)

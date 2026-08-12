@@ -226,7 +226,7 @@ impl WidgetCore for ToolbarView {
         for (i, slot) in out.pressed.iter_mut().enumerate() {
             *slot = matches!(
                 intro.query(&format!("pressed.{i}")),
-                Some(IntrospectValue::Bool(true))
+                Ok(IntrospectValue::Bool(true))
             );
         }
         out
@@ -484,7 +484,7 @@ mod key_tests {
             return None;
         };
         match node.handle.introspect()?.query("focus") {
-            Some(IntrospectValue::Int(i)) => Some(i),
+            Ok(IntrospectValue::Int(i)) => Some(i),
             _ => None,
         }
     }
@@ -494,7 +494,7 @@ mod key_tests {
             return None;
         };
         match node.handle.introspect()?.query(&format!("pressed.{i}")) {
-            Some(IntrospectValue::Bool(b)) => Some(b),
+            Ok(IntrospectValue::Bool(b)) => Some(b),
             _ => None,
         }
     }

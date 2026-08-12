@@ -22,7 +22,7 @@ use serde::de::DeserializeOwned;
 use crate::event::Event;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, ReadRefusal, RepaintOwner, SchemaField, ThreadOwnership,
 };
 
 use super::signal::Signal;
@@ -255,11 +255,11 @@ where
         IntrospectSchema::new(schema_fields::<T>())
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         if path == "value" {
-            Some(self.signal.get().to_introspect_value())
+            Ok(self.signal.get().to_introspect_value())
         } else {
-            None
+            Err(ReadRefusal::UnknownPath)
         }
     }
 
@@ -298,16 +298,16 @@ mod tests {
     fn query_reads_i32_signal_as_int() {
         let s = Signal::new(7_i32);
         let ext = SignalExternal::new(s.clone());
-        assert_eq!(ext.query("value"), Some(IntrospectValue::Int(7)));
+        assert_eq!(ext.query("value"), Ok(IntrospectValue::Int(7)));
         s.set(42);
-        assert_eq!(ext.query("value"), Some(IntrospectValue::Int(42)));
+        assert_eq!(ext.query("value"), Ok(IntrospectValue::Int(42)));
     }
 
     #[test]
     fn query_reads_bool_signal_as_bool() {
         let s = Signal::new(true);
         let ext = SignalExternal::new(s);
-        assert_eq!(ext.query("value"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(ext.query("value"), Ok(IntrospectValue::Bool(true)));
     }
 
     #[test]
@@ -316,7 +316,7 @@ mod tests {
         let ext = SignalExternal::new(s);
         assert_eq!(
             ext.query("value"),
-            Some(IntrospectValue::Text(String::from("hello")))
+            Ok(IntrospectValue::Text(String::from("hello")))
         );
     }
 
@@ -324,14 +324,14 @@ mod tests {
     fn query_reads_f64_signal_as_float() {
         let s = Signal::new(2.5_f64);
         let ext = SignalExternal::new(s);
-        assert_eq!(ext.query("value"), Some(IntrospectValue::Float(2.5)));
+        assert_eq!(ext.query("value"), Ok(IntrospectValue::Float(2.5)));
     }
 
     #[test]
     fn query_unknown_path_returns_none() {
         let s = Signal::new(1_i32);
         let ext = SignalExternal::new(s);
-        assert_eq!(ext.query("nope"), None);
+        assert_eq!(ext.query("nope"), Err(ReadRefusal::UnknownPath));
     }
 
     #[test]
@@ -417,7 +417,7 @@ mod tests {
         let s = Signal::new(0_i32);
         let mut ext: Box<dyn External> = Box::new(SignalExternal::new(s.clone()));
         let read = ext.introspect().expect("opted in").query("value");
-        assert_eq!(read, Some(IntrospectValue::Int(0)));
+        assert_eq!(read, Ok(IntrospectValue::Int(0)));
         ext.introspect_mut()
             .expect("opted in")
             .intervene("value", IntrospectValue::Int(5))

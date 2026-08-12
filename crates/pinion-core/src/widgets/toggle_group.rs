@@ -101,10 +101,10 @@ pub fn read_toggle(scene: &Scene, tag: &str) -> (ToggleState, bool) {
         return (ToggleState::Idle, false);
     };
     let state = match intro.query("state") {
-        Some(IntrospectValue::Text(name)) => ToggleState::from_name_or_default(&name),
+        Ok(IntrospectValue::Text(name)) => ToggleState::from_name_or_default(&name),
         _ => ToggleState::Idle,
     };
-    let on = matches!(intro.query("value"), Some(IntrospectValue::Bool(true)));
+    let on = matches!(intro.query("value"), Ok(IntrospectValue::Bool(true)));
     (state, on)
 }
 

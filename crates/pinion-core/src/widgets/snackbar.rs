@@ -32,7 +32,7 @@ use std::rc::Rc;
 
 use crate::animation::Tickable;
 use crate::external::{
-    IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource, SchemaField,
+    IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource, ReadRefusal, SchemaField,
 };
 use crate::reactive::{Owner, Signal};
 use crate::widget_core::ExtraExternal;
@@ -212,12 +212,12 @@ impl QuerySource for SnackbarTimer {
         )
     }
 
-    fn introspect_query(&self, path: &str) -> Option<IntrospectValue> {
+    fn introspect_query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "visible" => Some(IntrospectValue::Bool(self.visible())),
-            "remaining" => Some(IntrospectValue::Float(f64::from(self.remaining()))),
-            "duration" => Some(IntrospectValue::Float(f64::from(self.duration()))),
-            _ => None,
+            "visible" => Ok(IntrospectValue::Bool(self.visible())),
+            "remaining" => Ok(IntrospectValue::Float(f64::from(self.remaining()))),
+            "duration" => Ok(IntrospectValue::Float(f64::from(self.duration()))),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 }
@@ -315,19 +315,19 @@ mod tests {
         let timer = Rc::new(SnackbarTimer::new());
         let node = SnackbarIntrospect::new(timer.clone());
         // Hidden: visible=false, remaining=0, duration still the default.
-        assert_eq!(node.query("visible"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(node.query("remaining"), Some(IntrospectValue::Float(0.0)));
+        assert_eq!(node.query("visible"), Ok(IntrospectValue::Bool(false)));
+        assert_eq!(node.query("remaining"), Ok(IntrospectValue::Float(0.0)));
         assert_eq!(
             node.query("duration"),
-            Some(IntrospectValue::Float(f64::from(
+            Ok(IntrospectValue::Float(f64::from(
                 SnackbarTimer::DEFAULT_DURATION_SECS
             ))),
         );
         // Shown: visible flips and the countdown starts at the full duration.
         timer.show(4.0);
-        assert_eq!(node.query("visible"), Some(IntrospectValue::Bool(true)));
-        assert_eq!(node.query("remaining"), Some(IntrospectValue::Float(4.0)));
-        assert_eq!(node.query("duration"), Some(IntrospectValue::Float(4.0)));
+        assert_eq!(node.query("visible"), Ok(IntrospectValue::Bool(true)));
+        assert_eq!(node.query("remaining"), Ok(IntrospectValue::Float(4.0)));
+        assert_eq!(node.query("duration"), Ok(IntrospectValue::Float(4.0)));
     }
 
     #[test]
@@ -338,13 +338,13 @@ mod tests {
         timer.tick(1.0);
         assert_eq!(
             node.query("remaining"),
-            Some(IntrospectValue::Float(3.0)),
+            Ok(IntrospectValue::Float(3.0)),
             "remaining counts down with the shared timer (no second source)",
         );
-        assert_eq!(node.query("visible"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(node.query("visible"), Ok(IntrospectValue::Bool(true)));
         timer.tick(3.0); // total 4.0 == duration → auto-dismiss
-        assert_eq!(node.query("visible"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(node.query("remaining"), Some(IntrospectValue::Float(0.0)));
+        assert_eq!(node.query("visible"), Ok(IntrospectValue::Bool(false)));
+        assert_eq!(node.query("remaining"), Ok(IntrospectValue::Float(0.0)));
     }
 
     #[test]
@@ -369,7 +369,7 @@ mod tests {
         let node = SnackbarIntrospect::new(Rc::new(SnackbarTimer::new()));
         assert_eq!(
             node.query("elapsed"),
-            None,
+            Err(ReadRefusal::UnknownPath),
             "only visible/remaining/duration are query slots"
         );
     }
@@ -401,12 +401,12 @@ mod tests {
             .expect("the snackbar node exposes a query-only introspection face");
         assert_eq!(
             introspect.query("visible"),
-            Some(IntrospectValue::Bool(false))
+            Ok(IntrospectValue::Bool(false))
         );
         timer.show(4.0);
         assert_eq!(
             introspect.query("visible"),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
             "showing the shared timer flips the registered node (one SSOT)",
         );
     }

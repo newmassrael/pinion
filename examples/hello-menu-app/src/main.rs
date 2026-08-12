@@ -51,7 +51,7 @@ use pinion_a11y::{
 };
 use pinion_core::external::{
     External, ExternalIntrospect, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect,
-    QuerySource, SchemaField, int_of,
+    QuerySource, ReadRefusal, SchemaField, int_of,
 };
 use pinion_core::intent::Intent;
 use pinion_core::mnemonic::MnemonicLabel;
@@ -200,14 +200,14 @@ impl QuerySource for DocModel {
         )
     }
 
-    fn introspect_query(&self, path: &str) -> Option<IntrospectValue> {
+    fn introspect_query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         let content = self.content.get();
         match path {
-            "content_len" => Some(IntrospectValue::Int(int_of(content.chars().count()))),
-            "line_count" => Some(IntrospectValue::Int(int_of(line_count(&content)))),
-            "dirty" => Some(IntrospectValue::Bool(self.dirty.get())),
-            "empty" => Some(IntrospectValue::Bool(content.is_empty())),
-            _ => None,
+            "content_len" => Ok(IntrospectValue::Int(int_of(content.chars().count()))),
+            "line_count" => Ok(IntrospectValue::Int(int_of(line_count(&content)))),
+            "dirty" => Ok(IntrospectValue::Bool(self.dirty.get())),
+            "empty" => Ok(IntrospectValue::Bool(content.is_empty())),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 }
@@ -296,7 +296,7 @@ impl MenuState {
 /// Read an optional-index introspect slot: `Int(i)` -> `Some(i)`.
 fn query_index(intro: &dyn ExternalIntrospect, path: &str) -> Option<usize> {
     match intro.query(path) {
-        Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+        Ok(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
         _ => None,
     }
 }
@@ -305,7 +305,7 @@ fn query_index(intro: &dyn ExternalIntrospect, path: &str) -> Option<usize> {
 fn query_checked(intro: &dyn ExternalIntrospect, menu: usize, item: usize) -> bool {
     matches!(
         intro.query(&format!("checked.{menu}.{item}")),
-        Some(IntrospectValue::Bool(true))
+        Ok(IntrospectValue::Bool(true))
     )
 }
 
@@ -492,7 +492,7 @@ impl WidgetCore for AppMenuView {
         out.open = query_index(intro, "open");
         out.active = query_index(intro, "active");
         out.bar_focus = match intro.query("bar_focus") {
-            Some(IntrospectValue::Int(i)) => usize::try_from(i).unwrap_or(0),
+            Ok(IntrospectValue::Int(i)) => usize::try_from(i).unwrap_or(0),
             _ => 0,
         };
         // Persistent View toggles: read every frame (not only while the

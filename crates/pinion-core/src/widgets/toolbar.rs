@@ -109,8 +109,8 @@
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
-    ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership,
 };
 use crate::input::PointerWireEvent;
 use crate::intent::Intent;
@@ -306,6 +306,13 @@ impl ToolbarExternal {
         self.em.inner.is_pressed(i)
     }
 
+    /// R1667 §5.15 — the refusal both indexed reads owe an out-of-range `i`,
+    /// stated once because both bound against the same count and a second copy
+    /// is a second chance for the two sentences to disagree.
+    fn no_such_item(&self, i: usize) -> ReadRefusal {
+        ReadRefusal::no_such_member(format!("control {i} is outside 0..{}", self.count()))
+    }
+
     /// The roving keyboard cursor.
     #[must_use]
     pub fn focus(&self) -> usize {
@@ -424,10 +431,10 @@ fn focus_value(idx: usize) -> IntrospectValue {
 #[must_use]
 pub fn read_roving_focus(intro: &dyn ExternalIntrospect) -> (usize, bool) {
     let focus = match intro.query("focus") {
-        Some(IntrospectValue::Int(i)) => usize::try_from(i).unwrap_or(0),
+        Ok(IntrospectValue::Int(i)) => usize::try_from(i).unwrap_or(0),
         _ => 0,
     };
-    let focused = matches!(intro.query("focused"), Some(IntrospectValue::Bool(true)));
+    let focused = matches!(intro.query("focused"), Ok(IntrospectValue::Bool(true)));
     (focus, focused)
 }
 
@@ -507,22 +514,26 @@ impl ExternalIntrospect for ToolbarExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "count" => Some(IntrospectValue::Int(
+            "count" => Ok(IntrospectValue::Int(
                 i64::try_from(self.count()).expect("count fits in i64"),
             )),
-            "focus" => Some(focus_value(self.focus())),
+            "focus" => Ok(focus_value(self.focus())),
             // R694 §5.39 — group shell-focus posture for the ring gate.
-            "focused" => Some(IntrospectValue::Bool(self.group_focused)),
+            "focused" => Ok(IntrospectValue::Bool(self.group_focused)),
             _ => {
                 if let Some(suffix) = path.strip_prefix("kind.") {
-                    let i: usize = suffix.parse().ok()?;
-                    return Some(IntrospectValue::Text(kind_name(self.kind(i)?).to_string()));
+                    let i: usize = suffix.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?;
+                    let kind = self.kind(i).ok_or_else(|| self.no_such_item(i))?;
+                    return Ok(IntrospectValue::Text(kind_name(kind).to_string()));
                 }
-                let suffix = path.strip_prefix("pressed.")?;
-                let i: usize = suffix.parse().ok()?;
-                Some(IntrospectValue::Bool(self.is_pressed(i)?))
+                let suffix = path
+                    .strip_prefix("pressed.")
+                    .ok_or(ReadRefusal::UnknownPath)?;
+                let i: usize = suffix.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?;
+                let pressed = self.is_pressed(i).ok_or_else(|| self.no_such_item(i))?;
+                Ok(IntrospectValue::Bool(pressed))
             }
         }
     }
@@ -710,20 +721,26 @@ mod tests {
     #[test]
     fn external_query_initial() {
         let e = ext();
-        assert_eq!(e.query("count"), Some(IntrospectValue::Int(5)));
-        assert_eq!(e.query("focus"), Some(IntrospectValue::Int(0)));
+        assert_eq!(e.query("count"), Ok(IntrospectValue::Int(5)));
+        assert_eq!(e.query("focus"), Ok(IntrospectValue::Int(0)));
         assert_eq!(
             e.query("kind.0"),
-            Some(IntrospectValue::Text("toggle".to_string()))
+            Ok(IntrospectValue::Text("toggle".to_string()))
         );
         assert_eq!(
             e.query("kind.3"),
-            Some(IntrospectValue::Text("command".to_string()))
+            Ok(IntrospectValue::Text("command".to_string()))
         );
-        assert_eq!(e.query("pressed.0"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(e.query("kind.9"), None);
-        assert_eq!(e.query("pressed.9"), None);
-        assert_eq!(e.query("nope"), None);
+        assert_eq!(e.query("pressed.0"), Ok(IntrospectValue::Bool(false)));
+        assert!(matches!(
+            e.query("kind.9"),
+            Err(ReadRefusal::NoSuchMember(_))
+        ));
+        assert!(matches!(
+            e.query("pressed.9"),
+            Err(ReadRefusal::NoSuchMember(_))
+        ),);
+        assert_eq!(e.query("nope"), Err(ReadRefusal::UnknownPath));
     }
 
     #[test]
@@ -977,16 +994,16 @@ mod tests {
         use crate::external::External;
         let mut e = ext();
         assert!(!e.group_focused(), "toolbar boots without group focus");
-        assert_eq!(e.query("focused"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(e.query("focused"), Ok(IntrospectValue::Bool(false)));
         e.on_focus_change(true);
         assert!(e.group_focused());
         assert_eq!(
             e.query("focused"),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
             "group focus surfaces on the introspect slot for the ring gate",
         );
         e.on_focus_change(false);
-        assert_eq!(e.query("focused"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(e.query("focused"), Ok(IntrospectValue::Bool(false)));
     }
 
     #[test]

@@ -119,6 +119,7 @@ impl Brush {
         let read = |field: &str, fallback: f32| {
             intro
                 .query(field)
+                .ok()
                 .and_then(|v| v.as_f32())
                 .unwrap_or(fallback)
         };

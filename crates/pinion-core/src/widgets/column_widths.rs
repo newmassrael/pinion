@@ -33,8 +33,8 @@ use std::rc::Rc;
 use crate::composite_tag::split_send_payload;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, CaptureNormalize, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
-    SchemaField, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
+    SchemaArg, SchemaField, ThreadOwnership,
 };
 use crate::input::{DragCalibration, PointerWireEvent};
 use crate::intent::Intent;
@@ -528,33 +528,42 @@ impl ExternalIntrospect for ColumnWidthExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         // `width.<col>` reads one column's width.
         //
-        // (R1353) An out-of-range column is `None` — ABSENT. It used to report
-        // the min clamp, because `ColumnWidths::width` floors an unknown column
-        // for the paint path (a layout loop wants a sane number, not a panic).
+        // (R1353) An out-of-range column is ABSENT. It used to report the min
+        // clamp, because `ColumnWidths::width` floors an unknown column for the
+        // paint path (a layout loop wants a sane number, not a panic).
         // Reporting that number over introspection made the surface *lie*: a
         // client probing `width.999` on a 3-column grid got `40` — a plausible,
         // confidently wrong answer, indistinguishable from a real column's
         // width. A read that does not know the answer must say so; the paint
         // path's tolerance is not the wire's.
+        //
+        // (R1667) …and it now says WHICH way it does not know. The two refusals
+        // below were one word until this round: `width.zzz` and `width.999`
+        // both answered "no such path", so a client could not tell a typo from
+        // a probe past the end, and neither could tell either from asking for a
+        // slot this widget does not have at all.
         if let Some(rest) = path.strip_prefix("width.") {
-            let col: usize = rest.parse().ok()?;
+            let col: usize = rest.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?;
             if col >= self.state.col_count() {
-                return None;
+                return Err(ReadRefusal::no_such_member(format!(
+                    "column {col} is outside 0..{}",
+                    self.state.col_count()
+                )));
             }
-            return Some(IntrospectValue::Int(i64::from(self.state.width(col))));
+            return Ok(IntrospectValue::Int(i64::from(self.state.width(col))));
         }
         match path {
-            "widths" => Some(IntrospectValue::Text(widths_str(&self.state.widths()))),
-            "total" => Some(IntrospectValue::Int(i64::from(self.state.total()))),
-            "cols" => Some(IntrospectValue::Int(
+            "widths" => Ok(IntrospectValue::Text(widths_str(&self.state.widths()))),
+            "total" => Ok(IntrospectValue::Int(i64::from(self.state.total()))),
+            "cols" => Ok(IntrospectValue::Int(
                 i64::try_from(self.state.col_count()).unwrap_or(i64::MAX),
             )),
-            "min_width" => Some(IntrospectValue::Int(i64::from(self.state.min_width()))),
-            "max_width" => Some(IntrospectValue::Int(i64::from(self.state.max_width()))),
-            _ => None,
+            "min_width" => Ok(IntrospectValue::Int(i64::from(self.state.min_width()))),
+            "max_width" => Ok(IntrospectValue::Int(i64::from(self.state.max_width()))),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -876,13 +885,13 @@ impl ExternalIntrospect for ColumnResizeExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "col" => Some(IntrospectValue::Int(
+            "col" => Ok(IntrospectValue::Int(
                 i64::try_from(self.col).unwrap_or(i64::MAX),
             )),
-            "dragging" => Some(IntrospectValue::Bool(self.is_dragging())),
-            _ => None,
+            "dragging" => Ok(IntrospectValue::Bool(self.is_dragging())),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -1103,13 +1112,13 @@ mod tests {
         let ext = ColumnWidthExternal::new(Rc::new(widths()));
         assert_eq!(
             ext.query("widths"),
-            Some(IntrospectValue::Text("130,90,200".into()))
+            Ok(IntrospectValue::Text("130,90,200".into()))
         );
-        assert_eq!(ext.query("total"), Some(IntrospectValue::Int(420)));
-        assert_eq!(ext.query("cols"), Some(IntrospectValue::Int(3)));
-        assert_eq!(ext.query("width.2"), Some(IntrospectValue::Int(200)));
-        assert_eq!(ext.query("min_width"), Some(IntrospectValue::Int(40)));
-        assert_eq!(ext.query("nope"), None);
+        assert_eq!(ext.query("total"), Ok(IntrospectValue::Int(420)));
+        assert_eq!(ext.query("cols"), Ok(IntrospectValue::Int(3)));
+        assert_eq!(ext.query("width.2"), Ok(IntrospectValue::Int(200)));
+        assert_eq!(ext.query("min_width"), Ok(IntrospectValue::Int(40)));
+        assert_eq!(ext.query("nope"), Err(ReadRefusal::UnknownPath));
     }
 
     #[test]
@@ -1208,7 +1217,7 @@ mod tests {
         ext.invoke("send", IntrospectValue::Text("resize:PointerUp".into()))
             .unwrap();
         assert!(!ext.is_dragging(), "PointerUp tears down the drag");
-        assert_eq!(ext.query("dragging"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(ext.query("dragging"), Ok(IntrospectValue::Bool(false)));
         // A fresh press recalibrates from the new width.
         let _ = state.set_width(0, 160);
         ext.pointer_move(0.5, 0.0);
@@ -1420,9 +1429,9 @@ mod tests {
         let state = Rc::new(widths());
         let mut ext = resize_ext(&state, 2);
         assert_eq!(ext.col(), 2);
-        assert_eq!(ext.query("col"), Some(IntrospectValue::Int(2)));
-        assert_eq!(ext.query("dragging"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(ext.query("nope"), None);
+        assert_eq!(ext.query("col"), Ok(IntrospectValue::Int(2)));
+        assert_eq!(ext.query("dragging"), Ok(IntrospectValue::Bool(false)));
+        assert_eq!(ext.query("nope"), Err(ReadRefusal::UnknownPath));
         assert_eq!(
             ext.intervene("col", IntrospectValue::Int(0)),
             Err(InterveneError::ReadOnly)
@@ -1520,16 +1529,16 @@ mod tests {
         let mut ext = ColumnWidthExternal::new(Rc::new(widths()));
         assert_eq!(
             ext.query("min_width"),
-            Some(IntrospectValue::Int(i64::from(DEFAULT_MIN_COL_WIDTH)))
+            Ok(IntrospectValue::Int(i64::from(DEFAULT_MIN_COL_WIDTH)))
         );
         assert_eq!(
             ext.query("max_width"),
-            Some(IntrospectValue::Int(i64::from(DEFAULT_MAX_COL_WIDTH))),
+            Ok(IntrospectValue::Int(i64::from(DEFAULT_MAX_COL_WIDTH))),
             "unbounded by default, and it SAYS so instead of omitting the slot"
         );
         ext.intervene("max_width", IntrospectValue::Int(150))
             .expect("R1492 — the ceiling is a setting, not a constant");
-        assert_eq!(ext.query("max_width"), Some(IntrospectValue::Int(150)));
+        assert_eq!(ext.query("max_width"), Ok(IntrospectValue::Int(150)));
         assert_eq!(
             ext.invoke("set_col_width", IntrospectValue::Text("0=400".into())),
             Ok(IntrospectValue::Int(150)),
@@ -1537,7 +1546,7 @@ mod tests {
         );
         ext.intervene("min_width", IntrospectValue::Int(60))
             .expect("and the floor stopped being read-only");
-        assert_eq!(ext.query("min_width"), Some(IntrospectValue::Int(60)));
+        assert_eq!(ext.query("min_width"), Ok(IntrospectValue::Int(60)));
         assert_eq!(
             ext.intervene("total", IntrospectValue::Int(1)),
             Err(InterveneError::ReadOnly),

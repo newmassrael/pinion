@@ -411,7 +411,12 @@ fn emit_core_method_bodies(
         quote! {
             if let ::pinion_core::Scene::External(node) = scene {
                 if let ::core::option::Option::Some(intro) = node.handle.introspect() {
-                    if let ::core::option::Option::Some(
+                    // R1667 — `query` answers a `Result` now, and this walk
+                    // treats every refusal alike on purpose: it is a PAINT
+                    // path deriving a visual state, and "no state to paint"
+                    // is one fact however the surface arrived at it. The
+                    // reasons matter to a wire client, which this is not.
+                    if let ::core::result::Result::Ok(
                         ::pinion_core::external::IntrospectValue::Text(name)
                     ) = intro.query("state") {
                         return <#state as ::pinion_core::WidgetStateName>

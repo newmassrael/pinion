@@ -22,7 +22,8 @@
 use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode, capture_surface};
 use pinion_core::style::{Border, BoxStyle, LayoutStyle, Size, TextStyle};
@@ -242,23 +243,23 @@ impl ExternalIntrospect for PageView {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "focused_block" => Some(self.focused.map_or(IntrospectValue::Null, |i| {
+            "focused_block" => Ok(self.focused.map_or(IntrospectValue::Null, |i| {
                 IntrospectValue::Int(i64::try_from(i).unwrap_or(i64::MAX))
             })),
-            "zoomed" => Some(IntrospectValue::Bool(self.focused.is_some())),
-            "events" => Some(IntrospectValue::Int(
+            "zoomed" => Ok(IntrospectValue::Bool(self.focused.is_some())),
+            "events" => Ok(IntrospectValue::Int(
                 i64::try_from(self.events).unwrap_or(i64::MAX),
             )),
-            "anchor_x" => Some(self.anchor.map_or(IntrospectValue::Null, |(x, _)| {
+            "anchor_x" => Ok(self.anchor.map_or(IntrospectValue::Null, |(x, _)| {
                 IntrospectValue::Float(x.into())
             })),
-            "anchor_y" => Some(self.anchor.map_or(IntrospectValue::Null, |(_, y)| {
+            "anchor_y" => Ok(self.anchor.map_or(IntrospectValue::Null, |(_, y)| {
                 IntrospectValue::Float(y.into())
             })),
-            "last_mods" => Some(IntrospectValue::Text(self.modifiers.as_wire_token())),
-            _ => None,
+            "last_mods" => Ok(IntrospectValue::Text(self.modifiers.as_wire_token())),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -298,11 +299,11 @@ fn read_page(scene: &Scene) -> ViewState {
         return ViewState::default();
     };
     let focused = match intro.query("focused_block") {
-        Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+        Ok(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
         _ => None,
     };
     let events = match intro.query("events") {
-        Some(IntrospectValue::Int(n)) => u64::try_from(n).unwrap_or(0),
+        Ok(IntrospectValue::Int(n)) => u64::try_from(n).unwrap_or(0),
         _ => 0,
     };
     let anchor = match (query_frac(intro, "anchor_x"), query_frac(intro, "anchor_y")) {
@@ -322,7 +323,7 @@ fn query_frac(intro: &dyn ExternalIntrospect, path: &str) -> Option<f32> {
             clippy::cast_possible_truncation,
             reason = "an anchor fraction 0.0..=1.0 loses no meaningful precision as f32"
         )]
-        Some(IntrospectValue::Float(f)) => Some(f as f32),
+        Ok(IntrospectValue::Float(f)) => Some(f as f32),
         _ => None,
     }
 }
@@ -548,13 +549,10 @@ mod tests {
         p.smart_zoom_gesture(0.75, 0.25, shift);
         assert_eq!(p.anchor, Some((0.75, 0.25)));
         assert!(p.modifiers.shift_key(), "modifier bit recorded");
-        assert!(matches!(
-            p.query("zoomed"),
-            Some(IntrospectValue::Bool(true))
-        ));
+        assert!(matches!(p.query("zoomed"), Ok(IntrospectValue::Bool(true))));
         assert!(matches!(
             p.query("focused_block"),
-            Some(IntrospectValue::Int(0))
+            Ok(IntrospectValue::Int(0))
         ));
     }
 
@@ -568,7 +566,7 @@ mod tests {
         assert_eq!(p.events, 0);
         assert!(matches!(
             p.query("focused_block"),
-            Some(IntrospectValue::Null)
+            Ok(IntrospectValue::Null)
         ));
     }
 

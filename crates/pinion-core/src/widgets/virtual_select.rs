@@ -41,7 +41,8 @@ use crate::Scene;
 use crate::composite_tag::GridSendKey;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use crate::input::{Modifiers, PointerWireEvent};
 use crate::intent::Intent;
@@ -1742,43 +1743,40 @@ impl ExternalIntrospect for VirtualSelectExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
             // A schema-listed path must always return a value (the RPC
             // layer treats a `None` from a declared slot as
             // `UnknownIntrospectPath`); an empty selection reports
             // `Null` (present-but-empty) for the single index, an empty
             // JSON array for the set.
-            "selected" => Some(self.selected_value()),
-            "selection" => Some(self.selection_value()),
+            "selected" => Ok(self.selected_value()),
+            "selection" => Ok(self.selection_value()),
             // R1561 — the row count, answered from the runs. The toolkit has
             // no such accessor: `selectedRows().size()` builds one model index per selected row to
             // read the list's length.
-            "selection_count" => Some(
-                i64::try_from(self.selected_count())
-                    .map_or(IntrospectValue::Null, IntrospectValue::Int),
-            ),
+            "selection_count" => Ok(i64::try_from(self.selected_count())
+                .map_or(IntrospectValue::Null, IntrospectValue::Int)),
             // R1563 — the two-axis selection, and the two numbers that describe
             // it: how many cells it covers, and how many bands say so. On the
             // row axis those collapsed into one question; here a select-all
             // over a million rows and two hundred columns is 200 000 000 cells
             // in **one** band, and an agent budgeting a read wants the second
             // number, not the first.
-            "cells" => Some(self.cells_value()),
-            "cell_count" => Some(usize_value(
+            "cells" => Ok(self.cells_value()),
+            "cell_count" => Ok(usize_value(
                 self.cells().cell_count(self.em.inner.columns()),
             )),
-            "band_count" => Some(usize_value(self.cells().band_count())),
-            "column_selection" => Some(selection_to_value(&self.column_selection())),
+            "band_count" => Ok(usize_value(self.cells().band_count())),
+            "column_selection" => Ok(selection_to_value(&self.column_selection())),
             // `null` rather than `0`: a grid with no column axis is not a grid
             // zero columns wide, and the difference is exactly what a caller
             // must know before addressing a cell.
-            "column_count" => Some(
-                self.column_count()
-                    .and_then(|c| i64::try_from(c).ok())
-                    .map_or(IntrospectValue::Null, IntrospectValue::Int),
-            ),
-            "behavior" => Some(IntrospectValue::Text(
+            "column_count" => Ok(self
+                .column_count()
+                .and_then(|c| i64::try_from(c).ok())
+                .map_or(IntrospectValue::Null, IntrospectValue::Int)),
+            "behavior" => Ok(IntrospectValue::Text(
                 match self.behavior() {
                     SelectionBehavior::SelectRows => "rows",
                     SelectionBehavior::SelectColumns => "columns",
@@ -1786,36 +1784,31 @@ impl ExternalIntrospect for VirtualSelectExternal {
                 }
                 .to_string(),
             )),
-            "section_press" => Some(IntrospectValue::Text(
+            "section_press" => Ok(IntrospectValue::Text(
                 match self.section_press() {
                     SectionPress::Inert => "inert",
                     SectionPress::Select => "select",
                 }
                 .to_string(),
             )),
-            "selected_column" => Some(
-                self.cursor_column()
-                    .and_then(|i| i64::try_from(i).ok())
-                    .map_or(IntrospectValue::Null, IntrospectValue::Int),
-            ),
-            "anchor_column" => Some(
-                self.em
-                    .inner
-                    .anchor_column()
-                    .and_then(|i| i64::try_from(i).ok())
-                    .map_or(IntrospectValue::Null, IntrospectValue::Int),
-            ),
-            "anchor" => Some(
-                self.anchor()
-                    .and_then(|i| i64::try_from(i).ok())
-                    .map_or(IntrospectValue::Null, IntrospectValue::Int),
-            ),
-            "mode" => Some(self.mode_value()),
-            "item_count" => Some(
-                i64::try_from(self.item_count())
-                    .map_or(IntrospectValue::Null, IntrospectValue::Int),
-            ),
-            _ => None,
+            "selected_column" => Ok(self
+                .cursor_column()
+                .and_then(|i| i64::try_from(i).ok())
+                .map_or(IntrospectValue::Null, IntrospectValue::Int)),
+            "anchor_column" => Ok(self
+                .em
+                .inner
+                .anchor_column()
+                .and_then(|i| i64::try_from(i).ok())
+                .map_or(IntrospectValue::Null, IntrospectValue::Int)),
+            "anchor" => Ok(self
+                .anchor()
+                .and_then(|i| i64::try_from(i).ok())
+                .map_or(IntrospectValue::Null, IntrospectValue::Int)),
+            "mode" => Ok(self.mode_value()),
+            "item_count" => Ok(i64::try_from(self.item_count())
+                .map_or(IntrospectValue::Null, IntrospectValue::Int)),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -2051,7 +2044,7 @@ pub fn cells_to_value(cells: &CellSelection) -> IntrospectValue {
 #[must_use]
 pub fn read_cells(intro: &dyn ExternalIntrospect) -> CellSelection {
     match intro.query("cells") {
-        Some(IntrospectValue::Json(json)) => {
+        Ok(IntrospectValue::Json(json)) => {
             serde_json::from_value(json).unwrap_or_else(|_| CellSelection::new())
         }
         _ => CellSelection::new(),
@@ -2072,7 +2065,7 @@ pub fn read_selection(intro: &dyn ExternalIntrospect) -> IndexRuns {
 #[must_use]
 pub fn read_selection_at(intro: &dyn ExternalIntrospect, path: &str) -> IndexRuns {
     match intro.query(path) {
-        Some(IntrospectValue::Json(json)) => serde_json::from_value(json).unwrap_or_default(),
+        Ok(IntrospectValue::Json(json)) => serde_json::from_value(json).unwrap_or_default(),
         _ => IndexRuns::new(),
     }
 }
@@ -2089,7 +2082,7 @@ pub fn read_selection_at(intro: &dyn ExternalIntrospect, path: &str) -> IndexRun
 #[must_use]
 pub fn read_selected(intro: &dyn ExternalIntrospect) -> Option<usize> {
     match intro.query("selected") {
-        Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+        Ok(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
         _ => None,
     }
 }
@@ -2248,9 +2241,9 @@ pub fn nav_select_key(
     let Some(intro) = node.handle.introspect() else {
         return false;
     };
-    let multi = matches!(intro.query("mode"), Some(IntrospectValue::Text(ref m)) if m == "multi");
+    let multi = matches!(intro.query("mode"), Ok(IntrospectValue::Text(ref m)) if m == "multi");
     let current = match intro.query("selected") {
-        Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+        Ok(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
         _ => None,
     };
 
@@ -2531,15 +2524,15 @@ mod tests {
         let mut s = VirtualSelectExternal::new(50);
         assert_eq!(
             s.query("selected"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "unset selection reports Null (present-but-empty), not absence",
         );
-        assert_eq!(s.query("item_count"), Some(IntrospectValue::Int(50)));
+        assert_eq!(s.query("item_count"), Ok(IntrospectValue::Int(50)));
         s.select(12);
-        assert_eq!(s.query("selected"), Some(IntrospectValue::Int(12)));
+        assert_eq!(s.query("selected"), Ok(IntrospectValue::Int(12)));
         assert_eq!(
             s.query("nope"),
-            None,
+            Err(ReadRefusal::UnknownPath),
             "an undeclared path is genuinely absent"
         );
     }
@@ -2604,14 +2597,14 @@ mod tests {
         for field in s.schema().fields {
             match field.channel {
                 SchemaChannel::Read => assert!(
-                    s.query(field.path).is_some(),
+                    s.query(field.path).is_ok(),
                     "declared slot {:?} must answer — a declaration nothing \
                      implements is a surface an agent cannot follow",
                     field.path,
                 ),
                 SchemaChannel::Invoke => assert_eq!(
                     s.query(field.path),
-                    None,
+                    Err(ReadRefusal::UnknownPath),
                     "declared action {:?} must not also read: `SchemaChannel` \
                      is what tells an agent which call to make",
                     field.path,
@@ -2832,7 +2825,7 @@ mod tests {
             .find_external_with_tag(tag)
             .and_then(|n| n.handle.introspect())
             .and_then(|i| match i.query("selected") {
-                Some(IntrospectValue::Int(v)) => usize::try_from(v).ok(),
+                Ok(IntrospectValue::Int(v)) => usize::try_from(v).ok(),
                 _ => None,
             })
     }
@@ -3047,12 +3040,12 @@ mod tests {
         assert_eq!(s.selected_count(), 1_000_000, "and the count is exact");
         assert_eq!(
             s.query("selection"),
-            Some(IntrospectValue::Json(serde_json::json!([[0, 999_999]]))),
+            Ok(IntrospectValue::Json(serde_json::json!([[0, 999_999]]))),
             "the wire carries the run, not the rows",
         );
         assert_eq!(
             s.query("selection_count"),
-            Some(IntrospectValue::Int(1_000_000)),
+            Ok(IntrospectValue::Int(1_000_000)),
             "the count is answerable without materialising the selection",
         );
         // Shift-extend across the whole model is likewise one run.
@@ -3067,7 +3060,7 @@ mod tests {
         assert_eq!(s.selected_count(), 999_999);
         assert_eq!(
             s.query("selection"),
-            Some(IntrospectValue::Json(serde_json::json!([
+            Ok(IntrospectValue::Json(serde_json::json!([
                 [0, 499_999],
                 [500_001, 999_999]
             ]))),
@@ -3125,7 +3118,7 @@ mod tests {
         assert_eq!(s.selected_count(), 897);
         assert_eq!(
             s.query("selection"),
-            Some(IntrospectValue::Json(serde_json::json!([[4, 900]]))),
+            Ok(IntrospectValue::Json(serde_json::json!([[4, 900]]))),
         );
     }
 
@@ -3296,10 +3289,10 @@ mod tests {
     #[test]
     fn multi_query_and_intervene_round_trip_the_set() {
         let mut s = VirtualSelectExternal::new_multi(100);
-        assert_eq!(s.query("mode"), Some(IntrospectValue::Text("multi".into())));
+        assert_eq!(s.query("mode"), Ok(IntrospectValue::Text("multi".into())));
         assert_eq!(
             s.query("selection"),
-            Some(IntrospectValue::Json(serde_json::json!([]))),
+            Ok(IntrospectValue::Json(serde_json::json!([]))),
             "empty selection is an empty array, never Null",
         );
         // R1561 — runs in, canonical set out: the pairs arrive out of order and
@@ -3311,7 +3304,7 @@ mod tests {
         .expect("array of runs replaces selection");
         assert_eq!(
             s.query("selection"),
-            Some(IntrospectValue::Json(serde_json::json!([
+            Ok(IntrospectValue::Json(serde_json::json!([
                 [3, 3],
                 [8, 8],
                 [90, 99]
@@ -3319,7 +3312,7 @@ mod tests {
             "the run straddling item_count is trimmed, not dropped",
         );
         assert_eq!(s.selected_count(), 12);
-        assert_eq!(s.query("anchor"), Some(IntrospectValue::Int(99)));
+        assert_eq!(s.query("anchor"), Ok(IntrospectValue::Int(99)));
         // A malformed payload is refused rather than partly applied.
         assert_eq!(
             s.intervene(

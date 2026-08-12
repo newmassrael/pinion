@@ -32,7 +32,7 @@
 use pinion_a11y::WidgetA11y;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, ReadRefusal, RepaintOwner, SchemaField, ThreadOwnership,
 };
 use pinion_core::scene::{ContainerNode, ExternalNode, Rect, Scene, TextNode};
 use pinion_core::style::{
@@ -117,12 +117,12 @@ impl ExternalIntrospect for ReflowMeter {
     fn schema(&self) -> IntrospectSchema {
         IntrospectSchema::new(const { &[SchemaField::new("reflows", "int")] })
     }
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "reflows" => Some(IntrospectValue::Int(
+            "reflows" => Ok(IntrospectValue::Int(
                 i64::try_from(REFLOWS.with(Cell::get)).unwrap_or(i64::MAX),
             )),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
     /// Read-only: the count is a measurement of the world, not a knob on it.

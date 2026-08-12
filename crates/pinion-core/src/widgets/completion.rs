@@ -52,8 +52,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::external::{
-    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, SchemaArg,
-    SchemaField, query_proxy_external_impl,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    ReadRefusal, SchemaArg, SchemaField, query_proxy_external_impl,
 };
 use crate::reactive::{Owner, Signal};
 use crate::widgets::order_memo::{OrderMemo, source_at_value};
@@ -674,12 +674,12 @@ impl ExternalIntrospect for CompleterExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         // `source.<i>` resolves the i-th displayed completion's source index;
         // out of range reports Null (present-but-empty), never absence — the
         // shared `source_at.<pos>` contract.
         if let Some(rest) = path.strip_prefix("source.") {
-            return Some(source_at_value(rest, |i| self.state.completion_at(i)));
+            return Ok(source_at_value(rest, |i| self.state.completion_at(i)));
         }
         // `completion.<i>` is the same projection read as text.
         if let Some(rest) = path.strip_prefix("completion.") {
@@ -688,38 +688,36 @@ impl ExternalIntrospect for CompleterExternal {
                 .ok()
                 .and_then(|i| self.state.completion_at(i))
                 .map(|src| self.state.candidate(src).to_string());
-            return Some(text.map_or(IntrospectValue::Null, IntrospectValue::Text));
+            return Ok(text.map_or(IntrospectValue::Null, IntrospectValue::Text));
         }
         match path {
-            "prefix" => Some(IntrospectValue::Text(self.state.prefix())),
-            "filter" => Some(IntrospectValue::Text(
+            "prefix" => Ok(IntrospectValue::Text(self.state.prefix())),
+            "filter" => Ok(IntrospectValue::Text(
                 self.state.filter().to_wire().to_string(),
             )),
-            "case" => Some(IntrospectValue::Text(
+            "case" => Ok(IntrospectValue::Text(
                 self.state.case().to_wire().to_string(),
             )),
-            "mode" => Some(IntrospectValue::Text(
+            "mode" => Ok(IntrospectValue::Text(
                 self.state.mode().to_wire().to_string(),
             )),
-            "completion_count" => Some(self.count_value()),
-            "current" => Some(
-                self.state
-                    .current_index()
-                    .and_then(|i| i64::try_from(i).ok())
-                    .map_or(IntrospectValue::Null, IntrospectValue::Int),
-            ),
-            "current_completion" => Some(self.current_value()),
+            "completion_count" => Ok(self.count_value()),
+            "current" => Ok(self
+                .state
+                .current_index()
+                .and_then(|i| i64::try_from(i).ok())
+                .map_or(IntrospectValue::Null, IntrospectValue::Int)),
+            "current_completion" => Ok(self.current_value()),
             // `Null` when the mode appends nothing or the candidate does not
             // begin with the prefix; `""` when the prefix already spells it.
-            "inline" => Some(
-                self.state
-                    .inline_completion()
-                    .map_or(IntrospectValue::Null, IntrospectValue::Text),
-            ),
-            "count" => Some(IntrospectValue::Int(
+            "inline" => Ok(self
+                .state
+                .inline_completion()
+                .map_or(IntrospectValue::Null, IntrospectValue::Text)),
+            "count" => Ok(IntrospectValue::Int(
                 i64::try_from(self.state.count()).unwrap_or(i64::MAX),
             )),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -1079,16 +1077,16 @@ mod tests {
         );
         assert_eq!(
             ext.query("current_completion"),
-            Some(IntrospectValue::Text("Apple".into()))
+            Ok(IntrospectValue::Text("Apple".into()))
         );
         assert_eq!(
             ext.query("completion.1"),
-            Some(IntrospectValue::Text("Apricot".into()))
+            Ok(IntrospectValue::Text("Apricot".into()))
         );
-        assert_eq!(ext.query("source.1"), Some(IntrospectValue::Int(1)));
+        assert_eq!(ext.query("source.1"), Ok(IntrospectValue::Int(1)));
         assert_eq!(
             ext.query("completion.9"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "out of range is present-but-empty, never absence"
         );
         assert_eq!(
@@ -1110,7 +1108,7 @@ mod tests {
         );
         assert_eq!(
             ext.query("mode"),
-            Some(IntrospectValue::Text("unfiltered_popup".into()))
+            Ok(IntrospectValue::Text("unfiltered_popup".into()))
         );
         assert_eq!(
             ext.intervene("filter", IntrospectValue::Text("nonsense".into())),
@@ -1119,7 +1117,7 @@ mod tests {
         );
         assert_eq!(
             ext.query("filter"),
-            Some(IntrospectValue::Text("starts_with".into())),
+            Ok(IntrospectValue::Text("starts_with".into())),
             "and the rule is unchanged"
         );
         assert_eq!(
@@ -1142,14 +1140,14 @@ mod tests {
             .expect("prefix is writable");
         assert_eq!(
             ext.query("inline"),
-            Some(IntrospectValue::Text(String::new())),
+            Ok(IntrospectValue::Text(String::new())),
             "the prefix spells the whole candidate: nothing left to append"
         );
         ext.intervene("prefix", IntrospectValue::Text("zzz".into()))
             .expect("prefix is writable");
         assert_eq!(
             ext.query("inline"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "nothing is current: there is no completion at all"
         );
     }

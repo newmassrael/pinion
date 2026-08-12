@@ -99,8 +99,8 @@ use pinion_a11y::{AccessNode, AccessState, AriaRole, SortDirection, WidgetA11y};
 use pinion_core::command::Command;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, DragPayload, DropPoint, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField,
-    ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
+    SchemaField, ThreadOwnership,
 };
 use pinion_core::reactive::measured_text_extent;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
@@ -394,7 +394,7 @@ impl ExternalIntrospect for ColumnHeaderExternal {
         IntrospectSchema::new(&SCHEMA_FIELDS)
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
             // Header labels of the sections that are actually painted, left to
             // right — the thing a human compares a snapshot against. Read
@@ -407,7 +407,7 @@ impl ExternalIntrospect for ColumnHeaderExternal {
                     .iter()
                     .map(|&l| serde_json::Value::from(HEADERS[l]))
                     .collect();
-                Some(IntrospectValue::Json(serde_json::Value::Array(arr)))
+                Ok(IntrospectValue::Json(serde_json::Value::Array(arr)))
             }
             // R1501 — `count` was answered here too, with `NCOLS`, beside the
             // layout's own count of the same sections. It is the layout's now:
@@ -715,7 +715,7 @@ fn read_header_state(scene: &Scene) -> HeaderState {
         return out;
     };
     out.absorb(&read_column_layout(intro));
-    if let Some(IntrospectValue::Json(p)) = intro.query("preview") {
+    if let Ok(IntrospectValue::Json(p)) = intro.query("preview") {
         out.dragging = p
             .get("from_visual")
             .and_then(serde_json::Value::as_u64)
@@ -725,15 +725,15 @@ fn read_header_state(scene: &Scene) -> HeaderState {
             .and_then(serde_json::Value::as_u64)
             .and_then(|n| usize::try_from(n).ok());
     }
-    if let Some(IntrospectValue::Int(i)) = intro.query("focused_index") {
+    if let Ok(IntrospectValue::Int(i)) = intro.query("focused_index") {
         out.focused = usize::try_from(i).ok();
     }
-    if let Some(IntrospectValue::Bool(g)) = intro.query("grabbed") {
+    if let Ok(IntrospectValue::Bool(g)) = intro.query("grabbed") {
         out.grabbed = g;
     }
     // R1492 — read off the wire like everything else the readout shows, so the
     // painted rule and the rule an agent queries cannot drift apart.
-    if let (Some(IntrospectValue::Int(lo)), Some(IntrospectValue::Int(hi))) = (
+    if let (Ok(IntrospectValue::Int(lo)), Ok(IntrospectValue::Int(hi))) = (
         intro.query("min_section_size"),
         intro.query("max_section_size"),
     ) {
@@ -745,19 +745,19 @@ fn read_header_state(scene: &Scene) -> HeaderState {
     // R1493 — the third scalar rule, harvested the same way for the same
     // reason: the readout names it, so it must be the wire's value and not a
     // constant this binding remembers.
-    if let Some(IntrospectValue::Int(d)) = intro.query("default_section_size") {
+    if let Ok(IntrospectValue::Int(d)) = intro.query("default_section_size") {
         out.default_size = u32::try_from(d).unwrap_or(DEFAULT_SECTION_SIZE);
     }
-    if let Some(IntrospectValue::Bool(c)) = intro.query("cascading_section_resizes") {
+    if let Ok(IntrospectValue::Bool(c)) = intro.query("cascading_section_resizes") {
         out.rules.cascading = c;
     }
     // R1498 — the rule, and the modes it overrides. Both off the wire, so the
     // readout cannot claim a mode the header is not applying.
-    if let Some(IntrospectValue::Bool(s)) = intro.query("stretch_last_section") {
+    if let Ok(IntrospectValue::Bool(s)) = intro.query("stretch_last_section") {
         out.rules.stretch_last = s;
     }
     out.effective_modes = out.modes;
-    if let Some(IntrospectValue::Json(serde_json::Value::Array(items))) =
+    if let Ok(IntrospectValue::Json(serde_json::Value::Array(items))) =
         intro.query("effective_resize_modes")
     {
         for (slot, m) in out.effective_modes.iter_mut().zip(&items) {
@@ -768,7 +768,7 @@ fn read_header_state(scene: &Scene) -> HeaderState {
     }
     // R1496 — the two permissions, off the wire for the same reason: the strip
     // paints them, so what it paints has to be what an agent is told.
-    if let (Some(IntrospectValue::Bool(m)), Some(IntrospectValue::Bool(k))) = (
+    if let (Ok(IntrospectValue::Bool(m)), Ok(IntrospectValue::Bool(k))) = (
         intro.query("sections_movable"),
         intro.query("sections_clickable"),
     ) {
@@ -778,12 +778,11 @@ fn read_header_state(scene: &Scene) -> HeaderState {
     // is what the strip paints with, so deriving it here from the rule would
     // drop every per-section exception the model set and paint a label the
     // surface does not claim.
-    if let Some(IntrospectValue::Text(a)) = intro.query("default_alignment") {
+    if let Ok(IntrospectValue::Text(a)) = intro.query("default_alignment") {
         out.default_alignment = TextAlign::from_wire(&a).unwrap_or(DEFAULT_HEADER_ALIGNMENT);
     }
     out.alignments = [out.default_alignment; NCOLS];
-    if let Some(IntrospectValue::Json(serde_json::Value::Array(items))) = intro.query("alignments")
-    {
+    if let Ok(IntrospectValue::Json(serde_json::Value::Array(items))) = intro.query("alignments") {
         for (slot, a) in out.alignments.iter_mut().zip(&items) {
             if let Some(parsed) = a.as_str().and_then(TextAlign::from_wire) {
                 *slot = parsed;
@@ -794,11 +793,10 @@ fn read_header_state(scene: &Scene) -> HeaderState {
     // the EFFECTIVE row, so this binding never resolves the gate a second time:
     // the strip paints what an agent is told, which is the R1504 rule applied to
     // the field next door.
-    if let Some(IntrospectValue::Bool(h)) = intro.query("highlight_sections") {
+    if let Ok(IntrospectValue::Bool(h)) = intro.query("highlight_sections") {
         out.highlight_rule = h;
     }
-    if let Some(IntrospectValue::Json(serde_json::Value::Array(items))) = intro.query("highlights")
-    {
+    if let Ok(IntrospectValue::Json(serde_json::Value::Array(items))) = intro.query("highlights") {
         for (slot, s) in out.highlights.iter_mut().zip(&items) {
             if let Some(parsed) = s.as_str().and_then(|w| w.parse().ok()) {
                 *slot = parsed;
@@ -823,7 +821,7 @@ fn visible_visuals(intro: &dyn ExternalIntrospect) -> Vec<usize> {
 /// section.
 fn logical_at(intro: &dyn ExternalIntrospect, cursor: Option<usize>) -> Option<usize> {
     match intro.query(&format!("logical_index.{}", cursor?)) {
-        Some(IntrospectValue::Int(l)) => usize::try_from(l).ok(),
+        Ok(IntrospectValue::Int(l)) => usize::try_from(l).ok(),
         _ => None,
     }
 }
@@ -832,7 +830,7 @@ fn logical_at(intro: &dyn ExternalIntrospect, cursor: Option<usize>) -> Option<u
 /// the same wire slot an RPC client would use.
 fn read_mode(intro: &dyn ExternalIntrospect, logical: usize) -> SectionResizeMode {
     match intro.query(&format!("resize_mode.{logical}")) {
-        Some(IntrospectValue::Text(m)) => m.parse().unwrap_or_default(),
+        Ok(IntrospectValue::Text(m)) => m.parse().unwrap_or_default(),
         _ => SectionResizeMode::default(),
     }
 }
@@ -843,7 +841,7 @@ fn read_mode(intro: &dyn ExternalIntrospect, logical: usize) -> SectionResizeMod
 /// turn a filled `Interactive` section into a `ResizeToContents` one.
 fn read_effective_mode(intro: &dyn ExternalIntrospect, logical: usize) -> SectionResizeMode {
     match intro.query(&format!("effective_resize_mode.{logical}")) {
-        Some(IntrospectValue::Text(m)) => m.parse().unwrap_or_default(),
+        Ok(IntrospectValue::Text(m)) => m.parse().unwrap_or_default(),
         _ => read_mode(intro, logical),
     }
 }
@@ -882,7 +880,7 @@ fn toggle_hidden_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>) -
     };
     let hidden = matches!(
         intro.query(&format!("section_hidden.{logical}")),
-        Some(IntrospectValue::Bool(true))
+        Ok(IntrospectValue::Bool(true))
     );
     if intro
         .invoke(
@@ -944,7 +942,7 @@ fn toggle_highlight_sections(intro: &mut dyn ExternalIntrospect) -> bool {
 /// abstracted. These are the same function, and the next rule toggle is now
 /// free rather than a third copy.
 fn toggle_bool_rule(intro: &mut dyn ExternalIntrospect, path: &str) -> bool {
-    let on = matches!(intro.query(path), Some(IntrospectValue::Bool(true)));
+    let on = matches!(intro.query(path), Ok(IntrospectValue::Bool(true)));
     intro.intervene(path, IntrospectValue::Bool(!on)).is_ok()
 }
 
@@ -963,14 +961,14 @@ fn toggle_bool_rule(intro: &mut dyn ExternalIntrospect, path: &str) -> bool {
 /// section then, which would pin the cycle at its first step.
 fn cycle_selection_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>) -> bool {
     let Some(visual) = cursor else { return false };
-    let Some(IntrospectValue::Int(l)) = intro.query(&format!("logical_index.{visual}")) else {
+    let Ok(IntrospectValue::Int(l)) = intro.query(&format!("logical_index.{visual}")) else {
         return false;
     };
     let Ok(logical) = usize::try_from(l) else {
         return false;
     };
     let now: Option<SectionSelection> = match intro.query(&format!("section_selection.{logical}")) {
-        Some(IntrospectValue::Text(s)) => s.parse().ok(),
+        Ok(IntrospectValue::Text(s)) => s.parse().ok(),
         _ => None,
     };
     let next = match now {
@@ -990,7 +988,7 @@ fn cycle_selection_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>)
 /// needs no cursor.
 fn cycle_default_alignment(intro: &mut dyn ExternalIntrospect) -> bool {
     let now = match intro.query("default_alignment") {
-        Some(IntrospectValue::Text(a)) => TextAlign::from_wire(&a),
+        Ok(IntrospectValue::Text(a)) => TextAlign::from_wire(&a),
         _ => None,
     };
     // Justify is skipped: it is a multi-line rule and a header label is one
@@ -1013,14 +1011,14 @@ fn cycle_default_alignment(intro: &mut dyn ExternalIntrospect) -> bool {
 /// spelling that hands it to the header's rule.
 fn cycle_alignment_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>) -> bool {
     let Some(visual) = cursor else { return false };
-    let Some(IntrospectValue::Int(l)) = intro.query(&format!("logical_index.{visual}")) else {
+    let Ok(IntrospectValue::Int(l)) = intro.query(&format!("logical_index.{visual}")) else {
         return false;
     };
     let Ok(logical) = usize::try_from(l) else {
         return false;
     };
     let now = match intro.query(&format!("section_alignment_override.{logical}")) {
-        Some(IntrospectValue::Text(a)) => TextAlign::from_wire(&a),
+        Ok(IntrospectValue::Text(a)) => TextAlign::from_wire(&a),
         _ => None,
     };
     let next = match now {
@@ -1065,7 +1063,7 @@ fn nudge_size_at(intro: &mut dyn ExternalIntrospect, cursor: Option<usize>, grow
         return false;
     }
     let size = match intro.query(&format!("section_size.{logical}")) {
-        Some(IntrospectValue::Int(n)) => u32::try_from(n).unwrap_or(0),
+        Ok(IntrospectValue::Int(n)) => u32::try_from(n).unwrap_or(0),
         _ => return false,
     };
     let next = if grow {
@@ -1466,10 +1464,10 @@ impl WidgetCore for ColumnReorderView {
             return false;
         };
         let cursor = match intro.query("focused_index") {
-            Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+            Ok(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
             _ => None,
         };
-        let grabbed = matches!(intro.query("grabbed"), Some(IntrospectValue::Bool(true)));
+        let grabbed = matches!(intro.query("grabbed"), Ok(IntrospectValue::Bool(true)));
         // R1451 — the cursor walks PAINTED sections, so a hidden column is not
         // a hole the keyboard can fall into. One list feeds both the cursor and
         // a grabbed section's move, so the two cannot disagree about what "the
@@ -1649,8 +1647,8 @@ mod tests {
                 "the two directions must invert each other"
             );
         }
-        assert_eq!(ext.query("visual_index.9"), Some(IntrospectValue::Null));
-        assert_eq!(ext.query("logical_index.9"), Some(IntrospectValue::Null));
+        assert_eq!(ext.query("visual_index.9"), Ok(IntrospectValue::Null));
+        assert_eq!(ext.query("logical_index.9"), Ok(IntrospectValue::Null));
     }
 
     #[test]
@@ -1660,7 +1658,7 @@ mod tests {
             .expect("move_section is a known action");
         assert_eq!(
             ext.query("labels"),
-            Some(IntrospectValue::Json(serde_json::json!([
+            Ok(IntrospectValue::Json(serde_json::json!([
                 "Owner", "Name", "Type", "Size", "Modified"
             ])))
         );
@@ -1701,7 +1699,7 @@ mod tests {
         .expect("a permutation restores the layout");
         assert_eq!(
             ext.query("labels"),
-            Some(IntrospectValue::Json(serde_json::json!([
+            Ok(IntrospectValue::Json(serde_json::json!([
                 "Owner", "Modified", "Size", "Type", "Name"
             ])))
         );
@@ -2263,12 +2261,12 @@ mod tests {
         click_section(&mut ext, 1);
         assert_eq!(
             ext.query("sort_indicator"),
-            Some(IntrospectValue::Text("1:ascending".into())),
+            Ok(IntrospectValue::Text("1:ascending".into())),
             "a release in place sorted the section it pressed"
         );
         assert_eq!(
             ext.query("order"),
-            Some(IntrospectValue::Json(serde_json::json!([0, 1, 2, 3, 4]))),
+            Ok(IntrospectValue::Json(serde_json::json!([0, 1, 2, 3, 4]))),
             "and moved nothing"
         );
 
@@ -2283,12 +2281,12 @@ mod tests {
         );
         assert_eq!(
             ext.query("order"),
-            Some(IntrospectValue::Json(serde_json::json!([1, 2, 3, 0, 4]))),
+            Ok(IntrospectValue::Json(serde_json::json!([1, 2, 3, 0, 4]))),
             "the drag committed"
         );
         assert_eq!(
             ext.query("sort_indicator"),
-            Some(IntrospectValue::Text("1:ascending".into())),
+            Ok(IntrospectValue::Text("1:ascending".into())),
             "and did NOT also sort the section it dragged"
         );
     }
@@ -2312,12 +2310,12 @@ mod tests {
         );
         assert_eq!(
             ext.query("order"),
-            Some(IntrospectValue::Json(serde_json::json!([0, 1, 2, 3, 4]))),
+            Ok(IntrospectValue::Json(serde_json::json!([0, 1, 2, 3, 4]))),
             "the section went back where it came from"
         );
         assert_eq!(
             ext.query("sort_indicator"),
-            Some(IntrospectValue::Text("none".into())),
+            Ok(IntrospectValue::Text("none".into())),
             "and changing your mind is not a sort"
         );
     }
@@ -2340,12 +2338,12 @@ mod tests {
             .expect("send accepts a pointer payload");
         assert_eq!(
             ext.query("sort_indicator"),
-            Some(IntrospectValue::Text("1:ascending".into())),
+            Ok(IntrospectValue::Text("1:ascending".into())),
             "and the press it refused to drag still sorted"
         );
         assert_eq!(
             ext.query("order"),
-            Some(IntrospectValue::Json(serde_json::json!([0, 1, 2, 3, 4]))),
+            Ok(IntrospectValue::Json(serde_json::json!([0, 1, 2, 3, 4]))),
             "with nothing moved"
         );
     }
@@ -2416,7 +2414,7 @@ mod tests {
         click_section(&mut ext, 3);
         assert_eq!(
             ext.query("sort_indicator"),
-            Some(IntrospectValue::Text("0:ascending".into())),
+            Ok(IntrospectValue::Text("0:ascending".into())),
             "the click named the column, not the place it was clicked"
         );
     }
@@ -2602,7 +2600,7 @@ mod tests {
             .find_external_with_tag(HDR_TAG)
             .and_then(|n| n.handle.introspect())
             .expect("the header external is in the scene");
-        let Some(IntrospectValue::Json(serde_json::Value::Array(a))) = intro.query("section_sizes")
+        let Ok(IntrospectValue::Json(serde_json::Value::Array(a))) = intro.query("section_sizes")
         else {
             panic!("section_sizes reads back as a JSON array");
         };
@@ -2820,7 +2818,7 @@ mod tests {
             .expect("cycle is a known action");
         ext.invoke("move_section", IntrospectValue::Text("4:0".into()))
             .expect("move_section is a known action");
-        let Some(IntrospectValue::Json(saved)) = ext.query("state") else {
+        let Ok(IntrospectValue::Json(saved)) = ext.query("state") else {
             panic!("state reads back as JSON");
         };
         assert_eq!(
@@ -2837,11 +2835,11 @@ mod tests {
             .expect("the snapshot restores whole");
         assert_eq!(
             restored.query("sort_indicator"),
-            Some(IntrospectValue::Text("4:ascending".into()))
+            Ok(IntrospectValue::Text("4:ascending".into()))
         );
         assert_eq!(
             restored.query("labels"),
-            Some(IntrospectValue::Json(serde_json::json!([
+            Ok(IntrospectValue::Json(serde_json::json!([
                 "Owner", "Name", "Type", "Size", "Modified"
             ]))),
             "along with the order it was saved with"

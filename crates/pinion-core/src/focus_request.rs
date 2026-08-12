@@ -432,7 +432,7 @@ mod tests {
             .and_then(|n| n.handle.introspect())
             .expect("button external present");
         match intro.query("state") {
-            Some(crate::external::IntrospectValue::Text(s)) => s,
+            Ok(crate::external::IntrospectValue::Text(s)) => s,
             _ => panic!("button exposes a Text state"),
         }
     }

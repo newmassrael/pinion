@@ -1081,7 +1081,7 @@ impl WidgetCore for DockPanelsView {
         // pattern-matching `Scene::External` at the root.
         if let Some(node) = scene.find_external_with_tag(VIEWPORT_BTN_TAG)
             && let Some(intro) = node.handle.introspect()
-            && let Some(IntrospectValue::Text(name)) = intro.query("state")
+            && let Ok(IntrospectValue::Text(name)) = intro.query("state")
         {
             return <Self::State as pinion_core::WidgetStateName>::from_name_or_default(&name);
         }
@@ -1839,7 +1839,7 @@ mod tests {
                 inspector
                     .handle
                     .introspect()
-                    .and_then(|i| i.query("lifecycle")),
+                    .and_then(|i| i.query("lifecycle").ok()),
                 Some(IntrospectValue::Text("Docked".to_string())),
                 "a freshly registered panel is docked",
             );
@@ -1855,7 +1855,7 @@ mod tests {
                 inspector
                     .handle
                     .introspect()
-                    .and_then(|i| i.query("lifecycle")),
+                    .and_then(|i| i.query("lifecycle").ok()),
                 Some(IntrospectValue::Text("Floating".to_string())),
                 "the tear_off invoke floats the panel's lifecycle",
             );
@@ -1898,7 +1898,7 @@ mod tests {
                 inspector
                     .handle
                     .introspect()
-                    .and_then(|i| i.query("lifecycle")),
+                    .and_then(|i| i.query("lifecycle").ok()),
                 Some(IntrospectValue::Text("Floating".to_string())),
             );
             let mut first: Vec<Intent> = Vec::new();
@@ -1922,7 +1922,7 @@ mod tests {
                 inspector
                     .handle
                     .introspect()
-                    .and_then(|i| i.query("lifecycle")),
+                    .and_then(|i| i.query("lifecycle").ok()),
                 Some(IntrospectValue::Text("Docked".to_string())),
                 "the chart dock-backs in step with the window list",
             );
@@ -1963,7 +1963,9 @@ mod tests {
 
             // The chart lifecycle (widget layer): true = floating.
             let chart_floating = |ext: &ExtraExternal| {
-                ext.handle.introspect().and_then(|i| i.query("lifecycle"))
+                ext.handle
+                    .introspect()
+                    .and_then(|i| i.query("lifecycle").ok())
                     == Some(IntrospectValue::Text("Floating".to_string()))
             };
 

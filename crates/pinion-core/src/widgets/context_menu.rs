@@ -34,7 +34,8 @@
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use crate::input::PointerWireEvent;
 use crate::intent::Intent;
@@ -399,22 +400,22 @@ impl ExternalIntrospect for ContextMenuExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "item_count" => Some(IntrospectValue::Int(
+            "item_count" => Ok(IntrospectValue::Int(
                 i64::try_from(self.item_count()).expect("item_count fits in i64"),
             )),
-            "open" => Some(IntrospectValue::Bool(self.is_open())),
-            "open_x" => Some(self.open_at().map_or(IntrospectValue::Null, |(x, _)| {
+            "open" => Ok(IntrospectValue::Bool(self.is_open())),
+            "open_x" => Ok(self.open_at().map_or(IntrospectValue::Null, |(x, _)| {
                 IntrospectValue::Float(f64::from(x))
             })),
-            "open_y" => Some(self.open_at().map_or(IntrospectValue::Null, |(_, y)| {
+            "open_y" => Ok(self.open_at().map_or(IntrospectValue::Null, |(_, y)| {
                 IntrospectValue::Float(f64::from(y))
             })),
-            "active" => Some(self.active_item().map_or(IntrospectValue::Null, |a| {
+            "active" => Ok(self.active_item().map_or(IntrospectValue::Null, |a| {
                 IntrospectValue::Int(i64::try_from(a).expect("active index fits in i64"))
             })),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -496,7 +497,7 @@ impl ExternalIntrospect for ContextMenuExternal {
 /// `None` when nothing is highlighted.
 #[must_use]
 pub fn read_open_state(intro: &dyn ExternalIntrospect) -> (Option<(f32, f32)>, Option<usize>) {
-    let open_at = if matches!(intro.query("open"), Some(IntrospectValue::Bool(true))) {
+    let open_at = if matches!(intro.query("open"), Ok(IntrospectValue::Bool(true))) {
         Some((
             query_anchor_axis(intro, "open_x"),
             query_anchor_axis(intro, "open_y"),
@@ -505,7 +506,7 @@ pub fn read_open_state(intro: &dyn ExternalIntrospect) -> (Option<(f32, f32)>, O
         None
     };
     let active = match intro.query("active") {
-        Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+        Ok(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
         _ => None,
     };
     (open_at, active)
@@ -520,7 +521,7 @@ pub fn read_open_state(intro: &dyn ExternalIntrospect) -> (Option<(f32, f32)>, O
 )]
 fn query_anchor_axis(intro: &dyn ExternalIntrospect, path: &str) -> f32 {
     match intro.query(path) {
-        Some(IntrospectValue::Float(v)) => v as f32,
+        Ok(IntrospectValue::Float(v)) => v as f32,
         _ => 0.0,
     }
 }
@@ -733,14 +734,14 @@ mod tests {
     #[test]
     fn query_reports_open_anchor_and_active() {
         let mut e = ext();
-        assert_eq!(e.query("open"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(e.query("open_x"), Some(IntrospectValue::Null));
+        assert_eq!(e.query("open"), Ok(IntrospectValue::Bool(false)));
+        assert_eq!(e.query("open_x"), Ok(IntrospectValue::Null));
         e.dispatch_open_at("150,90").unwrap();
-        assert_eq!(e.query("open"), Some(IntrospectValue::Bool(true)));
-        assert_eq!(e.query("open_x"), Some(IntrospectValue::Float(150.0)));
-        assert_eq!(e.query("open_y"), Some(IntrospectValue::Float(90.0)));
-        assert_eq!(e.query("item_count"), Some(IntrospectValue::Int(4)));
-        assert_eq!(e.query("active"), Some(IntrospectValue::Null));
+        assert_eq!(e.query("open"), Ok(IntrospectValue::Bool(true)));
+        assert_eq!(e.query("open_x"), Ok(IntrospectValue::Float(150.0)));
+        assert_eq!(e.query("open_y"), Ok(IntrospectValue::Float(90.0)));
+        assert_eq!(e.query("item_count"), Ok(IntrospectValue::Int(4)));
+        assert_eq!(e.query("active"), Ok(IntrospectValue::Null));
     }
 
     #[test]

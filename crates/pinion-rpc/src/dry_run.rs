@@ -108,7 +108,7 @@ pub fn dry_run(
         let (intro, introspect_path) = resolve_external_introspect_mut(scene, raw_path)?;
         let saved = intro
             .query(&introspect_path)
-            .ok_or(DryRunError::InitialQueryFailed)?;
+            .map_err(|_| DryRunError::InitialQueryFailed)?;
         intro
             .intervene(&introspect_path, value)
             .map_err(DryRunError::Intervene)?;
@@ -294,11 +294,11 @@ mod tests {
             .expect("extra present");
         assert_eq!(
             primary.handle.introspect().unwrap().query("count"),
-            Some(IntrospectValue::Int(100)),
+            Ok(IntrospectValue::Int(100)),
         );
         assert_eq!(
             extra.handle.introspect().unwrap().query("count"),
-            Some(IntrospectValue::Int(0)),
+            Ok(IntrospectValue::Int(0)),
         );
     }
 

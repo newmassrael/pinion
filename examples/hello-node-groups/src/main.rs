@@ -47,8 +47,8 @@ use std::rc::Rc;
 use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::external::{
     ArgCase, ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
-    SchemaField, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
+    SchemaArg, SchemaField, ThreadOwnership,
 };
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{
@@ -1693,14 +1693,17 @@ impl ExternalIntrospect for GroupsOracle {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
-        let state = self.state.as_ref()?;
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
+        let state = self
+            .state
+            .as_ref()
+            .ok_or_else(|| ReadRefusal::unavailable("the editor holds no document yet"))?;
         let document = state.document.get();
         let tree = state.current();
-        let int = |v: usize| Some(IntrospectValue::Int(i64::try_from(v).unwrap_or(i64::MAX)));
+        let int = |v: usize| Ok(IntrospectValue::Int(i64::try_from(v).unwrap_or(i64::MAX)));
         match path {
             "trees" => int(document.tree_count()),
-            "definitions" => Some(IntrospectValue::Text(
+            "definitions" => Ok(IntrospectValue::Text(
                 document
                     .definitions()
                     .map(|t| format!("{}:{}", t.id.0, t.name))
@@ -1711,17 +1714,17 @@ impl ExternalIntrospect for GroupsOracle {
                 .tree(tree)
                 .map_or(0, pinion_node_graph::Tree::node_count)),
             "links" => int(document.tree(tree).map_or(0, |t| t.links().len())),
-            "valid" => Some(IntrospectValue::Text(if document.validate().is_empty() {
+            "valid" => Ok(IntrospectValue::Text(if document.validate().is_empty() {
                 "ok".to_owned()
             } else {
                 format!("{:?}", document.validate())
             })),
-            "path" => Some(IntrospectValue::Text(
+            "path" => Ok(IntrospectValue::Text(
                 state.path.get().breadcrumb(&document).join("/"),
             )),
             "depth" => int(state.path.get().depth()),
-            "current_tree" => Some(IntrospectValue::Int(i64::from(tree.0))),
-            "selection" => Some(IntrospectValue::Text(
+            "current_tree" => Ok(IntrospectValue::Int(i64::from(tree.0))),
+            "selection" => Ok(IntrospectValue::Text(
                 state
                     .selection
                     .get()
@@ -1730,19 +1733,19 @@ impl ExternalIntrospect for GroupsOracle {
                     .collect::<Vec<_>>()
                     .join(","),
             )),
-            "item_sides" => Some(IntrospectValue::Text(item_sides(
+            "item_sides" => Ok(IntrospectValue::Text(item_sides(
                 &document,
                 tree,
                 &state.selection.get(),
             ))),
-            "last_refusal" => Some(IntrospectValue::Text(state.refusal.get())),
+            "last_refusal" => Ok(IntrospectValue::Text(state.refusal.get())),
             "clipboard" => {
-                Some(IntrospectValue::Text(state.clipboard.get().map_or_else(
+                Ok(IntrospectValue::Text(state.clipboard.get().map_or_else(
                     || "empty".to_owned(),
                     |f| describe_fragment(&f),
                 )))
             }
-            "clipboard_severed" => Some(IntrospectValue::Text(state.clipboard.get().map_or_else(
+            "clipboard_severed" => Ok(IntrospectValue::Text(state.clipboard.get().map_or_else(
                 String::new,
                 |f| {
                     format!(
@@ -1760,10 +1763,10 @@ impl ExternalIntrospect for GroupsOracle {
                 .get()
                 .and_then(|f| serde_json::to_string(&f).ok())
                 .map_or(0, |json| json.len())),
-            "last_insert" => Some(IntrospectValue::Text(state.last_insert.get())),
-            "last_move" => Some(IntrospectValue::Text(state.last_move.get())),
-            "last_rewire" => Some(IntrospectValue::Text(state.last_rewire.get())),
-            "bypassed" => Some(IntrospectValue::Text(join_ids(
+            "last_insert" => Ok(IntrospectValue::Text(state.last_insert.get())),
+            "last_move" => Ok(IntrospectValue::Text(state.last_move.get())),
+            "last_rewire" => Ok(IntrospectValue::Text(state.last_rewire.get())),
+            "bypassed" => Ok(IntrospectValue::Text(join_ids(
                 document
                     .tree(tree)
                     .into_iter()
@@ -1771,7 +1774,7 @@ impl ExternalIntrospect for GroupsOracle {
                     .filter(|n| n.bypassed)
                     .map(|n| n.id.0),
             ))),
-            "frames" => Some(IntrospectValue::Text(
+            "frames" => Ok(IntrospectValue::Text(
                 document
                     .tree(tree)
                     .into_iter()
@@ -1787,8 +1790,10 @@ impl ExternalIntrospect for GroupsOracle {
                     .collect::<Vec<_>>()
                     .join(";"),
             )),
-            "muted_links" | "link_conversions" => Self::link_query(&document, tree, path),
-            _ => None,
+            "muted_links" | "link_conversions" => {
+                Self::link_query(&document, tree, path).ok_or(ReadRefusal::UnknownPath)
+            }
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 

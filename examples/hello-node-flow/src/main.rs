@@ -33,8 +33,8 @@ use std::rc::Rc;
 use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg,
-    SchemaField, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
+    SchemaArg, SchemaField, ThreadOwnership,
 };
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
@@ -974,19 +974,35 @@ impl FlowOracle {
     };
 }
 
+impl FlowOracle {
+    /// R1667 — the attached state, or the refusal every READ owes when there is
+    /// none. The peer of [`bound`](Self::bound), which the invoke channel has
+    /// had all along.
+    ///
+    /// That asymmetry is the round in miniature: the same precondition, on two
+    /// channels, and only one of them could say what it was. `bound` answers
+    /// `InvokeError::Rejected` with a sentence; the read side had `Option` and
+    /// so answered "no such path" for a path this surface publishes.
+    fn read_bound(&self) -> Result<&Rc<FlowState>, ReadRefusal> {
+        self.state
+            .as_ref()
+            .ok_or_else(|| ReadRefusal::unavailable("the flow holds no document yet"))
+    }
+}
+
 impl ExternalIntrospect for FlowOracle {
     fn schema(&self) -> IntrospectSchema {
         IntrospectSchema::new(const { &Self::FIELDS })
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
-        let state = self.state.as_ref()?;
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
+        let state = self.read_bound()?;
         let document = state.document.get();
         let machine = state.machine.get();
         let session = state.session.get();
         let budget = session.budget();
         let (trace, stop) = current_run(&document, &machine, budget);
-        let int = |v: usize| Some(IntrospectValue::Int(i64::try_from(v).unwrap_or(i64::MAX)));
+        let int = |v: usize| Ok(IntrospectValue::Int(i64::try_from(v).unwrap_or(i64::MAX)));
         let ids = |list: &[NodeId]| {
             IntrospectValue::Text(
                 list.iter()
@@ -1000,15 +1016,15 @@ impl ExternalIntrospect for FlowOracle {
                 .tree(TREE)
                 .map_or(0, pinion_node_graph::Tree::node_count)),
             "links" => int(document.tree(TREE).map_or(0, |t| t.links().len())),
-            "valid" => Some(IntrospectValue::Text(if document.validate().is_empty() {
+            "valid" => Ok(IntrospectValue::Text(if document.validate().is_empty() {
                 "ok".to_owned()
             } else {
                 format!("{:?}", document.validate())
             })),
-            "entries" => Some(ids(&document.entry_points(TREE))),
-            "trace" => Some(ids(&trace.iter().map(|(_, id)| *id).collect::<Vec<_>>())),
+            "entries" => Ok(ids(&document.entry_points(TREE))),
+            "trace" => Ok(ids(&trace.iter().map(|(_, id)| *id).collect::<Vec<_>>())),
             "steps" => int(trace.len()),
-            "stop" => Some(IntrospectValue::Text(
+            "stop" => Ok(IntrospectValue::Text(
                 match stop {
                     Some(Stop::Halted) => "halted",
                     Some(Stop::BudgetExhausted) => "budget_exhausted",
@@ -1017,11 +1033,12 @@ impl ExternalIntrospect for FlowOracle {
                 .to_owned(),
             )),
             "budget" => int(budget),
-            "control_loops" => Some(ids(&document.control_loops(TREE))),
-            "cycle_nodes" => Some(ids(&document.cycle_nodes(TREE))),
+            "control_loops" => Ok(ids(&document.control_loops(TREE))),
+            "cycle_nodes" => Ok(ids(&document.cycle_nodes(TREE))),
             "pure_nodes" => {
                 let mut pure: Vec<NodeId> = document
-                    .tree(TREE)?
+                    .tree(TREE)
+                    .ok_or_else(|| ReadRefusal::no_such_member("the document has no flow tree"))?
                     .nodes()
                     .filter(|node| {
                         document.signature(TREE, node.id).is_some_and(|s| {
@@ -1032,25 +1049,32 @@ impl ExternalIntrospect for FlowOracle {
                     .map(|node| node.id)
                     .collect();
                 pure.sort_unstable();
-                Some(ids(&pure))
+                Ok(ids(&pure))
             }
             "never_ran" => {
                 let mut cold: Vec<NodeId> = document
-                    .tree(TREE)?
+                    .tree(TREE)
+                    .ok_or_else(|| ReadRefusal::no_such_member("the document has no flow tree"))?
                     .nodes()
                     .map(|node| node.id)
                     .filter(|id| !trace.iter().any(|(_, ran)| ran == id))
                     .collect();
                 cold.sort_unstable();
-                Some(ids(&cold))
+                Ok(ids(&cold))
             }
             "port_flows" => {
                 let mut rows = Vec::new();
-                let mut all: Vec<NodeId> =
-                    document.tree(TREE)?.nodes().map(|node| node.id).collect();
+                let mut all: Vec<NodeId> = document
+                    .tree(TREE)
+                    .ok_or_else(|| ReadRefusal::no_such_member("the document has no flow tree"))?
+                    .nodes()
+                    .map(|node| node.id)
+                    .collect();
                 all.sort_unstable();
                 for id in all {
-                    let signature = document.signature(TREE, id)?;
+                    let signature = document.signature(TREE, id).ok_or_else(|| {
+                        ReadRefusal::no_such_member(format!("no node `{id:?}` in the flow tree"))
+                    })?;
                     let side = |ports: &[Port<Ty, Val>]| {
                         ports
                             .iter()
@@ -1063,13 +1087,14 @@ impl ExternalIntrospect for FlowOracle {
                         side(&signature.outputs)
                     ));
                 }
-                Some(IntrospectValue::Text(rows.join(",")))
+                Ok(IntrospectValue::Text(rows.join(",")))
             }
-            "last_refusal" => Some(IntrospectValue::Text(state.refusal.get())),
+            "last_refusal" => Ok(IntrospectValue::Text(state.refusal.get())),
             // R1600 -- the machine, read in its own function so this one stays
             // about the document. R1644's debugger has a third.
             _ => Self::machine_read(&document, &machine, budget, path)
-                .or_else(|| Self::debug_read(&document, &machine, &session, path)),
+                .or_else(|| Self::debug_read(&document, &machine, &session, path))
+                .ok_or(ReadRefusal::UnknownPath),
         }
     }
 

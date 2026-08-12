@@ -28,8 +28,8 @@
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
-    ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership,
 };
 use crate::input::AutoRepeat;
 use crate::intent::Intent;
@@ -311,14 +311,14 @@ impl ExternalIntrospect for PaginationExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "can_prev" => Some(IntrospectValue::Bool(self.can_prev())),
-            "can_next" => Some(IntrospectValue::Bool(self.can_next())),
-            "prev.state" => Some(IntrospectValue::Text(
+            "can_prev" => Ok(IntrospectValue::Bool(self.can_prev())),
+            "can_next" => Ok(IntrospectValue::Bool(self.can_next())),
+            "prev.state" => Ok(IntrospectValue::Text(
                 self.prev.state().as_name().to_string(),
             )),
-            "next.state" => Some(IntrospectValue::Text(
+            "next.state" => Ok(IntrospectValue::Text(
                 self.next.state().as_name().to_string(),
             )),
             // count / selected_index / focused_index / state.<i> /
@@ -646,19 +646,19 @@ mod tests {
     #[test]
     fn query_surface_matches_the_group_plus_can_prev_next_and_button_states() {
         let p = PaginationExternal::new(4, 0);
-        assert_eq!(p.query("count"), Some(IntrospectValue::Int(4)));
-        assert_eq!(p.query("selected_index"), Some(IntrospectValue::Int(0)));
-        assert_eq!(p.query("can_prev"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(p.query("can_next"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(p.query("count"), Ok(IntrospectValue::Int(4)));
+        assert_eq!(p.query("selected_index"), Ok(IntrospectValue::Int(0)));
+        assert_eq!(p.query("can_prev"), Ok(IntrospectValue::Bool(false)));
+        assert_eq!(p.query("can_next"), Ok(IntrospectValue::Bool(true)));
         assert_eq!(
             p.query("prev.state"),
-            Some(IntrospectValue::Text("Disabled".into()))
+            Ok(IntrospectValue::Text("Disabled".into()))
         );
         assert_eq!(
             p.query("next.state"),
-            Some(IntrospectValue::Text("Idle".into()))
+            Ok(IntrospectValue::Text("Idle".into()))
         );
-        assert_eq!(p.query("selected.0"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(p.query("selected.0"), Ok(IntrospectValue::Bool(true)));
     }
 
     #[test]

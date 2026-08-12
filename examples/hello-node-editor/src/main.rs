@@ -271,7 +271,7 @@ use pinion_core::event::LINE_HEIGHT_PX;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, CaptureNormalize, DragPayload, DropPoint, External,
     ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
-    RepaintOwner, SchemaArg, SchemaField, ThreadOwnership, int_of,
+    ReadRefusal, RepaintOwner, SchemaArg, SchemaField, ThreadOwnership, int_of,
 };
 use pinion_core::reactive::{Owner, Signal, batch};
 use pinion_core::region::{Point, Region, RegionFit};
@@ -4431,28 +4431,31 @@ impl NodeGraphExternal {
     /// Python as `node.parent` and there is no accessor for a frame's children
     /// at all, so its own UI code walks every node in the tree comparing
     /// pointers.
-    fn query_frame(&self, path: &str) -> Option<IntrospectValue> {
-        let rest = path.strip_prefix("frame.")?;
-        let (id_str, field) = rest.split_once('.')?;
-        let id = NodeId(id_str.parse().ok()?);
+    fn query_frame(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
+        let rest = path
+            .strip_prefix("frame.")
+            .ok_or(ReadRefusal::UnknownPath)?;
+        let (id_str, field) = rest.split_once('.').ok_or(ReadRefusal::QueryTypeMismatch)?;
+        let id = NodeId(id_str.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?);
         let graph = self.graph();
-        let f = frame_node(&graph, id)?;
+        let f = frame_node(&graph, id)
+            .ok_or_else(|| ReadRefusal::no_such_member(format!("no frame `{id:?}`")))?;
         match field {
-            "title" => Some(IntrospectValue::Text(f.title())),
-            "x" => Some(IntrospectValue::Int(i64::from(f.x))),
-            "y" => Some(IntrospectValue::Int(i64::from(f.y))),
-            "w" => Some(IntrospectValue::Int(i64::from(f.width()))),
-            "h" => Some(IntrospectValue::Int(i64::from(f.height()))),
-            "contains" => Some(IntrospectValue::Text(csv_ids(
+            "title" => Ok(IntrospectValue::Text(f.title())),
+            "x" => Ok(IntrospectValue::Int(i64::from(f.x))),
+            "y" => Ok(IntrospectValue::Int(i64::from(f.y))),
+            "w" => Ok(IntrospectValue::Int(i64::from(f.width()))),
+            "h" => Ok(IntrospectValue::Int(i64::from(f.height()))),
+            "contains" => Ok(IntrospectValue::Text(csv_ids(
                 graph.members(TREE, id).into_iter().map(|n| n.0),
             ))),
-            "contents" => Some(IntrospectValue::Text(csv_ids(
+            "contents" => Ok(IntrospectValue::Text(csv_ids(
                 graph.contents(TREE, id).into_iter().map(|n| n.0),
             ))),
-            "parent" => Some(f.parent.map_or(IntrospectValue::Null, |p| {
+            "parent" => Ok(f.parent.map_or(IntrospectValue::Null, |p| {
                 IntrospectValue::Int(i64::from(p.0))
             })),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -4460,64 +4463,66 @@ impl NodeGraphExternal {
     /// `node.<id>.<field>` / `edge.<id>` / `dissolvable.<id>` / `frame.<id>.<field>`.
     /// Extracted from `query` when its arm count crossed the line ceiling (the
     /// R1227 `query_frame` extraction precedent).
-    fn query_prefixed(&self, path: &str) -> Option<IntrospectValue> {
+    fn query_prefixed(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         // R916 — `detail.<field>` is a selection-relative alias for
         // `node.<selected>.<field>`: resolve the single selected node and
         // delegate to the existing absolute-addressing read. `Null` when
         // the selection is not exactly one node (no unambiguous "the"
         // node) — the R909 selection-driven detail-panel pattern.
         if let Some(field) = path.strip_prefix("detail.") {
-            return Some(match self.selected_node_path(field) {
+            return Ok(match self.selected_node_path(field) {
                 Some(node_path) => self.query(&node_path).unwrap_or(IntrospectValue::Null),
                 None => IntrospectValue::Null,
             });
         }
         if let Some(rest) = path.strip_prefix("node.") {
-            let (id_str, field) = rest.split_once('.')?;
-            let id = NodeId(id_str.parse().ok()?);
+            let (id_str, field) = rest.split_once('.').ok_or(ReadRefusal::QueryTypeMismatch)?;
+            let id = NodeId(id_str.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?);
             let graph = self.graph();
-            let (node, op) = kind_node(&graph, id)?;
-            let signature = signature_of(&graph, id)?;
+            let (node, op) = kind_node(&graph, id)
+                .ok_or_else(|| ReadRefusal::no_such_member(format!("no node `{id:?}`")))?;
+            let signature = signature_of(&graph, id)
+                .ok_or_else(|| ReadRefusal::no_such_member(format!("no signature for `{id:?}`")))?;
             return match field {
-                "title" => Some(IntrospectValue::Text(node.title())),
-                "x" => Some(IntrospectValue::Int(i64::from(node.x))),
-                "y" => Some(IntrospectValue::Int(i64::from(node.y))),
+                "title" => Ok(IntrospectValue::Text(node.title())),
+                "x" => Ok(IntrospectValue::Int(i64::from(node.x))),
+                "y" => Ok(IntrospectValue::Int(i64::from(node.y))),
                 // R1441 — the card's laid-out height, the twin of the long-standing
                 // `frame.<id>.h`. Needed to reason about a node's CENTRE, which is
                 // where an edge attaches: with cards of unequal height "these two
                 // line up" is a statement about centres, and recomputing the height
                 // from the port count outside the model would be a second, driftable
                 // definition of it.
-                "h" => Some(IntrospectValue::Int(i64::from(node.height()))),
-                "inputs" => Some(IntrospectValue::Int(int_of(signature.inputs.len()))),
-                "outputs" => Some(IntrospectValue::Int(int_of(signature.outputs.len()))),
+                "h" => Ok(IntrospectValue::Int(i64::from(node.height()))),
+                "inputs" => Ok(IntrospectValue::Int(int_of(signature.inputs.len()))),
+                "outputs" => Ok(IntrospectValue::Int(int_of(signature.outputs.len()))),
                 // R1596 — the frame this node sits in, or `Null` on the bare
                 // canvas ([`Node::parent`], R1589). Membership is now a fact the document
                 // maintains, so it is readable from the member's end as well
                 // as the frame's — the DCC has `node.parent` in Python and no accessor
                 // for the other direction at all.
-                "parent" => Some(node.parent.map_or(IntrospectValue::Null, |p| {
+                "parent" => Ok(node.parent.map_or(IntrospectValue::Null, |p| {
                     IntrospectValue::Int(i64::from(p.0))
                 })),
                 // R1242 — the reroute discriminator (a first-class model read, not
                 // a title match — a user-renamed knot still reads true, a node
                 // renamed "Reroute" reads false).
-                "is_reroute" => Some(IntrospectValue::Bool(node.is_reroute())),
+                "is_reroute" => Ok(IntrospectValue::Bool(node.is_reroute())),
                 // R1256 — the first-class compute identity (the rename-stable
                 // `Add`/`Multiply`/... the evaluator dispatches on). The AI-first
                 // answer to "what does this node compute" — the structural reads
                 // (`input_types`/arity) cannot separate ops that share a
                 // signature, and `title` is rewritable, so an AI enumeration
                 // reads `op` to predict/verify `value`.
-                "op" => Some(IntrospectValue::Text(op.name())),
+                "op" => Ok(IntrospectValue::Text(op.name())),
                 // R1257 — whether this node is an authorable SOURCE (its `value`
                 // is a stored, `intervene`-able constant vs a derived output).
-                "is_source" => Some(IntrospectValue::Bool(is_source(&graph, id))),
+                "is_source" => Ok(IntrospectValue::Bool(is_source(&graph, id))),
                 // R898 — the typed-port read twins: CSV of the port types in port
                 // order ("" for a source / sink). The arity reads stay the
                 // byte-stable count contract.
-                "input_types" => Some(IntrospectValue::Text(port_types_csv(&signature.inputs))),
-                "output_types" => Some(IntrospectValue::Text(port_types_csv(&signature.outputs))),
+                "input_types" => Ok(IntrospectValue::Text(port_types_csv(&signature.inputs))),
+                "output_types" => Ok(IntrospectValue::Text(port_types_csv(&signature.outputs))),
                 // R1255 — the node's *evaluated* output value (the compute twin
                 // of the authoring reads above): topo-eval over the graph, an
                 // unconnected input taking its R899 pin default and a source op
@@ -4525,7 +4530,7 @@ impl NodeGraphExternal {
                 // value undefined (distinguish via `eval.acyclic`). A `Float`
                 // reads as a float, a `Vector` (`Color`) as a `{hex,r,g,b,a}`
                 // object — the same wire form as `input_default.<port>`.
-                "value" => Some(cell_or_null(evaluate(&graph, id))),
+                "value" => Ok(cell_or_null(evaluate(&graph, id))),
                 // R899 — the typed default of an input port (the write twin is
                 // `intervene node.<id>.input_default.<port>`); a `Float` reads as a
                 // float, a `Vector` (`Color`) as a `{hex,r,g,b,a}` object. R1260 —
@@ -4537,26 +4542,35 @@ impl NodeGraphExternal {
                         .strip_prefix("input_default.")
                         .and_then(|p| p.parse::<usize>().ok())
                     {
-                        input_default(&graph, id, port).map(|v| v.to_introspect())
+                        input_default(&graph, id, port)
+                            .map(|v| v.to_introspect())
+                            .ok_or_else(|| {
+                                ReadRefusal::no_such_member(format!(
+                                    "no input port {port} on `{id:?}`"
+                                ))
+                            })
                     } else if let Some(port) = other
                         .strip_prefix("resolved_input.")
                         .and_then(|p| p.parse::<usize>().ok())
                     {
                         // Out-of-range port -> UnknownPath (`None`); an in-range
                         // input fed by a cycle -> `Null`.
-                        input_type(&graph, id, port)?;
-                        Some(cell_or_null(resolve_input_value(&graph, id, port)))
+                        input_type(&graph, id, port).ok_or_else(|| {
+                            ReadRefusal::no_such_member(format!("no input port {port} on `{id:?}`"))
+                        })?;
+                        Ok(cell_or_null(resolve_input_value(&graph, id, port)))
                     } else {
-                        None
+                        Err(ReadRefusal::UnknownPath)
                     }
                 }
             };
         }
         if let Some(id_str) = path.strip_prefix("edge.") {
-            let id = EdgeId(id_str.parse().ok()?);
+            let id = EdgeId(id_str.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?);
             let graph = self.graph();
-            let e = edge(&graph, id)?;
-            return Some(IntrospectValue::Text(format!(
+            let e = edge(&graph, id)
+                .ok_or_else(|| ReadRefusal::no_such_member(format!("no edge `{id:?}`")))?;
+            return Ok(IntrospectValue::Text(format!(
                 "{}:{}->{}:{}",
                 e.from.node, e.from.port, e.to.node, e.to.port
             )));
@@ -4576,28 +4590,31 @@ impl NodeGraphExternal {
             // starting the migration surfaced.
             let on_cycle = graph.cycle_nodes(TREE);
             return match field {
-                "output" => Some(cell_or_null(eval_terminal(&graph))),
-                "acyclic" => Some(IntrospectValue::Bool(on_cycle.is_empty())),
+                "output" => Ok(cell_or_null(eval_terminal(&graph))),
+                "acyclic" => Ok(IntrospectValue::Bool(on_cycle.is_empty())),
                 // R1260 — LOCALISE a cycle: the ids of the nodes ON a cycle
                 // (not merely downstream), so a `null` value points at the knot
                 // to break. Empty for a DAG. R1262 — through the `csv_ids` SSOT
                 // (the 9th id-list-CSV consumer), not a hand-rolled join.
-                "cycle_nodes" => Some(IntrospectValue::Text(csv_ids(
+                "cycle_nodes" => Ok(IntrospectValue::Text(csv_ids(
                     on_cycle.iter().map(|id| id.0),
                 ))),
-                _ => None,
+                _ => Err(ReadRefusal::UnknownPath),
             };
         }
         // R1241 — the per-node dissolve-eligibility read (the twin of the
         // `dissolve_node` verb; shares the `dissolve_plan` predicate).
         if let Some(id_str) = path.strip_prefix("dissolvable.") {
-            let id = NodeId(id_str.parse().ok()?);
-            return Some(IntrospectValue::Bool(self.dissolvable(id)));
+            let id = NodeId(id_str.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?);
+            return Ok(IntrospectValue::Bool(self.dissolvable(id)));
         }
         // R1596 — WHICH wires a dissolve would cut, beside whether it cuts any.
         if let Some(id_str) = path.strip_prefix("dissolve_severs.") {
-            let id = NodeId(id_str.parse().ok()?);
-            return self.dissolve_severs(id).map(IntrospectValue::Text);
+            let id = NodeId(id_str.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?);
+            return self
+                .dissolve_severs(id)
+                .map(IntrospectValue::Text)
+                .ok_or_else(|| ReadRefusal::no_such_member(format!("no node `{id:?}`")));
         }
         // R1227 — `frame.<id>.<field>` reads.
         self.query_frame(path)
@@ -6399,48 +6416,48 @@ impl ExternalIntrospect for NodeGraphExternal {
         IntrospectSchema::new(NODE_GRAPH_SCHEMA_FIELDS)
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "node_count" => Some(IntrospectValue::Int(int_of(self.node_count()))),
-            "edge_count" => Some(IntrospectValue::Int(int_of(edges(&self.graph()).len()))),
-            "layout_crossings" => Some(IntrospectValue::Int(int_of(layout_crossings(
+            "node_count" => Ok(IntrospectValue::Int(int_of(self.node_count()))),
+            "edge_count" => Ok(IntrospectValue::Int(int_of(edges(&self.graph()).len()))),
+            "layout_crossings" => Ok(IntrospectValue::Int(int_of(layout_crossings(
                 &self.graph(),
             )))),
-            "layout_inner_segments" => Some(IntrospectValue::Int(int_of(
+            "layout_inner_segments" => Ok(IntrospectValue::Int(int_of(
                 layout_inner_straightness(&self.graph()).0,
             ))),
-            "layout_straight_inner" => Some(IntrospectValue::Int(int_of(
+            "layout_straight_inner" => Ok(IntrospectValue::Int(int_of(
                 layout_inner_straightness(&self.graph()).1,
             ))),
             // CSV of the *current* (possibly sparse after deletes) stable ids —
             // the enumeration handle an AI needs now that addressing is by id.
-            "node_ids" => Some(IntrospectValue::Text(csv_ids(
+            "node_ids" => Ok(IntrospectValue::Text(csv_ids(
                 kind_nodes(&self.graph()).map(|(n, _)| n.id.0),
             ))),
-            "edge_ids" => Some(IntrospectValue::Text(csv_ids(
+            "edge_ids" => Ok(IntrospectValue::Text(csv_ids(
                 edges(&self.graph()).iter().map(|e| e.id.0),
             ))),
             // R1242 — the reroute-knot enumeration (the AI-first "find every
             // reroute" handle a self-hosted editor's cleanup pass needs; the
             // `node.<id>.is_reroute` read is the per-node twin).
-            "reroute_ids" => Some(IntrospectValue::Text(csv_ids(
+            "reroute_ids" => Ok(IntrospectValue::Text(csv_ids(
                 kind_nodes(&self.graph())
                     .filter(|(n, _)| n.is_reroute())
                     .map(|(n, _)| n.id.0),
             ))),
             // R1227 — the comment-frame enumeration handles (the annotation
             // layer as data, exactly like `node_ids` / `edge_ids`).
-            "frame_count" => Some(IntrospectValue::Int(int_of(
+            "frame_count" => Ok(IntrospectValue::Int(int_of(
                 frame_nodes(&self.graph()).count(),
             ))),
-            "frame_ids" => Some(IntrospectValue::Text(csv_ids(
+            "frame_ids" => Ok(IntrospectValue::Text(csv_ids(
                 frame_nodes(&self.graph()).map(|f| f.id.0),
             ))),
             // R1241 — the AI-first dissolve-eligibility enumeration: the CSV of
             // node ids a dissolve would not cost anything, so an editor can
             // offer "Dissolve" without probing each node. The `dissolvable.<id>`
             // read is the per-node twin.
-            "dissolvable_ids" => Some(IntrospectValue::Text(csv_ids(
+            "dissolvable_ids" => Ok(IntrospectValue::Text(csv_ids(
                 kind_node_vec(&self.graph())
                     .iter()
                     .filter(|n| self.dissolvable(n.id))
@@ -6449,16 +6466,16 @@ impl ExternalIntrospect for NodeGraphExternal {
             // R879 — `selected` answers the *single*-selection question:
             // an Int only when exactly one node is selected (a multi-set
             // has no unambiguous "the" node — read `selected_ids`).
-            "selected" => Some(match self.selection.get().node() {
+            "selected" => Ok(match self.selection.get().node() {
                 Some(id) => IntrospectValue::Int(i64::from(id.0)),
                 None => IntrospectValue::Null,
             }),
             // R879 — the multi-select read twin: CSV of the selected node
             // ids in id order ("" when no node selection).
-            "selected_ids" => Some(IntrospectValue::Text(csv_ids(
+            "selected_ids" => Ok(IntrospectValue::Text(csv_ids(
                 self.selection.get().nodes().iter().map(|id| id.0),
             ))),
-            "selected_edge" => Some(match self.selection.get().edge() {
+            "selected_edge" => Ok(match self.selection.get().edge() {
                 Some(id) => IntrospectValue::Int(i64::from(id.0)),
                 None => IntrospectValue::Null,
             }),
@@ -6469,7 +6486,7 @@ impl ExternalIntrospect for NodeGraphExternal {
             // this stays `Null` then (read `editing` for the full picture —
             // [[wire-form-read-write-symmetry]], the representation-richer-but-
             // old-contract-preserved discipline).
-            "renaming" => Some(match self.editing.get() {
+            "renaming" => Ok(match self.editing.get() {
                 Some(ActiveEdit {
                     target: EditTarget::Title(id),
                     ..
@@ -6481,25 +6498,24 @@ impl ExternalIntrospect for NodeGraphExternal {
             // `kind` is `title` / `port_default` / `pos_x` / `pos_y` and `surface`
             // is `card` / `panel` (the read twin of the `begin_*` invokes + the
             // double-click / panel-row-click entries).
-            "editing" => Some(
-                self.editing
-                    .get()
-                    .map_or(IntrospectValue::Null, active_edit_introspect),
-            ),
+            "editing" => Ok(self
+                .editing
+                .get()
+                .map_or(IntrospectValue::Null, active_edit_introspect)),
             // R852 — the whole graph as one JSON blob (the AI-first read; its
             // write-twin is `invoke set_graph`).
-            "serialized" => Some(IntrospectValue::Text(self.serialized_json())),
+            "serialized" => Ok(IntrospectValue::Text(self.serialized_json())),
             // R1220 — the open pin-drop create menu as JSON (Null when closed):
             // the introspection twin of the painted floating menu.
-            "pin_create" => Some(self.pin_create_introspect()),
+            "pin_create" => Ok(self.pin_create_introspect()),
             // R877 — the viewport, in zoom-independent graph units (pan) +
             // the zoom factor. Write-twins: `intervene viewport.{x,y,zoom}`.
             // R1183 — the pan in graph units is the graph point under the
             // canvas top-left corner: `cursor_graph(0, 0)`, the inverse SSOT
             // (was an inline `offset / zoom`).
-            "viewport.x" => Some(IntrospectValue::Float(self.cursor_graph(0.0, 0.0).0)),
-            "viewport.y" => Some(IntrospectValue::Float(self.cursor_graph(0.0, 0.0).1)),
-            "viewport.zoom" => Some(IntrospectValue::Float(self.zoom.get())),
+            "viewport.x" => Ok(IntrospectValue::Float(self.cursor_graph(0.0, 0.0).0)),
+            "viewport.y" => Ok(IntrospectValue::Float(self.cursor_graph(0.0, 0.0).1)),
+            "viewport.zoom" => Ok(IntrospectValue::Float(self.zoom.get())),
             // R916 — `detail.node` is the single selected node id (the alias the
             // Details panel addresses against, same answer as `selected`).
             "detail.node" => self.query("selected"),
@@ -7164,7 +7180,7 @@ fn apply_key_graph(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
     // `invoke_undo(scene, …)` re-borrow below still type-checks when idle.
     if let Some(node) = scene.find_external_with_tag_mut(GRAPH_TAG) {
         if let Some(intro) = node.handle.introspect_mut() {
-            if let Some(IntrospectValue::Json(menu)) = intro.query("pin_create") {
+            if let Ok(IntrospectValue::Json(menu)) = intro.query("pin_create") {
                 return pin_create_key(intro, &menu, key, modifiers);
             }
         }
@@ -7186,7 +7202,7 @@ fn apply_key_graph(scene: &mut Scene, key: &str, modifiers: Modifiers) -> bool {
         let target = match verb {
             ZoomKey::Reset => 1.0,
             ZoomKey::In | ZoomKey::Out => {
-                let Some(IntrospectValue::Float(zoom)) = intro.query("viewport.zoom") else {
+                let Ok(IntrospectValue::Float(zoom)) = intro.query("viewport.zoom") else {
                     return false;
                 };
                 if verb == ZoomKey::In {

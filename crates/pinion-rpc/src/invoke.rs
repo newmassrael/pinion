@@ -449,7 +449,7 @@ fn retained_refusal(scene: &Scene, source: SceneSource, raw_path: &str) -> Invok
 mod tests {
     use super::*;
     use pinion_core::Color;
-    use pinion_core::external::{CountedExternal, StubExternal};
+    use pinion_core::external::{CountedExternal, ReadRefusal, StubExternal};
     use pinion_core::scene::{BoxNode, ExternalNode, Rect};
 
     use pinion_core::external::{InterveneError, IntrospectSchema, SchemaArg, SchemaField};
@@ -488,8 +488,10 @@ mod tests {
         fn schema(&self) -> IntrospectSchema {
             MIXED
         }
-        fn query(&self, path: &str) -> Option<IntrospectValue> {
-            (path == "depth").then_some(IntrospectValue::Int(3))
+        fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
+            (path == "depth")
+                .then_some(IntrospectValue::Int(3))
+                .ok_or(ReadRefusal::UnknownPath)
         }
         fn intervene(&mut self, _path: &str, _v: IntrospectValue) -> Result<(), InterveneError> {
             Err(InterveneError::UnknownPath)
@@ -654,8 +656,10 @@ mod tests {
                 },
             )
         }
-        fn query(&self, path: &str) -> Option<IntrospectValue> {
-            (path == "speed").then_some(IntrospectValue::Int(self.speed))
+        fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
+            (path == "speed")
+                .then_some(IntrospectValue::Int(self.speed))
+                .ok_or(ReadRefusal::UnknownPath)
         }
         fn intervene(
             &mut self,
@@ -894,7 +898,7 @@ mod tests {
             .expect("pane_a still present");
         assert_eq!(
             a_node.handle.introspect().unwrap().query("count"),
-            Some(IntrospectValue::Int(101)),
+            Ok(IntrospectValue::Int(101)),
         );
     }
 
@@ -925,7 +929,7 @@ mod tests {
                 .introspect()
                 .unwrap()
                 .query("count"),
-            Some(IntrospectValue::Int(101)),
+            Ok(IntrospectValue::Int(101)),
         );
     }
 

@@ -54,7 +54,8 @@ use std::collections::HashMap;
 use pinion_core::Color;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use pinion_core::intent::Intent;
 use pinion_core::scene::{ContainerNode, Scene};
@@ -777,14 +778,14 @@ impl ExternalIntrospect for ClickRouter {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         if path == CLICK_ROUTER_LAST_CLICKED_SLOT {
-            return Some(match &self.last_clicked {
+            return Ok(match &self.last_clicked {
                 Some(p) => IntrospectValue::Text(p.clone()),
                 None => IntrospectValue::Null,
             });
         }
-        None
+        Err(ReadRefusal::UnknownPath)
     }
 
     fn intervene(&mut self, path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
@@ -1504,6 +1505,7 @@ mod tests {
             CLICK_ROUTER_EVENT, CLICK_ROUTER_INVOKE_PATH, CLICK_ROUTER_LAST_CLICKED_SLOT,
             ClickRouter,
         };
+        use pinion_core::external::ReadRefusal;
         use pinion_core::external::{
             Backend, External, ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
         };
@@ -1541,14 +1543,14 @@ mod tests {
             let router = ClickRouter::new();
             assert_eq!(
                 router.query(CLICK_ROUTER_LAST_CLICKED_SLOT),
-                Some(IntrospectValue::Null),
+                Ok(IntrospectValue::Null),
             );
         }
 
         #[test]
         fn r683_query_unknown_path_returns_none() {
             let router = ClickRouter::new();
-            assert_eq!(router.query("nonexistent"), None);
+            assert_eq!(router.query("nonexistent"), Err(ReadRefusal::UnknownPath));
         }
 
         #[test]
@@ -1672,7 +1674,7 @@ mod tests {
                 .unwrap();
             assert_eq!(
                 router.query(CLICK_ROUTER_LAST_CLICKED_SLOT),
-                Some(IntrospectValue::Text("p/q".into())),
+                Ok(IntrospectValue::Text("p/q".into())),
             );
         }
     }

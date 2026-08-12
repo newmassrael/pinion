@@ -69,8 +69,8 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use crate::external::{
-    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, SchemaArg,
-    SchemaField, query_proxy_external_impl,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    ReadRefusal, SchemaArg, SchemaField, query_proxy_external_impl,
 };
 use crate::reactive::{Owner, Signal, batch};
 use crate::undo::{UndoCommand, UndoStack};
@@ -525,27 +525,26 @@ impl ExternalIntrospect for ViewSortFilterExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         // `source_at.<pos>` resolves the visual→source map; an out-of-range
         // position reports Null (present-but-empty), never absence.
         if let Some(rest) = path.strip_prefix("source_at.") {
-            return Some(source_at_value(rest, |p| self.state.source_at(p)));
+            return Ok(source_at_value(rest, |p| self.state.source_at(p)));
         }
         match path {
-            "sort_dir" => Some(IntrospectValue::Text(
+            "sort_dir" => Ok(IntrospectValue::Text(
                 sort_dir_str(self.state.sort()).into(),
             )),
-            "filter" => Some(
-                self.state
-                    .filter()
-                    .and_then(|f| i64::try_from(f).ok())
-                    .map_or(IntrospectValue::Null, IntrospectValue::Int),
-            ),
-            "view_len" => Some(self.view_len_value()),
-            "count" => Some(IntrospectValue::Int(
+            "filter" => Ok(self
+                .state
+                .filter()
+                .and_then(|f| i64::try_from(f).ok())
+                .map_or(IntrospectValue::Null, IntrospectValue::Int)),
+            "view_len" => Ok(self.view_len_value()),
+            "count" => Ok(IntrospectValue::Int(
                 i64::try_from(self.state.count()).unwrap_or(i64::MAX),
             )),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -759,18 +758,22 @@ mod tests {
         let e = ext();
         assert_eq!(
             e.query("sort_dir"),
-            Some(IntrospectValue::Text("none".into()))
+            Ok(IntrospectValue::Text("none".into()))
         );
-        assert_eq!(e.query("filter"), Some(IntrospectValue::Null));
-        assert_eq!(e.query("view_len"), Some(IntrospectValue::Int(12)));
-        assert_eq!(e.query("count"), Some(IntrospectValue::Int(12)));
-        assert_eq!(e.query("source_at.0"), Some(IntrospectValue::Int(0)));
+        assert_eq!(e.query("filter"), Ok(IntrospectValue::Null));
+        assert_eq!(e.query("view_len"), Ok(IntrospectValue::Int(12)));
+        assert_eq!(e.query("count"), Ok(IntrospectValue::Int(12)));
+        assert_eq!(e.query("source_at.0"), Ok(IntrospectValue::Int(0)));
         assert_eq!(
             e.query("source_at.99"),
-            Some(IntrospectValue::Null),
+            Ok(IntrospectValue::Null),
             "out-of-range view position is present-but-empty, not absent",
         );
-        assert_eq!(e.query("nope"), None, "undeclared path is genuinely absent");
+        assert_eq!(
+            e.query("nope"),
+            Err(ReadRefusal::UnknownPath),
+            "undeclared path is genuinely absent"
+        );
     }
 
     #[test]

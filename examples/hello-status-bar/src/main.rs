@@ -37,7 +37,8 @@ use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_core::composite_tag::send_activation_key;
 use pinion_core::external::query_proxy_external_impl;
 use pinion_core::external::{
-    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError, SchemaField,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    ReadRefusal, SchemaField,
 };
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -162,18 +163,20 @@ impl ExternalIntrospect for StatusBarExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "line" => Some(IntrospectValue::Int(i64::from(self.line.get()))),
-            "col" => Some(IntrospectValue::Int(i64::from(self.col.get()))),
-            "position" => Some(IntrospectValue::Text(self.position())),
-            "mode" => Some(IntrospectValue::Text(mode_name(self.mode.get()).to_owned())),
-            "mode_index" => Some(IntrospectValue::Int(i64::try_from(self.mode.get()).ok()?)),
-            "encoding" => Some(IntrospectValue::Text(
+            "line" => Ok(IntrospectValue::Int(i64::from(self.line.get()))),
+            "col" => Ok(IntrospectValue::Int(i64::from(self.col.get()))),
+            "position" => Ok(IntrospectValue::Text(self.position())),
+            "mode" => Ok(IntrospectValue::Text(mode_name(self.mode.get()).to_owned())),
+            "mode_index" => Ok(IntrospectValue::Int(
+                i64::try_from(self.mode.get()).map_err(|_| ReadRefusal::QueryTypeMismatch)?,
+            )),
+            "encoding" => Ok(IntrospectValue::Text(
                 encoding_name(self.encoding.get()).to_owned(),
             )),
-            "message" => Some(IntrospectValue::Text(self.message.get())),
-            _ => None,
+            "message" => Ok(IntrospectValue::Text(self.message.get())),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -379,7 +382,7 @@ impl StatusBarView {
     fn read_state(scene: &Scene) -> usize {
         if let Scene::External(node) = scene {
             if let Some(intro) = node.handle.introspect() {
-                if let Some(IntrospectValue::Int(n)) = intro.query("mode_index") {
+                if let Ok(IntrospectValue::Int(n)) = intro.query("mode_index") {
                     return usize::try_from(n).unwrap_or(0);
                 }
             }
@@ -415,7 +418,7 @@ mod tests {
         e.intervene("col", IntrospectValue::Int(7)).unwrap();
         assert_eq!(
             e.query("position"),
-            Some(IntrospectValue::Text("Ln 42, Col 7".to_owned()))
+            Ok(IntrospectValue::Text("Ln 42, Col 7".to_owned()))
         );
     }
 
@@ -425,7 +428,7 @@ mod tests {
         assert_eq!(e.intervene("line", IntrospectValue::Int(0)), Ok(()));
         assert_eq!(
             e.query("line"),
-            Some(IntrospectValue::Int(1)),
+            Ok(IntrospectValue::Int(1)),
             "line floors at 1"
         );
         assert!(
@@ -440,7 +443,7 @@ mod tests {
         // Boot mode = Rust (index 1).
         assert_eq!(
             e.query("mode"),
-            Some(IntrospectValue::Text("Rust".to_owned()))
+            Ok(IntrospectValue::Text("Rust".to_owned()))
         );
         for _ in 0..MODES.len() {
             e.invoke("cycle_mode", IntrospectValue::Null).unwrap();
@@ -448,7 +451,7 @@ mod tests {
         // A full cycle returns to Rust (wrap).
         assert_eq!(
             e.query("mode"),
-            Some(IntrospectValue::Text("Rust".to_owned()))
+            Ok(IntrospectValue::Text("Rust".to_owned()))
         );
     }
 
@@ -457,12 +460,12 @@ mod tests {
         let mut e = ext();
         assert_eq!(
             e.query("encoding"),
-            Some(IntrospectValue::Text("UTF-8".to_owned()))
+            Ok(IntrospectValue::Text("UTF-8".to_owned()))
         );
         e.invoke("cycle_encoding", IntrospectValue::Null).unwrap();
         assert_eq!(
             e.query("encoding"),
-            Some(IntrospectValue::Text("UTF-16 LE".to_owned()))
+            Ok(IntrospectValue::Text("UTF-16 LE".to_owned()))
         );
     }
 
@@ -477,13 +480,13 @@ mod tests {
         .unwrap();
         assert_eq!(
             e.query("mode"),
-            Some(IntrospectValue::Text("Rust".to_owned()))
+            Ok(IntrospectValue::Text("Rust".to_owned()))
         );
         e.invoke("send", IntrospectValue::Text("mode:PointerUp".to_owned()))
             .unwrap();
         assert_eq!(
             e.query("mode"),
-            Some(IntrospectValue::Text("Python".to_owned()))
+            Ok(IntrospectValue::Text("Python".to_owned()))
         );
         // The encoding segment is independent.
         e.invoke(
@@ -493,7 +496,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             e.query("encoding"),
-            Some(IntrospectValue::Text("UTF-16 LE".to_owned()))
+            Ok(IntrospectValue::Text("UTF-16 LE".to_owned()))
         );
     }
 
@@ -504,7 +507,7 @@ mod tests {
             .unwrap();
         assert_eq!(
             e.query("message"),
-            Some(IntrospectValue::Text("Saved 3 files".to_owned()))
+            Ok(IntrospectValue::Text("Saved 3 files".to_owned()))
         );
     }
 

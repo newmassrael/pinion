@@ -79,8 +79,8 @@ use std::rc::Rc;
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
-    ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership,
 };
 use crate::reactive::{Computed, Owner, Signal};
 use crate::widgets::tree_nav::VisibleRow;
@@ -343,20 +343,20 @@ impl ExternalIntrospect for TreeFilterExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         // `visible_at.<pos>` / `label_at.<pos>` resolve the filtered visual
         // position; an out-of-range position reports Null (present-but-empty),
         // never absence (the caller has matched the prefix).
         if let Some(rest) = path.strip_prefix("visible_at.") {
-            return Some(id_value(rest, |p| self.state.visible_id_at(p)));
+            return Ok(id_value(rest, |p| self.state.visible_id_at(p)));
         }
         if let Some(rest) = path.strip_prefix("label_at.") {
-            return Some(id_value(rest, |p| self.state.visible_label_at(p)));
+            return Ok(id_value(rest, |p| self.state.visible_label_at(p)));
         }
         match path {
-            "query" => Some(IntrospectValue::Text(self.state.query())),
-            "visible_count" => Some(self.visible_count_value()),
-            _ => None,
+            "query" => Ok(IntrospectValue::Text(self.state.query())),
+            "visible_count" => Ok(self.visible_count_value()),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -428,7 +428,9 @@ mod tests {
     //! coordinator be tested next to its definition.
 
     use super::{TreeFilterExternal, TreeFilterState, TreeRowsFn, use_tree_filter};
-    use crate::external::{ExternalIntrospect, InterveneError, IntrospectValue, InvokeError};
+    use crate::external::{
+        ExternalIntrospect, InterveneError, IntrospectValue, InvokeError, ReadRefusal,
+    };
     use crate::reactive::{Owner, Signal};
     use crate::widgets::tree_nav::{TreeNode, flat_visible, flat_visible_filtered};
     use std::rc::Rc;
@@ -555,35 +557,33 @@ mod tests {
             let state = Rc::new(TreeFilterState::new(rows_fn_over(Signal::new(fixture()))));
             let mut ext = TreeFilterExternal::new(Rc::clone(&state));
             // Boot: empty query, full view.
-            assert_eq!(
-                ext.query("query"),
-                Some(IntrospectValue::Text(String::new()))
-            );
-            assert_eq!(ext.query("visible_count"), Some(IntrospectValue::Int(6)));
+            assert_eq!(ext.query("query"), Ok(IntrospectValue::Text(String::new())));
+            assert_eq!(ext.query("visible_count"), Ok(IntrospectValue::Int(6)));
             // invoke set_filter returns the resulting visible_count in one trip.
             assert_eq!(
                 ext.invoke("set_filter", IntrospectValue::Text("rry".into())),
                 Ok(IntrospectValue::Int(2)),
                 "g1 + Cherry",
             );
-            assert_eq!(
-                ext.query("query"),
-                Some(IntrospectValue::Text("rry".into()))
-            );
+            assert_eq!(ext.query("query"), Ok(IntrospectValue::Text("rry".into())));
             assert_eq!(
                 ext.query("visible_at.0"),
-                Some(IntrospectValue::Text("g1".into()))
+                Ok(IntrospectValue::Text("g1".into()))
             );
             assert_eq!(
                 ext.query("label_at.1"),
-                Some(IntrospectValue::Text("Cherry".into()))
+                Ok(IntrospectValue::Text("Cherry".into()))
             );
             assert_eq!(
                 ext.query("visible_at.999"),
-                Some(IntrospectValue::Null),
+                Ok(IntrospectValue::Null),
                 "out-of-range filtered position is present-but-empty",
             );
-            assert_eq!(ext.query("nope"), None, "undeclared path is absent");
+            assert_eq!(
+                ext.query("nope"),
+                Err(ReadRefusal::UnknownPath),
+                "undeclared path is absent"
+            );
             // intervene sets the query (admin / restore); read-only + type guards.
             ext.intervene("query", IntrospectValue::Text("Ap".into()))
                 .unwrap();

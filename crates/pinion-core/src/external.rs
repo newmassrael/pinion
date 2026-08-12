@@ -1007,8 +1007,7 @@ impl SchemaField {
     }
 
     /// Does `probe` address this field? An exact hit for a scalar; for a
-    /// parametric family, a probe that matches the template with a non-empty
-    /// value in each placeholder.
+    /// parametric family, a probe that matches the template's literal segments.
     ///
     /// The membership question every caller actually means — a parametric family
     /// is addressed by its members, never by its template, so a bare
@@ -1016,11 +1015,24 @@ impl SchemaField {
     /// `width.0`, a path the surface answers perfectly well. That mistake is the
     /// §2 #7 lie [`read_only_or_unknown`] exists to prevent, so it routes here.
     ///
-    /// Deliberately checks that an argument is *present*, not that it is
-    /// *well-formed* or in range — only the `query` impl knows that. This
-    /// answers "does this field own this path", which is what an error-kind
-    /// decision needs; `width.zzz` belongs to `width` and is malformed, not
-    /// unknown.
+    /// **Ownership only — never validity.** Whether an argument is well-formed,
+    /// in range, or non-empty is the `query` impl's call and no one else's:
+    /// `width.zzz` belongs to `width` and is malformed, not unknown, and the
+    /// surface says which by answering
+    /// [`ReadRefusal::QueryTypeMismatch`] rather than by being unreachable.
+    ///
+    /// R1667 — this used to make exactly one exception, requiring a **non-empty**
+    /// run in each placeholder, and that exception is why the doc above was true
+    /// of `width.zzz` and false of `width.`. Emptiness is a property of the
+    /// argument, not of the address, so the two malformed probes were being
+    /// answered along different axes; and the exception was not load-bearing for
+    /// the parse, which is greedy-to-the-next-literal and therefore stays
+    /// deterministic with empty runs (`cell..2` is `row=""`, `col="2"`, one
+    /// reading). What it did instead was decide, on behalf of all 106 declared
+    /// families at once, that no family may have a meaningful empty member —
+    /// while [`SchemaArg`] exists precisely so a family can state its own
+    /// argument's domain. A consumer that publishes `find.` as "a search for
+    /// nothing" was told its own declared family had no such address.
     #[must_use]
     pub fn addresses(&self, probe: &str) -> bool {
         // R1638 — only a PATH-form field's arguments are part of its address.
@@ -1062,9 +1074,9 @@ impl SchemaField {
                     None => return false,
                 }
             };
-            if arg_len == 0 {
-                return false;
-            }
+            // R1667 — an empty run is a member with an empty argument, not a
+            // non-member. See the doc above for why this is not the matcher's
+            // call to make.
             rest = &rest[arg_len..];
             first = false;
         }
@@ -1551,6 +1563,124 @@ pub const OUTER_DOCK_MARGIN: f64 = 32.0;
 /// (the [[wire-vocab-canon-pin-not-fold]] pattern), like [`OUTER_DOCK_ZONE_TAG`].
 pub const DOCK_PANEL_DRAG_KIND: &str = "dock-panel";
 
+/// R1667 §5.15 §2 #7 — why a surface declined to answer
+/// [`ExternalIntrospect::query`]. The read channel's peer of
+/// [`InterveneError`].
+///
+/// # Why a read needs a reason at all
+///
+/// It did not have one. `query` answered `Option<IntrospectValue>`, and the
+/// transport turned every `None` into the single word `UnknownIntrospectPath` —
+/// so "the schema does not declare that name", "the family is declared and index
+/// 999 addresses nothing", and "the argument is not an integer" reached a client
+/// as **byte-identical** answers. The surface knew which of the three it meant
+/// (its own `parse` and bounds check are what produced the `None`) and had no
+/// way to say so. `dispatch::query_error_reason` even carried the sentence that
+/// documented the gap: *"a READ cannot be refused by a producer: `query`
+/// answers `Option`, so every failure here is the transport's own
+/// classification."*
+///
+/// The write channel never had that problem — [`InterveneError`] has said
+/// `UnknownPath` / `TypeMismatch` / `ReadOnly` / `OutOfRange` since R51, and
+/// R1565 gave the last of those the producer's own sentence. The read channel
+/// was the asymmetric one ([[wire-form-read-write-symmetry]]), and a consumer
+/// paid for it: sprag publishes three distinct facts about a parametric family
+/// (a member with an argument, a member with an **empty** argument, and a bare
+/// stem that is no address at all) and could deliver only two, because two of
+/// its three answers were the same bytes.
+///
+/// # Which arm to answer
+///
+/// * [`UnknownPath`](Self::UnknownPath) — the schema does not declare this
+///   path. The transport's declaration gate normally answers this before the
+///   surface is consulted at all (R1637), so a surface reaches for it only when
+///   it is driven directly, in-process, past that gate.
+/// * [`NoSuchMember`](Self::NoSuchMember) — the path belongs to a declared
+///   family and the argument names nothing that exists. **Carries the
+///   surface's own sentence**, for the reason
+///   [`InterveneError::OutOfRange`] does: the variant says a member is missing
+///   and cannot say which members are present, so a client holding it alone
+///   knows only that it guessed wrong. Build it with
+///   [`no_such_member`](Self::no_such_member).
+/// * [`QueryTypeMismatch`](Self::QueryTypeMismatch) — the path belongs to a
+///   declared family and the argument is not the declared type (`width.zzz`
+///   where `col` is an int, and — since R1667 — `width.` where it is empty).
+///   No sentence: `$schema` publishes the argument's type, so a sentence here
+///   would restate what the client can already read.
+/// * [`Unavailable`](Self::Unavailable) — the path is declared, the call is
+///   well formed, and **this instance** cannot answer it: a `TextField` with no
+///   `TextEditState` attached has a `caret`, in the schema and not in the
+///   object. The read peer of [`InvokeError::Rejected`], and it exists
+///   for the same reason: the caller did nothing wrong, so telling it to fix
+///   its call sends it to rewrite something that was already right.
+///
+/// Answering a **value** is still available for "that position holds nothing":
+/// [`IntrospectValue::Null`] is an `Ok`, and the surfaces routed through
+/// `at_index` use it. This enum is for the cases where there is no value to
+/// give, not for empty ones — and `text_field`'s doc has drawn exactly that
+/// line since R56.1.f.3, promising clients they could "distinguish *no state
+/// bound* from *no selection*". Both were `None` when it said so.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ReadRefusal {
+    /// The schema does not declare this path.
+    UnknownPath,
+    /// A declared family, and the argument addresses nothing. Carries the
+    /// surface's sentence naming what would have worked.
+    NoSuchMember(RefusalReason),
+    /// A declared family, and the argument is not the declared type — including
+    /// an argument that is **empty** (`width.`), which R1667 made the surface's
+    /// call rather than the matcher's. See [`SchemaField::addresses`].
+    QueryTypeMismatch,
+    /// Declared, well addressed, and unanswerable by this instance — it holds
+    /// no state to read. Carries the surface's sentence, because "which state,
+    /// and how would a client attach it" is the whole of what makes this
+    /// actionable. Build it with [`unavailable`](Self::unavailable).
+    Unavailable(RefusalReason),
+}
+
+impl ReadRefusal {
+    /// Refuse a read because the argument addresses no existing member,
+    /// **stating what does**.
+    ///
+    /// ```
+    /// # use pinion_core::external::ReadRefusal;
+    /// let err = ReadRefusal::no_such_member(format!("row {} is outside 0..{}", 99, 12));
+    /// assert!(err.reason().is_some_and(|why| why.as_str().contains("0..12")));
+    /// ```
+    #[must_use]
+    pub fn no_such_member(reason: impl Into<RefusalReason>) -> Self {
+        Self::NoSuchMember(reason.into())
+    }
+
+    /// Refuse a read because this instance holds nothing to read it from,
+    /// **saying what is missing**.
+    ///
+    /// ```
+    /// # use pinion_core::external::ReadRefusal;
+    /// let err = ReadRefusal::unavailable("no TextEditState is attached to this field");
+    /// assert!(err.reason().is_some_and(|why| why.as_str().contains("TextEditState")));
+    /// ```
+    #[must_use]
+    pub fn unavailable(reason: impl Into<RefusalReason>) -> Self {
+        Self::Unavailable(reason.into())
+    }
+
+    /// The surface's sentence, when this is a refusal that carries one.
+    ///
+    /// `None` for the two arms whose variant fully determines their meaning —
+    /// the same split [`InterveneError::reason`] makes, and for the same
+    /// reason: a sentence beside a self-explaining variant is prose a client
+    /// would have to parse to learn nothing.
+    #[must_use]
+    pub fn reason(&self) -> Option<&RefusalReason> {
+        match self {
+            Self::NoSuchMember(reason) | Self::Unavailable(reason) => Some(reason),
+            _ => None,
+        }
+    }
+}
+
 /// Failure modes for [`ExternalIntrospect::intervene`].
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1802,8 +1932,16 @@ pub trait ExternalIntrospect {
     /// Schema of introspectable state.
     fn schema(&self) -> IntrospectSchema;
 
-    /// Read the value at `path`. `None` when `path` is not in the
-    /// schema.
+    /// Read the value at `path`, or say why not.
+    ///
+    /// R1667 §5.15 — this answered `Option<IntrospectValue>` until the read
+    /// channel was given a reason to state. See [`ReadRefusal`] for which arm a
+    /// surface owes each caller, and for the three facts that used to arrive as
+    /// one word.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReadRefusal`] per the variants there.
     ///
     /// # A read CAN take an argument: encode it in the path
     ///
@@ -1822,14 +1960,24 @@ pub trait ExternalIntrospect {
     /// An impl serves one by matching the prefix before its exact-path arm:
     ///
     /// ```ignore
-    /// fn query(&self, path: &str) -> Option<IntrospectValue> {
+    /// fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
     ///     if let Some(rest) = path.strip_prefix("width.") {
-    ///         let col: usize = rest.parse().ok()?;
-    ///         return Some(IntrospectValue::Int(self.width(col).into()));
+    ///         let col: usize = rest.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?;
+    ///         if col >= self.col_count() {
+    ///             return Err(ReadRefusal::no_such_member(
+    ///                 format!("column {col} is outside 0..{}", self.col_count()),
+    ///             ));
+    ///         }
+    ///         return Ok(IntrospectValue::Int(self.width(col).into()));
     ///     }
-    ///     match path { /* argument-free paths */ _ => None }
+    ///     match path { /* argument-free paths */ _ => Err(ReadRefusal::UnknownPath) }
     /// }
     /// ```
+    ///
+    /// The two refusals in that body are the point of the signature: before
+    /// R1667 both were `None`, so a client that asked for `width.zzz` and a
+    /// client that asked for `width.999` were told the same thing, and neither
+    /// was told the truth.
     ///
     /// Declare the family in [`schema`](Self::schema) with
     /// [`SchemaField::parametric`], whose path is the wire TEMPLATE
@@ -1869,23 +2017,29 @@ pub trait ExternalIntrospect {
     /// (matching takes the first trailing literal, so `voice.x.gain.gain` matches
     /// nothing), and a template's final argument swallows the rest, so
     /// `cell.<row>.<col>` reads `cell.1.2.3` as `col = "2.3"` — owned by the
-    /// field, malformed, `None` from `query`. This is safe today only because
-    /// every argument in the workspace is an integer index or a dot-free id. A
-    /// family keyed by a filename or a dotted path needs an escaping rule first;
-    /// declaring one without it would be a promise the wire cannot keep.
+    /// field, malformed, [`ReadRefusal::QueryTypeMismatch`] from `query`. This is
+    /// safe today only because every argument in the workspace is an integer
+    /// index or a dot-free id. A family keyed by a filename or a dotted path
+    /// needs an escaping rule first; declaring one without it would be a promise
+    /// the wire cannot keep.
     ///
     /// **Out-of-range has two spellings**, both honest and both in the tree:
-    /// `None` — "no such path" — from the surfaces that guard the index
-    /// explicitly (`column_widths`, `listbox`, `radio_group`,
-    /// `disclosure_group`, `table`, `file_browser`, `row_style`, and any other
-    /// that bounds before reading), and `Some(Null)` — "that position holds
-    /// nothing" — from everything routed through `at_index`, which `map_or`s a
-    /// missing element to `Null` (`tree_nav`, `tree_filter`, `grid_sort`,
-    /// `view_order`, `group_order`, `row_search`, …). Treat neither list as
-    /// exhaustive; the rule, not the roster, is what holds: **neither
-    /// fabricates**, and that is the property
-    /// `r1353_declared_domains_hold_on_real_widgets` enforces. Unifying the two
-    /// spellings is a separate call nobody has needed to make.
+    /// [`ReadRefusal::NoSuchMember`] — "there is no such member, and here is the
+    /// range that has some" — from the surfaces that guard the index explicitly
+    /// (`column_widths`, `listbox`, `radio_group`, `disclosure_group`, `table`,
+    /// `file_browser`, `row_style`, and any other that bounds before reading),
+    /// and `Ok(Null)` — "that position holds nothing" — from everything routed
+    /// through `at_index`, which `map_or`s a missing element to `Null`
+    /// (`tree_nav`, `tree_filter`, `grid_sort`, `view_order`, `group_order`,
+    /// `row_search`, …). Treat neither list as exhaustive; the rule, not the
+    /// roster, is what holds: **neither fabricates**, and that is the property
+    /// `r1353_declared_domains_hold_on_real_widgets` enforces.
+    ///
+    /// R1667 did not unify them, and the choice is now a stated one rather than
+    /// an artifact: before, both spellings were `Option` arms and the difference
+    /// between "absent" and "empty" was only visible to a reader of the impl.
+    /// A refusal and a `Null` are now different *types* of answer, so a surface
+    /// picks its spelling on the wire, deliberately, at each site.
     ///
     /// # Why this matters more than it looks
     ///
@@ -1902,7 +2056,7 @@ pub trait ExternalIntrospect {
     ///
     /// So: a read that needs an argument is a `query` with the argument in the
     /// path. It is a read, and it stays free.
-    fn query(&self, path: &str) -> Option<IntrospectValue>;
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal>;
 
     /// Write `value` to `path`. Errors when the path is unknown, the
     /// value does not match the slot type, or the slot is read-only.
@@ -1980,7 +2134,7 @@ pub fn selection_copy_payload(
         return None;
     }
     match intro.query(query_field) {
-        Some(IntrospectValue::Text(payload)) => Some(payload),
+        Ok(IntrospectValue::Text(payload)) => Some(payload),
         _ => None,
     }
 }
@@ -2966,8 +3120,18 @@ pub trait QuerySource {
     /// type), kept in lockstep with [`introspect_query`](Self::introspect_query).
     fn introspect_schema(&self) -> IntrospectSchema;
 
-    /// The live value at `path`, or `None` for an undeclared path.
-    fn introspect_query(&self, path: &str) -> Option<IntrospectValue>;
+    /// The live value at `path`, or why not.
+    ///
+    /// R1667 — this answered `Option` and reached the wire through
+    /// [`QueryOnlyIntrospect`], so every surface built on it inherited the read
+    /// channel's one-bit refusal. Widening the adapter alone would not have
+    /// helped: the adapter would have had to *invent* a reason, which is the
+    /// same defect wearing the fix's clothes.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`ReadRefusal`] per the variants there.
+    fn introspect_query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal>;
 }
 
 /// R847 §5.15 §5.40 — emit the [`External`] skeleton shared by every
@@ -3212,7 +3376,7 @@ impl<S: QuerySource + core::fmt::Debug + 'static> ExternalIntrospect for QueryOn
         self.source.introspect_schema()
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         self.source.introspect_query(path)
     }
 
@@ -3325,10 +3489,10 @@ impl ExternalIntrospect for CountedExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "count" => Some(IntrospectValue::Int(self.count)),
-            _ => None,
+            "count" => Ok(IntrospectValue::Int(self.count)),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -3400,10 +3564,10 @@ mod tests {
         };
         assert_eq!(width.path, "width.<col>", "the declared wire template");
         assert!(
-            ext.query("width").is_none(),
+            ext.query("width").is_err(),
             "a parametric stem must not answer bare",
         );
-        assert!(ext.query("width.0").is_some(), "…but answers with an arg");
+        assert!(ext.query("width.0").is_ok(), "…but answers with an arg");
 
         // Direction 2: the declared DOMAIN must be true. `IndexOf("cols")`
         // promises that `cols` is readable and that exactly `0..cols` answer —
@@ -3411,18 +3575,18 @@ mod tests {
         let ArgDomain::IndexOf(count_path) = arg.domain else {
             panic!("width's domain is IndexOf");
         };
-        let Some(IntrospectValue::Int(cols)) = ext.query(count_path) else {
+        let Ok(IntrospectValue::Int(cols)) = ext.query(count_path) else {
             panic!("the declared count_path {count_path:?} must itself be readable");
         };
         assert_eq!(cols, 3);
         for col in 0..cols {
             assert!(
-                ext.query(&format!("width.{col}")).is_some(),
+                ext.query(&format!("width.{col}")).is_ok(),
                 "every index below the declared count answers ({col})",
             );
         }
         assert!(
-            ext.query(&format!("width.{cols}")).is_none(),
+            ext.query(&format!("width.{cols}")).is_err(),
             "and the first index at/above it does NOT — an out-of-range read that \
              answered would be the fabricated value R1353 removed",
         );
@@ -3438,7 +3602,7 @@ mod tests {
                 .args
                 .is_empty(),
         );
-        assert!(ext.query("total").is_some(), "a scalar answers bare");
+        assert!(ext.query("total").is_ok(), "a scalar answers bare");
     }
 
     /// R1501 — a binding's `External` wrapper, reduced to what the audit needs:
@@ -3451,7 +3615,7 @@ mod tests {
         fn schema(&self) -> IntrospectSchema {
             crate::widgets::column_layout::ColumnLayout::SCHEMA
         }
-        fn query(&self, path: &str) -> Option<IntrospectValue> {
+        fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
             self.0.query(path)
         }
         fn intervene(&mut self, path: &str, value: IntrospectValue) -> Result<(), InterveneError> {
@@ -3521,7 +3685,7 @@ mod tests {
                     // The promise: `count_path` is itself readable, and it is an
                     // int. A domain pointing at a path that does not exist is a
                     // dead end a client cannot follow.
-                    let Some(IntrospectValue::Int(n)) = ext.query(count_path) else {
+                    let Ok(IntrospectValue::Int(n)) = ext.query(count_path) else {
                         panic!(
                             "{label}: {:?} declares domain IndexOf({count_path:?}), \
                              but that path does not read as an int",
@@ -3533,24 +3697,30 @@ mod tests {
                     if f.args.len() == 1 && n > 0 {
                         let inside = f.path.replace(&format!("<{}>", a.name), "0");
                         assert!(
-                            ext.query(&inside).is_some(),
+                            ext.query(&inside).is_ok(),
                             "{label}: {inside:?} is inside the declared domain but \
                              does not answer",
                         );
                         // Outside the declared domain, a read must not produce a
-                        // VALUE. Two spellings of that are already in the tree and
-                        // both are honest: `None` from the surfaces that guard the
-                        // index explicitly, and `Some(Null)` from everything routed
+                        // VALUE. Several spellings of that are in the tree and all
+                        // are honest: a refusal from the surfaces that guard the
+                        // index explicitly, and `Ok(Null)` from everything routed
                         // through `at_index`. (See `ExternalIntrospect::query`; the
                         // rosters there are examples, not an exhaustive list.) The
-                        // invariant that matters is neither of those; it is that
+                        // invariant that matters is none of those; it is that
                         // nothing plausible comes back. `width.999` answering `40`
                         // — a real-looking width for a column that does not exist —
                         // is what R1353 removed, and it is what this catches.
+                        //
+                        // R1667 — the refusal side is now a family of words rather
+                        // than one, so this matches on `Err(_)` instead of naming
+                        // an arm. Naming one would make the census a statement
+                        // about WHICH refusal each surface picked, which is the
+                        // surface's call and not this invariant's business.
                         let outside = f.path.replace(&format!("<{}>", a.name), &n.to_string());
                         let answer = ext.query(&outside);
                         assert!(
-                            matches!(answer, None | Some(IntrospectValue::Null)),
+                            matches!(answer, Err(_) | Ok(IntrospectValue::Null)),
                             "{label}: {outside:?} is OUTSIDE the declared domain \
                              (count={n}) yet answered {answer:?} — a client that \
                              trusts the declaration cannot tell that apart from a \
@@ -3830,8 +4000,9 @@ mod tests {
         );
         assert!(!f.addresses("voice.3"), "the trailing literal is required");
         assert!(
-            !f.addresses("voice..gain"),
-            "an empty argument is not a member"
+            f.addresses("voice..gain"),
+            "R1667 — an EMPTY argument is a member with an empty argument; \
+             emptiness is well-formedness, and well-formedness is query's job",
         );
         assert!(!f.addresses("voice.3.pan"), "a DIFFERENT field's template");
     }
@@ -3885,16 +4056,16 @@ mod tests {
         );
         assert!(
             !two.addresses("cell.1"),
-            "a missing argument is not a member"
+            "a MISSING argument is not a member — the template's trailing \
+             literal never matched, so this is a different address, not a \
+             malformed one",
         );
-        assert!(
-            !two.addresses("cell.1."),
-            "an empty final argument is not a member"
-        );
-        assert!(
-            !two.addresses("cell..2"),
-            "an empty leading argument is not a member"
-        );
+        // R1667 — an argument that is present and empty is the field's, and the
+        // parse stays unambiguous either way: greedy-to-the-next-literal gives
+        // each of these exactly one reading.
+        assert!(two.addresses("cell.1."), "col = \"\"");
+        assert!(two.addresses("cell..2"), "row = \"\"");
+        assert!(two.addresses("cell.."), "both empty");
     }
 
     /// R1353 — `addresses` is the membership question, so a parametric family is
@@ -3919,8 +4090,9 @@ mod tests {
             "the bare stem addresses nothing — it is not a readable path",
         );
         assert!(
-            !param.addresses("width."),
-            "an empty argument is not a member",
+            param.addresses("width."),
+            "R1667 — the declared family owns its empty member; whether that \
+             member has a value is `query`'s answer, not the matcher's",
         );
         assert!(
             !param.addresses("widths"),
@@ -4126,8 +4298,8 @@ mod tests {
     fn counted_opts_in_to_introspection() {
         let counted = CountedExternal::new(7);
         let introspect = counted.introspect().expect("opt-in declared");
-        assert_eq!(introspect.query("count"), Some(IntrospectValue::Int(7)),);
-        assert!(introspect.query("missing").is_none());
+        assert_eq!(introspect.query("count"), Ok(IntrospectValue::Int(7)),);
+        assert!(introspect.query("missing").is_err());
     }
 
     /// R1638 — an ACTION's path is exact however many arguments it declares.
@@ -4158,7 +4330,7 @@ mod tests {
             const { &[SchemaArg::open("row", "int")] },
         );
         assert!(real.addresses("cell.3"));
-        assert!(!real.addresses("cell."));
+        assert!(real.addresses("cell."), "R1667 — its empty member, too");
     }
 
     #[test]
@@ -4326,8 +4498,8 @@ mod tests {
             fn schema(&self) -> IntrospectSchema {
                 IntrospectSchema::new(const { &[] })
             }
-            fn query(&self, _: &str) -> Option<IntrospectValue> {
-                None
+            fn query(&self, _: &str) -> Result<IntrospectValue, ReadRefusal> {
+                Err(ReadRefusal::UnknownPath)
             }
             fn intervene(&mut self, _: &str, _: IntrospectValue) -> Result<(), InterveneError> {
                 Err(InterveneError::UnknownPath)
@@ -4456,7 +4628,7 @@ mod selection_copy_payload_tests {
     //! clipboard, so every path — including `AltGr` safety — is asserted without
     //! racing the real OS clipboard.
     use super::{
-        ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue,
+        ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, ReadRefusal,
         selection_copy_payload,
     };
     use crate::input::Modifiers;
@@ -4470,11 +4642,14 @@ mod selection_copy_payload_tests {
         fn schema(&self) -> IntrospectSchema {
             IntrospectSchema::new(&[])
         }
-        fn query(&self, path: &str) -> Option<IntrospectValue> {
+        fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
             match path {
-                "sel" => self.0.map(|s| IntrospectValue::Text(s.to_owned())),
-                "count" => Some(IntrospectValue::Int(3)),
-                _ => None,
+                "sel" => self
+                    .0
+                    .map(|s| IntrospectValue::Text(s.to_owned()))
+                    .ok_or(ReadRefusal::UnknownPath),
+                "count" => Ok(IntrospectValue::Int(3)),
+                _ => Err(ReadRefusal::UnknownPath),
             }
         }
         fn intervene(&mut self, _: &str, _: IntrospectValue) -> Result<(), InterveneError> {

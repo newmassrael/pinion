@@ -144,6 +144,9 @@ fn catalog() -> Vec<(&'static str, Box<dyn pinion_core::external::External>)> {
         datepicker::DatePickerExternal,
         disclosure::DisclosureExternal,
         disclosure_group::DisclosureGroupExternal,
+        field_bytes::{
+            ByteExtent, ByteMap, ByteMapExternal, ByteMapState, ByteSource, FieldSpan, SourceId,
+        },
         file_browser::{DirectoryExternal, DirectoryState},
         grid_sort::{GridSortExternal, GridSortState},
         group_order::{GroupOrderExternal, GroupOrderState},
@@ -220,6 +223,24 @@ fn catalog() -> Vec<(&'static str, Box<dyn pinion_core::external::External>)> {
             )))),
         ),
         ("DisclosureExternal", ext_scene(DisclosureExternal::new())),
+        // R1667 — registered here in the round after the one that built it.
+        // R1663 landed `ByteMapExternal` and this gate has been red ever since;
+        // the pushes that would have reported it are still local, so the only
+        // thing that found it was running the suite.
+        (
+            "ByteMapExternal",
+            ext_scene(ByteMapExternal::new(Rc::new(ByteMapState::new(
+                ByteMap::build(
+                    vec![ByteSource::new("frame", 8)],
+                    vec![FieldSpan::bytes(
+                        "hdr",
+                        SourceId::new(0),
+                        ByteExtent::new(0, 4),
+                    )],
+                )
+                .expect("a one-span dissection of an 8-byte source"),
+            )))),
+        ),
         (
             "DisclosureGroupExternal",
             ext_scene(DisclosureGroupExternal::new(3)),

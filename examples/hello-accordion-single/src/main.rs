@@ -243,12 +243,12 @@ impl WidgetCore for AccordionSingleView {
         // sees exactly the value the view fn renders.
         for (i, slot) in out.iter_mut().enumerate() {
             let state = match intro.query(&format!("state.{i}")) {
-                Some(IntrospectValue::Text(name)) => DisclosureState::from_name_or_default(&name),
+                Ok(IntrospectValue::Text(name)) => DisclosureState::from_name_or_default(&name),
                 _ => DisclosureState::Idle,
             };
             let expanded = matches!(
                 intro.query(&format!("expanded.{i}")),
-                Some(IntrospectValue::Bool(true)),
+                Ok(IntrospectValue::Bool(true)),
             );
             *slot = (state, expanded);
         }
@@ -444,7 +444,7 @@ mod tests {
             return None;
         };
         match node.handle.introspect()?.query("expanded_index") {
-            Some(IntrospectValue::Int(i)) => Some(i),
+            Ok(IntrospectValue::Int(i)) => Some(i),
             _ => None,
         }
     }

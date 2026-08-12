@@ -66,8 +66,8 @@
 use crate::WidgetStateName;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaArg, SchemaField,
-    ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaArg,
+    SchemaField, ThreadOwnership,
 };
 use crate::intent::Intent;
 use crate::widgets::listbox_item::{ListBoxItem, ListboxItemEvent, ListboxItemState};
@@ -637,24 +637,24 @@ impl ExternalIntrospect for ListBoxExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "count" => Some(IntrospectValue::Int(
+            "count" => Ok(IntrospectValue::Int(
                 i64::try_from(self.count()).expect("ListBox count must fit in i64"),
             )),
             // R51.98 §5.38 — mode metadata exposed to AI clients so a
             // mode-agnostic introspector can pick the right path
             // (`selected.<i>` per-row vs `selected_index` single).
-            "multiselect" => Some(IntrospectValue::Bool(self.is_multiselect())),
+            "multiselect" => Ok(IntrospectValue::Bool(self.is_multiselect())),
             "selected_index" => {
                 if self.is_multiselect() {
                     // R51.98 §5.38 — multi-mode has no single selected
                     // index; introspect returns Null rather than
                     // panicking like the Rust API. RPC clients use
                     // `selected.<i>` for per-row state.
-                    Some(IntrospectValue::Null)
+                    Ok(IntrospectValue::Null)
                 } else {
-                    Some(match self.selected_index() {
+                    Ok(match self.selected_index() {
                         Some(idx) => {
                             IntrospectValue::Int(i64::try_from(idx).expect("index fits in i64"))
                         }
@@ -662,26 +662,36 @@ impl ExternalIntrospect for ListBoxExternal {
                     })
                 }
             }
-            "focused_index" => Some(match self.focused_index() {
+            "focused_index" => Ok(match self.focused_index() {
                 Some(idx) => IntrospectValue::Int(i64::try_from(idx).expect("index fits in i64")),
                 None => IntrospectValue::Null,
             }),
             _ => {
                 if let Some(idx_str) = path.strip_prefix("state.") {
-                    let idx: usize = idx_str.parse().ok()?;
+                    let idx: usize = idx_str
+                        .parse()
+                        .map_err(|_| ReadRefusal::QueryTypeMismatch)?;
                     if idx >= self.count() {
-                        return None;
+                        return Err(ReadRefusal::no_such_member(format!(
+                            "item {idx} is outside 0..{}",
+                            self.count()
+                        )));
                     }
-                    return Some(IntrospectValue::Text(self.state(idx).as_name().to_string()));
+                    return Ok(IntrospectValue::Text(self.state(idx).as_name().to_string()));
                 }
                 if let Some(idx_str) = path.strip_prefix("selected.") {
-                    let idx: usize = idx_str.parse().ok()?;
+                    let idx: usize = idx_str
+                        .parse()
+                        .map_err(|_| ReadRefusal::QueryTypeMismatch)?;
                     if idx >= self.count() {
-                        return None;
+                        return Err(ReadRefusal::no_such_member(format!(
+                            "item {idx} is outside 0..{}",
+                            self.count()
+                        )));
                     }
-                    return Some(IntrospectValue::Bool(self.is_selected(idx)));
+                    return Ok(IntrospectValue::Bool(self.is_selected(idx)));
                 }
-                None
+                Err(ReadRefusal::UnknownPath)
             }
         }
     }
@@ -974,9 +984,9 @@ mod tests {
     #[test]
     fn external_query_count_and_indices() {
         let mut lx = ListBoxExternal::new(3);
-        assert_eq!(lx.query("count"), Some(IntrospectValue::Int(3)));
-        assert_eq!(lx.query("selected_index"), Some(IntrospectValue::Null));
-        assert_eq!(lx.query("focused_index"), Some(IntrospectValue::Null));
+        assert_eq!(lx.query("count"), Ok(IntrospectValue::Int(3)));
+        assert_eq!(lx.query("selected_index"), Ok(IntrospectValue::Null));
+        assert_eq!(lx.query("focused_index"), Ok(IntrospectValue::Null));
         // Activate index 1.
         for ev in [
             ListboxItemEvent::PointerEnter,
@@ -985,8 +995,8 @@ mod tests {
         ] {
             lx.send(1, ev);
         }
-        assert_eq!(lx.query("selected_index"), Some(IntrospectValue::Int(1)));
-        assert_eq!(lx.query("focused_index"), Some(IntrospectValue::Int(1)));
+        assert_eq!(lx.query("selected_index"), Ok(IntrospectValue::Int(1)));
+        assert_eq!(lx.query("focused_index"), Ok(IntrospectValue::Int(1)));
     }
 
     #[test]
@@ -995,13 +1005,12 @@ mod tests {
         lx.send(0, ListboxItemEvent::PointerEnter);
         assert_eq!(
             lx.query("state.0"),
-            Some(IntrospectValue::Text("Hover".to_string()))
+            Ok(IntrospectValue::Text("Hover".to_string()))
         );
-        assert_eq!(lx.query("selected.0"), Some(IntrospectValue::Bool(false)));
-        assert_eq!(
-            lx.query("state.5"),
-            None,
-            "out-of-range per-item query returns None"
+        assert_eq!(lx.query("selected.0"), Ok(IntrospectValue::Bool(false)));
+        assert!(
+            matches!(lx.query("state.5"), Err(ReadRefusal::NoSuchMember(_))),
+            "R1667 - the family is declared and this argument addresses nothing"
         );
     }
 
@@ -1335,13 +1344,10 @@ mod tests {
         let single = ListBoxExternal::new(3);
         assert_eq!(
             single.query("multiselect"),
-            Some(IntrospectValue::Bool(false))
+            Ok(IntrospectValue::Bool(false))
         );
         let multi = ListBoxExternal::with_multiselect(3);
-        assert_eq!(
-            multi.query("multiselect"),
-            Some(IntrospectValue::Bool(true))
-        );
+        assert_eq!(multi.query("multiselect"), Ok(IntrospectValue::Bool(true)));
     }
 
     #[test]
@@ -1356,9 +1362,9 @@ mod tests {
         }
         // selected_index returns Null in multi-mode even when items
         // are selected — there is no single "the" selected index.
-        assert_eq!(lx.query("selected_index"), Some(IntrospectValue::Null));
+        assert_eq!(lx.query("selected_index"), Ok(IntrospectValue::Null));
         // Per-row selection is still queryable.
-        assert_eq!(lx.query("selected.1"), Some(IntrospectValue::Bool(true)));
+        assert_eq!(lx.query("selected.1"), Ok(IntrospectValue::Bool(true)));
     }
 
     #[test]

@@ -46,7 +46,8 @@
 use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use pinion_core::scene::{ContainerNode, Rect, TextGridNode, TextNode};
 use pinion_core::style::{BoxStyle, CursorHint, LayoutStyle, Size, TextStyle};
@@ -302,7 +303,7 @@ fn read_oracle(scene: &Scene) -> (Option<HyperlinkId>, Option<HyperlinkId>) {
         return (None, None);
     };
     let index = |name: &str| match intro.query(name) {
-        Some(IntrospectValue::Int(i)) => u32::try_from(i).ok().map(HyperlinkId),
+        Ok(IntrospectValue::Int(i)) => u32::try_from(i).ok().map(HyperlinkId),
         _ => None,
     };
     (index("hover_index"), index("activated_index"))
@@ -417,42 +418,36 @@ impl ExternalIntrospect for HyperlinkOracle {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         let int = |n: usize| IntrospectValue::Int(i64::try_from(n).unwrap_or(0));
         match path {
-            "link_count" => Some(int(LINKS.len())),
-            "hover_index" => Some(
-                self.hovered
-                    .map_or(IntrospectValue::Null, |h| int(h.0 as usize)),
-            ),
-            "hover_uri" => Some(
-                self.hovered
-                    .and_then(|h| self.uri_of(h))
-                    .map_or(IntrospectValue::Null, IntrospectValue::Text),
-            ),
-            "hover_id" => Some(
-                self.hovered
-                    .and_then(|h| self.buffer.hyperlink(h))
-                    .and_then(|h| h.id.clone())
-                    .map_or(IntrospectValue::Null, IntrospectValue::Text),
-            ),
-            "hover_group_size" => Some(
-                self.hovered
-                    .map_or(IntrospectValue::Null, |h| int(group_size(h.0))),
-            ),
-            "activated_index" => Some(
-                self.activated
-                    .as_ref()
-                    .map_or(IntrospectValue::Null, |(h, _)| int(h.0 as usize)),
-            ),
-            "activated_uri" => Some(
-                self.activated
-                    .as_ref()
-                    .map_or(IntrospectValue::Null, |(_, uri)| {
-                        IntrospectValue::Text(uri.clone())
-                    }),
-            ),
-            _ => None,
+            "link_count" => Ok(int(LINKS.len())),
+            "hover_index" => Ok(self
+                .hovered
+                .map_or(IntrospectValue::Null, |h| int(h.0 as usize))),
+            "hover_uri" => Ok(self
+                .hovered
+                .and_then(|h| self.uri_of(h))
+                .map_or(IntrospectValue::Null, IntrospectValue::Text)),
+            "hover_id" => Ok(self
+                .hovered
+                .and_then(|h| self.buffer.hyperlink(h))
+                .and_then(|h| h.id.clone())
+                .map_or(IntrospectValue::Null, IntrospectValue::Text)),
+            "hover_group_size" => Ok(self
+                .hovered
+                .map_or(IntrospectValue::Null, |h| int(group_size(h.0)))),
+            "activated_index" => Ok(self
+                .activated
+                .as_ref()
+                .map_or(IntrospectValue::Null, |(h, _)| int(h.0 as usize))),
+            "activated_uri" => Ok(self
+                .activated
+                .as_ref()
+                .map_or(IntrospectValue::Null, |(_, uri)| {
+                    IntrospectValue::Text(uri.clone())
+                })),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -660,22 +655,19 @@ mod tests {
     #[test]
     fn oracle_resolves_a_cell_to_its_link_and_reports_it() {
         let mut o = HyperlinkOracle::new();
-        assert_eq!(o.query("link_count"), Some(IntrospectValue::Int(3)));
-        assert_eq!(o.query("hover_index"), Some(IntrospectValue::Null));
+        assert_eq!(o.query("link_count"), Ok(IntrospectValue::Int(3)));
+        assert_eq!(o.query("hover_index"), Ok(IntrospectValue::Null));
         // Hover the doc link (row 0 col 6 = link 0).
         assert_eq!(o.link_at(6, 0), Some(HyperlinkId(0)));
         o.hovered = o.link_at(6, 0);
-        assert_eq!(o.query("hover_index"), Some(IntrospectValue::Int(0)));
+        assert_eq!(o.query("hover_index"), Ok(IntrospectValue::Int(0)));
         assert_eq!(
             o.query("hover_uri"),
-            Some(IntrospectValue::Text(
+            Ok(IntrospectValue::Text(
                 "https://doc.rust-lang.org/book".into()
             ))
         );
-        assert_eq!(
-            o.query("hover_id"),
-            Some(IntrospectValue::Text("doc".into()))
-        );
+        assert_eq!(o.query("hover_id"), Ok(IntrospectValue::Text("doc".into())));
         // A non-link cell resolves to nothing.
         assert_eq!(o.link_at(0, 0), None);
     }
@@ -690,21 +682,21 @@ mod tests {
                 "file:///home/user/src/main.rs".into()
             ))
         );
-        assert_eq!(o.query("activated_index"), Some(IntrospectValue::Int(1)));
+        assert_eq!(o.query("activated_index"), Ok(IntrospectValue::Int(1)));
         // A press over a hovered link activates it.
         o.hovered = Some(HyperlinkId(2));
         o.invoke("send", IntrospectValue::Text("PointerDown".into()))
             .unwrap();
         assert_eq!(
             o.query("activated_uri"),
-            Some(IntrospectValue::Text(
+            Ok(IntrospectValue::Text(
                 "https://github.com/org/repo/issues/42".into()
             ))
         );
         // A leave clears the hover.
         o.invoke("send", IntrospectValue::Text("PointerLeave".into()))
             .unwrap();
-        assert_eq!(o.query("hover_index"), Some(IntrospectValue::Null));
+        assert_eq!(o.query("hover_index"), Ok(IntrospectValue::Null));
         // Guards.
         assert_refused_saying(
             &o.invoke("activate", IntrospectValue::Int(9)),

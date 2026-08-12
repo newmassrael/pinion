@@ -57,7 +57,7 @@ use std::rc::Rc;
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
 use pinion_core::external::{
     External, ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
-    SchemaField, forward_intents,
+    ReadRefusal, SchemaField, forward_intents,
 };
 use pinion_core::intent::Intent;
 use pinion_core::reactive::Owner;
@@ -242,7 +242,7 @@ impl ExternalIntrospect for VnSaveDemoExternal {
         IntrospectSchema::new(&SCHEMA_FIELDS)
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         self.inner.query(path)
     }
 
@@ -364,9 +364,7 @@ impl WidgetCore for HelloVnTide {
 /// `0` when absent or out of range.
 fn query_u16(intro: &dyn ExternalIntrospect, path: &str) -> u16 {
     match intro.query(path) {
-        Some(IntrospectValue::Int(n)) => {
-            u16::try_from(n.clamp(0, i64::from(u16::MAX))).unwrap_or(0)
-        }
+        Ok(IntrospectValue::Int(n)) => u16::try_from(n.clamp(0, i64::from(u16::MAX))).unwrap_or(0),
         _ => 0,
     }
 }
@@ -375,9 +373,7 @@ fn query_u16(intro: &dyn ExternalIntrospect, path: &str) -> u16 {
 /// `0` when absent or out of range.
 fn query_u32(intro: &dyn ExternalIntrospect, path: &str) -> u32 {
     match intro.query(path) {
-        Some(IntrospectValue::Int(n)) => {
-            u32::try_from(n.clamp(0, i64::from(u32::MAX))).unwrap_or(0)
-        }
+        Ok(IntrospectValue::Int(n)) => u32::try_from(n.clamp(0, i64::from(u32::MAX))).unwrap_or(0),
         _ => 0,
     }
 }

@@ -486,6 +486,7 @@ mod tests {
         node.handle
             .introspect()?
             .query("selected_index")
+            .ok()
             .and_then(|v| match v {
                 IntrospectValue::Int(i) => Some(i),
                 _ => None,

@@ -49,7 +49,7 @@
 
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, ReadRefusal, RepaintOwner, SchemaField, ThreadOwnership,
 };
 
 /// R759 §5.38 — count / dot status-overlay value holder.
@@ -221,14 +221,14 @@ impl ExternalIntrospect for BadgeExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "count" => Some(IntrospectValue::Int(i64::from(self.count))),
-            "max" => Some(IntrospectValue::Int(i64::from(self.max))),
-            "dot" => Some(IntrospectValue::Bool(self.dot)),
-            "label" => Some(IntrospectValue::Text(self.label())),
-            "visible" => Some(IntrospectValue::Bool(self.visible())),
-            _ => None,
+            "count" => Ok(IntrospectValue::Int(i64::from(self.count))),
+            "max" => Ok(IntrospectValue::Int(i64::from(self.max))),
+            "dot" => Ok(IntrospectValue::Bool(self.dot)),
+            "label" => Ok(IntrospectValue::Text(self.label())),
+            "visible" => Ok(IntrospectValue::Bool(self.visible())),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -346,15 +346,15 @@ mod tests {
     #[test]
     fn query_reports_every_axis() {
         let b = BadgeExternal::with_count(150);
-        assert_eq!(b.query("count"), Some(IntrospectValue::Int(150)));
-        assert_eq!(b.query("max"), Some(IntrospectValue::Int(99)));
-        assert_eq!(b.query("dot"), Some(IntrospectValue::Bool(false)));
+        assert_eq!(b.query("count"), Ok(IntrospectValue::Int(150)));
+        assert_eq!(b.query("max"), Ok(IntrospectValue::Int(99)));
+        assert_eq!(b.query("dot"), Ok(IntrospectValue::Bool(false)));
         assert_eq!(
             b.query("label"),
-            Some(IntrospectValue::Text("99+".to_string()))
+            Ok(IntrospectValue::Text("99+".to_string()))
         );
-        assert_eq!(b.query("visible"), Some(IntrospectValue::Bool(true)));
-        assert_eq!(b.query("nope"), None);
+        assert_eq!(b.query("visible"), Ok(IntrospectValue::Bool(true)));
+        assert_eq!(b.query("nope"), Err(ReadRefusal::UnknownPath));
     }
 
     #[test]
@@ -380,7 +380,7 @@ mod tests {
         b.intervene("dot", IntrospectValue::Bool(true))
             .expect("bool accepted");
         assert!(b.dot());
-        assert_eq!(b.query("label"), Some(IntrospectValue::Text(String::new())));
+        assert_eq!(b.query("label"), Ok(IntrospectValue::Text(String::new())));
     }
 
     #[test]
@@ -390,7 +390,7 @@ mod tests {
             .expect("int accepted");
         assert_eq!(
             b.query("label"),
-            Some(IntrospectValue::Text("9+".to_string()))
+            Ok(IntrospectValue::Text("9+".to_string()))
         );
     }
 

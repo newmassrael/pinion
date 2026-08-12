@@ -177,11 +177,11 @@ fn read_state(scene: &Scene) -> (KeySequenceState, u32) {
         return (KeySequenceState::Idle, 0);
     };
     let state = match intro.query("state") {
-        Some(IntrospectValue::Text(name)) => KeySequenceState::from_name_or_default(&name),
+        Ok(IntrospectValue::Text(name)) => KeySequenceState::from_name_or_default(&name),
         _ => KeySequenceState::Idle,
     };
     let revision = match intro.query("revision") {
-        Some(IntrospectValue::Int(n)) => u32::try_from(n.max(0)).unwrap_or(u32::MAX),
+        Ok(IntrospectValue::Int(n)) => u32::try_from(n.max(0)).unwrap_or(u32::MAX),
         _ => 0,
     };
     (state, revision)

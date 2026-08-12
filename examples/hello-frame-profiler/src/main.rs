@@ -404,7 +404,7 @@ fn read_scrub(scene: &Scene) -> f32 {
     scene
         .find_external_with_tag(HIST_SCRUB_TAG)
         .and_then(|node| node.handle.introspect())
-        .and_then(|intro| intro.query("value"))
+        .and_then(|intro| intro.query("value").ok())
         .and_then(|v| v.as_f32())
         .unwrap_or(0.5)
 }

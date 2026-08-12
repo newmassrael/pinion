@@ -1,5 +1,5 @@
 use super::*;
-use pinion_core::external::{CountedExternal, StubExternal};
+use pinion_core::external::{CountedExternal, ReadRefusal, StubExternal};
 use pinion_core::scene::{ExternalNode, SceneNodeKind};
 use serde_json::json;
 
@@ -8647,11 +8647,11 @@ impl pinion_core::external::ExternalIntrospect for EncodedExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "raw" => Some(IntrospectValue::raw(&FRAME)),
-            "dom" => Some(IntrospectValue::json(&FRAME)),
-            _ => None,
+            "raw" => Ok(IntrospectValue::raw(&FRAME)),
+            "dom" => Ok(IntrospectValue::json(&FRAME)),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -8801,8 +8801,10 @@ impl pinion_core::external::ExternalIntrospect for SpeedDriver {
             },
         )
     }
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
-        (path == "speed").then_some(IntrospectValue::Int(self.0))
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
+        (path == "speed")
+            .then_some(IntrospectValue::Int(self.0))
+            .ok_or(ReadRefusal::UnknownPath)
     }
     fn intervene(
         &mut self,
@@ -9633,6 +9635,84 @@ fn r1485_the_reason_word_is_the_one_the_bare_form_sends() {
             "path {path}",
         );
     }
+}
+
+/// R1667 §5.15 §2 #2 — the four ways a read can fail arrive as four different
+/// answers **on the wire**, and the sentence a surface wrote reaches the client
+/// verbatim.
+///
+/// Driven through `dispatch_full` rather than through `query` directly, for the
+/// reason R1619 wrote down after a unit test fed a payload straight to a handler
+/// and passed while the wire was broken: a capability that exists to be read by
+/// an out-of-process agent is proven by bytes, not by a call.
+///
+/// Before this round every row below answered
+/// `{"code":-32602,"data":"UnknownIntrospectPath"}`. A client could not tell
+/// *stop asking, that name is not here* from *the name is right, read `cols`
+/// and pick a real index* — instructions that point opposite ways.
+#[test]
+fn r1667_a_refused_read_says_which_of_four_things_went_wrong() {
+    use pinion_core::widgets::column_widths::{ColumnWidthExternal, ColumnWidths};
+    use std::rc::Rc;
+
+    let state = Rc::new(ColumnWidths::new(vec![100, 200, 300]));
+    let mut scene = Scene::External(ExternalNode::new(Box::new(ColumnWidthExternal::new(
+        Rc::clone(&state),
+    ))));
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+
+    let ask = |scene: &mut Scene, path: &str| {
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/query","params":{{"path":"{path}"}},"id":1}}"#
+        );
+        parse_response(&dispatch_full(scene, &previews, &revision, &req).expect("a response"))
+            .error
+            .expect("this path is refused")
+    };
+
+    // 1. A name the schema does not declare. The transport's own word, and the
+    //    one that has not changed — a client matching it still matches.
+    let e = ask(&mut scene, "/external/nope");
+    assert_eq!(e.code, -32602);
+    assert_eq!(
+        e.data.as_ref().and_then(Value::as_str),
+        Some("UnknownIntrospectPath")
+    );
+
+    // 2. A declared family, and the argument is not the declared type.
+    let e = ask(&mut scene, "/external/width.zzz");
+    assert_eq!(
+        e.code, -32602,
+        "still a bad parameter, still the same category"
+    );
+    assert_eq!(
+        e.data.as_ref().and_then(Value::as_str),
+        Some("QueryTypeMismatch")
+    );
+
+    // 3. R1667 — the EMPTY member. `addresses` used to reject this before the
+    //    surface ever saw it, so a consumer publishing `find.` as "a search for
+    //    nothing" was told its own declared family had no such address.
+    let e = ask(&mut scene, "/external/width.");
+    assert_eq!(
+        e.data.as_ref().and_then(Value::as_str),
+        Some("QueryTypeMismatch"),
+        "the empty argument reaches the surface, which calls it malformed"
+    );
+
+    // 4. A declared family whose index addresses nothing — its own code, and
+    //    the surface's own sentence, naming the range that does have members.
+    let e = ask(&mut scene, "/external/width.999");
+    assert_eq!(
+        e.code, NO_SUCH_MEMBER,
+        "not -32602: the parameters were fine"
+    );
+    assert_eq!(
+        e.data.as_ref().and_then(Value::as_str),
+        Some("column 999 is outside 0..3"),
+        "the producer's sentence, verbatim — this is what tells the client what to ask instead",
+    );
 }
 
 #[test]

@@ -300,12 +300,12 @@ impl RunBackgroundView {
     fn read_state(scene: &Scene) -> (ToggleState, bool) {
         if let Scene::External(node) = scene {
             if let Some(intro) = node.handle.introspect() {
-                let state = if let Some(IntrospectValue::Text(name)) = intro.query("state") {
+                let state = if let Ok(IntrospectValue::Text(name)) = intro.query("state") {
                     ToggleState::from_name_or_default(&name)
                 } else {
                     ToggleState::Idle
                 };
-                let on = matches!(intro.query("value"), Some(IntrospectValue::Bool(true)));
+                let on = matches!(intro.query("value"), Ok(IntrospectValue::Bool(true)));
                 return (state, on);
             }
         }

@@ -138,19 +138,21 @@ fn read_range(scene: &Scene) -> RangeState {
         return RangeState::boot();
     };
     let interaction = match intro.query("state") {
-        Some(IntrospectValue::Text(name)) => SliderState::from_name_or_default(&name),
+        Ok(IntrospectValue::Text(name)) => SliderState::from_name_or_default(&name),
         _ => SliderState::Idle,
     };
     let low = intro
         .query("low")
+        .ok()
         .and_then(|v| v.as_f32())
         .unwrap_or(START_LOW);
     let high = intro
         .query("high")
+        .ok()
         .and_then(|v| v.as_f32())
         .unwrap_or(START_HIGH);
     let active = match intro.query("active") {
-        Some(IntrospectValue::Text(name)) => ThumbId::from_name(&name).unwrap_or(ThumbId::High),
+        Ok(IntrospectValue::Text(name)) => ThumbId::from_name(&name).unwrap_or(ThumbId::High),
         _ => ThumbId::High,
     };
     RangeState {
@@ -352,7 +354,7 @@ impl WidgetCore for RangeView {
         let Some(intro) = node.handle.introspect_mut() else {
             return false;
         };
-        let Some(current) = intro.query(path).and_then(|v| v.as_f32()) else {
+        let Some(current) = intro.query(path).ok().and_then(|v| v.as_f32()) else {
             return false;
         };
         let next = match key {
@@ -453,8 +455,16 @@ mod tests {
             panic!("expected External root");
         };
         let intro = node.handle.introspect().expect("introspect opted in");
-        let low = intro.query("low").and_then(|v| v.as_f32()).expect("low");
-        let high = intro.query("high").and_then(|v| v.as_f32()).expect("high");
+        let low = intro
+            .query("low")
+            .ok()
+            .and_then(|v| v.as_f32())
+            .expect("low");
+        let high = intro
+            .query("high")
+            .ok()
+            .and_then(|v| v.as_f32())
+            .expect("high");
         (low, high)
     }
 

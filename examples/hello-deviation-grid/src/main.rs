@@ -43,7 +43,8 @@ use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_chart::{ColorScale, contrast_ratio, readable_ink};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{Border, BoxStyle, Color, LayoutStyle, Size, TextStyle};
@@ -312,16 +313,16 @@ impl ExternalIntrospect for DeviationOracle {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "rows" => Some(IntrospectValue::Int(i64::from(ROWS_U32))),
-            "cols" => Some(IntrospectValue::Int(i64::from(COLS_U32))),
-            "min" => Some(IntrospectValue::Float(MIN_DEV)),
-            "mid" => Some(IntrospectValue::Float(MID_DEV)),
-            "max" => Some(IntrospectValue::Float(MAX_DEV)),
-            "neutral_hex" => Some(IntrospectValue::Text(hex(self.palette.neutral()))),
-            "min_contrast" => Some(IntrospectValue::Float(f64::from(self.min_contrast()))),
-            _ => None,
+            "rows" => Ok(IntrospectValue::Int(i64::from(ROWS_U32))),
+            "cols" => Ok(IntrospectValue::Int(i64::from(COLS_U32))),
+            "min" => Ok(IntrospectValue::Float(MIN_DEV)),
+            "mid" => Ok(IntrospectValue::Float(MID_DEV)),
+            "max" => Ok(IntrospectValue::Float(MAX_DEV)),
+            "neutral_hex" => Ok(IntrospectValue::Text(hex(self.palette.neutral()))),
+            "min_contrast" => Ok(IntrospectValue::Float(f64::from(self.min_contrast()))),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 
@@ -386,7 +387,7 @@ fn read_oracle(scene: &Scene) -> f32 {
                 clippy::cast_possible_truncation,
                 reason = "a WCAG ratio is 1.0..=21.0; f32 is its native precision"
             )]
-            Some(IntrospectValue::Float(f)) => Some(f as f32),
+            Ok(IntrospectValue::Float(f)) => Some(f as f32),
             _ => None,
         })
         .unwrap_or(0.0)
@@ -649,16 +650,18 @@ mod tests {
     #[test]
     fn the_oracle_publishes_the_model_and_the_encoding() {
         let o = DeviationOracle::new();
-        assert!(
-            matches!(o.query("rows"), Some(IntrospectValue::Int(r)) if r == i64::from(ROWS_U32))
-        );
-        assert!(matches!(o.query("mid"), Some(IntrospectValue::Float(m)) if m == MID_DEV));
+        assert!(matches!(o.query("rows"), Ok(IntrospectValue::Int(r)) if r == i64::from(ROWS_U32)));
+        assert!(matches!(o.query("mid"), Ok(IntrospectValue::Float(m)) if m == MID_DEV));
         let neutral = match o.query("neutral_hex") {
-            Some(IntrospectValue::Text(s)) => s,
+            Ok(IntrospectValue::Text(s)) => s,
             other => panic!("neutral_hex must be text, got {other:?}"),
         };
         assert!(neutral.starts_with('#') && neutral.len() == 7, "{neutral}");
-        assert_eq!(o.query("nope"), None, "an unknown path reads as None");
+        assert_eq!(
+            o.query("nope"),
+            Err(ReadRefusal::UnknownPath),
+            "an unknown path reads as Err(ReadRefusal::UnknownPath)"
+        );
     }
 
     #[test]
@@ -666,7 +669,7 @@ mod tests {
         let mut o = DeviationOracle::new();
         // Row 2 is the on-target row, so its colour IS the neutral.
         let neutral = match o.query("neutral_hex") {
-            Some(IntrospectValue::Text(s)) => s,
+            Ok(IntrospectValue::Text(s)) => s,
             other => panic!("neutral_hex must be text, got {other:?}"),
         };
         let at = o

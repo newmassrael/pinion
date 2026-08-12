@@ -79,7 +79,8 @@ use std::rc::Rc;
 use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, RepaintOwner, SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
+    ThreadOwnership,
 };
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{
@@ -684,16 +685,19 @@ impl ExternalIntrospect for TopologyOracle {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
-        let state = self.state.as_ref()?;
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
+        let state = self
+            .state
+            .as_ref()
+            .ok_or_else(|| ReadRefusal::unavailable("no topology has been built yet"))?;
         let measured = self.stats();
-        let int = |v: usize| Some(IntrospectValue::Int(i64::try_from(v).unwrap_or(i64::MAX)));
+        let int = |v: usize| Ok(IntrospectValue::Int(i64::try_from(v).unwrap_or(i64::MAX)));
         match path {
-            "mode" => Some(IntrospectValue::Text(self.mode().name().to_string())),
+            "mode" => Ok(IntrospectValue::Text(self.mode().name().to_string())),
             "services" => int(state.topology.get().services.len()),
             "dependencies" => int(state.topology.get().links.len()),
             "depth" => int(measured.depth),
-            "service_names" => Some(IntrospectValue::Text(
+            "service_names" => Ok(IntrospectValue::Text(
                 state
                     .topology
                     .get()
@@ -703,14 +707,14 @@ impl ExternalIntrospect for TopologyOracle {
                     .collect::<Vec<_>>()
                     .join(","),
             )),
-            "last_event" => Some(IntrospectValue::Text(state.last_event.get())),
+            "last_event" => Ok(IntrospectValue::Text(state.last_event.get())),
             "feed_remaining" => int(STREAM.len().saturating_sub(state.cursor.get())),
             "crossings" => int(measured.crossings),
             "order_changes" => int(measured.order_changes),
             "bends" => int(measured.bends),
             "inner_segments" => int(measured.inner),
             "straight_inner" => int(measured.straight),
-            _ => None,
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 

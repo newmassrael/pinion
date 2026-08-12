@@ -30,8 +30,8 @@ use std::rc::Rc;
 
 use pinion_a11y::{AccessNode, AccessState, AriaRole, WidgetA11y};
 use pinion_core::external::{
-    External, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource, SchemaField,
-    int_of,
+    External, IntrospectSchema, IntrospectValue, QueryOnlyIntrospect, QuerySource, ReadRefusal,
+    SchemaField, int_of,
 };
 use pinion_core::intent::Intent;
 use pinion_core::print::{
@@ -195,30 +195,30 @@ impl QuerySource for PrintIntrospect {
         )
     }
 
-    fn introspect_query(&self, path: &str) -> Option<IntrospectValue> {
+    fn introspect_query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         let printers = self.backend.enumerate_printers();
         let selected = self.model.selected.get();
         match path {
-            "backend_kind" => Some(IntrospectValue::Text(self.backend.kind.to_owned())),
-            "printer_count" => Some(IntrospectValue::Int(int_of(printers.len()))),
-            "selected" => Some(IntrospectValue::Int(int_of(selected))),
-            "selected_id" => Some(IntrospectValue::Text(
+            "backend_kind" => Ok(IntrospectValue::Text(self.backend.kind.to_owned())),
+            "printer_count" => Ok(IntrospectValue::Int(int_of(printers.len()))),
+            "selected" => Ok(IntrospectValue::Int(int_of(selected))),
+            "selected_id" => Ok(IntrospectValue::Text(
                 printers
                     .get(selected)
                     .map(|p| p.id.clone())
                     .unwrap_or_default(),
             )),
-            "copies" => Some(IntrospectValue::Int(i64::from(self.model.copies.get()))),
-            "submit_count" => Some(IntrospectValue::Int(i64::from(
+            "copies" => Ok(IntrospectValue::Int(i64::from(self.model.copies.get()))),
+            "submit_count" => Ok(IntrospectValue::Int(i64::from(
                 self.model.submit_count.get(),
             ))),
-            "last_printer" => Some(IntrospectValue::Text(self.model.last_printer.get())),
-            "last_copies" => Some(IntrospectValue::Int(i64::from(
+            "last_printer" => Ok(IntrospectValue::Text(self.model.last_printer.get())),
+            "last_copies" => Ok(IntrospectValue::Int(i64::from(
                 self.model.last_copies.get(),
             ))),
-            "last_job" => Some(IntrospectValue::Text(self.model.last_job.get())),
-            "last_content" => Some(IntrospectValue::Text(self.model.last_content.get())),
-            _ => None,
+            "last_job" => Ok(IntrospectValue::Text(self.model.last_job.get())),
+            "last_content" => Ok(IntrospectValue::Text(self.model.last_content.get())),
+            _ => Err(ReadRefusal::UnknownPath),
         }
     }
 }

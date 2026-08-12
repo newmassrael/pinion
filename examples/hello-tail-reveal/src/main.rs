@@ -47,8 +47,8 @@
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y, windowed_list_nodes};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, RepaintOwner, SchemaArg, SchemaField, ThreadOwnership,
-    int_of,
+    IntrospectSchema, IntrospectValue, ReadRefusal, RepaintOwner, SchemaArg, SchemaField,
+    ThreadOwnership, int_of,
 };
 use pinion_core::intent::Intent;
 use pinion_core::reactive::{Owner, Signal};
@@ -394,14 +394,14 @@ impl ExternalIntrospect for TailRevealExternal {
         )
     }
 
-    fn query(&self, path: &str) -> Option<IntrospectValue> {
+    fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
-            "item_count" => Some(IntrospectValue::Int(int_of(self.measured.item_count()))),
-            "estimated" => Some(IntrospectValue::Int(i64::from(EST))),
-            "viewport_h" => Some(IntrospectValue::Int(i64::from(VIEWPORT_H))),
-            "measured_count" => Some(IntrospectValue::Int(int_of(self.measured.measured_count()))),
-            "is_fully_measured" => Some(IntrospectValue::Bool(self.measured.is_fully_measured())),
-            "total_height" => Some(IntrospectValue::Int(i64::from(
+            "item_count" => Ok(IntrospectValue::Int(int_of(self.measured.item_count()))),
+            "estimated" => Ok(IntrospectValue::Int(i64::from(EST))),
+            "viewport_h" => Ok(IntrospectValue::Int(i64::from(VIEWPORT_H))),
+            "measured_count" => Ok(IntrospectValue::Int(int_of(self.measured.measured_count()))),
+            "is_fully_measured" => Ok(IntrospectValue::Bool(self.measured.is_fully_measured())),
+            "total_height" => Ok(IntrospectValue::Int(i64::from(
                 self.measured.total_height(),
             ))),
             // `measured_height.<row>` — one row's harvested height, or null
@@ -412,11 +412,15 @@ impl ExternalIntrospect for TailRevealExternal {
             _ => {
                 let row = path
                     .strip_prefix("measured_height.")
-                    .and_then(|seg| seg.parse::<usize>().ok())?;
+                    .and_then(|seg| seg.parse::<usize>().ok())
+                    .ok_or(ReadRefusal::QueryTypeMismatch)?;
                 if row >= self.measured.item_count() {
-                    return None;
+                    return Err(ReadRefusal::no_such_member(format!(
+                        "row {row} is outside 0..{}",
+                        self.measured.item_count()
+                    )));
                 }
-                Some(match self.measured.measured_height(row) {
+                Ok(match self.measured.measured_height(row) {
                     Some(h) => IntrospectValue::Int(i64::from(h)),
                     None => IntrospectValue::Null,
                 })

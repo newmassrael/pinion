@@ -79,7 +79,7 @@ pub fn drive_activate(intro: &mut dyn ExternalIntrospect, idx: usize) {
 #[must_use]
 pub fn selected_index(intro: &dyn ExternalIntrospect) -> Option<usize> {
     match intro.query("selected_index") {
-        Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+        Ok(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
         _ => None,
     }
 }
@@ -88,7 +88,7 @@ pub fn selected_index(intro: &dyn ExternalIntrospect) -> Option<usize> {
 #[must_use]
 pub fn focused_index(intro: &dyn ExternalIntrospect) -> Option<usize> {
     match intro.query("focused_index") {
-        Some(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
+        Ok(IntrospectValue::Int(i)) => usize::try_from(i).ok(),
         _ => None,
     }
 }
@@ -117,12 +117,12 @@ pub fn step(intro: Option<&dyn ExternalIntrospect>, direction: i32, n: usize) ->
 pub fn read_rows(intro: &dyn ExternalIntrospect, rows: &mut [(RadioState, bool)]) {
     for (i, slot) in rows.iter_mut().enumerate() {
         let state = match intro.query(&format!("state.{i}")) {
-            Some(IntrospectValue::Text(name)) => RadioState::from_name_or_default(&name),
+            Ok(IntrospectValue::Text(name)) => RadioState::from_name_or_default(&name),
             _ => RadioState::Idle,
         };
         let selected = matches!(
             intro.query(&format!("selected.{i}")),
-            Some(IntrospectValue::Bool(true)),
+            Ok(IntrospectValue::Bool(true)),
         );
         *slot = (state, selected);
     }

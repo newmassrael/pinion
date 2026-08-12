@@ -258,7 +258,7 @@ pub fn simulate(scene: &mut Scene, steps: &[SimulateStep]) -> Result<SnapshotNod
         })?;
         let saved = intro
             .query(introspect_path)
-            .ok_or(SimulateError::InitialQueryFailed { step_index: i })?;
+            .map_err(|_| SimulateError::InitialQueryFailed { step_index: i })?;
         originals.insert(key, saved);
     }
 

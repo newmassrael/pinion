@@ -370,7 +370,7 @@ impl WidgetCore for VirtualTreeView {
     fn read_state(scene: &Scene) -> Self::State {
         if let Some(node) = scene.find_external_with_tag(ROOT_TAG)
             && let Some(intro) = node.handle.introspect()
-            && let Some(IntrospectValue::Text(name)) = intro.query("state")
+            && let Ok(IntrospectValue::Text(name)) = intro.query("state")
         {
             return <Self::State as pinion_core::WidgetStateName>::from_name_or_default(&name);
         }

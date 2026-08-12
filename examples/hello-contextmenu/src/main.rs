@@ -505,7 +505,7 @@ mod key_tests {
             return false;
         };
         matches!(
-            node.handle.introspect().and_then(|i| i.query("open")),
+            node.handle.introspect().and_then(|i| i.query("open").ok()),
             Some(IntrospectValue::Bool(true))
         )
     }
@@ -523,8 +523,8 @@ mod key_tests {
             panic!("external");
         };
         let intro = node.handle.introspect().unwrap();
-        assert_eq!(intro.query("open_x"), Some(IntrospectValue::Float(120.0)));
-        assert_eq!(intro.query("open_y"), Some(IntrospectValue::Float(64.0)));
+        assert_eq!(intro.query("open_x"), Ok(IntrospectValue::Float(120.0)));
+        assert_eq!(intro.query("open_y"), Ok(IntrospectValue::Float(64.0)));
     }
 
     #[test]
