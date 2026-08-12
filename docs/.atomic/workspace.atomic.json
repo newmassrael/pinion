@@ -36684,6 +36684,38 @@
         "`content_of` reads chrome from a node's style, so a scene that lies about its structure still gets a clean report — the limit R1656 stated for this module, unchanged."
       ]
     },
+    "R1675": {
+      "decision_summary": "The SCE pin moves 60cc4fcb -> 615cb3f6 (19 commits) and the mirror claim it\nfalsified is repaired.\n\nThe consumer surface is ZERO and that is a measurement, not an assumption:\n`git diff` over `sce-rust-runtime/` is EMPTY across all nineteen commits, and\nthe new `pub` count there is 0. The whole delta is build-time — a W3C suite\nemitter, per-route backend declarations, symbol-level judgment for three\nruntimes, a mutation harness that can study a ctest suite.\n\nWHAT THE BUMP ACTUALLY COST is one field, and R1657 is why it cost anything at\nall. Upstream added `Diagnostic::expanded_from`, and `pinion-forge`'s mirror\ndestructures that record with no `..` precisely so an upstream field addition\nlands as a COMPILE ERROR rather than as a claim quietly going false. It did.\nThis tree changed nothing and its statement \"I mirror the SCE v1 record shape\"\nwould have become untrue on its own — which is the thing R1657 wrote down and\nthis is the first bump to exercise it.\n\nThe field is classified NOT MIRRORED, with the reason and the condition that\nwould reverse it. `expanded_from` names the call site that chose the parameters\nwhen a diagnostic's `location` points at a TEMPLATE row rather than at the\nexpansion that failed; it is also upstream's signal that the value is synthetic,\nwhich is why no substitution `fix` accompanies it. Pinion has no such case:\nevery diagnostic here names a row in a real widget chart, and that row contains\nthe `actual` it complains about, so there is no second coordinate to carry. The\nday pinion's forge expands a parameterised chart, this key is what stops a\nconsumer being handed a location that does not contain what it is told about —\nand the destructure is what will bring someone back to it.\n\nDual-pin discipline held: gitlink, both manifest revisions and the lock move in\nthis one commit, `tools/pin_sync.py --check-dual-pin` green.",
+      "changes_bullets": [
+        "`vendor/sce` gitlink 60cc4fcb -> 615cb3f6 (19 commits), both `Cargo.toml` revisions, and `Cargo.lock`, in one commit.",
+        "`pinion-forge/src/wire.rs` classifies the new `Diagnostic::expanded_from` as deliberately not mirrored, with the reason and the condition that would reverse it."
+      ],
+      "verification_bullets": [
+        "`cargo test --workspace` 12,247 passed / 0 failed on the new pin.",
+        "`pinion-forge` 95 tests green, including the shape mirror that failed to compile before the field was classified.",
+        "`tools/pin_sync.py --check-dual-pin` green: manifest = lock = vendor/sce at 615cb3f.",
+        "Consumer-surface measurement: `git diff` over `sce-rust-runtime/` is empty across the 19 commits and new `pub` items there are 0."
+      ],
+      "impact_refs": [
+        "5.4",
+        "5.14"
+      ],
+      "publishable_decision_summary": "The SCE pin moves 60cc4fcb -> 615cb3f6 (19 commits) and the mirror claim it\nfalsified is repaired.\n\nThe consumer surface is ZERO and that is a measurement, not an assumption:\n`git diff` over `sce-rust-runtime/` is EMPTY across all nineteen commits, and\nthe new `pub` count there is 0. The whole delta is build-time — a W3C suite\nemitter, per-route backend declarations, symbol-level judgment for three\nruntimes, a mutation harness that can study a ctest suite.\n\nWHAT THE BUMP ACTUALLY COST is one field, and R1657 is why it cost anything at\nall. Upstream added `Diagnostic::expanded_from`, and `pinion-forge`'s mirror\ndestructures that record with no `..` precisely so an upstream field addition\nlands as a COMPILE ERROR rather than as a claim quietly going false. It did.\nThis tree changed nothing and its statement \"I mirror the SCE v1 record shape\"\nwould have become untrue on its own — which is the thing R1657 wrote down and\nthis is the first bump to exercise it.\n\nThe field is classified NOT MIRRORED, with the reason and the condition that\nwould reverse it. `expanded_from` names the call site that chose the parameters\nwhen a diagnostic's `location` points at a TEMPLATE row rather than at the\nexpansion that failed; it is also upstream's signal that the value is synthetic,\nwhich is why no substitution `fix` accompanies it. Pinion has no such case:\nevery diagnostic here names a row in a real widget chart, and that row contains\nthe `actual` it complains about, so there is no second coordinate to carry. The\nday pinion's forge expands a parameterised chart, this key is what stops a\nconsumer being handed a location that does not contain what it is told about —\nand the destructure is what will bring someone back to it.\n\nDual-pin discipline held: gitlink, both manifest revisions and the lock move in\nthis one commit, `tools/pin_sync.py --check-dual-pin` green.",
+      "publishable_changes_bullets": [
+        "`vendor/sce` gitlink 60cc4fcb -> 615cb3f6 (19 commits), both `Cargo.toml` revisions, and `Cargo.lock`, in one commit.",
+        "`pinion-forge/src/wire.rs` classifies the new `Diagnostic::expanded_from` as deliberately not mirrored, with the reason and the condition that would reverse it."
+      ],
+      "publishable_verification_bullets": [
+        "`cargo test --workspace` 12,247 passed / 0 failed on the new pin.",
+        "`pinion-forge` 95 tests green, including the shape mirror that failed to compile before the field was classified.",
+        "`tools/pin_sync.py --check-dual-pin` green: manifest = lock = vendor/sce at 615cb3f.",
+        "Consumer-surface measurement: `git diff` over `sce-rust-runtime/` is empty across the 19 commits and new `pub` items there are 0."
+      ],
+      "publishable_impact_refs": [
+        "5.4",
+        "5.14"
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

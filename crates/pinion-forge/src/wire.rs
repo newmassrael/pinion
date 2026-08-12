@@ -358,6 +358,22 @@ mod tests {
             // `question_kind` classifies an SCE authoring question back
             // to the author; pinion's diagnostics are all refusals.
             question_kind: _,
+            // `expanded_from` names the call site that chose the
+            // parameters when `location` points at a TEMPLATE row rather
+            // than at the expansion that failed — the coordinate that
+            // tells two expansions of one template apart, and upstream's
+            // signal that the value is synthetic (which is why no
+            // substitution `fix` accompanies it).
+            //
+            // Pinion has no such case. Every diagnostic here names a row
+            // in a real `crates/pinion-core/widgets/*.scxml`, and that
+            // row CONTAINS the `actual` it complains about, so there is
+            // no second coordinate to carry. The day pinion's forge
+            // expands a parameterised chart, this key is the one that
+            // stops a consumer from being handed a location that does
+            // not contain what it is being told about — and this
+            // destructure is what will bring anyone back here.
+            expanded_from: _,
         } = &sce;
 
         let pinion = pinion_record();
