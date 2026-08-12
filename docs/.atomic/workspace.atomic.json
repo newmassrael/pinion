@@ -35996,6 +35996,58 @@
         "The build-failure hole in the measurement producer was found by being hit: a concurrent cargo run took the target lock and 24 consecutive examples were about to be written into the ratchet as \"unmeasured\" with a spurious reason. It now stops instead. The budget file's own absence is reported UNARMED rather than enforced as zero, which is R1661's three-state argument applied to the file as well as to its rows."
       ]
     },
+    "R1663": {
+      "decision_summary": "A decoded field says which bytes it came from. The analyzer census carried capture.t0.3 -- bidirectional highlight between a field and its bytes -- as a `have`, covered by widgets::hex_dump plus scene/marks. Driven on the wire before building anything, neither surface holds the relation: the dissection External publishes 13 declared paths and NOT ONE names a byte, and the hex External publishes 17 and NOT ONE names a field. That verdict was covering the byte-to-CELL pair, which is a different pair, and it is the error direction R1602 named as the expensive one -- a wrong `have` inflates a number silently where a wrong `absent` self-corrects the moment somebody reaches for it. pinion_core::widgets::field_bytes is the relation: ONE list of FieldSpans, from which forward (extent_of / selection_for, already shaped as the ByteSelection a hex view highlights) and inverse (layers_at, with owner_at DEFINED as its last link rather than computed a second way) are both derived. The marks this tree already had are the right thing for saying why a painted position looks the way it does and cannot carry a dissection, and each gap is asserted against a real MarkSet rather than claimed: one index space, overlap as a paint rule rather than an invariant, two answers where there are three, and no arm for a field with no bytes. So the dissection is the model and the paint marks are derived from it.",
+      "changes_bullets": [
+        "`pinion_core::widgets::field_bytes` — ByteExtent / SourceId / ByteSource / FieldOrigin / FieldSpan / Coverage / MapDefect / SelectDefect / ByteMap / ByteMapState / ByteMapExternal; 26 tests",
+        "ByteMap::build refuses a declaration that is not a dissection — duplicate path, run past the end, child escaping its parent, two unrelated fields sharing a byte — typed and naming the paths, in O(n log n)",
+        "ByteMap::marks DERIVES the R1615 MarkSet the byte pane paints with, outermost first so last-wins puts the leaf on top, which is the same order layers_at reports from the same sort",
+        "12 declared wire paths on ByteMapExternal, read-only, with a test that every declared path answers and every answer is declared",
+        "examples/hello-packet-view — the analysis tool's capture viewer: filter bar, always-visible session context, three-pane body, reassembly strip; spec.rs is the reference screen as a value, published on the wire as `spec`",
+        "examples/hello-packet-view/src/painted.rs — the integration sweep, 8 states x 3 sizes over forward, backward, reachable, contained, disjoint and the round's own law; 11 tests, 12 model tests beside them",
+        "tools/measure_ink_budgets.py — `--add`, which registers a NEW surface by merging one measurement in and refuses an example that already has a row",
+        "docs/analyzer-census.json — capture.t0.3 re-verdicted with a proof; four `app` verdicts gain the assembly that composes them",
+        "tools/phase_b_tally.py — dcc re-judged 86 -> 88 with `packet-view` filed, demanded by the staleness check"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-core -p hello-packet-view: 3422 + 23 passed, 0 failed. clippy -D pedantic on both, and cargo fmt --all --check: clean. Demo r1663_a_field_says_which_bytes.py PASS with 160 named assertions over eight sections, every population derived from the specification the running screen publishes rather than carried in the demo. The reference floor was MEASURED out-of-tree rather than read: sharing one selection model between two views over different models is refused at runtime, so selecting a field selects zero bytes, and 0 of its 29 selection-model methods and 0 of its 76 item-model methods name a byte extent. The painted sweep's FIRST run found four real defects, all one shape -- a number picked rather than derived -- and all fixed by derivation: a list floor smaller than its own fixed columns, and three fixed slots given to runs whose length nobody had measured. Counterfactuals 14/14 CAUGHT across two gates (8 on the relation, 6 on the screen)."
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.41",
+        "5.12",
+        "5.36"
+      ],
+      "carry_forward_bullets": [
+        "The dcc axis's artifact list and its judgment method name different sets: the list has held row-dissect, hex-dump and inspector for hundreds of rounds while the method averages property grid, data grid and node graph, which excludes all three. This round's own work is therefore uncounted by construction, and crediting it would have been the R1542 inflation. Registered as debt rather than resolved here, because changing the method and the inputs in one re-judgment makes the move unreadable (R1604's rule).",
+        "The example's decoder reproduces the reference's decode table for the one message the reference states in full and builds a smaller real dissection for the other fifteen. That is the honest shape for a screen whose specification describes one decode, and it is stated rather than hidden: a second fully-specified message would be invention."
+      ],
+      "publishable_decision_summary": "A decoded field says which bytes it came from. The analyzer census carried capture.t0.3 -- bidirectional highlight between a field and its bytes -- as a `have`, covered by widgets::hex_dump plus scene/marks. Driven on the wire before building anything, neither surface holds the relation: the dissection External publishes 13 declared paths and NOT ONE names a byte, and the hex External publishes 17 and NOT ONE names a field. That verdict was covering the byte-to-CELL pair, which is a different pair, and it is the error direction R1602 named as the expensive one -- a wrong `have` inflates a number silently where a wrong `absent` self-corrects the moment somebody reaches for it. pinion_core::widgets::field_bytes is the relation: ONE list of FieldSpans, from which forward (extent_of / selection_for, already shaped as the ByteSelection a hex view highlights) and inverse (layers_at, with owner_at DEFINED as its last link rather than computed a second way) are both derived. The marks this tree already had are the right thing for saying why a painted position looks the way it does and cannot carry a dissection, and each gap is asserted against a real MarkSet rather than claimed: one index space, overlap as a paint rule rather than an invariant, two answers where there are three, and no arm for a field with no bytes. So the dissection is the model and the paint marks are derived from it.",
+      "publishable_changes_bullets": [
+        "`pinion_core::widgets::field_bytes` — ByteExtent / SourceId / ByteSource / FieldOrigin / FieldSpan / Coverage / MapDefect / SelectDefect / ByteMap / ByteMapState / ByteMapExternal; 26 tests",
+        "ByteMap::build refuses a declaration that is not a dissection — duplicate path, run past the end, child escaping its parent, two unrelated fields sharing a byte — typed and naming the paths, in O(n log n)",
+        "ByteMap::marks DERIVES the R1615 MarkSet the byte pane paints with, outermost first so last-wins puts the leaf on top, which is the same order layers_at reports from the same sort",
+        "12 declared wire paths on ByteMapExternal, read-only, with a test that every declared path answers and every answer is declared",
+        "examples/hello-packet-view — the analysis tool's capture viewer: filter bar, always-visible session context, three-pane body, reassembly strip; spec.rs is the reference screen as a value, published on the wire as `spec`",
+        "examples/hello-packet-view/src/painted.rs — the integration sweep, 8 states x 3 sizes over forward, backward, reachable, contained, disjoint and the round's own law; 11 tests, 12 model tests beside them",
+        "tools/measure_ink_budgets.py — `--add`, which registers a NEW surface by merging one measurement in and refuses an example that already has a row",
+        "docs/analyzer-census.json — capture.t0.3 re-verdicted with a proof; four `app` verdicts gain the assembly that composes them",
+        "tools/phase_b_tally.py — dcc re-judged 86 -> 88 with `packet-view` filed, demanded by the staleness check"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-core -p hello-packet-view: 3422 + 23 passed, 0 failed. clippy -D pedantic on both, and cargo fmt --all --check: clean. Demo r1663_a_field_says_which_bytes.py PASS with 160 named assertions over eight sections, every population derived from the specification the running screen publishes rather than carried in the demo. The reference floor was MEASURED out-of-tree rather than read: sharing one selection model between two views over different models is refused at runtime, so selecting a field selects zero bytes, and 0 of its 29 selection-model methods and 0 of its 76 item-model methods name a byte extent. The painted sweep's FIRST run found four real defects, all one shape -- a number picked rather than derived -- and all fixed by derivation: a list floor smaller than its own fixed columns, and three fixed slots given to runs whose length nobody had measured. Counterfactuals 14/14 CAUGHT across two gates (8 on the relation, 6 on the screen)."
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.41",
+        "5.12",
+        "5.36"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The dcc axis's artifact list and its judgment method name different sets: the list has held row-dissect, hex-dump and inspector for hundreds of rounds while the method averages property grid, data grid and node graph, which excludes all three. This round's own work is therefore uncounted by construction, and crediting it would have been the R1542 inflation. Registered as debt rather than resolved here, because changing the method and the inputs in one re-judgment makes the move unreadable (R1604's rule).",
+        "The example's decoder reproduces the reference's decode table for the one message the reference states in full and builds a smaller real dissection for the other fifteen. That is the honest shape for a screen whose specification describes one decode, and it is stated rather than hidden: a second fully-specified message would be invention."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

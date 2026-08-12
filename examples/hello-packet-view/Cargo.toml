@@ -1,0 +1,40 @@
+[package]
+name = "hello-packet-view"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1663 Phase-B plane-B integration consumer — the analysis tool's capture viewer assembled as ONE app against a written-down specification of the reference screen: a filter bar, the always-visible session context, a three-pane body (message list, layered decode, bytes) and a reassembly strip. The decode tree, the byte highlight and the layer chain are all derived from one pinion_core::widgets::field_bytes::ByteMap, which is the relation the analyzer census claimed and no surface held."
+publish = false
+
+[[bin]]
+name = "hello-packet-view"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# §5.40 AccessKit substrate for `WidgetA11y::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# R1662 §5.21 — the scrolling pane, so a body taller than its viewport is
+# reachable rather than painted past the edge.
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+# §5.16 paint-side AppShell (winit + Vello + RPC).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R1537 §5.16 — the emitted renderer owns its wgpu device through pinion-gpu.
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
+vello = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+# R1653 — the integration test runs the real view -> layout pipeline, so the
+# rectangles it asserts against are the ones the window would paint.
+pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

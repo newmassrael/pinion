@@ -231,6 +231,7 @@ members = [
     "examples/hello-displays",
     "examples/hello-analyzer-shell",
     "examples/hello-node-lab",
+    "examples/hello-packet-view",
     "examples/hello-graph-diff",
     "examples/hello-topology",
     "examples/hello-node-groups",

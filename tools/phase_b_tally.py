@@ -236,6 +236,12 @@ AXES = [
                 # exact-ish name rather than a prefix, so it needs its own
                 # entry the way `node-groups` and `node-flow` did.
                 "node-lab",
+                # R1663, added WITH the round for the reason the entry above
+                # gives. `hello-packet-view` is the capture viewer whose left
+                # pane is a data grid — one of this axis's three named families
+                # — and whose other two panes are the `row-dissect` and
+                # `hex-dump` artifacts this list already holds, assembled.
+                "packet-view",
             ]),
         ],
         # R1532 re-judgment, demanded by this axis's round count going 0 -> 1
@@ -695,9 +701,40 @@ AXES = [
         # first round in the series that moved the measurement UP by building,
         # which is worth naming as the other direction rather than as a
         # correction.
-        "judged_at": 1604,
-        "completion": 86,
-        "evidence_snapshot": {"example-name": 30, "round-axis": 23},
+        # ---- R1663 re-judgment, 86 -> 88, demanded by `round-axis` going
+        # 23 -> 29 (+26%), the first time this axis's staleness check has fired
+        # since the meter was built.
+        #
+        # It folds in the measurement R1644 recorded and deliberately did not
+        # spend. That addendum said, in as many words, that moving a number on
+        # evidence nobody was asked to re-read is the hand-adjustment this table
+        # exists to stop — so it wrote the new inputs down and left the figure
+        # alone. The check firing is the ask, and this is the answer.
+        #
+        # RE-MEASURED this round rather than copied from that paragraph, because
+        # a number carried forward is exactly what R1519 was about
+        # (`tools/reference_census.py`, 2026-08-12): the DCC 58/76 = 76%, the
+        # engine 132/211 = 62%, equal weight 69. Identical to R1644's reading,
+        # which is a legitimate outcome — no round since has touched the node
+        # graph. Composition unchanged in method: property grid ~98, data grid
+        # ~98, node graph 69, averaging 88.3.
+        #
+        # ★ R1663's OWN work is deliberately NOT counted, and the reason is a
+        # finding rather than modesty. This round built the relation between a
+        # decode tree's fields and the bytes they came from
+        # (`widgets::field_bytes`) and assembled the capture viewer on it — and
+        # the three-family method cannot see any of it, because a decode
+        # inspector is neither a property grid, a data grid nor a node graph.
+        # The axis's ARTIFACT list has held `row-dissect`, `hex-dump` and
+        # `inspector` since long before this round; its JUDGMENT method measures
+        # three families that exclude all three. Crediting the round would be
+        # the R1542 inflation; leaving the disagreement unwritten would be worse,
+        # so it is registered as [[debt-the-dcc-axis-measures-three-of-its-four-families]]
+        # and the next demanded look inherits a stated question rather than a
+        # silent one.
+        "judged_at": 1663,
+        "completion": 88,
+        "evidence_snapshot": {"example-name": 34, "round-axis": 29},
     },
     {
         "key": "modelview",

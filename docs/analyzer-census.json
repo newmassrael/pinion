@@ -21,7 +21,8 @@
     "tier": "t0",
     "capability": "bidirectional highlight between a field and its bytes",
     "verdict": "have",
-    "covered_by": "`widgets::hex_dump` (HexLayout / Cell / Region / Nibble / ByteSelection) plus `scene/marks`, which answers the named run stack over one position"
+    "covered_by": "R1663 `widgets::field_bytes` — ONE list of FieldSpans; forward `extent_of` / `selection_for` (already shaped as the ByteSelection a hex view highlights), inverse `layers_at` with `owner_at` DEFINED as its last link, and the paint MarkSet derived from the same list. Before this the verdict cited `hex_dump` + `scene/marks`, which is the byte-to-CELL pair: measured on the wire, the dissection External published 13 paths naming no byte and the hex External 17 naming no field",
+    "proven_by": "crates/pinion-core/src/widgets/field_bytes.rs the_two_directions_are_inverse_for_every_field_with_bytes + owner_is_the_last_link_of_the_layer_chain + a_markset_alone_cannot_express_a_dissection; end to end tools/demos/r1663_a_field_says_which_bytes.py section D"
   },
   {
     "id": "capture.t0.4",
@@ -37,7 +38,8 @@
     "tier": "t0",
     "capability": "an id-to-name table rebuilt from earlier declarations, with an unresolved badge and a direction",
     "verdict": "app",
-    "covered_by": "a table over the data grid; the resolution history and the badge are domain logic"
+    "covered_by": "a table over the data grid; the resolution history and the badge are domain logic",
+    "assembled_by": "examples/hello-packet-view"
   },
   {
     "id": "capture.t0.6",
@@ -45,7 +47,8 @@
     "tier": "t0",
     "capability": "payload carried out of band, shown as a descriptor rather than as empty",
     "verdict": "app",
-    "covered_by": "a dissect row shape; nothing in it is a framework capability"
+    "covered_by": "a dissect row shape; nothing in it is a framework capability",
+    "assembled_by": "examples/hello-packet-view"
   },
   {
     "id": "capture.t0.7",
@@ -53,7 +56,8 @@
     "tier": "t0",
     "capability": "an unknown extension shown as id, length and raw bytes rather than as a parse failure",
     "verdict": "app",
-    "covered_by": "`row_dissect` plus `hex_dump` hold the shapes"
+    "covered_by": "`row_dissect` plus `hex_dump` hold the shapes",
+    "assembled_by": "examples/hello-packet-view"
   },
   {
     "id": "capture.t1.8",
@@ -101,7 +105,8 @@
     "tier": "t1",
     "capability": "a view of the declarations currently in force, rebuilt from the capture",
     "verdict": "app",
-    "covered_by": "a table over reconstructed state"
+    "covered_by": "a table over reconstructed state",
+    "assembled_by": "examples/hello-packet-view"
   },
   {
     "id": "capture.t2.14",

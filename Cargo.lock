@@ -3462,6 +3462,22 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-packet-view"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-gpu",
+ "pinion-runtime",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "serde",
+ "serde_json",
+ "vello",
+]
+
+[[package]]
 name = "hello-paged-stream"
 version = "0.0.1"
 dependencies = [

@@ -16,6 +16,7 @@ pub mod datepicker;
 pub mod disclosure;
 pub mod disclosure_group;
 pub mod dock_panel;
+pub mod field_bytes;
 pub mod file_browser;
 pub mod grid_edit;
 pub mod grid_sort;

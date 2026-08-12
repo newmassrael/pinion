@@ -39,7 +39,20 @@ Usage:
 
     python3 tools/measure_ink_budgets.py            # measure every example
     python3 tools/measure_ink_budgets.py --only X   # one, for iterating
+    python3 tools/measure_ink_budgets.py --add X    # register a NEW surface
     python3 tools/measure_ink_budgets.py --dry-run  # print, write nothing
+
+## Why `--add` exists, and why it cannot re-measure
+
+A `--only` run writes nothing, because a producer that writes a partial file is
+how a census loses rows. But the census is `total`, so a round that ADDS an
+example must be able to register it — and re-measuring 223 unrelated surfaces to
+do that is a full local sweep, which this project does not run locally.
+
+`--add` measures only the named examples and MERGES them into the files. It
+refuses an example that already has a row in any of the three, so it can never
+overwrite a measured number: registering a new surface and re-measuring an old
+one are different operations, and only the second one needs the whole census.
 """
 
 from __future__ import annotations
@@ -162,6 +175,33 @@ HEADER = """\
 """
 
 
+def existing(path: Path) -> "list[tuple[str, object, str]]":
+    """The rows a budget file already holds, in file order.
+
+    Parsed rather than pattern-matched so `--add` merges into exactly what the
+    last full run wrote, including its `unmeasured` rows and their reasons.
+    """
+    rows: list[tuple[str, object, str]] = []
+    if not path.exists():
+        return rows
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        parts = line.split("\t")
+        if len(parts) >= 3 and parts[1] == UNMEASURED:
+            rows.append((parts[0], UNMEASURED, parts[2]))
+        elif len(parts) >= 2:
+            rows.append((parts[0], int(parts[1]), ""))
+    return rows
+
+
+def merged(
+    path: Path, added: "list[tuple[str, object, str]]"
+) -> "list[tuple[str, object, str]]":
+    """`path`'s rows plus `added`, sorted the way a full run writes them."""
+    return sorted(existing(path) + added, key=lambda row: row[0])
+
+
 def write(path: Path, title: str, rows: list[tuple[str, object, str]]) -> None:
     lines = [HEADER.format(title=title, unmeasured=UNMEASURED)]
     for example, count, reason in rows:
@@ -175,8 +215,29 @@ def write(path: Path, title: str, rows: list[tuple[str, object, str]]) -> None:
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--only", action="append", help="measure just this example")
+    ap.add_argument(
+        "--add",
+        action="append",
+        help="measure a NEW example and merge it in; refuses one already present",
+    )
     ap.add_argument("--dry-run", action="store_true", help="print, write nothing")
     args = ap.parse_args()
+
+    if args.add and args.only:
+        print("--add and --only are different operations; pick one", file=sys.stderr)
+        return 1
+    if args.add:
+        known = {row[0] for path in (CONTAINMENT, SMEAR, REACH) for row in existing(path)}
+        already = sorted(set(args.add) & known)
+        if already:
+            print(
+                f"refusing to --add {already}: they already have rows. Registering a "
+                "new surface and RE-MEASURING an existing one are different "
+                "operations, and only the second one is allowed to move a number "
+                "somebody already measured — run the tool with no arguments for that.",
+                file=sys.stderr,
+            )
+            return 1
 
     if rpc_verify.pinned_fontconfig() is None:
         print(
@@ -186,7 +247,12 @@ def main() -> int:
         )
         return 1
 
-    targets = args.only or examples()
+    targets = args.add or args.only or examples()
+    if args.add:
+        unknown = sorted(set(args.add) - set(examples()))
+        if unknown:
+            print(f"no such example: {unknown}", file=sys.stderr)
+            return 1
     cont: list[tuple[str, object, str]] = []
     smear: list[tuple[str, object, str]] = []
     reach: list[tuple[str, object, str]] = []
@@ -214,6 +280,10 @@ def main() -> int:
     if args.dry_run or args.only:
         print("(dry run / partial — not writing)", file=sys.stderr)
         return 0
+    if args.add:
+        cont = merged(CONTAINMENT, cont)
+        smear = merged(SMEAR, smear)
+        reach = merged(REACH, reach)
     write(CONTAINMENT, "the measured backlog of painted marks that left their box.", cont)
     write(SMEAR, "the measured backlog of text runs painted on top of each other.", smear)
     write(REACH, "the measured backlog of marks no gesture can bring into view.", reach)
