@@ -867,6 +867,45 @@ def test_a_budget_file_has_four_states_and_a_missing_row_is_an_error() -> None:
             rpc_verify._READ_BUDGETS.clear()
 
 
+def test_a_boot_that_raises_still_reaps_the_child() -> None:
+    """R1672 — every exit path from `__enter__` reaps, not only the gate's.
+
+    `with` calls `__exit__` only for a context manager whose `__enter__`
+    RETURNED, so a raise anywhere in the boot sequence leaks the subprocess.
+    R1650 wrote that sentence and guarded only the block it was adding; the boot
+    baseline sits BEFORE that guard, and it is the part that times out —
+    measured twice, `ai-introspect-demo` alive for an hour and two minutes after
+    R1666's census and for an hour and eleven during R1672's own measurement.
+
+    The counter-case is the load-bearing half: a boot that SUCCEEDS must not
+    reap, or the guard would be indistinguishable from a harness that shuts
+    every child down immediately.
+    """
+    print("__enter__ teardown guard")
+    for failing in (True, False):
+        tf = RpcSubprocess("nonexistent-example", ensure_build=False)
+        reaped: list[bool] = []
+        tf.shutdown = lambda: reaped.append(True)  # type: ignore[method-assign]
+        if failing:
+            def boom() -> RpcSubprocess:
+                raise RpcError(-32099, "timeout waiting for response to id=1", None)
+
+            tf._enter_inner = boom  # type: ignore[method-assign]
+            try:
+                with tf:
+                    check(False, "the boot raised, so the body must not run")
+            except RpcError:
+                pass
+            check(reaped == [True], "a boot that raises reaps the child")
+        else:
+            tf._enter_inner = lambda: tf  # type: ignore[method-assign]
+            with tf:
+                pass
+            # `__exit__` reaps on the way out; what must NOT have happened is a
+            # reap from the guard while the boot was still succeeding.
+            check(len(reaped) <= 1, "a boot that succeeds is not reaped twice")
+
+
 def main() -> int:
     # R1580 — the population is DERIVED from this module, not listed.
     #

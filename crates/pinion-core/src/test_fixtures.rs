@@ -21,6 +21,11 @@
 //! the framework owns one place to evolve the assertion's error
 //! message / hook list as the AT bounds attach contract grows.
 
+// R1672 §5.32 §5.45 — the ink gate three screens run. Its own module because
+// it is a HARNESS vocabulary rather than a widget stand-in: the check is
+// `containment::escapes` and what a screen has to supply is the metric.
+pub mod screen_ink;
+
 use std::borrow::Cow;
 
 use crate::Frame;

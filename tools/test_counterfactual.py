@@ -92,6 +92,11 @@ def test_a_scoped_gate_is_refused() -> None:
     for gate in (
         ["cargo", "test", "-p", "pinion-node-graph", "--lib"],
         ["cargo", "test", "--workspace"],
+        # ★ R1672 — an example package's whole suite. Every example here is its
+        # own package, so this IS the un-scoped form for a screen, and it was
+        # refused because `--manifest-path` was not known to consume its value.
+        ["cargo", "test", "--manifest-path", "examples/hello-node-lab/Cargo.toml"],
+        ["cargo", "test", "--manifest-path", "x/Cargo.toml", "-j2"],
         ["bash", "-c", "true"],
     ):
         try:

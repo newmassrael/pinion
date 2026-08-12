@@ -78,6 +78,30 @@ COMPILE_MARKERS = ("error[E", "could not compile", "error: could not")
 #: A gate that names one test cannot answer "does anything catch this".
 SINGLE_TEST_FLAGS = ("--exact",)
 
+#: `cargo test` flags that CONSUME the next argument, so that argument is not a
+#: test-name filter.
+#:
+#: ★ R1672 — `--manifest-path` was missing, and this project keeps every example
+#: in its own package: `cargo test --manifest-path examples/<x>/Cargo.toml` is
+#: that package's WHOLE suite and was refused as if the path were a test name.
+#: The refusal is loud, so nothing was silently mis-scoped — but the effect was
+#: that a screen's own gate could not be a counterfactual gate at all, and the
+#: screens are where three of this round's breaks are visible. The list is
+#: spelled out rather than inferred because a flag missing from it fails
+#: closed (a refusal), which is the safe direction.
+VALUE_FLAGS = (
+    "-p",
+    "--package",
+    "--exclude",
+    "--features",
+    "-j",
+    "--jobs",
+    "--manifest-path",
+    "--target",
+    "--target-dir",
+    "--profile",
+)
+
 CAUGHT, PASSED, BROKEN, NOT_APPLIED = "CAUGHT", "PASSED", "BROKEN", "NOT-APPLIED"
 
 
@@ -144,7 +168,7 @@ def check_gate(gate: list[str]) -> None:
                 skip_value = False
                 continue
             if token.startswith("-"):
-                skip_value = token in ("-p", "--package", "--features", "-j")
+                skip_value = token in VALUE_FLAGS
                 continue
             raise SystemExit(
                 f"counterfactual: gate filters to {token!r}. Run the whole "

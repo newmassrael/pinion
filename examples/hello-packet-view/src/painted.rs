@@ -158,22 +158,15 @@ impl Painted {
     }
 }
 
-/// A monospace stand-in for a glyph run: wider per character than any face this
-/// screen uses, so a box that passes here has room for a real one.
-fn stand_in_ink(text: &pinion_core::scene::TextNode) -> (u32, u32) {
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "a label is a handful of characters"
-    )]
-    let chars = text.content.chars().count() as u32;
-    let px = text.style.font_size_px.max(1);
-    let painted = if text.style.overflow.shortens() {
-        text.rect.w.min(chars * px)
-    } else {
-        chars * px
-    };
-    (painted, text.rect.h)
-}
+/// ★★ R1672 — the ink stand-in and the containment gate come from the crate.
+///
+/// This file held a byte-identical copy of the stand-in and **never ran the
+/// check with it**: a counterfactual that handed all three of this screen's
+/// scrolling panes their panels' own boxes — putting each body over the outline
+/// of the panel holding it — was caught by nothing here, while the same break
+/// on screen A was caught immediately. A metric a screen owns but does not use
+/// is a vocabulary the screen cannot speak.
+use pinion_core::test_fixtures::screen_ink::{assert_contained_ink, stand_in_ink};
 
 /// Run the real pipeline at `size` and index what came out of it.
 fn painted_at(state: &std::rc::Rc<ViewState>, size: (u32, u32)) -> (Painted, Scene) {
@@ -529,6 +522,48 @@ fn r1663_every_painted_mark_is_inside_the_pane_its_address_names() {
             );
         }
     });
+}
+
+/// ★★ R1672 — and every painted mark is inside the box that OWNS it, ink and
+/// all.
+///
+/// The check above asks whether a tag's rectangle is inside the pane its
+/// address names, which is a question about the *scene* and about an ancestor
+/// chosen by name. This one asks
+/// [`pinion_core::containment::escapes`]: whether the **ink** — a measurement,
+/// not something in the scene — left the box the tree says owns it, including
+/// the box's own border ([`pinion_core::containment::content_rect`]).
+///
+/// Screen A has run it since R1656 and this screen did not, which is how R1672
+/// found three panes here painted over the outlines of the panels holding them
+/// with every test in this file green. The counterfactual that reintroduces it
+/// (`panel_content` handing back the box) is now caught.
+#[test]
+fn r1672_every_painted_mark_is_inside_the_box_that_owns_it() {
+    let mut below = 0;
+    let mut cases = 0;
+    let mut weighed = 0;
+    sweep(|_, shot, scene, size, case| {
+        cases += 1;
+        weighed += shot.runs.len();
+        below += assert_contained_ink(case, scene, size);
+    });
+    // Floors on the SWEEP, because the two ways this passes without asking
+    // anything are opposite. A state deleted from `STATES` takes its own
+    // assertions with it, so the case count is pinned; and a screen whose every
+    // mark took the off-window exemption asserted nothing at all, so the
+    // exemption is bounded by what the sweep actually weighed.
+    assert_eq!(
+        cases,
+        STATES.len() * SIZES.len(),
+        "the sweep covered {cases} of the (state, size) cases it declares",
+    );
+    assert!(weighed > 0, "the sweep found no painted runs to weigh");
+    assert!(
+        below < weighed,
+        "{below} of {weighed} mark(s) took the off-window exemption — that is \
+         the whole screen, so this gate weighed nothing",
+    );
 }
 
 // ── 5. Disjoint: two rows are never painted on top of each other ────────────

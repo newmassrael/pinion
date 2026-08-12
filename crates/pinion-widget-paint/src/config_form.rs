@@ -531,6 +531,11 @@ fn lay_row(field: &ConfigField, at: (u32, u32), key_col: u32, style: &FormStyle)
 fn lay_parts(field: &ConfigField, control: Rect, style: &FormStyle) -> Vec<(String, Rect)> {
     let key = field.key();
     let text_style = form_run_style().with_size_px(style.key_px);
+    // ★★ R1672 — inside the control's CONTENT box, not its box. A part laid at
+    // the box covers the outline the box strokes inside itself, which is a gap
+    // in that outline wherever the part sits; `pinion_core::containment` calls
+    // it an escape from the moment it learned the distinction.
+    let control = inset_by(control, control_frame(field.shape()));
     match field.shape() {
         FieldType::Text => Vec::new(),
         FieldType::Integer { .. } => {
@@ -882,6 +887,71 @@ fn view_control(
 /// One chooser rather than four, because a divergence between the shapes here
 /// would be a bug: "this value stops a launch" is a fact about the row, not
 /// about which control the row happens to draw.
+/// The width of the outline [`control_skin`] draws INSIDE a control's box.
+///
+/// ★ R1672 — reserved by [`framed`] so a control's content cannot sit on its own
+/// outline. Measured the moment `containment` learned the border-box /
+/// content-box distinction: five marks in one form were flush against the frame
+/// they are drawn inside, which is a gap in the outline wherever they touch it.
+const CONTROL_FRAME: u32 = 1;
+
+/// The width of the outline the container that OWNS a shape's parts draws
+/// inside its own box — so the inset those parts are laid within.
+///
+/// ★★ R1672 — the **layout** half of the same fact [`framed`] is the paint half
+/// of, and the reason this is a function of the shape rather than a constant:
+/// only two of the six shapes put their parts inside a box that strokes itself.
+///
+/// A part rectangle is published ([`RowBox::parts`]) and then both painted at
+/// and pressed at, so it is not enough for the painter to add padding: an
+/// absolutely-placed child ignores its parent's padding, which is exactly what
+/// the measurement showed. R1672 added the padding, re-measured, and found the
+/// two stepper buttons still standing on the control's outline — the padding
+/// had moved the value text and nothing else.
+///
+/// The correspondence to what is actually painted is asserted over **every**
+/// arm by `r1672_every_shapes_control_frame_is_the_one_it_paints`, so a shape
+/// that gains or loses a skin cannot leave this behind.
+const fn control_frame(shape: &FieldType) -> u32 {
+    match shape {
+        // The control container IS the box: it draws [`control_skin`], and
+        // whatever it owns sits inside that stroke.
+        FieldType::Text | FieldType::Integer { .. } => CONTROL_FRAME,
+        // These paint into an unstyled container — a checkbox and its word, a
+        // row of option pills, a column of self-skinned item boxes. There is no
+        // outline of their own for a part to stand on.
+        FieldType::Boolean
+        | FieldType::Choice { .. }
+        | FieldType::Flags { .. }
+        | FieldType::List { .. } => 0,
+    }
+}
+
+/// `rect` less the outline drawn inside it — its content box.
+const fn inset_by(rect: Rect, frame: u32) -> Rect {
+    Rect::new(
+        rect.x + frame,
+        rect.y + frame,
+        rect.w.saturating_sub(frame * 2),
+        rect.h.saturating_sub(frame * 2),
+    )
+}
+
+/// A control's layout, with the frame's own pixels reserved.
+///
+/// One place rather than three: the three call sites below draw the same skin,
+/// and a padding each of them remembers separately is a padding one of them
+/// forgets — which is what the measurement found.
+fn framed(base: LayoutStyle) -> LayoutStyle {
+    let pad = base.padding;
+    base.with_padding(Rect::new(
+        pad.x + CONTROL_FRAME,
+        pad.y + CONTROL_FRAME,
+        pad.w + CONTROL_FRAME,
+        pad.h + CONTROL_FRAME,
+    ))
+}
+
 fn control_skin(worst: Option<&ConfigDefect>, theme: &Theme) -> BoxStyle {
     BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh))
         .with_corner_radius(8)
@@ -891,7 +961,9 @@ fn control_skin(worst: Option<&ConfigDefect>, theme: &Theme) -> BoxStyle {
             } else {
                 theme.resolve(ColorRole::Outline)
             },
-            1,
+            // The constant, not a literal: [`control_frame`] answers with this
+            // width and the two must be the same number by construction.
+            CONTROL_FRAME,
         ))
 }
 
@@ -1051,7 +1123,7 @@ fn number_control(
             .with_tag(format!("{tag_prefix}.control.{}", row.key))
             .with_style(control_skin(worst, theme))
             .with_layout(placed(
-                LayoutStyle::new().with_focusable(true),
+                framed(LayoutStyle::new().with_focusable(true)),
                 row.control,
                 origin,
             )),
@@ -1086,7 +1158,7 @@ fn list_control(
             .with_tag(format!("{tag_prefix}.{name}"))
             .with_style(control_skin(None, theme))
             .with_layout(placed(
-                LayoutStyle::new().with_focusable(true),
+                framed(LayoutStyle::new().with_focusable(true)),
                 seat,
                 (row.control.x, row.control.y),
             )),
@@ -1132,11 +1204,13 @@ fn text_control(
         .with_tag(format!("{tag_prefix}.control.{}", row.key))
         .with_style(control_skin(worst, theme))
         .with_layout(placed(
-            LayoutStyle::new()
-                .flex(FlexDirection::Row)
-                .with_align_items(AlignItems::Center)
-                .with_padding(Rect::new(10, 0, 10, 0))
-                .with_focusable(true),
+            framed(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_align_items(AlignItems::Center)
+                    .with_padding(Rect::new(10, 0, 10, 0))
+                    .with_focusable(true),
+            ),
             row.control,
             origin,
         )),
@@ -1370,9 +1444,11 @@ mod tests {
     }
     use pinion_core::widgets::config_form::{Applies, ConfigField, ConfigForm, FieldType};
 
+    use pinion_core::Scene;
+
     use super::{
-        FieldGrowth, FormStyle, RowWrap, form_geometry, row_access_nodes, row_description,
-        view_config_form,
+        CONTROL_FRAME, FieldGrowth, FormStyle, RowWrap, control_frame, form_geometry, inset_by,
+        row_access_nodes, row_description, view_config_form,
     };
 
     fn inspector() -> ConfigForm {
@@ -2083,5 +2159,137 @@ mod tests {
             "{} tagged node(s) would swallow a real press: {opaque:?}",
             opaque.len()
         );
+    }
+
+    /// The border a tagged node strokes inside its own box, or `None` if the
+    /// walk never reached that tag.
+    fn painted_frame(scene: &Scene, tag: &str) -> Option<u32> {
+        let mut found = None;
+        scene.for_each_node(&mut |visit| {
+            if visit.node.tag() == Some(tag) {
+                let style = match visit.node {
+                    Scene::Container(n) => Some(&n.style),
+                    Scene::Box(n) => Some(&n.style),
+                    _ => None,
+                };
+                found =
+                    Some(style.map_or(0, |s| s.border.as_ref().map_or(0, |border| border.width)));
+            }
+        });
+        found
+    }
+
+    /// One field of every shape, and the shape census that keeps it total.
+    ///
+    /// A [`FieldType`] arm added later lands in the `match` below as a
+    /// non-exhaustive pattern, so the population cannot silently stop covering
+    /// the type it is a census of.
+    fn one_of_every_shape() -> Vec<ConfigField> {
+        let words = || vec!["one".into(), "two".into()];
+        let fields = vec![
+            ConfigField::new("a.text", "text", Applies::Hot, "x"),
+            ConfigField::new("a.int", "int", Applies::Hot, "8")
+                .with_shape(FieldType::Integer { min: 0, max: 99 }),
+            ConfigField::new("a.bool", "bool", Applies::Hot, "true").with_shape(FieldType::Boolean),
+            ConfigField::new("a.choice", "choice", Applies::Hot, "one")
+                .with_shape(FieldType::Choice { of: words() }),
+            ConfigField::new("a.flags", "flags", Applies::Hot, "one")
+                .with_shape(FieldType::Flags { of: words() }),
+            ConfigField::new("a.list", "list", Applies::Hot, "one, two").with_shape(
+                FieldType::List {
+                    of: Box::new(FieldType::Text),
+                },
+            ),
+        ];
+        let mut seen = [false; 6];
+        for field in &fields {
+            seen[match field.shape() {
+                FieldType::Text => 0,
+                FieldType::Integer { .. } => 1,
+                FieldType::Boolean => 2,
+                FieldType::Choice { .. } => 3,
+                FieldType::Flags { .. } => 4,
+                FieldType::List { .. } => 5,
+            }] = true;
+        }
+        assert!(
+            seen.iter().all(|hit| *hit),
+            "the census must hold one field of every shape: {seen:?}"
+        );
+        fields
+    }
+
+    /// ★★ R1672 — the frame every shape DECLARES is the frame it PAINTS.
+    ///
+    /// [`control_frame`] is the inset [`lay_parts`] lays a shape's affordances
+    /// within, and it is a judgment about what the painter does: two of the six
+    /// shapes put their parts inside a container that strokes [`control_skin`]
+    /// and the other four do not. A judgment nothing checks is a comment, and
+    /// this one goes wrong silently — a shape that gains a skin would start
+    /// painting its own parts over its outline with every test still green.
+    ///
+    /// So the assertion is a correspondence over the whole census: for each
+    /// shape, the border width the scene actually carries at
+    /// `<prefix>.control.<key>` equals what the constant says.
+    #[test]
+    fn r1672_every_shapes_control_frame_is_the_one_it_paints() {
+        let theme = pinion_core::theme::Theme::default();
+        let fields = one_of_every_shape();
+        let form = ConfigForm::new(fields.clone(), Vec::new());
+        let geometry = form_geometry(&form, (0, 0), &FormStyle::default());
+        let scene = view_config_form("f", &form, &geometry, &theme);
+        for field in &fields {
+            let tag = format!("f.control.{}", field.key());
+            let painted = painted_frame(&scene, &tag)
+                .unwrap_or_else(|| panic!("{tag} is painted by this form"));
+            assert_eq!(
+                painted,
+                control_frame(field.shape()),
+                "{tag}: the declared frame and the painted one have to be one \
+                 number, or a part laid inside the first sits on the second",
+            );
+        }
+    }
+
+    /// ★★ R1672 — a stepper stands inside its control's outline, not on it.
+    ///
+    /// The published part rectangles are laid against the control's CONTENT
+    /// box. Before this round they were laid against its box, so the two
+    /// stepper buttons of every integer row on every consumer of this widget
+    /// covered the control's own frame along three edges — reported by
+    /// `pinion_core::containment` the moment it learned the distinction, and
+    /// invisible to everything before that.
+    ///
+    /// The counter-assertion is the load-bearing half: an integer control keeps
+    /// a frame to clear, so a repair that simply stopped drawing the outline
+    /// would satisfy the first assertion and fail this one.
+    #[test]
+    fn r1672_a_steppers_seat_clears_its_controls_outline() {
+        let field = ConfigField::new("link.tx.batch_size", "int", Applies::Restart, "8")
+            .with_shape(FieldType::Integer { min: 0, max: 65535 });
+        let form = ConfigForm::new(vec![field], Vec::new());
+        let geometry = form_geometry(&form, (14, 40), &FormStyle::default());
+        let row = geometry.row("link.tx.batch_size").expect("shown");
+        let frame = control_frame(&FieldType::Integer { min: 0, max: 65535 });
+        assert_eq!(frame, CONTROL_FRAME, "an integer control draws a frame");
+        let content = inset_by(row.control, frame);
+        assert!(
+            content.w < row.control.w && content.h < row.control.h,
+            "the content box is smaller than the box: {content:?} vs {:?}",
+            row.control
+        );
+        let mut steppers = 0;
+        for (suffix, seat) in &row.parts {
+            steppers += 1;
+            assert!(
+                seat.x >= content.x
+                    && seat.y >= content.y
+                    && seat.x + seat.w <= content.x + content.w
+                    && seat.y + seat.h <= content.y + content.h,
+                "{suffix} at {seat:?} stands on the control's outline; the \
+                 content box is {content:?}",
+            );
+        }
+        assert_eq!(steppers, 2, "an integer row publishes a stepper pair");
     }
 }

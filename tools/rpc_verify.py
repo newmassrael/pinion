@@ -873,6 +873,25 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         self._next_id = 1
 
     def __enter__(self) -> "RpcSubprocess":
+        # ★★ R1672 — EVERY exit path from here reaps the child, not only the
+        # gate block's.
+        #
+        # `with` calls `__exit__` only for a context manager whose `__enter__`
+        # RETURNED, so a raise anywhere in the body below leaks the subprocess
+        # — and the body raises on a boot that times out, on a binary that dies
+        # during boot, and on a first paint that never completes. R1650 wrote
+        # exactly that sentence and guarded only the block it was adding;
+        # R1666 then measured `ai-introspect-demo` alive for an hour and two
+        # minutes after its boot baseline timed out, and R1672 measured it again
+        # at an hour and eleven. The axis is not "the gate refused", it is
+        # "anything left `__enter__` without returning".
+        try:
+            return self._enter_inner()
+        except BaseException:
+            self.shutdown()
+            raise
+
+    def _enter_inner(self) -> "RpcSubprocess":
         binary = self._resolve_binary()
         cmd = [str(binary)] if binary else self._cargo_run_cmd()
         # R835 §5.16 — windowless-by-default env. Hidden unless the demo
@@ -995,23 +1014,18 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
                         time.sleep(0.05)
         finally:
             self.request_timeout = steady_timeout
-        # R1650 — the gate runs INSIDE a teardown guard, because `with` only
-        # calls `__exit__` for a context manager whose `__enter__` RETURNED: a
-        # bare raise here leaves the subprocess running, and R1570.3 recorded
-        # what a leaked process does to every demo the sweep runs after it.
-        # Measured on this gate's own first sweep — 14 refusals left 14 live
-        # binaries holding GPU contexts, and the next launch died with
-        # "Not enough memory left" instead of its own verdict.
-        try:
-            self._gate_pointer_reach()
-            self._gate_text_smear()
-            self._gate_font_pin()
-            self._gate_containment()
-            self._gate_stated_reasons()
-            self._gate_scroll_reach()
-        except BaseException:
-            self.shutdown()
-            raise
+        # R1650 wrote these gates their own teardown guard; R1672 moved that
+        # guard out to `__enter__` itself, where it covers the boot baseline
+        # above as well. What a leaked process does is on record: R1570.3
+        # measured 14 refusals leaving 14 live binaries holding GPU contexts,
+        # and the next launch died with "Not enough memory left" instead of its
+        # own verdict.
+        self._gate_pointer_reach()
+        self._gate_text_smear()
+        self._gate_font_pin()
+        self._gate_containment()
+        self._gate_stated_reasons()
+        self._gate_scroll_reach()
         return self
 
     def _gate_pointer_reach(self) -> None:

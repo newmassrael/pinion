@@ -882,6 +882,152 @@ fn r1668_no_card_paints_its_content_outside_itself() {
 ///
 /// So this walks every painted node, tagged or not, and holds it to the card's
 /// **content** rectangle — the box less its border.
+/// ★★ R1672 — the preset menu is a popup: **anchored** to the chip that opens
+/// it, **bounded** by the window rather than by the bar.
+///
+/// It was a child of the sub bar and hung 81 pixels below it. Moving it to the
+/// window's own layer is what makes that an honest tree — but the move alone is
+/// not checkable, and this is the trap this session kept walking into: the
+/// paint and the hit test both read `preset_item_rect`, so a change to that
+/// function moves BOTH and no assertion comparing them can notice. The shape
+/// has to be pinned against something that is not itself, and the something is
+/// the chip: the menu hangs under it, lines up with it, and stays inside the
+/// window.
+#[test]
+fn r1672_the_preset_menu_hangs_under_the_chip_that_opens_it() {
+    let mut open_cases = 0;
+    sweep(|state, shot, _, case| {
+        if !state.preset_open.get() {
+            assert!(
+                shot.rect("shell.preset.menu").is_none(),
+                "{case}: the menu is closed and still painted",
+            );
+            return;
+        }
+        open_cases += 1;
+        let chip = shot
+            .rect("shell.subbar.preset")
+            .unwrap_or_else(|| panic!("{case}: the chip that opens the menu is painted"));
+        let menu = shot
+            .rect("shell.preset.menu")
+            .unwrap_or_else(|| panic!("{case}: the open menu is painted"));
+        // The panel's own top overlaps the chip by design — the menu's heading
+        // band sits over the bottom of the control that opened it, which is how
+        // it reads as belonging to it. What has to be BELOW the chip is the
+        // first thing a person can press, or the menu covers its own trigger.
+        let first = shot
+            .rect("shell.preset.item.0")
+            .unwrap_or_else(|| panic!("{case}: the open menu paints its first row"));
+        assert!(
+            first.y >= chip.y + chip.h,
+            "{case}: the first row at {first:?} is not below the chip at {chip:?}",
+        );
+        assert!(
+            menu.x + 16 >= chip.x && menu.x <= chip.x + 16,
+            "{case}: the menu at {menu:?} is not lined up with {chip:?}",
+        );
+        assert!(
+            menu.x + menu.w <= case.size.0 && menu.y + menu.h <= case.size.1,
+            "{case}: the menu at {menu:?} leaves the {:?} window",
+            case.size,
+        );
+    });
+    assert!(open_cases > 0, "no swept state opens the menu");
+}
+
+/// ★★ R1672 — a header too narrow for its own chrome gives way IN ORDER, and
+/// the sweep reaches both sides of that.
+///
+/// The give-way is this round's mechanism and a mechanism nothing exercises on
+/// both sides is a branch nobody has run ([[r1669-a-clamp-says-which-case-
+/// reaches-it]]). The two floors below are what make this a coverage claim
+/// rather than a sample: some case must paint a card's **whole** affordance
+/// strip, and some case must paint **fewer** than a card offers — otherwise the
+/// per-case assertion is true of a screen where the give-way never happens or
+/// never stops happening.
+///
+/// The per-case assertion is that what is painted is a **suffix** of what the
+/// card offers: dropping from the left keeps the last-declared control nearest
+/// the edge a hand reaches for, and a hole in the middle would mean the strip's
+/// positions and its contents had come apart.
+#[test]
+fn r1672_a_narrow_header_drops_affordances_from_the_left() {
+    let mut whole = 0;
+    let mut reduced = 0;
+    sweep(|state, shot, _, case| {
+        for id in shown_cards(state) {
+            let Some(card) = state.card(&id) else {
+                continue;
+            };
+            let offered: Vec<String> = card
+                .chrome()
+                .offered()
+                .iter()
+                .map(|a| a.wire().to_owned())
+                .collect();
+            if offered.is_empty() {
+                continue;
+            }
+            let painted: Vec<String> = offered
+                .iter()
+                .filter(|wire| shot.rect(&format!("card.{id}.{wire}")).is_some())
+                .cloned()
+                .collect();
+            assert_eq!(
+                painted,
+                offered[offered.len() - painted.len()..],
+                "{case}: `{id}` painted {painted:?} of {offered:?} — the strip \
+                 gives way from the LEFT, so what is left is a suffix",
+            );
+            if painted.len() == offered.len() {
+                whole += 1;
+            } else {
+                reduced += 1;
+            }
+        }
+    });
+    assert!(whole > 0, "no case painted a card's whole strip");
+    assert!(
+        reduced > 0,
+        "no case narrowed a card enough to drop one — the give-way branch is \
+         never reached, so this sweep says nothing about it",
+    );
+}
+
+/// ★★ R1672 — every painted mark is inside the box that OWNS it, ink and all.
+///
+/// The two checks around this one ask about *rectangles in the scene*: whether
+/// a tag lands inside the pane its address names, and whether a card's parts
+/// cross the card's frame. Neither can see **ink**, which is a measurement and
+/// not something the scene holds — a label whose glyphs run three pixels past
+/// the box the view gave it is inside its rectangle by every question above.
+///
+/// Screen A has asked this since R1656. This screen and screen B never did, and
+/// R1672 measured what that cost: the check's metric had been copied into
+/// screen B without the check, so a break that put its panes over their panels'
+/// outlines was caught by nothing. The metric now comes from the crate
+/// ([`pinion_core::test_fixtures::screen_ink`]) and all three screens ask.
+#[test]
+fn r1672_every_painted_mark_is_inside_the_box_that_owns_it() {
+    use pinion_core::test_fixtures::screen_ink::assert_contained_ink;
+    let mut below = 0;
+    let mut weighed = 0;
+    sweep(|_, shot, scene, case| {
+        weighed += shot.runs.len();
+        below += assert_contained_ink(case.name, scene, case.size);
+    });
+    // A floor on the SWEEP, for the reason `sweep` itself carries one (it pins
+    // the case count): a check whose every mark took the off-window exemption
+    // asserted nothing and reads afterwards as coverage. Bounded by what was
+    // actually weighed rather than by a number picked here.
+    assert!(weighed > 0, "the sweep found no painted runs to weigh");
+    assert!(
+        below < weighed,
+        "{below} of {weighed} mark(s) took the off-window exemption — that is \
+         the whole screen, so this gate weighed nothing",
+    );
+}
+
 #[test]
 fn r1671_nothing_a_card_paints_crosses_its_own_frame() {
     sweep(|state, shot, scene, case| {

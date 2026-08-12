@@ -141,14 +141,61 @@ pub fn scroll_pane(
     let node =
         ScrollNode::from_state(Rc::clone(state), viewport, content).with_axis(ScrollAxis::Both);
     let layout = node.layout.clone();
-    Scene::Scroll(
-        node.with_layout(layout.with_pointer_transparent(pointer == PanePointer::PassesThrough)),
-    )
+    // ★ R1672 — the viewport's ORIGIN is honoured, not only its size. It was
+    // used for the extent alone and the node took its position from the flow,
+    // so a caller that handed a pane its CONTENT rectangle (inset by the frame
+    // the pane draws) got a body that was the right size in the wrong place:
+    // measured, the right and bottom overhangs closed and the left and top
+    // stayed at one pixel each. A rectangle is a position and a size, and a
+    // consumer that passes one has said both.
+    let placed = layout
+        .with_pointer_transparent(pointer == PanePointer::PassesThrough)
+        .with_absolute_position(viewport.x, viewport.y);
+    Scene::Scroll(node.with_layout(placed))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// R1672 — the viewport's ORIGIN is honoured, not only its size.
+    ///
+    /// It was used for the extent alone and the node took its position from the
+    /// flow, so a caller handing a pane its CONTENT rectangle (inset by the
+    /// frame the pane draws) got a body of the right size in the wrong place:
+    /// measured on two screens, the right and bottom overhangs closed and the
+    /// left and top stayed at one pixel each.
+    ///
+    /// A rectangle is a position AND a size, and a consumer that passes one has
+    /// said both. Asserted here because the change is a contract this crate
+    /// makes to twelve call sites, and a contract nothing checks is a comment.
+    #[test]
+    fn r1672_the_viewport_origin_places_the_pane() {
+        use pinion_core::reactive::Owner;
+        use pinion_core::scene::Rect;
+        use pinion_core::widgets::scroll::ScrollState;
+
+        let owner = Owner::new();
+        owner.run(|| {
+            let state = std::rc::Rc::new(ScrollState::with_tag("probe"));
+            let placed = scroll_pane(
+                &state,
+                Rect::new(7, 11, 80, 40),
+                (0, 0),
+                PanePointer::PassesThrough,
+                Vec::new(),
+            );
+            let layout = placed
+                .layout_style()
+                .expect("a scroll node carries a layout sidecar");
+            assert_eq!(
+                layout.absolute_position,
+                Some((7, 11)),
+                "the pane is placed where its viewport says, not at the flow's origin",
+            );
+        });
+    }
+
     use pinion_core::reactive::Owner;
     use pinion_core::style::BoxStyle;
     use pinion_core::widgets::scroll::use_scroll_state;

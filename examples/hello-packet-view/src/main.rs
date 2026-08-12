@@ -472,6 +472,19 @@ fn tagged_label(tag: &str, text: impl Into<String>, rect: Rect, px: u32, fg: Col
     )
 }
 
+/// A bordered panel's CONTENT rectangle in its own space: its box less the 1px
+/// frame [`panel`] draws inside it.
+///
+/// ★ R1672 — the placement half of
+/// [`pinion_core::containment::content_rect`], which is the check half. A pane
+/// that handed its scrolling body `(0, 0, rect.w, rect.h)` put the body over
+/// its own outline, and the channel could not say so until it learned the
+/// border-box / content-box distinction. Named here so the two halves cannot
+/// drift: change the frame's width and both follow.
+const fn panel_content(rect: Rect) -> Rect {
+    Rect::new(1, 1, rect.w.saturating_sub(2), rect.h.saturating_sub(2))
+}
+
 fn panel(tag: &str, rect: Rect, fill: Color, border: Option<Color>, children: Vec<Scene>) -> Scene {
     let mut style = BoxStyle::filled(fill);
     if let Some(colour) = border {
@@ -986,7 +999,7 @@ fn list_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
         Some(ink.outline),
         vec![scroll_pane(
             &state.list_scroll,
-            Rect::new(0, 0, rect.w, rect.h),
+            panel_content(rect),
             (0, PAD),
             PanePointer::PassesThrough,
             children,
@@ -1179,7 +1192,7 @@ fn tree_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
         Some(ink.outline),
         vec![scroll_pane(
             &state.tree_scroll,
-            Rect::new(0, 0, rect.w, rect.h),
+            panel_content(rect),
             (0, PAD),
             PanePointer::PassesThrough,
             children,
@@ -1264,7 +1277,7 @@ fn bytes_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
         Some(ink.outline),
         vec![scroll_pane(
             &state.bytes_scroll,
-            Rect::new(0, 0, rect.w, rect.h),
+            panel_content(rect),
             (0, PAD),
             PanePointer::PassesThrough,
             children,

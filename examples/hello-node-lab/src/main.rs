@@ -1686,10 +1686,35 @@ fn value_label(text: impl Into<String>, rect: Rect, px: u32, fg: Color) -> Scene
     Scene::Text(TextNode::styled(text.into(), rect, path_style(px, fg)).with_layout(absolute(rect)))
 }
 
+/// The width of the outline [`panel`] and [`box_at`] stroke INSIDE their box.
+///
+/// Named so [`panel_content`] and the border below are one number: a content
+/// inset that remembers the frame's width separately from the frame is an
+/// inset that goes wrong the day the frame changes.
+const PANEL_FRAME: u32 = 1;
+
+/// A bordered panel's CONTENT rectangle in its own space: its box less the
+/// [`PANEL_FRAME`] outline [`panel`] draws inside it.
+///
+/// ★ R1672 — the placement half of
+/// [`pinion_core::containment::content_rect`], which is the check half. A pane
+/// that handed its scrolling body `(0, 0, rect.w, rect.h)` put the body over
+/// its own outline, and the channel could not say so until it learned the
+/// border-box / content-box distinction. Named here so the two halves cannot
+/// drift: change the frame's width and both follow.
+const fn panel_content(rect: Rect) -> Rect {
+    Rect::new(
+        PANEL_FRAME,
+        PANEL_FRAME,
+        rect.w.saturating_sub(PANEL_FRAME * 2),
+        rect.h.saturating_sub(PANEL_FRAME * 2),
+    )
+}
+
 fn panel(tag: &str, rect: Rect, fill: Color, border: Option<Color>, children: Vec<Scene>) -> Scene {
     let mut style = BoxStyle::filled(fill);
     if let Some(colour) = border {
-        style = style.with_border(Border::new(colour, 1));
+        style = style.with_border(Border::new(colour, PANEL_FRAME));
     }
     Scene::Container(
         ContainerNode::new(children)
@@ -1963,7 +1988,7 @@ fn palette(state: &LabState, ink: Ink) -> Scene {
         Some(ink.outline),
         vec![scroll_pane(
             &state.palette_scroll,
-            Rect::new(0, 0, rect.w, rect.h),
+            panel_content(rect),
             (0, PAD),
             // Every press on this screen belongs to the one root `External`
             // that does the screen's own hit test, so the pane must be
@@ -2089,6 +2114,12 @@ fn palette_determinism(state: &LabState, rect: Rect, ink: Ink) -> Vec<Scene> {
 fn toolbar(state: &LabState, ink: Ink) -> Scene {
     /// The clearance between one toolbar label's box and the next one's.
     const GAP: u32 = 8;
+    /// The clearance the launch chip keeps between its frame and its word,
+    /// above and below.
+    const GATE_PAD: u32 = 1;
+    /// The same, left and right — wider, because a word set flush against a
+    /// vertical rule reads as touching it long before it overlaps.
+    const GATE_TEXT_PAD: u32 = 9;
     let bar = toolbar_rect();
     let verdict = state.verdict();
     let nodes = state.cards().len();
@@ -2127,19 +2158,37 @@ fn toolbar(state: &LabState, ink: Ink) -> Scene {
         ),
         // The word lives INSIDE the chip rather than beside it, so it is the
         // chip's own content and cannot drift out of it.
-        panel(
-            "lab.toolbar.gate",
-            Rect::new(PAD + 300, 12, 104, 22),
-            ink.raised,
-            Some(gate_colour),
-            vec![label(
-                gate_word,
-                // ★ R1656 — the LINE box of the face, not the face's size.
-                Rect::new(10, 4, 84, line_box(FONT_SMALL)),
-                FONT_SMALL,
-                gate_colour,
-            )],
-        ),
+        //
+        // ★★ R1672 — and the chip's height and the word's seat are both DERIVED
+        // from the line box and the frame. They were a picked `22` and a picked
+        // `y = 4`, which happened to put the word's last row on the chip's own
+        // outline: exactly one pixel, on the bottom edge, invisible until
+        // `containment` learned that a border is ink the box owns. The numbers
+        // below come out at the same 22 — the pixels do not move, the way they
+        // are arrived at does.
+        {
+            let line = line_box(FONT_SMALL);
+            let seat = Rect::new(PAD + 300, 12, 104, line + (PANEL_FRAME + GATE_PAD) * 2);
+            let inner = panel_content(seat);
+            panel(
+                "lab.toolbar.gate",
+                seat,
+                ink.raised,
+                Some(gate_colour),
+                vec![label(
+                    gate_word,
+                    // ★ R1656 — the LINE box of the face, not the face's size.
+                    Rect::new(
+                        inner.x + GATE_TEXT_PAD,
+                        inner.y + GATE_PAD,
+                        inner.w.saturating_sub(GATE_TEXT_PAD * 2),
+                        line,
+                    ),
+                    FONT_SMALL,
+                    gate_colour,
+                )],
+            )
+        },
     ];
 
     children.extend(toolbar_controls(state, ink));
@@ -2610,7 +2659,7 @@ fn canvas(state: &LabState, ink: Ink) -> Scene {
     );
     let (ox, oy) = world_offset(state, state.pan.get());
     let viewport = Scene::Scroll(
-        ScrollNode::new(Rect::new(0, 0, rect.w, rect.h), world)
+        ScrollNode::new(panel_content(rect), world)
             .with_axis(ScrollAxis::Both)
             .with_offset(ox, oy)
             // A drag on this surface is a pan, not a selection sweep, so the
@@ -2652,7 +2701,7 @@ fn inspector(state: &LabState, theme: &Theme, ink: Ink) -> Scene {
             Some(ink.outline),
             vec![scroll_pane(
                 &state.inspector_scroll,
-                Rect::new(0, 0, rect.w, rect.h),
+                panel_content(rect),
                 (0, PAD),
                 PanePointer::PassesThrough,
                 children,
@@ -2778,7 +2827,7 @@ fn inspector_pane(state: &LabState, theme: &Theme, ink: Ink, mut children: Vec<S
         Some(ink.outline),
         vec![scroll_pane(
             &state.inspector_scroll,
-            Rect::new(0, 0, rect.w, rect.h),
+            panel_content(rect),
             (0, PAD),
             // Every press on this screen belongs to the one root `External`
             // that does the screen's own hit test, so the pane must be

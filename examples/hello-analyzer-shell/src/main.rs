@@ -673,7 +673,15 @@ fn cell_at(lx: u32, ly: u32) -> (u32, u32) {
     (col.min(GRID_COLS - 1), row)
 }
 
-/// The card's frame: a 1px border drawn INSIDE its own rectangle.
+/// The outline a card strokes inside its rectangle at rest.
+const CARD_OUTLINE: u32 = 1;
+
+/// The accent ring it strokes instead when it is the keyboard's subject — the
+/// wider of the two, because a ring has to read as a ring.
+const CARD_RING: u32 = 2;
+
+/// The band a card reserves for its own frame: the **widest** the frame ever
+/// gets, whichever of the two it is drawing right now.
 ///
 /// ★★ R1671 — every one of a card's three bands is inset by it, and that is a
 /// rule rather than three decisions. Reported by a person looking at the
@@ -681,13 +689,23 @@ fn cell_at(lx: u32, ly: u32) -> (u32, u32) {
 /// card's outline, and after the body was inset the outline was still eaten —
 /// by the size-stepper strip, which is the band nobody had thought about.
 ///
-/// Nothing in the framework says a child may not paint over its owner's
-/// border: `scene/containment` compares a mark against the owner's BOX, and a
-/// border is ink the box owns inside that box, so painting over it is by that
-/// definition contained ([[debt-a-child-may-paint-over-its-owners-border]]).
-/// Until that lands, a band that CANNOT REACH the frame is the only form of
-/// this rule that a painter cannot forget.
-const CARD_FRAME: u32 = 1;
+/// ★★ R1672 — and it was [`CARD_OUTLINE`], so the moment a card became the
+/// selected one and swapped its 1px outline for the 2px ring, its header and
+/// **every row of its body** stood on the ring's second pixel. Nine marks, in a
+/// state this screen's sweep already ran, and nothing could see them: until this
+/// round `scene/containment` compared a mark against the owner's BOX, and a
+/// border is ink the box owns *inside* that box, so painting over it was by
+/// that definition contained. The channel has a content box now
+/// ([`pinion_core::containment::content_rect`]) and this is the placement half.
+///
+/// Derived from the two widths rather than picked, and **constant** rather than
+/// a function of `selected`: a content rectangle that changed with the ring
+/// would move every row in the card by a pixel when a person selects it.
+const CARD_FRAME: u32 = if CARD_RING > CARD_OUTLINE {
+    CARD_RING
+} else {
+    CARD_OUTLINE
+};
 
 /// The card's header band — the grip, the title and the header controls.
 const fn header_rect(card: Rect) -> Rect {
@@ -835,10 +853,23 @@ impl SubChip {
     }
 }
 
-/// One entry of the open preset menu, in the sub bar's own space.
+/// One entry of the open preset menu, in **window** space.
+///
+/// ★★ R1672 — window rather than the sub bar's, because the menu left the sub
+/// bar. A drop-down is anchored to the control that opens it and is not
+/// *bounded* by it: this one hung 81 pixels below the bar it was a child of,
+/// which the ink gate reports as an escape and which is exactly what it is —
+/// the reference toolkit at 6.11 makes a menu a top-level popup for the same
+/// reason. It is now a sibling of the bars, painted after them, at the window
+/// coordinates its anchor derives.
 fn preset_item_rect(n: u32) -> Rect {
     let anchor = SubChip::Preset.rect();
-    Rect::new(anchor.x + 8, anchor.y + 44 + n * 34, 210, 30)
+    Rect::new(
+        RAIL_W + anchor.x + 8,
+        APP_BAR_H + anchor.y + 44 + n * 34,
+        210,
+        30,
+    )
 }
 
 /// Where the `n`th rail entry sits, in the rail container's own space.
@@ -914,12 +945,13 @@ impl Hit {
     /// Front to back: the preset menu is over the sub bar, floats are over the
     /// canvas, and a card's own controls are over its body.
     fn at(state: &ShellState, px: u32, py: u32) -> Self {
-        let sub_origin = (RAIL_W, APP_BAR_H);
-        if state.preset_open.get() && px >= sub_origin.0 && py >= sub_origin.1 {
-            let (lx, ly) = (px - sub_origin.0, py - sub_origin.1);
+        // ★ R1672 — the menu is a top-level popup now, so its rows are asked
+        // for in WINDOW coordinates and there is no origin to subtract. The
+        // paint reads the same function.
+        if state.preset_open.get() {
             let rows = state.presets.borrow().len();
             for n in 0..=rows {
-                if contains(preset_item_rect(u(n)), lx, ly) {
+                if contains(preset_item_rect(u(n)), px, py) {
                     return Self::PresetItem(n);
                 }
             }
@@ -953,7 +985,7 @@ impl Hit {
             return Self::Nothing;
         }
         if py < APP_BAR_H + SUB_BAR_H {
-            let (lx, ly) = (px - sub_origin.0, py - sub_origin.1);
+            let (lx, ly) = (px - RAIL_W, py - APP_BAR_H);
             for chip in SubChip::ALL {
                 if contains(chip.rect(), lx, ly) {
                     return Self::Sub(chip);
@@ -2575,11 +2607,49 @@ struct Palette {
 /// the screen reads as a list of everything the container holds. This shell's
 /// first draft omitted it and every card painted its title, badge and
 /// description down the left edge.
+/// ★★ R1672 — and the run **elides**, which this screen alone did not say.
+///
+/// A run placed at an exact rectangle has a fixed width, so what happens when
+/// the string is longer than that width is a policy somebody has to choose.
+/// Screens A and B choose `Ellipsis` for every run they place; this screen left
+/// the default, so a label too long for its box was painted *past* it — over
+/// whatever was next — rather than shortened. Measured the round the ink gate
+/// reached this screen: **32 marks**, including four of the app bar's own.
+///
+/// `Ellipsis` is the honest contract for a fixed box: it says the box wins and
+/// the string gives way. A box that is genuinely too small for its string is
+/// still a defect, and it is the shaped measurement at boot
+/// (`scene/containment`) that reports that one — this policy is about what the
+/// paint does when it happens, not about pretending it did not.
 fn label(text: &str, rect: Rect, px: u32, fg: Color) -> Scene {
-    Scene::Text(
-        TextNode::styled(text, rect, TextStyle::new().with_size_px(px).with_fg(fg))
-            .with_layout(absolute(rect)),
-    )
+    clipped(text, rect, px, fg, TextOverflow::Ellipsis)
+}
+
+/// A kind's three-letter code in its coloured chip, the word seated by the
+/// chip.
+///
+/// ★ R1672 — one helper because two call sites drew this and **both put the
+/// word's box past the chip's right edge**, by the same three pixels, from two
+/// separately picked insets (`(5, 9, 30, 14)` in a 32-wide chip and
+/// `(9, 9, 34, 14)` in a 40-wide one). Neither is a judgement anybody made
+/// twice; it is one rule written twice and got wrong twice, which is the
+/// mechanical-duplication case.
+fn code_chip(code: &str, chip: Rect, skin: BoxStyle, ink: Color, tag: Option<String>) -> Scene {
+    /// The clearance a code chip keeps between its edge and its word.
+    const CODE_PAD: u32 = 5;
+    let line = pinion_core::containment::line_box(FONT_TINY);
+    let word = Rect::new(
+        CODE_PAD,
+        chip.h.saturating_sub(line) / 2,
+        chip.w.saturating_sub(CODE_PAD * 2),
+        line,
+    );
+    let node = ContainerNode::new(vec![label(code, word, FONT_TINY, ink)]);
+    let node = match tag {
+        Some(tag) => node.with_tag(tag),
+        None => node,
+    };
+    Scene::Container(node.with_style(skin).with_layout(absolute(chip)))
 }
 
 /// Place a node at an exact rectangle inside its container, and make it
@@ -2949,7 +3019,7 @@ fn app_bar_scene(state: &ShellState, palette: Palette) -> Scene {
 fn sub_bar_scene(state: &ShellState, palette: Palette) -> Scene {
     let placed = state.placed().len();
     let preset = SubChip::Preset.rect();
-    let mut children = vec![
+    let children = vec![
         Scene::Container(
             ContainerNode::new(vec![
                 label(
@@ -2994,9 +3064,6 @@ fn sub_bar_scene(state: &ShellState, palette: Palette) -> Scene {
             palette,
         ),
     ];
-    if state.preset_open.get() {
-        children.push(preset_menu_scene(state, palette));
-    }
     Scene::Container(
         ContainerNode::new(children)
             .with_tag("shell.subbar")
@@ -3010,8 +3077,8 @@ fn sub_bar_scene(state: &ShellState, palette: Palette) -> Scene {
     )
 }
 
-/// The saved-layout menu, painted in the sub bar's own space — the same space
-/// the hit test resolves its rows in.
+/// The saved-layout menu: a **top-level popup**, painted in window space — the
+/// same space [`preset_item_rect`] gives the hit test.
 fn preset_menu_scene(state: &ShellState, palette: Palette) -> Scene {
     let names: Vec<String> = state.presets.borrow().keys().cloned().collect();
     let rows = u(names.len()) + 1;
@@ -3146,6 +3213,13 @@ fn grid_scene(rows: u32, palette: Palette, bright: bool) -> Vec<Scene> {
 
 /// A card's header: grip, status light, title, LIVE badge, controls.
 fn header_scene(card: &Card, rect: Rect, palette: Palette) -> Vec<Scene> {
+    /// The clearance the affordance strip keeps at the header's right edge.
+    const HDR_TAIL: u32 = 6;
+    /// The narrowest a title may be and still be worth painting.
+    const MIN_TITLE: u32 = 24;
+    /// The ready badge: its dot, its word, and the gap before it.
+    const BADGE_W: u32 = 54;
+
     let id = card.id().as_str();
     let colour = kind_color(kind_of(id));
     let grip = grip_rect(rect);
@@ -3164,19 +3238,52 @@ fn header_scene(card: &Card, rect: Rect, palette: Palette) -> Vec<Scene> {
         9,
         colour,
     ));
+    // ★★ R1672 — the header GIVES WAY in a stated order, and a part that does
+    // not fit is **not painted** rather than clamped.
+    //
+    // It used to be one expression — a title width with `.max(40)` on the end —
+    // and everything after it was measured from that clamped number, so a card
+    // shrunk to one board cell (75px) painted its title 11px past its own
+    // frame, its ready dot 21px past, the word `LIVE` **65px** past, and two
+    // affordance slots off its left edge. Twenty-five marks in a state the
+    // sweep already ran, and nothing could see them: the same shape R1668 named
+    // — one fact, two clamps, and the second one arrives too late to be told.
+    //
+    // The order below is the judgement, and it is the one a toolbar makes:
+    //
+    // 1. the grip and the kind dot are the card's identity and never give way;
+    // 2. the affordance strip keeps as many slots as fit, dropping from the
+    //    LEFT so the last-declared stays nearest the edge a hand reaches for;
+    // 3. the ready badge goes before the title does;
+    // 4. the title takes what is left, and elides inside it.
     let offered = card.chrome().offered();
-    let title_w = rect
-        .w
-        .saturating_sub(grip.w + 32 + u(offered.len()) * SLOT_W + 56)
-        .max(40);
-    out.push(label(
-        card.title(),
-        Rect::new(grip.x + grip.w + 20, rect.y + 9, title_w, 16),
-        FONT_BODY,
-        palette.ink,
-    ));
-    if card.state().is_ready() {
-        let badge_x = grip.x + grip.w + 24 + title_w;
+    let text_x = grip.x + grip.w + 20;
+    let right = rect.x + rect.w;
+    // What the header can give the strip once the identity and a title that
+    // says something are paid for. Derived, so the count the paint walks and
+    // the width the strip is sized from are one number.
+    let shown = usize::min(
+        offered.len(),
+        (right.saturating_sub(text_x + MIN_TITLE + HDR_TAIL) / SLOT_W) as usize,
+    );
+    let dropped = offered.len() - shown;
+    let text_room = right.saturating_sub(text_x + u(shown) * SLOT_W + HDR_TAIL);
+    let show_badge = card.state().is_ready() && text_room >= BADGE_W + MIN_TITLE;
+    let title_w = if show_badge {
+        text_room - BADGE_W
+    } else {
+        text_room
+    };
+    if title_w > 0 {
+        out.push(label(
+            card.title(),
+            Rect::new(text_x, rect.y + 9, title_w, 16),
+            FONT_BODY,
+            palette.ink,
+        ));
+    }
+    if show_badge {
+        let badge_x = text_x + title_w + 4;
         out.push(dot(
             badge_x,
             rect.y + CARD_HDR / 2 - 3,
@@ -3190,7 +3297,7 @@ fn header_scene(card: &Card, rect: Rect, palette: Palette) -> Vec<Scene> {
             palette.accent_fg,
         ));
     }
-    for (n, affordance) in offered.iter().enumerate() {
+    for (n, affordance) in offered.iter().enumerate().skip(dropped) {
         let slot = affordance_rect(rect, u(offered.len()), u(n));
         out.push(Scene::Container(
             ContainerNode::new(affordance_mark(*affordance, local(slot), palette.muted))
@@ -3765,16 +3872,12 @@ fn filter_counts(id: &str, area: Rect, card: Rect, palette: Palette) -> Vec<Scen
 fn placeholder_body(kind: &str, id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
     let def = def_of(kind);
     vec![
-        Scene::Container(
-            ContainerNode::new(vec![label(
-                def.map_or("", |d| d.code),
-                Rect::new(9, 9, 34, 14),
-                FONT_TINY,
-                palette.on_accent,
-            )])
-            .with_tag(format!("card.{id}.code"))
-            .with_style(BoxStyle::filled(kind_color(kind)).with_corner_radius(6))
-            .with_layout(absolute(Rect::new(rect.x + 12, rect.y + 10, 40, 32))),
+        code_chip(
+            def.map_or("", |d| d.code),
+            Rect::new(rect.x + 12, rect.y + 10, 40, 32),
+            BoxStyle::filled(kind_color(kind)).with_corner_radius(6),
+            palette.on_accent,
+            Some(format!("card.{id}.code")),
         ),
         label(
             def.map_or("", |d| d.gist),
@@ -3888,9 +3991,9 @@ fn card_scene(
                     // rather than a different fill, so a selected card that is
                     // also failing still reads as failing.
                     .with_border(if selected {
-                        Border::new(palette.accent_fg, 2)
+                        Border::new(palette.accent_fg, CARD_RING)
                     } else {
-                        Border::new(palette.outline, 1)
+                        Border::new(palette.outline, CARD_OUTLINE)
                     }),
             )
             .with_layout(absolute(rect)),
@@ -4142,15 +4245,12 @@ fn palette_row(
     };
     Scene::Container(
         ContainerNode::new(vec![
-            Scene::Container(
-                ContainerNode::new(vec![label(
-                    def.code,
-                    Rect::new(5, 9, 30, 14),
-                    FONT_TINY,
-                    palette.on_accent,
-                )])
-                .with_style(BoxStyle::filled(kind_color(def.kind)).with_corner_radius(8))
-                .with_layout(absolute(Rect::new(8, 7, 32, 32))),
+            code_chip(
+                def.code,
+                Rect::new(8, 7, 32, 32),
+                BoxStyle::filled(kind_color(def.kind)).with_corner_radius(8),
+                palette.on_accent,
+                None,
             ),
             // Both elide. A palette is a list of names of varying length in a
             // fixed column, so "the longest one happens to fit" is not a
@@ -4349,6 +4449,16 @@ fn view(_state: (), _frame: Frame) -> Scene {
         rail_scene(&state, palette),
         palette_scene(&state, palette),
         toast_scene(&state, palette),
+        // ★★ R1672 — the preset menu is a POPUP: anchored to the sub bar's
+        // chip, bounded by the window. It used to be a child of the bar and hung
+        // 81 pixels below it, which is an escape and was invisible until the ink
+        // gate reached this screen. A sibling here also puts it over everything
+        // it opens across, which a child of one bar can never be.
+        if state.preset_open.get() {
+            preset_menu_scene(&state, palette)
+        } else {
+            Scene::Container(ContainerNode::new(Vec::new()))
+        },
         label(
             HELP_STRIP,
             Rect::new(canvas_rect().x + 610, win_h() - 47, 470, 14),

@@ -89,6 +89,7 @@
 use std::collections::HashMap;
 
 use crate::scene::{Rect, Scene, TextNode};
+use crate::style::{Border, BorderPlacement};
 
 /// The height a box must have to hold one line of a `px` face without the
 /// glyphs leaving it — a **reservation**, not a measurement.
@@ -228,6 +229,75 @@ pub struct Escape {
 /// and no single answer is right for both.
 pub type InkOf<'a> = &'a mut dyn FnMut(&TextNode) -> (u32, u32);
 
+/// A node's **content** rectangle: its box, less any border it draws inside it.
+///
+/// The distinction CSS calls border box versus content box. A child is judged
+/// against this rather than against the box, because a border is ink the owner
+/// owns and a child that covers it has left the region it was given even though
+/// it is inside the outer rectangle.
+///
+/// ★ R1672 — **public, because the placement side needs the same answer.** A
+/// pane that hands its scrolling body its own rectangle puts the body over its
+/// outline, and a caller computing the inset itself would be a second copy of
+/// this rule free to disagree with the check that reports it. Two screens and a
+/// widget were doing exactly that, measured at 13 escapes the moment this
+/// channel learned the distinction.
+///
+/// # Against the floor, measured by running it
+///
+/// The reference toolkit at 6.11 **has** this concept and derives it the same
+/// way: a framed widget with a 2px line reports content margins of `2,2,2,2`
+/// and a content rect of `(2, 2, 96, 36)` inside a `100x40` box, and a titled
+/// group box reports `3,23,3,3` — its caption band included. So this is parity
+/// on the *rectangle*, and one limit of ours is worth stating: only the border
+/// is subtracted here, because a caption band is a widget's own layout decision
+/// and the scene has no vocabulary for it.
+///
+/// What the floor has no answer for is the question this module exists to ask.
+/// Probed there: nothing reports whether a mark actually **left** the content
+/// rect. A painter is free to draw outside it and no API says so; there is no
+/// per-edge overhang, no owner attribution, and `childrenRect` answers about
+/// child *widgets* rather than about painted ink. Here the content rectangle
+/// and the report that a mark crossed it are the same function's two halves.
+#[must_use]
+pub fn content_rect(node: &Scene, box_rect: Rect) -> Rect {
+    let border = match node {
+        Scene::Box(n) => n.style.border.as_ref(),
+        Scene::Container(n) => n.style.border.as_ref(),
+        _ => None,
+    };
+    let Some(border) = border else {
+        return box_rect;
+    };
+    let inset = border_inset(border);
+    Rect::new(
+        box_rect.x + inset,
+        box_rect.y + inset,
+        box_rect.w.saturating_sub(inset * 2),
+        box_rect.h.saturating_sub(inset * 2),
+    )
+}
+
+/// How many pixels of the box a border's own stroke covers, per edge.
+///
+/// A `match` over every placement rather than a test for one of them, so a
+/// placement added to [`BorderPlacement`] lands here as a compile error instead
+/// of silently taking the "nothing" branch. R1672's first draft *was* that test
+/// (`if placement != Inside { return box_rect }`) and it got
+/// [`BorderPlacement::Center`] wrong: a centred stroke straddles the edge, so
+/// half of it is inside the box and a child laid at the box covers that half.
+const fn border_inset(border: &Border) -> u32 {
+    match border.placement {
+        // The whole stroke is inside the box.
+        BorderPlacement::Inside => border.width,
+        // Half in, half out — and a partially covered pixel is covered, so the
+        // half that is inside rounds UP.
+        BorderPlacement::Center => border.width.div_ceil(2),
+        // Drawn beyond the box; it takes nothing from the content.
+        BorderPlacement::Outside => 0,
+    }
+}
+
 /// Every painted mark that left the box that owns it, in paint order.
 ///
 /// The walk is [`Scene::for_each_node`], so the geometry fold — enclosing
@@ -286,6 +356,20 @@ pub fn escapes(scene: &Scene, ink_of: InkOf<'_>) -> Vec<Escape> {
             // no promise about where its children go, so it cannot be broken.
             return;
         }
+        // ★★ R1672 — against the owner's CONTENT rectangle: its box less the
+        // border it draws inside that box. A border is ink the owner owns, so a
+        // child painted at the owner's full width covers the outline and leaves
+        // a gap in it — and until this round that was reported as contained,
+        // because "inside the box" was the whole of the question.
+        //
+        // Found by a person looking at a window twice in one session, on two
+        // different bands of the same card, and neither `scene/containment` nor
+        // any screen's own gate could see either: CSS has had border box versus
+        // content box from the beginning and nothing here expressed the second.
+        //
+        // `Outside` placement draws the border beyond the box, so it takes
+        // nothing from the content; only an inside border does.
+        let owner_rect = content_rect(parent, owner_rect);
         if matches!(parent, Scene::Scroll(_)) {
             // A scroll's content is SUPPOSED to be bigger than the viewport —
             // that is what makes it scrollable. Judging it here reported a
@@ -399,48 +483,127 @@ mod tests {
         (w, 12)
     }
 
-    /// R1671 — ★★ a child that covers its owner's BORDER is reported
-    /// CONTAINED, and that is the structural gap this test pins.
+    /// R1672 — ★★ a child that covers its owner's BORDER is an ESCAPE.
     ///
-    /// The channel compares a mark against its owner's **box**. A border is ink
-    /// the box owns *inside* that box, so a child painted at the owner's full
-    /// width sits over the outline and is, by this definition, inside it. CSS
-    /// has had the distinction from the beginning — border box versus content
-    /// box — and nothing here expresses the second one.
+    /// R1671 pinned the opposite answer here, with a doc saying the test should
+    /// be rewritten on the round that gave this channel a content box. This is
+    /// that round, and the test is the rewrite.
     ///
-    /// Found by a person looking at a window: a card's `time / type / name /
-    /// len` strip was painted at exactly its card's x and width, so the card's
-    /// outline had a gap where the strip crossed it. That screen was repaired
-    /// by insetting its body, which is one site compensating for a rule the
-    /// framework does not have.
+    /// The distinction is CSS's border box versus content box, and it is not
+    /// decorative: a person looking at a window reported the same defect twice
+    /// in one session, on two bands of one card, and neither this channel nor
+    /// any screen's own gate could see either — because "inside the box" was
+    /// the whole of the question and a border lives inside the box.
     ///
-    /// The assertion is deliberately that the escape list is EMPTY: it records
-    /// today's answer and goes red on the round that gives this channel a
-    /// content box, which is when it should assert the escape instead.
+    /// The overhang is reported per edge, so the repair (inset by the border)
+    /// is legible from the report alone.
     #[test]
-    fn r1671_a_mark_over_its_owners_border_is_called_contained() {
+    fn r1672_a_mark_over_its_owners_border_is_an_escape() {
         use crate::style::{Border, Color};
 
-        let strip = Scene::Box(
-            BoxNode::new(
-                // Exactly the owner's width: the fill covers both border
-                // columns, so the outline has a gap where this sits.
-                Rect::new(0, 10, 100, 12),
-                BoxStyle::filled(Color::rgb(0x30, 0x30, 0x30)),
+        let strip = |x: u32, w: u32| {
+            Scene::Box(
+                BoxNode::new(
+                    Rect::new(x, 10, w, 12),
+                    BoxStyle::filled(Color::rgb(0x30, 0x30, 0x30)),
+                )
+                .with_tag("strip"),
             )
-            .with_tag("strip"),
+        };
+        let framed = |child: Scene| {
+            let mut frame = ContainerNode::new(vec![child]);
+            frame.rect = Rect::new(0, 0, 100, 40);
+            frame.tag = Some("frame".to_owned().into());
+            frame.style = BoxStyle::filled(Color::rgb(0x10, 0x10, 0x10))
+                .with_border(Border::new(Color::rgb(0xEC, 0x5A, 0xA0), 1));
+            Scene::Container(frame)
+        };
+
+        // Exactly the owner's width: the fill covers both border columns.
+        let found = escapes(&framed(strip(0, 100)), &mut stub_ink);
+        assert_eq!(found.len(), 1, "the strip covers the frame: {found:?}");
+        assert_eq!(found[0].owner, "frame");
+        assert_eq!(
+            found[0].owner_rect,
+            Rect::new(1, 1, 98, 38),
+            "the CONTENT box"
         );
-        let mut frame = ContainerNode::new(vec![strip]);
-        frame.rect = Rect::new(0, 0, 100, 40);
-        frame.tag = Some("frame".to_owned().into());
-        frame.style = BoxStyle::filled(Color::rgb(0x10, 0x10, 0x10))
-            .with_border(Border::new(Color::rgb(0xEC, 0x5A, 0xA0), 1));
-        let scene = Scene::Container(frame);
-        let found = escapes(&scene, &mut stub_ink);
+        assert_eq!(
+            found[0].over.left, 1,
+            "one column each side, named per edge"
+        );
+        assert_eq!(found[0].over.right, 1);
+        assert_eq!(found[0].over.top, 0);
+        assert_eq!(found[0].over.bottom, 0);
+
+        // Inset by the border: nothing to report. The rule is not "anything
+        // touching the edge" — it is the border's own pixels.
         assert!(
-            found.is_empty(),
-            "the channel now reports {found:?} — the content-box rule has \
-             landed, and this test should assert the escape instead",
+            escapes(&framed(strip(1, 98)), &mut stub_ink).is_empty(),
+            "a band inset by the frame is contained",
+        );
+
+        // And an owner with no border is judged against its box, unchanged:
+        // this rule takes nothing away from a surface that draws no frame.
+        let mut plain = ContainerNode::new(vec![strip(0, 100)]);
+        plain.rect = Rect::new(0, 0, 100, 40);
+        plain.tag = Some("plain".to_owned().into());
+        assert!(
+            escapes(&Scene::Container(plain), &mut stub_ink).is_empty(),
+            "no border, no content inset",
+        );
+    }
+
+    /// R1672 — how much of the box a border takes, for **every** placement.
+    ///
+    /// Written because the first draft of [`content_rect`] asked whether the
+    /// placement was [`BorderPlacement::Inside`] and returned the box for
+    /// anything else, which is right for [`BorderPlacement::Outside`] and wrong
+    /// for [`BorderPlacement::Center`] — a centred stroke straddles the edge, so
+    /// half its width is inside the box and a child laid at the box covers it.
+    ///
+    /// The population is a `match` over the enum, so a fourth placement is a
+    /// compile error here rather than a silent fourth answer.
+    #[test]
+    fn r1672_each_border_placement_takes_its_own_share_of_the_box() {
+        use crate::style::{Border, Color};
+
+        let framed = |placement: BorderPlacement, width: u32| {
+            let mut frame = ContainerNode::new(Vec::new());
+            frame.rect = Rect::new(0, 0, 100, 40);
+            frame.style = BoxStyle::filled(Color::rgb(0x10, 0x10, 0x10)).with_border(
+                Border::new(Color::rgb(0xEC, 0x5A, 0xA0), width).with_placement(placement),
+            );
+            Scene::Container(frame)
+        };
+        let inset_of = |placement, width| {
+            let node = framed(placement, width);
+            content_rect(&node, Rect::new(0, 0, 100, 40)).x
+        };
+
+        let mut covered = 0;
+        for placement in [
+            BorderPlacement::Inside,
+            BorderPlacement::Center,
+            BorderPlacement::Outside,
+        ] {
+            covered += 1;
+            let want = match placement {
+                // The whole 4px stroke is in the box.
+                BorderPlacement::Inside => 4,
+                // Half of it is, and an odd width rounds up: a partly covered
+                // pixel is covered.
+                BorderPlacement::Center => 2,
+                // None of it is.
+                BorderPlacement::Outside => 0,
+            };
+            assert_eq!(inset_of(placement, 4), want, "{placement:?} at width 4");
+        }
+        assert_eq!(covered, 3, "the census covers every placement");
+        assert_eq!(
+            inset_of(BorderPlacement::Center, 3),
+            2,
+            "an odd centred stroke rounds its inside half UP",
         );
     }
 

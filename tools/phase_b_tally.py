@@ -1162,9 +1162,55 @@ AXES = [
         # axis gains is a test in the painter that every tag it writes is
         # transparent. Nothing else in the catalogue has that test, which is the
         # next thing to measure here rather than a point to award now.
-        "judged_at": 1655,
-        "completion": 97,
-        "evidence_snapshot": {"example-name": 77, "round-axis": 12},
+        #
+        # R1672 RE-JUDGMENT, demanded by the tool (round-axis 12 -> 16, +33%),
+        # absorbing R1668, R1669, R1671 and R1672. 97 -> 98, and the point is
+        # ONE ITEM OFF THE STATED LIST ABOVE: the disabled cascade.
+        #
+        # R1655 recorded it as having one consumer, which was the whole of it —
+        # a widget could be greyed and nothing could say why. R1668 gave the
+        # DECLARATION a typed reason (`availability::Unavailable`: six kinds and
+        # a detail the kind gives meaning to), R1669 gave it the branchless
+        # builder (`LayoutStyle::with_availability`) and a boot gate that counts
+        # reasonless silent regions on the RUNNING screen with a floor of zero
+        # and an empty exception list, and the region's reason now reaches every
+        # node inside it while a node's own reason beats the region's. Measured
+        # against the reference at 6.11 by running it: four surfaces there
+        # answer a bool, assistive technology receives one bit of fifty-one, and
+        # the only slot that could carry a reason defaults to the action's own
+        # label — so "booked for a later release" and "this build will never
+        # have it" are the same bool. That gap is closed and the axis says so.
+        #
+        # WHY ONLY ONE POINT, re-measured this round rather than recalled:
+        #
+        #  * `External::wheel` still has exactly TWO widget implementors
+        #    (`slider`, `spin_button`) — counted over every `fn wheel` in the
+        #    tree, the rest being the trait default, the runtime/shell/TUI
+        #    plumbing and two examples. A combo box and a tab bar still do not
+        #    answer a wheel. Unmoved since R1554 and still the largest
+        #    cross-cutting item.
+        #  * The four absent widget kinds are still absent. Checked against the
+        #    example population by name and then by what the two near-misses
+        #    actually are: `hello-paged-stream` is Model/View paging behind an
+        #    LRU cache, not the paged CONTAINER, and `hello-app-font` loads an
+        #    application face rather than offering a font PICKER.
+        #  * Mnemonic adoption was not re-counted this round and is carried
+        #    forward as-is; a number nobody re-derived is not evidence.
+        #
+        # WHAT R1671 AND R1672 ADDED IS CORRECTNESS, NOT SURFACE, and that is
+        # why it is folded into this one point rather than scored separately: a
+        # box owns the border it strokes inside itself, so a child laid at the
+        # owner's full width has left the region it was given
+        # (`containment::content_rect`, with the inset a match over every
+        # `BorderPlacement` — the first draft got `Center` wrong by asking a
+        # yes/no question about `Inside`). Every bordered widget in the
+        # catalogue inherits it, and the config form's published part rectangles
+        # follow it in the crate, so its steppers stopped standing on their own
+        # outline for every consumer at once. Real, and the kind of thing an
+        # axis measured in catalogue BREADTH cannot show as more than a point.
+        "judged_at": 1672,
+        "completion": 98,
+        "evidence_snapshot": {"example-name": 77, "round-axis": 16},
     },
     {
         "key": "dataviz",

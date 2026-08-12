@@ -54,7 +54,7 @@ hello-conn-lifecycle	0
 hello-contextmenu	0
 hello-cross-filter	0
 hello-crosshair	0
-hello-data-grid	3
+hello-data-grid	4
 hello-datepicker	0
 hello-deviation-grid	0
 hello-dialog	0
@@ -70,8 +70,8 @@ hello-drawer	0
 hello-elevation	0
 hello-elevation-trace	0
 hello-encoded-answer	0
-hello-endpoint-identity	1
-hello-fab	1
+hello-endpoint-identity	0
+hello-fab	0
 hello-file-browser	0
 hello-file-dialog	0
 hello-file-manager	0
@@ -84,7 +84,7 @@ hello-flex-virtual-list	0
 hello-floating-chart	0
 hello-frame-profiler	0
 hello-gradient	0
-hello-graph-diff	0
+hello-graph-diff	6
 hello-grid-filter	0
 hello-grid-frozen-col	0
 hello-grid-header-menu	0
@@ -96,7 +96,7 @@ hello-grid-pointer	0
 hello-grid-row-style	0
 hello-grid-search	0
 hello-grid-sort	0
-hello-group-box	2
+hello-group-box	3
 hello-grouped-grid	0
 hello-grouped-grid-sort	0
 hello-grouped-list	0
@@ -108,8 +108,8 @@ hello-hyperlink	0
 hello-image	0
 hello-immediate-intent	0
 hello-immediate-mode-canvas	0
-hello-input-chip	0
-hello-inspector	0
+hello-input-chip	10
+hello-inspector	1
 hello-key-sequence	0
 hello-lazy-list	0
 hello-lazy-tree	0
@@ -136,7 +136,7 @@ hello-multi-window	0
 hello-narrative-walk	unmeasured	RpcError: [-32099] subprocess exited during boot (rc=1) — 'hello-narrative-walk: shell error: No such device or address 
 hello-nav-rail	0
 hello-no-primary	0
-hello-node-editor	0
+hello-node-editor	10
 hello-node-flow	0
 hello-node-groups	0
 hello-node-lab	0
@@ -153,7 +153,7 @@ hello-polar	0
 hello-popover	0
 hello-print	0
 hello-progress	0
-hello-property-grid	6
+hello-property-grid	35
 hello-radio	0
 hello-radio-group	0
 hello-range-slider	0

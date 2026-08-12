@@ -712,17 +712,18 @@ fn r1656_a_cards_text_shrinks_with_the_diagram() {
     });
 }
 
-/// ★ R1656 — every painted mark is inside the box that owns it, asked of the
-/// framework rather than of a helper here.
+/// ★★ R1672 — the ink gate comes from the CRATE now
+/// ([`pinion_core::test_fixtures::screen_ink`]), and this screen is one of its
+/// three consumers.
 ///
-/// The property a person had to find by looking: at the size this screen opens
-/// in, **seven of its eight node cards painted their last field row three to
-/// five pixels below their own border**, and every check in this module was
-/// green. Two reasons, and both are why this calls
-/// [`pinion_core::containment::escapes`] instead of comparing rectangles
-/// locally:
+/// It was written here at R1656 for a property a person had to find by looking:
+/// at the size this screen opens in, **seven of its eight node cards painted
+/// their last field row three to five pixels below their own border**, and
+/// every check in this module was green. Two reasons, and both are why the
+/// check is [`pinion_core::containment::escapes`] rather than a rectangle
+/// comparison local to this file:
 ///
-/// * `assert_contained` next door judges a run against its nearest **tagged
+/// * [`assert_contained`] next door judges a run against its nearest **tagged
 ///   ancestor**, and the card's parts were the card's SIBLINGS. The owner it
 ///   resolved was the canvas, which is big enough to hold anything, so the
 ///   question was answered honestly about the wrong box.
@@ -730,93 +731,20 @@ fn r1656_a_cards_text_shrinks_with_the_diagram() {
 ///   rows were inside their boxes. What left the card was the **ink**, and the
 ///   ink is not in the scene — it is a measurement.
 ///
-/// So the check has to come from the framework, and the framework has to be
-/// asked with a real metric. The stub used here is proportional to the string
-/// rather than shaped, and that is deliberate: a shaped measurement makes this
-/// gate green or red depending on which fonts the host has ([[zero-flake-policy]]).
-/// The shaped answer is what `scene/containment` reports at boot to
-/// `tools/rpc_verify.py`, on the machine that is actually painting.
-fn assert_contained_ink(when: &str, scene: &Scene, size: (u32, u32)) -> usize {
-    let (escapes, offscreen) = ink_escapes(scene, size);
-    assert!(
-        escapes.is_empty(),
-        "{when}: {} painted mark(s) are outside the box that owns them — {:?}",
-        escapes.len(),
-        escapes
-            .iter()
-            .map(|e| (
-                e.content.clone().or_else(|| e.tag.clone()),
-                e.owner.clone(),
-                e.over
-            ))
-            .take(6)
-            .collect::<Vec<_>>()
-    );
-    offscreen
-}
-
-/// The escapes and how many of them were entirely off-window, without asserting.
+/// What moved at R1672 is the *metric*, because there were three mechanical
+/// copies of it — two in this file — and screen B held one without ever running
+/// the check, so a counterfactual that put its panes over their panels'
+/// outlines was caught by nothing.
 ///
-/// Split out so a negative control can prove the metric MEASURES: a stand-in
-/// that hands the box back reports every scene as clean, and a check that
-/// cannot fail is indistinguishable from a screen with nothing wrong.
-/// The ink stand-in both containment and reach are measured with.
-///
-/// One function because two stand-ins would drift, and a mark that is "inside
-/// its box" under one measure and "out of reach" under another would be a
-/// disagreement about the screen rather than about the two questions.
-fn stand_in_ink(text: &pinion_core::scene::TextNode) -> (u32, u32) {
-    #[allow(
-        clippy::cast_possible_truncation,
-        reason = "a label is a handful of characters"
-    )]
-    let chars = text.content.chars().count() as u32;
-    let px = text.style.font_size_px.max(1);
-    let painted = if text.style.overflow.shortens() {
-        text.rect.w.min(chars * px)
-    } else {
-        chars * px
-    };
-    (painted, text.rect.h)
-}
-
-fn ink_escapes(scene: &Scene, size: (u32, u32)) -> (Vec<pinion_core::containment::Escape>, usize) {
-    let escapes = pinion_core::containment::escapes(scene, &mut |text| {
-        // A monospace stand-in, wider per character than any face this screen
-        // uses, so a box that passes here has room for a real one. Height is
-        // the shaper's line box for the declared face, which is the number an
-        // author most often gets wrong.
-        #[allow(
-            clippy::cast_possible_truncation,
-            reason = "a label is a handful of characters"
-        )]
-        let chars = text.content.chars().count() as u32;
-        let px = text.style.font_size_px.max(1);
-        let painted = if text.style.overflow.shortens() {
-            text.rect.w.min(chars * px)
-        } else {
-            chars * px
-        };
-        // ★ The WIDTH is stubbed and the HEIGHT is the laid-out one, and the
-        // split is deliberate. "Is this string too long for its column" is a
-        // question a font-independent stand-in can answer conservatively, and
-        // it is the one an author gets wrong. "Is this line box tall enough for
-        // this face" is answered by the layout pass using the real metrics of
-        // the host's fonts, so re-deciding it here against a constant would
-        // make this gate green or red depending on which fonts are installed
-        // ([[zero-flake-policy]]) — and would demand that the flow layout agree
-        // with a number this file made up. The shaped vertical answer is what
-        // `scene/containment` reports at boot, on the machine that is painting.
-        (painted, text.rect.h)
-    });
-    // Entirely below the window: nobody can see it, so it is the registered
-    // scroll gap rather than a mark drawn over its neighbour. Partly visible
-    // and escaping is still a defect — the grant is "invisible", not "low".
-    let (offscreen, escapes): (Vec<_>, Vec<_>) = escapes
-        .into_iter()
-        .partition(|e| e.painted.y >= size.1 || e.painted.x >= size.0);
-    (escapes, offscreen.len())
-}
+/// ★ There is no allowance, and that is a finding. The channel learned the
+/// border-box / content-box distinction this round and surfaced six escapes
+/// here. A first pass closed four and named the other two in an
+/// `OUTLINE_ALLOWANCE`; the round then closed those as well — the published
+/// part rectangles in `pinion_widget_paint::config_form` (a crate, so every
+/// consumer followed) and this screen's own toolbar pill. An exception
+/// mechanism holding the empty set is a place for the next escape to be filed
+/// instead of fixed, so it is gone.
+use pinion_core::test_fixtures::screen_ink::{assert_contained_ink, ink_escapes, stand_in_ink};
 
 /// The one sweep, over every state.
 #[test]
