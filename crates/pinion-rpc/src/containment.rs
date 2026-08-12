@@ -116,6 +116,16 @@ pub struct EscapeReport {
     pub over: OverhangReport,
     /// `smeared` (drawn over the neighbour) or `clipped` (cut away silently).
     pub fate: &'static str,
+    /// R1674 — **which parts of the owner** the mark landed on, in the order a
+    /// painter lays them: `outside`, `border`, and `chrome:<role>` for a band
+    /// the owner reserved for itself. Never empty, and more than one when a
+    /// mark crosses several: a header label drawn full-bleed reports
+    /// `["border", "chrome:header"]`.
+    ///
+    /// This is the field the reference toolkit has no form for. Probed at 6.11,
+    /// a widget's reservation is four integers with the reason discarded, so
+    /// "over the title" and "out of bounds" arrive as the same answer.
+    pub trespass: Vec<String>,
 }
 
 /// The `scene/containment` result.
@@ -177,6 +187,7 @@ pub fn report(escapes: &[Escape], marks: usize) -> ContainmentOutcome {
                     bottom: e.over.bottom,
                 },
                 fate: e.fate.wire_word(),
+                trespass: e.trespass.iter().map(|t| t.wire_word()).collect(),
             })
             .collect(),
         smeared: escapes.iter().filter(|e| e.fate == Fate::Smeared).count(),
@@ -220,8 +231,9 @@ pub fn handle_scene_containment(outcome: Option<&ContainmentOutcome>) -> Result<
 #[cfg(test)]
 mod tests {
     use super::*;
-    use pinion_core::containment::{Fate, Overhang};
+    use pinion_core::containment::{Fate, Overhang, Trespass};
     use pinion_core::scene::Rect;
+    use pinion_core::style::ChromeRole;
 
     fn escape(fate: Fate) -> Escape {
         Escape {
@@ -239,6 +251,7 @@ mod tests {
                 bottom: 5,
             },
             fate,
+            trespass: vec![Trespass::Chrome(ChromeRole::Header)],
         }
     }
 
@@ -253,6 +266,57 @@ mod tests {
         assert_eq!(out.marks, 331);
         assert_eq!(out.escapes[0].fate, "smeared");
         assert_eq!(out.escapes[1].fate, "clipped");
+    }
+
+    /// ★★★ R1674 — the trespass survives the trip, with the words it was
+    /// given.
+    ///
+    /// Written because a counterfactual passed: emptying the list left the
+    /// whole of `pinion-rpc` green. The field is this round's answer to the
+    /// question the floor has no form for — probed at 6.11, "over the title"
+    /// and "out of bounds" arrive there as the same four integers — so a wire
+    /// form that silently drops it withholds exactly what was built.
+    ///
+    /// The words are compared against the type's own `wire_word`, not against
+    /// literals, so this and `box_style_to_json`'s `role` cannot drift into two
+    /// spellings of one vocabulary.
+    #[test]
+    fn r1674_the_trespass_survives_the_wire_with_its_words() {
+        let mut hit_border = escape(Fate::Smeared);
+        hit_border.trespass = vec![
+            Trespass::Border,
+            Trespass::Chrome(ChromeRole::Caption),
+            Trespass::Outside,
+        ];
+        let out = report(&[hit_border], 1);
+        assert_eq!(
+            out.escapes[0].trespass,
+            vec![
+                Trespass::Border.wire_word(),
+                Trespass::Chrome(ChromeRole::Caption).wire_word(),
+                Trespass::Outside.wire_word(),
+            ],
+            "in the order the parts are laid, and spelled by the type",
+        );
+        assert_eq!(
+            out.escapes[0].trespass,
+            vec!["border", "chrome:caption", "outside"],
+            "and those words are these words — pinned, because they are an \
+             AI client's keys",
+        );
+
+        // ★ The negative control: two escapes that differ ONLY in which band
+        // they hit must not serialize identically. Without this, a `trespass`
+        // emitted as a constant would read as a pass.
+        let mut on_header = escape(Fate::Smeared);
+        on_header.trespass = vec![Trespass::Chrome(ChromeRole::Header)];
+        let mut on_caption = escape(Fate::Smeared);
+        on_caption.trespass = vec![Trespass::Chrome(ChromeRole::Caption)];
+        assert_ne!(
+            report(&[on_header], 1).escapes[0].trespass,
+            report(&[on_caption], 1).escapes[0].trespass,
+            "a mark on the header and a mark on the caption are different facts",
+        );
     }
 
     /// ★ An absent report is not an empty one, and the wire says which.

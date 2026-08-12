@@ -92,6 +92,11 @@ pub mod document;
 pub mod drawer;
 pub mod elevation;
 pub mod file_browser;
+/// R1674 — the crate-level frame gate, and the census that says who must run
+/// it. Test-only: it exists to be called from other modules' `#[cfg(test)]`
+/// blocks, and shipping it would put a layout pass in the production build.
+#[cfg(test)]
+mod frame_gate;
 pub mod glyph;
 pub mod group_box;
 pub mod group_header;

@@ -59,7 +59,7 @@ use pinion_core::external::{
 };
 use pinion_core::intent::Intent;
 use pinion_core::scene::{ContainerNode, Scene};
-use pinion_core::style::{Border, BoxStyle};
+use pinion_core::style::{Border, BorderPlacement, BoxStyle};
 
 use crate::tree_view::TreeItem;
 
@@ -304,9 +304,31 @@ pub fn find_node_at_path<'s>(root: &'s Scene, path: &str) -> Option<&'s Scene> {
 /// `pinion-runtime`'s layout pass to fit the child's bounding box.
 #[must_use]
 pub fn wrap_with_highlight(scene: Scene, color: Color) -> Scene {
-    Scene::Container(ContainerNode::new(vec![scene]).with_style(
-        BoxStyle::default().with_border(Border::new(color, DEFAULT_HIGHLIGHT_BORDER_WIDTH)),
-    ))
+    Scene::Container(
+        ContainerNode::new(vec![scene]).with_style(
+            BoxStyle::default().with_border(
+                Border::new(color, DEFAULT_HIGHLIGHT_BORDER_WIDTH)
+                    // ★★ R1674 — drawn OUTSIDE the box, which is the placement
+                    // this doc comment has always described.
+                    //
+                    // The wrapper promises to leave the node's paint exactly as
+                    // it was and to only add an outline. With the default
+                    // `Inside` placement it did neither: the border is ink the
+                    // box owns, so the wrapped node — laid at the wrapper's full
+                    // box, since the wrapper deliberately imposes no padding —
+                    // painted straight over it on three edges. Measured by this
+                    // crate's frame gate on its first run,
+                    // `trespass: ["border"]`, two pixels each side. A highlight
+                    // you cannot see over the thing it highlights is a
+                    // highlight that does not work.
+                    //
+                    // Padding is the other repair and it is the wrong one here:
+                    // it would move the marked node, and a devtools overlay
+                    // that shifts what it inspects is measuring its own effect.
+                    .with_placement(BorderPlacement::Outside),
+            ),
+        ),
+    )
 }
 
 /// R678 §5.16 §5.49 — **the path-stable rebuild walker.** Given a
@@ -1677,5 +1699,31 @@ mod tests {
                 Ok(IntrospectValue::Text("p/q".into())),
             );
         }
+    }
+
+    /// ★★ R1674 — the highlight wrapper's outline is not painted over by the
+    /// node it wraps. The crate gate ([`crate::frame_gate`]).
+    ///
+    /// The border in this module belongs to [`wrap_with_highlight`], whose
+    /// whole job is to add an outline around a node WITHOUT disturbing it —
+    /// which makes "does the wrapped node cover that outline" precisely the
+    /// question worth asking of it.
+    #[test]
+    fn r1674_the_highlight_wrapper_keeps_the_node_inside_its_outline() {
+        crate::frame_gate::assert_frame_contained("devtools highlight", &mut |w, h| {
+            wrap_with_highlight(
+                Scene::Box(
+                    pinion_core::scene::BoxNode::new(
+                        pinion_core::scene::Rect::default(),
+                        pinion_core::style::BoxStyle::filled(Color::rgb(0x20, 0x60, 0xC0)),
+                    )
+                    .with_layout(
+                        pinion_core::style::LayoutStyle::new()
+                            .with_size(pinion_core::style::Size::px(w.min(120), h.min(48))),
+                    ),
+                ),
+                Color::rgb(0xFF, 0x00, 0x00),
+            )
+        });
     }
 }

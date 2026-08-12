@@ -52,7 +52,7 @@
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, SizeValue,
-    TextStyle,
+    TextOverflow, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::{Color, Scene};
@@ -263,7 +263,12 @@ fn build_control(
         Rect::default(),
         TextStyle::new()
             .with_size_px(style.item_font_px)
-            .with_fg(theme.resolve(label_role)),
+            .with_fg(theme.resolve(label_role))
+            // ★ R1674 — what happens when the bar is too narrow for its
+            // controls is STATED. See the size declaration below for what was
+            // measured; the default `Visible` is what turned a bar that did not
+            // fit into a control painted outside the bar entirely.
+            .with_overflow(TextOverflow::Ellipsis),
     ));
     Scene::Container(
         ContainerNode::new(vec![label_node])
@@ -275,6 +280,28 @@ fn build_control(
                     .with_align_items(AlignItems::Center)
                     .with_justify(JustifyContent::Center)
                     .with_size(Size::auto().with_height(SizeValue::Px(style.item_height)))
+                    // ★★ R1674 — a control may shrink below its label.
+                    //
+                    // Measured by this crate's frame gate on its first run: a
+                    // five-control bar in a 180px window painted its last
+                    // control 58 pixels PAST the bar — `trespass: ["outside"]`,
+                    // over whatever was beside it and off the window. The cause
+                    // is CSS's automatic minimum size, which taffy applies to a
+                    // flex item and which pins a content-sized control at its
+                    // min-content width however tight the line gets, so the
+                    // overflow had nowhere to go but out.
+                    //
+                    // `Px(0)` on the main axis is the documented override
+                    // (`LayoutStyle::min_size`), and with the label eliding
+                    // above, a bar that runs out of room now degrades to
+                    // shortened labels instead of ink outside itself.
+                    //
+                    // ⚠ This is not the floor's shape. A toolbar there grows an
+                    // extension button and moves the overflowing actions into a
+                    // popup, which keeps every label whole and is better; that
+                    // is an affordance with its own state, not a containment
+                    // fix, and it is registered rather than half-built here.
+                    .with_min_size(Size::auto().with_width(SizeValue::Px(0)))
                     .with_padding(Rect::new(style.item_padding, 0, style.item_padding, 0)),
             ),
     )
@@ -594,5 +621,32 @@ mod tests {
             tag_border(&scene, "toolbar#0"),
             Some(Border::new(t.resolve(ColorRole::Accent), 2))
         );
+    }
+
+    /// ★★ R1674 — a toolbar's controls stay inside the outline a pressed or
+    /// focused control strokes. The crate gate ([`crate::frame_gate`]).
+    ///
+    /// The pressed and focused postures are the ones that HAVE a border, so a
+    /// gate that ran only the resting bar would be asking about a widget with
+    /// no frame.
+    #[test]
+    fn r1674_a_toolbar_keeps_its_controls_inside_their_outlines() {
+        for group_focused in [false, true] {
+            crate::frame_gate::assert_frame_contained(
+                &format!("toolbar focused={group_focused}"),
+                &mut |_w, _h| {
+                    view_toolbar(
+                        "toolbar",
+                        &LABELS,
+                        &[true, false, false, false, false],
+                        &[false, false, true, false, false],
+                        0,
+                        group_focused,
+                        &theme(),
+                        &ToolbarStyle::m3_default(),
+                    )
+                },
+            );
+        }
     }
 }

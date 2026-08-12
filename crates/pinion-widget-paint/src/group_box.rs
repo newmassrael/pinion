@@ -45,8 +45,8 @@ use pinion_core::composite_tag::GroupBoxTag;
 use pinion_core::mnemonic::MnemonicLabel;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
-    AlignItems, Border, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size,
-    SizeValue, TextStyle,
+    AlignItems, Border, BoxStyle, Chrome, ChromeRole, Color, FlexDirection, JustifyContent,
+    LayoutStyle, Size, SizeValue, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::checkbox::CheckboxState;
@@ -270,6 +270,24 @@ pub fn view_group_box(
     Scene::Container(
         ContainerNode::new(vec![title_band, framed])
             .with_tag(tag)
+            // ★★ R1674 — the caption band is DECLARED, so this widget's content
+            // rectangle is the region its members actually get rather than its
+            // whole box. Everything above the frame — the band itself and the
+            // gap under it — is chrome this widget spends on itself, and a
+            // reader could not previously learn that from the scene: the root
+            // draws no border, so `content_rect` answered "the whole box" and a
+            // consumer dropping a label at the group box's origin was told it
+            // had landed on the content.
+            //
+            // Parity with the floor is exact and was measured by running it: a
+            // titled group box there reports content margins of `3,23,3,3`
+            // against a plain frame's `2,2,2,2` — the caption band included.
+            // What does not survive the trip there is WHICH of the twenty-three
+            // pixels are caption, and `chrome:caption` is the answer to that.
+            .with_style(
+                BoxStyle::filled(Color::TRANSPARENT)
+                    .with_chrome(Chrome::caption(caption_extent(check, style))),
+            )
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
@@ -277,6 +295,17 @@ pub fn view_group_box(
                     .with_flex_grow(1.0),
             ),
     )
+}
+
+/// How much of the group box's own rectangle the caption costs: the band, plus
+/// the gap under it that separates it from the frame.
+///
+/// The gap is in here because the question the number answers is *"where can a
+/// member go"*, and a member cannot go in the gap. Splitting it out as a second
+/// band would name it as chrome with a role, and it has none — it is spacing
+/// between two things that do.
+fn caption_extent(check: Option<GroupBoxCheck>, style: &GroupBoxStyle) -> u32 {
+    title_band_height(check, style) + style.title_gap
 }
 
 /// How tall the title band has to be: **the tallest thing in it**.
@@ -360,6 +389,12 @@ fn title_band_node(
             .with_tag(GroupBoxTag::title(tag))
             .with_layout({
                 let mut l = LayoutStyle::new()
+                    // ★ R1674 — this node IS the caption its parent reserved,
+                    // so the containment check judges it against that band
+                    // rather than against the content rectangle. Without the
+                    // claim, declaring the band above would make every titled
+                    // frame in the tree report its own title as an escape.
+                    .with_chrome_slot(ChromeRole::Caption)
                     .flex(FlexDirection::Row)
                     .with_align_items(AlignItems::Center)
                     .with_justify(justify)
@@ -813,40 +848,37 @@ mod tests {
     /// [`pinion_core::test_fixtures::screen_ink::assert_contained_ink`], the one
     /// three screens run, so a widget and the screens holding it are judged by
     /// one rule rather than by two that can drift.
+    ///
+    /// ★ R1674 — routed through [`crate::frame_gate`], the crate-wide form of
+    /// this test. R1673 wrote it here with a stand-in metric; the gate asks the
+    /// same question of all fifteen bordered painters with the metric the
+    /// layout used, and a widget judged by its own private copy of a rule is
+    /// the drift this crate keeps re-learning.
     #[test]
     fn r1673_nothing_a_group_box_paints_leaves_the_box_that_owns_it() {
-        use pinion_core::test_fixtures::screen_ink::assert_contained_ink;
-        use pinion_runtime::layout::compute_layout;
-
         let theme = Theme::light();
         for checked in [None, Some(true), Some(false)] {
-            for (label, width, height) in [("opening", 420u32, 260u32), ("narrow", 180, 120)] {
-                let check = checked.map(|checked| GroupBoxCheck {
-                    checked,
-                    interaction: CheckboxState::Idle,
-                });
-                let body = vec![Scene::Box(BoxNode::new(
-                    Rect::new(0, 0, 40, 20),
-                    BoxStyle::filled(theme.resolve(ColorRole::Accent)),
-                ))];
-                let mut scene = Scene::Container(
-                    pinion_core::scene::ContainerNode::new(vec![view_group_box(
+            crate::frame_gate::assert_frame_contained(
+                &format!("group box, check = {checked:?}"),
+                &mut |_w, _h| {
+                    let check = checked.map(|checked| GroupBoxCheck {
+                        checked,
+                        interaction: CheckboxState::Idle,
+                    });
+                    let body = vec![Scene::Box(BoxNode::new(
+                        Rect::new(0, 0, 40, 20),
+                        BoxStyle::filled(theme.resolve(ColorRole::Accent)),
+                    ))];
+                    view_group_box(
                         "advanced",
                         "&Advanced",
                         check,
                         &theme,
                         &GroupBoxStyle::default(),
                         body,
-                    )])
-                    .with_layout(
-                        LayoutStyle::new().with_size(pinion_core::style::Size::px(width, height)),
-                    ),
-                );
-                let mut cache = pinion_text::LayoutCache::new();
-                compute_layout(&mut scene, &mut cache, width, height);
-                let when = format!("{label}, check = {checked:?}");
-                assert_contained_ink(&when, &scene, (width, height));
-            }
+                    )
+                },
+            );
         }
     }
 }

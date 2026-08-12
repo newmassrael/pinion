@@ -5879,6 +5879,31 @@ fn shadow_to_json(shadow: &pinion_core::style::BoxShadow) -> Value {
     Value::Object(obj)
 }
 
+/// R1674 §5.32 §2 #7 — wire serialization for a [`Chrome`] band: the edge it is
+/// taken from, how many pixels it takes, and **why**.
+///
+/// The role is what makes this worth a wire form at all. A reader can already
+/// subtract a border from a rectangle; what it could not do is ask a screen
+/// *"which of these insets is the title bar"*, and that is the question a
+/// `scene/containment` `trespass` of `chrome:caption` answers. Both reads spell
+/// the role with [`ChromeRole::wire_word`], so they cannot drift.
+///
+/// [`Chrome`]: pinion_core::style::Chrome
+/// [`ChromeRole::wire_word`]: pinion_core::style::ChromeRole::wire_word
+fn chrome_to_json(band: pinion_core::style::Chrome) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert(
+        "edge".to_string(),
+        Value::String(band.edge.wire_word().to_string()),
+    );
+    obj.insert("extent".to_string(), Value::Number(band.extent.into()));
+    obj.insert(
+        "role".to_string(),
+        Value::String(band.role.wire_word().to_string()),
+    );
+    Value::Object(obj)
+}
+
 /// R55.G.8 §5.49 — wire serialization for `BoxStyle`. Surfaces fill,
 /// optional border (null when absent), `corner_radius`, the R708
 /// optional `gradient` overlay (null when absent), and the R710
@@ -5907,6 +5932,15 @@ fn box_style_to_json(style: &pinion_core::style::BoxStyle) -> Value {
                 .as_ref()
                 .map_or(Value::Null, gradient_to_json),
             BoxFacet::Shadows => Value::Array(style.shadows.iter().map(shadow_to_json).collect()),
+            // R1674 — each band as `{edge, extent, role}` rather than the four
+            // integers the floor collapses to. The reason is the whole point of
+            // the type: a reader that got `[0, 20, 0, 0]` could not tell a
+            // caption band from a toolbar, and `scene/containment`'s
+            // `trespass` names the role, so the two reads have to agree about
+            // which roles exist.
+            BoxFacet::Chrome => {
+                Value::Array(style.chrome.iter().copied().map(chrome_to_json).collect())
+            }
         };
         obj.insert(facet.name().to_string(), value);
     }

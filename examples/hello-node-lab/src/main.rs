@@ -1706,6 +1706,10 @@ fn panel_content(rect: Rect) -> Rect {
     pinion_core::containment::content_of(
         Rect::new(0, 0, rect.w, rect.h),
         Some(&Border::new(Color::rgba(0, 0, 0, 0), PANEL_FRAME)),
+        // A plain panel reserves no band of itself: it draws a frame and gives
+        // everything inside it away. R1674 made this an argument rather than a
+        // default so a panel that GROWS a header has to come back here.
+        &[],
     )
 }
 

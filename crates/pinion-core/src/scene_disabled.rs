@@ -287,6 +287,11 @@ fn fade_box_style(style: &mut BoxStyle, backdrop: Color) {
         corner_radius: _,
         gradient,
         shadows,
+        // R1674 — chrome carries no colour: it is an extent and a reason, and
+        // a disabled panel reserves its caption band exactly as an enabled one
+        // does. Nothing to fade, and saying so here is the point of the
+        // destructure.
+        chrome: _,
     } = style;
     *fill = fade(*fill, backdrop);
     if let Some(border) = border {

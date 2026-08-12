@@ -1155,4 +1155,24 @@ mod tests {
         assert_eq!(heading.style.font_size_px, 21, "inherited");
         assert_eq!(body.style.text_indent.amount_px, 24, "its own");
     }
+
+    /// ★★ R1674 — a ruled table cell keeps its paragraph inside the rule it
+    /// strokes. The crate gate ([`crate::frame_gate`]).
+    ///
+    /// The border in this module belongs to a table CELL, so that is what the
+    /// gate assembles: a cell whose rule is two pixels wide, with padding, and
+    /// a paragraph inside it.
+    #[test]
+    fn r1674_a_ruled_cell_keeps_its_paragraph_inside_its_rule() {
+        let format = TableFormat::new(2)
+            .with_metrics(7, 3)
+            .with_border(2, Color::rgb(0x11, 0x22, 0x33));
+        crate::frame_gate::assert_frame_contained("document with a ruled table", &mut |_w, _h| {
+            Scene::Container(view_document(
+                "doc",
+                &TextStyle::new().with_size_px(13),
+                &[cell("Left", &format), cell("Right", &format)],
+            ))
+        });
+    }
 }

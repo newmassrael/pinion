@@ -164,4 +164,32 @@ mod tests {
         };
         assert!(idle.style.border.is_none(), "idle option has no ring");
     }
+
+    /// ★★ R1674 — the accent ring an active option strokes is not painted over
+    /// by the option's own label or check mark. The crate gate
+    /// ([`crate::frame_gate`]).
+    #[test]
+    fn r1674_an_option_keeps_its_ink_inside_its_ring() {
+        for active in [false, true] {
+            for selected in [false, true] {
+                crate::frame_gate::assert_frame_contained(
+                    &format!("listbox option active={active} selected={selected}"),
+                    &mut |w, _h| {
+                        view_option(
+                            &OptionRow {
+                                tag: "opt#1".to_owned(),
+                                label: "Additive",
+                                state: ListboxItemState::Idle,
+                                active,
+                                selected,
+                            },
+                            w,
+                            36,
+                            &Theme::light(),
+                        )
+                    },
+                );
+            }
+        }
+    }
 }

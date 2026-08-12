@@ -7011,4 +7011,61 @@ mod tests {
             );
         }
     }
+
+    /// ★★ R1674 — a selected cell keeps its text inside the accent border the
+    /// selection strokes. The crate gate ([`crate::frame_gate`]).
+    ///
+    /// The cell-selection arm, because that is where this module's border is:
+    /// an unselected table strokes none, so a gate run against a resting table
+    /// would be asking about a widget with no frame.
+    #[test]
+    fn r1674_a_selected_cell_keeps_its_text_inside_its_accent_border() {
+        let (headers, rows) = data();
+        // ★ At widths this painter's OWN tokens declare it needs. The eager
+        // table tiles columns at a fixed `col_width` and its bands take the
+        // width they are given, so below `cols * col_width` the columns are
+        // painted outside the bands holding them — measured here at 180px, six
+        // escapes, and it is a real defect with a real repair (the bands should
+        // be as wide as their columns and the surface should scroll, which is
+        // what the floor does). That repair is the table's own layout axis, not
+        // this round's, and it is registered rather than half-built:
+        // [[debt-a-table-band-shrinks-while-its-columns-do-not]].
+        //
+        // So the WIDTH here is derived from `col_width` and held above what
+        // the painter needs, while the second size varies the HEIGHT — the axis
+        // that is still open to question here, and the one that decides how
+        // many row strips the band has to hold. Measured while writing this:
+        // the true minimum is between `cols * col_width` and 40px more than it,
+        // and the painter publishes no token for the difference, which is part
+        // of what the debt above records.
+        let style = TableStyle::m3();
+        let natural = u32::try_from(headers.len()).unwrap_or(3) * style.col_width + 40;
+        crate::frame_gate::assert_frame_contained_at(
+            "table with a cell selection",
+            &[(natural, 260), (natural, 120)],
+            &mut |_w, _h| {
+                Owner::new().run(|| {
+                    view_table(
+                        "table",
+                        TableData {
+                            headers: &headers,
+                            rows: &rows,
+                            row_ids: &[],
+                            decoration: None,
+                            header_decoration: None,
+                            row_headers: None,
+                        },
+                        TableSelection {
+                            rows: &[],
+                            cells: Some((0, 0, 1, 1)),
+                        },
+                        &all_idle(),
+                        None,
+                        &light(),
+                        &style,
+                    )
+                })
+            },
+        );
+    }
 }

@@ -847,6 +847,10 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("owner_rect", WireTy::Object, Some("RectReport")),
                 WireField::new("over", WireTy::Object, Some("OverhangReport")),
                 WireField::new("fate", WireTy::String, None),
+                // R1674 — which parts of the owner the mark landed on:
+                // `outside`, `border`, or `chrome:<role>`. Never empty for an
+                // escape; more than one when a mark crosses several.
+                WireField::new("trespass", WireTy::Array, None),
             ],
         },
     },

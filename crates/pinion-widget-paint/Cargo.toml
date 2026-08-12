@@ -63,6 +63,14 @@ pinion-core = { path = "../pinion-core", version = "0.0.1", features = ["test-fi
 # default features stay off so the vello GPU stack does not pull
 # into the test binary.
 pinion-runtime = { path = "../pinion-runtime" }
+# R1674 — the frame gate's population is PARSED out of this crate's own
+# sources rather than hand-listed, so a bordered painter added later fails the
+# census until it runs the gate. A regex over the same text would count a
+# `with_border` inside a doc comment (R1669 re-classified exactly that kind of
+# raw count and found 18 of 23 "sites" were test fixtures), and the two halves
+# this asks about — production strokes, test gate calls — are only separable in
+# a syntax tree. Precedent: `pinion-shell/tests/winit_level_model.rs`.
+syn = { workspace = true, features = ["full", "visit"] }
 
 [lints]
 workspace = true

@@ -46,8 +46,12 @@
 //! * [`Observation::Gap`] — the medium CAN carry it and this renderer does
 //!   not. A named debt, and the number of them is a number that can go to
 //!   zero.
+//! * [`Observation::Declarative`] — R1674 — the facet asks for no ink at all,
+//!   so there is nothing for any renderer to carry or to owe. Both words above
+//!   would be false statements about it, and a false excuse and a false debt
+//!   are each worse than the silence they replace.
 //!
-//! Both assert byte-equality, so a renderer that quietly starts honouring
+//! All three assert byte-equality, so a renderer that quietly starts honouring
 //! something fails here just as loudly as one that stops. The difference is
 //! what the reader is told. R1512 recorded *"the PDF projector paints fill +
 //! border only"* as though it were a property of PDF; the projector's own doc
@@ -94,7 +98,9 @@
 use pinion_core::scene::{
     BoxNode, ContainerNode, Rect, Scene, SceneNodeKind, ScrollNode, TextNode,
 };
-use pinion_core::style::{Border, BoxFacet, BoxShadow, BoxStyle, Color, Gradient, TextStyle};
+use pinion_core::style::{
+    Border, BoxFacet, BoxShadow, BoxStyle, Chrome, Color, Gradient, TextStyle,
+};
 use pinion_runtime::paint_adapter::to_vello;
 use pinion_text::LayoutCache;
 use pinion_tui::ratatui::buffer::{Buffer, Cell};
@@ -107,6 +113,13 @@ fn rect() -> Rect {
 const FILL: Color = Color::rgb(0x20, 0x20, 0x20);
 const STROKE: Color = Color::rgb(0xff, 0x30, 0x30);
 const BORDER_W: u32 = 3;
+/// Why every renderer is right to leave a chrome band unpainted. R1674.
+const CHROME_PAINTS_NOTHING: &str = "a chrome band is a reservation, not a mark: \
+     it states how much of its own box a painter kept for a caption, a header \
+     or a tab strip so `containment::content_of` can subtract it. The painter \
+     still draws the title itself, through the ordinary nodes every backend \
+     already renders. A renderer that changed its output here would be \
+     inventing ink the scene never declared";
 
 /// What one renderer does with one declaration.
 enum Observation {
@@ -121,6 +134,17 @@ enum Observation {
     /// The medium CAN carry the declaration and this renderer does not yet.
     /// A debt with a name, not a property of the target format.
     Gap(&'static str),
+    /// R1674 — the declaration is not about ink at all, so no renderer is
+    /// expected to observe it and none is in debt for not doing so.
+    ///
+    /// The three arms above were written when every facet of a `BoxStyle` was
+    /// something to draw, and between them they can only say "cannot" or
+    /// "does not yet" — both of which are false statements about a facet that
+    /// asks nobody to draw anything. Classifying such a facet as
+    /// [`Ignores`](Observation::Ignores) would enter a permanent excuse for
+    /// a renderer that is not at fault, and as [`Gap`](Observation::Gap) a
+    /// permanent debt nobody can ever pay.
+    Declarative(&'static str),
 }
 
 impl Observation {
@@ -135,13 +159,14 @@ impl Observation {
             Self::Observes => "observes",
             Self::Ignores(_) => "ignores (the medium cannot carry it)",
             Self::Gap(_) => "has a GAP (the medium carries it; this renderer does not)",
+            Self::Declarative(_) => "is not asked to observe it (the facet paints nothing)",
         }
     }
 
     const fn reason(&self) -> &'static str {
         match self {
             Self::Observes => "",
-            Self::Ignores(why) | Self::Gap(why) => why,
+            Self::Ignores(why) | Self::Gap(why) | Self::Declarative(why) => why,
         }
     }
 }
@@ -225,6 +250,17 @@ fn declaration(facet: BoxFacet) -> Declaration {
                 ),
             ),
         ],
+        // R1674 — chrome is a LAYOUT declaration: how much of its own box a
+        // painter kept for a caption band, a header or a tab strip. Nothing
+        // renders from it in any backend, by design, and byte-identical output
+        // is therefore the CORRECT result rather than a shortfall. The rows
+        // below say so in the one vocabulary that can say it without slandering
+        // a renderer.
+        BoxFacet::Chrome => &[
+            ("vello", Observation::Declarative(CHROME_PAINTS_NOTHING)),
+            ("tui", Observation::Declarative(CHROME_PAINTS_NOTHING)),
+            ("pdf", Observation::Declarative(CHROME_PAINTS_NOTHING)),
+        ],
     };
     let apply: fn(BoxStyle) -> BoxStyle = match facet {
         BoxFacet::Fill => |s| s.with_fill(Color::rgb(0x00, 0x90, 0xff)),
@@ -244,6 +280,7 @@ fn declaration(facet: BoxFacet) -> Declaration {
                     .with_blur(4.0),
             ])
         },
+        BoxFacet::Chrome => |s| s.with_chrome(Chrome::caption(20)),
     };
     Declaration {
         facet,

@@ -511,6 +511,60 @@ pub fn view_menu_cascade(
     out
 }
 
+/// The width of the outline a menu popup strokes inside its own box.
+///
+/// Named because three things have to agree about it: the border, the padding
+/// that reserves it, and the size that grows by it. R1674 — before this round
+/// the literal `1` appeared in the border alone, in **two** builders, and
+/// neither of the other two knew it existed.
+const DROPDOWN_BORDER_PX: u32 = 1;
+
+/// The box a menu popup paints in: a bordered, elevated surface whose declared
+/// `content` size is the room its ROWS get, with the outline added around them.
+///
+/// ★★ R1674 — one rule, because there were two copies of it. `build_popup` and
+/// [`view_context_menu`] each assembled this style and this layout by hand, and
+/// each stretched its rows across the popup's full width over its own 1px
+/// outline. The crate's frame gate found it in the first, and the second was
+/// only revealed when fixing the first made a pinned size disagree — which is
+/// the argument for the extraction rather than for two edits.
+///
+/// The border is added to the box rather than taken out of the rows: a menu row
+/// whose label got a pixel shorter because the popup gained an outline would be
+/// the outline deciding the type's metrics.
+fn popup_box(
+    rows: Vec<Scene>,
+    tag: &'static str,
+    at: (u32, u32),
+    content: (u32, u32),
+    theme: &Theme,
+    style: &MenuStyle,
+) -> ContainerNode {
+    let frame = DROPDOWN_BORDER_PX;
+    ContainerNode::new(rows)
+        .with_tag(tag)
+        .with_style(
+            BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh))
+                .with_corner_radius(style.dropdown_radius)
+                .with_border(Border::new(theme.resolve(ColorRole::Outline), frame))
+                .with_shadows(crate::elevation::elevation(style.elevation)),
+        )
+        .with_layout(
+            LayoutStyle::new()
+                .flex(FlexDirection::Column)
+                .with_align_items(AlignItems::Stretch)
+                .with_justify(JustifyContent::Start)
+                .with_absolute_position(at.0, at.1)
+                .with_size(Size::px(content.0 + frame * 2, content.1 + frame * 2))
+                .with_padding(Rect::new(
+                    frame,
+                    style.dropdown_v_padding + frame,
+                    frame,
+                    style.dropdown_v_padding + frame,
+                )),
+        )
+}
+
 /// R985 — shared elevated-popup composition for one menu level at an explicit
 /// window-space `(x, y)`, item rows tagged with the `rel_prefix` descent.
 /// The R691 menubar dropdown and each R985 nested popup are this same surface.
@@ -529,7 +583,6 @@ fn build_popup(
     theme: &Theme,
     style: &MenuStyle,
 ) -> Scene {
-    let surface = theme.resolve(ColorRole::SurfaceContainerHigh);
     // R805 — reserve the leading check-gutter for *every* row when the
     // dropdown holds any checkbox, so checkmarks and command labels align.
     let reserve_gutter = items.iter().any(|it| it.checkmark.is_some());
@@ -548,30 +601,14 @@ fn build_popup(
         ));
     }
     let height = style.dropdown_height(u32::try_from(items.len()).unwrap_or(u32::MAX));
-    Scene::Container(
-        ContainerNode::new(rows)
-            .with_tag(popup_tag)
-            .with_style(
-                BoxStyle::filled(surface)
-                    .with_corner_radius(style.dropdown_radius)
-                    .with_border(Border::new(theme.resolve(ColorRole::Outline), 1))
-                    .with_shadows(crate::elevation::elevation(style.elevation)),
-            )
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Column)
-                    .with_align_items(AlignItems::Stretch)
-                    .with_justify(JustifyContent::Start)
-                    .with_absolute_position(x, y)
-                    .with_size(Size::px(style.dropdown_width, height))
-                    .with_padding(Rect::new(
-                        0,
-                        style.dropdown_v_padding,
-                        0,
-                        style.dropdown_v_padding,
-                    )),
-            ),
-    )
+    Scene::Container(popup_box(
+        rows,
+        popup_tag,
+        (x, y),
+        (style.dropdown_width, height),
+        theme,
+        style,
+    ))
 }
 
 /// Window-space placement for a floating [`view_context_menu`] popup: the
@@ -629,7 +666,6 @@ pub fn view_context_menu(
     theme: &Theme,
     style: &MenuStyle,
 ) -> Scene {
-    let surface = theme.resolve(ColorRole::SurfaceContainerHigh);
     let mut rows: Vec<Scene> = Vec::with_capacity(items.len());
     // A context menu carries plain command rows (its stateful-item axis is
     // a declared-defer until a consumer needs it), so no gutter is reserved.
@@ -648,39 +684,30 @@ pub fn view_context_menu(
     let width = style.dropdown_width;
     let height = style.dropdown_height(u32::try_from(items.len()).unwrap_or(u32::MAX));
     // Clamp so the panel's far edge never leaves the window (a right-click
-    // near the right/bottom edge slides the popup back on-screen).
-    let x = anchor_px(placement.anchor.0, placement.window.0.saturating_sub(width));
+    // near the right/bottom edge slides the popup back on-screen). R1674 — the
+    // outline is part of what has to fit, so the clamp is against the OUTER
+    // size: clamping against the content and then growing the box would slide
+    // the frame back off the edge the clamp exists to keep it on.
+    let frame = DROPDOWN_BORDER_PX * 2;
+    let x = anchor_px(
+        placement.anchor.0,
+        placement.window.0.saturating_sub(width + frame),
+    );
     let y = anchor_px(
         placement.anchor.1,
-        placement.window.1.saturating_sub(height),
+        placement.window.1.saturating_sub(height + frame),
     );
     Scene::Container(
-        ContainerNode::new(rows)
-            .with_tag(panel_tag)
-            .with_style(
-                BoxStyle::filled(surface)
-                    .with_corner_radius(style.dropdown_radius)
-                    .with_border(Border::new(theme.resolve(ColorRole::Outline), 1))
-                    .with_shadows(crate::elevation::elevation(style.elevation)),
-            )
-            .with_layout(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Column)
-                    .with_align_items(AlignItems::Stretch)
-                    .with_justify(JustifyContent::Start)
-                    .with_absolute_position(x, y)
-                    .with_size(Size::px(width, height))
-                    // (R1020 §5.39) Carry the binding's focus-stop opt-in onto
-                    // the tag-carrying panel so the scene-derived enumeration
-                    // collects the open context-menu's tag as a Tab stop.
-                    .with_focusable(style.focusable)
-                    .with_padding(Rect::new(
-                        0,
-                        style.dropdown_v_padding,
-                        0,
-                        style.dropdown_v_padding,
-                    )),
-            ),
+        popup_box(rows, panel_tag, (x, y), (width, height), theme, style).with_layout(
+            // (R1020 §5.39) Carry the binding's focus-stop opt-in onto the
+            // tag-carrying panel so the scene-derived enumeration collects the
+            // open context-menu's tag as a Tab stop. The rest of the layout is
+            // `popup_box`'s, read back and extended rather than rebuilt — a
+            // second hand-written copy is what this round is removing.
+            popup_box(Vec::new(), panel_tag, (x, y), (width, height), theme, style)
+                .layout
+                .with_focusable(style.focusable),
+        ),
     )
 }
 
@@ -712,9 +739,10 @@ fn build_item(
     if item.separator {
         return build_separator(bar_tag, rel_path, theme, style);
     }
-    let surface = theme.resolve(ColorRole::SurfaceContainerHigh);
     let fill = if is_active {
-        surface.lerp(theme.resolve(ColorRole::OnSurface), ACTIVE_ITEM_STATE_LAYER)
+        theme
+            .resolve(ColorRole::SurfaceContainerHigh)
+            .lerp(theme.resolve(ColorRole::OnSurface), ACTIVE_ITEM_STATE_LAYER)
     } else {
         Color::TRANSPARENT
     };
@@ -844,6 +872,23 @@ mod tests {
         assert_eq!(parse_item_sub_tag("ix"), None, "non-numeric index");
         assert_eq!(parse_item_sub_tag(""), None, "empty sub-tag");
     }
+
+    /// ★ R1674 — why a popup's box is two pixels bigger than its declared
+    /// metrics on each axis.
+    ///
+    /// The declared `dropdown_width` / `dropdown_height` are what the ITEMS
+    /// get; the popup is that plus the outline it strokes around them. Before
+    /// this round the box was exactly `dropdown_width` and the rows stretched
+    /// across all of it, painting over the border down both sides — measured by
+    /// this crate's frame gate on its first run, one pixel each side, in every
+    /// dropdown in the tree.
+    ///
+    /// Growing the box rather than squeezing the rows is the direction the
+    /// floor takes too (a menu's size hint there is its contents PLUS its
+    /// frame), and the alternative would let an outline decide a menu row's
+    /// text metrics.
+    const WHY_THE_BOX_GREW: &str = "a popup's declared metrics are its items' room; the outline is added \
+         to the box rather than taken out of the rows";
 
     const TITLES: [&str; 3] = ["File", "Edit", "View"];
     const ITEMS: [&str; 3] = ["New", "Open", "Save"];
@@ -1050,8 +1095,15 @@ mod tests {
             c.layout.absolute_position,
             Some((2 * s.title_slot_width, s.bar_height))
         );
-        assert_eq!(c.layout.size.width, SizeValue::Px(s.dropdown_width));
-        assert_eq!(c.layout.size.height, SizeValue::Px(s.dropdown_height(3)));
+        assert_eq!(
+            c.layout.size.width,
+            SizeValue::Px(s.dropdown_width + DROPDOWN_BORDER_PX * 2),
+            "{WHY_THE_BOX_GREW}"
+        );
+        assert_eq!(
+            c.layout.size.height,
+            SizeValue::Px(s.dropdown_height(3) + DROPDOWN_BORDER_PX * 2)
+        );
     }
 
     fn placement(anchor: (f32, f32), window: (u32, u32)) -> ContextMenuPlacement {
@@ -1096,8 +1148,15 @@ mod tests {
             panic!("expected panel Container");
         };
         assert_eq!(c.layout.absolute_position, Some((100, 80)));
-        assert_eq!(c.layout.size.width, SizeValue::Px(s.dropdown_width));
-        assert_eq!(c.layout.size.height, SizeValue::Px(s.dropdown_height(3)));
+        assert_eq!(
+            c.layout.size.width,
+            SizeValue::Px(s.dropdown_width + DROPDOWN_BORDER_PX * 2),
+            "{WHY_THE_BOX_GREW}"
+        );
+        assert_eq!(
+            c.layout.size.height,
+            SizeValue::Px(s.dropdown_height(3) + DROPDOWN_BORDER_PX * 2)
+        );
     }
 
     #[test]
@@ -1116,12 +1175,18 @@ mod tests {
         let Scene::Container(c) = &scene else {
             panic!("expected panel Container");
         };
-        let max_x = win.0 - s.dropdown_width;
-        let max_y = win.1 - s.dropdown_height(3);
+        // ★ R1674 — against the OUTER size. What has to stay on screen is the
+        // panel, and the panel is its rows plus the outline around them; a
+        // clamp computed from the content alone slides the frame back off the
+        // very edge the clamp exists to keep it on. Two pixels, and invisible
+        // to every assertion here until the frame became part of the box.
+        let outer = DROPDOWN_BORDER_PX * 2;
+        let max_x = win.0 - (s.dropdown_width + outer);
+        let max_y = win.1 - (s.dropdown_height(3) + outer);
         assert_eq!(
             c.layout.absolute_position,
             Some((max_x, max_y)),
-            "panel slid back on-screen near the edges"
+            "panel slid back on-screen near the edges, frame included"
         );
     }
 
@@ -1435,5 +1500,37 @@ mod tests {
             &s,
         );
         assert_eq!(popups.len(), 1, "no nested popup without an open child");
+    }
+
+    /// ★★ R1674 — a menu bar's titles and a dropdown's items stay inside the
+    /// outlines those surfaces stroke. The crate gate ([`crate::frame_gate`]).
+    ///
+    /// Both entry points, because the border in this module is on the POPUP
+    /// (two sites), and the bar is what a consumer opens it from.
+    #[test]
+    fn r1674_a_menu_keeps_its_items_inside_its_popup() {
+        crate::frame_gate::assert_frame_contained("menu bar open", &mut |_w, _h| {
+            view_menu_bar("menu", &TITLES, Some(0), &theme(), &MenuStyle::m3_default())
+        });
+        // A dropdown is ANCHORED, not bound (R1672): it is absolutely positioned
+        // and may extend past whatever is behind it, so the question here is
+        // whether its ITEMS stay inside IT. Judging it against a 180px window
+        // would only report that a 200px menu is wider than 180 pixels, which is
+        // true and is not this gate's question.
+        crate::frame_gate::assert_frame_contained_at(
+            "menu dropdown",
+            &[(420, 260), (320, 200)],
+            &mut |_w, _h| {
+                view_menu_dropdown(
+                    "menu",
+                    "menu_dropdown",
+                    0,
+                    &CMD_ITEMS,
+                    Some(1),
+                    &theme(),
+                    &MenuStyle::m3_default(),
+                )
+            },
+        );
     }
 }

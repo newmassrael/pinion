@@ -16128,4 +16128,43 @@ mod surface_tests {
             "a duplicate split id must be a deserialize error"
         );
     }
+
+    /// ★★ R1674 — the drop-preview overlays keep their ink inside the accent
+    /// border they stroke. The crate gate ([`crate::frame_gate`]).
+    ///
+    /// ★ The honest note about what this proves, because a gate whose answer is
+    /// structurally "yes" reads like coverage and is not: both bordered nodes
+    /// in this module are **childless** `Scene::Box` overlays, so nothing
+    /// exists that could be painted over their outlines. The assertion below
+    /// says that in the form that can FAIL — if either preview grows a child
+    /// (a label naming the target well, the obvious next thing to want), the
+    /// gate starts asking a real question of it without anyone remembering to
+    /// come back here.
+    #[test]
+    fn r1674_a_drop_preview_keeps_its_ink_inside_its_accent_border() {
+        for zone in [
+            crate::dock::DockDropZone::Left,
+            crate::dock::DockDropZone::Right,
+            crate::dock::DockDropZone::Top,
+            crate::dock::DockDropZone::Bottom,
+            crate::dock::DockDropZone::Center,
+        ] {
+            crate::frame_gate::assert_frame_contained(
+                &format!("dock drop preview {zone:?}"),
+                &mut |w, h| {
+                    crate::dock::dock_drop_preview_overlay(
+                        pinion_core::scene::Rect::new(0, 0, w, h),
+                        zone,
+                        crate::dock::dock_redock_preview_tint(&pinion_core::theme::Theme::light()),
+                    )
+                    .unwrap_or_else(|| {
+                        pinion_core::Scene::Box(pinion_core::scene::BoxNode::new(
+                            pinion_core::scene::Rect::new(0, 0, 4, 4),
+                            pinion_core::style::BoxStyle::filled(pinion_core::Color::TRANSPARENT),
+                        ))
+                    })
+                },
+            );
+        }
+    }
 }

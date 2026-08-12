@@ -11589,6 +11589,20 @@ mod r1467_producer_dresses_the_window_tests {
         }
     }
 
+    /// The first node in a produced scene document carrying `tag`.
+    ///
+    /// R1674 — so a claim about one node's geometry is read out of that node
+    /// instead of matched against a rendering of its siblings' style fields.
+    fn find_tagged<'a>(node: &'a serde_json::Value, tag: &str) -> Option<&'a serde_json::Value> {
+        if node["tag"].as_str() == Some(tag) {
+            return Some(node);
+        }
+        node["children"]
+            .as_array()?
+            .iter()
+            .find_map(|child| find_tagged(child, tag))
+    }
+
     #[test]
     fn the_produce_path_insets_a_chromed_window_like_the_paint_does() {
         // §2 #7 for the geometry: the scene an agent reads from the produce
@@ -11606,11 +11620,21 @@ mod r1467_producer_dresses_the_window_tests {
         // window, so "no full-window rect appears" is a different (and false)
         // claim than "the content is inset" — the first shape of this assertion
         // said the second and tested the first.
-        assert!(
-            resp.contains(&format!(
-                r#""rect":{{"h":{ROW_H},"w":{W},"x":0,"y":{CHROME_H}}},"style":{{"border":null,"corner_radius":0,"fill":{{"a":0,"b":0,"g":0,"r":0}},"gradient":null,"shadows":[]}},"tag":"{}""#,
-                ROWS[0]
-            )),
+        //
+        // ★ R1674 — and read out of the PARSED response rather than matched as
+        // text. The second shape of this assertion pinned the row's whole
+        // serialized `style` object as an anchor to disambiguate the rect, so
+        // adding any field to `BoxStyle` broke a test about window chrome for
+        // reasons that had nothing to do with window chrome — measured, when
+        // `chrome` was added. A node is found by its tag; its rect is then a
+        // value, not a substring.
+        let doc: serde_json::Value =
+            serde_json::from_str(&resp).expect("the produce path answers JSON");
+        let row = find_tagged(&doc["result"], ROWS[0])
+            .unwrap_or_else(|| panic!("the produced scene carries {}: {resp}", ROWS[0]));
+        assert_eq!(
+            (row["rect"]["y"].as_u64(), row["rect"]["h"].as_u64()),
+            (Some(u64::from(CHROME_H)), Some(u64::from(ROW_H))),
             "★the produce path insets the top row below the chrome strip: {resp}",
         );
         assert!(

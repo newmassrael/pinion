@@ -89,7 +89,7 @@
 use std::collections::HashMap;
 
 use crate::scene::{Rect, Scene, TextNode};
-use crate::style::{Border, BorderPlacement};
+use crate::style::{Border, BorderPlacement, Chrome, ChromeEdge, ChromeRole};
 
 /// The height a box must have to hold one line of a `px` face without the
 /// glyphs leaving it — a **reservation**, not a measurement.
@@ -220,6 +220,10 @@ pub struct Escape {
     pub over: Overhang,
     /// Whether the overhang is cut by a clip or drawn over the neighbour.
     pub fate: Fate,
+    /// R1674 — **which parts of the owner** the mark landed on: its outer edge,
+    /// its border, or a named chrome band. Never empty for an escape, because
+    /// leaving the content rectangle means landing on at least one of them.
+    pub trespass: Vec<Trespass>,
 }
 
 /// How wide and tall a text run's glyphs actually are, in the caller's unit.
@@ -261,19 +265,31 @@ pub type InkOf<'a> = &'a mut dyn FnMut(&TextNode) -> (u32, u32);
 /// and the report that a mark crossed it are the same function's two halves.
 #[must_use]
 pub fn content_rect(node: &Scene, box_rect: Rect) -> Rect {
-    let border = match node {
-        Scene::Box(n) => n.style.border.as_ref(),
-        Scene::Container(n) => n.style.border.as_ref(),
-        _ => None,
-    };
-    content_of(box_rect, border)
+    let (border, chrome) = box_chrome(node);
+    content_of(box_rect, border, chrome)
 }
 
-/// The content rectangle of a box that strokes `border` inside itself.
+/// The border and the declared chrome bands of a node that has a
+/// [`BoxStyle`](crate::style::BoxStyle),
+/// or `(None, &[])` for one that does not.
+///
+/// One place reads the style, so [`content_rect`] and the trespass attribution
+/// cannot disagree about which nodes have chrome.
+fn box_chrome(node: &Scene) -> (Option<&Border>, &[Chrome]) {
+    match node {
+        Scene::Box(n) => (n.style.border.as_ref(), &n.style.chrome),
+        Scene::Container(n) => (n.style.border.as_ref(), &n.style.chrome),
+        _ => (None, &[]),
+    }
+}
+
+/// The content rectangle of a box that strokes `border` inside itself and keeps
+/// `chrome` bands of itself for itself.
 ///
 /// The arithmetic half of [`content_rect`], for the side that is **placing**
-/// children and so has the border before it has the node. Pass `None` for a box
-/// that draws no frame and the rectangle comes back unchanged.
+/// children and so has the style before it has the node. Pass `None` and `&[]`
+/// for a box that draws no frame and reserves nothing, and the rectangle comes
+/// back unchanged.
 ///
 /// ★★ R1673 — lifted at the tenth consumer, and the count is the argument. Three
 /// screens had written the same `const fn panel_content(rect) -> Rect` by hand
@@ -282,18 +298,211 @@ pub fn content_rect(node: &Scene, box_rect: Rect) -> Rect {
 /// is ten chances for one of them to disagree with the check that reports it —
 /// and this one is *already* the check, which is the strongest case for a lift
 /// there is: the placement and the judgement are now the same arithmetic.
+///
+/// ★★ R1674 — `chrome` joined it as a **required** argument rather than a second
+/// entry point. A `content_of_with_chrome` beside this would let a caller
+/// holding a style with bands ask the question that ignores them and get an
+/// answer that looks right, which is the two-copies failure the paragraph above
+/// records, re-created by an API shape. Every caller now states its chrome, and
+/// `&[]` is a statement.
+///
+/// The bands are subtracted **after** the border, because that is where a
+/// painter draws them: a titled frame strokes its outline on the box and then
+/// lays its caption inside it. Two bands on one edge sum.
 #[must_use]
-pub fn content_of(box_rect: Rect, border: Option<&Border>) -> Rect {
-    let Some(border) = border else {
-        return box_rect;
-    };
-    let inset = border_inset(border);
-    Rect::new(
+pub fn content_of(box_rect: Rect, border: Option<&Border>, chrome: &[Chrome]) -> Rect {
+    let inset = border.map_or(0, border_inset);
+    let mut rect = Rect::new(
         box_rect.x + inset,
         box_rect.y + inset,
         box_rect.w.saturating_sub(inset * 2),
         box_rect.h.saturating_sub(inset * 2),
-    )
+    );
+    for band in chrome {
+        rect = split_band(rect, *band).1;
+    }
+    rect
+}
+
+/// A band's own rectangle inside `rect`, and what is left for the content.
+///
+/// The single implementation of "where does this band sit": [`content_of`]
+/// takes the remainder and [`trespasses`] takes the band, so the rectangle a
+/// trespass is attributed to is by construction the rectangle the content was
+/// denied. A band wider than what is left takes all of it and leaves an empty
+/// rectangle **on the far side**, which is where a caller placing children next
+/// would want the origin.
+const fn split_band(rect: Rect, band: Chrome) -> (Rect, Rect) {
+    let taken_h = if band.extent < rect.h {
+        band.extent
+    } else {
+        rect.h
+    };
+    let taken_w = if band.extent < rect.w {
+        band.extent
+    } else {
+        rect.w
+    };
+    match band.edge {
+        ChromeEdge::Top => (
+            Rect::new(rect.x, rect.y, rect.w, taken_h),
+            Rect::new(rect.x, rect.y + taken_h, rect.w, rect.h - taken_h),
+        ),
+        ChromeEdge::Bottom => (
+            Rect::new(rect.x, rect.y + rect.h - taken_h, rect.w, taken_h),
+            Rect::new(rect.x, rect.y, rect.w, rect.h - taken_h),
+        ),
+        ChromeEdge::Left => (
+            Rect::new(rect.x, rect.y, taken_w, rect.h),
+            Rect::new(rect.x + taken_w, rect.y, rect.w - taken_w, rect.h),
+        ),
+        ChromeEdge::Right => (
+            Rect::new(rect.x + rect.w - taken_w, rect.y, taken_w, rect.h),
+            Rect::new(rect.x, rect.y, rect.w - taken_w, rect.h),
+        ),
+    }
+}
+
+/// The [`ChromeRole`] a node claims to be, or `None` for ordinary content.
+///
+/// Read from [`LayoutStyle::chrome_slot`](crate::style::LayoutStyle::chrome_slot)
+/// through the node's layout sidecar, which every kind carries — a caption can
+/// be a bare [`Scene::Text`] as easily as a container of one.
+fn chrome_slot_of(node: &Scene) -> Option<ChromeRole> {
+    node.layout_style().and_then(|layout| layout.chrome_slot)
+}
+
+/// The band `node` was given, when it claims one its parent actually reserved.
+///
+/// `None` for a node that claims nothing — the ordinary case — and also for one
+/// whose claimed role the parent never declared. The second is deliberate: a
+/// band that was not reserved was not taken from the content, so the content
+/// rectangle is still the honest thing to judge that node against, and silently
+/// exempting it instead would make a typo'd role into an exemption.
+fn chrome_band_of(
+    node: &Scene,
+    owner_box: Rect,
+    border: Option<&Border>,
+    chrome: &[Chrome],
+) -> Option<Rect> {
+    let role = chrome_slot_of(node)?;
+    let mut rect = content_of(owner_box, border, &[]);
+    for band in chrome {
+        let (band_rect, remainder) = split_band(rect, *band);
+        if band.role == role {
+            return Some(band_rect);
+        }
+        rect = remainder;
+    }
+    None
+}
+
+/// Whether two rectangles share at least one pixel. Zero-extent rectangles
+/// cover no pixels, so they intersect nothing — a zero-height band was never
+/// taken from the content and cannot be trespassed on.
+const fn overlaps(a: Rect, b: Rect) -> bool {
+    a.w > 0
+        && a.h > 0
+        && b.w > 0
+        && b.h > 0
+        && a.x < b.x + b.w
+        && b.x < a.x + a.w
+        && a.y < b.y + b.h
+        && b.y < a.y + a.h
+}
+
+/// What a mark that left the content rectangle actually landed on.
+///
+/// The floor conflates all of these into "outside the content rect": probed at
+/// 6.11, a widget publishes its reservation as four integers and reading them
+/// back cannot say which pixels were frame and which were caption. Naming the
+/// part is what turns *"this label is out of bounds"* into *"this label is over
+/// the title"*, and the two have different repairs.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Trespass {
+    /// Past the owner's outer edge entirely — the mark is not in the box at all.
+    Outside,
+    /// On the border the owner strokes inside its own box.
+    Border,
+    /// In a band the owner reserved for its own chrome, named by its role.
+    Chrome(ChromeRole),
+}
+
+impl Trespass {
+    /// The word that rides on the wire. A chrome band is `chrome:<role>`, so
+    /// one string sorts the three cases and a reader never has to join two
+    /// fields to know what was hit.
+    #[must_use]
+    pub fn wire_word(self) -> String {
+        match self {
+            Self::Outside => "outside".to_owned(),
+            Self::Border => "border".to_owned(),
+            Self::Chrome(role) => format!("chrome:{}", role.wire_word()),
+        }
+    }
+}
+
+/// Every part of `owner_box` this mark landed on that was not content, in the
+/// order a painter laid them: the outer edge first, then the border, then the
+/// chrome bands in declaration order.
+///
+/// A mark can hit more than one — a header label drawn full-bleed sits on the
+/// caption band *and* on the border beside it — and the list says so rather
+/// than picking a winner, because the repairs are independent.
+fn trespasses(
+    painted: Rect,
+    owner_box: Rect,
+    border: Option<&Border>,
+    chrome: &[Chrome],
+) -> Vec<Trespass> {
+    let mut found = Vec::new();
+    if !Overhang::of(painted, owner_box).is_contained() {
+        found.push(Trespass::Outside);
+    }
+    let inside_border = content_of(owner_box, border, &[]);
+    // The border ring is what the box has and the inside does not. Testing the
+    // four strips separately rather than "in the box but not in the ring"
+    // because a mark can sit entirely within one strip.
+    if inside_border != owner_box {
+        let ring = [
+            Rect::new(
+                owner_box.x,
+                owner_box.y,
+                owner_box.w,
+                inside_border.y - owner_box.y,
+            ),
+            Rect::new(
+                owner_box.x,
+                inside_border.y + inside_border.h,
+                owner_box.w,
+                (owner_box.y + owner_box.h).saturating_sub(inside_border.y + inside_border.h),
+            ),
+            Rect::new(
+                owner_box.x,
+                owner_box.y,
+                inside_border.x - owner_box.x,
+                owner_box.h,
+            ),
+            Rect::new(
+                inside_border.x + inside_border.w,
+                owner_box.y,
+                (owner_box.x + owner_box.w).saturating_sub(inside_border.x + inside_border.w),
+                owner_box.h,
+            ),
+        ];
+        if ring.iter().any(|strip| overlaps(painted, *strip)) {
+            found.push(Trespass::Border);
+        }
+    }
+    let mut rect = inside_border;
+    for band in chrome {
+        let (band_rect, remainder) = split_band(rect, *band);
+        if overlaps(painted, band_rect) {
+            found.push(Trespass::Chrome(band.role));
+        }
+        rect = remainder;
+    }
+    found
 }
 
 /// How many pixels of the box a border's own stroke covers, per edge.
@@ -387,7 +596,18 @@ pub fn escapes(scene: &Scene, ink_of: InkOf<'_>) -> Vec<Escape> {
         //
         // `Outside` placement draws the border beyond the box, so it takes
         // nothing from the content; only an inside border does.
-        let owner_rect = content_rect(parent, owner_rect);
+        let owner_box = owner_rect;
+        let (border, chrome) = box_chrome(parent);
+        // ★★ R1674 — WHICH rectangle this child was promised depends on what it
+        // says it is. A node carrying a `chrome_slot` is the band itself, so it
+        // is judged against the band; every other child is judged against what
+        // is left once the bands are taken out. Two questions, because a single
+        // one has to be wrong for one of the two populations: judging the title
+        // against the content rectangle reports every titled frame in the tree
+        // as broken, and exempting whatever is drawn in the band lets a label
+        // that really did land on the caption through.
+        let owner_rect = chrome_band_of(visit.node, owner_box, border, chrome)
+            .unwrap_or_else(|| content_of(owner_box, border, chrome));
         if matches!(parent, Scene::Scroll(_)) {
             // A scroll's content is SUPPOSED to be bigger than the viewport —
             // that is what makes it scrollable. Judging it here reported a
@@ -423,6 +643,18 @@ pub fn escapes(scene: &Scene, ink_of: InkOf<'_>) -> Vec<Escape> {
             Some(clip) if !Overhang::of(painted, clip).is_contained() => Fate::Clipped,
             _ => Fate::Smeared,
         };
+        // ★ R1674 — attributed against the owner's BOX, because that is the
+        // rectangle the parts divide up: the border ring and every chrome band
+        // are inside it, and the content rectangle is what is left after both.
+        //
+        // A chrome node's own band is not a trespass by it — it was given that
+        // band — so the band it fills is dropped from its own list. What
+        // remains is what it reached beyond its band: the border it covered, or
+        // a neighbouring band, or the outside of the box.
+        let mut trespass = trespasses(painted, owner_box, border, chrome);
+        if let Some(role) = chrome_slot_of(visit.node) {
+            trespass.retain(|t| *t != Trespass::Chrome(role));
+        }
         found.push(Escape {
             tag: visit.node.tag().map(str::to_owned),
             path: visit.path.to_vec(),
@@ -435,6 +667,7 @@ pub fn escapes(scene: &Scene, ink_of: InkOf<'_>) -> Vec<Escape> {
             owner_rect,
             over,
             fate,
+            trespass,
         });
     });
     found
@@ -592,13 +825,39 @@ mod tests {
         let box_rect = Rect::new(10, 20, 100, 40);
         assert_eq!(
             content_rect(&node, box_rect),
-            content_of(box_rect, Some(&border)),
+            content_of(box_rect, Some(&border), &[]),
             "the judging half and the placing half are one answer",
         );
-        assert_eq!(content_of(box_rect, None), box_rect, "no border, no inset");
         assert_eq!(
-            content_of(box_rect, Some(&border)),
+            content_of(box_rect, None, &[]),
+            box_rect,
+            "no border, no chrome, no inset"
+        );
+        assert_eq!(
+            content_of(box_rect, Some(&border), &[]),
             Rect::new(13, 23, 94, 34)
+        );
+
+        // ★ R1674 — and the same identity holds once the box declares chrome,
+        // which is the half that could have been added to one side only. A
+        // titled frame is the case: the caption band is subtracted by the
+        // painter placing children AND by the check judging them, or the two
+        // disagree about the same twenty pixels.
+        let caption = Chrome::caption(20);
+        let mut titled = ContainerNode::new(Vec::new());
+        titled.rect = box_rect;
+        titled.style = BoxStyle::filled(Color::rgb(0x10, 0x10, 0x10))
+            .with_border(border)
+            .with_chrome(caption);
+        assert_eq!(
+            content_rect(&Scene::Container(titled), box_rect),
+            content_of(box_rect, Some(&border), &[caption]),
+            "chrome reaches the judging half too",
+        );
+        assert_eq!(
+            content_of(box_rect, Some(&border), &[caption]),
+            Rect::new(13, 43, 94, 14),
+            "3px of border on every edge, then 20px of caption off the top",
         );
     }
 
@@ -801,5 +1060,230 @@ mod tests {
         assert_eq!(over.worst(), 45);
         assert!(!over.is_contained());
         assert!(Overhang::of(Rect::new(10, 10, 5, 5), Rect::new(10, 10, 50, 50)).is_contained());
+    }
+
+    /// ★★ R1674 — a caption band is subtracted from the content, and the parity
+    /// case is the floor's own numbers.
+    ///
+    /// Probed by building and running it: a titled group box at 6.11 reports
+    /// content margins of `3,23,3,3` inside a `100x40` box while a plain framed
+    /// widget with a 2px line reports `2,2,2,2`. A 3px border plus a 20px
+    /// caption is that first answer exactly, which is the point — the RECTANGLE
+    /// is parity, and what the floor cannot carry is which twenty of those
+    /// twenty-three pixels are the title.
+    #[test]
+    fn r1674_a_caption_band_comes_out_of_the_content_rectangle() {
+        let box_rect = Rect::new(0, 0, 100, 40);
+        let border = Border::new(crate::style::Color::rgb(0x33, 0x33, 0x33), 3);
+        let caption = Chrome::caption(20);
+        assert_eq!(
+            content_of(box_rect, Some(&border), &[caption]),
+            Rect::new(3, 23, 94, 14),
+            "3px of border on every edge, then 20 more off the top",
+        );
+        assert_eq!(
+            content_of(box_rect, Some(&border), &[]),
+            Rect::new(3, 23 - 20, 94, 14 + 20),
+            "the same box with no caption keeps those twenty pixels",
+        );
+    }
+
+    /// ★ Every edge, and two bands on one edge sum.
+    ///
+    /// A `match` over [`ChromeEdge`] decides where a band is taken from, and
+    /// the arm that moves the ORIGIN (top, left) is a different arm from the
+    /// one that only shortens (bottom, right) — the asymmetry R1672 got wrong
+    /// once already on `BorderPlacement`, in a `match` that looked complete.
+    #[test]
+    fn r1674_a_band_is_taken_from_the_edge_it_names() {
+        let r = Rect::new(10, 20, 100, 60);
+        let cases = [
+            (ChromeEdge::Top, Rect::new(10, 30, 100, 50)),
+            (ChromeEdge::Bottom, Rect::new(10, 20, 100, 50)),
+            (ChromeEdge::Left, Rect::new(20, 20, 90, 60)),
+            (ChromeEdge::Right, Rect::new(10, 20, 90, 60)),
+        ];
+        for (edge, want) in cases {
+            let band = Chrome::new(edge, 10, ChromeRole::Header);
+            assert_eq!(content_of(r, None, &[band]), want, "{edge:?}");
+        }
+        // A panel carrying a tab strip above a toolbar spends both.
+        assert_eq!(
+            content_of(
+                r,
+                None,
+                &[
+                    Chrome::new(ChromeEdge::Top, 10, ChromeRole::TabStrip),
+                    Chrome::new(ChromeEdge::Top, 6, ChromeRole::Toolbar),
+                ],
+            ),
+            Rect::new(10, 36, 100, 44),
+            "two bands on one edge sum",
+        );
+    }
+
+    /// ★ A band bigger than what is left takes all of it and leaves the origin
+    /// on the far side, rather than underflowing.
+    ///
+    /// The `.max(0)` shape R1668 measured as a four-billion-pixel underflow, in
+    /// the arithmetic that decides where a child goes.
+    #[test]
+    fn r1674_an_oversized_band_empties_the_content_without_underflowing() {
+        let r = Rect::new(0, 0, 40, 30);
+        let got = content_of(r, None, &[Chrome::caption(500)]);
+        assert_eq!(got, Rect::new(0, 30, 40, 0), "empty, at the bottom edge");
+        let got = content_of(
+            r,
+            None,
+            &[Chrome::new(ChromeEdge::Left, 500, ChromeRole::Gutter)],
+        );
+        assert_eq!(got, Rect::new(40, 0, 0, 30), "empty, at the right edge");
+    }
+
+    /// ★★★ R1674 — what the mark landed on, named. The field the floor has no
+    /// form for.
+    ///
+    /// Probed at 6.11: a custom-painted widget publishes its reservation with
+    /// its four-integer content-margin setter with `3, 23, 3, 3`, and reading
+    /// it back yields four integers indistinguishable from a 3px border with
+    /// 20 more on top. So
+    /// "this label is over the title" and "this label is out of bounds" arrive
+    /// there as the same answer, and the repairs are not the same repair.
+    #[test]
+    fn r1674_an_escape_says_which_part_of_the_owner_it_landed_on() {
+        let border = Border::new(crate::style::Color::rgb(0x33, 0x33, 0x33), 2);
+        let owner_style = BoxStyle::filled(crate::style::Color::TRANSPARENT)
+            .with_border(border)
+            .with_chrome(Chrome::caption(20));
+        // A label dropped at the owner's origin: over the border AND the caption.
+        let intruder = text("Endpoint", Rect::new(0, 0, 60, 12), Some("intruder"));
+        let mut owner = ContainerNode::new(vec![intruder]);
+        owner.rect = Rect::new(0, 0, 100, 60);
+        owner.style = owner_style.clone();
+        let found = escapes(&Scene::Container(owner), &mut |t| (t.rect.w, t.rect.h));
+        assert_eq!(found.len(), 1, "one intruder, one report");
+        assert_eq!(
+            found[0].trespass,
+            vec![Trespass::Border, Trespass::Chrome(ChromeRole::Caption)],
+            "it covered the outline and it landed on the title, and both are said",
+        );
+
+        // The same label placed in the CONTENT is not an escape at all.
+        let good = text("Endpoint", Rect::new(2, 22, 60, 12), Some("good"));
+        let mut owner = ContainerNode::new(vec![good]);
+        owner.rect = Rect::new(0, 0, 100, 60);
+        owner.style = owner_style;
+        assert!(
+            escapes(&Scene::Container(owner), &mut |t| (t.rect.w, t.rect.h)).is_empty(),
+            "the content rectangle starts below the caption",
+        );
+    }
+
+    /// ★★★ R1674 — a node that IS the chrome is judged against its band, and a
+    /// node that merely sits in the band is not.
+    ///
+    /// The two halves are useless apart. Without the claim, declaring a caption
+    /// makes every titled frame in the tree report its own title as an escape;
+    /// without the declaration, whatever is drawn up there is exempt and a
+    /// label that really did land on the caption goes unreported. This asserts
+    /// both directions against one owner, so a change that collapses them into
+    /// one answer fails here.
+    #[test]
+    fn r1674_a_chrome_node_answers_to_its_band_and_content_does_not() {
+        let style =
+            BoxStyle::filled(crate::style::Color::TRANSPARENT).with_chrome(Chrome::caption(20));
+        let ink = &mut |t: &TextNode| (t.rect.w, t.rect.h);
+
+        // Claims the caption, fits the caption: contained.
+        let title = Scene::Text(
+            TextNode::new("Advanced", Rect::new(0, 2, 60, 14))
+                .with_tag("title")
+                .with_layout(
+                    crate::style::LayoutStyle::new().with_chrome_slot(ChromeRole::Caption),
+                ),
+        );
+        let mut owner = ContainerNode::new(vec![title]);
+        owner.rect = Rect::new(0, 0, 100, 60);
+        owner.style = style.clone();
+        assert!(
+            escapes(&Scene::Container(owner), &mut *ink).is_empty(),
+            "the title is judged against the band it was given",
+        );
+
+        // Claims the caption, OUTGROWS the caption: reported. This is the
+        // defect R1673 found in a group box's legend by accident, and the
+        // reason the claim is not simply an exemption.
+        let tall = Scene::Text(
+            TextNode::new("Advanced", Rect::new(0, 2, 60, 30))
+                .with_tag("tall")
+                .with_layout(
+                    crate::style::LayoutStyle::new().with_chrome_slot(ChromeRole::Caption),
+                ),
+        );
+        let mut owner = ContainerNode::new(vec![tall]);
+        owner.rect = Rect::new(0, 0, 100, 60);
+        owner.style = style.clone();
+        let found = escapes(&Scene::Container(owner), &mut *ink);
+        assert_eq!(
+            found.len(),
+            1,
+            "a caption too tall for its band is reported"
+        );
+        assert_eq!(found[0].over.bottom, 12, "2 + 30 past a 20px band");
+
+        // Claims a role the owner never reserved: judged as ordinary content,
+        // NOT exempted. A band that was never taken from the content was never
+        // taken from the content, and a typo in a role must not become an
+        // exemption.
+        let liar = Scene::Text(
+            TextNode::new("Advanced", Rect::new(0, 2, 60, 14))
+                .with_tag("liar")
+                .with_layout(crate::style::LayoutStyle::new().with_chrome_slot(ChromeRole::Footer)),
+        );
+        let mut owner = ContainerNode::new(vec![liar]);
+        owner.rect = Rect::new(0, 0, 100, 60);
+        owner.style = style;
+        let found = escapes(&Scene::Container(owner), &mut *ink);
+        assert_eq!(
+            found.len(),
+            1,
+            "an unreserved role is not an exemption — it is content in the caption",
+        );
+        assert_eq!(
+            found[0].trespass,
+            vec![Trespass::Chrome(ChromeRole::Caption)]
+        );
+    }
+
+    /// ★ The wire words are identity: two reads spell a role, and a rename
+    /// would silently move an AI client's key on both.
+    #[test]
+    fn r1674_the_chrome_vocabulary_is_pinned_on_the_wire() {
+        let roles = [
+            (ChromeRole::Caption, "caption"),
+            (ChromeRole::Header, "header"),
+            (ChromeRole::TabStrip, "tab_strip"),
+            (ChromeRole::Toolbar, "toolbar"),
+            (ChromeRole::Gutter, "gutter"),
+            (ChromeRole::Footer, "footer"),
+        ];
+        for (role, word) in roles {
+            assert_eq!(role.wire_word(), word);
+            assert_eq!(
+                Trespass::Chrome(role).wire_word(),
+                format!("chrome:{word}"),
+                "one string carries the case and the role",
+            );
+        }
+        for (edge, word) in [
+            (ChromeEdge::Top, "top"),
+            (ChromeEdge::Bottom, "bottom"),
+            (ChromeEdge::Left, "left"),
+            (ChromeEdge::Right, "right"),
+        ] {
+            assert_eq!(edge.wire_word(), word);
+        }
+        assert_eq!(Trespass::Outside.wire_word(), "outside");
+        assert_eq!(Trespass::Border.wire_word(), "border");
     }
 }

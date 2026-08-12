@@ -1533,6 +1533,153 @@ fn hash_box_shadow<H: core::hash::Hasher>(shadow: &BoxShadow, state: &mut H) {
     hash_f32(shadow.spread, state);
 }
 
+/// Which edge of a box a [`Chrome`] band is taken from.
+///
+/// Physical rather than writing-order (`leading`/`trailing`): every consumer
+/// here places chrome from a resolved layout, and a band whose side flips with
+/// the locale would make [`content_of`](crate::containment::content_of) depend
+/// on text direction — a dependency the arithmetic does not have and should not
+/// acquire silently. A right-to-left painter picks the edge it wants.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ChromeEdge {
+    /// The top edge.
+    Top,
+    /// The bottom edge.
+    Bottom,
+    /// The left edge.
+    Left,
+    /// The right edge.
+    Right,
+}
+
+impl ChromeEdge {
+    /// Every edge, for a caller folding a band list into four insets.
+    pub const ALL: [Self; 4] = [Self::Top, Self::Bottom, Self::Left, Self::Right];
+
+    /// The word that rides on the wire.
+    #[must_use]
+    pub const fn wire_word(self) -> &'static str {
+        match self {
+            Self::Top => "top",
+            Self::Bottom => "bottom",
+            Self::Left => "left",
+            Self::Right => "right",
+        }
+    }
+}
+
+/// **Why** a box reserved a band of its own rectangle — the fact the floor
+/// throws away.
+///
+/// Every arm names a strip something in this tree actually paints, so the
+/// vocabulary is a census of the chrome that exists rather than a guess at the
+/// chrome that might: [`Caption`](Self::Caption) is
+/// [`group_box`](https://docs.rs/pinion-widget-paint)'s title band,
+/// [`Header`](Self::Header) a card's header strip, [`TabStrip`](Self::TabStrip)
+/// a dock well's tabs, [`Toolbar`](Self::Toolbar) a panel's button row,
+/// [`Gutter`](Self::Gutter) a line-number or marker column, and
+/// [`Footer`](Self::Footer) a status line.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum ChromeRole {
+    /// A titled frame's caption band.
+    Caption,
+    /// A card or panel header strip.
+    Header,
+    /// A row of tabs selecting which child a well shows.
+    TabStrip,
+    /// A row of actions belonging to the box rather than to its content.
+    Toolbar,
+    /// A column beside the content: line numbers, fold arrows, list markers.
+    Gutter,
+    /// A status or summary line below the content.
+    Footer,
+}
+
+impl ChromeRole {
+    /// The word that rides on the wire.
+    #[must_use]
+    pub const fn wire_word(self) -> &'static str {
+        match self {
+            Self::Caption => "caption",
+            Self::Header => "header",
+            Self::TabStrip => "tab_strip",
+            Self::Toolbar => "toolbar",
+            Self::Gutter => "gutter",
+            Self::Footer => "footer",
+        }
+    }
+}
+
+/// A band of its own rectangle that a box paints itself, and so cannot give to
+/// a child.
+///
+/// # The fact this makes expressible
+///
+/// A border is chrome the *scene* already describes, so
+/// [`content_of`](crate::containment::content_of) could subtract it. A caption
+/// band, a card header and a tab strip are chrome the **painter** decides, and
+/// until this type the scene had no way to hear about it: a titled frame's
+/// content rectangle was its box less two pixels of outline, and a label
+/// dropped onto the title read as contained.
+///
+/// # Measured against the floor at 6.11
+///
+/// The floor arrives at the same *rectangle* — a titled group box there reports
+/// content margins of `3,23,3,3` against a `2,2,2,2` plain frame, the caption
+/// band included — so the number is parity. Two things are not:
+///
+/// * **The reason survives here.** Probed by running it: a custom-painted
+///   widget publishes its band through a four-integer content-margin setter
+///   (`3, 23, 3, 3`), and reading it back yields four integers
+///   indistinguishable from a three pixel border with an extra twenty on top. Which part is frame and which is
+///   caption is unrecoverable, so nothing downstream can say *"this label is
+///   over the title"* rather than *"this label is out of bounds"*. Here each
+///   band keeps its [`role`](Self::role) and
+///   [`Trespass`](crate::containment::Trespass) names it.
+/// * **It is not a fixed list of classes.** The floor *can* separate the parts
+///   of a group box — through that class's own sub-control enum, one of about
+///   twenty complex controls that have one. A card header or a dock tab
+///   strip drawn by an application has none, and there is no generic accessor:
+///   probed, the base widget class's whole surface for this is one content
+///   rectangle and one margin quad. Any painter here declares a band the same
+///   way.
+///
+/// # It declares, it does not paint
+///
+/// Nothing renders from this. The painter still draws its own title, and this
+/// says how much room that took, which is what keeps §2 #7 honest — the scene
+/// describes the screen, and a reservation the scene cannot see is a promise
+/// nothing can check.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct Chrome {
+    /// Which edge the band is taken from.
+    pub edge: ChromeEdge,
+    /// How many pixels of that edge the box keeps for itself.
+    pub extent: u32,
+    /// Why the box kept them.
+    pub role: ChromeRole,
+}
+
+impl Chrome {
+    /// A band of `extent` pixels on `edge`, reserved for `role`.
+    #[must_use]
+    pub const fn new(edge: ChromeEdge, extent: u32, role: ChromeRole) -> Self {
+        Self { edge, extent, role }
+    }
+
+    /// A caption band across the top — the titled-frame case.
+    #[must_use]
+    pub const fn caption(extent: u32) -> Self {
+        Self::new(ChromeEdge::Top, extent, ChromeRole::Caption)
+    }
+
+    /// A header strip across the top — the card case.
+    #[must_use]
+    pub const fn header(extent: u32) -> Self {
+        Self::new(ChromeEdge::Top, extent, ChromeRole::Header)
+    }
+}
+
 /// Sidecar style for [`BoxNode`](crate::scene::BoxNode) per the §5.11
 /// "layered" decision (§5.3 R20 lock).
 ///
@@ -1560,6 +1707,13 @@ pub struct BoxStyle {
     /// Drop-shadows painted behind the box, back-to-front in list order
     /// (another retained-mode toolkit `List<BoxShadow>`). Empty (default) = no shadow.
     pub shadows: Vec<BoxShadow>,
+    /// R1674 §5.32 §2 #7 — bands of this box's rectangle the box paints itself,
+    /// and so cannot give to a child. Empty (default) = the border is the whole
+    /// of this box's chrome.
+    ///
+    /// Read by [`content_of`](crate::containment::content_of); nothing renders
+    /// from it. See [`Chrome`] for why the reason travels with the extent.
+    pub chrome: Vec<Chrome>,
 }
 
 impl core::hash::Hash for BoxStyle {
@@ -1578,6 +1732,13 @@ impl core::hash::Hash for BoxStyle {
         for shadow in &self.shadows {
             hash_box_shadow(shadow, state);
         }
+        // R1674 — hashed because it is compared. This `Hash` is the §5.16 R682
+        // paint cache's key, not a bucket hint, so a field that `PartialEq`
+        // separates and `Hash` does not is two different styles sharing one
+        // cache entry. Chrome paints nothing today, which makes the collision
+        // harmless today and invisible the round someone reads chrome at paint
+        // time. `Chrome` is integral throughout, so it hashes directly.
+        self.chrome.hash(state);
     }
 }
 
@@ -1594,6 +1755,7 @@ impl BoxStyle {
             // `Vec::new` is `const` and allocates nothing — keeps
             // `filled` usable in `const` contexts.
             shadows: Vec::new(),
+            chrome: Vec::new(),
         }
     }
 
@@ -1644,6 +1806,26 @@ impl BoxStyle {
         self
     }
 
+    /// Builder: declare a band of this box's rectangle that the box paints
+    /// itself. R1674 — see [`Chrome`].
+    ///
+    /// Additive, so a box with a header *and* a footer states both and
+    /// [`content_of`](crate::containment::content_of) folds them. Two bands on
+    /// one edge sum, which is the honest answer for a panel carrying a tab
+    /// strip above a toolbar.
+    #[must_use]
+    pub fn with_chrome(mut self, chrome: Chrome) -> Self {
+        self.chrome.push(chrome);
+        self
+    }
+
+    /// Builder: replace the entire chrome list. R1674.
+    #[must_use]
+    pub fn with_chrome_bands(mut self, chrome: Vec<Chrome>) -> Self {
+        self.chrome = chrome;
+        self
+    }
+
     /// R1514 §5.16 — every facet of this style, paired with whether it is
     /// declared (differs from [`BoxStyle::default`]).
     ///
@@ -1667,6 +1849,7 @@ impl BoxStyle {
             corner_radius,
             gradient,
             shadows,
+            chrome,
         } = self;
         let bare = Self::default();
         [
@@ -1675,6 +1858,7 @@ impl BoxStyle {
             (BoxFacet::CornerRadius, *corner_radius != bare.corner_radius),
             (BoxFacet::Gradient, *gradient != bare.gradient),
             (BoxFacet::Shadows, *shadows != bare.shadows),
+            (BoxFacet::Chrome, *chrome != bare.chrome),
         ]
     }
 }
@@ -1712,17 +1896,25 @@ pub enum BoxFacet {
     Gradient,
     /// [`BoxStyle::shadows`] — drop-shadows painted behind the box.
     Shadows,
+    /// [`BoxStyle::chrome`] — bands of the box reserved for the box's own
+    /// chrome. R1674. Alone among these facets it paints nothing: it moves
+    /// where the box's *content* begins, which is why it is a facet of the
+    /// style rather than of the layout — the border it composes with lives
+    /// here, and two answers to "how much of this box is not for children"
+    /// living in two places is the drift this exists to prevent.
+    Chrome,
 }
 
 impl BoxFacet {
     /// The census. Consumers iterate this instead of re-deriving a field
     /// list they cannot see.
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Fill,
         Self::Border,
         Self::CornerRadius,
         Self::Gradient,
         Self::Shadows,
+        Self::Chrome,
     ];
 
     /// Stable identity — the `BoxStyle` field name, which is also the §2 #7
@@ -1735,6 +1927,7 @@ impl BoxFacet {
             Self::CornerRadius => "corner_radius",
             Self::Gradient => "gradient",
             Self::Shadows => "shadows",
+            Self::Chrome => "chrome",
         }
     }
 
@@ -3906,6 +4099,35 @@ pub struct LayoutStyle {
     ///
     /// [`Unavailable`]: crate::availability::Unavailable
     pub resolved_unavailable: Option<Unavailable>,
+    /// (R1674 §5.32 §2 #7) This node occupies its parent's chrome band of this
+    /// role — the title a titled frame draws, the header strip on a card, the
+    /// tabs on a well — rather than being content placed inside the parent.
+    ///
+    /// *Occupies*, not *is*: a band is often several siblings (a grip, a title,
+    /// a status pill, two affordance buttons), and each of them says so. They
+    /// are then each judged against the band, which is the question worth
+    /// asking of every one of them.
+    ///
+    /// The matching half of [`BoxStyle::chrome`], and neither is much use
+    /// alone. The parent's declaration says *how much* of itself it kept;
+    /// this says *which node spends it*, and without that pair the containment
+    /// check has to choose between two wrong answers: judge the title against
+    /// the content rectangle and every titled frame in the tree reports its own
+    /// title as an escape, or exempt whatever happens to be drawn up there and
+    /// a label that genuinely landed on the caption goes unreported.
+    ///
+    /// With the pair, both questions are asked and they are different
+    /// questions: a content child must stay inside the content rectangle, and a
+    /// chrome child must stay inside **its own band**. The second is not
+    /// hypothetical — R1673 found a group box's legend two pixels outside its
+    /// title band, and found it by accident, because nothing was asking.
+    ///
+    /// `None` (the default) is ordinary content. A role with no matching band
+    /// on the parent is a declaration that spends nothing, and
+    /// [`containment::escapes`](crate::containment::escapes) judges such a node
+    /// against the content rectangle like any other child — the honest reading,
+    /// since a band that was never reserved was never taken from the content.
+    pub chrome_slot: Option<ChromeRole>,
     /// (R1196 §5.16 §5.39) The hover mouse **cursor** this node requests when
     /// the pointer is over it — a [`CursorHint`], or `None` (the default) for
     /// the OS default arrow. The shell resolves the deepest hinted node under
@@ -4041,6 +4263,9 @@ impl LayoutStyle {
             // (R1554 §5.39) Derived; `resolve_disabled` overwrites it every
             // paint, in both directions.
             resolved_unavailable: None,
+            // (R1674 §5.32) `None` = ordinary content, judged against the
+            // parent's content rectangle rather than against a band.
+            chrome_slot: None,
             // (R1196 §5.16 §5.39) `None` = the OS default arrow cursor.
             cursor: None,
             // (R1560 §5.21) Empty = no explicit tracks; every track a grid
@@ -4139,6 +4364,15 @@ impl LayoutStyle {
     #[must_use]
     pub fn with_availability(mut self, reason: Option<Unavailable>) -> Self {
         self.unavailable = reason;
+        self
+    }
+
+    /// (R1674 §5.32) Builder: declare that this node **is** its parent's chrome
+    /// band of `role`, not content placed inside the parent. See
+    /// [`chrome_slot`](Self::chrome_slot).
+    #[must_use]
+    pub const fn with_chrome_slot(mut self, role: ChromeRole) -> Self {
+        self.chrome_slot = Some(role);
         self
     }
 
@@ -4452,6 +4686,10 @@ mod tests {
                 bare.clone()
                     .with_shadows(vec![BoxShadow::new(Color::rgb(14, 15, 16))]),
             ),
+            (
+                BoxFacet::Chrome,
+                bare.clone().with_chrome(Chrome::caption(20)),
+            ),
         ];
         for (declared, style) in cases {
             for facet in BoxFacet::ALL {
@@ -4473,7 +4711,14 @@ mod tests {
     fn r1514_facet_names_are_the_box_style_field_names() {
         assert_eq!(
             BoxFacet::ALL.map(BoxFacet::name),
-            ["fill", "border", "corner_radius", "gradient", "shadows"]
+            [
+                "fill",
+                "border",
+                "corner_radius",
+                "gradient",
+                "shadows",
+                "chrome"
+            ]
         );
     }
 

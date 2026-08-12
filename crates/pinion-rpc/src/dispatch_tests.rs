@@ -8422,6 +8422,58 @@ fn r1514_the_wire_object_carries_exactly_the_declared_facets() {
     }
 }
 
+// ★★★ R1674 §2 #7 — a chrome band reaches the wire with its REASON.
+//
+// Written because a counterfactual passed. Replacing the emitted role with a
+// constant string left the whole of `pinion-rpc` green, and that mutation is
+// precisely the floor's behaviour: probed at 6.11, a widget's reservation is
+// four integers and reading them back cannot say which pixels were frame and
+// which were caption. The inset survives there and the reason does not, so a
+// test that only checked the inset would have been checking the half we did
+// not need to build.
+//
+// The role words are compared against `ChromeRole::wire_word`, the same
+// derivation `scene/containment`'s `trespass` uses, so the two reads cannot
+// drift into disagreeing about what a caption is called.
+#[test]
+fn r1674_a_chrome_band_reaches_the_wire_with_its_reason() {
+    use pinion_core::style::{BoxStyle, Chrome, ChromeEdge, ChromeRole, Color};
+
+    let style = BoxStyle::filled(Color::rgb(1, 2, 3))
+        .with_chrome(Chrome::caption(23))
+        .with_chrome(Chrome::new(ChromeEdge::Bottom, 18, ChromeRole::Footer));
+    let json = box_style_to_json(&style);
+    let bands = json["chrome"].as_array().expect("chrome is a list");
+    assert_eq!(bands.len(), 2, "both declared bands, in declaration order");
+
+    assert_eq!(bands[0]["edge"], "top");
+    assert_eq!(bands[0]["extent"], 23);
+    assert_eq!(
+        bands[0]["role"],
+        ChromeRole::Caption.wire_word(),
+        "the reason travels, and it is spelled by the type",
+    );
+    assert_eq!(bands[1]["edge"], "bottom");
+    assert_eq!(bands[1]["extent"], 18);
+    assert_eq!(bands[1]["role"], ChromeRole::Footer.wire_word());
+
+    // ★ The negative control. Two bands of the same extent on the same edge
+    // and different roles must NOT serialize identically — that is the whole
+    // claim, and without this assertion a `role` emitted as a constant reads
+    // as a pass.
+    let caption = box_style_to_json(&BoxStyle::default().with_chrome(Chrome::caption(20)));
+    let header = box_style_to_json(&BoxStyle::default().with_chrome(Chrome::header(20)));
+    assert_ne!(
+        caption["chrome"], header["chrome"],
+        "a caption and a header of equal extent are different facts",
+    );
+
+    // A box that reserves nothing says so as an empty list, not as a null:
+    // "no bands" and "this reader cannot know" are different answers.
+    let bare = box_style_to_json(&BoxStyle::default());
+    assert_eq!(bare["chrome"], serde_json::json!([]));
+}
+
 // R708 §5.50 — gradient-fill wire serialization. `box_style_to_json`
 // must surface the optional `Gradient` overlay so AI clients can read a
 // box's gradient ramp as data (§2 #7 scene-as-data); `null` when absent.

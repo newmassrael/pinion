@@ -2292,4 +2292,29 @@ mod tests {
         }
         assert_eq!(steppers, 2, "an integer row publishes a stepper pair");
     }
+
+    /// ★★ R1674 — the crate gate ([`crate::frame_gate`]), which this painter is
+    /// one of the two founding cases for.
+    ///
+    /// R1672 gave this module a containment test with a stand-in metric of its
+    /// own; the gate now asks the same question of every bordered painter here,
+    /// with the metric the layout used, so the fifteen are judged by one rule.
+    /// The long-key case above stays as it is — it asks a different question
+    /// (does the KEY give way rather than the badges) that this cannot.
+    #[test]
+    fn r1674_a_config_form_keeps_its_rows_inside_its_frame() {
+        let theme = pinion_core::theme::Theme::default();
+        let style = FormStyle::default();
+        let form = ConfigForm::new(
+            vec![
+                ConfigField::new("transport.link.tx", "int", Applies::Hot, "65535"),
+                ConfigField::new("transport.link.mode", "enum", Applies::Restart, "unicast"),
+            ],
+            Vec::new(),
+        );
+        crate::frame_gate::assert_frame_contained("config form", &mut |_w, _h| {
+            let geometry = form_geometry(&form, (0, 0), &style);
+            view_config_form("f", &form, &geometry, &theme)
+        });
+    }
 }

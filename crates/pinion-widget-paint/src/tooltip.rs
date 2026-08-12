@@ -453,4 +453,33 @@ mod tests {
         };
         assert_eq!(label.content, "Saves the file");
     }
+
+    /// ★★ R1674 — a tooltip's label stays inside the tip it strokes, at both
+    /// sizes and on every side it can be placed. The crate gate
+    /// ([`crate::frame_gate`]).
+    ///
+    /// Both sides the vocabulary has, because the placement arm decides the
+    /// tip's origin and a flip near an edge is where a tip that fit stops
+    /// fitting.
+    #[test]
+    fn r1674_a_tooltip_keeps_its_label_inside_its_tip() {
+        for side in [TooltipSide::Above, TooltipSide::Below] {
+            crate::frame_gate::assert_frame_contained(&format!("tooltip {side:?}"), &mut |w, h| {
+                view_tooltip(
+                    "tip",
+                    "Saves the file",
+                    &place(Rect::new(w / 3, h / 3, 80, 30), (140, 28), side),
+                    (w, h),
+                    &theme(),
+                    // The outlined variant: the M3 default draws no border
+                    // at all, and a gate about frames must run the arm that
+                    // HAS one or it proves nothing about this painter.
+                    &TooltipStyle {
+                        border_width: 1,
+                        ..TooltipStyle::m3_default()
+                    },
+                )
+            });
+        }
+    }
 }

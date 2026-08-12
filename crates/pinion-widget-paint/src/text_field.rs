@@ -2165,4 +2165,30 @@ mod tests {
             assert_eq!(logical, 1, "one logical line ⇒ one gutter number");
         });
     }
+
+    /// ★★ R1674 — the bracket-match outline is not painted over by the text it
+    /// marks. The crate gate ([`crate::frame_gate`]).
+    ///
+    /// The border in this module is the bracket-match highlight, and it is
+    /// drawn only when the field holds a matched pair — so the gate seeds the
+    /// field's text with one rather than running an empty field, which would
+    /// exercise no frame at all.
+    #[test]
+    fn r1674_a_field_keeps_its_ink_inside_the_outlines_it_strokes() {
+        with_owner(|| {
+            let theme = Theme::light();
+            let state = use_text_edit_state("r1674_frame_gate_field");
+            state.set_text("(matched)".to_owned());
+            crate::frame_gate::assert_frame_contained("text field", &mut |_w, _h| {
+                view_field(
+                    "r1674_frame_gate_field",
+                    TextFieldState::Focused,
+                    1,
+                    &theme,
+                    &TextFieldStyle::default(),
+                    "Endpoint",
+                )
+            });
+        });
+    }
 }

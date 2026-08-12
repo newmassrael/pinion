@@ -608,7 +608,7 @@ mod tests {
 
             // Arm a drag from the file (row 1), hover the folder (row 0).
             dir.press(1);
-            dir.drag_over(Some(&DropPoint {
+            dir.drag_over(Some(&pinion_core::external::DropPoint {
                 tag: "fb#0".into(),
                 x_rel: 0.5,
                 y_rel: 0.5,
@@ -643,6 +643,53 @@ mod tests {
                 !outlined(&pane, "fb#0", accent),
                 "the folder row is no longer the target"
             );
+        });
+    }
+
+    /// ★★ R1674 — a row highlighted as a drop target keeps its name and icon
+    /// inside the accent border that highlight strokes. The crate gate
+    /// ([`crate::frame_gate`]).
+    ///
+    /// The drop-target arm specifically, because that is the arm that HAS a
+    /// border: a resting row draws none, so a gate run against an idle pane
+    /// would be asking about a widget with no frame.
+    #[test]
+    fn r1674_a_drop_target_row_keeps_its_ink_inside_its_accent_border() {
+        use pinion_core::directory::InMemoryDirectory;
+        use pinion_core::reactive::Owner;
+        use pinion_core::widgets::scroll::use_scroll_state;
+
+        Owner::new().run(|| {
+            let d = InMemoryDirectory::new();
+            d.insert(
+                "/p",
+                vec![DirEntry::dir("destination"), DirEntry::file("moveme.txt")],
+            );
+            d.insert("/p/destination", vec![]);
+            let dir = DirectoryState::new(Rc::new(d), "/p");
+            let scroll = use_scroll_state("r1674_frame_gate_scroll");
+            dir.press(1);
+            dir.drag_over(Some(&pinion_core::external::DropPoint {
+                tag: "fb#0".into(),
+                x_rel: 0.5,
+                y_rel: 0.5,
+            }));
+            crate::frame_gate::assert_frame_contained("file browser drop target", &mut |w, h| {
+                file_browser_pane(
+                    "fb",
+                    &dir,
+                    &scroll,
+                    &Theme::light(),
+                    FileBrowserMetrics {
+                        list_width: w,
+                        list_height: h,
+                        row_pitch: 32,
+                        overscan: 2,
+                        focusable: false,
+                    },
+                    None,
+                )
+            });
         });
     }
 }

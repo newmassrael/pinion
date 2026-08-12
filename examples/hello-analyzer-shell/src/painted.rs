@@ -1369,3 +1369,77 @@ fn r1668_no_path_places_a_reserved_seat() {
         }
     });
 }
+
+/// ★★★ R1674 — the bands a card DECLARES are the bands its painter PLACES.
+///
+/// The round's whole rule, asserted at a consumer: `card_style` publishes the
+/// chrome and `header_rect` / `edit_bar_rect` place the marks, and the two are
+/// separate expressions of one fact. Nothing forced them to agree, and the
+/// first draft did not — three edit bars sat one pixel above the footer band
+/// the card had just declared for them, because the placement reserves the
+/// WIDER of the two border widths (constant, so rows do not shift on selection)
+/// while the declaration subtracted the one actually drawn.
+///
+/// A pixel, and it took the containment check to find it. That is the argument
+/// for asserting the identity rather than the consequence: the consequence is
+/// one overhang in one state, and the identity holds in all four.
+///
+/// The comparison is against the framework's own arithmetic
+/// ([`pinion_core::containment::content_of`]) rather than against a re-derived
+/// rectangle here, for the reason R1673 recorded when it hand-inverted
+/// `line_box` and the sweep refuted it on the first run: a copy of a function
+/// written beside it is free to disagree with it.
+#[test]
+fn r1674_the_declared_bands_are_the_placed_bands() {
+    use pinion_core::containment::content_of;
+
+    for selected in [false, true] {
+        for editing in [false, true] {
+            let palette = super::palette_of(&pinion_core::theme::Theme::dark(), true);
+            let style = super::card_style(palette, selected, editing);
+            let card = Rect::new(0, 0, 320, 240);
+            let border = style.border.expect("a card is outlined in every state");
+
+            // The header band, as the chrome says it is.
+            let after_header = content_of(card, Some(&border), &style.chrome[..1]);
+            let placed_header = super::header_rect(card);
+            assert_eq!(
+                after_header.y,
+                placed_header.y + placed_header.h,
+                "selected={selected} editing={editing}: the content starts where \
+                 the placed header ends",
+            );
+
+            // And the footer band, in the mode that has one.
+            let content = content_of(card, Some(&border), &style.chrome);
+            if editing {
+                let bar = super::edit_bar_rect(card);
+                assert_eq!(
+                    content.y + content.h,
+                    bar.y,
+                    "selected={selected}: the content ends where the placed \
+                     edit bar begins",
+                );
+                assert_eq!(style.chrome.len(), 2, "header and footer");
+            } else {
+                assert_eq!(
+                    style.chrome.len(),
+                    1,
+                    "no edit bar outside layout-edit mode, so no footer band",
+                );
+            }
+
+            // ★ The negative control. Without it this file would pass with a
+            // `card_style` that declared nothing at all: `content_of` with an
+            // empty band list is the box less the border, and the assertions
+            // above would then be comparing the header's placement with
+            // itself in a different spelling.
+            let undeclared = content_of(card, Some(&border), &[]);
+            assert!(
+                undeclared.y < after_header.y,
+                "the declaration has to MOVE the content rectangle, or it is \
+                 not being read",
+            );
+        }
+    }
+}

@@ -36,7 +36,8 @@ use pinion_core::Color;
 use pinion_core::Scene;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
-    AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
+    AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextOverflow,
+    TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::widgets::interaction::InteractionState;
@@ -152,7 +153,17 @@ pub fn option_chip<S: InteractionState + Copy>(
     let text = Scene::Text(TextNode::styled(
         label.to_owned(),
         Rect::default(),
-        TextStyle::new().with_size_px(CHIP_LABEL_PX).with_fg(ink),
+        TextStyle::new()
+            .with_size_px(CHIP_LABEL_PX)
+            .with_fg(ink)
+            // ★ R1674 — a chip is laid out at a width its CALLER picks, so a
+            // label that does not fit is the ordinary case rather than the
+            // exceptional one, and the default `Visible` painted it straight
+            // through the chip's own outline (measured: 18px past a 140px
+            // chip). Ellipsis is also what the reference does with a chip
+            // label; the difference is that here the policy is in the scene,
+            // where `scene/text_painted` reports the string a reader is losing.
+            .with_overflow(TextOverflow::Ellipsis),
     ));
     Scene::Container(
         ContainerNode::new(vec![text])
@@ -287,5 +298,33 @@ mod tests {
             "no insets for fixed-width chips"
         );
         assert_eq!(layout.gap, INNER_GAP);
+    }
+
+    /// ★★ R1674 — an option chip's label stays inside the outline the chip
+    /// strokes. The crate gate ([`crate::frame_gate`]).
+    ///
+    /// Both selection states, because they are not the same shape: an
+    /// unselected chip is the one that HAS an outline
+    /// (`selection_border` drops it when selected), so a gate that only ran
+    /// the selected arm would never see a border at all.
+    #[test]
+    fn r1674_a_chip_keeps_its_label_inside_its_outline() {
+        let theme = Theme::light();
+        for selected in [false, true] {
+            crate::frame_gate::assert_frame_contained(
+                &format!("option chip selected={selected}"),
+                &mut |w, _h| {
+                    option_chip(
+                        "chip#0".to_owned(),
+                        "Transport",
+                        selected,
+                        true,
+                        w.min(140),
+                        ButtonState::Idle,
+                        &theme,
+                    )
+                },
+            );
+        }
     }
 }

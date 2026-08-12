@@ -89,7 +89,8 @@ use pinion_core::external::{
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect, TextNode};
 use pinion_core::style::{
-    Border, BoxStyle, Color, LayoutStyle, PathStyle, Size, Stroke, TextOverflow, TextStyle,
+    Border, BoxStyle, Chrome, ChromeEdge, ChromeRole, Color, LayoutStyle, PathStyle, Size, Stroke,
+    TextOverflow, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme, ThemeMode, ThemeProvider, use_theme};
 use pinion_core::widgets::card::{Card, CardAffordance, CardChrome, CardState, Remedy};
@@ -3961,6 +3962,21 @@ fn edit_bar_scene(card_id: &str, bar: Rect, cell: (u32, u32), palette: Palette) 
     )
 }
 
+/// Declare that `node` occupies its parent's chrome band of `role`. R1674.
+///
+/// One place, because the claim has to reach every mark in a band and a band is
+/// several siblings — a grip, a title, a status pill, two buttons. A per-call
+/// `.with_layout(...)` at each of those sites is five chances to miss one, and
+/// a missed one reports as a mark that landed on the header rather than as a
+/// mark that IS the header.
+fn in_chrome(node: Scene, role: ChromeRole) -> Scene {
+    let mut node = node;
+    if let Some(layout) = node.layout_style_mut() {
+        *layout = layout.clone().with_chrome_slot(role);
+    }
+    node
+}
+
 fn card_scene(
     card: &Card,
     rect: Rect,
@@ -3970,34 +3986,89 @@ fn card_scene(
     palette: Palette,
 ) -> Scene {
     let inside = local(rect);
-    let mut children = header_scene(card, header_rect(inside), palette);
+    // ★★ R1674 — the header's marks say they are IN the header band, so the
+    // containment check judges them against that band and not against the
+    // card's content rectangle. Both halves are needed and neither works
+    // alone: without the card's `Chrome::header` declaration the band does not
+    // exist to be judged against, and without these claims declaring it would
+    // report the card's own title as an escape.
+    //
+    // What this buys, beyond silence: a mark that lands on the title strip
+    // WITHOUT claiming it now arrives as `trespass: ["chrome:header"]` instead
+    // of as an undifferentiated overhang, so a reader is told which band was
+    // invaded. The floor has no form for that — its whole reservation is four
+    // integers with the reason discarded.
+    let mut children: Vec<Scene> = header_scene(card, header_rect(inside), palette)
+        .into_iter()
+        .map(|node| in_chrome(node, ChromeRole::Header))
+        .collect();
     children.extend(body_scene(card, body_rect(inside, editing), palette));
     if editing {
-        children.push(edit_bar_scene(
-            card.id().as_str(),
-            edit_bar_rect(inside),
-            cell,
-            palette,
+        children.push(in_chrome(
+            edit_bar_scene(card.id().as_str(), edit_bar_rect(inside), cell, palette),
+            ChromeRole::Footer,
         ));
     }
     Scene::Container(
         ContainerNode::new(children)
             .with_tag(format!("card.{}", card.id().as_str()))
-            .with_style(
-                BoxStyle::filled(palette.panel)
-                    .with_corner_radius(10)
-                    // The selection ring: one card is the keyboard's subject
-                    // and a person has to see which. Accent on the border
-                    // rather than a different fill, so a selected card that is
-                    // also failing still reads as failing.
-                    .with_border(if selected {
-                        Border::new(palette.accent_fg, CARD_RING)
-                    } else {
-                        Border::new(palette.outline, CARD_OUTLINE)
-                    }),
-            )
+            .with_style(card_style(palette, selected, editing))
             .with_layout(absolute(rect)),
     )
+}
+
+/// A card's skin: its fill, its outline, and **the bands of itself it keeps**.
+///
+/// ★★ R1674 — the header strip and the edit bar are now DECLARED chrome
+/// ([`pinion_core::style::Chrome`]) rather than two rectangles this file works
+/// out privately. The card's content rectangle is therefore the region its rows
+/// actually get, and `scene/containment` can say `chrome:header` about a mark
+/// that landed on the title strip instead of the undifferentiated "out of
+/// bounds" that was the only available answer.
+///
+/// This is where the floor stops: probed at 6.11, a custom-painted widget can
+/// publish the same INSET through a four-integer content-margin setter, and
+/// reading it back gives four integers with the reason gone — a caption band
+/// and a three pixel border are the same four numbers there. A card header is not one of
+/// the ~20 complex controls with their own sub-control enum, so there is no
+/// second way to ask either.
+fn card_style(palette: Palette, selected: bool, editing: bool) -> BoxStyle {
+    // The selection ring: one card is the keyboard's subject and a person has
+    // to see which. Accent on the border rather than a different fill, so a
+    // selected card that is also failing still reads as failing.
+    let border = if selected {
+        Border::new(palette.accent_fg, CARD_RING)
+    } else {
+        Border::new(palette.outline, CARD_OUTLINE)
+    };
+    // ★★ The band extents are measured from the card's EDGE and `content_of`
+    // subtracts the border before them, so each declaration is the distance to
+    // the band's far side LESS the border currently drawn.
+    //
+    // The subtlety is [`CARD_FRAME`], which is deliberately the WIDER of the
+    // two borders and constant, so a card's rows do not shift by a pixel the
+    // moment a person selects it. The card therefore reserves more than it
+    // draws when it is not selected, and a declaration that ignored that would
+    // be a pixel out — measured, exactly that: three edit bars reported one
+    // pixel above their own footer band, by a check that had just been told
+    // where the band was. Deriving both sides from the same two constants is
+    // what makes the placement functions and this one incapable of disagreeing,
+    // which `r1674_the_declared_bands_are_the_placed_bands` then asserts.
+    let mut style = BoxStyle::filled(palette.panel)
+        .with_corner_radius(10)
+        .with_border(border)
+        .with_chrome(Chrome::header(CARD_HDR.saturating_sub(border.width)));
+    if editing {
+        // The size-stepper strip only exists in layout-edit mode, so the
+        // content rectangle is smaller in that mode — a fact about this card
+        // that no reader could previously obtain.
+        style = style.with_chrome(Chrome::new(
+            ChromeEdge::Bottom,
+            EDIT_BAR_H + CARD_FRAME - border.width,
+            ChromeRole::Footer,
+        ));
+    }
+    style
 }
 
 /// A detached panel, floating over the canvas.
@@ -4360,11 +4431,14 @@ fn toast_scene(state: &ShellState, palette: Palette) -> Scene {
     )
 }
 
-fn view(_state: (), _frame: Frame) -> Scene {
-    let theme = use_theme(THEME_TAG).theme_animated();
-    let state = use_shell_state();
-    let dark = theme_word(&state.theme) == "dark";
-    let palette = Palette {
+/// Every colour the painters here read, resolved from one theme.
+///
+/// Extracted at its second consumer (R1674): the geometry tests need a palette
+/// to build a card's style with, and the alternative — a second literal struct
+/// in the test — is a copy that stops resembling the real one the first time a
+/// role is added.
+fn palette_of(theme: &Theme, dark: bool) -> Palette {
+    Palette {
         ink: theme.resolve(ColorRole::OnSurface),
         muted: theme.resolve(ColorRole::OnSurfaceMuted),
         accent: theme.resolve(ColorRole::Accent),
@@ -4377,7 +4451,14 @@ fn view(_state: (), _frame: Frame) -> Scene {
         outline: theme.resolve(ColorRole::Outline),
         grid: grid_ink(dark),
         warn: theme.resolve(ColorRole::Warning),
-    };
+    }
+}
+
+fn view(_state: (), _frame: Frame) -> Scene {
+    let theme = use_theme(THEME_TAG).theme_animated();
+    let state = use_shell_state();
+    let dark = theme_word(&state.theme) == "dark";
+    let palette = palette_of(&theme, dark);
 
     let board = state.board.get();
     let selected = state.selected.get();
