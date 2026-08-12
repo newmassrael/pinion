@@ -267,6 +267,42 @@ def body() -> None:
         )
         assert_eq(q(tf, "nav"), "dashboard", "B2: and the section did not change")
 
+        # ── (B3) ★★ R1671 — the screen and its GESTURE agree about the window
+        # after a resize, driven over the wire because that is the only path
+        # that exercises it. The Rust sweep sets the shell's size signal
+        # directly, so both halves of it read one value in-process and four
+        # counterfactuals passed against it; the defect lived on the External's
+        # invoke path, which runs with no `Owner` scope and so could not read
+        # the size at all. A person maximising the window is what found it, and
+        # this is that person, written down.
+        big = (2494, 1531)
+        tf.request("scene/resize", {"width": big[0], "height": big[1]})
+        for _ in range(3):
+            tf.tick(0.016)
+        grown = abs_rects_of(paint(tf))
+        palette = grown["shell.palette"]
+        assert palette[0] + palette[2] == big[0], (
+            f"B3: the palette's right edge is {palette[0] + palette[2]} in a "
+            f"{big[0]}px window — the PAINT did not follow the resize"
+        )
+        # And every control the paint moved answers for itself where it landed.
+        misses = []
+        for kind in CATALOGUE:
+            tag = f"shell.palette.{kind}"
+            x, y, w, h = grown[tag]
+            got = inv(tf, "point", f"{x + w // 2},{y + h // 2}")
+            if got != tag:
+                misses.append((tag, got))
+        assert not misses, (
+            f"B3: ★ {len(misses)} control(s) moved by the resize now answer as "
+            f"something else: {misses[:4]} — the paint follows the window and "
+            f"the gesture does not, which is what a person sees as 'nodes stop "
+            f"clicking after a maximise'"
+        )
+        tf.request("scene/resize", {"width": 1440, "height": 900})
+        for _ in range(3):
+            tf.tick(0.016)
+
         # ── (C) ★ a header is a set, and the set is enforced ─────────────
         assert_eq(
             q(tf, "affordances"),

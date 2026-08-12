@@ -399,6 +399,51 @@ mod tests {
         (w, 12)
     }
 
+    /// R1671 — ★★ a child that covers its owner's BORDER is reported
+    /// CONTAINED, and that is the structural gap this test pins.
+    ///
+    /// The channel compares a mark against its owner's **box**. A border is ink
+    /// the box owns *inside* that box, so a child painted at the owner's full
+    /// width sits over the outline and is, by this definition, inside it. CSS
+    /// has had the distinction from the beginning — border box versus content
+    /// box — and nothing here expresses the second one.
+    ///
+    /// Found by a person looking at a window: a card's `time / type / name /
+    /// len` strip was painted at exactly its card's x and width, so the card's
+    /// outline had a gap where the strip crossed it. That screen was repaired
+    /// by insetting its body, which is one site compensating for a rule the
+    /// framework does not have.
+    ///
+    /// The assertion is deliberately that the escape list is EMPTY: it records
+    /// today's answer and goes red on the round that gives this channel a
+    /// content box, which is when it should assert the escape instead.
+    #[test]
+    fn r1671_a_mark_over_its_owners_border_is_called_contained() {
+        use crate::style::{Border, Color};
+
+        let strip = Scene::Box(
+            BoxNode::new(
+                // Exactly the owner's width: the fill covers both border
+                // columns, so the outline has a gap where this sits.
+                Rect::new(0, 10, 100, 12),
+                BoxStyle::filled(Color::rgb(0x30, 0x30, 0x30)),
+            )
+            .with_tag("strip"),
+        );
+        let mut frame = ContainerNode::new(vec![strip]);
+        frame.rect = Rect::new(0, 0, 100, 40);
+        frame.tag = Some("frame".to_owned().into());
+        frame.style = BoxStyle::filled(Color::rgb(0x10, 0x10, 0x10))
+            .with_border(Border::new(Color::rgb(0xEC, 0x5A, 0xA0), 1));
+        let scene = Scene::Container(frame);
+        let found = escapes(&scene, &mut stub_ink);
+        assert!(
+            found.is_empty(),
+            "the channel now reports {found:?} — the content-box rule has \
+             landed, and this test should assert the escape instead",
+        );
+    }
+
     /// ★ The defect this module was written for, as a property: a card whose
     /// last row is painted below its own border.
     ///

@@ -110,8 +110,47 @@ include!(concat!(env!("OUT_DIR"), "/app.rs"));
 
 vello_renderer_impl!(HelloAnalyzerShellRenderer, HelloAnalyzerShellRendererError);
 
+/// The size the specification's rectangles were measured against, and the
+/// floor this screen declares to the shell.
 const WIN_W: u32 = spec::WIN_W;
 const WIN_H: u32 = spec::WIN_H;
+
+/// The live surface, or the design size where no shell has published one.
+///
+/// ★ R1671 — reported by a person maximising the window: the content stayed
+/// where it was and the rest of the window was empty. Every rectangle on this
+/// screen was authored against the CONSTANTS, so the screen painted 1440x900
+/// in whatever window it was given. Screens A and B have read the live size
+/// since R1654; this one never did, and its own painted sweep could not see it
+/// because every check compared the screen to itself.
+///
+/// `use_viewport_size` is a tracked read, so the view re-runs on a resize; it
+/// is strict about the owner scope and a bare unit call has none. The design
+/// size is the honest fallback there — it is what the specification measured.
+/// Below the floor it is also the answer: the shell declares `SizeStrategy::
+/// Fixed`, so a smaller surface is not a state this screen can be dragged into.
+fn window_size() -> (u32, u32) {
+    // ONE fact — `ShellState::surface`, written by `External::on_resize` — read
+    // through whichever route the caller has. A view is inside the scope and
+    // gets a TRACKED read (so it re-runs on a resize); the invoke path is not
+    // and takes the weak handle. Neither one holds a copy.
+    let live = pinion_core::reactive::Owner::current()
+        .map(|_| use_shell_state().surface.get())
+        .or_else(|| shell_state_handle().map(|state| state.surface.get()));
+    match live {
+        Some((w, h)) if w >= WIN_W && h >= WIN_H => (w, h),
+        _ => (WIN_W, WIN_H),
+    }
+}
+
+/// The live surface width, and height.
+fn win_w() -> u32 {
+    window_size().0
+}
+
+fn win_h() -> u32 {
+    window_size().1
+}
 
 const VIEW_TAG: &str = "analyzer_shell";
 const THEME_TAG: &str = "app";
@@ -167,12 +206,12 @@ const FONT_TINY: u32 = 10;
 
 /// The canvas rectangle: everything between the rail and the palette, under
 /// both bars.
-const fn canvas_rect() -> Rect {
+fn canvas_rect() -> Rect {
     Rect::new(
         RAIL_W,
         APP_BAR_H + SUB_BAR_H,
-        WIN_W - RAIL_W - PALETTE_W,
-        WIN_H - APP_BAR_H - SUB_BAR_H,
+        win_w() - RAIL_W - PALETTE_W,
+        win_h() - APP_BAR_H - SUB_BAR_H,
     )
 }
 
@@ -423,6 +462,23 @@ struct ShellState {
     /// ([[debt-the-analyzer-canvas-does-not-scroll]]). Held on the state
     /// because the paint and the hit test both read it.
     canvas_scroll: Rc<ScrollState>,
+    /// ★★ R1671 §5.15 — **the one place this screen knows how big it is.**
+    ///
+    /// It was two places, and they answered differently. The paint read
+    /// `use_viewport_size`, which lives in the Owner scope a view runs inside;
+    /// the hit test and the `point` bounds check run on the External's invoke
+    /// path, which has no such scope, so they took the fallback and went on
+    /// answering about a 1440x900 screen while the paint had moved. Measured on
+    /// a maximised window: the paint put a palette row at x=1741 and the invoke
+    /// path refused the press as "outside the 1440x900 shell".
+    ///
+    /// A `Signal` on the state rather than a field on the External because BOTH
+    /// sides hold the state: the view reads it (and so re-runs on a resize) and
+    /// the oracle writes it from `External::on_resize`. That is the general
+    /// form of [[debt-paint-and-gesture-read-two-facts]] — what is drawn and
+    /// what responds must be derived from ONE fact, not from two that are
+    /// usually equal.
+    surface: Signal<(u32, u32)>,
 }
 
 impl ShellState {
@@ -483,6 +539,7 @@ impl ShellState {
             toast: Signal::new(format!("{} loaded", spec::PRESET)),
             next_id: RefCell::new(u(spec::BOARD.len())),
             canvas_scroll: Rc::new(ScrollState::with_tag(CANVAS_SCROLL)),
+            surface: Signal::new((WIN_W, WIN_H)),
         }
     }
 
@@ -537,12 +594,37 @@ impl ShellState {
     }
 }
 
+thread_local! {
+    /// ★★ R1671 — a scope-free route to the SAME state the view caches.
+    ///
+    /// Not a second copy of anything: it is a `Weak` handle, and the fact it
+    /// reaches ([`ShellState::surface`]) has one owner. It exists because the
+    /// two halves of this screen run in different places — a view runs inside
+    /// an `Owner` scope and the `External` invoke path does not — and the
+    /// geometry helpers below are called from both. Without it every helper on
+    /// the gesture side silently took the design size, so a maximised window
+    /// painted its cards at one pitch and hit-tested them at another: measured,
+    /// 20 of 24 probes resolved to the wrong control or to nothing.
+    static SHELL: std::cell::RefCell<std::rc::Weak<ShellState>> =
+        const { std::cell::RefCell::new(std::rc::Weak::new()) };
+}
+
 fn use_shell_state() -> Rc<ShellState> {
     let clock = use_transport_clock(TRANSPORT_KEY, REPLAY_SECS);
     let theme = use_theme(THEME_TAG);
-    Owner::current()
+    let state = Owner::current()
         .expect("use_shell_state requires an active Owner scope")
-        .cache(STATE_KEY, move || ShellState::new(clock, theme))
+        .cache(STATE_KEY, move || ShellState::new(clock, theme));
+    SHELL.with(|slot| *slot.borrow_mut() = Rc::downgrade(&state));
+    state
+}
+
+/// The state, from wherever the caller is — no `Owner` scope required.
+///
+/// [`None`] before the first view has run, which is the only moment nothing has
+/// been painted and so the only moment no geometry is being asked about.
+fn shell_state_handle() -> Option<Rc<ShellState>> {
+    SHELL.with(|slot| slot.borrow().upgrade())
 }
 
 // --- Geometry: ONE source, read by the paint and by the gesture --------------
@@ -591,26 +673,49 @@ fn cell_at(lx: u32, ly: u32) -> (u32, u32) {
     (col.min(GRID_COLS - 1), row)
 }
 
+/// The card's frame: a 1px border drawn INSIDE its own rectangle.
+///
+/// ★★ R1671 — every one of a card's three bands is inset by it, and that is a
+/// rule rather than three decisions. Reported by a person looking at the
+/// window, twice: the stream's `time / type / name / len` strip sat on the
+/// card's outline, and after the body was inset the outline was still eaten —
+/// by the size-stepper strip, which is the band nobody had thought about.
+///
+/// Nothing in the framework says a child may not paint over its owner's
+/// border: `scene/containment` compares a mark against the owner's BOX, and a
+/// border is ink the box owns inside that box, so painting over it is by that
+/// definition contained ([[debt-a-child-may-paint-over-its-owners-border]]).
+/// Until that lands, a band that CANNOT REACH the frame is the only form of
+/// this rule that a painter cannot forget.
+const CARD_FRAME: u32 = 1;
+
+/// The card's header band — the grip, the title and the header controls.
 const fn header_rect(card: Rect) -> Rect {
-    Rect::new(card.x, card.y, card.w, CARD_HDR)
+    Rect::new(
+        card.x + CARD_FRAME,
+        card.y + CARD_FRAME,
+        card.w.saturating_sub(CARD_FRAME * 2),
+        CARD_HDR.saturating_sub(CARD_FRAME),
+    )
 }
 
+/// The card's content band, between the header and the edit strip.
 const fn body_rect(card: Rect, editing: bool) -> Rect {
     let foot = if editing { EDIT_BAR_H } else { 0 };
     Rect::new(
-        card.x,
+        card.x + CARD_FRAME,
         card.y + CARD_HDR,
-        card.w,
-        card.h.saturating_sub(CARD_HDR + foot),
+        card.w.saturating_sub(CARD_FRAME * 2),
+        card.h.saturating_sub(CARD_HDR + foot + CARD_FRAME),
     )
 }
 
 /// The size-stepper strip at the foot of a card in layout-edit mode.
 const fn edit_bar_rect(card: Rect) -> Rect {
     Rect::new(
-        card.x,
-        (card.y + card.h).saturating_sub(EDIT_BAR_H),
-        card.w,
+        card.x + CARD_FRAME,
+        (card.y + card.h).saturating_sub(EDIT_BAR_H + CARD_FRAME),
+        card.w.saturating_sub(CARD_FRAME * 2),
         EDIT_BAR_H,
     )
 }
@@ -689,13 +794,13 @@ impl BarChip {
         }
     }
 
-    const fn rect(self) -> Rect {
+    fn rect(self) -> Rect {
         match self {
             Self::Tab0 => Rect::new(168, 10, 108, 32),
             Self::Tab1 => Rect::new(280, 10, 118, 32),
             Self::Source => Rect::new(416, 10, 268, 32),
             Self::Capture => Rect::new(696, 10, 132, 32),
-            Self::Search => Rect::new(WIN_W - 300, 10, 288, 32),
+            Self::Search => Rect::new(win_w() - 300, 10, 288, 32),
         }
     }
 }
@@ -720,8 +825,8 @@ impl SubChip {
     }
 
     /// In the sub bar's own space, whose origin is `(RAIL_W, APP_BAR_H)`.
-    const fn rect(self) -> Rect {
-        let bar_w = WIN_W - RAIL_W - PALETTE_W;
+    fn rect(self) -> Rect {
+        let bar_w = win_w() - RAIL_W - PALETTE_W;
         match self {
             Self::Preset => Rect::new(16, 7, 178, 32),
             Self::EditLayout => Rect::new(bar_w - 330, 7, 140, 32),
@@ -731,7 +836,7 @@ impl SubChip {
 }
 
 /// One entry of the open preset menu, in the sub bar's own space.
-const fn preset_item_rect(n: u32) -> Rect {
+fn preset_item_rect(n: u32) -> Rect {
     let anchor = SubChip::Preset.rect();
     Rect::new(anchor.x + 8, anchor.y + 44 + n * 34, 210, 30)
 }
@@ -751,8 +856,13 @@ const fn rail_rect(n: u32) -> Rect {
 const PALETTE_ROW_H: u32 = 46;
 
 /// The palette panel's rectangle.
-const fn palette_rect() -> Rect {
-    Rect::new(WIN_W - PALETTE_W, APP_BAR_H, PALETTE_W, WIN_H - APP_BAR_H)
+fn palette_rect() -> Rect {
+    Rect::new(
+        win_w() - PALETTE_W,
+        APP_BAR_H,
+        PALETTE_W,
+        win_h() - APP_BAR_H,
+    )
 }
 
 /// The palette's rows — section headers interleaved with entries, in the
@@ -1026,10 +1136,10 @@ impl core::fmt::Debug for ShellOracle {
 impl ShellOracle {
     const NO_STATE: &str = "this shell surface is not bound to a model yet";
 
-    const fn new() -> Self {
+    fn new() -> Self {
         Self {
             state: None,
-            surface: (WIN_W, WIN_H),
+            surface: window_size(),
         }
     }
 
@@ -1900,9 +2010,14 @@ impl ExternalIntrospect for ShellOracle {
                         .map_err(|_| InvokeError::rejected(format!("{what} is a pixel, got {s:?}")))
                 };
                 let (x, y) = (parse("x", x)?, parse("y", y)?);
-                if x >= WIN_W || y >= WIN_H {
+                // ★ R1671 — from the STATE, not through the Owner-scoped read:
+                // this path has no scope, so `window_size()` here answered with
+                // the design fallback and refused presses the paint had put on
+                // screen.
+                let (w, h) = window_size();
+                if x >= w || y >= h {
                     return Err(InvokeError::rejected(format!(
-                        "({x},{y}) is outside the {WIN_W}x{WIN_H} shell"
+                        "({x},{y}) is outside the {w}x{h} shell"
                     )));
                 }
                 Self::move_cursor(&state, x, y);
@@ -2364,7 +2479,14 @@ impl External for ShellOracle {
     /// R1656 §5.15 — the shell's resize notification, which is how this surface
     /// knows what a pointer fraction is a fraction OF.
     fn on_resize(&mut self, width: u32, height: u32) {
-        self.surface = (width.max(1), height.max(1));
+        let live = (width.max(1), height.max(1));
+        self.surface = live;
+        // ★ R1671 — and the STATE, which is what the paint and the hit test
+        // both read. Writing only the External's own field left the two halves
+        // of this screen disagreeing about its size the moment it was resized.
+        if let Some(state) = &self.state {
+            state.surface.set(live);
+        }
     }
 
     fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
@@ -2820,7 +2942,7 @@ fn app_bar_scene(state: &ShellState, palette: Palette) -> Scene {
         ContainerNode::new(children)
             .with_tag("shell.appbar")
             .with_style(BoxStyle::filled(palette.panel))
-            .with_layout(absolute(Rect::new(0, 0, WIN_W, APP_BAR_H))),
+            .with_layout(absolute(Rect::new(0, 0, win_w(), APP_BAR_H))),
     )
 }
 
@@ -2882,7 +3004,7 @@ fn sub_bar_scene(state: &ShellState, palette: Palette) -> Scene {
             .with_layout(absolute(Rect::new(
                 RAIL_W,
                 APP_BAR_H,
-                WIN_W - RAIL_W - PALETTE_W,
+                win_w() - RAIL_W - PALETTE_W,
                 SUB_BAR_H,
             ))),
     )
@@ -2980,7 +3102,7 @@ fn rail_scene(state: &ShellState, palette: Palette) -> Scene {
         )])
         .with_tag("shell.rail.account")
         .with_style(BoxStyle::filled(palette.accent).with_corner_radius(16))
-        .with_layout(absolute(Rect::new(10, WIN_H - APP_BAR_H - 46, 32, 32))),
+        .with_layout(absolute(Rect::new(10, win_h() - APP_BAR_H - 46, 32, 32))),
     ));
     Scene::Container(
         ContainerNode::new(entries)
@@ -2990,7 +3112,7 @@ fn rail_scene(state: &ShellState, palette: Palette) -> Scene {
                 0,
                 APP_BAR_H,
                 RAIL_W,
-                WIN_H.saturating_sub(APP_BAR_H),
+                win_h().saturating_sub(APP_BAR_H),
             ))),
     )
 }
@@ -4117,7 +4239,7 @@ fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
 /// The toast: what just happened, floating at the foot of the canvas.
 fn toast_scene(state: &ShellState, palette: Palette) -> Scene {
     let canvas = canvas_rect();
-    let rect = Rect::new(canvas.x + 24, WIN_H - 58, 560, 34);
+    let rect = Rect::new(canvas.x + 24, win_h() - 58, 560, 34);
     Scene::Container(
         ContainerNode::new(vec![
             dot(14, 13, 8, palette.accent_fg),
@@ -4229,7 +4351,7 @@ fn view(_state: (), _frame: Frame) -> Scene {
         toast_scene(&state, palette),
         label(
             HELP_STRIP,
-            Rect::new(canvas_rect().x + 610, WIN_H - 47, 470, 14),
+            Rect::new(canvas_rect().x + 610, win_h() - 47, 470, 14),
             FONT_SMALL,
             palette.muted,
         ),
@@ -4239,7 +4361,7 @@ fn view(_state: (), _frame: Frame) -> Scene {
         ContainerNode::new(children)
             .with_tag(VIEW_TAG)
             .with_style(BoxStyle::filled(palette.canvas))
-            .with_layout(LayoutStyle::new().with_size(Size::px(WIN_W, WIN_H))),
+            .with_layout(LayoutStyle::new().with_size(Size::px(win_w(), win_h()))),
     )
 }
 

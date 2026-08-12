@@ -179,12 +179,18 @@ impl Painted {
 
 /// Run the real pipeline at `size` and index what came out of it.
 fn painted_at(size: (u32, u32)) -> (Painted, Scene) {
-    // ★ R1654 — publish the size the way the shell does, so the sweep can ask
-    // the screen to lay out at a size other than the one it was designed for.
+    // ★ R1671 — publish the size through the channel the SHELL reads, which is
+    // the state's own signal. It used to be `VIEWPORT_SIZE`, and that was a
+    // second source: the shell's invoke path has no Owner scope, so it could
+    // not read that one at all and answered about the design size while the
+    // paint had moved. Driving the one channel is what makes this sweep able to
+    // see a resize at all -- and `r1671_the_screen_fills_the_window_it_was_given`
+    // is red the moment this line addresses anything else.
     let owner = Owner::current().expect("the sweep runs inside a scope");
     pinion_core::reactive::VIEWPORT_SIZE
         .resolve(&owner)
         .set(size);
+    use_shell_state().surface.set(size);
     let mut scene = super::view((), Frame::default());
     let mut cache = pinion_runtime::LayoutCache::new();
     pinion_runtime::compute_layout(&mut scene, &mut cache, size.0, size.1);
@@ -514,10 +520,24 @@ fn r1668_the_decode_card_lights_exactly_the_specified_bytes() {
                 lit.insert(index);
             }
         });
-        let wanted: BTreeSet<usize> = (start..end).collect();
+        // ★ R1671 — the lit set is exactly the span's bytes THAT ARE DRAWN.
+        // A narrowed pane drops byte columns from the right, so demanding the
+        // whole span would report the painter's correct clipping as a defect --
+        // and demanding nothing would let a card light a byte the span does not
+        // contain. Both directions are wanted, and the drawn set is read from
+        // the paint rather than assumed.
+        let drawn: BTreeSet<usize> = painted
+            .iter()
+            .filter_map(|t| t.rsplit('.').next().and_then(|n| n.parse::<usize>().ok()))
+            .collect();
+        let wanted: BTreeSet<usize> = (start..end).filter(|n| drawn.contains(n)).collect();
+        assert!(
+            !wanted.is_empty(),
+            "{case}: card {id} draws none of the span's bytes, so this proves nothing",
+        );
         assert_eq!(
             lit, wanted,
-            "{case}: card {id} lights {lit:?} and the specification's span is {wanted:?}",
+            "{case}: card {id} lights {lit:?}; the span's drawn bytes are {wanted:?}",
         );
     });
 }
@@ -638,6 +658,53 @@ fn r1669_the_sweep_reaches_both_sides_of_every_clamp() {
     );
 }
 
+/// R1671 — the screen FILLS the window it was given.
+///
+/// ★★ Reported by a person maximising the window: the content stayed exactly
+/// where it was, painted at the size the screen opens in, with the rest of the
+/// window empty. And this module's sweep already laid the screen out at a
+/// maximised size and every check passed — because every check compares the
+/// screen to ITSELF (is this mark inside its pane, do these rows overlap), and
+/// all of those stay true when the whole screen ignores the window. R1654 wrote
+/// that sentence down about screen A: "every check ran the layout at WIN_W x
+/// WIN_H, so the assumption and the defect were the same number". Screen C had
+/// the sizes in its sweep and no check that compared the paint to the WINDOW.
+///
+/// Screens A and B read `use_viewport_size`; this one did not, which is the
+/// whole of the defect and the reason the check belongs here rather than in a
+/// shared harness.
+#[test]
+fn r1671_the_screen_fills_the_window_it_was_given() {
+    sweep(|_, shot, _, case| {
+        let (w, h) = case.size;
+        // The three top-level panes are what the window is divided into, so
+        // their union IS the screen's extent. Derived from the paint rather
+        // than from the shell's constants -- a constant would agree with the
+        // defect.
+        let mut right = 0;
+        let mut bottom = 0;
+        for pane in [
+            "shell.appbar",
+            "shell.rail",
+            "shell.palette",
+            "shell.subbar",
+        ] {
+            if let Some(r) = shot.rect(pane) {
+                right = right.max(r.x + r.w);
+                bottom = bottom.max(r.y + r.h);
+            }
+        }
+        assert_eq!(
+            right, w,
+            "{case}: the screen paints {right}px wide in a {w}px window",
+        );
+        assert_eq!(
+            bottom, h,
+            "{case}: the screen paints {bottom}px tall in a {h}px window",
+        );
+    });
+}
+
 // -- 2. Backward: nothing is on the screen that the specification does not own -
 
 /// R1668 — every painted palette row and rail seat is one the specification
@@ -711,12 +778,13 @@ fn r1668_the_screen_invents_no_seat_and_states_the_counts_it_specifies() {
 #[test]
 fn r1668_every_painted_control_answers_for_itself() {
     sweep(|state, shot, _, case| {
-        // Only the size the screen is specified at: the hit test is written in
-        // the specified coordinate space, and asking it about a window it was
-        // not laid out for is a different (and separately reported) question.
-        if case.size != (WIN_W, WIN_H) {
-            return;
-        }
+        // ★ R1671 — at EVERY size. This used to skip all but the opening one,
+        // on the ground that "the hit test is written in the specified
+        // coordinate space" — which was true, and was the defect: the paint
+        // followed the window and the gesture did not, so a maximised screen
+        // resolved 20 of 24 probes to the wrong control or to nothing. The skip
+        // was the gate agreeing with the bug. Both halves read one fact now,
+        // and this is what holds them there.
         let mut probes: Vec<String> = Vec::new();
         for seat in spec::RAIL {
             probes.push(format!("shell.rail.{}", seat.key));
@@ -798,6 +866,182 @@ fn r1668_no_card_paints_its_content_outside_itself() {
             }
         }
     });
+}
+
+/// R1671 — nothing a card paints may cross the card's own FRAME.
+///
+/// ★★ Reported by a person looking at the window, twice: the stream's header
+/// strip sat on the card's outline, leaving a gap in it. The first repair inset
+/// the body and the outline was still eaten, because the culprit is an
+/// UNTAGGED fill — and every check in this module addresses nodes by tag, so
+/// none of them could see it. `scene/containment` cannot either: it compares a
+/// mark against its owner's BOX, and a border is ink the box owns inside that
+/// box, so painting over it is by that definition contained
+/// ([[debt-a-child-may-paint-over-its-owners-border]] pins that in the
+/// framework).
+///
+/// So this walks every painted node, tagged or not, and holds it to the card's
+/// **content** rectangle — the box less its border.
+#[test]
+fn r1671_nothing_a_card_paints_crosses_its_own_frame() {
+    sweep(|state, shot, scene, case| {
+        let cards: BTreeMap<String, Rect> = shown_cards(state)
+            .into_iter()
+            .filter_map(|id| shot.rect(&format!("card.{id}")).map(|r| (id, r)))
+            .collect();
+        if cards.is_empty() {
+            return;
+        }
+        let mut crossing: Vec<(String, String, Rect)> = Vec::new();
+        // ★ How many opaque marks the walk actually WEIGHED. Without it a gate
+        // that stopped looking -- a predicate that never matches, a population
+        // that derives to nothing -- passes and reads as coverage. Two rounds
+        // running, a counterfactual found exactly that in a gate this session
+        // wrote, so this one carries its own floor.
+        let mut weighed = 0_usize;
+        scene.for_each_node(&mut |visit| {
+            let Some(rect) = visit.absolute_rect() else {
+                return;
+            };
+            if rect.w == 0 || rect.h == 0 {
+                return;
+            }
+            // Only nodes that PAINT: a grouping container with no fill draws
+            // nothing over the frame, and holding one to the content box would
+            // report the card's own body wrapper.
+            let opaque = match visit.node {
+                Scene::Box(n) => n.style.fill.a > 0,
+                Scene::Container(n) => n.style.fill.a > 0,
+                _ => false,
+            };
+            if !opaque {
+                return;
+            }
+            for (id, card) in &cards {
+                let tag = format!("card.{id}");
+                // The card itself, and anything outside it, are not its
+                // content: this is about what a card paints INSIDE itself.
+                if visit.node.tag() == Some(tag.as_str()) {
+                    continue;
+                }
+                let inside = rect.x >= card.x
+                    && rect.y >= card.y
+                    && rect.x + rect.w <= card.x + card.w
+                    && rect.y + rect.h <= card.y + card.h;
+                if !inside {
+                    continue;
+                }
+                weighed += 1;
+                let content = Rect::new(
+                    card.x + super::CARD_FRAME,
+                    card.y + super::CARD_FRAME,
+                    card.w.saturating_sub(super::CARD_FRAME * 2),
+                    card.h.saturating_sub(super::CARD_FRAME * 2),
+                );
+                if rect.x < content.x
+                    || rect.y < content.y
+                    || rect.x + rect.w > content.x + content.w
+                    || rect.y + rect.h > content.y + content.h
+                {
+                    crossing.push((
+                        tag,
+                        visit.node.tag().unwrap_or("<untagged>").to_owned(),
+                        rect,
+                    ));
+                }
+            }
+        });
+        assert!(
+            weighed >= cards.len(),
+            "{case}: the walk weighed {weighed} opaque mark(s) inside {} card(s), \
+             which is too few to have looked at anything",
+            cards.len(),
+        );
+        assert!(
+            crossing.is_empty(),
+            "{case}: {} mark(s) paint over their card's frame: {:?}",
+            crossing.len(),
+            &crossing[..crossing.len().min(6)],
+        );
+    });
+}
+
+/// R1671 — the frame gate's own negative control.
+///
+/// ★★ Four counterfactuals against this round PASSED, and the reason was the
+/// same each time: a gate that only ever runs against correct code cannot be
+/// shown to work. Removing the untagged half of the walk above broke nothing,
+/// because with the screen repaired there is nothing untagged crossing a frame
+/// to miss. So the crossing is CONSTRUCTED here, untagged, and the walk has to
+/// find it.
+///
+/// The scene is synthetic on purpose: the property is about the WALK, and
+/// building it out of the real screen would make this a second copy of that
+/// screen instead of a test of the instrument.
+#[test]
+fn r1671_the_frame_walk_finds_an_untagged_crossing() {
+    use pinion_core::scene::{BoxNode, ContainerNode};
+    use pinion_core::style::{BoxStyle, Color};
+
+    /// Every opaque mark inside `card` that reaches past its frame, by the same
+    /// rule the sweep applies.
+    fn crossings(scene: &Scene, card: Rect) -> usize {
+        let content = Rect::new(
+            card.x + super::CARD_FRAME,
+            card.y + super::CARD_FRAME,
+            card.w.saturating_sub(super::CARD_FRAME * 2),
+            card.h.saturating_sub(super::CARD_FRAME * 2),
+        );
+        let mut found = 0;
+        scene.for_each_node(&mut |visit| {
+            let Some(rect) = visit.absolute_rect() else {
+                return;
+            };
+            let opaque = match visit.node {
+                Scene::Box(n) => n.style.fill.a > 0,
+                Scene::Container(n) => n.style.fill.a > 0,
+                _ => false,
+            };
+            if !opaque || rect.w == 0 || rect.h == 0 || visit.node.tag() == Some("card") {
+                return;
+            }
+            if rect.x < card.x || rect.x + rect.w > card.x + card.w {
+                return; // outside the card is a different question
+            }
+            if rect.x < content.x || rect.x + rect.w > content.x + content.w {
+                found += 1;
+            }
+        });
+        found
+    }
+
+    let card = Rect::new(0, 0, 100, 40);
+    let fill = BoxStyle::filled(Color::rgb(0x30, 0x30, 0x30));
+    // An UNTAGGED strip at exactly the card's width: the shape the person saw.
+    let mut over = ContainerNode::new(vec![Scene::Box(BoxNode::new(
+        Rect::new(0, 10, 100, 12),
+        fill.clone(),
+    ))]);
+    over.rect = card;
+    over.tag = Some("card".to_owned().into());
+    assert_eq!(
+        crossings(&Scene::Container(over), card),
+        1,
+        "the walk must find an untagged mark at the card's full width",
+    );
+
+    // And the inset one is not a crossing, so the rule is not simply "anything".
+    let mut inside = ContainerNode::new(vec![Scene::Box(BoxNode::new(
+        Rect::new(super::CARD_FRAME, 10, 100 - super::CARD_FRAME * 2, 12),
+        fill,
+    ))]);
+    inside.rect = card;
+    inside.tag = Some("card".to_owned().into());
+    assert_eq!(
+        crossings(&Scene::Container(inside), card),
+        0,
+        "a band inset by the frame is not a crossing",
+    );
 }
 
 // -- 5. Disjoint: nothing is painted on top of anything ----------------------
