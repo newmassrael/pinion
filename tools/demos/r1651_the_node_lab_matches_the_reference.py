@@ -36,6 +36,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_declared_channels_are_true,
     assert_eq,
+    assert_router_press_moves,
     call,
     find_by_tag,
     run_demo,
@@ -213,6 +214,14 @@ def body() -> None:
         declared = set()
         for pane in spec["panes"]:
             declared.add(pane["tag"])
+            # ★ R1664 — a pane that SCROLLS paints a body node, and the
+            # specification is where that is stated (R1662 added the column).
+            # This loop read `tag` and not `body`, so R1662's scroll panes were
+            # painted tags nothing declared and the backward check went red on
+            # CI while every local test passed: the tag set is only checked by
+            # this demo, and the demo sweep does not gate a push.
+            if pane.get("body"):
+                declared.add(pane["body"])
         for seat in spec["rail"]:
             declared.add(f"lab.rail.{seat['name']}")
         for role in spec["roles"]:
@@ -272,7 +281,11 @@ def body() -> None:
             "lab.gate": 7,
             "lab.hint": 2,
             "lab.link": len(spec["links"]) + 2,
-            "lab.inspector": 7,
+            # ★ R1664 — 8, not 7: R1662 gave the inspector a scrolling body,
+            # which is a member. The pin is what NOTICED (this is the check
+            # working), and the number moves with a reason rather than by
+            # somebody widening it to make a red go away.
+            "lab.inspector": 8,
             "lab.palette.discovery": 3,
         }
         undeclared = [
@@ -588,6 +601,31 @@ def body() -> None:
         )
         inv(tf, "run", False)
         print("[N] a launch settles the form, so nothing is left pending a restart")
+
+        # ── (O) ★★★★★ a real press, through the §5.35 router ────────────────
+        #
+        # Every `click(...)` above is `invoke("point")` + `invoke("send")` — the
+        # lab's own oracle, handed the answer the router has to WORK OUT from a
+        # bare coordinate. That gap is not theoretical on this screen's family:
+        # R1649.1 measured a sibling shell dead to a mouse with 118 assertions
+        # green, and R1663 shipped a second sibling with the same defect in both
+        # of its joins. This section is the one that would have failed.
+        assert_router_press_moves(
+            tf, "lab.node.P-02", lambda: q(tf, "selected"), "O: a node card"
+        )
+        assert_router_press_moves(
+            tf, "lab.toolbar.zoom.in", lambda: q(tf, "zoom"), "O: a toolbar stepper"
+        )
+        # ★ The negative control: same verb, a decorative point, nothing moves.
+        before = (q(tf, "selected"), q(tf, "zoom"))
+        tf.request("scene/click", {"button": "left", "at": {"x": 3, "y": 3}})
+        tf.tick(16)
+        assert_eq(
+            (q(tf, "selected"), q(tf, "zoom")),
+            before,
+            "O: ★ a press in the app bar's corner moves nothing",
+        )
+        print("[O] a real router press reaches the canvas and the toolbar")
 
 
 if __name__ == "__main__":

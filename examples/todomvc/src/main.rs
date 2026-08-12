@@ -165,14 +165,38 @@ const TOGGLE_TAG: &str = "todo_toggle";
 /// per-item tag is `"todo_toggle#<id>"`. Mirrors [`DELETE_TAG_PREFIX`].
 const TOGGLE_TAG_PREFIX: &str = "todo_toggle";
 
+/// The larger of two lengths, in a `const` context.
+///
+/// ★ R1664 — a one-line helper because `Ord::max` is not `const`, and the
+/// sizes below have to be *derived* at compile time rather than typed in: a
+/// box authored as a literal is a box that can be smaller than the text it
+/// promised to hold, which is the defect this file paid for on every row.
+const fn crate_max(a: u32, b: u32) -> u32 {
+    if a > b { a } else { b }
+}
+
 /// (R658 §5.16) Width of the per-item toggle button. Matches the
 /// 24×24 WCAG 2.5.5 AAA target-size recommendation [`DELETE_BUTTON_W`]
 /// uses for the destructive affordance, so the two side buttons sit
 /// symmetrical at the row edges.
 const TOGGLE_BUTTON_W: u32 = 24;
-/// (R658 §5.16) Height of the per-item toggle button. Square hit
-/// target, symmetric with [`DELETE_BUTTON_H`].
-const TOGGLE_BUTTON_H: u32 = 24;
+/// (R658 §5.16) Height of the per-item toggle button.
+///
+/// ★ R1664 — `max(the WCAG floor, the glyph's line box)`, because 24 is a
+/// **minimum** target size and was being read as a maximum. A shaped line is
+/// taller than the face it holds (ascent + descent + leading all sit outside
+/// the em), so an 18px glyph in a 24px box overhangs by construction: measured,
+/// the run is 25px tall, the flex centring rounds the half-pixel outwards, and
+/// every toggle and delete glyph on every row painted one pixel above its own
+/// button. Four rows of it went red on CI while the budget — measured on the
+/// empty list, where there are no rows — said zero.
+///
+/// Derived rather than nudged to 25: a number that happens to fit the face this
+/// host shaped today is the thing `docs/containment-budget.tsv` exists to stop
+/// being written down. [`pinion_core::containment::line_box`] reserves
+/// conservatively and is `const`, so the box cannot be authored too small in the
+/// first place.
+const TOGGLE_BUTTON_H: u32 = crate_max(24, pinion_core::containment::line_box(TOGGLE_FONT_SIZE_PX));
 /// (R658 §5.16) Font size for the `☐` / `☑` toggle glyphs. 18 px to
 /// match the destructive [`DELETE_FONT_SIZE_PX`] glyph weight so the
 /// two row affordances read with equal visual prominence.
@@ -681,10 +705,12 @@ const LIST_VIEWPORT_W: u32 = 360;
 /// padding on each side; large enough to satisfy the WCAG 2.5.5
 /// "target size (minimum)" 24×24 CSS px recommendation for AAA.
 const DELETE_BUTTON_W: u32 = 24;
-/// (R656 §5.16) Height of the per-item delete button. Matches
-/// [`DELETE_BUTTON_W`] for a square hit target — the most
-/// forgiving shape for touch and mouse alike.
-const DELETE_BUTTON_H: u32 = 24;
+/// (R656 §5.16) Height of the per-item delete button.
+///
+/// ★ R1664 — the same `max(WCAG floor, line box)` as [`TOGGLE_BUTTON_H`], and
+/// for the same measured reason: the `×` at 18px shapes a 25px line and was
+/// painting one pixel above a 24px box on every row.
+const DELETE_BUTTON_H: u32 = crate_max(24, pinion_core::containment::line_box(DELETE_FONT_SIZE_PX));
 /// (R656 §5.16) Font size for the `×` delete glyph. 18 px gives the
 /// glyph the same visual weight as the entry text below it without
 /// dominating the row.

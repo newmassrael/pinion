@@ -273,6 +273,65 @@ fn r1663_every_declared_element_of_the_screen_is_painted() {
     });
 }
 
+/// ★★★★★ R1664 — the screen paints the tag it is REGISTERED under, and paints
+/// it as the node a press falls through to.
+///
+/// # Why this is a test and not a convention
+///
+/// The §5.35 router turns a window point into a widget by resolving the deepest
+/// tagged node under the cursor and looking its primary half up as an `External`
+/// in the state scene. So a screen is operable only if *some* painted tag is a
+/// name the state scene answers to — and that is a join between two string
+/// literals in two different functions, with nothing on either side that fails
+/// when they disagree.
+///
+/// R1663 shipped this screen with them disagreeing (`packet_view` registered,
+/// `pv.root` painted). Every press anywhere in the window was dropped in
+/// silence. Eleven tests in this file passed, because each one asks the app's own
+/// `Hit::at`; the 160-assertion demo passed, because it invokes the oracle by
+/// name; the boot gate printed `deliverable=0` and let it through. The defect was
+/// found by a person opening the window and pressing things.
+///
+/// Two properties, and the second is the one a rename could break quietly:
+/// the receiver is painted, and it is not *itself* pointer-transparent — a
+/// transparent node is skipped by `hit_test` along with everything under it, so
+/// declaring it would make the screen dead in a way this file's forward check
+/// (which only asks whether the tag is present) cannot see.
+#[test]
+fn r1664_the_root_paints_the_tag_the_router_resolves_a_press_to() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_view_state();
+        let (_, scene) = painted_at(&state, (MIN_W, MIN_H));
+        let mut found = false;
+        scene.for_each_node(&mut |visit| {
+            if visit.node.tag() == Some(crate::VIEW_TAG) {
+                found = true;
+                assert!(
+                    !visit.node.is_pointer_transparent(),
+                    "`{}` is painted but declares itself transparent to the pointer, so \
+                     `hit_test` skips it and everything under it — the screen is dead to a \
+                     mouse exactly as it was before it carried the tag at all",
+                    crate::VIEW_TAG,
+                );
+                assert!(
+                    visit.ancestors.iter().all(|a| !a.is_pointer_transparent()),
+                    "`{}` sits under a pointer-transparent ancestor, so the whole subtree \
+                     is skipped before the router ever reaches it",
+                    crate::VIEW_TAG,
+                );
+            }
+        });
+        assert!(
+            found,
+            "nothing painted carries `{}`, the tag this screen's `External` is registered \
+             under — so the router has nothing to resolve a press to and every press in the \
+             window is dropped without a word",
+            crate::VIEW_TAG,
+        );
+    });
+}
+
 /// The scrolling bodies are the specification's, not the painter's opinion.
 #[test]
 fn r1663_a_pane_the_specification_says_scrolls_is_a_scroll_node() {
@@ -305,6 +364,11 @@ fn r1663_a_pane_the_specification_says_scrolls_is_a_scroll_node() {
 #[test]
 fn r1663_every_painted_tag_belongs_to_a_declared_family() {
     let stems: &[&str] = &[
+        // ★ R1664 — the tag the widget is REGISTERED under, which is what the
+        // §5.35 router resolves a press to. Named from the constant rather than
+        // spelled again: the two literals drifting apart is precisely the defect
+        // that left this screen dead to a mouse for a round.
+        crate::VIEW_TAG,
         "pv.root",
         "pv.appbar",
         "pv.filter",

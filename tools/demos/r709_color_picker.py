@@ -280,13 +280,41 @@ def body() -> None:
 
     # Hue bar at the three interior primary stops (green 1/3, cyan 1/2,
     # blue 2/3) — AT a stop the colour is the stop colour.
+    #
+    # ★ R1664 — asserted as *where the stop is*, not as *what one nominal pixel
+    # holds*. The old form sampled `hx + round(hw * off)` and allowed 24 of
+    # slack in the colour, which conflates two different tolerances into one and
+    # measures the wrong thing: the hue ramp climbs about 6 per pixel here, so a
+    # rasteriser whose gradient origin sits a few pixels over reads as a wrong
+    # COLOUR. That is what CI reported — `(0, 255, 26)` at x=83, which is
+    # byte-for-byte this host's value at x=87, i.e. the same gradient shifted
+    # four pixels, not a different one.
+    #
+    # So: find the pixel that IS the stop colour (tolerance 8, three times
+    # tighter than before) and assert it lands within `STOP_SLOP` of where the
+    # bar's geometry says it should. Both halves are now checked, and neither is
+    # hostage to a rasteriser's convention for where a gradient begins.
     hx, hy, hw, hh = hue_rect
     row_y = hy + hh // 2
     interior = [HUE_STOPS[2], HUE_STOPS[3], HUE_STOPS[4]]
-    hue_pts = [(hx + max(1, min(hw - 2, round(hw * off))), row_y) for off, _ in interior]
-    for (off, rgb), (x, y), pixel in zip(interior, hue_pts, sample_png_points(img, hue_pts)):
-        assert_pixel_eq(pixel, (rgb[0], rgb[1], rgb[2], 255),
-                        f"hue bar at offset {off:.3f} ({x}, {y})", tolerance=24)
+    STOP_SLOP = 6
+    for off, rgb in interior:
+        nominal = hx + max(1, min(hw - 2, round(hw * off)))
+        xs = [x for x in range(nominal - STOP_SLOP, nominal + STOP_SLOP + 1)
+              if hx <= x < hx + hw]
+        row = sample_png_points(img, [(x, row_y) for x in xs])
+        deltas = [max(abs(px[c] - rgb[c]) for c in range(3)) for px in row]
+        best = min(range(len(xs)), key=lambda i: deltas[i])
+        assert_pixel_eq(
+            row[best], (rgb[0], rgb[1], rgb[2], 255),
+            f"hue bar reaches {rgb} somewhere within {STOP_SLOP}px of offset "
+            f"{off:.3f} (best was x={xs[best]}, nominal {nominal})",
+            tolerance=8,
+        )
+        assert abs(xs[best] - nominal) <= STOP_SLOP, (
+            f"the {rgb} stop is painted at x={xs[best]} and the bar's geometry "
+            f"puts offset {off:.3f} at x={nominal}"
+        )
 
 
 if __name__ == "__main__":

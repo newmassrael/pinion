@@ -421,10 +421,30 @@ fn visible_fields(state: &ViewState) -> Vec<(String, String, String, usize)> {
 
 // ── Paint helpers ───────────────────────────────────────────────────────────
 
+/// ★★★★★ R1664 — and the pointer declaration is load-bearing, exactly as it is
+/// on this screen's two siblings.
+///
+/// This screen routes every press to one root `External` and addresses its parts
+/// by tag. Those two facts fight: the §5.35 router resolves the **deepest tagged
+/// node** under the cursor and looks its primary half up as an `External`, so
+/// every tag painted for addressing shadows the root and the press is dropped
+/// without a word. `scene/click {path}`, `scene/invoke` and `send` all keep
+/// working, because they call the handler by name and never ask the router —
+/// which is why R1663 shipped this screen with 11 integration tests, a
+/// 160-assertion demo and a boot gate all green, and a person opening the window
+/// found that pressing anything did nothing at all.
+///
+/// `hello-node-lab` and `hello-analyzer-shell` both carry this line, and
+/// `hello-analyzer-shell` carries R1649.1's account of learning it. This file
+/// was written after both and without it.
+///
+/// The root container is the one node that keeps its own layout, so it stays the
+/// target; everything built through this helper is an address.
 fn absolute(rect: Rect) -> LayoutStyle {
     LayoutStyle::new()
         .with_absolute_position(rect.x, rect.y)
         .with_size(Size::px(rect.w, rect.h))
+        .with_pointer_transparent(true)
 }
 
 /// The style every run on this screen carries.
@@ -782,6 +802,14 @@ fn view(_state: (), _frame: Frame) -> Scene {
                 reassembly_strip(ink),
             ],
         )])
+        // ★ R1664 — the root carries the tag the widget is REGISTERED under, so
+        // the router has something to resolve a press to. `pv.root` above is an
+        // ADDRESS, for `scene/snapshot` and the sweep; this is the RECEIVER.
+        // They were two string literals in two functions with nothing checking
+        // that either of them named anything, and the screen was dead at every
+        // point in the window. `scene/pointer_reach`.externals is the read that
+        // now holds both sides of that join.
+        .with_tag(VIEW_TAG)
         .with_layout(LayoutStyle::new().with_size(Size::px(w, h))),
     )
 }
@@ -1423,6 +1451,12 @@ impl ExternalIntrospect for ViewOracle {
                     SchemaField::action("toggle_layer", "int"),
                     SchemaField::action("point", "string"),
                     SchemaField::action("press", "string"),
+                    // ★ R1664 — declared, not merely handled. The router's press
+                    // verb was the one action this screen could be driven by and
+                    // the one it did not publish, so `rpc/schema` described a
+                    // widget that answered a verb it never mentioned and did not
+                    // answer the verb it is actually pressed with.
+                    SchemaField::action("send", "string"),
                     SchemaField::action("key", "string"),
                 ]
             },
@@ -1559,6 +1593,40 @@ impl ExternalIntrospect for ViewOracle {
             }
             "press" => {
                 press(&state);
+                Ok(IntrospectValue::Text(state.said.borrow().clone()))
+            }
+            // ★★★★ R1664 — `send` is the verb the §5.35 ROUTER presses with,
+            // and it is the second half of this screen's deafness.
+            //
+            // Routing a press is two joins, and R1663 got neither: the painted
+            // root has to carry the tag the widget is registered under (the
+            // repair in `view` above), and the widget has to answer the verb
+            // `dispatch_send` dispatches — `invoke("send", "PointerDown")`. This
+            // screen spelled its own action `press`, so once the first join was
+            // repaired the router resolved the widget, called `send`, got
+            // `UnknownPath` back, and **discarded it** (`let _ = intro.invoke(…)`
+            // in `pinion_runtime::input::dispatch_send`): a press that arrives,
+            // is refused, and leaves no trace anywhere.
+            //
+            // Measured before and after this arm existed, driving `scene/click
+            // {at}` — the wire entry point that goes through the router — rather
+            // than `invoke("press")`, which is the oracle and was never broken.
+            "send" => {
+                let event = Self::text(&args)?;
+                match event.trim() {
+                    "PointerDown" => press(&state),
+                    // A release commits nothing on this screen: selection is
+                    // decided at press, and there is no drag. Accepted rather
+                    // than rejected, because the router sends the pair and a
+                    // widget that refuses half of it is the shape above.
+                    "PointerUp" | "PointerEnter" | "PointerLeave" | "PointerCancel" => {}
+                    other => {
+                        return Err(InvokeError::rejected(format!(
+                            "{other:?} is not a pointer event; they are PointerDown / \
+                             PointerUp / PointerEnter / PointerLeave / PointerCancel"
+                        )));
+                    }
+                }
                 Ok(IntrospectValue::Text(state.said.borrow().clone()))
             }
             "key" => {

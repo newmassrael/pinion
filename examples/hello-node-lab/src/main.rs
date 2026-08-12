@@ -3255,8 +3255,14 @@ impl ExternalIntrospect for LabOracle {
 /// The specification, as the wire publishes it.
 fn spec_json() -> serde_json::Value {
     serde_json::json!({
+        // ★ R1664 — `body` is published too. R1662 added the column to the
+        // specification and to the Rust sweep and stopped there, so the pane
+        // that scrolls painted a tag the WIRE's copy of the specification did
+        // not declare, and the demo's backward check went red on CI while
+        // every local test passed. A fact added to the model and published by
+        // half is the shape this project keeps paying for.
         "panes": spec::PANES.iter().map(|p| serde_json::json!({
-            "tag": p.tag, "title": p.title, "width": p.width,
+            "tag": p.tag, "title": p.title, "width": p.width, "body": p.body,
         })).collect::<Vec<_>>(),
         "rail": spec::RAIL.iter().map(|(name, locked)| serde_json::json!({
             "name": name, "locked": locked, "active": *name == spec::RAIL_ACTIVE,

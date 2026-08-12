@@ -881,6 +881,15 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "ExternalRoutingEntry",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("tag", WireTy::String, None),
+                WireField::new("routed_by", WireTy::String, None).nullable(),
+            ],
+        },
+    },
+    WireType {
         name: "FamilyNameOutcome",
         shape: WireShape::Object {
             fields: &[WireField::new("name", WireTy::String, None).nullable()],
@@ -1523,6 +1532,8 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("inert", WireTy::Integer, None),
                 WireField::new("shadows", WireTy::Array, Some("ShadowEntry")),
                 WireField::new("unreachable", WireTy::Array, Some("UnreachableEntry")),
+                WireField::new("externals", WireTy::Array, Some("ExternalRoutingEntry")),
+                WireField::new("dead_to_a_pointer", WireTy::Boolean, None),
             ],
         },
     },

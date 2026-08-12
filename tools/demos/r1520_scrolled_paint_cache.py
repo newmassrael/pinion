@@ -68,8 +68,9 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     Png,
     RpcSubprocess,
-    assert_eq,
     abs_rects_of,
+    assert_eq,
+    assert_same_picture,
     find_by_tag,
     read_png_rgba8,
     run_demo,
@@ -247,6 +248,10 @@ def body() -> None:
         # the wrong place (or not at all) shows here as a moved list.
         paint_after(tf, lambda: tf.scroll(SCROLL_TAG, to=(0, 512)))
         first_visit = capture(tf, "offset512-first")
+        # The rasteriser's disagreement with ITSELF: the same offset, captured
+        # again with nothing in between. Measured, not assumed — see
+        # `assert_same_picture`.
+        control = [first_visit, capture(tf, "offset512-control")]
         paint_after(tf, lambda: tf.scroll(SCROLL_TAG, to=(0, 1024)))
         away = capture(tf, "offset1024")
         back_stats = paint_after(tf, lambda: tf.scroll(SCROLL_TAG, to=(0, 512)))
@@ -261,11 +266,18 @@ def body() -> None:
             "a different offset paints a different frame — otherwise the "
             "comparison below would pass on a frozen surface"
         )
-        assert_eq(
-            second_visit.pixels,
-            first_visit.pixels,
-            "returning to offset 512 paints a byte-identical framebuffer",
+        # ★ R1664 — the same PICTURE, against a tolerance this run measured.
+        # See `assert_same_picture`: byte-identity is a claim about the
+        # rasteriser, and the software Vulkan the CI sweep runs on disagrees
+        # with itself by one least-significant bit of coverage on a handful of
+        # glyph edges. On a GPU host the measured tolerance is 0 and this is
+        # byte-identity unchanged.
+        floor = assert_same_picture(
+            control,
+            (first_visit, second_visit),
+            "returning to offset 512 paints the same framebuffer",
         )
+        print(f"[demo] rasteriser self-disagreement this run: {floor} per channel")
         assert back_stats["hits"] > prev["hits"], (
             "the return frame served fragments from the cache"
         )

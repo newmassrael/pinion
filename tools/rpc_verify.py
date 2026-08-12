@@ -43,7 +43,7 @@ import tempfile
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Iterable, Iterator, NoReturn, Optional
+from typing import Any, Callable, Iterable, Iterator, NoReturn, Optional, Sequence
 
 from build_gate import BuildError, ensure_built
 
@@ -578,6 +578,43 @@ def _pointer_reach_budget() -> dict[str, frozenset[str]]:
     return _POINTER_REACH_BUDGET
 
 
+_POINTER_ROUTING_BUDGET: "Optional[dict[str, str]]" = None
+
+
+def _pointer_routing_budget() -> dict[str, str]:
+    """R1664 — the surfaces whose OPENING screen routes no press, and why.
+
+    A separate file from `_pointer_reach_budget`'s, deliberately, because it is
+    a different claim: that one says *this painted widget's own centre answers
+    to nobody*, this one says *nothing on this screen answers to anybody*. They
+    look adjacent and are not, and folding two claims into one file is how a
+    reader ends up unable to tell which one a row is making.
+
+    Measured over all 224 examples before the gate was armed: nine route
+    nothing, and every one of the nine was then checked against its own
+    `$schema` and its paint. Eight are readouts with no action declared at all;
+    the ninth, `hello-contextmenu`, is a live screen whose menu is painted only
+    after a right-click — which is the gate's state-blindness rather than the
+    screen's defect, and is why this file exists instead of nine repairs.
+
+    The reason travels with the row so the claim is reviewable. A surface not
+    listed must route a press.
+    """
+    global _POINTER_ROUTING_BUDGET
+    if _POINTER_ROUTING_BUDGET is None:
+        budget: dict[str, str] = {}
+        path = WORKSPACE_ROOT / "docs" / "pointer-routing-budget.tsv"
+        if path.is_file():
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if not line.strip() or line.lstrip().startswith("#"):
+                    continue
+                example, _, reason = line.partition("\t")
+                if reason.strip():
+                    budget[example.strip()] = reason.strip()
+        _POINTER_ROUTING_BUDGET = budget
+    return _POINTER_ROUTING_BUDGET
+
+
 #: What a budget row holds when the surface could not be measured on the host
 #: that produced the file, beside the reason it could not.
 UNMEASURED = "unmeasured"
@@ -1027,6 +1064,47 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
                 "measured backlog; adding a row to silence this is the one use "
                 "that turns the ratchet back into a suggestion."
             )
+        # ★ R1664 — the half this gate PRINTED and never enforced.
+        #
+        # R1663 shipped `hello-packet-view` with `deliverable=0 inert=30`, this
+        # gate printed exactly that line, the sweep went green, and a person
+        # opened the window, pressed things, and reported that nothing happened.
+        # `deliverable=0` was not information; it was the diagnosis. What made it
+        # unreadable is that it is byte-identical to the honest report of a screen
+        # with no widgets on it — the same "no entries reads as zero" collapse
+        # R1661/R1662 fixed in the budget files, one layer up.
+        #
+        # `dead_to_a_pointer` is the runtime's own verdict over the roster of
+        # registered widgets (all unrouted, roster non-empty), so this gate reads
+        # a decision rather than re-deriving one from a count it can misread. A
+        # binary too old to publish it is driven without the check, the same
+        # tolerance the rest of this method gives.
+        if reach.get("dead_to_a_pointer") and not self.measuring:
+            unrouted = [
+                e["tag"] for e in reach.get("externals", []) if e.get("routed_by") is None
+            ]
+            declared = _pointer_routing_budget().get(self.example)
+            if declared is not None:
+                print(
+                    f"[pointer-routing] {self.example}: routes no press at boot, "
+                    f"declared — {declared}"
+                )
+                return
+            raise AssertionError(
+                f"{self.example}: this screen is dead to a real mouse — it paints "
+                f"{reach.get('deliverable', 0) + reach.get('inert', 0)} tagged node(s) "
+                f"and registers {len(unrouted)} widget(s), and NOT ONE of them can "
+                f"receive a press anywhere in the window: {', '.join(unrouted[:6])}. "
+                "The router resolves the deepest tagged node under the cursor and "
+                "looks its primary half up as an `External`; when no painted tag "
+                "carries a registered name, every press is dropped in silence while "
+                "`scene/click {path}`, `scene/invoke` and `send` all keep working, "
+                "because those call the handler by name and never ask the router. "
+                "The repair is to paint the widget's surface under the tag it is "
+                "registered with (`scene/pointer_reach`.externals names both sides). "
+                "This is not budgetable: a screen nobody can press is not a backlog "
+                "item."
+            )
         note = ""
         if reach.get("shadows"):
             note += f" shadows={len(reach['shadows'])}"
@@ -1034,6 +1112,9 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             note += f" off-window={len(offscreen)} ({', '.join(u['tag'] for u in offscreen[:3])}…)"
         if allowed:
             note += f" budgeted={len(allowed)}"
+        unrouted = [e["tag"] for e in reach.get("externals", []) if e.get("routed_by") is None]
+        if unrouted:
+            note += f" unrouted={len(unrouted)}"
         print(
             f"[pointer-reach] {self.example}: "
             f"deliverable={reach.get('deliverable', 0)} inert={reach.get('inert', 0)}{note}"
@@ -3423,6 +3504,187 @@ def node_center(node: dict) -> tuple[float, float]:
 # R705.1 §5.39 — the injected focus-ring overlay box tag (mirrors
 # `pinion_overlay::focus_ring::FOCUS_RING_TAG`).
 FOCUS_RING_TAG = "ai-overlay/focus-ring"
+
+
+def frame_diff(a: Any, b: Any) -> "tuple[int, int]":
+    """`(bytes that disagree, the largest disagreement)` for two RGBA8 captures.
+
+    The second number is the one that matters. A rasteriser rounding sub-pixel
+    coverage differently moves a channel by **1**; a glyph painted somewhere
+    else swaps ink for background, which moves it by tens or hundreds. So the
+    magnitude separates "the same picture drawn twice" from "a different
+    picture" in a way a count never can — measured R1664, and see
+    [`assert_same_picture`].
+    """
+    assert (a.width, a.height) == (b.width, b.height), (
+        f"captures are different surfaces: {a.width}x{a.height} vs {b.width}x{b.height}"
+    )
+    count = 0
+    worst = 0
+    for x, y in zip(a.pixels, b.pixels):
+        if x != y:
+            count += 1
+            delta = x - y if x > y else y - x
+            if delta > worst:
+                worst = delta
+    return count, worst
+
+
+def assert_same_picture(
+    control: "Sequence[Any]",
+    under_test: "tuple[Any, Any]",
+    what: str,
+) -> int:
+    """★★★★ R1664 — assert two frames are the same PICTURE, against a noise
+    floor this run measured rather than one anybody assumed. Returns the
+    measured floor.
+
+    # Why byte-identity was the wrong claim
+
+    Three demos asserted `second.pixels == first.pixels` to prove a cache
+    replayed a frame instead of rebuilding it. That is a claim about the paint
+    pipeline, and it was being made through the **rasteriser**, which is not
+    part of the claim and is not byte-deterministic everywhere.
+
+    Measured (R1664): capturing one unchanged screen four times in a row, with
+    no input between the captures —
+
+    * on this host's GPU, every pair is byte-identical;
+    * under lavapipe, the software Vulkan the CI sweep runs on, consecutive
+      captures of *the same state* differ in **4 to 7 bytes of 768,000** —
+      sub-pixel coverage on a handful of glyph edges.
+
+    So all three demos went red on CI for something no cache did, and they had
+    been red there for many runs while passing locally, which is exactly the
+    green-local / red-CI shape [[zero-flake-policy]] forbids.
+
+    # The predicate is the MAGNITUDE, not the count
+
+    Characterised rather than guessed. Ten consecutive captures of one unchanged
+    screen under lavapipe disagreed on 2 to 10 bytes, scattered over two vertical
+    edges — **and every single differing byte differed by exactly 1**. That is
+    one least-significant bit of coverage, which is what a tile-parallel software
+    rasteriser rounds differently between runs.
+
+    A count therefore cannot be the test: it drifts run to run (a floor sampled
+    at 4 rejected a real replay that noised at 6), so it would either flake or
+    have to be padded until it stopped meaning anything. The magnitude does not
+    drift, and it is what actually separates the two cases — any *positional*
+    error swaps ink for background at a glyph edge, which moves a channel by tens
+    or hundreds, never by one.
+
+    # Why this does not weaken anything
+
+    `control` is two or more captures of ONE state with nothing in between,
+    taken in the same process on the same rasteriser. On a deterministic one its
+    tolerance is **0**, and this assertion is then exactly the byte-identity it
+    replaces — which is what it reduces to on this project's GPU hosts.
+    """
+    assert len(control) >= 2, (
+        f"{what}: the tolerance is measured, so it needs at least two captures "
+        f"of the unchanged state (got {len(control)})"
+    )
+    tolerance = max(
+        frame_diff(control[i], control[j])[1]
+        for i in range(len(control))
+        for j in range(i + 1, len(control))
+    )
+    count, worst = frame_diff(*under_test)
+    total = len(control[0].pixels)
+    assert worst <= tolerance, (
+        f"{what}: the two frames disagree by up to {worst} on a channel "
+        f"({count} of {total} bytes differ), and this rasteriser's own "
+        f"disagreement with itself — measured in this run by capturing one "
+        f"unchanged screen {len(control)} times — never exceeds {tolerance}. A "
+        f"channel moving by more than that is ink where background was: a run "
+        f"dropped, a position transcribed run-relative where layout-absolute was "
+        f"meant, or a fragment replayed after it went stale."
+    )
+    return tolerance
+
+
+def assert_router_press_moves(
+    tf: "RpcSubprocess",
+    tag: str,
+    read: "Callable[[], Any]",
+    what: str,
+    *,
+    viewport: tuple[int, int] = (1440, 900),
+) -> Any:
+    """★★★★★ R1664 — press the centre of `tag` the way a mouse does, and assert
+    the app moved. Returns the value `read` gives afterwards.
+
+    The rect is resolved **at press time**, from the paint scene, in
+    window-absolute coordinates. Both halves of that are load-bearing and both
+    were got wrong while this helper was being written:
+
+    * *At press time*, because a screen re-lays-out under the presses a sequence
+      of these makes. Taking the geometry once and pressing five times aimed the
+      fifth press at where the fourth press had moved the target, and the
+      failure looked exactly like the routing defect this helper exists to catch.
+    * *Window-absolute*, because a node inside a `Scroll` carries a scroll-LOCAL
+      rect — which is what `find_by_tag(...)["rect"]` hands back, and what put
+      every press on two analyzer screens at coordinates nothing is painted at
+      once R1662 made their panes scroll.
+
+    # The bypass this exists to end
+
+    A screen can pass every test in this tree and be completely dead to a person,
+    because every wire verb a demo normally reaches for addresses a widget **by
+    name**:
+
+    * `scene/invoke {path}` / `scene/query {path}` call the widget's own
+      introspection handler;
+    * `scene/click {path}` resolves the path's rect and presses its centre, but
+      it is the *path* that found the widget;
+    * an example's own `Hit::at`, which its Rust sweep calls, is the app's
+      private hit function and not the router at all.
+
+    A real mouse has no name. It has a point, and the §5.35 router has to turn
+    that point into a widget: it resolves the deepest tagged node under the
+    cursor, splits the composite half off, and looks the result up as an
+    `External` in the state scene. Two joins, both of them plain strings, and a
+    failure of either returns without a word — `dispatch_send` discards the
+    widget's answer (`let _ = intro.invoke("send", …)`), so a widget that does
+    not know the verb is as silent as one that was never found.
+
+    Measured three times: R1497 (a header cell's own label swallowed the press),
+    R1649.1 (an entire shell, with a 118-assertion demo passing), and R1663
+    (`hello-packet-view`: 11 integration tests, a 160-assertion demo and a boot
+    gate all green, and a person opening the window found that pressing anything
+    did nothing at all — BOTH joins were broken, and repairing only the first one
+    still produced a screen where every press was refused and dropped).
+
+    `scene/click {at: {x, y}}` is the one wire entry point that goes through the
+    router, so it is the one a screen's own coverage has to include. The
+    assertion is that the app's state MOVED — a press that resolves and is
+    refused changes nothing, which is indistinguishable from no press at all
+    unless something reads the state on both sides of it.
+
+    """
+    rects = abs_rects_of(tf.snapshot(source="paint", viewport=viewport))
+    assert tag in rects, (
+        f"{what}: nothing painted carries `{tag}`, so there is no point to press "
+        f"— the screen paints {len(rects)} tagged node(s)"
+    )
+    x, y, w, h = rects[tag]
+    at = (x + w // 2, y + h // 2)
+    before = read()
+    tf.request("scene/click", {"button": "left", "at": {"x": at[0], "y": at[1]}})
+    tf.tick(16)
+    after = read()
+    assert after != before, (
+        f"{what}: a press at {at}, the centre of `{tag}` — driven through the "
+        f"§5.35 router, the way a "
+        f"mouse arrives — left the screen exactly as it was ({before!r}). Either "
+        f"no painted tag at that point resolves to a registered `External` (ask "
+        f"`scene/pointer_reach`.externals, which names both sides of that join), "
+        f"or one does and the widget does not answer `send`, which the router "
+        f"dispatches a press as and whose rejection it discards. Driving the same "
+        f"target with `scene/invoke` proves neither: that path never asks the "
+        f"router."
+    )
+    return after
 
 
 def abs_rects_of(snap: Any) -> dict[str, tuple[int, int, int, int]]:

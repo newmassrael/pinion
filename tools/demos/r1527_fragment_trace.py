@@ -81,6 +81,7 @@ from rpc_verify import (  # noqa: E402
     Png,
     RpcSubprocess,
     assert_eq,
+    assert_same_picture,
     read_png_rgba8,
     run_demo,
     wait_paint_beyond,
@@ -293,6 +294,11 @@ def body() -> None:
         step_to(tf, "ArrowDown", 2)
         paint_after(tf, lambda: None)
         first_visit = capture(tf, "sel2_first")
+        # ★ R1664 — the rasteriser's disagreement with ITSELF, measured here:
+        # the same state captured again with nothing in between. Zero on a GPU
+        # host, one least-significant bit of coverage under the software Vulkan
+        # the CI sweep runs on. See `assert_same_picture`.
+        control = [first_visit, capture(tf, "sel2_control")]
 
         # Leave and come back. The return trip is served largely from
         # fragments the trace kept alive across the intervening frames.
@@ -313,11 +319,14 @@ def body() -> None:
             (first_visit.width, first_visit.height),
             "both captures are the same surface",
         )
-        assert second_visit.pixels == first_visit.pixels, (
-            "returning to a selection paints byte-identically to the first "
+        floor = assert_same_picture(
+            control,
+            (first_visit, second_visit),
+            "returning to a selection paints the same picture as the first "
             "visit — a fragment the trace kept alive but that had gone "
-            "stale would differ exactly here"
+            "stale would differ exactly here",
         )
+        print(f"[demo] rasteriser self-disagreement this run: {floor} per channel")
         assert_eq(
             stats(tf)["entries"], boot_entries,
             "and the live set is still exactly the painted set",

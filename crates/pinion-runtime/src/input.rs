@@ -3698,6 +3698,38 @@ pub struct PointerUnreachable {
     pub blocked_by: Option<String>,
 }
 
+/// R1664 §5.35 §2 #7 — one `External` the state scene registers, paired with
+/// the painted tag (if any) that routes a press to it.
+///
+/// The state scene is where a widget *exists*; the paint scene is where it is
+/// *addressable*. The router joins them by name, and the join is two string
+/// literals in two different functions with nothing checking that they agree.
+/// When they do not, every press on that widget is dropped in silence — the
+/// failure has no symptom other than a person pressing something and reporting
+/// that nothing happened, which is exactly how it was found (R1663's
+/// `hello-packet-view`: registered `packet_view`, painted `pv.root`).
+///
+/// [`PointerReach::deliverable`] already counted the join from the paint side,
+/// so a total mismatch reported `0` — a number that reads identically to "this
+/// screen has no widgets on it". This row is the same fact from the state side,
+/// where the thing that needs repairing has a **name**.
+///
+/// See [`pointer_reach`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalRouting {
+    /// The tag the `External` is registered under in the state scene.
+    pub tag: String,
+    /// The shallowest painted tag whose primary half resolves here — the region
+    /// a press lands in — or `None` when nothing painted routes here at all.
+    ///
+    /// `None` is not by itself a defect: a data-only `External` (R1663's
+    /// `pv.map`, a model with no surface) is registered for `scene/query` and
+    /// is never meant to receive a press. It becomes one only when *no*
+    /// external on the screen is routed — see
+    /// [`PointerReach::is_dead_to_a_pointer`].
+    pub routed_by: Option<String>,
+}
+
 /// R1650 §5.35 §2 #7 — the reachability of a painted surface: how much of it a
 /// real pointer can drive, and what is stealing the rest.
 ///
@@ -3728,6 +3760,59 @@ pub struct PointerReach {
     /// intercepted, which a container legitimately does in its own gaps; an
     /// entry here says a press lands and is dropped.
     pub unreachable: Vec<PointerUnreachable>,
+    /// R1664 — every **tagged** `External` the state scene registers, and the
+    /// painted tag that routes a press to it. Declaration order, deduplicated.
+    ///
+    /// The census the counts above could not give: `deliverable` and `inert`
+    /// are read off the *paint* tree, so when the join fails completely they
+    /// report `0` and a number, and neither of those names the widget that
+    /// cannot be reached. This list does.
+    ///
+    /// **Tagged**, and that is the definition rather than an oversight: the
+    /// router's only handle on a widget is the tag it is registered under, so
+    /// an untagged `External` is unaddressable by construction — not by the
+    /// router, not by `scene/click {path}`, not by `send`. Listing one would
+    /// report a widget as unrouted when nothing was ever meant to route to it,
+    /// and `hello-endpoint-identity` is that case in this tree: a display-only
+    /// binding (PR-51's `primary_surface` opt-out) whose roster is therefore
+    /// empty and whose screen is correctly not called dead.
+    pub externals: Vec<ExternalRouting>,
+}
+
+impl PointerReach {
+    /// R1664 §5.35 — the screen registers widgets and **not one of them** can
+    /// receive a press: every point in the window is dropped by the router.
+    ///
+    /// # Why this is derived and not a field
+    ///
+    /// A stored verdict is a second place the answer lives, free to disagree
+    /// with the census it summarises. This one is a function of
+    /// [`externals`](Self::externals) alone, so it cannot drift from it.
+    ///
+    /// # Why "all", and not "any"
+    ///
+    /// A single unrouted `External` is ordinary: a model registered for
+    /// `scene/query` with no surface of its own is unroutable by design, and
+    /// this tree has them. What is never ordinary is a screen where the router
+    /// resolves *nothing anywhere* while widgets are registered and a surface
+    /// is painted — that screen is dead to a mouse, and the only report it used
+    /// to produce was `deliverable: 0`, which is byte-identical to the answer a
+    /// screen with no widgets gives.
+    ///
+    /// Measured, which is why it is here rather than in a comment: R1663 shipped
+    /// `hello-packet-view` with 185 painted tags, 30 of them inert, `deliverable
+    /// = 0`, an empty `shadows` list and an empty `unreachable` list — a report
+    /// that reads as *clean* in every field — and a person pressing the window
+    /// got nothing, anywhere.
+    ///
+    /// An empty [`externals`](Self::externals) is **not** dead: a screen with no
+    /// widgets registered has nothing to fail to reach, and saying otherwise
+    /// would make "no widgets yet" indistinguishable from "the wiring broke",
+    /// which is the mistake this method exists to undo.
+    #[must_use]
+    pub fn is_dead_to_a_pointer(&self) -> bool {
+        !self.externals.is_empty() && self.externals.iter().all(|e| e.routed_by.is_none())
+    }
 }
 
 /// R1650 §5.35 §2 #7 — ask a painted surface which of its tags a pointer can
@@ -3894,6 +3979,42 @@ pub fn pointer_reach(paint_scene: &Scene, state_scene: &Scene) -> PointerReach {
             });
         }
     }
+    // R1664 — the same join from the other side, so the failure has a NAME.
+    //
+    // Walked over the state scene (where an `External` exists) and answered
+    // against the paint scene (where it becomes addressable), which is the
+    // direction the router itself does not go: it starts at a point. Nothing
+    // else in this tree asks "is this registered widget on screen at all", and
+    // the answer being `no` for every widget at once is the one report that
+    // separates a dead screen from an empty one.
+    let mut routed: HashMap<&str, Option<String>> = HashMap::new();
+    let mut order: Vec<&str> = Vec::new();
+    state_scene.for_each_node(&mut |visit| {
+        if let Scene::External(node) = visit.node
+            && let Some(tag) = node.tag.as_deref()
+            && !routed.contains_key(tag)
+        {
+            routed.insert(tag, None);
+            order.push(tag);
+        }
+    });
+    // Shallowest painted tag wins: a press lands in a region, and the region is
+    // the outermost node carrying that address. Taking the deepest would name a
+    // leaf whose parent is the thing a repair moves.
+    paint_scene.for_each_node(&mut |visit| {
+        let Some(tag) = visit.node.tag() else { return };
+        let (primary, _) = split_subindex(tag);
+        if let Some(slot @ None) = routed.get_mut(primary) {
+            *slot = Some(tag.to_string());
+        }
+    });
+    out.externals = order
+        .into_iter()
+        .map(|tag| ExternalRouting {
+            tag: tag.to_string(),
+            routed_by: routed.get(tag).cloned().flatten(),
+        })
+        .collect();
     out
 }
 
@@ -12677,6 +12798,189 @@ mod pointer_reach_tests {
         let paint = Scene::Container(ContainerNode::new(vec![veil]).with_tag("shell.root"));
         let reach = pointer_reach(&paint, &state_with("shell.root"));
         assert!(reach.shadows.is_empty(), "{:?}", reach.shadows);
+    }
+
+    /// Two widgets registered under one root, the way a screen that keeps its
+    /// model in a second `External` is built.
+    fn state_with_two(a: &'static str, b: &'static str) -> Scene {
+        Scene::Container(ContainerNode::new(vec![state_with(a), state_with(b)]))
+    }
+
+    /// ★ R1664 — the R1663 incident, reduced: the screen registers `packet_view`
+    /// and paints its surface under `pv.root`, a name nothing answers to.
+    ///
+    /// The point of this test is the FIRST four assertions. Every field the
+    /// report had before this round reads exactly as it reads for a healthy
+    /// screen with no widgets on it — no shadow (there is no victim to shadow),
+    /// nothing unreachable (that population is the tags that *did* resolve, and
+    /// none did), and a count of inert decoration. A person pressing this window
+    /// gets nothing, anywhere, and the report said so in no field.
+    #[test]
+    fn r1664_a_screen_whose_paint_tag_matches_no_widget_reports_clean_except_here() {
+        let paint = Scene::Container(
+            ContainerNode::new(vec![tagged_box("pv.list"), tagged_box("pv.tree")])
+                .with_tag("pv.root"),
+        );
+        let reach = pointer_reach(&paint, &state_with("packet_view"));
+
+        assert!(reach.shadows.is_empty(), "{:?}", reach.shadows);
+        assert!(reach.unreachable.is_empty(), "{:?}", reach.unreachable);
+        assert_eq!(reach.deliverable, 0);
+        assert_eq!(reach.inert, 3, "three painted tags, all decorative to it");
+
+        // …and the one field that can tell this apart from an empty screen.
+        assert!(
+            reach.is_dead_to_a_pointer(),
+            "every press in this window is dropped: {reach:?}"
+        );
+        assert_eq!(
+            reach
+                .externals
+                .iter()
+                .map(|e| (e.tag.as_str(), e.routed_by.clone()))
+                .collect::<Vec<_>>(),
+            [("packet_view", None)],
+            "and it names the widget nothing on screen routes to"
+        );
+    }
+
+    /// The repair, and the reason the assertion above is not merely "this screen
+    /// is unusual": painting the root under the registered name makes the same
+    /// screen live, with nothing else changed.
+    #[test]
+    fn r1664_painting_the_root_under_the_registered_tag_makes_it_reachable() {
+        let paint = Scene::Container(
+            ContainerNode::new(vec![tagged_box("pv.list"), tagged_box("pv.tree")])
+                .with_tag("packet_view"),
+        );
+        let reach = pointer_reach(&paint, &state_with("packet_view"));
+        assert!(!reach.is_dead_to_a_pointer(), "{reach:?}");
+        assert_eq!(
+            reach.externals,
+            vec![super::ExternalRouting {
+                tag: "packet_view".to_string(),
+                routed_by: Some("packet_view".to_string()),
+            }]
+        );
+    }
+
+    /// ★ A single unrouted widget is NOT the defect, and this is what keeps the
+    /// verdict from crying wolf: a model registered so `scene/query` can read it
+    /// has no surface by design and can never be pressed. The screen is live.
+    #[test]
+    fn r1664_a_data_only_widget_with_no_surface_does_not_make_a_screen_dead() {
+        let paint = Scene::Container(ContainerNode::new(vec![]).with_tag("packet_view"));
+        let reach = pointer_reach(&paint, &state_with_two("packet_view", "pv.map"));
+        assert!(
+            !reach.is_dead_to_a_pointer(),
+            "one widget is reachable, so the screen is drivable: {reach:?}"
+        );
+        assert_eq!(
+            reach
+                .externals
+                .iter()
+                .map(|e| (e.tag.as_str(), e.routed_by.as_deref()))
+                .collect::<Vec<_>>(),
+            [("packet_view", Some("packet_view")), ("pv.map", None)],
+            "and the census still says which one has no surface"
+        );
+    }
+
+    /// A screen with nothing registered has nothing to fail to reach. Asserted
+    /// because the alternative — treating an empty roster as dead — would make
+    /// "no widgets yet" and "the wiring broke" one answer again, which is the
+    /// collapse this whole read exists to undo.
+    #[test]
+    fn r1664_an_empty_roster_is_not_a_dead_screen() {
+        let paint = Scene::Container(ContainerNode::new(vec![tagged_box("splash.logo")]));
+        let reach = pointer_reach(&paint, &Scene::Container(ContainerNode::new(vec![])));
+        assert!(reach.externals.is_empty());
+        assert!(!reach.is_dead_to_a_pointer());
+    }
+
+    /// The region a press LANDS IN is the outermost node carrying the address,
+    /// so that is what the census names — the repair moves the container, not
+    /// the leaf that happens to share its primary half.
+    #[test]
+    fn r1664_the_routing_names_the_shallowest_tag_that_resolves() {
+        let paint = Scene::Container(
+            ContainerNode::new(vec![Scene::Container(
+                ContainerNode::new(vec![tagged_box("grid#7")]).with_tag("grid#3"),
+            )])
+            .with_tag("grid"),
+        );
+        let reach = pointer_reach(&paint, &state_with("grid"));
+        assert_eq!(reach.externals[0].routed_by.as_deref(), Some("grid"));
+    }
+
+    /// ★ The two sides of the join cannot disagree. `deliverable` counts it from
+    /// the paint tree and `externals` walks it from the state tree; they are
+    /// separate code reading separate inputs, so a drift between them is a real
+    /// possibility and this is what forbids it.
+    ///
+    /// Driven over every fixture in this module rather than one, because a
+    /// cross-check asserted on a single shape is a cross-check that has only
+    /// been asked one question.
+    #[test]
+    fn r1664_deliverable_and_the_external_census_agree_on_every_fixture() {
+        let transparent = match tagged_box("card.alpha") {
+            Scene::Box(n) => {
+                Scene::Box(n.with_layout(LayoutStyle::new().with_pointer_transparent(true)))
+            }
+            other => other,
+        };
+        let cases: Vec<(&str, Scene, Scene)> = vec![
+            (
+                "the shadowed shell",
+                Scene::Container(
+                    ContainerNode::new(vec![tagged_box("card.alpha")]).with_tag("shell.root"),
+                ),
+                state_with("shell.root"),
+            ),
+            (
+                "the repaired shell",
+                Scene::Container(ContainerNode::new(vec![transparent]).with_tag("shell.root")),
+                state_with("shell.root"),
+            ),
+            (
+                "decoration only",
+                Scene::Container(ContainerNode::new(vec![tagged_box("legend.row")])),
+                state_with("elsewhere"),
+            ),
+            (
+                "the composite header",
+                Scene::Container(ContainerNode::new(vec![Scene::Container(
+                    ContainerNode::new(vec![tagged_box("colhdr_label#3")]).with_tag("colhdr#3"),
+                )])),
+                state_with("colhdr"),
+            ),
+            (
+                "the packet view",
+                Scene::Container(
+                    ContainerNode::new(vec![tagged_box("pv.list")]).with_tag("pv.root"),
+                ),
+                state_with("packet_view"),
+            ),
+        ];
+        for (what, paint, state) in cases {
+            let reach = pointer_reach(&paint, &state);
+            let routed = reach
+                .externals
+                .iter()
+                .filter(|e| e.routed_by.is_some())
+                .count();
+            assert_eq!(
+                reach.deliverable > 0,
+                routed > 0,
+                "{what}: paint side says deliverable={}, state side says routed={routed}",
+                reach.deliverable,
+            );
+            assert_eq!(
+                reach.is_dead_to_a_pointer(),
+                !reach.externals.is_empty() && reach.deliverable == 0,
+                "{what}: the verdict must follow from the counts it summarises"
+            );
+        }
     }
 }
 

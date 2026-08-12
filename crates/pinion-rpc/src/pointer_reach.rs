@@ -53,7 +53,12 @@
 //!     ],
 //!     "unreachable": [
 //!       { "tag": "shell.root", "path": "", "blocked_by": "card.alpha" }
-//!     ]
+//!     ],
+//!     "externals": [
+//!       { "tag": "shell", "routed_by": "shell.root" },
+//!       { "tag": "shell.model", "routed_by": null }
+//!     ],
+//!     "dead_to_a_pointer": false
 //!   }
 //! }
 //! ```
@@ -83,6 +88,29 @@
 //!
 //! `path` is the address `scene/snapshot`, `scene/locate` and `scene/click`
 //! all accept, so the offending node can be looked at in the same session.
+//!
+//! # R1664 — `deliverable: 0` said two different things
+//!
+//! The four fields above are all read off the **paint** tree, and every one of
+//! them reports clean on a screen whose widgets are registered under names
+//! nothing on screen carries: no tag resolves, so nothing is deliverable,
+//! nothing shadows anything (there is no victim to shadow), and nothing is
+//! unreachable (the population is the tags that *did* resolve, which is empty).
+//! `deliverable: 0` was the only trace, and it is byte-identical to the honest
+//! answer a screen with no widgets on it gives.
+//!
+//! Measured: R1663's `hello-packet-view` painted 185 tags and registered
+//! `packet_view`, while the surface it painted for that widget was tagged
+//! `pv.root`. Every press anywhere in the window was dropped, three separate
+//! test layers passed (each drove the widget's own handler by name, which is
+//! the half that was never broken), and the defect was found by a person
+//! pressing the window and saying nothing happened.
+//!
+//! `externals` is the same join walked from the **state** side, where the thing
+//! that needs repairing has a name, and `dead_to_a_pointer` is the verdict over
+//! it. An entry with `routed_by: null` on its own is ordinary — a data-only
+//! model registered for `scene/query` has no surface and is not meant to be
+//! pressed. All of them null, with widgets registered, is the failure.
 
 use pinion_core::Scene;
 use serde::Serialize;
@@ -117,6 +145,16 @@ pub struct UnreachableEntry {
     pub blocked_by: Option<String>,
 }
 
+/// R1664 §5.35 — one registered `External`, and where a press reaches it.
+#[derive(Debug, Clone, Serialize)]
+pub struct ExternalRoutingEntry {
+    /// The tag the widget is registered under in the state scene.
+    pub tag: String,
+    /// The painted tag whose region routes a press here, or `null` when the
+    /// widget has no addressable surface at all.
+    pub routed_by: Option<String>,
+}
+
 /// The `scene/pointer_reach` result.
 #[derive(Debug, Clone, Serialize)]
 pub struct PointerReachReport {
@@ -129,6 +167,18 @@ pub struct PointerReachReport {
     pub shadows: Vec<ShadowEntry>,
     /// The widgets that are not operable, in paint order — the verdict.
     pub unreachable: Vec<UnreachableEntry>,
+    /// R1664 — every registered widget and the painted region a press reaches
+    /// it through, in declaration order.
+    pub externals: Vec<ExternalRoutingEntry>,
+    /// R1664 — widgets are registered and **not one** of them can be pressed
+    /// anywhere in the window.
+    ///
+    /// Published rather than left to the caller because the arithmetic behind
+    /// it is a rule (*all*, not *any*, and an empty roster is not dead), and a
+    /// rule re-derived per consumer is a rule with as many versions as
+    /// consumers. It is a pure function of `externals`, so the two cannot
+    /// disagree.
+    pub dead_to_a_pointer: bool,
 }
 
 /// R1650 §5.35 — compute the report from the painted scene and the state scene.
@@ -153,12 +203,27 @@ pub fn handle_scene_pointer_reach(
             inert: 0,
             shadows: Vec::new(),
             unreachable: Vec::new(),
+            // A screen that has not painted has no roster to be dead against —
+            // the same reason the counts above are zero rather than an error.
+            externals: Vec::new(),
+            dead_to_a_pointer: false,
         },
         |paint| {
             let reach = pinion_runtime::pointer_reach(paint, state_scene);
+            let dead_to_a_pointer = reach.is_dead_to_a_pointer();
+            let externals = reach
+                .externals
+                .iter()
+                .map(|e| ExternalRoutingEntry {
+                    tag: e.tag.clone(),
+                    routed_by: e.routed_by.clone(),
+                })
+                .collect();
             PointerReachReport {
                 deliverable: reach.deliverable,
                 inert: reach.inert,
+                externals,
+                dead_to_a_pointer,
                 shadows: reach
                     .shadows
                     .into_iter()

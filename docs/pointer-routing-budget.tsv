@@ -1,0 +1,39 @@
+# R1664 — the surfaces whose OPENING screen routes no press anywhere, and why.
+#
+# `scene/pointer_reach` answers `dead_to_a_pointer` when a surface registers
+# widgets and not one of them can receive a press: no painted tag carries a
+# name the §5.35 router resolves, so every press in the window is dropped in
+# silence. That is a total failure of a screen, and R1663 shipped one -- 185
+# painted tags, an empty `shadows` list, an empty `unreachable` list, and a
+# person pressing the window getting nothing. The boot gate now refuses it.
+#
+# It is refused for every example EXCEPT the ones listed here. A row is a
+# claim that the surface has nothing to route a press to *in the state it
+# opens in*, and the reason is what makes that claim reviewable. Adding a row
+# to make a failure go away is the one use that turns this ratchet back into a
+# suggestion; the repair for a real one is to paint the widget's surface under
+# the tag it is registered with, which `scene/pointer_reach`.externals names.
+#
+# Measured 2026-08-12 over all 224 example packages: 206 answered, 9 could not
+# be booted headless here (the same set the ink budgets record, for the same
+# reasons), and NINE routed nothing. Every one of the nine was then checked
+# against its own `$schema` and its paint, and none is the failure this gate
+# exists for -- which is why they are rows and not repairs.
+#
+# ★ The gate is deliberately state-blind here, and that is why this file has to
+# exist at all: `hello-contextmenu` is a live, driveable screen whose widget is
+# painted only after a right-click, so at boot it is indistinguishable from a
+# screen that is dead. The same shape as docs/containment-budget.tsv's, one
+# axis over -- see debt-the-containment-gate-asks-once-at-boot.
+#
+# `<example>\t<reason>`. A surface not listed must route a press.
+
+hello-answer-origin	display-only: `model` publishes where an answer came from and paints a readout; nothing on this screen is pressed
+hello-app-font	display-only: a font-resolution readout, driven entirely by env and the wire
+hello-contextmenu	`ctx` is a popup painted only while `open_at` is Some, so the OPENING screen has no menu to route to; the barrier and the menu both appear on right-click
+hello-deviation-grid	display-only: a measured-vs-reference grid, read through the wire
+hello-dock-presets	display-only at boot: the preset list is a readout and the dock it describes is a separate surface
+hello-memory-image	display-only: an arena readout
+hello-no-primary	PR-51's `primary_surface` opt-out is the whole subject of this example -- two panes and no primary surface is what it exists to demonstrate
+hello-refused-invoke	display-only: `host` exists to REFUSE an invoke, which is a wire claim and not a pointer one
+hello-vn-tide	display-only: a render-axis readout with 36 declared reads and no action

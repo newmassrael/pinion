@@ -42,12 +42,15 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import rpc_verify  # noqa: E402
 from rpc_verify import (  # noqa: E402
+    Png,
     Response,
     RpcError,
     RpcSubprocess,
     _pointer_reach_budget,
+    _pointer_routing_budget,
     access_node_by_tag,
     assert_eq,
+    assert_same_picture,
     find_by_tag,
     terminate_process_tree,
     wait_until,
@@ -518,6 +521,143 @@ def test_pointer_reach_gate_separates_the_two_unreachable_kinds() -> None:
     # And the budget is what makes it adoptable — the same row, allowed.
     tf.pointer_reach_exempt = {"board": "a fixture"}
     tf._gate_pointer_reach()
+
+
+def test_a_screen_that_routes_nothing_fails_and_an_empty_roster_does_not() -> None:
+    # ★ R1664 — the half this gate used to PRINT. `deliverable: 0` means both
+    # "no widgets here" and "every press in this window is dropped", and the
+    # gate passed on the second one for a whole round while a person was
+    # pressing the window and getting nothing.
+    tf = RpcSubprocess("fixture-example")
+    tf._proc = None
+    report = {
+        "deliverable": 0,
+        "inert": 30,
+        "shadows": [],
+        "unreachable": [],
+        "externals": [{"tag": "packet_view", "routed_by": None}],
+        "dead_to_a_pointer": True,
+    }
+    tf.request = lambda method, params=None, **kw: Response(  # type: ignore[assignment]
+        id=1, result=report
+    )
+    raised = None
+    try:
+        tf._gate_pointer_reach()
+    except AssertionError as exc:
+        raised = str(exc)
+    check(raised is not None, "gate: a screen no press can reach fails")
+    check(
+        raised is not None and "packet_view" in raised,
+        "gate: and it names the widget nothing on screen routes to",
+    )
+
+    # A roster with one widget routed is a live screen, even with a data-only
+    # `External` that has no surface — the case that would make this cry wolf.
+    report["deliverable"] = 1
+    report["externals"] = [
+        {"tag": "packet_view", "routed_by": "packet_view"},
+        {"tag": "pv.map", "routed_by": None},
+    ]
+    report["dead_to_a_pointer"] = False
+    tf._gate_pointer_reach()
+
+    # And a binary too old to publish the verdict is driven without the check,
+    # the same tolerance the rest of this gate gives — otherwise a stale
+    # example would fail for lacking a field rather than for being broken.
+    for key in ("externals", "dead_to_a_pointer"):
+        report.pop(key)
+    report["deliverable"] = 0
+    tf._gate_pointer_reach()
+
+    # The producer stands down: `measure_ink_budgets.py` has to be able to read
+    # past a refusal to record WHY a surface could not be measured.
+    report["externals"] = [{"tag": "packet_view", "routed_by": None}]
+    report["dead_to_a_pointer"] = True
+    tf.measuring = True
+    tf._gate_pointer_reach()
+    tf.measuring = False
+
+    # And a DECLARED surface is reported rather than refused. Measured over all
+    # 224 examples before this gate was armed, nine route nothing at boot and
+    # none of them is this failure — eight are readouts with no action declared
+    # at all, and `hello-contextmenu`'s menu is painted only after a
+    # right-click. The row carries the reason so the claim can be reviewed.
+    declared = next(iter(_pointer_routing_budget()))
+    tf.example = declared
+    tf._gate_pointer_reach()
+    check(
+        len(_pointer_routing_budget()) == 9,
+        f"gate: the routing budget is the nine measured surfaces, not a "
+        f"growing list ({len(_pointer_routing_budget())})",
+    )
+    check(
+        all(reason.strip() for reason in _pointer_routing_budget().values()),
+        "gate: every declared surface says WHY it routes nothing",
+    )
+
+
+def test_a_measured_tolerance_still_catches_a_moved_glyph() -> None:
+    # ★ R1664 — the assertion this replaced was `second.pixels == first.pixels`,
+    # and the whole risk of replacing it is that a tolerance swallows the defect
+    # it was meant to catch. It cannot, and the reason is the PREDICATE and not
+    # the size of the number: the rasteriser's disagreement with itself is one
+    # least-significant bit of coverage, while a glyph painted somewhere else
+    # swaps ink for background.
+    def png(data: bytes) -> Png:
+        return Png(width=4, height=1, pixels=data)
+
+    base = bytes([10, 20, 30, 255] * 4)
+    # Two captures of one state under a software rasteriser: a few channels off
+    # by one, scattered.
+    noisy = bytearray(base)
+    noisy[0] = 11
+    noisy[9] = 21
+    control = [png(base), png(bytes(noisy))]
+
+    # The same picture again, noised the same way but at different channels —
+    # accepted, and it must be, or every CI run flakes.
+    other = bytearray(base)
+    other[4] = 11
+    other[13] = 19
+    assert_same_picture(control, (png(base), png(bytes(other))), "same picture")
+
+    # A glyph painted somewhere else: background where ink was. Refused.
+    moved = bytearray(base)
+    moved[4:8] = bytes([255, 255, 255, 255])
+    raised = None
+    try:
+        assert_same_picture(control, (png(base), png(bytes(moved))), "a moved run")
+    except AssertionError as exc:
+        raised = str(exc)
+    check(raised is not None, "frames: a channel moved by more than the floor FAILS")
+    check(
+        raised is not None and "245" in raised and "1" in raised,
+        "frames: and the message states both the disagreement and the floor",
+    )
+
+    # And a deterministic rasteriser reduces this to byte-identity exactly.
+    exact = [png(base), png(base)]
+    off_by_one = bytearray(base)
+    off_by_one[2] = 31
+    raised = None
+    try:
+        assert_same_picture(exact, (png(base), png(bytes(off_by_one))), "on a GPU")
+    except AssertionError as exc:
+        raised = str(exc)
+    check(
+        raised is not None,
+        "frames: with a measured floor of 0 the check IS byte-identity, so a "
+        "single-bit difference is still a failure on a deterministic host",
+    )
+
+    # Two captures is the minimum; one is not a measurement.
+    raised = None
+    try:
+        assert_same_picture([png(base)], (png(base), png(base)), "one capture")
+    except AssertionError as exc:
+        raised = str(exc)
+    check(raised is not None, "frames: a tolerance needs at least two captures")
 
 
 def test_pointer_reach_budget_parses_the_committed_file() -> None:

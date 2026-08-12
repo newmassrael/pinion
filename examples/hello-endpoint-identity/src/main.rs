@@ -63,7 +63,8 @@ use std::sync::{Arc, OnceLock};
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
-    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextAlign, TextStyle,
+    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextAlign,
+    TextOverflow, TextStyle,
 };
 use pinion_core::theme::{ColorRole, use_theme};
 use pinion_core::widget_core::{ExtraExternal, PrimarySurface};
@@ -211,22 +212,44 @@ fn hint_line() -> String {
 /// not a side effect of this round. (R1478 obligation-3b note: the two copies
 /// differ — this one takes `&str` and wraps its own `TextStyle` opinions
 /// per-call — and two is not the lift trigger.)
+/// The width a line of this panel is given: the window, less a gutter on each
+/// side.
+///
+/// ★ R1664 — a line whose ink is wider than the window it is centred in is
+/// SMEARED across the panel's edge, and it was: `hint_line` shapes 630px of ink
+/// inside a 520px window (110px past the right edge) because it names two
+/// environment variables, and `claim_line` joins that once a real socket path
+/// makes it long enough. Both are content the panel does not choose — an env
+/// var name and a filesystem path — against a window size it does
+/// ([`SizeStrategy::Fixed`]).
+const LINE_W: u32 = WIN_W - 2 * 16;
+
+/// One tagged, horizontally-centred line of text.
+///
+/// ★ R1664 — with a box and an overflow policy, which is what makes the run
+/// containable at all. `Rect::default()` plus a flex row lets the shaper's own
+/// intrinsic width win, so the box is whatever the string happens to need and
+/// "it does not fit" is not expressible; `Ellipsis` over an explicit
+/// [`LINE_W`] box makes the panel's edge the authority instead, and leaves the
+/// evidence that something was cut (R1654 — a hard `Clip` does not).
 fn tagged_centered_line(
     tag: impl Into<std::borrow::Cow<'static, str>>,
     text: String,
     style: TextStyle,
 ) -> Scene {
+    let rect = Rect::new(0, 0, LINE_W, 0);
     Scene::Container(
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
             text,
-            Rect::default(),
-            style,
+            rect,
+            style.with_overflow(TextOverflow::Ellipsis),
         ))])
         .with_tag(tag)
         .with_layout(
             LayoutStyle::new()
                 .flex(FlexDirection::Row)
-                .with_justify(JustifyContent::Center),
+                .with_justify(JustifyContent::Center)
+                .with_size(Size::px(LINE_W, 0)),
         ),
     )
 }

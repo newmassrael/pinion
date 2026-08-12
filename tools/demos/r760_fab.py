@@ -61,7 +61,7 @@ from rpc_verify import (  # noqa: E402
 )
 
 EXAMPLE = "hello-fab"
-VIEWPORT = (520, 260)
+VIEWPORT = (560, 260)
 TAGS = ["fab_small", "fab_standard", "fab_large", "fab_extended"]
 CAPTIONS = ["Small", "Standard", "Large", "Extended"]
 RADII = [12, 16, 28, 16]

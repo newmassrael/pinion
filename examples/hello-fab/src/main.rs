@@ -45,7 +45,7 @@ use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
 use pinion_core::style::{
-    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
+    AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, SizeValue, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
@@ -59,7 +59,13 @@ use pinion_widget_paint::button::{
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 vello_renderer_impl!(HelloFabRenderer, HelloFabRendererError);
 
-const WIN_W: u32 = 520;
+/// ★ R1664 — 560, not 520. The extended FAB became content-sized (see
+/// [`fab_size`]) and the row it sits in grew to 536px, so the row itself then
+/// overhung the window by 16 — the same defect one level out, and the
+/// containment gate reported it as such the moment the first one was repaired.
+/// A window that cannot hold its own row is the shape this file is now free of
+/// at both levels.
+const WIN_W: u32 = 560;
 const WIN_H: u32 = 260;
 /// [`ThemeProvider`](pinion_core::theme::ThemeProvider) cache key — the `"app"` convention shared across the
 /// example gallery.
@@ -77,12 +83,11 @@ const CAPTIONS: [&str; N] = ["Small", "Standard", "Large", "Extended"];
 /// FAB has no text to enrich from, so these are authoritative.
 const NAMES: [&str; N] = ["Add", "Edit", "Create", "another declarative toolkit"];
 
-/// Per-variant FAB edge size (square; the extended FAB's width is fixed
-/// wider to hold its label, see [`fab_size`]).
+/// Per-variant FAB edge size (square; the extended FAB hugs its label — see
+/// [`fab_size`], where R1664 replaced a fixed width with content sizing).
 const SMALL: u32 = 40;
 const STANDARD: u32 = 56;
 const LARGE: u32 = 96;
-const EXTENDED_W: u32 = 168;
 /// M3 FAB corner radii: small 12, standard 16, large 28, extended 16.
 const RADII: [u32; N] = [12, 16, 28, 16];
 /// Icon / label font size per variant.
@@ -91,6 +96,9 @@ const FONTS: [u32; N] = [18, 24, 36, 16];
 /// the extended FAB's icon + label.
 const ICON: &str = "+";
 const EXTENDED_LABEL: &str = "+  another declarative toolkit";
+
+/// M3 extended-FAB horizontal padding (16dp each side).
+const EXTENDED_PAD_X: u32 = 16;
 
 /// Cached projection: one [`ButtonState`] per FAB.
 type FabStates = [ButtonState; N];
@@ -108,14 +116,27 @@ const fn fab_level(state: ButtonState) -> u8 {
     }
 }
 
-/// The FAB's painted size: a square for the icon variants, a fixed wider
-/// pill for the extended variant.
+/// The FAB's painted size: a square for the icon variants, and for the extended
+/// variant a pill that is **as wide as its label**.
+///
+/// ★ R1664 — `SizeValue::Auto` on the width, not a constant. That constant
+/// was 168px and the label shapes 216px of ink, so the run started 24px to the
+/// LEFT of the button and ran 48px past its right edge: the pill's own text was
+/// painted mostly outside the pill. It had been sitting in
+/// `docs/containment-budget.tsv` as this surface's one budgeted escape, and it
+/// is also what made the live-pixel check flaky — a sample point a fixed inset
+/// in from the left edge lands on white glyph rather than accent fill, on
+/// whichever variant that host's rasteriser happens to spread the ink over.
+///
+/// Content-sized is also what M3 specifies for the extended FAB (the icon-only
+/// variants have fixed 40/56/96 sizes; the extended one hugs its label), so this
+/// is the reference behaviour rather than a repair that departs from it.
 fn fab_size(i: usize) -> Size {
     match i {
         0 => Size::px(SMALL, SMALL),
         1 => Size::px(STANDARD, STANDARD),
         2 => Size::px(LARGE, LARGE),
-        _ => Size::px(EXTENDED_W, STANDARD),
+        _ => Size::auto().with_height(SizeValue::Px(STANDARD)),
     }
 }
 
@@ -131,11 +152,21 @@ fn view_fab(i: usize, state: ButtonState, theme: &Theme) -> Scene {
     } else {
         0.0
     };
-    let style = ButtonStyle::m3_default(FAB_TAGS[i])
+    let mut style = ButtonStyle::m3_default(FAB_TAGS[i])
         .with_corner_radius(RADII[i])
         .with_size(fab_size(i))
         .with_label_font_size_px(FONTS[i])
         .with_elevation(fab_level(state));
+    if i == EXTENDED {
+        // ★ R1664 — M3's 16dp horizontal padding, which is what turns a
+        // content-sized pill into the extended FAB's shape rather than a box
+        // drawn tight around the glyphs. With the width `Auto` the label is
+        // exactly the button, so the padding is the whole difference between
+        // "the text fits" and "the text is inset the way the reference insets
+        // it" — and it is also what leaves accent fill either side of the
+        // label for the live-pixel check to find.
+        style = style.with_padding(Rect::new(EXTENDED_PAD_X, 0, EXTENDED_PAD_X, 0));
+    }
     let label = if i == EXTENDED { EXTENDED_LABEL } else { ICON };
     view_button(label, state, hover_progress, &colors, &style)
 }

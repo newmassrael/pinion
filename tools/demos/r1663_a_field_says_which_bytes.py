@@ -35,7 +35,13 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from rpc_verify import RpcError, RpcSubprocess, assert_eq, run_demo  # noqa: E402
+from rpc_verify import (  # noqa: E402
+    RpcError,
+    RpcSubprocess,
+    assert_eq,
+    assert_router_press_moves,
+    run_demo,
+)
 
 EXAMPLE = "hello-packet-view"
 VIEW = "packet_view"
@@ -291,6 +297,66 @@ def body() -> None:
             q(app, MAP, "field_count"), len(fields), "and the first one comes back"
         )
         CHECKS.extend(["re-decode", "decode differs", "decode returns"])
+
+        # ── (I) ★★★★★ the ROUTER, which is the path a person's hand takes ──
+        #
+        # Everything above this line drives the oracle by name, and every one of
+        # those assertions passed on a screen where no press anywhere in the
+        # window did anything at all. This section presses WINDOW POINTS through
+        # `scene/click {at}` — the one wire verb that goes through the §5.35
+        # router — and asserts the screen moved.
+        banner("I — a real press, through the router, on every kind of target")
+        # A message row, a decode row, a byte cell, a saved filter and a layer
+        # chevron: the five things `Hit` distinguishes, so a press that resolved
+        # to the widget but reached the wrong sub-region shows up as the wrong
+        # one of these moving.
+        # The decode row and the byte cell are chosen so that pressing the second
+        # cannot land on the field the first one selected — otherwise "nothing
+        # moved" would be the correct answer and this check would be asserting
+        # the press was DELIVERED against a read that cannot tell.
+        # The owner of a byte is the INNERMOST field covering it (R1663's
+        # `owner_at`), so a parent field's declared `at` is not a byte that
+        # selects the parent. The target is therefore derived from the same
+        # inverse read section C proves, not from the forward table.
+        row_field = fields[1]["path"]
+        byte_index = next(
+            b
+            for b in range(64)
+            if (owner := q(app, MAP, f"owner.0.{b}")) is not None and owner != row_field
+        )
+        targets = [
+            ("a message row", "pv.list.row.2", lambda: q(app, VIEW, "selected_row")),
+            (
+                "a decode row",
+                f"pv.tree.field.{row_field}",
+                lambda: q(app, VIEW, "selected_field"),
+            ),
+            (
+                f"a byte cell owned by `{q(app, MAP, f'owner.0.{byte_index}')}`",
+                f"pv.bytes.cell.{byte_index}",
+                lambda: q(app, VIEW, "selected_field"),
+            ),
+            ("a saved filter", "pv.filter.saved.1", lambda: q(app, VIEW, "saved")),
+            ("a layer chevron", "pv.tree.layer.l1", lambda: q(app, VIEW, "folded")),
+        ]
+        for what, tag, read in targets:
+            moved = assert_router_press_moves(app, tag, read, f"I: {what}")
+            ok(f"a router press on {what} moves the screen", True)
+            print(f"[demo]   {tag}: -> {moved!r}")
+
+        # ★ And the negative control that makes the five above mean something: a
+        # press on a decorative strip resolves to the same widget and correctly
+        # changes nothing, so "the screen moved" is a fact about WHERE the press
+        # landed and not about pressing at all.
+        before = q(app, VIEW, "selected_row")
+        app.request("scene/click", {"button": "left", "at": {"x": 700, "y": 6}})
+        app.tick(16)
+        assert_eq(
+            q(app, VIEW, "selected_row"),
+            before,
+            "I: ★ a press on the app bar's dead space selects nothing",
+        )
+        CHECKS.append("router press on dead space")
 
         # The hit test the painter shares, driven through the wire: the point a
         # byte cell was painted at answers as that byte.

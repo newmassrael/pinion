@@ -94,6 +94,7 @@ from rpc_verify import (  # noqa: E402
     Png,
     RpcSubprocess,
     assert_eq,
+    assert_same_picture,
     read_png_rgba8,
     run_demo,
     wait_paint_beyond,
@@ -313,6 +314,13 @@ def body() -> None:
         paint_after(tf, lambda: None)
         derived_at = text_stats(tf)
         first_visit = capture(tf, "row2_first")
+        # ★ R1664 — the rasteriser's own noise floor, measured HERE: one
+        # unchanged screen captured twice, nothing in between. On this host's
+        # GPU that is zero and the assertion below is byte-identity; under the
+        # software Vulkan the CI sweep runs on it is a handful of bytes of
+        # sub-pixel glyph coverage, which is what made this demo red there for
+        # many runs while passing locally.
+        control = [first_visit] + [capture(tf, f"row2_control{k}") for k in range(3)]
 
         # Leave and come back. The labels on the return trip are served
         # from draw lists derived on the way in, and the counter says so.
@@ -334,13 +342,15 @@ def body() -> None:
             (first_visit.width, first_visit.height),
             "both captures are the same surface",
         )
-        assert second_visit.pixels == first_visit.pixels, (
-            "and the replayed frame is byte-identical to the one that "
-            "derived the list — a transcription slip in the derivation (a "
-            "swapped x/y, a run dropped, run-relative positions kept where "
-            "layout-absolute were meant) differs exactly here, and nowhere "
-            "in the counters"
+        floor = assert_same_picture(
+            control,
+            (first_visit, second_visit),
+            "the replayed frame is the same picture as the one that derived "
+            "the list — a transcription slip in the derivation (a swapped x/y, "
+            "a run dropped, run-relative positions kept where layout-absolute "
+            "were meant) differs exactly here, and nowhere in the counters",
         )
+        print(f"[demo] rasteriser self-disagreement this run: {floor} per channel")
         final = text_stats(tf)
         assert final["run_builds"] <= final["shapes"], (
             "the bound holds at the end as it did at the start"

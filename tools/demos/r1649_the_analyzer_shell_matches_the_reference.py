@@ -46,8 +46,10 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
+    abs_rects_of,
     assert_declared_channels_are_true,
     assert_eq,
+    assert_router_press_moves,
     find_by_tag,
     run_demo,
     texts_of,
@@ -122,9 +124,15 @@ def at(tf: RpcSubprocess, tag: str) -> str:
     carrying a second copy of the geometry could not notice a drift between the
     painter and the hit test, which is the whole property section (K) holds.
     """
-    node = find_by_tag(paint(tf), tag)
-    assert node is not None and isinstance(node.get("rect"), dict), f"{tag} is painted"
-    return centre(node["rect"])
+    # ★ R1664 — WINDOW-absolute, via `abs_rects_of`. A node inside a `Scroll`
+    # carries a scroll-LOCAL rect, and R1662 made this shell's board a scroll
+    # pane — so `find_by_tag(...)["rect"]` stopped being the place a pointer
+    # reaches and every press aimed by this helper landed on nothing. The
+    # docstring above was still true of the intent and false of the code.
+    rects = abs_rects_of(paint(tf))
+    assert tag in rects, f"{tag} is painted"
+    x, y, w, h = rects[tag]
+    return centre({"x": x, "y": y, "w": w, "h": h})
 
 
 def cell_of(grid: dict, cid: str) -> tuple[int, int]:
@@ -410,10 +418,13 @@ def body() -> None:
         assert probed > 400 and named > 200, f"K: the sweep covers the window: {named}/{probed}"
 
         words = q(tf, "affordances").split(",") + q(tf, "steppers").split(",")
+        # ★ R1664 — WINDOW-absolute rects, for the reason `at` states: a node
+        # inside the board's scroll pane carries a scroll-LOCAL rect, so this
+        # population was aiming presses at coordinates nothing is painted at
+        # (a card control reported y=20, which is the app bar).
         tagged = [
-            (node["tag"], node["rect"])
-            for _p, node in walk_nodes(snap)
-            if isinstance(node.get("rect"), dict) and isinstance(node.get("tag"), str)
+            (tag, {"x": x, "y": y, "w": w, "h": h})
+            for tag, (x, y, w, h) in abs_rects_of(snap).items()
         ]
         controls = [
             (tag, rect)
@@ -439,10 +450,17 @@ def body() -> None:
         # ★ And the deliberate asymmetry: a remedy nobody can act on is PROSE.
         # It carries a tag, because a tag is an address and not a claim of
         # clickability, and pressing where it is drawn selects the card.
-        inert = find_by_tag(snap, "card.throughput#1.remedy")
-        assert inert is not None, "K: the board has a non-actionable remedy on it"
+        assert find_by_tag(snap, "card.throughput#1.remedy") is not None, (
+            "K: the board has a non-actionable remedy on it"
+        )
+        # ★ R1664 — through `at`, not `find_by_tag(...)["rect"]`. This line was
+        # the third site reading a node's own rect as a window position, and it
+        # is the one the other two repairs left behind: the board became a scroll
+        # pane in R1662, so the remedy's own rect is scroll-LOCAL and this press
+        # landed on the app bar. Naming the tag instead of carrying a rect is
+        # what makes a fourth site impossible rather than merely unlikely.
         assert_eq(
-            inv(tf, "point", centre(inert["rect"])),
+            inv(tf, "point", at(tf, "card.throughput#1.remedy")),
             "card.throughput#1",
             "K: ★ an encrypted link's remedy is drawn but is not a control",
         )
@@ -545,6 +563,37 @@ def body() -> None:
             "TransportClock rather than being a fourth state to keep in step",
         )
         assert "0..=1000" in refused(tf, "seek", "1400"), "M: outside the window"
+
+        # ── (N) ★★★★★ and a REAL press, through the §5.35 router ─────────
+        #
+        # Everything above — including section K, which is the one about being
+        # pressable — drives `invoke("point")` + `invoke("send")`, the shell's own
+        # oracle. R1649.1 measured what that hides: this shell was dead to a
+        # mouse at every point in the window while its 118 assertions passed,
+        # because the router has to *find* the widget from a bare coordinate and
+        # the oracle is handed the answer. R1663 then shipped a sibling screen
+        # with the same defect, which says the lesson did not survive as prose.
+        #
+        # `scene/click {at}` is the wire verb that goes through the router. Two
+        # targets, in different panes, so a repair that happens to fix one
+        # region does not read as coverage of the screen.
+        assert_router_press_moves(
+            tf, "shell.rail.stream", lambda: q(tf, "nav"), "N: a rail seat"
+        )
+        assert_router_press_moves(
+            tf, "shell.subbar.edit", lambda: q(tf, "editing"), "N: the layout-edit toggle"
+        )
+        # ★ The negative control: the same verb, a point that is decoration,
+        # nothing moves. Without it "the screen moved" could be an artefact of
+        # pressing at all rather than a fact about where.
+        before = (q(tf, "nav"), q(tf, "editing"))
+        tf.request("scene/click", {"button": "left", "at": {"x": 2, "y": 2}})
+        tf.tick(16)
+        assert_eq(
+            (q(tf, "nav"), q(tf, "editing")),
+            before,
+            "N: ★ a press in the app bar's corner moves nothing",
+        )
 
 
 run_demo("R1649 the analyzer shell matches the reference", body)
