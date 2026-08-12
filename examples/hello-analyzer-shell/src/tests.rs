@@ -12,45 +12,228 @@ use pinion_core::widgets::tile_grid::Tile;
 use pinion_core::widgets::transport::TransportStatus;
 
 use super::{
-    BarChip, DEFS, GRID_COLS, KEYMAP, OVERVIEW, RAIL, SECTIONS, SOURCES, STEPPERS, SubChip, TABS,
-    cell_at, cell_rect, def_of, kind_of, parse_state, remedy_label, remedy_word, state_sentence,
-    transport_word,
+    BarChip, GRID_COLS, KEYMAP, SOURCES, STEPPERS, SubChip, TABS, cell_at, cell_rect, chrome,
+    def_of, kind_of, kind_span, parse_state, remedy_label, remedy_word, spec, state_sentence,
+    transport_word, type_ink,
 };
 
-/// R1649 — the catalogue is twelve kinds, distinct, each in a listed section.
-///
-/// The palette's footer states the count, so a kind added without a section
-/// would be offered nowhere and the two numbers on screen would disagree.
-#[test]
-fn r1649_the_catalogue_is_twelve_kinds_in_listed_sections() {
-    assert_eq!(DEFS.len(), 12, "the palette's footer states this count");
-    let mut seen = std::collections::BTreeSet::new();
-    for def in DEFS {
-        assert!(seen.insert(def.kind), "{} appears twice", def.kind);
-        assert!(
-            SECTIONS.iter().any(|(key, _)| *key == def.section),
-            "{} is in section {:?}, which the palette does not list",
-            def.kind,
-            def.section
-        );
-        assert!(!def.label.is_empty() && !def.desc.is_empty());
-        assert!(def.cols >= 1 && def.cols <= GRID_COLS, "{} fits", def.kind);
-        assert!(def.rows >= 1, "{} has height", def.kind);
-        assert!(!def.chrome.is_empty(), "{} offers something", def.kind);
+/// A palette whose roles are all distinct, so a test that asks "did this take
+/// the fallback ink" gets an answer rather than a coincidence.
+fn probe_palette() -> super::Palette {
+    use pinion_core::style::Color;
+    let mut n = 0_u8;
+    let mut next = || {
+        n += 1;
+        Color::rgb(n, n, n)
+    };
+    super::Palette {
+        ink: next(),
+        muted: next(),
+        accent: next(),
+        on_accent: next(),
+        accent_fg: next(),
+        canvas: next(),
+        panel: next(),
+        raised: next(),
+        high: next(),
+        outline: next(),
+        grid: next(),
+        warn: next(),
     }
 }
 
-/// R1649 — the opening layout names catalogue kinds and fits the grid.
+/// R1668 — the catalogue is thirteen entries in two tiers, each in a listed
+/// section, and each section is homogeneous in tier.
+///
+/// The palette's footer states **both** counts, so an entry that moved tier
+/// without moving section would put two numbers on the screen that disagree
+/// with the list under them.
 #[test]
-fn r1649_the_overview_layout_is_a_legal_board() {
-    assert_eq!(OVERVIEW.len(), 3, "three placed of twelve offered");
-    for (kind, col, _row) in OVERVIEW {
-        let def = def_of(kind).unwrap_or_else(|| panic!("{kind} is in the catalogue"));
-        assert!(
-            col + def.cols <= GRID_COLS,
-            "{kind} at column {col} would run off a {GRID_COLS}-column grid"
+fn r1668_the_catalogue_is_four_placeable_and_nine_reserved() {
+    assert_eq!(spec::CATALOGUE.len(), 13);
+    assert_eq!(spec::placeable_count(), 4, "the palette's footer says this");
+    assert_eq!(spec::reserved_count(), 9, "and this");
+
+    let mut seen = std::collections::BTreeSet::new();
+    let mut codes = std::collections::BTreeSet::new();
+    for def in spec::CATALOGUE {
+        assert!(seen.insert(def.kind), "{} appears twice", def.kind);
+        assert!(codes.insert(def.code), "{} shares its code", def.kind);
+        let section = spec::SECTIONS
+            .iter()
+            .find(|(key, ..)| *key == def.section)
+            .unwrap_or_else(|| panic!("{} is in an unlisted section", def.kind));
+        assert_eq!(
+            section.2, def.tier,
+            "{} sits in a {:?} section at tier {:?}; the heading a reader scans \
+             carries the tier, so a mixed section is a heading that lies",
+            def.kind, section.2, def.tier
+        );
+        assert!(!def.label.is_empty() && !def.gist.is_empty());
+        assert_eq!(
+            def.tier == spec::Tier::Reserved,
+            !def.reserved_for.is_empty(),
+            "{} states a booking iff it is reserved",
+            def.kind
         );
     }
+}
+
+/// R1668 — the opening board places **every** placeable entry, legally.
+///
+/// Every, not a subset: the palette's footer counts placed against placeable,
+/// and the reference's screen opens with nothing left to offer for this
+/// release. A board holding three of four is a different claim.
+#[test]
+fn r1668_the_opening_board_places_every_placeable_entry() {
+    assert_eq!(spec::BOARD.len(), spec::placeable_count());
+    let mut placed = std::collections::BTreeSet::new();
+    for tile in spec::BOARD {
+        let def = def_of(tile.kind).unwrap_or_else(|| panic!("{} is in the catalogue", tile.kind));
+        assert_eq!(
+            def.tier,
+            spec::Tier::Placeable,
+            "{} is on the opening board and reserved",
+            tile.kind
+        );
+        assert!(placed.insert(tile.kind), "{} is placed twice", tile.kind);
+        assert!(
+            tile.col + tile.cols <= GRID_COLS,
+            "{} at column {} would run off a {GRID_COLS}-column grid",
+            tile.kind,
+            tile.col
+        );
+        assert!(tile.cols >= 1 && tile.rows >= 1, "{} has extent", tile.kind);
+        assert_eq!(kind_span(tile.kind), Some((tile.cols, tile.rows)));
+    }
+    for def in spec::CATALOGUE
+        .iter()
+        .filter(|w| w.tier == spec::Tier::Placeable)
+    {
+        assert!(
+            placed.contains(def.kind),
+            "{} is placeable and the opening board leaves it off",
+            def.kind
+        );
+    }
+    // And no two tiles overlap -- checked here rather than trusted, because the
+    // board is a hand-written arrangement and an overlap paints one card on top
+    // of another with nothing to say so.
+    for (a, b) in spec::BOARD.iter().zip(spec::BOARD.iter().skip(1)) {
+        let _ = (a, b);
+    }
+    let mut cells = std::collections::BTreeSet::new();
+    for tile in spec::BOARD {
+        for col in tile.col..tile.col + tile.cols {
+            for row in tile.row..tile.row + tile.rows {
+                assert!(
+                    cells.insert((col, row)),
+                    "{} overlaps another tile at cell ({col}, {row})",
+                    tile.kind
+                );
+            }
+        }
+    }
+}
+
+/// R1668 — a reserved entry states a booking, and the rail's reserved seats do
+/// too.
+///
+/// The screen's whole claim is that a later release's work is *visible* rather
+/// than absent, and a seat that is merely grey states nothing. Each booking is
+/// what the shell hands to the framework's availability channel, so this is
+/// also what `scene/disabled` will report.
+#[test]
+fn r1668_every_reserved_seat_names_what_it_waits_for() {
+    let reserved: Vec<_> = spec::CATALOGUE
+        .iter()
+        .filter(|w| w.tier == spec::Tier::Reserved)
+        .collect();
+    assert_eq!(reserved.len(), 9);
+    for def in reserved {
+        assert!(
+            def.reserved_for.starts_with("requirement "),
+            "{} is booked under {:?}, which names no requirement",
+            def.kind,
+            def.reserved_for
+        );
+    }
+    let locked: Vec<_> = spec::RAIL
+        .iter()
+        .filter_map(|seat| seat.reserved_for.map(|why| (seat.key, why)))
+        .collect();
+    assert_eq!(locked.len(), 2, "the reference locks two rail seats");
+    for (key, why) in locked {
+        assert!(
+            why.starts_with("requirement "),
+            "the {key} seat is booked under {why:?}, which names no requirement"
+        );
+    }
+    assert!(
+        spec::RAIL
+            .iter()
+            .any(|seat| seat.key == spec::RAIL_ACTIVE && seat.reserved_for.is_none()),
+        "the seat this screen IS cannot be a reserved one",
+    );
+}
+
+/// R1668 — the header controls the specification names all map onto an
+/// affordance this shell can paint.
+#[test]
+fn r1668_every_named_header_control_is_one_the_shell_has() {
+    let painted = chrome();
+    assert_eq!(painted.len(), spec::CARD_CHROME.len());
+    for (name, affordance) in spec::CARD_CHROME.iter().zip(painted) {
+        assert_eq!(*name, affordance.wire(), "the two vocabularies agree");
+    }
+}
+
+/// R1668 — every message type on a specified row is one the legend colours.
+///
+/// The ink is looked up by position in the legend, so a row carrying an
+/// unlisted type would be drawn in the muted ink; this asserts no row is.
+#[test]
+fn r1668_every_streamed_type_is_one_the_legend_lists() {
+    for (_, kind, ..) in spec::STREAM_ROWS {
+        assert!(
+            spec::STREAM_TYPES.contains(kind),
+            "a row carries type {kind:?}, which the legend does not list"
+        );
+    }
+    let palette = probe_palette();
+    let muted = palette.muted;
+    for kind in spec::STREAM_TYPES {
+        assert_ne!(
+            type_ink(kind, palette),
+            muted,
+            "{kind:?} is in the legend and takes the fallback ink"
+        );
+    }
+    assert_eq!(
+        type_ink("not-a-type", palette),
+        muted,
+        "an unlisted type takes the fallback rather than another type's colour",
+    );
+}
+
+/// R1668 — the selected decode row's byte span is inside the bytes drawn, and
+/// is not empty.
+///
+/// The law screen B is built on, held here too: what is drawn lit is what the
+/// map says the selection occupies. A span past the end would light nothing and
+/// look exactly like a selection with no bytes.
+#[test]
+fn r1668_the_lit_span_is_inside_the_bytes_it_lights() {
+    let (start, end) = spec::DECODE_SELECTED_SPAN;
+    let total = spec::DECODE_BYTES.len() * 4;
+    assert!(start < end, "an empty span lights nothing");
+    assert!(end <= total, "the span runs past the bytes drawn");
+    assert!(
+        spec::DECODE_SELECTED < spec::DECODE_ROWS.len(),
+        "the selected row is one of the rows",
+    );
+    let (depth, ..) = spec::DECODE_ROWS[spec::DECODE_SELECTED];
+    assert!(depth > 0, "a layer heading is not a field and has no bytes");
 }
 
 /// R1649 — a card id carries its kind, so a definition is recoverable without
@@ -254,17 +437,18 @@ fn r1649_the_sources_are_a_set_the_shell_opens_within() {
     );
 }
 
-/// R1649 — the catalogue exercises every affordance, in both directions.
+/// R1668 — the board's chrome is UNIFORM, deliberately, and the wire's refusal
+/// path still has a case to demonstrate on.
 ///
-/// The second half is what gives the wire's refusal path a case to demonstrate:
-/// a catalogue where every kind offers an affordance can never show it being
-/// refused. R1648's first draft failed exactly this, and its own test caught it.
+/// R1649 made the chrome vary between kinds so that a refusal could be shown at
+/// all, and its own test pinned that. The reference does not: every placed card
+/// carries the same four controls, and a uniform board is what makes a missing
+/// control legible. So the variation goes and the refusal case moves to the one
+/// this round introduced -- a reserved kind, which the palette will not place.
+/// That is a better case anyway: it refuses for a reason a person can read.
 #[test]
-fn r1649_the_catalogue_exercises_every_affordance_in_both_directions() {
-    let mut offered = std::collections::BTreeSet::new();
-    for def in DEFS {
-        offered.extend(def.chrome.iter().copied());
-    }
+fn r1668_the_chrome_is_uniform_and_a_refusal_is_still_demonstrable() {
+    let offered: std::collections::BTreeSet<_> = chrome().into_iter().collect();
     assert_eq!(
         offered.len(),
         CardAffordance::ARMS,
@@ -274,27 +458,33 @@ fn r1649_the_catalogue_exercises_every_affordance_in_both_directions() {
             .filter(|a| !offered.contains(a))
             .collect::<Vec<_>>()
     );
-    // ★ `Close` is UNIVERSAL by design — every widget in the reference tool has
-    // a ✕, and a card a person cannot get rid of is not a thing that shell
-    // offers. Stated here rather than left as an accident of the table, because
-    // the check below would otherwise read as "nobody withholds close YET".
     assert!(
-        DEFS.iter()
-            .all(|d| d.chrome.contains(&CardAffordance::Close)),
-        "every widget kind can be closed"
+        offered.contains(&CardAffordance::Close),
+        "a card a person cannot get rid of is not a thing this shell offers",
     );
-    // The other three must each have a kind that withholds them, or the wire's
-    // refusal path has no case to demonstrate on. R1648's first draft failed
-    // exactly this for `Settings`, and its own test caught it.
-    for affordance in CardAffordance::ALL {
-        if affordance == CardAffordance::Close {
-            continue;
-        }
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = super::use_shell_state();
+        let reserved = spec::CATALOGUE
+            .iter()
+            .find(|w| w.tier == spec::Tier::Reserved)
+            .expect("nine of them");
+        let refusal = super::ShellOracle::add(&state, reserved.kind)
+            .expect_err("a reserved kind is not placed");
+        let said = format!("{refusal:?}");
         assert!(
-            DEFS.iter().any(|d| !d.chrome.contains(&affordance)),
-            "every kind offers {affordance:?}, so nothing can refuse it"
+            said.contains(reserved.reserved_for),
+            "the refusal is {said:?} and does not say what it is waiting for",
         );
-    }
+        // And a placeable one is placed, so the refusal is about the tier and
+        // not about the path being broken.
+        let placeable = spec::CATALOGUE
+            .iter()
+            .find(|w| w.tier == spec::Tier::Placeable)
+            .expect("four of them");
+        super::ShellOracle::add(&state, placeable.kind).expect("the palette offers it");
+    });
 }
 
 /// R1649.1 — ★★ a REAL pointer reaches this surface.
@@ -360,7 +550,7 @@ fn r1649_the_published_vocabularies_have_no_repeats() {
         assert_eq!(seen.len(), words.len());
     };
     distinct("steppers", STEPPERS.iter().map(|(v, _)| *v).collect());
-    distinct("rail", RAIL.iter().map(|(k, _)| *k).collect());
+    distinct("rail", spec::RAIL.iter().map(|seat| seat.key).collect());
     distinct("tabs", TABS.to_vec());
     distinct("keymap", KEYMAP.iter().map(|(c, _)| *c).collect());
 }
@@ -451,7 +641,7 @@ fn r1662_a_board_taller_than_the_canvas_is_reachable_by_scrolling() {
         // Enough cards that the board outgrows the canvas whatever the opening
         // layout holds: the canvas is a fixed height and each row has a pitch.
         for _ in 0..12 {
-            super::ShellOracle::add(&state, DEFS[0].kind).expect("the palette offers it");
+            super::ShellOracle::add(&state, spec::BOARD[0].kind).expect("the palette offers it");
         }
         let paint = || {
             let mut scene = super::view((), pinion_core::Frame::default());

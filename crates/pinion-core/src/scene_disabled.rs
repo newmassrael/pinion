@@ -66,9 +66,10 @@
 //! reports each disabled node's [`DisabledInk`], so "declared disabled, ink
 //! unchanged" is a fact an agent reads rather than a surprise it discovers.
 //!
-//! [`LayoutStyle::resolved_disabled`]: crate::style::LayoutStyle::resolved_disabled
+//! [`LayoutStyle::resolved_disabled`]: crate::style::LayoutStyle::resolved_unavailable
 
 use crate::Scene;
+use crate::availability::Unavailable;
 use crate::style::{BoxStyle, Color, PathStyle, TextStyle};
 use crate::widgets::interaction::DISABLED;
 
@@ -121,7 +122,7 @@ pub struct DisabledNode {
     /// The disabled node's own tag. Untagged disabled nodes are not reported —
     /// they cannot be addressed, so a row for one would name nothing.
     pub tag: String,
-    /// The node carries its own [`disabled`](crate::style::LayoutStyle::disabled)
+    /// The node carries its own [`declaration`](crate::style::LayoutStyle::unavailable)
     /// declaration — the toolkit's `WA_ForceDisabled`. True and [`Self::declared_by`] `Some` together mean a
     /// self-disabled node that also sits inside a disabled region, so
     /// re-enabling the region leaves this one disabled.
@@ -131,10 +132,20 @@ pub struct DisabledNode {
     pub declared_by: Option<String>,
     /// What the cascade did to this node's ink.
     pub ink: DisabledInk,
+    /// (R1668) **Why** — the reason of whichever declaration reached this node:
+    /// its own when [`self_declared`](Self::self_declared), otherwise the one
+    /// [`declared_by`](Self::declared_by) named.
+    ///
+    /// Always present, because a node in this census is disabled and every
+    /// declaration carries a reason — possibly
+    /// [`UnavailableKind::Unstated`](crate::availability::UnavailableKind::Unstated),
+    /// which is the arm that makes "declared inert, said nothing" a number
+    /// rather than a silence.
+    pub reason: Unavailable,
 }
 
 /// Resolve the inherited disabled property over a produced paint scene: record
-/// [`resolved_disabled`](crate::style::LayoutStyle::resolved_disabled) on every
+/// [`resolved_unavailable`](crate::style::LayoutStyle::resolved_unavailable) on every
 /// node, and fade the ink of each node the pass newly resolves as disabled.
 ///
 /// Idempotent. The fade fires on the `false -> true` transition of the derived
@@ -146,18 +157,25 @@ pub struct DisabledNode {
 /// style only inside a disabled region. A tree that declares nothing disabled
 /// pays the walk and writes `false` where `false` already was.
 pub fn resolve_disabled(scene: &mut Scene) {
-    cascade(scene, false, BACKDROP_FALLBACK);
+    cascade(scene, None, BACKDROP_FALLBACK);
 }
 
-fn cascade(scene: &mut Scene, inherited: bool, backdrop: Color) {
+fn cascade(scene: &mut Scene, inherited: Option<&Unavailable>, backdrop: Color) {
     // R1554 — the backdrop for THIS node is what is behind it, so it is read
     // from the ancestors before the node's own fill can join it. A node's own
     // fill is what its CHILDREN sit on.
-    let effective = inherited || scene.declares_disabled();
+    //
+    // R1668 — a node's OWN reason wins over the region's. Re-enabling the
+    // region would leave a self-declared node inert, and for its own reason,
+    // so that is the reason it must be able to state.
+    let own = scene
+        .layout_style()
+        .and_then(|layout| layout.unavailable.clone());
+    let effective = own.or_else(|| inherited.cloned());
     let newly = if let Some(layout) = scene.layout_style_mut() {
-        let was = layout.resolved_disabled;
-        layout.resolved_disabled = effective;
-        effective && !was
+        let was = layout.resolved_unavailable.is_some();
+        layout.resolved_unavailable.clone_from(&effective);
+        effective.is_some() && !was
     } else {
         // `Scene::Effect` carries no sidecar and paints nothing.
         false
@@ -169,10 +187,10 @@ fn cascade(scene: &mut Scene, inherited: bool, backdrop: Color) {
     match scene {
         Scene::Container(c) => {
             for child in &mut c.children {
-                cascade(child, effective, child_backdrop);
+                cascade(child, effective.as_ref(), child_backdrop);
             }
         }
-        Scene::Scroll(s) => cascade(&mut s.content, effective, child_backdrop),
+        Scene::Scroll(s) => cascade(&mut s.content, effective.as_ref(), child_backdrop),
         Scene::Box(_)
         | Scene::Text(_)
         | Scene::Path(_)
@@ -349,13 +367,24 @@ fn fade_path_style(style: &mut PathStyle, backdrop: Color) {
 #[must_use]
 pub fn disabled_census(scene: &Scene) -> Vec<DisabledNode> {
     let mut out = Vec::new();
-    census(scene, None, &mut out);
+    census(scene, None, None, &mut out);
     out
 }
 
-fn census(scene: &Scene, declared_by: Option<&str>, out: &mut Vec<DisabledNode>) {
-    let self_declared = scene.declares_disabled();
-    if (self_declared || declared_by.is_some())
+fn census(
+    scene: &Scene,
+    declared_by: Option<&str>,
+    inherited: Option<&Unavailable>,
+    out: &mut Vec<DisabledNode>,
+) {
+    let own = scene
+        .layout_style()
+        .and_then(|layout| layout.unavailable.as_ref());
+    let self_declared = own.is_some();
+    // R1668 — the same precedence the cascade applies: the node's own reason
+    // when it has one, otherwise the region's.
+    let reason = own.or(inherited);
+    if let Some(reason) = reason
         && let Some(tag) = scene.tag()
     {
         out.push(DisabledNode {
@@ -363,6 +392,7 @@ fn census(scene: &Scene, declared_by: Option<&str>, out: &mut Vec<DisabledNode>)
             self_declared,
             declared_by: declared_by.map(str::to_owned),
             ink: ink_of(scene),
+            reason: reason.clone(),
         });
     }
     // The nearest declaring ancestor FOR THE CHILDREN: this node when it
@@ -375,10 +405,10 @@ fn census(scene: &Scene, declared_by: Option<&str>, out: &mut Vec<DisabledNode>)
     match scene {
         Scene::Container(c) => {
             for child in &c.children {
-                census(child, child_declarer, out);
+                census(child, child_declarer, reason, out);
             }
         }
-        Scene::Scroll(s) => census(&s.content, child_declarer, out),
+        Scene::Scroll(s) => census(&s.content, child_declarer, reason, out),
         Scene::Box(_)
         | Scene::Text(_)
         | Scene::Path(_)
@@ -416,6 +446,7 @@ mod tests {
         BACKDROP_FALLBACK, DisabledInk, disabled_census, fade_node, ink_of, resolve_disabled,
     };
     use crate::Scene;
+    use crate::availability::{Recourse, Unavailable, UnavailableKind};
     use crate::scene::{BoxNode, ContainerNode, Rect, TextNode};
     use crate::style::{BoxStyle, Color, LayoutStyle, TextStyle};
     use crate::widgets::interaction::DISABLED;
@@ -492,13 +523,160 @@ mod tests {
         let mut scene = Scene::Container(ContainerNode::new(vec![text("a")]));
         // Forge the derived half the way nothing in production can.
         if let Some(l) = find_mut(&mut scene, "a").layout_style_mut() {
-            l.resolved_disabled = true;
+            l.resolved_unavailable = Some(Unavailable::unstated());
         }
         resolve_disabled(&mut scene);
         assert!(
             !find(&scene, "a").is_disabled(),
             "no declaration anywhere, so the derived flag is cleared",
         );
+    }
+
+    // ----- R1668: the reason travels with the cascade -----
+
+    /// R1668 — a control deep inside a reserved region answers *why it is
+    /// inert* from its own resolved style, with no walk.
+    ///
+    /// This is the question the floor cannot answer at all: measured by
+    /// building and running the toolkit at 6.11, a control inside a disabled
+    /// region reports `isEnabled() == false`, `isEnabledTo` answers about a
+    /// segment the caller already picked, and the force-disabled attribute
+    /// separates self from inherited while naming nobody.
+    #[test]
+    fn r1668_a_descendant_reports_the_regions_reason_without_a_walk() {
+        let mut scene = Scene::Container(filled(
+            "root",
+            SURFACE,
+            vec![Scene::Container(
+                filled("panel", SURFACE, vec![text("control")]).with_layout(
+                    LayoutStyle::default().with_unavailable(Unavailable::reserved(
+                        "requirement 16, the second release",
+                    )),
+                ),
+            )],
+        ));
+        resolve_disabled(&mut scene);
+
+        let reason = find(&scene, "control")
+            .layout_style()
+            .and_then(|l| l.resolved_unavailable.clone())
+            .expect("the control is in a declared region");
+        assert_eq!(reason.kind(), UnavailableKind::Reserved);
+        assert_eq!(reason.detail(), "requirement 16, the second release");
+        assert_eq!(reason.recourse(), Recourse::AwaitRelease);
+        assert!(
+            find(&scene, "root")
+                .layout_style()
+                .and_then(|l| l.resolved_unavailable.as_ref())
+                .is_none(),
+            "the region's ancestor is outside it",
+        );
+    }
+
+    /// R1668 — a node that disables itself inside a disabled region reports
+    /// **its own** reason, because re-enabling the region would leave it inert
+    /// for that reason and no other.
+    #[test]
+    fn r1668_a_self_declared_node_keeps_its_own_reason_inside_a_region() {
+        let mut scene = Scene::Container(
+            filled(
+                "panel",
+                SURFACE,
+                vec![Scene::Text(
+                    TextNode::styled("x", Rect::default(), TextStyle::new().with_fg(INK))
+                        .with_tag("mine")
+                        .with_layout(
+                            LayoutStyle::default()
+                                .with_unavailable(Unavailable::permission("an operator")),
+                        ),
+                )],
+            )
+            .with_layout(
+                LayoutStyle::default().with_unavailable(Unavailable::reserved("release two")),
+            ),
+        );
+        resolve_disabled(&mut scene);
+
+        let mine = find(&scene, "mine")
+            .layout_style()
+            .and_then(|l| l.resolved_unavailable.clone())
+            .expect("declared");
+        assert_eq!(mine.kind(), UnavailableKind::Permission);
+        assert_eq!(mine.recourse(), Recourse::Authorize);
+
+        let census = disabled_census(&scene);
+        let row = census.iter().find(|d| d.tag == "mine").expect("in census");
+        assert!(row.self_declared);
+        assert_eq!(row.declared_by.as_deref(), Some("panel"));
+        assert_eq!(
+            row.reason.kind(),
+            UnavailableKind::Permission,
+            "the census agrees with the resolved style",
+        );
+    }
+
+    /// R1668 — `with_disabled(true)` still says the fact without the reason,
+    /// and that lands on an arm a census can count rather than a silence.
+    #[test]
+    fn r1668_a_reasonless_declaration_is_countable() {
+        let mut scene = Scene::Container(filled(
+            "root",
+            SURFACE,
+            vec![Scene::Text(
+                TextNode::styled("x", Rect::default(), TextStyle::new().with_fg(INK))
+                    .with_tag("quiet")
+                    .with_layout(LayoutStyle::default().with_disabled(true)),
+            )],
+        ));
+        resolve_disabled(&mut scene);
+
+        let census = disabled_census(&scene);
+        let row = census.iter().find(|d| d.tag == "quiet").expect("in census");
+        assert_eq!(row.reason.kind(), UnavailableKind::Unstated);
+        assert!(!row.reason.is_stated());
+        assert_eq!(
+            census.iter().filter(|d| !d.reason.is_stated()).count(),
+            1,
+            "a number, which is the point of the arm",
+        );
+    }
+
+    /// R1668 — a region declared by an **untagged** node still puts its
+    /// descendants in the census.
+    ///
+    /// Found by this round's change, and it was a real hole: the census
+    /// carried the declarer's *tag* down as the only inheritance, so an
+    /// untagged declaring container handed its children `None` and they were
+    /// omitted — while the cascade had faded them and the hit test refused to
+    /// descend into them. The accessibility assembler marks a node disabled
+    /// **iff** the census names it, so those controls were painted inert,
+    /// unreachable by pointer, and announced live.
+    #[test]
+    fn r1668_an_untagged_declarer_still_puts_its_region_in_the_census() {
+        let mut scene = Scene::Container(filled(
+            "root",
+            SURFACE,
+            vec![Scene::Container(
+                ContainerNode::new(vec![text("control")]).with_layout(
+                    LayoutStyle::default().with_unavailable(Unavailable::busy("an export")),
+                ),
+            )],
+        ));
+        resolve_disabled(&mut scene);
+
+        assert!(find(&scene, "control").is_disabled(), "the cascade agrees");
+        let census = disabled_census(&scene);
+        let row = census
+            .iter()
+            .find(|d| d.tag == "control")
+            .expect("a disabled control the assistive tree must be told about");
+        assert!(!row.self_declared);
+        assert_eq!(
+            row.declared_by, None,
+            "the declarer has no tag to name, and that is the only thing missing",
+        );
+        assert_eq!(row.reason.kind(), UnavailableKind::Busy);
+        assert_eq!(row.reason.detail(), "an export");
     }
 
     fn find_mut<'a>(scene: &'a mut Scene, tag: &str) -> &'a mut Scene {

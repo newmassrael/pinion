@@ -86,6 +86,26 @@ pub struct DisabledEntry {
     /// (an image, an `External` surface, an immediate-mode driver, a terminal
     /// grid). Inert and announced disabled either way.
     pub ink: &'static str,
+    /// (R1668) **Why** — the class of the declaration that reached this node:
+    /// `"precondition"`, `"permission"`, `"busy"`, `"reserved"`,
+    /// `"unsupported"`, or `"unstated"` when the declaration named no reason.
+    ///
+    /// The node's own class when `self_declared`, otherwise the region's. The
+    /// floor this is measured against has no such column on any of its four
+    /// disable surfaces, and its accessibility layer carries one bit.
+    pub reason: &'static str,
+    /// (R1668) The specific thing [`reason`](Self::reason) points at — the
+    /// condition, the authority, the holder, the release, the missing
+    /// capability. Empty when the declaration named no reason.
+    pub detail: String,
+    /// (R1668) What a person can do about it — `"satisfy"`, `"authorize"`,
+    /// `"wait"`, `"await_release"` or `"nothing"`.
+    ///
+    /// **Derived** from [`reason`](Self::reason), never declared, so an agent
+    /// and a screen cannot disagree about it. Published rather than left to the
+    /// reader because the mapping is the framework's answer, not a convention
+    /// each consumer re-invents.
+    pub recourse: &'static str,
 }
 
 /// Response payload for `scene/disabled`.
@@ -112,6 +132,9 @@ pub fn handle_scene_disabled(last_paint_scene: Option<&Scene>) -> Result<Value, 
             self_declared: d.self_declared,
             declared_by: d.declared_by,
             ink: d.ink.name(),
+            reason: d.reason.kind().name(),
+            detail: d.reason.detail().to_owned(),
+            recourse: d.reason.recourse().name(),
         })
         .collect();
     serde_json::to_value(DisabledOutcome { disabled }).map_err(RpcError::internal_error)
@@ -167,6 +190,84 @@ mod tests {
         assert_eq!(rows[1]["tag"], "inner");
         assert_eq!(rows[1]["self_declared"], false);
         assert_eq!(rows[1]["declared_by"], "group");
+    }
+
+    /// R1668 — the wire says why, and derives what to do about it.
+    ///
+    /// The two arms that matter most are the ones the floor cannot tell apart:
+    /// a widget reserved for a release that has not shipped, and one this build
+    /// will never have. Both are inert; only one will stop being.
+    #[test]
+    fn r1668_the_wire_separates_reserved_from_unsupported() {
+        use pinion_core::availability::Unavailable;
+
+        fn booked(tag: &'static str, reason: Unavailable) -> Scene {
+            Scene::Container(
+                ContainerNode::new(vec![])
+                    .with_tag(tag)
+                    .with_layout(LayoutStyle::new().with_unavailable(reason)),
+            )
+        }
+
+        let scene = Scene::Container(ContainerNode::new(vec![
+            booked("later", Unavailable::reserved("requirement 16")),
+            booked("never", Unavailable::unsupported("no such device here")),
+            region("quiet", vec![]),
+        ]));
+        let value = handle_scene_disabled(Some(&scene)).expect("ok");
+        let rows = value["disabled"].as_array().expect("array");
+        assert_eq!(rows.len(), 3);
+
+        assert_eq!(rows[0]["tag"], "later");
+        assert_eq!(rows[0]["reason"], "reserved");
+        assert_eq!(rows[0]["detail"], "requirement 16");
+        assert_eq!(rows[0]["recourse"], "await_release");
+
+        assert_eq!(rows[1]["tag"], "never");
+        assert_eq!(rows[1]["reason"], "unsupported");
+        assert_eq!(rows[1]["recourse"], "nothing");
+
+        // Same bool, same ink, same accessibility bit -- and the wire keeps
+        // them apart, which is the whole claim.
+        assert_eq!(rows[0]["ink"], rows[1]["ink"]);
+        assert_ne!(rows[0]["reason"], rows[1]["reason"]);
+        assert_ne!(rows[0]["recourse"], rows[1]["recourse"]);
+
+        // And a declaration that names no reason says exactly that rather than
+        // going missing.
+        assert_eq!(rows[2]["tag"], "quiet");
+        assert_eq!(rows[2]["reason"], "unstated");
+        assert_eq!(rows[2]["detail"], "");
+        assert_eq!(rows[2]["recourse"], "nothing");
+    }
+
+    /// R1668 — every member of the published vocabulary is one the reader
+    /// accepts, checked on the wire shape rather than on the enum alone.
+    #[test]
+    fn r1668_every_published_reason_is_a_readable_one() {
+        use pinion_core::availability::{Recourse, Unavailable, UnavailableKind};
+
+        for kind in UnavailableKind::ALL {
+            let scene = Scene::Container(
+                ContainerNode::new(vec![])
+                    .with_tag("one")
+                    .with_layout(LayoutStyle::new().with_unavailable(Unavailable::new(kind, "d"))),
+            );
+            let value = handle_scene_disabled(Some(&scene)).expect("ok");
+            let row = &value["disabled"][0];
+            let published = row["reason"].as_str().expect("a string");
+            assert_eq!(
+                UnavailableKind::from_name(published),
+                Some(kind),
+                "the wire published {published:?}, which its own reader rejects",
+            );
+            let recourse = row["recourse"].as_str().expect("a string");
+            assert_eq!(
+                Recourse::from_name(recourse),
+                Some(kind.recourse()),
+                "the wire published recourse {recourse:?}, which its own reader rejects",
+            );
+        }
     }
 
     #[test]

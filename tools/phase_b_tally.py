@@ -2252,9 +2252,23 @@ AXES = [
         # cannot say a slot is WRITABLE (R1566's item, two arms unchanged), so a
         # settable value is still two unrelated fields — `x` and `set_x` — with
         # nothing published to relate them.
-        "judged_at": 1642,
+        # R1668 re-judged and the number HELD at 72, which the tool asks for and
+        # does not require to move. Demanded by the tool (round-axis 11 -> 14 =
+        # +27%). What R1668 did to this surface: `scene/disabled` gained three
+        # fields, two of them a CLOSED vocabulary published in the wire census
+        # and proven -- on the wire, not only on the enum -- to be one its own
+        # reader accepts, and the third DERIVED and published rather than left
+        # for each client to recompute. Real, and this axis is not named for it:
+        # every gap the R1642 judgment listed is untouched -- method-to-type
+        # binding, version negotiation, a deprecation path, the freeze itself, a
+        # per-method error taxonomy, a census that reaches past `pinion-rpc`, a
+        # per-subscription filter, and a `SchemaChannel` that still cannot say a
+        # slot is WRITABLE. Adding a well-formed field to one method is the work
+        # this axis already scores; the eight items above are the work it is
+        # waiting on, and none of them moved.
+        "judged_at": 1668,
         "completion": 72,
-        "evidence_snapshot": {"example-name": 9, "round-axis": 11},
+        "evidence_snapshot": {"example-name": 9, "round-axis": 14},
                 # R1565 re-judged 55 -> 62, DEMANDED by the tool (ledger 3 -> 4). It
         # closes BOTH items R1564's own audit left open.
         #

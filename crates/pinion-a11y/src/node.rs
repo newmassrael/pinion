@@ -13,6 +13,7 @@
 //! `accesskit::Node`, so a future `accesskit` API change rewrites the
 //! builder rather than every widget impl.
 
+use pinion_core::availability::Unavailable;
 use pinion_core::scene::Rect;
 use pinion_core::widgets::interaction::InteractionState;
 use std::collections::HashMap;
@@ -65,6 +66,24 @@ pub struct AccessNode {
     /// Interaction-state flags — mirror §5.39 focus + §5.35 hover
     /// + §5.35 pressed.
     pub state: AccessState,
+    /// R1668 §5.40 §5.39 — **why** this node is disabled, when the scene's
+    /// disabled cascade is what disabled it.
+    ///
+    /// [`state.disabled`](AccessState::disabled) is the ARIA flag —
+    /// `aria-disabled`, and the one bit the reference toolkit's accessibility
+    /// layer carries. This is the part that bit cannot hold: a reader is told
+    /// that a control is dimmed and never why, so a feature reserved for a
+    /// release that has not shipped and one this build will never have are
+    /// indistinguishable to somebody using a screen reader.
+    ///
+    /// Modelled on `aria-describedby` rather than on a state flag, because it
+    /// is a description of the node and not a member of the state vocabulary —
+    /// which is also why it lives here and not on the `Copy` state struct.
+    ///
+    /// `None` for a live node, and for a node disabled only by its **own
+    /// widget state** (a pressed-out button), whose reason is the widget's
+    /// business and not the scene's.
+    pub unavailable: Option<Unavailable>,
     /// Hit-test rectangle. Used by AT to overlay focus rings,
     /// magnifiers, and pointer-driven readout.
     ///
@@ -454,6 +473,7 @@ impl AccessNode {
             name_from_tag: None,
             value: None,
             state: AccessState::default(),
+            unavailable: None,
             bounds: None,
             bounds_union_tags: Vec::new(),
             children: Vec::new(),

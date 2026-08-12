@@ -672,6 +672,11 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("self_declared", WireTy::Boolean, None),
                 WireField::new("declared_by", WireTy::String, None).nullable(),
                 WireField::new("ink", WireTy::String, None),
+                WireField::new("reason", WireTy::String, None)
+                    .accepting(&pinion_core::availability::KIND_WIRE_NAMES),
+                WireField::new("detail", WireTy::String, None),
+                WireField::new("recourse", WireTy::String, None)
+                    .accepting(&pinion_core::availability::RECOURSE_WIRE_NAMES),
             ],
         },
     },

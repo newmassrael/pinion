@@ -746,7 +746,7 @@ impl Scene {
         }
     }
 
-    /// (R1554 §5.39) The node's own [`disabled`](crate::style::LayoutStyle::disabled)
+    /// (R1554 §5.39) The node's own [`declaration`](crate::style::LayoutStyle::unavailable)
     /// DECLARATION — the toolkit `setEnabled(false)` written on this widget rather than
     /// inherited from an ancestor (the toolkit's `WA_ForceDisabled`).
     ///
@@ -758,12 +758,13 @@ impl Scene {
     /// [`Scene::Effect`] carries no layout sidecar and is never disabled.
     #[must_use]
     pub fn declares_disabled(&self) -> bool {
-        self.layout_style().is_some_and(|l| l.disabled)
+        self.layout_style()
+            .is_some_and(LayoutStyle::declares_disabled)
     }
 
     /// (R1554 §5.39) Whether the node is disabled at all — its own
     /// [`declaration`](Self::declares_disabled), or the
-    /// [`resolved`](crate::style::LayoutStyle::resolved_disabled) half the
+    /// [`resolved`](crate::style::LayoutStyle::resolved_unavailable) half the
     /// cascade wrote. The toolkit's `isEnabled()` inverted.
     ///
     /// Only meaningful after
@@ -773,7 +774,7 @@ impl Scene {
     #[must_use]
     pub fn is_disabled(&self) -> bool {
         self.layout_style()
-            .is_some_and(|l| l.disabled || l.resolved_disabled)
+            .is_some_and(|l| l.declares_disabled() || l.is_resolved_disabled())
     }
 
     /// (R1554 §5.39) The node's layout sidecar, or [`None`] for

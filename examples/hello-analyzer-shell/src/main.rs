@@ -80,6 +80,7 @@ use std::rc::Rc;
 
 use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
 use pinion_chart::{ChartStyle, Sparkline};
+use pinion_core::availability::Unavailable;
 use pinion_core::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
@@ -88,7 +89,7 @@ use pinion_core::external::{
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect, TextNode};
 use pinion_core::style::{
-    Border, BoxStyle, Color, LayoutStyle, PathStyle, Size, Stroke, TextStyle,
+    Border, BoxStyle, Color, LayoutStyle, PathStyle, Size, Stroke, TextOverflow, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme, ThemeMode, ThemeProvider, use_theme};
 use pinion_core::widgets::card::{Card, CardAffordance, CardChrome, CardState, Remedy};
@@ -101,14 +102,16 @@ use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use pinion_widget_paint::pane::{PanePointer, scroll_pane};
 
+mod spec;
+
 // pinion-forge codegen output: `pub struct HelloAnalyzerShellRenderer` + its
 // error type + async `new<...>` + sync `render` / `resize`.
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 
 vello_renderer_impl!(HelloAnalyzerShellRenderer, HelloAnalyzerShellRendererError);
 
-const WIN_W: u32 = 1440;
-const WIN_H: u32 = 900;
+const WIN_W: u32 = spec::WIN_W;
+const WIN_H: u32 = spec::WIN_H;
 
 const VIEW_TAG: &str = "analyzer_shell";
 const THEME_TAG: &str = "app";
@@ -124,15 +127,29 @@ const REPLAY_SECS: f32 = 12.0;
 // row height and a gutter — are the same here, because a board's arrangement is
 // only portable between two tools that agree on what a cell is.
 
-const APP_BAR_H: u32 = 52;
-const SUB_BAR_H: u32 = 46;
-const RAIL_W: u32 = 52;
-const PALETTE_W: u32 = 292;
-const GRID_COLS: u32 = 12;
+const APP_BAR_H: u32 = spec::APP_BAR_H;
+const SUB_BAR_H: u32 = spec::SUB_BAR_H;
+const RAIL_W: u32 = spec::RAIL_W;
+const PALETTE_W: u32 = spec::PALETTE_W;
+const GRID_COLS: u32 = spec::GRID_COLS;
 const ROW_H: u32 = 174;
 const GAP: u32 = 16;
 /// A card's header strip.
 const CARD_HDR: u32 = 34;
+/// (R1668) The decode card's byte pane: the width it prefers, and the narrowest
+/// it can be and still show an offset plus one byte. Below the floor the pane
+/// is dropped rather than drawn outside the card.
+const BYTES_W: u32 = 148;
+const BYTES_FLOOR: u32 = 66;
+/// (R1668) A decode row's value column, and the narrowest its key can be. The
+/// key is allocated first: a row that lost its name reads as a value belonging
+/// to nothing.
+const VALUE_W: u32 = 74;
+const KEY_FLOOR: u32 = 30;
+/// (R1668) A filter stat tile: its height, and the narrowest it can be and
+/// still hold a number. The three go or stay together.
+const STAT_H: u32 = 46;
+const STAT_FLOOR: u32 = 52;
 /// The size-stepper strip layout-edit mode adds to the foot of every card.
 const EDIT_BAR_H: u32 = 26;
 /// A detached panel's opening size, and the cascade between successive ones.
@@ -165,34 +182,34 @@ fn col_pitch() -> u32 {
 }
 
 // --- The widget catalogue ----------------------------------------------------
-
-/// One kind of widget the palette offers.
-///
-/// The reference tool's own table, restated: a three-letter code, a label, a
-/// one-line description, an identifying colour, and the cell size it is placed
-/// at. **The descriptions are deliberately domain-neutral** — this file is
-/// about a tool *class*, and nothing about any particular protocol, product or
-/// deployment belongs in a repository.
-struct WidgetDef {
-    kind: &'static str,
-    code: &'static str,
-    label: &'static str,
-    desc: &'static str,
-    color: Color,
-    section: &'static str,
-    cols: u32,
-    rows: u32,
-    chrome: &'static [CardAffordance],
-}
+//
+// The table itself is in `spec.rs` — the reference's own catalogue written down
+// as a value, thirteen entries of which four the first release places and nine
+// it reserves. What stays here is what is about PAINT rather than about the
+// screen: the colour a kind is identified by, and the header controls a card
+// carries. Everything else is read from the specification, so this file cannot
+// drift from it without failing the gate in `painted.rs`.
 
 use CardAffordance::{Close, Maximize, Settings, TearOff};
 
-/// The palette's sections, in the order the panel lists them.
-const SECTIONS: [(&str, &str); 3] = [
-    ("capture", "CAPTURE & DECODE"),
-    ("visual", "VISUALIZATION"),
-    ("operate", "DIAGNOSE & OPERATE"),
-];
+/// Every placed card carries the same header controls.
+///
+/// The specification names them and this maps the names onto the framework's
+/// vocabulary, so a control added there arrives here rather than being
+/// remembered: a uniform board is what makes a missing control legible, where a
+/// board of individually-decided chrome is a board nobody can check.
+fn chrome() -> Vec<CardAffordance> {
+    spec::CARD_CHROME
+        .iter()
+        .map(|name| match *name {
+            "settings" => Settings,
+            "tear_off" => TearOff,
+            "maximize" => Maximize,
+            "close" => Close,
+            other => panic!("the specification names a header control {other:?} this shell has no affordance for"),
+        })
+        .collect()
+}
 
 /// A colour from a packed `0xRRGGBB`, so the reference's token table can be
 /// transcribed exactly as it is written rather than as three decimals each.
@@ -208,154 +225,61 @@ const fn rgb(hex: u32) -> Color {
     )
 }
 
-/// Twelve widget kinds — the count the palette's footer states.
-static DEFS: &[WidgetDef] = &[
-    WidgetDef {
-        kind: "packet",
-        code: "PKT",
-        label: "Packet Stream",
-        desc: "colour-coded live message list",
-        color: rgb(0x2D_6C_DF),
-        section: "capture",
-        cols: 5,
-        rows: 2,
-        chrome: &[Settings, TearOff, Maximize, Close],
-    },
-    WidgetDef {
-        kind: "decode",
-        code: "DEC",
-        label: "Decode Inspector",
-        desc: "layer tree with hex and fields",
-        color: rgb(0x8A_5C_F6),
-        section: "capture",
-        cols: 4,
-        rows: 2,
-        chrome: &[Settings, TearOff, Maximize, Close],
-    },
-    WidgetDef {
-        kind: "filter",
-        code: "FLT",
-        label: "Search & Filter",
-        desc: "query bar, saved filter chips",
-        color: rgb(0x6B_72_80),
-        section: "capture",
-        cols: 4,
-        rows: 1,
-        chrome: &[Close],
-    },
-    WidgetDef {
-        kind: "topology",
-        code: "TOP",
-        label: "Session / Peer Topology",
-        desc: "endpoint connection graph",
-        color: rgb(0x9A_00_4F),
-        section: "visual",
-        cols: 7,
-        rows: 2,
-        chrome: &[Settings, TearOff, Maximize, Close],
-    },
-    WidgetDef {
-        kind: "throughput",
-        code: "THR",
-        label: "Throughput",
-        desc: "live time series per stream",
-        color: rgb(0x1F_8A_4C),
-        section: "visual",
-        cols: 5,
-        rows: 2,
-        chrome: &[Settings, TearOff, Maximize, Close],
-    },
-    WidgetDef {
-        kind: "share",
-        code: "SHR",
-        label: "Traffic Share",
-        desc: "share of volume by endpoint",
-        color: rgb(0x0E_9A_A7),
-        section: "visual",
-        cols: 4,
-        rows: 2,
-        chrome: &[Settings, Maximize, Close],
-    },
-    WidgetDef {
-        kind: "latency",
-        code: "LAT",
-        label: "Latency",
-        desc: "round-trip distribution",
-        color: rgb(0xC7_78_00),
-        section: "visual",
-        cols: 4,
-        rows: 2,
-        chrome: &[Settings, Maximize, Close],
-    },
-    WidgetDef {
-        kind: "loss",
-        code: "LOS",
-        label: "Loss Tracker",
-        desc: "sequence-gap timeline in lanes",
-        color: rgb(0xB0_33_5B),
-        section: "visual",
-        cols: 5,
-        rows: 1,
-        chrome: &[Settings, Maximize, Close],
-    },
-    WidgetDef {
-        kind: "health",
-        code: "HLT",
-        label: "Health Tiles",
-        desc: "KPI stats with sparklines",
-        color: rgb(0x35_C0_8B),
-        section: "operate",
-        cols: 6,
-        rows: 1,
-        chrome: &[Settings, Close],
-    },
-    WidgetDef {
-        kind: "alarms",
-        code: "ALM",
-        label: "Alarms",
-        desc: "event feed by severity",
-        color: rgb(0xD3_3A_2C),
-        section: "operate",
-        cols: 4,
-        rows: 2,
-        chrome: &[Settings, TearOff, Close],
-    },
-    WidgetDef {
-        kind: "replay",
-        code: "RPL",
-        label: "Replay / Injection",
-        desc: "active injection console",
-        color: rgb(0x8A_5C_F6),
-        section: "operate",
-        cols: 4,
-        rows: 2,
-        chrome: &[Settings, Maximize, Close],
-    },
-    WidgetDef {
-        kind: "report",
-        code: "RPT",
-        label: "Report",
-        desc: "summary and statistics export",
-        color: rgb(0x6B_72_80),
-        section: "operate",
-        cols: 3,
-        rows: 1,
-        chrome: &[Settings, Close],
-    },
+/// The colour a kind is identified by — on its palette swatch and on its card.
+///
+/// Keyed by the specification's kind rather than stored beside it: a colour is
+/// a decision about ink and the specification is a statement about the screen,
+/// and this round's whole point is that the two are not the same document.
+fn kind_color(kind: &str) -> Color {
+    match kind {
+        "packet" => rgb(0x2D_6C_DF),
+        "decode" => rgb(0x8A_5C_F6),
+        "keymap" => rgb(0xC7_78_00),
+        "filter" => rgb(0x1F_8A_4C),
+        "topology" => rgb(0x9A_00_4F),
+        "overlay" => rgb(0xB0_33_5B),
+        "throughput" => rgb(0x0E_9A_A7),
+        "share" => rgb(0x35_C0_8B),
+        "latency" => rgb(0xD3_3A_2C),
+        "health" => rgb(0x4A_7A_9B),
+        "loss" => rgb(0xA9_4F_10),
+        "alarms" => rgb(0x7A_4B_C4),
+        "admin" => rgb(0x2F_6B_6B),
+        _ => rgb(0x6B_72_80),
+    }
+}
+
+/// The cells a kind occupies when it is placed, from the opening board.
+///
+/// A reserved kind has no size because it is never placed, which is why this
+/// answers `None` for one rather than inventing a default that no screen has
+/// ever painted.
+fn kind_span(kind: &str) -> Option<(u32, u32)> {
+    spec::BOARD
+        .iter()
+        .find(|p| p.kind == kind)
+        .map(|p| (p.cols, p.rows))
+}
+
+/// The catalogue entry for a kind.
+fn def_of(kind: &str) -> Option<&'static spec::WidgetSpec> {
+    spec::widget_of(kind)
+}
+
+/// The sources the application bar offers. The first is the one the
+/// specification states the screen opens on; the others are what the control
+/// cycles to, which the specification does not fix.
+///
+/// No real address belongs in a repository, so these are documentation
+/// addresses (RFC 5737 TEST-NET-1).
+const SOURCES: [&str; 3] = [
+    spec::SOURCE,
+    "lo \u{00B7} 127.0.0.1:7447",
+    "file \u{00B7} session-2.capture",
 ];
 
-/// The kinds the "Overview" layout opens with.
-///
-/// Three placed of twelve offered, which is the state the reference tool opens
-/// in — and the reason the palette exists at all: a board is populated by a
-/// person, so "how many are placed" is a number two parts of the screen have to
-/// agree about.
-const OVERVIEW: [(&str, u32, u32); 3] =
-    [("topology", 0, 0), ("throughput", 7, 0), ("packet", 0, 2)];
-
-fn def_of(kind: &str) -> Option<&'static WidgetDef> {
-    DEFS.iter().find(|d| d.kind == kind)
-}
+/// The two view tabs the application bar carries.
+const TABS: [&str; 2] = ["Dashboard", "Design System"];
 
 /// A card's id is `<kind>#<n>` — the kind so the definition is recoverable
 /// without a side table, the ordinal so a kind can be placed more than once.
@@ -363,7 +287,7 @@ fn kind_of(id: &str) -> &str {
     id.split_once('#').map_or(id, |(kind, _)| kind)
 }
 
-fn def_for_card(id: &str) -> Option<&'static WidgetDef> {
+fn def_for_card(id: &str) -> Option<&'static spec::WidgetSpec> {
     def_of(kind_of(id))
 }
 
@@ -371,32 +295,11 @@ fn label_of(id: &str) -> String {
     def_for_card(id).map_or_else(|| id.to_string(), |d| d.label.to_string())
 }
 
-/// The KPI card's sparkline series.
-const KPI_SERIES: [f64; 12] = [
+/// The sparkline the filter card draws under its counts: how many messages
+/// matched, over the recent past.
+const MATCH_SERIES: [f64; 12] = [
     4.0, 6.0, 5.0, 9.0, 7.0, 12.0, 10.0, 14.0, 11.0, 15.0, 13.0, 17.0,
 ];
-
-/// The sources the app bar offers, spelled as a capture tool spells them: an
-/// interface and an endpoint. No real address belongs in a repository, so these
-/// are documentation addresses (RFC 5737 TEST-NET-1).
-const SOURCES: [&str; 3] = [
-    "eth0 \u{00B7} 192.0.2.10:7447",
-    "lo \u{00B7} 127.0.0.1:7447",
-    "file \u{00B7} session-2.capture",
-];
-
-/// The rail's entries: the section key and its name.
-const RAIL: [(&str, &str); 6] = [
-    ("dashboard", "Dashboard"),
-    ("topology", "Topology"),
-    ("stream", "Stream"),
-    ("decode", "Decode"),
-    ("catalog", "Catalog"),
-    ("settings", "Settings"),
-];
-
-/// The two view tabs the app bar carries.
-const TABS: [&str; 2] = ["Dashboard", "Design System"];
 
 /// The reference tool's own dark and light token sets, mapped onto this
 /// framework's roles.
@@ -529,21 +432,27 @@ impl ShellState {
         theme.set_mode(ThemeMode::Dark);
         let mut board = TileGrid::new(GRID_COLS);
         let mut cards = Vec::new();
-        for (n, (kind, col, row)) in OVERVIEW.iter().enumerate() {
-            let def = def_of(kind).expect("the overview names catalogue kinds");
-            let id = format!("{kind}#{n}");
+        for (n, placed) in spec::BOARD.iter().enumerate() {
+            let def = def_of(placed.kind).expect("the board names catalogue kinds");
+            let id = format!("{}#{n}", placed.kind);
             board
-                .place(Tile::new(id.clone(), *col, *row, def.cols, def.rows))
-                .expect("the overview is a legal arrangement");
+                .place(Tile::new(
+                    id.clone(),
+                    placed.col,
+                    placed.row,
+                    placed.cols,
+                    placed.rows,
+                ))
+                .expect("the specified board is a legal arrangement");
             cards.push(
                 Card::new(id, def.label)
-                    .with_chrome(CardChrome::of(def.chrome.iter().copied()))
+                    .with_chrome(CardChrome::of(chrome()))
                     .with_state(CardState::Ready),
             );
         }
         let mut presets = BTreeMap::new();
         presets.insert(
-            "Overview".to_string(),
+            spec::PRESET.to_string(),
             Preset {
                 board: board.clone(),
                 cards: cards.clone(),
@@ -557,7 +466,7 @@ impl ShellState {
             maximized: Signal::new(None),
             floats: Signal::new(Vec::new()),
             presets: RefCell::new(presets),
-            preset: Signal::new("Overview".to_string()),
+            preset: Signal::new(spec::PRESET.to_string()),
             preset_open: Signal::new(false),
             editing: Signal::new(false),
             config_open: Signal::new(None),
@@ -566,13 +475,13 @@ impl ShellState {
             search: Signal::new(String::new()),
             searching: Signal::new(false),
             tab: Signal::new(TABS[0].to_string()),
-            nav: Signal::new("dashboard".to_string()),
+            nav: Signal::new(spec::RAIL_ACTIVE.to_string()),
             selected: Signal::new(None),
             cursor: Signal::new((0, 0)),
             pressed: RefCell::new(None),
             drag: Signal::new(None),
-            toast: Signal::new("Overview loaded".to_string()),
-            next_id: RefCell::new(u(OVERVIEW.len())),
+            toast: Signal::new(format!("{} loaded", spec::PRESET)),
+            next_id: RefCell::new(u(spec::BOARD.len())),
             canvas_scroll: Rc::new(ScrollState::with_tag(CANVAS_SCROLL)),
         }
     }
@@ -852,13 +761,13 @@ const fn palette_rect() -> Rect {
 /// Returned rather than recomputed at each site: the painter walks it to draw
 /// and the hit test walks it to resolve, which is the discipline the card
 /// rectangles follow.
-fn palette_rows() -> Vec<(Option<&'static WidgetDef>, &'static str, Rect)> {
+fn palette_rows() -> Vec<(Option<&'static spec::WidgetSpec>, &'static str, Rect)> {
     let mut out = Vec::new();
     let mut y = 76_u32;
-    for (key, title) in SECTIONS {
-        out.push((None, title, Rect::new(16, y, PALETTE_W - 32, 20)));
+    for (key, title, _tier) in spec::SECTIONS {
+        out.push((None, *title, Rect::new(16, y, PALETTE_W - 32, 20)));
         y += 26;
-        for def in DEFS.iter().filter(|d| d.section == key) {
+        for def in spec::CATALOGUE.iter().filter(|w| w.section == *key) {
             out.push((
                 Some(def),
                 def.label,
@@ -926,9 +835,9 @@ impl Hit {
             return Self::Nothing;
         }
         if px < RAIL_W {
-            for (n, (key, _)) in RAIL.iter().enumerate() {
+            for (n, seat) in spec::RAIL.iter().enumerate() {
                 if contains(rail_rect(u(n)), px, py - APP_BAR_H) {
-                    return Self::Rail(key);
+                    return Self::Rail(seat.key);
                 }
             }
             return Self::Nothing;
@@ -1302,12 +1211,12 @@ impl ShellOracle {
                 "card {id:?} is not detached"
             )));
         }
-        let def = def_for_card(id)
-            .ok_or_else(|| InvokeError::rejected(format!("no catalogue entry for {id:?}")))?;
+        let (cols, rows) = kind_span(kind_of(id))
+            .ok_or_else(|| InvokeError::rejected(format!("no specified cell size for {id:?}")))?;
         let mut board = state.board.get();
         let row = board.rows();
         board
-            .place(Tile::new(id, 0, row, def.cols, def.rows))
+            .place(Tile::new(id, 0, row, cols, rows))
             .map_err(|why| InvokeError::rejected(why.to_string()))?;
         state.board.set(board);
         state.floats.set(
@@ -1327,8 +1236,27 @@ impl ShellOracle {
         let def = def_of(kind.trim()).ok_or_else(|| {
             InvokeError::rejected(format!(
                 "{kind:?} is not a widget kind; the palette offers {}",
-                DEFS.iter().map(|d| d.kind).collect::<Vec<_>>().join(", ")
+                spec::CATALOGUE
+                    .iter()
+                    .filter(|w| w.tier == spec::Tier::Placeable)
+                    .map(|w| w.kind)
+                    .collect::<Vec<_>>()
+                    .join(", ")
             ))
+        })?;
+        // R1668 — a reserved kind refuses, and the refusal carries the reason
+        // rather than a bare "no". The palette paints the same fact (the row is
+        // declared unavailable, so it is inert, faded and announced with its
+        // reason), and this is that fact on the invoke path — the two cannot
+        // drift because both read `reserved_for` from the specification.
+        if def.tier == spec::Tier::Reserved {
+            return Err(InvokeError::rejected(format!(
+                "{:?} is reserved for {} and this release does not place it",
+                def.kind, def.reserved_for
+            )));
+        }
+        let (cols, rows) = kind_span(def.kind).ok_or_else(|| {
+            InvokeError::rejected(format!("{:?} has no specified cell size", def.kind))
         })?;
         let ordinal = {
             let mut next = state.next_id.borrow_mut();
@@ -1340,13 +1268,13 @@ impl ShellOracle {
         let mut board = state.board.get();
         let row = board.rows();
         board
-            .place(Tile::new(id.clone(), 0, row, def.cols, def.rows))
+            .place(Tile::new(id.clone(), 0, row, cols, rows))
             .map_err(|why| InvokeError::rejected(why.to_string()))?;
         state.board.set(board);
         let mut cards = state.cards.get();
         cards.push(
             Card::new(id.clone(), def.label)
-                .with_chrome(CardChrome::of(def.chrome.iter().copied()))
+                .with_chrome(CardChrome::of(chrome()))
                 .with_state(CardState::Ready),
         );
         state.cards.set(cards);
@@ -1585,8 +1513,14 @@ const FIELDS: &[SchemaField] = const {
         SchemaField::new("theme", "string"),
         SchemaField::new("tab", "string"),
         SchemaField::new("tabs", "string"),
+        // R1668 — the reference screen this shell claims to reproduce, as the
+        // table a gate reads. Published so the demo compares the running
+        // application against the specification rather than against a second
+        // copy of it (the failure R1649's sweep exists to prevent, one level up).
+        SchemaField::new("spec", "json"),
         // the rail and the sub bar
         SchemaField::new("rail", "string"),
+        SchemaField::new("reserved_rail", "json"),
         SchemaField::new("nav", "string"),
         SchemaField::new("editing", "bool"),
         SchemaField::new("config_open", "string"),
@@ -1744,12 +1678,10 @@ impl ExternalIntrospect for ShellOracle {
             "theme" => text(theme_word(&state.theme)),
             "tab" => text(state.tab.get()),
             "tabs" => text(TABS.join(",")),
-            "rail" => text(RAIL.map(|(key, _)| key).join(",")),
+            "spec" | "rail" | "reserved_rail" | "catalogue" => read_specification(path),
             "nav" => text(state.nav.get()),
             "editing" => Ok(IntrospectValue::Bool(state.editing.get())),
             "config_open" => text(state.config_open.get().unwrap_or_default()),
-            // The palette's twelve, so a client picks from what is offered.
-            "catalogue" => text(DEFS.iter().map(|d| d.kind).collect::<Vec<_>>().join(",")),
             "cards" => text(state.card_ids()),
             "card_count" => Ok(IntrospectValue::Int(i64::from(u(state.cards.get().len())))),
             "placed_count" => Ok(IntrospectValue::Int(i64::from(u(state.placed().len())))),
@@ -1878,14 +1810,29 @@ impl ExternalIntrospect for ShellOracle {
             }
             "nav" => {
                 let name = word(&value)?;
-                let chosen = RAIL.iter().find(|(key, _)| *key == name).ok_or_else(|| {
-                    InterveneError::out_of_range(format!(
-                        "{name:?} is not a rail section; they are {}",
-                        RAIL.map(|(key, _)| key).join(", ")
-                    ))
-                })?;
-                state.nav.set(chosen.0.to_string());
-                state.say(format!("{} section", chosen.1));
+                let chosen = spec::RAIL
+                    .iter()
+                    .find(|seat| seat.key == name)
+                    .ok_or_else(|| {
+                        InterveneError::out_of_range(format!(
+                            "{name:?} is not a rail section; they are {}",
+                            spec::RAIL
+                                .iter()
+                                .map(|seat| seat.key)
+                                .collect::<Vec<_>>()
+                                .join(", ")
+                        ))
+                    })?;
+                // R1668 — a reserved seat refuses, and says what it is waiting
+                // for. The wire learns this the same way a person does: the
+                // rail paints it inert and `scene/disabled` names the reason.
+                if let Some(why) = chosen.reserved_for {
+                    return Err(InterveneError::out_of_range(format!(
+                        "the {name:?} section is reserved for {why}"
+                    )));
+                }
+                state.nav.set(chosen.key.to_string());
+                state.say(format!("{} section", chosen.title));
                 Ok(())
             }
             "preset" => ShellOracle::apply_preset(&state, &word(&value)?),
@@ -2001,7 +1948,16 @@ impl ShellOracle {
         };
         let canvas = canvas_rect();
         let (col, row) = cell_at(px.saturating_sub(canvas.x), py.saturating_sub(canvas.y));
-        let snap = (col.saturating_sub(drag.dx), row.saturating_sub(drag.dy));
+        // ★ R1668 — the GRID says where it would land, rather than this file
+        // guessing. A preview computed here and a release computed there is one
+        // fact with two clamps, and the two disagreed: a six-column card
+        // dragged to column seven previewed seven and committed six.
+        let wanted = (col.saturating_sub(drag.dx), row.saturating_sub(drag.dy));
+        let snap = state
+            .board
+            .get()
+            .landing(&drag.id, wanted.0, wanted.1)
+            .unwrap_or(wanted);
         if snap != drag.snap {
             drag.snap = snap;
             state.drag.set(Some(drag));
@@ -2066,17 +2022,33 @@ impl ShellOracle {
         if Hit::at(state, px, py) != latched {
             return;
         }
+        Self::act_on_hit(state, latched);
+    }
+
+    /// What a completed press on one hit target does.
+    ///
+    /// Lifted out of [`Self::release`] in R1668 so a test can put a hit to the
+    /// shell directly. It was reachable only by placing a cursor and driving a
+    /// press-release pair, which meant "does a reserved rail seat refuse" could
+    /// be asked only through the geometry that already refuses to reach it --
+    /// the shape R1649.1 named: a capability verified only by the path that
+    /// bypasses it is a capability nobody verified.
+    fn act_on_hit(state: &Rc<ShellState>, latched: Hit) {
         match latched {
             Hit::Chip(chip) => Self::press_chip(state, chip),
             Hit::Sub(chip) => Self::press_sub(state, chip),
             Hit::PresetItem(n) => Self::press_preset_item(state, n),
             Hit::Rail(key) => {
+                let seat = spec::RAIL.iter().find(|seat| seat.key == key);
+                let title = seat.map_or(key, |seat| seat.title);
+                if let Some(why) = seat.and_then(|seat| seat.reserved_for) {
+                    // The seat is painted inert, so a pointer never reaches it;
+                    // this is the keyboard and wire path saying the same thing.
+                    state.say(format!("{title} is reserved for {why}"));
+                    return;
+                }
                 state.nav.set(key.to_string());
-                let name = RAIL
-                    .iter()
-                    .find(|(k, _)| *k == key)
-                    .map_or(key, |(_, name)| name);
-                state.say(format!("{name} section"));
+                state.say(format!("{title} section"));
             }
             Hit::Palette(kind) => {
                 if let Err(why) = Self::add(state, kind) {
@@ -2467,6 +2439,10 @@ struct Palette {
     high: Color,
     outline: Color,
     grid: Color,
+    /// R1668 — the ink an identifier the capture cannot resolve is drawn in.
+    /// A role rather than a literal because a warning has to hold its contrast
+    /// in both themes, which a hand-picked amber does in exactly one.
+    warn: Color,
 }
 
 /// A text run at an exact place in its container.
@@ -2788,12 +2764,19 @@ fn app_bar_scene(state: &ShellState, palette: Palette) -> Scene {
         } else {
             palette.muted
         },
-        if capturing { "Capturing" } else { "Paused" },
+        if capturing { spec::TRANSPORT } else { "Paused" },
         palette,
     ));
     children.push(label(
         &transport_word(state.clock.status(), capturing),
-        Rect::new(842, 19, 120, 16),
+        Rect::new(842, 19, 92, 16),
+        FONT_SMALL,
+        palette.muted,
+    ));
+    // The rate readout: what a capture tool is counting while it runs.
+    children.push(label(
+        spec::RATE,
+        Rect::new(938, 19, 96, 16),
         FONT_SMALL,
         palette.muted,
     ));
@@ -2806,7 +2789,7 @@ fn app_bar_scene(state: &ShellState, palette: Palette) -> Scene {
             &if searching {
                 format!("{search}|")
             } else if search.is_empty() {
-                "press / to search".to_string()
+                spec::SEARCH_HINT.to_string()
             } else {
                 search
             },
@@ -2865,7 +2848,7 @@ fn sub_bar_scene(state: &ShellState, palette: Palette) -> Scene {
             .with_layout(absolute(preset)),
         ),
         label(
-            &format!("{placed} widget(s) placed"),
+            &format!("{placed} widgets placed"),
             Rect::new(preset.x + preset.w + 14, preset.y + 8, 220, 16),
             FONT_BODY,
             palette.muted,
@@ -2876,7 +2859,7 @@ fn sub_bar_scene(state: &ShellState, palette: Palette) -> Scene {
             if state.editing.get() {
                 "Done"
             } else {
-                "Edit Layout"
+                spec::BOARD_VERBS[0]
             },
             state.editing.get(),
             palette,
@@ -2884,7 +2867,7 @@ fn sub_bar_scene(state: &ShellState, palette: Palette) -> Scene {
         button(
             SubChip::AddWidget.rect(),
             SubChip::AddWidget.tag(),
-            "+  Add Widget",
+            spec::BOARD_VERBS[1],
             true,
             palette,
         ),
@@ -2964,10 +2947,20 @@ fn preset_menu_scene(state: &ShellState, palette: Palette) -> Scene {
 fn rail_scene(state: &ShellState, palette: Palette) -> Scene {
     let mut entries = Vec::new();
     let nav = state.nav.get();
-    for (n, (key, _name)) in RAIL.iter().enumerate() {
+    for (n, seat) in spec::RAIL.iter().enumerate() {
+        let key = seat.key;
         let rect = rail_rect(u(n));
-        let on = nav == *key;
+        let on = nav == key;
         let ink = if on { palette.accent_fg } else { palette.muted };
+        // R1668 — a reserved seat is DECLARED unavailable rather than painted
+        // grey by hand. The declaration is what makes it inert to the pointer,
+        // fades its ink, announces it to a screen reader and puts the reason on
+        // `scene/disabled`; a hand-picked grey would do only the last of those,
+        // and would do it in a way nothing can check.
+        let layout = seat.reserved_for.map_or_else(
+            || absolute(rect),
+            |why| absolute(rect).with_unavailable(Unavailable::reserved(why)),
+        );
         entries.push(Scene::Container(
             ContainerNode::new(rail_mark(key, local(rect), ink))
                 .with_tag(format!("shell.rail.{key}"))
@@ -2975,7 +2968,7 @@ fn rail_scene(state: &ShellState, palette: Palette) -> Scene {
                     BoxStyle::filled(if on { palette.high } else { palette.panel })
                         .with_corner_radius(8),
                 )
-                .with_layout(absolute(rect)),
+                .with_layout(layout),
         ));
     }
     entries.push(Scene::Container(
@@ -3032,7 +3025,7 @@ fn grid_scene(rows: u32, palette: Palette, bright: bool) -> Vec<Scene> {
 /// A card's header: grip, status light, title, LIVE badge, controls.
 fn header_scene(card: &Card, rect: Rect, palette: Palette) -> Vec<Scene> {
     let id = card.id().as_str();
-    let colour = def_for_card(id).map_or(palette.accent, |d| d.color);
+    let colour = kind_color(kind_of(id));
     let grip = grip_rect(rect);
     let mut out = vec![Scene::Container(
         ContainerNode::new(
@@ -3132,51 +3125,524 @@ fn body_scene(card: &Card, rect: Rect, palette: Palette) -> Vec<Scene> {
     out
 }
 
-/// A ready card's content. Deliberately small — this file demonstrates the
-/// shell, and the panes have their own examples.
+/// A ready card's content — the body the specification gives that kind.
+///
+/// R1668 replaced a placeholder here. The four placeable widgets are what
+/// screen C *is*, and a board of four coloured swatches reproduces the
+/// arrangement while reproducing none of the screen: the gate next door
+/// compares painted rows against `spec`, and a placeholder has no rows to
+/// compare. Each body is drawn from the specification's own table, so a row
+/// added there appears here and nowhere is there a second copy to disagree.
 fn ready_body(card: &Card, rect: Rect, palette: Palette) -> Vec<Scene> {
     let id = card.id().as_str();
-    let def = def_for_card(id);
-    let colour = def.map_or(palette.accent, |d| d.color);
-    if def.map(|d| d.kind) == Some("health") {
-        // The capability list's KPI stat tile: a box, a label and a chart
-        // primitive, assembled here rather than shipped by the framework —
-        // which is exactly what that row's verdict claims.
-        return vec![
-            label(
-                "17.3 Mb/s",
-                Rect::new(rect.x + 12, rect.y + 8, 160, 20),
-                FONT_TITLE,
-                palette.ink,
-            ),
-            Scene::Container(
-                ContainerNode::new(vec![
-                    Sparkline::new(KPI_SERIES.to_vec())
-                        .with_color(colour)
-                        .with_tag_prefix("kpi.spark")
-                        .build(
-                            Rect::new(
-                                0,
-                                0,
-                                rect.w.saturating_sub(24).max(8),
-                                rect.h.saturating_sub(44).max(8),
-                            ),
-                            &ChartStyle::default(),
-                        ),
-                ])
-                .with_tag(format!("card.{id}.sparkline"))
-                .with_layout(absolute(Rect::new(
-                    rect.x + 12,
-                    rect.y + 32,
-                    rect.w.saturating_sub(24).max(8),
-                    rect.h.saturating_sub(44).max(8),
-                ))),
-            ),
-        ];
+    match kind_of(id) {
+        "packet" => stream_body(id, rect, palette),
+        "decode" => decode_body(id, rect, palette),
+        "keymap" => map_body(id, rect, palette),
+        "filter" => filter_body(id, rect, palette),
+        // A kind with no body painter of its own still reads as content rather
+        // than as a gap. Reachable only if the catalogue grows a placeable kind
+        // before its body does, which is the moment a placeholder is honest.
+        other => placeholder_body(other, id, rect, palette),
     }
+}
+
+/// The ink a message type is drawn in.
+///
+/// Looked up by the type's position in the specification's legend, so a row
+/// carrying a type the legend does not list is drawn muted rather than
+/// silently taking a colour that means something else. The alternative -- a
+/// match on the words -- lets the two lists drift and says nothing when they do.
+const TYPE_INKS: [Color; 5] = [
+    rgb(0x2D_6C_DF),
+    rgb(0xC7_78_00),
+    rgb(0x1F_8A_4C),
+    rgb(0x8A_5C_F6),
+    rgb(0x0E_9A_A7),
+];
+
+fn type_ink(word: &str, palette: Palette) -> Color {
+    spec::STREAM_TYPES
+        .iter()
+        .position(|known| *known == word)
+        .and_then(|n| TYPE_INKS.get(n).copied())
+        .unwrap_or(palette.muted)
+}
+
+/// The x offset and **text width** of each stream column inside a body of that
+/// width, for the columns that fit.
+///
+/// Derived from the specification's column table: the one column whose width is
+/// `0` takes what the others leave, so a body narrower than the fixed columns
+/// gives it nothing rather than wrapping into the next card.
+///
+/// ★ The gutter is subtracted HERE, and a column with nothing left after it is
+/// dropped rather than returned at zero. The first draft returned the cell
+/// width and left each caller to write `w - 6`, which underflows the moment a
+/// card is one cell wide: a debug panic, and in release a column four billion
+/// pixels across. A counterfactual found it -- no swept state had ever been
+/// small enough -- and the repair is to make the subtraction impossible to get
+/// wrong rather than to write it correctly in four places.
+fn stream_columns(width: u32) -> Vec<(&'static str, u32, u32)> {
+    const GUTTER: u32 = 6;
+    /// The narrowest a column can be and still say anything.
+    const FLOOR: u32 = 18;
+    let fixed: u32 = spec::STREAM_COLUMNS.iter().map(|(_, w)| *w).sum();
+    let flexible = width.saturating_sub(fixed + 24);
+    let mut out = Vec::new();
+    let mut x = 12;
+    let mut left = width.saturating_sub(12);
+    for (name, w) in spec::STREAM_COLUMNS {
+        let wanted = if *w == 0 { flexible } else { *w };
+        // A column takes what it wants or what is left, whichever is smaller,
+        // and the ones with nothing left are dropped from the right. The label
+        // elides rather than overflowing, so a narrowed column says it was cut
+        // instead of painting over its neighbour.
+        let cell = wanted.min(left);
+        let text = cell.saturating_sub(GUTTER);
+        if text < FLOOR {
+            break;
+        }
+        out.push((*name, x, text));
+        x += cell;
+        left -= cell;
+    }
+    out
+}
+
+/// A label that says so when it does not fit, rather than painting past its
+/// box. `Ellipsis` for a value read from the left, `EllipsisStart` for a path
+/// whose leaf is what identifies it (R1654's distinction).
+fn clipped(text: &str, rect: Rect, px: u32, fg: Color, overflow: TextOverflow) -> Scene {
+    Scene::Text(
+        TextNode::styled(
+            text,
+            rect,
+            TextStyle::new()
+                .with_size_px(px)
+                .with_fg(fg)
+                .with_overflow(overflow),
+        )
+        .with_layout(absolute(rect)),
+    )
+}
+
+/// The message stream: a header row of columns over the opening rows.
+fn stream_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
+    const HEAD_H: u32 = 20;
+    const ROW_H: u32 = 20;
+    let columns = stream_columns(rect.w);
+    let mut out = vec![Scene::Container(
+        ContainerNode::new(
+            columns
+                .iter()
+                .map(|(name, x, w)| {
+                    clipped(
+                        name,
+                        Rect::new(*x, 4, *w, 13),
+                        FONT_TINY,
+                        palette.muted,
+                        TextOverflow::Ellipsis,
+                    )
+                })
+                .collect(),
+        )
+        .with_tag(format!("card.{id}.head"))
+        .with_style(BoxStyle::filled(palette.raised))
+        .with_layout(absolute(Rect::new(rect.x, rect.y, rect.w, HEAD_H))),
+    )];
+    for (n, (time, kind, name, len)) in spec::STREAM_ROWS.iter().enumerate() {
+        let top = rect.y + HEAD_H + u(n) * ROW_H;
+        // A row whose bottom would leave the card is not painted at all. The
+        // alternative -- painting it and letting it land on the card below --
+        // is the defect R1656 measured on twenty-five surfaces.
+        if top + ROW_H > rect.y + rect.h {
+            break;
+        }
+        // A cell per column that fits, in the specification's order, with the
+        // row's own values. Zipped rather than indexed: a narrow card drops
+        // columns from the right, and indexing would reach past the end.
+        let values = [*time, *kind, *name, *len];
+        let cells = columns
+            .iter()
+            .zip(values)
+            .map(|((column, x, w), value)| {
+                let ink = if *column == "type" {
+                    type_ink(value, palette)
+                } else if *column == "name" {
+                    palette.ink
+                } else {
+                    palette.muted
+                };
+                // A resource path is identified by its leaf, so it gives up
+                // its head; everything else reads from the left.
+                let overflow = if *column == "name" {
+                    TextOverflow::EllipsisStart
+                } else {
+                    TextOverflow::Ellipsis
+                };
+                clipped(value, Rect::new(*x, 3, *w, 13), FONT_TINY, ink, overflow)
+            })
+            .collect();
+        out.push(Scene::Container(
+            ContainerNode::new(cells)
+                .with_tag(format!("card.{id}.row.{n}"))
+                .with_layout(absolute(Rect::new(rect.x, top, rect.w, ROW_H))),
+        ));
+    }
+    out
+}
+
+/// The decode inspector: the layer tree beside the bytes it decoded.
+fn decode_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
+    const ROW_H: u32 = 19;
+    // The tree keeps at least half the card; the bytes pane takes what is left,
+    // and is dropped entirely when that is less than one byte's worth. A fixed
+    // pane on a card narrower than the pane paints outside the card, which the
+    // gate reports and a reader sees as one card's bytes on the next one.
+    let bytes_w = BYTES_W.min(rect.w / 2);
+    let tree_w = if bytes_w >= BYTES_FLOOR {
+        rect.w.saturating_sub(bytes_w + 12)
+    } else {
+        rect.w
+    };
+    let mut out = Vec::new();
+    for (n, (depth, key, value)) in spec::DECODE_ROWS.iter().enumerate() {
+        let top = rect.y + 4 + u(n) * ROW_H;
+        if top + ROW_H > rect.y + rect.h {
+            break;
+        }
+        let indent = (10 + depth * 12).min(tree_w);
+        let heading = *depth == 0;
+        let selected = n == spec::DECODE_SELECTED;
+        // ★ The key is the identifying half, so it is allocated FIRST and the
+        // value gets what is left. The first draft gave the value a fixed
+        // seventy-four pixels at a fixed offset and let the key take the
+        // remainder: on a narrowed card the remainder was nothing, the key
+        // vanished, and the row read as a value with no name. A positional
+        // comparison against the specification is what caught it -- a check
+        // that asked only "are these the row's words" saw the same set.
+        let room = tree_w.saturating_sub(indent + 6);
+        let with_value = !value.is_empty() && room >= KEY_FLOOR + VALUE_W;
+        let key_w = if with_value { room - VALUE_W } else { room };
+        let mut cells = Vec::new();
+        if key_w > 0 {
+            cells.push(clipped(
+                key,
+                Rect::new(indent, 3, key_w, 13),
+                FONT_TINY,
+                if heading { palette.ink } else { palette.muted },
+                TextOverflow::Ellipsis,
+            ));
+        }
+        if with_value {
+            cells.push(clipped(
+                value,
+                Rect::new(indent + key_w, 3, VALUE_W, 13),
+                FONT_TINY,
+                palette.ink,
+                TextOverflow::EllipsisStart,
+            ));
+        }
+        out.push(Scene::Container(
+            ContainerNode::new(cells)
+                .with_tag(format!("card.{id}.tree.{n}"))
+                .with_style(if selected {
+                    BoxStyle::filled(palette.high).with_corner_radius(4)
+                } else {
+                    BoxStyle::default()
+                })
+                .with_layout(absolute(Rect::new(rect.x, top, tree_w, ROW_H))),
+        ));
+    }
+    out.extend(byte_pane(
+        id,
+        Rect::new(rect.x + tree_w + 12, rect.y, bytes_w, rect.h),
+        rect,
+        palette,
+    ));
+    out
+}
+
+/// The bytes the decode card shows beside its tree, four per line, with the
+/// selected field's own bytes lit.
+///
+/// The law screen B is built on (R1663): what is drawn lit is exactly what the
+/// map says the selection occupies, not a resemblance of it.
+fn byte_pane(id: &str, pane: Rect, card: Rect, palette: Palette) -> Vec<Scene> {
+    const ROW_H: u32 = 19;
+    let mut out = Vec::new();
+    if pane.w < BYTES_FLOOR {
+        return out;
+    }
+    let (start, end) = spec::DECODE_SELECTED_SPAN;
+    for (line, quad) in spec::DECODE_BYTES.iter().enumerate() {
+        let top = card.y + 4 + u(line) * ROW_H;
+        if top + ROW_H > card.y + card.h {
+            break;
+        }
+        let mut cells = vec![label(
+            &format!("{:04x}", line * 4),
+            Rect::new(6, 3, 30, 13),
+            FONT_TINY,
+            palette.muted,
+        )];
+        for (col, byte) in quad.iter().enumerate() {
+            let index = line * 4 + col;
+            // A cell that would leave the pane is not painted. Its bytes are
+            // not lost -- the pane is simply narrower than four columns, and a
+            // cell drawn past the edge lands on whatever is beside the card.
+            if 40 + u(col) * 24 + 22 > pane.w {
+                break;
+            }
+            let lit = index >= start && index < end;
+            cells.push(Scene::Container(
+                ContainerNode::new(vec![label(
+                    &format!("{byte:02x}"),
+                    Rect::new(2, 3, 18, 13),
+                    FONT_TINY,
+                    if lit { palette.on_accent } else { palette.ink },
+                )])
+                .with_tag(format!("card.{id}.byte.{index}"))
+                .with_style(if lit {
+                    BoxStyle::filled(palette.accent).with_corner_radius(3)
+                } else {
+                    BoxStyle::default()
+                })
+                .with_layout(absolute(Rect::new(40 + u(col) * 24, 0, 22, ROW_H))),
+            ));
+        }
+        out.push(Scene::Container(
+            ContainerNode::new(cells)
+                .with_tag(format!("card.{id}.bytes.{line}"))
+                .with_layout(absolute(Rect::new(pane.x, top, pane.w, ROW_H))),
+        ));
+    }
+    out
+}
+
+/// The identifier map: numeric id to resource path, and when it was declared.
+fn map_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
+    const HEAD_H: u32 = 18;
+    const ROW_H: u32 = 18;
+    // The columns are allocated left to right and a column with nothing left is
+    // dropped, so a narrowed card shows the id and the resource rather than the
+    // id and the timestamp. Same discipline as the stream's columns and the
+    // decode tree's key: the identifying half is allocated first.
+    const ID_W: u32 = 34;
+    const SEEN_W: u32 = 66;
+    const PATH_FLOOR: u32 = 40;
+    let room = rect.w.saturating_sub(12 + ID_W + 6);
+    let with_seen = room >= PATH_FLOOR + SEEN_W;
+    let path_w = if with_seen { room - SEEN_W } else { room };
+    let cells = |ink: Color, cols: [&str; 3], warn: bool| {
+        let mut out = vec![clipped(
+            cols[0],
+            Rect::new(12, 2, ID_W, 13),
+            FONT_TINY,
+            if warn { palette.warn } else { ink },
+            TextOverflow::Ellipsis,
+        )];
+        if path_w > 0 {
+            out.push(clipped(
+                cols[1],
+                Rect::new(12 + ID_W + 6, 2, path_w, 13),
+                FONT_TINY,
+                ink,
+                TextOverflow::EllipsisStart,
+            ));
+        }
+        if with_seen {
+            out.push(clipped(
+                cols[2],
+                Rect::new(12 + ID_W + 6 + path_w, 2, SEEN_W, 13),
+                FONT_TINY,
+                palette.muted,
+                TextOverflow::Ellipsis,
+            ));
+        }
+        out
+    };
+    let mut out = vec![Scene::Container(
+        ContainerNode::new(cells(
+            palette.muted,
+            [
+                spec::MAP_COLUMNS[0],
+                spec::MAP_COLUMNS[1],
+                spec::MAP_COLUMNS[2],
+            ],
+            false,
+        ))
+        .with_tag(format!("card.{id}.head"))
+        .with_style(BoxStyle::filled(palette.raised))
+        .with_layout(absolute(Rect::new(rect.x, rect.y, rect.w, HEAD_H))),
+    )];
+    for (n, (key, path, seen)) in spec::MAP_ROWS.iter().enumerate() {
+        let top = rect.y + HEAD_H + u(n) * ROW_H;
+        if top + ROW_H > rect.y + rect.h {
+            break;
+        }
+        let unresolved = n == spec::MAP_UNRESOLVED;
+        out.push(Scene::Container(
+            ContainerNode::new(cells(
+                if unresolved {
+                    palette.warn
+                } else {
+                    palette.ink
+                },
+                [key, path, seen],
+                unresolved,
+            ))
+            .with_tag(format!("card.{id}.map.{n}"))
+            .with_layout(absolute(Rect::new(rect.x, top, rect.w, ROW_H))),
+        ));
+    }
+    out
+}
+
+/// The search and filter card: the query, the saved chips, and the three counts
+/// whose relation is the point of the card.
+fn filter_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
+    let mut out = vec![Scene::Container(
+        ContainerNode::new(vec![label(
+            spec::FILTER_QUERY,
+            Rect::new(10, 7, rect.w.saturating_sub(36), 14),
+            FONT_SMALL,
+            palette.ink,
+        )])
+        .with_tag(format!("card.{id}.query"))
+        .with_style(
+            BoxStyle::filled(palette.raised)
+                .with_corner_radius(7)
+                .with_border(Border::new(palette.outline, 1)),
+        )
+        .with_layout(absolute(Rect::new(rect.x, rect.y, rect.w, 28))),
+    )];
+    let mut x = rect.x;
+    let mut y = rect.y + 34;
+    for (n, (name, on)) in spec::FILTER_CHIPS.iter().enumerate() {
+        // A chip is as wide as its word, and a row of them wraps rather than
+        // running off the card -- the policy R1651 measured on the reference's
+        // own form and lifted into the framework. ★ It is also CLAMPED to the
+        // card: a word longer than the card cannot be made to fit by wrapping,
+        // and the first draft let it run off the right edge on a one-cell card.
+        let w = (18 + u(name.chars().count()) * 6).min(rect.w);
+        if x + w > rect.x + rect.w {
+            x = rect.x;
+            y += 26;
+        }
+        if y + 22 > rect.y + rect.h {
+            break;
+        }
+        out.push(Scene::Container(
+            ContainerNode::new(vec![clipped(
+                name,
+                Rect::new(9, 4, w.saturating_sub(18), 13),
+                FONT_TINY,
+                if *on {
+                    palette.on_accent
+                } else {
+                    palette.muted
+                },
+                TextOverflow::Ellipsis,
+            )])
+            .with_tag(format!("card.{id}.chip.{n}"))
+            .with_style(
+                BoxStyle::filled(if *on { palette.accent } else { palette.raised })
+                    .with_corner_radius(10)
+                    .with_border(Border::new(palette.outline, 1)),
+            )
+            .with_layout(absolute(Rect::new(x, y, w, 22))),
+        ));
+        x += w + 6;
+    }
+    out.extend(filter_counts(
+        id,
+        Rect::new(
+            rect.x,
+            y + 30,
+            rect.w,
+            rect.y + rect.h - (y + 30).min(rect.y + rect.h),
+        ),
+        rect,
+        palette,
+    ));
+    out
+}
+
+/// The filter card's three counts, and the recent past of the first.
+///
+/// Three rather than one because the reference's point is the RELATION -- a
+/// reader is looking at a subset of a subset, and a single number cannot say
+/// which subset it is. The tiles go or stay together: a card too short for them
+/// shows the query and the chips, which are the parts a reader can still act on.
+fn filter_counts(id: &str, area: Rect, card: Rect, palette: Palette) -> Vec<Scene> {
+    let mut out = Vec::new();
+    let stat_w = area.w.saturating_sub(2 * 8) / u(spec::FILTER_STATS.len());
+    if stat_w < STAT_FLOOR || area.y + STAT_H > card.y + card.h {
+        return out;
+    }
+    for (n, (value, what)) in spec::FILTER_STATS.iter().enumerate() {
+        out.push(Scene::Container(
+            ContainerNode::new(vec![
+                label(
+                    value,
+                    Rect::new(10, 7, stat_w.saturating_sub(20), 17),
+                    FONT_TITLE,
+                    palette.ink,
+                ),
+                label(
+                    what,
+                    Rect::new(10, 27, stat_w.saturating_sub(20), 13),
+                    FONT_TINY,
+                    palette.muted,
+                ),
+            ])
+            .with_tag(format!("card.{id}.stat.{n}"))
+            .with_style(
+                BoxStyle::filled(palette.raised)
+                    .with_corner_radius(8)
+                    .with_border(Border::new(palette.outline, 1)),
+            )
+            .with_layout(absolute(Rect::new(
+                area.x + u(n) * (stat_w + 8),
+                area.y,
+                stat_w,
+                STAT_H,
+            ))),
+        ));
+    }
+    // The recent past of the first count, so a reader can see whether the
+    // matched share is moving before reading three numbers off the tiles.
+    let spark_y = area.y + 52;
+    if spark_y + 30 <= card.y + card.h {
+        out.push(Scene::Container(
+            ContainerNode::new(vec![
+                Sparkline::new(MATCH_SERIES.to_vec())
+                    .with_color(kind_color("filter"))
+                    .with_tag_prefix("match.spark")
+                    .build(
+                        Rect::new(0, 0, area.w, card.y + card.h - spark_y),
+                        &ChartStyle::default(),
+                    ),
+            ])
+            .with_tag(format!("card.{id}.sparkline"))
+            .with_layout(absolute(Rect::new(
+                area.x,
+                spark_y,
+                area.w,
+                card.y + card.h - spark_y,
+            ))),
+        ));
+    }
+    out
+}
+
+/// A kind with no body painter: its code and its one line, which is what the
+/// palette already told the person who placed it.
+fn placeholder_body(kind: &str, id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
+    let def = def_of(kind);
     vec![
-        // A placeholder that reads as content rather than as a gap: the
-        // widget's own colour, its code, and its one-line description.
         Scene::Container(
             ContainerNode::new(vec![label(
                 def.map_or("", |d| d.code),
@@ -3185,11 +3651,11 @@ fn ready_body(card: &Card, rect: Rect, palette: Palette) -> Vec<Scene> {
                 palette.on_accent,
             )])
             .with_tag(format!("card.{id}.code"))
-            .with_style(BoxStyle::filled(colour).with_corner_radius(6))
+            .with_style(BoxStyle::filled(kind_color(kind)).with_corner_radius(6))
             .with_layout(absolute(Rect::new(rect.x + 12, rect.y + 10, 40, 32))),
         ),
         label(
-            def.map_or("", |d| d.desc),
+            def.map_or("", |d| d.gist),
             Rect::new(rect.x + 62, rect.y + 18, rect.w.saturating_sub(74), 16),
             FONT_BODY,
             palette.muted,
@@ -3315,7 +3781,7 @@ fn float_scene(state: &ShellState, float: &Float, palette: Palette) -> Option<Sc
     let rect = float_rect(float);
     let inside = local(rect);
     let header = header_rect(inside);
-    let colour = def_for_card(&float.id).map_or(palette.accent, |d| d.color);
+    let colour = kind_color(kind_of(&float.id));
     let mut children = vec![
         dot(14, header.y + CARD_HDR / 2 - 4, 9, colour),
         label(
@@ -3375,85 +3841,268 @@ fn float_scene(state: &ShellState, float: &Float, palette: Palette) -> Option<Sc
     ))
 }
 
+/// R1668 — the reads that answer from the SPECIFICATION rather than from the
+/// shell's state.
+///
+/// Grouped because that is the distinction: nothing here can change while the
+/// application runs, so a client that caches one of these is right to.
+fn read_specification(path: &str) -> Result<IntrospectValue, ReadRefusal> {
+    match path {
+        "spec" => Ok(IntrospectValue::Json(spec_json())),
+        "rail" => Ok(IntrospectValue::Text(
+            spec::RAIL
+                .iter()
+                .map(|seat| seat.key)
+                .collect::<Vec<_>>()
+                .join(","),
+        )),
+        // The seats a later release opens, and what each is booked under. A
+        // locked seat that could only be SEEN is a screenshot; one that says
+        // what it is waiting for is a specification.
+        "reserved_rail" => Ok(IntrospectValue::Json(serde_json::Value::Array(
+            spec::RAIL
+                .iter()
+                .filter_map(|seat| {
+                    seat.reserved_for
+                        .map(|why| serde_json::json!({ "key": seat.key, "reserved_for": why }))
+                })
+                .collect(),
+        ))),
+        // The thirteen kinds, so a client picks from what is offered.
+        "catalogue" => Ok(IntrospectValue::Text(
+            spec::CATALOGUE
+                .iter()
+                .map(|w| w.kind)
+                .collect::<Vec<_>>()
+                .join(","),
+        )),
+        // Unreachable through the caller's match, which routes exactly the
+        // four paths above. Stated rather than unwrapped: a fifth path added to
+        // that arm and not to this one refuses in the schema's own vocabulary
+        // instead of panicking a shell.
+        _ => Err(ReadRefusal::UnknownPath),
+    }
+}
+
+/// R1668 — the reference screen C, as the wire hands it to a client.
+///
+/// Every field is read straight out of `spec`, so the running application and
+/// the gate compare against one table rather than two spellings of it.
+fn spec_json() -> serde_json::Value {
+    serde_json::json!({
+        "window": { "w": spec::WIN_W, "h": spec::WIN_H },
+        "metrics": {
+            "app_bar_h": spec::APP_BAR_H,
+            "sub_bar_h": spec::SUB_BAR_H,
+            "rail_w": spec::RAIL_W,
+            "palette_w": spec::PALETTE_W,
+            "grid_cols": spec::GRID_COLS,
+        },
+        "source": spec::SOURCE,
+        "transport": spec::TRANSPORT,
+        "rate": spec::RATE,
+        "preset": spec::PRESET,
+        "board_verbs": spec::BOARD_VERBS,
+        "rail": spec::RAIL.iter().map(|seat| serde_json::json!({
+            "key": seat.key, "title": seat.title, "reserved_for": seat.reserved_for,
+        })).collect::<Vec<_>>(),
+        "rail_active": spec::RAIL_ACTIVE,
+        "sections": spec::SECTIONS.iter().map(|(key, title, tier)| serde_json::json!({
+            "key": key, "title": title, "tier": tier_word(*tier),
+        })).collect::<Vec<_>>(),
+        "catalogue": spec::CATALOGUE.iter().map(|w| serde_json::json!({
+            "kind": w.kind,
+            "code": w.code,
+            "label": w.label,
+            "gist": w.gist,
+            "section": w.section,
+            "tier": tier_word(w.tier),
+            "reserved_for": w.reserved_for,
+        })).collect::<Vec<_>>(),
+        "placeable_count": spec::placeable_count(),
+        "reserved_count": spec::reserved_count(),
+        "board": spec::BOARD.iter().map(|p| serde_json::json!({
+            "kind": p.kind, "col": p.col, "row": p.row, "cols": p.cols, "rows": p.rows,
+        })).collect::<Vec<_>>(),
+        "card_chrome": spec::CARD_CHROME,
+        "stream_columns": spec::STREAM_COLUMNS.iter().map(|(name, w)| serde_json::json!({
+            "name": name, "width": w,
+        })).collect::<Vec<_>>(),
+        "stream_rows": spec::STREAM_ROWS.iter().map(|(time, kind, name, len)| serde_json::json!({
+            "time": time, "type": kind, "name": name, "len": len,
+        })).collect::<Vec<_>>(),
+        "decode_rows": spec::DECODE_ROWS.iter().map(|(depth, key, value)| serde_json::json!({
+            "depth": depth, "key": key, "value": value,
+        })).collect::<Vec<_>>(),
+        "decode_selected": spec::DECODE_SELECTED,
+        "decode_span": [spec::DECODE_SELECTED_SPAN.0, spec::DECODE_SELECTED_SPAN.1],
+        "map_rows": spec::MAP_ROWS.iter().map(|(id, path, seen)| serde_json::json!({
+            "id": id, "resource": path, "first_seen": seen,
+        })).collect::<Vec<_>>(),
+        "map_unresolved": spec::MAP_UNRESOLVED,
+        "filter_query": spec::FILTER_QUERY,
+        "filter_chips": spec::FILTER_CHIPS.iter().map(|(name, on)| serde_json::json!({
+            "name": name, "on": on,
+        })).collect::<Vec<_>>(),
+        "filter_stats": spec::FILTER_STATS.iter().map(|(value, what)| serde_json::json!({
+            "value": value, "of": what,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+/// The wire spelling of a tier.
+const fn tier_word(tier: spec::Tier) -> &'static str {
+    match tier {
+        spec::Tier::Placeable => "placeable",
+        spec::Tier::Reserved => "reserved",
+    }
+}
+
+/// One palette row: the swatch, the name, the one line, and what the row offers
+/// -- the verb for a placeable entry, the booking for a reserved one.
+fn palette_row(
+    state: &ShellState,
+    def: &'static spec::WidgetSpec,
+    rect: Rect,
+    palette: Palette,
+) -> Scene {
+    let placed = state
+        .cards
+        .get()
+        .iter()
+        .filter(|c| kind_of(c.id().as_str()) == def.kind)
+        .count();
+    let reserved = def.tier == spec::Tier::Reserved;
+    // The reference shows the reservation in the slot the add control would
+    // occupy, so a reader's eye finds "what does this row offer me" in one
+    // place down the whole list.
+    //
+    // ★ Its width is what the text beside it gives up. The first draft sized
+    // the text against the ADD control and then put a wider word in the slot,
+    // and every one of the nine reserved rows painted its name under the
+    // badge -- eighteen overlapping pairs, which the gate reported before
+    // anybody looked at the window.
+    let (trailing_w, trailing) = if reserved {
+        (
+            52,
+            label(
+                "later",
+                Rect::new(rect.w.saturating_sub(52), 15, 46, 16),
+                FONT_SMALL,
+                palette.muted,
+            ),
+        )
+    } else {
+        (
+            34,
+            label(
+                &if placed == 0 {
+                    "+".to_string()
+                } else {
+                    format!("+ {placed}")
+                },
+                Rect::new(rect.w.saturating_sub(30), 15, 26, 16),
+                FONT_BODY,
+                palette.accent_fg,
+            ),
+        )
+    };
+    let text_w = rect.w.saturating_sub(50 + trailing_w + 6);
+    // R1668 — a reserved row is DECLARED unavailable and states what it is
+    // booked under. Everything a reader and an agent get from that -- inert to
+    // the pointer, faded ink, `aria-disabled` with a spoken reason, a row on
+    // `scene/disabled` naming the requirement -- follows from this one
+    // declaration rather than from four hand-kept copies of it.
+    let layout = if reserved {
+        absolute(rect).with_unavailable(Unavailable::reserved(def.reserved_for))
+    } else {
+        absolute(rect)
+    };
+    Scene::Container(
+        ContainerNode::new(vec![
+            Scene::Container(
+                ContainerNode::new(vec![label(
+                    def.code,
+                    Rect::new(5, 9, 30, 14),
+                    FONT_TINY,
+                    palette.on_accent,
+                )])
+                .with_style(BoxStyle::filled(kind_color(def.kind)).with_corner_radius(8))
+                .with_layout(absolute(Rect::new(8, 7, 32, 32))),
+            ),
+            // Both elide. A palette is a list of names of varying length in a
+            // fixed column, so "the longest one happens to fit" is not a
+            // property anybody can keep -- and the boot gate measured this one
+            // at ten pixels outside its row.
+            clipped(
+                def.label,
+                Rect::new(50, 8, text_w, 16),
+                FONT_BODY,
+                palette.ink,
+                TextOverflow::Ellipsis,
+            ),
+            clipped(
+                def.gist,
+                Rect::new(50, 26, text_w, 14),
+                FONT_SMALL,
+                palette.muted,
+                TextOverflow::Ellipsis,
+            ),
+            trailing,
+        ])
+        .with_tag(format!("shell.palette.{}", def.kind))
+        .with_style(
+            BoxStyle::filled(palette.raised)
+                .with_corner_radius(10)
+                .with_border(Border::new(palette.outline, 1)),
+        )
+        .with_layout(layout),
+    )
+}
+
 /// The palette panel: the catalogue, grouped, with a count at the foot.
 fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
     let panel = palette_rect();
     let mut children = vec![
         label(
-            "Widget Palette",
+            spec::PALETTE_TITLE,
             Rect::new(16, 18, 220, 20),
             FONT_TITLE,
             palette.ink,
         ),
         label(
-            "Press one to place it on the board",
+            spec::PALETTE_HINT,
             Rect::new(16, 42, 250, 16),
             FONT_SMALL,
             palette.muted,
         ),
     ];
     for (def, title, rect) in palette_rows() {
-        let Some(def) = def else {
-            children.push(label(title, rect, FONT_TINY, palette.muted));
-            continue;
-        };
-        let placed = state
-            .cards
-            .get()
-            .iter()
-            .filter(|c| kind_of(c.id().as_str()) == def.kind)
-            .count();
-        children.push(Scene::Container(
-            ContainerNode::new(vec![
-                Scene::Container(
-                    ContainerNode::new(vec![label(
-                        def.code,
-                        Rect::new(5, 9, 30, 14),
-                        FONT_TINY,
-                        palette.on_accent,
-                    )])
-                    .with_style(BoxStyle::filled(def.color).with_corner_radius(8))
-                    .with_layout(absolute(Rect::new(8, 7, 32, 32))),
-                ),
-                label(
-                    def.label,
-                    Rect::new(50, 8, rect.w.saturating_sub(84), 16),
-                    FONT_BODY,
-                    palette.ink,
-                ),
-                label(
-                    def.desc,
-                    Rect::new(50, 26, rect.w.saturating_sub(84), 14),
-                    FONT_SMALL,
-                    palette.muted,
-                ),
-                label(
-                    &if placed == 0 {
-                        "+".to_string()
-                    } else {
-                        format!("+ {placed}")
-                    },
-                    Rect::new(rect.w.saturating_sub(30), 15, 26, 16),
-                    FONT_BODY,
-                    palette.accent_fg,
-                ),
-            ])
-            .with_tag(format!("shell.palette.{}", def.kind))
-            .with_style(
-                BoxStyle::filled(palette.raised)
-                    .with_corner_radius(10)
-                    .with_border(Border::new(palette.outline, 1)),
-            )
-            .with_layout(absolute(rect)),
-        ));
+        match def {
+            None => children.push(label(title, rect, FONT_TINY, palette.muted)),
+            Some(def) => children.push(palette_row(state, def, rect, palette)),
+        }
     }
+    // Both counts, because the screen's whole claim is the relation between
+    // them: this release places four, and holds nine seats open.
     children.push(label(
         &format!(
-            "{} widgets \u{00B7} {} placed",
-            DEFS.len(),
-            state.placed().len()
+            "{} placed of {}",
+            state.placed().len(),
+            spec::placeable_count()
         ),
-        Rect::new(16, panel.h.saturating_sub(30), 240, 16),
+        Rect::new(16, panel.h.saturating_sub(30), 130, 16),
+        FONT_SMALL,
+        palette.muted,
+    ));
+    children.push(label(
+        &format!("{} reserved", spec::reserved_count()),
+        Rect::new(
+            panel.w.saturating_sub(110),
+            panel.h.saturating_sub(30),
+            94,
+            16,
+        ),
         FONT_SMALL,
         palette.muted,
     ));
@@ -3505,6 +4154,7 @@ fn view(_state: (), _frame: Frame) -> Scene {
         high: theme.resolve(ColorRole::SurfaceContainerHigh),
         outline: theme.resolve(ColorRole::Outline),
         grid: grid_ink(dark),
+        warn: theme.resolve(ColorRole::Warning),
     };
 
     let board = state.board.get();
@@ -3638,10 +4288,11 @@ impl WidgetA11y for AnalyzerShellView {
             AccessNode::new(VIEW_TAG, AriaRole::Group)
                 .with_name("Analyzer dashboard")
                 .with_value(AccessValue::Text(format!(
-                    "{} of {} widgets placed on layout \"{}\", source {}",
+                    "{} of {} widgets placed on layout \"{}\", {} reserved, source {}",
                     state.placed().len(),
-                    DEFS.len(),
+                    spec::placeable_count(),
                     state.preset.get(),
+                    spec::reserved_count(),
                     state.source.get(),
                 ))),
         ];
@@ -3686,5 +4337,7 @@ fn main() {
     pinion_shell::run::<AnalyzerShellView>();
 }
 
+#[cfg(test)]
+mod painted;
 #[cfg(test)]
 mod tests;

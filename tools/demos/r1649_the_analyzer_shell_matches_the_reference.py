@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""R1648/R1649 §5.21 §5.51 §2 #7 — the analysis-tool dashboard shell, assembled,
-operated by hand, and shaped like the tool this axis is judged by.
+"""R1648/R1649/R1668 §5.21 §5.51 §5.39 §2 #7 — the analysis-tool dashboard
+shell, assembled, operated by hand, and shaped like the tool this axis is
+judged by.
 
 `tools/analyzer_census.py` gives every capability of this tool class one of five
 verdicts, and the biggest bin is `app` — *the substrate is here, the domain
@@ -16,8 +17,16 @@ script therefore checks:
 
 * **A three-column shell** — icon rail, sub-header with the layout preset and
   the two board verbs, canvas, and a **widget palette the board is populated
-  from**. Twelve kinds offered, three placed, and the two counts on screen have
-  to agree.
+  from**. Thirteen kinds offered — four this release places and nine it
+  RESERVES — and the counts on screen have to agree.
+* **R1668: a reserved seat is present, named, and says what it is waiting for.**
+  The reference is emphatic that a later release's widgets are shown locked
+  rather than hidden, so the shape of the finished tool is legible before it
+  exists. Each one is declared unavailable with the requirement it is booked
+  under, which is what puts the reason on `scene/disabled`, in the accessibility
+  tree, and out of reach of every path that places a card. Measured on the
+  toolkit at 6.11 by building and running it: four disable surfaces, all bools,
+  and one accessibility bit with no slot for a reason.
 * **A drag previews where it will land** rather than displacing cards live. The
   reference commits on release; so does this, and `drag` publishes the snap.
 * **Layout-edit mode** puts size steppers on the cards.
@@ -58,24 +67,41 @@ from rpc_verify import (  # noqa: E402
 
 EXT = "/external"
 
-#: The twelve widget kinds the palette offers.
+#: The thirteen catalogue kinds, in palette order. Read back from the running
+#: application's own `spec` below as well — this list is what makes a silent
+#: reordering visible, since a comparison against the application alone would
+#: agree with whatever the application happened to say.
 CATALOGUE = [
     "packet",
     "decode",
+    "keymap",
     "filter",
     "topology",
+    "overlay",
     "throughput",
     "share",
     "latency",
-    "loss",
     "health",
+    "loss",
     "alarms",
-    "replay",
-    "report",
+    "admin",
 ]
 
-#: The board the "Overview" layout opens with.
-OPENING = ["topology#0", "throughput#1", "packet#2"]
+#: The four the first release places, and the board it opens with.
+OPENING = ["packet#0", "decode#1", "keymap#2", "filter#3"]
+
+#: The nine it reserves, and the requirement each is booked under.
+RESERVED = {
+    "topology": "requirement 12",
+    "overlay": "requirement 13",
+    "throughput": "requirement 16",
+    "share": "requirement 17",
+    "latency": "requirement 19",
+    "health": "requirement 18",
+    "loss": "requirement 20",
+    "alarms": "requirement 21",
+    "admin": "requirement 14",
+}
 
 
 def q(tf: RpcSubprocess, path: str):
@@ -149,11 +175,15 @@ def body() -> None:
         assert counted["read"] >= 25, f"the walk reaches the surface: {counted}"
 
         # ── (A) the shell is assembled: a catalogue, a board, and a count ─
-        assert_eq(q(tf, "catalogue"), ",".join(CATALOGUE), "A: twelve widget kinds offered")
-        assert_eq(q(tf, "cards"), ",".join(OPENING), "A: three placed, in board order")
-        assert_eq(q(tf, "placed_count"), 3, "A: and the count agrees")
+        assert_eq(q(tf, "catalogue"), ",".join(CATALOGUE), "A: thirteen kinds offered")
+        assert_eq(q(tf, "cards"), ",".join(OPENING), "A: four placed, in board order")
+        assert_eq(q(tf, "placed_count"), 4, "A: and the count agrees")
         assert_eq(q(tf, "preset"), "Overview", "A: the layout it opens on")
-        assert_eq(q(tf, "rail"), "dashboard,topology,stream,decode,catalog,settings", "A: the rail")
+        assert_eq(
+            q(tf, "rail"),
+            "dashboard,stream,decode,catalog,settings,topology,sessions",
+            "A: the rail, its two reserved seats last",
+        )
         assert_eq(q(tf, "tabs"), "Dashboard,Design System", "A: the two view tabs")
         assert q(tf, "source").startswith("eth0"), "A: the app bar opens on a source"
         assert_eq(q(tf, "capturing"), True, "A: capture is on")
@@ -167,29 +197,75 @@ def body() -> None:
         # ── (B) ★ a card is ADDED from the palette, not seeded ───────────
         # The reason the palette exists: what is on the board is a decision
         # somebody made, so two places on screen have to agree about how many.
-        assert_eq(inv(tf, "add", "latency"), "latency#3", "B: a new card takes the next ordinal")
-        assert_eq(q(tf, "placed_count"), 4, "B: and the board grew")
-        # Row 4 because the opening board reaches row 4 (two rows of two-row
-        # cards). "The bottom" is derived from the arrangement, not a constant.
-        assert_eq(inv(tf, "cell", "latency#3"), "0,4,4,2", "B: placed at the bottom, left")
+        assert_eq(inv(tf, "add", "packet"), "packet#4", "B: a new card takes the next ordinal")
+        assert_eq(q(tf, "placed_count"), 5, "B: and the board grew")
         assert "is not a widget kind" in refused(tf, "add", "nonesuch"), (
             "B: the catalogue is closed, and the refusal lists it"
         )
         # A kind can be placed twice — which is why an id carries an ordinal.
-        assert_eq(inv(tf, "add", "latency"), "latency#4", "B: twice is allowed")
-        assert_eq(q(tf, "placed_count"), 5, "B: five on the board")
+        assert_eq(inv(tf, "add", "packet"), "packet#5", "B: twice is allowed")
+        assert_eq(q(tf, "placed_count"), 6, "B: six on the board")
         # Closed over the wire rather than by hand: the fifth card lands below
         # the viewport, and this shell does not scroll its canvas
         # (debt-the-analyzer-canvas-does-not-scroll). Stated here rather than
         # worked around silently, because a demo that quietly avoided the edge
         # of the window would be hiding the difference from the reference.
-        inv(tf, "act", "latency#4,close")
-        assert_eq(q(tf, "placed_count"), 4, "B: and one closed")
+        inv(tf, "act", "packet#5,close")
+        assert_eq(q(tf, "placed_count"), 5, "B: and one closed")
         # And placing one from the PALETTE, which is the gesture that matters.
-        click(tf, at(tf, "shell.palette.report"))
-        assert_eq(q(tf, "placed_count"), 5, "B: ★ the palette places a card")
-        assert q(tf, "cards").endswith("report#5"), f"B: by kind: {q(tf, 'cards')}"
-        inv(tf, "act", "report#5,close")
+        click(tf, at(tf, "shell.palette.keymap"))
+        assert_eq(q(tf, "placed_count"), 6, "B: ★ the palette places a card")
+        assert q(tf, "cards").endswith("keymap#6"), f"B: by kind: {q(tf, 'cards')}"
+        inv(tf, "act", "keymap#6,close")
+        assert_eq(q(tf, "placed_count"), 5, "B: the added card stays for what follows")
+
+        # ── (B2) ★ R1668 — the nine seats a later release opens ───────────
+        # The reference shows them rather than hiding them, so the shape of the
+        # finished tool is legible now. Each one says what it is waiting for,
+        # and no path here places it.
+        spec = q(tf, "spec")
+        assert_eq(spec["placeable_count"], 4, "B2: four this release places")
+        assert_eq(spec["reserved_count"], 9, "B2: and nine it reserves")
+        assert_eq(
+            [w["kind"] for w in spec["catalogue"] if w["tier"] == "reserved"],
+            list(RESERVED),
+            "B2: the reserved nine, in palette order",
+        )
+        for kind, booking in RESERVED.items():
+            entry = next(w for w in spec["catalogue"] if w["kind"] == kind)
+            assert_eq(entry["reserved_for"], booking, f"B2: {kind} states its booking")
+            why = refused(tf, "add", kind)
+            assert booking in why, f"B2: ★ {kind} refuses AND names the booking: {why}"
+        assert_eq(q(tf, "placed_count"), 5, "B2: and not one of them reached the board")
+
+        # ★ The same fact on the READ channel, from the framework's own cascade
+        # rather than from anything this shell wrote down: `scene/disabled` says
+        # which seats are inert, why, and what a person can do about it. The
+        # floor this is measured against has a bool on four surfaces and one
+        # accessibility bit with no slot for a reason.
+        inert = {row["tag"]: row for row in tf.request("scene/disabled", {}).result["disabled"]}
+        for kind, booking in RESERVED.items():
+            row = inert.get(f"shell.palette.{kind}")
+            assert row is not None, f"B2: shell.palette.{kind} is reserved and reported live"
+            assert_eq(row["reason"], "reserved", f"B2: {kind} is inert as a reservation")
+            assert_eq(row["detail"], booking, f"B2: {kind} reports its booking on the wire")
+            assert_eq(row["recourse"], "await_release", f"B2: {kind} derives its recourse")
+        for kind in ("packet", "decode", "keymap", "filter"):
+            assert f"shell.palette.{kind}" not in inert, f"B2: {kind} is placeable and live"
+        for seat, booking in (("topology", "requirement 12"), ("sessions", "requirement 14")):
+            row = inert.get(f"shell.rail.{seat}")
+            assert row is not None, f"B2: the {seat} rail seat is reserved and reported live"
+            assert_eq(row["detail"], booking, f"B2: and names what it waits for")
+        assert_eq(
+            [row["tag"] for row in tf.request("scene/disabled", {}).result["disabled"] if row["reason"] != "reserved"],
+            [],
+            "B2: nothing on this screen is inert for any other reason",
+        )
+        # And the rail refuses on its own channel, by name.
+        assert "reserved for requirement 12" in refused_write(tf, "nav", "topology"), (
+            "B2: ★ a reserved rail seat refuses the write and says why"
+        )
+        assert_eq(q(tf, "nav"), "dashboard", "B2: and the section did not change")
 
         # ── (C) ★ a header is a set, and the set is enforced ─────────────
         assert_eq(
@@ -198,25 +274,25 @@ def body() -> None:
             "C: the four affordances, published in layout order",
         )
         assert_eq(
-            inv(tf, "chrome", "topology#0"),
+            inv(tf, "chrome", "packet#0"),
             "settings,tear_off,maximize,close",
             "C: ★ ONE card offering tear-off AND maximise — the toolkit splits "
             "those across two class hierarchies that cannot be combined, so a "
             "card with both is not expressible there at all",
         )
-        assert_eq(
-            inv(tf, "chrome", "latency#3"),
-            "settings,maximize,close",
-            "C: and one offers less",
-        )
-        why = refused(tf, "act", "latency#3,tear_off")
-        assert "does not offer tear_off" in why, (
-            f"C: ★ an affordance the card does not offer is refused BY NAME, on "
-            f"the wire, not merely hidden from the painter: {why}"
-        )
-        assert "settings,maximize,close" in why, "C: and the refusal says what it DOES offer"
-        assert "is not an affordance" in refused(tf, "act", "latency#3,float"), "C: closed set"
-        assert "is not <card>,<affordance>" in refused(tf, "act", "latency#3"), "C: malformed"
+        # ★ R1668 — the chrome is UNIFORM across the board, which is what the
+        # reference does and what makes a missing control legible. R1649 had it
+        # vary between kinds so that a refusal could be demonstrated at all;
+        # that case moved to the reserved kinds in (B2), which refuse for a
+        # reason a person can read rather than for an accident of a table.
+        for card in q(tf, "cards").split(","):
+            assert_eq(
+                inv(tf, "chrome", card),
+                "settings,tear_off,maximize,close",
+                f"C: {card} carries the same four as every other card",
+            )
+        assert "is not an affordance" in refused(tf, "act", "packet#4,float"), "C: closed set"
+        assert "is not <card>,<affordance>" in refused(tf, "act", "packet#4"), "C: malformed"
 
         # ── (D) ★ the body state, and its DERIVED remedy ─────────────────
         assert_eq(
@@ -227,50 +303,50 @@ def body() -> None:
         )
         assert_eq(q(tf, "remedies"), "wait,retry,widen,authorize,nothing", "D: five remedies")
         for word, card, detail, remedy, actionable in [
-            ("loading", "throughput#1", None, "wait", "no"),
-            ("empty", "packet#2", None, "widen", "yes"),
-            ("failed", "latency#3", "collector unreachable", "retry", "yes"),
+            ("loading", "decode#1", None, "wait", "no"),
+            ("empty", "keymap#2", None, "widen", "yes"),
+            ("failed", "packet#4", "collector unreachable", "retry", "yes"),
         ]:
             arg = f"{card},{word}" if detail is None else f"{card},{word},{detail}"
             inv(tf, "set_state", arg)
             assert_eq(inv(tf, "state", card), word, f"D: {card} is {word}")
             assert_eq(inv(tf, "remedy", card), remedy, f"D: which derives {remedy}")
             assert_eq(inv(tf, "actionable", card), actionable, f"D: actionable={actionable}")
-        inv(tf, "set_state", "topology#0,denied,operator role")
-        assert_eq(inv(tf, "detail", "topology#0"), "operator role", "D: a denial names the right")
+        inv(tf, "set_state", "packet#0,denied,operator role")
+        assert_eq(inv(tf, "detail", "packet#0"), "operator role", "D: a denial names the right")
         assert_eq(
-            (inv(tf, "remedy", "topology#0"), inv(tf, "actionable", "topology#0")),
+            (inv(tf, "remedy", "packet#0"), inv(tf, "actionable", "packet#0")),
             ("authorize", "yes"),
             "D: ★ a denial is actionable — somebody holds the right",
         )
-        inv(tf, "set_state", "topology#0,opaque")
+        inv(tf, "set_state", "packet#0,opaque")
         assert_eq(
-            (inv(tf, "remedy", "topology#0"), inv(tf, "actionable", "topology#0")),
+            (inv(tf, "remedy", "packet#0"), inv(tf, "actionable", "packet#0")),
             ("nothing", "no"),
             "D: ★★ and an encrypted link is NOT, though both render as 'no "
             "content'. Collapsing them into one `error` arm is what makes a "
             "shell offer 'request access' on a link no permission can open",
         )
-        assert_eq(inv(tf, "detail", "topology#0"), "", "D: and it carries no particular reason")
-        assert "carries a reason" in refused(tf, "set_state", "topology#0,failed"), (
+        assert_eq(inv(tf, "detail", "packet#0"), "", "D: and it carries no particular reason")
+        assert "carries a reason" in refused(tf, "set_state", "packet#0,failed"), (
             "D: a failure with no reason is a failure whose reason was lost"
         )
-        assert "carries no reason" in refused(tf, "set_state", "topology#0,empty,because"), (
+        assert "carries no reason" in refused(tf, "set_state", "packet#0,empty,because"), (
             "D: and a reason on an arm nothing reads it from is refused too"
         )
-        assert "is not a card state" in refused(tf, "set_state", "topology#0,broken"), "D: closed"
-        inv(tf, "set_state", "topology#0,ready")
+        assert "is not a card state" in refused(tf, "set_state", "packet#0,broken"), "D: closed"
+        inv(tf, "set_state", "packet#0,ready")
 
         # ── (E) ★ a drag PREVIEWS, and commits on release ────────────────
         assert_eq(q(tf, "drag"), "", "E: nothing is being dragged")
         before = json.loads(q(tf, "layout"))
-        assert_eq(cell_of(before, "packet#2"), (0, 2), "E: where it starts")
-        inv(tf, "point", at(tf, "card.packet#2.grip"))
+        assert_eq(cell_of(before, "keymap#2"), (0, 2), "E: where it starts")
+        inv(tf, "point", at(tf, "card.keymap#2.grip"))
         inv(tf, "send", "PointerDown")
-        assert_eq(q(tf, "drag"), "packet#2,0,2", "E: the drag opens on its own cell")
+        assert_eq(q(tf, "drag"), "keymap#2,0,2", "E: the drag opens on its own cell")
         inv(tf, "point", "760,620")
         snap = q(tf, "drag")
-        assert snap.startswith("packet#2,") and snap != "packet#2,0,2", (
+        assert snap.startswith("keymap#2,") and snap != "keymap#2,0,2", (
             f"E: the snap preview follows the cursor: {snap}"
         )
         assert_eq(
@@ -284,7 +360,7 @@ def body() -> None:
         inv(tf, "send", "PointerUp")
         assert_eq(q(tf, "drag"), "", "E: the drag is over")
         assert_eq(
-            cell_of(json.loads(q(tf, "layout")), "packet#2"),
+            cell_of(json.loads(q(tf, "layout")), "keymap#2"),
             preview,
             "E: ★ and the card landed exactly where the preview said",
         )
@@ -292,13 +368,22 @@ def body() -> None:
         # ── (F) ★ layout-edit mode, and the size steppers ────────────────
         assert_eq(q(tf, "editing"), False, "F: the board is locked to start")
         assert_eq(q(tf, "steppers"), "narrow,widen,shorter,taller", "F: four size steps")
-        assert "is not a size step" in refused(tf, "resize", "packet#2,sideways"), "F: closed set"
+        assert "is not a size step" in refused(tf, "resize", "keymap#2,sideways"), "F: closed set"
         click(tf, at(tf, "shell.subbar.edit"))
         assert_eq(q(tf, "editing"), True, "F: pressing Edit Layout turns it on")
-        was = inv(tf, "cell", "packet#2")
-        click(tf, at(tf, "card.packet#2.widen"))
-        assert inv(tf, "cell", "packet#2") != was, "F: ★ a stepper resized the card by hand"
-        assert_eq(inv(tf, "resize", "packet#2,narrow"), "5x2", "F: and back, over the wire")
+        was = inv(tf, "cell", "keymap#2")
+        # The size it starts at comes from the application's own specification,
+        # so widening and narrowing has to return exactly there. Writing the
+        # number down here would make this pass on whatever the shell happens
+        # to open with.
+        opening = next(p for p in spec["board"] if p["kind"] == "keymap")
+        click(tf, at(tf, "card.keymap#2.widen"))
+        assert inv(tf, "cell", "keymap#2") != was, "F: ★ a stepper resized the card by hand"
+        assert_eq(
+            inv(tf, "resize", "keymap#2,narrow"),
+            f"{opening['cols']}x{opening['rows']}",
+            "F: and back, over the wire, to the size the specification gives it",
+        )
         click(tf, at(tf, "shell.subbar.edit"))
         assert_eq(q(tf, "editing"), False, "F: Done turns it off")
         assert_eq(inv(tf, "key", "e"), True, "F: and `e` is the same toggle")
@@ -308,35 +393,35 @@ def body() -> None:
         # ── (G) ★ detach REMOVES the card, re-dock appends at the bottom ─
         assert_eq(q(tf, "floating"), "", "G: nothing is detached")
         placed = q(tf, "placed_count")
-        assert_eq(inv(tf, "act", "topology#0,tear_off"), "topology#0 tear_off", "G: detach it")
-        assert_eq(q(tf, "floating"), "topology#0", "G: which the shell reports")
+        assert_eq(inv(tf, "act", "packet#0,tear_off"), "packet#0 tear_off", "G: detach it")
+        assert_eq(q(tf, "floating"), "packet#0", "G: which the shell reports")
         assert_eq(q(tf, "placed_count"), placed - 1, "G: ★ and the BOARD lost a card")
         assert_eq(q(tf, "card_count"), placed, "G: it exists, elsewhere")
         assert_eq(
-            inv(tf, "cell", "topology#0"),
+            inv(tf, "cell", "packet#0"),
             "detached",
             "G: ★ so 'where is it' answers 'not on the board' rather than a cell",
         )
-        assert "already detached" in refused(tf, "act", "topology#0,tear_off"), "G: once only"
-        assert find_by_tag(paint(tf), "float.topology#0") is not None, (
+        assert "already detached" in refused(tf, "act", "packet#0,tear_off"), "G: once only"
+        assert find_by_tag(paint(tf), "float.packet#0") is not None, (
             "G: the detached panel is painted, with its own header"
         )
-        click(tf, at(tf, "float.topology#0.redock"))
+        click(tf, at(tf, "float.packet#0.redock"))
         assert_eq(q(tf, "floating"), "", "G: the re-dock control put it back")
         assert_eq(q(tf, "placed_count"), placed, "G: on the board again")
         bottom = json.loads(q(tf, "layout"))
-        assert row_of(bottom, "topology#0") == max(t["row"] for t in bottom["tiles"]), (
+        assert row_of(bottom, "packet#0") == max(t["row"] for t in bottom["tiles"]), (
             "G: ★ at the BOTTOM, as the reference does — a card that left the "
             "board lost its cell, and inventing one back would be a third "
             "placement rule nobody asked for"
         )
-        assert "is not detached" in refused(tf, "redock", "packet#2"), "G: only a floater docks"
+        assert "is not detached" in refused(tf, "redock", "keymap#2"), "G: only a floater docks"
 
         # ── (H) ★ maximise hands back the way home ───────────────────────
         assert_eq(q(tf, "maximized"), "", "H: nothing is maximised")
         assert_eq(q(tf, "restore_to"), "", "H: so there is no way home to read")
         before = json.loads(q(tf, "layout"))
-        assert_eq(inv(tf, "act", "throughput#1,maximize"), "throughput#1 maximize", "H: maximise")
+        assert_eq(inv(tf, "act", "decode#1,maximize"), "decode#1 maximize", "H: maximise")
         filled = json.loads(q(tf, "layout"))
         assert_eq(len(filled["tiles"]), 1, "H: one card fills the board")
         assert_eq(filled["tiles"][0]["w"], 12, "H: across every column")
@@ -347,8 +432,8 @@ def body() -> None:
             "the previous arrangement, so there is no second copy in the "
             "binding to fall out of date",
         )
-        assert "already maximised" in refused(tf, "act", "packet#2,maximize"), "H: one at a time"
-        assert_eq(inv(tf, "restore", None), "throughput#1", "H: restore names what it restored")
+        assert "already maximised" in refused(tf, "act", "keymap#2,maximize"), "H: one at a time"
+        assert_eq(inv(tf, "restore", None), "decode#1", "H: restore names what it restored")
         assert_eq(json.loads(q(tf, "layout")), before, "H: and the arrangement is back, exactly")
         assert "no card is maximised" in refused(tf, "restore", None), "H: restoring twice"
 
@@ -375,11 +460,11 @@ def body() -> None:
         assert "is not a saved layout" in refused_write(tf, "preset", "nope"), "I: closed set"
 
         # ── (J) ★ the derivation decides the PAINT, not the card kind ────
-        inv(tf, "set_state", "packet#2,denied,read scope")
-        inv(tf, "set_state", "throughput#1,opaque")
+        inv(tf, "set_state", "keymap#2,denied,read scope")
+        inv(tf, "set_state", "decode#1,opaque")
         snap = paint(tf)
-        denied = find_by_tag(snap, "card.packet#2.remedy")
-        opaque = find_by_tag(snap, "card.throughput#1.remedy")
+        denied = find_by_tag(snap, "card.keymap#2.remedy")
+        opaque = find_by_tag(snap, "card.decode#1.remedy")
         assert denied is not None and opaque is not None, "J: both cards paint a remedy"
         assert texts_of(denied) == ["Request access"], (
             f"J: ★ the denial paints a CONTROL: {texts_of(denied)}"
@@ -389,8 +474,8 @@ def body() -> None:
             f"it — two cards of different kinds, one derivation, and neither "
             f"card decided: {texts_of(opaque)}"
         )
-        assert find_by_tag(snap, "card.topology#0.tear_off") is not None, "J: offered, so painted"
-        assert find_by_tag(snap, "card.latency#3.tear_off") is None, (
+        assert find_by_tag(snap, "card.packet#0.tear_off") is not None, "J: offered, so painted"
+        assert find_by_tag(snap, "card.packet#4.tear_off") is None, (
             "J: not offered, so absent from the scene — the wire refusal in (C) "
             "and this are the same set, read two ways"
         )
@@ -450,7 +535,7 @@ def body() -> None:
         # ★ And the deliberate asymmetry: a remedy nobody can act on is PROSE.
         # It carries a tag, because a tag is an address and not a claim of
         # clickability, and pressing where it is drawn selects the card.
-        assert find_by_tag(snap, "card.throughput#1.remedy") is not None, (
+        assert find_by_tag(snap, "card.decode#1.remedy") is not None, (
             "K: the board has a non-actionable remedy on it"
         )
         # ★ R1664 — through `at`, not `find_by_tag(...)["rect"]`. This line was
@@ -460,8 +545,8 @@ def body() -> None:
         # landed on the app bar. Naming the tag instead of carrying a rect is
         # what makes a fourth site impossible rather than merely unlikely.
         assert_eq(
-            inv(tf, "point", at(tf, "card.throughput#1.remedy")),
-            "card.throughput#1",
+            inv(tf, "point", at(tf, "card.decode#1.remedy")),
+            "card.decode#1",
             "K: ★ an encrypted link's remedy is drawn but is not a control",
         )
         assert "is outside the" in refused(tf, "point", "9999,10"), "K: off-window"
@@ -473,25 +558,42 @@ def body() -> None:
         # nothing in this file noticed, because every assertion above reads
         # TAGS and TEXTS and the rects of tagged CONTAINERS, and a text run
         # carries no tag. A counterfactual found it; this is what closes it.
-        card = find_by_tag(snap, "card.topology#0")
+        card = find_by_tag(snap, "card.packet#0")
         assert card is not None, "K: the card is painted"
+        first = spec["stream_rows"][0]
+        SPEC_FIRST_ROW = (first["time"], first["type"], first["name"], first["len"])
         origin = card["rect"]
-        runs = {
-            str(node.get("content")): node["rect"]
+        # ★ A LIST, not a dict keyed by content. R1668: this was a dict, and the
+        # message stream repeats a type word down its rows, so four of them
+        # collapsed into one and the card looked as though it had lost cells.
+        # A demo that indexes paint by its text cannot see a table.
+        runs = [
+            (str(node.get("content")), node["rect"])
             for _p, node in walk_nodes(card)
             if isinstance(node.get("content"), str) and isinstance(node.get("rect"), dict)
-        }
-        title = runs.get("Session / Peer Topology")
-        desc = runs.get("endpoint connection graph")
-        assert title is not None and desc is not None, f"K: the card's text: {list(runs)}"
+        ]
+        title = next((r for text, r in runs if text == "Message Stream"), None)
+        assert title is not None, f"K: the card's text: {[t for t, _ in runs]}"
         assert title["x"] - origin["x"] > 30, (
             f"K: ★★ the title sits BESIDE the drag grip, not under it — flowed "
             f"text would start at the container's origin: {title}"
         )
-        assert desc["y"] > title["y"] + 20, "K: and the description is below the header"
-        assert desc["x"] > title["x"], (
-            f"K: ★ the description is indented past the code badge, which is "
-            f"the placement flow cannot produce: {desc}"
+        # And the body is a TABLE: the four cells of one row share a baseline
+        # and sit side by side. Flowed text stacks, so this is the property
+        # that separates a table from a list of everything the card holds.
+        row = find_by_tag(card, "card.packet#0.row.0")
+        assert row is not None, "K: the first stream row is painted"
+        cells = [
+            (str(node.get("content")), node["rect"])
+            for _p, node in walk_nodes(row)
+            if isinstance(node.get("content"), str) and isinstance(node.get("rect"), dict)
+        ]
+        assert_eq([text for text, _ in cells], list(SPEC_FIRST_ROW), "K: the row's four cells")
+        assert len({r["y"] for _t, r in cells}) == 1, f"K: ★ one baseline: {cells}"
+        xs = [r["x"] for _t, r in cells]
+        assert xs == sorted(xs) and len(set(xs)) == len(xs), (
+            f"K: ★★ and four distinct columns left to right, which flowed text "
+            f"cannot produce: {cells}"
         )
 
         # ── (L) the pointer and the keyboard are one set of handlers ─────
@@ -504,7 +606,7 @@ def body() -> None:
         # slides off is abandoned — and a press that is INTERRUPTED is not a
         # release either.
         cards_before = q(tf, "cards")
-        target = at(tf, "card.packet#2.close")
+        target = at(tf, "card.keymap#2.close")
         inv(tf, "point", target)
         inv(tf, "send", "PointerDown")
         inv(tf, "point", "760,760")

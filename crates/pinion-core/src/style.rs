@@ -13,6 +13,8 @@
 
 use std::num::NonZeroU32;
 
+use crate::availability::Unavailable;
+
 /// 8-bit-per-channel sRGB color with separate alpha.
 ///
 /// v0 §5.3 lock: `Color { r, g, b, a: u8 }` is the typed replacement
@@ -3856,11 +3858,25 @@ pub struct LayoutStyle {
     ///   fraction (and so the same ink) a self-disabled widget's state layer
     ///   already uses.
     ///
-    /// `false` (the default) is every pre-R1554 node — additive and
+    /// `None` (the default) is every pre-R1554 node — additive and
     /// bit-identical for existing bindings.
-    pub disabled: bool,
+    ///
+    /// (R1668 §5.39) The declaration carries **why**, as an
+    /// [`Unavailable`]: a kind from a closed vocabulary and one detail the kind
+    /// gives meaning to. `Some(..)` *is* the disabled bit — there is no
+    /// separate bool to disagree with it — and
+    /// [`with_disabled(true)`](Self::with_disabled) still says the fact without
+    /// the reason, landing on [`UnavailableKind::Unstated`], which is an arm a
+    /// census counts rather than a silence it cannot see. The floor this was
+    /// measured against (the toolkit at 6.11, built and run) has a bool on the
+    /// widget, a bool on the action, a bool on the quick item and a flag bit on
+    /// the model item, and nothing anywhere that classifies a reason.
+    ///
+    /// [`Unavailable`]: crate::availability::Unavailable
+    /// [`UnavailableKind::Unstated`]: crate::availability::UnavailableKind::Unstated
+    pub unavailable: Option<Unavailable>,
     /// (R1554 §5.39) Derived: the cascade has resolved this node as disabled —
-    /// by its own [`declaration`](Self::disabled) or by an ancestor's. The toolkit's
+    /// by its own [`declaration`](Self::unavailable) or by an ancestor's. The toolkit's
     /// `isEnabled()`, inverted.
     ///
     /// Written **only** by [`resolve_disabled`](crate::scene_disabled::resolve_disabled),
@@ -3880,7 +3896,16 @@ pub struct LayoutStyle {
     /// descendant widget and must walk them again to take it back, keeping N
     /// copies of one fact in step by procedure — most delicately across a
     /// reparent.
-    pub resolved_disabled: bool,
+    ///
+    /// (R1668 §5.39) It carries the **declaring node's reason**, not just the
+    /// fact, so a control deep inside a reserved panel answers *why it is
+    /// inert* from its own style and without a walk. Where a node declares its
+    /// own reason and also sits in a declared region, this holds the node's
+    /// own: re-enabling the region would leave this one inert, and for that
+    /// reason.
+    ///
+    /// [`Unavailable`]: crate::availability::Unavailable
+    pub resolved_unavailable: Option<Unavailable>,
     /// (R1196 §5.16 §5.39) The hover mouse **cursor** this node requests when
     /// the pointer is over it — a [`CursorHint`], or `None` (the default) for
     /// the OS default arrow. The shell resolves the deepest hinted node under
@@ -4012,10 +4037,10 @@ impl LayoutStyle {
             // pre-R1080 default.
             drop_target: false,
             // (R1554 §5.39) `false` = interactive, the pre-R1554 default.
-            disabled: false,
+            unavailable: None,
             // (R1554 §5.39) Derived; `resolve_disabled` overwrites it every
             // paint, in both directions.
-            resolved_disabled: false,
+            resolved_unavailable: None,
             // (R1196 §5.16 §5.39) `None` = the OS default arrow cursor.
             cursor: None,
             // (R1560 §5.21) Empty = no explicit tracks; every track a grid
@@ -4072,17 +4097,54 @@ impl LayoutStyle {
 
     /// (R1554 §5.39 §5.35 §5.40) Builder: declare this node and its whole
     /// subtree disabled — the toolkit `setEnabled(false)`, HTML
-    /// `<fieldset disabled>`. See [`Self::disabled`] for the four consequences
-    /// the framework derives from it.
+    /// `<fieldset disabled>`. See [`Self::unavailable`] for the four
+    /// consequences the framework derives from it.
     ///
     /// There is deliberately no builder for
-    /// [`resolved_disabled`](Self::resolved_disabled): that half is the
+    /// [`resolved_unavailable`](Self::resolved_unavailable): that half is the
     /// cascade's to write, and a binding able to set it could claim a
     /// descendant is disabled while its ancestors are not.
+    ///
+    /// (R1668) This states the fact and no reason, so it lands on
+    /// [`UnavailableKind::Unstated`](crate::availability::UnavailableKind::Unstated).
+    /// Prefer [`with_unavailable`](Self::with_unavailable), which says why.
     #[must_use]
-    pub const fn with_disabled(mut self, disabled: bool) -> Self {
-        self.disabled = disabled;
+    pub fn with_disabled(mut self, disabled: bool) -> Self {
+        self.unavailable = disabled.then(Unavailable::unstated);
         self
+    }
+
+    /// (R1668 §5.39 §5.40) Builder: declare this node and its whole subtree
+    /// unavailable, **and why**.
+    ///
+    /// The reason travels with the cascade: every node in the region reports
+    /// it on [`resolved_unavailable`](Self::resolved_unavailable), it is
+    /// published on `scene/disabled`, and it reaches the accessibility tree —
+    /// so "reserved for a release that has not shipped" and "this build will
+    /// never have it" stop being the same bool.
+    #[must_use]
+    pub fn with_unavailable(mut self, reason: Unavailable) -> Self {
+        self.unavailable = Some(reason);
+        self
+    }
+
+    /// (R1554 §5.39) Whether this node's own declaration says it is
+    /// unavailable — the toolkit's `testAttribute(WA_ForceDisabled)`, which
+    /// separates self from inherited and names nobody.
+    #[must_use]
+    pub const fn declares_disabled(&self) -> bool {
+        self.unavailable.is_some()
+    }
+
+    /// (R1554 §5.39) Whether the cascade resolved this node as disabled, by
+    /// its own declaration or an ancestor's — the toolkit's `isEnabled()`,
+    /// inverted.
+    ///
+    /// Only meaningful after
+    /// [`resolve_disabled`](crate::scene_disabled::resolve_disabled) has run.
+    #[must_use]
+    pub const fn is_resolved_disabled(&self) -> bool {
+        self.resolved_unavailable.is_some()
     }
 
     /// (R1080 §5.51) Builder: mark this node a drag-and-drop drop target.
@@ -4297,8 +4359,8 @@ impl core::hash::Hash for LayoutStyle {
         // the faded colours alone would not say so on a node whose own style
         // carries none (a bare Container). Same single-byte `false`-default
         // invariant — pre-R1554 cache keys stay bit-identical.
-        self.disabled.hash(hasher);
-        self.resolved_disabled.hash(hasher);
+        self.unavailable.hash(hasher);
+        self.resolved_unavailable.hash(hasher);
     }
 }
 

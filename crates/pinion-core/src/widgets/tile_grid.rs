@@ -849,15 +849,39 @@ impl TileGrid {
     ///
     /// [`TileError::NoSuchTile`].
     pub fn move_to(&mut self, id: &TileId, col: u32, row: u32) -> Result<Reflow, TileError> {
-        let columns = self.columns;
+        let (col, row) = self
+            .landing(id, col, row)
+            .ok_or_else(|| TileError::NoSuchTile(id.clone()))?;
         let target = self
             .tiles
             .iter_mut()
             .find(|t| &t.id == id)
             .ok_or_else(|| TileError::NoSuchTile(id.clone()))?;
-        target.col = col.min(columns - target.w);
+        target.col = col;
         target.row = row;
         Ok(self.reflow_around(id))
+    }
+
+    /// (R1668) Where a tile asked to go to `(col, row)` would actually land,
+    /// without moving it — the cell a drag preview must draw.
+    ///
+    /// [`None`] when the grid holds no such tile.
+    ///
+    /// ## Why this exists
+    ///
+    /// A tile cannot start further right than `columns - w`, or it would run
+    /// off the board. [`move_to`](Self::move_to) has always applied that, and a
+    /// shell drawing a drag preview applied its own rule — one fact with two
+    /// clamps, the shape R1654 named. Measured: dragging a six-column card to
+    /// column seven of a twelve-column board previewed column seven and
+    /// committed column six, so the preview was a promise the release broke.
+    ///
+    /// `move_to` is now written in terms of this, so a preview that asks and a
+    /// release that acts cannot disagree.
+    #[must_use]
+    pub fn landing(&self, id: &TileId, col: u32, row: u32) -> Option<(u32, u32)> {
+        let target = self.tiles.iter().find(|t| &t.id == id)?;
+        Some((col.min(self.columns.saturating_sub(target.w)), row))
     }
 
     /// Resize a tile, pushing whatever it grows into downward.
@@ -1283,6 +1307,39 @@ fn span(cells: u32) -> u16 {
 
 #[cfg(test)]
 mod tests {
+    /// R1668 — a preview that asks where a tile would land and a release that
+    /// moves it agree, because the release is written in terms of the ask.
+    ///
+    /// Found on the wire: a six-column card dragged toward column seven of a
+    /// twelve-column board previewed seven and committed six, because the shell
+    /// clamped one way and this file clamped another. One fact, two clamps --
+    /// the shape R1654 named.
+    #[test]
+    fn r1668_the_landing_a_preview_asks_for_is_the_one_a_move_takes() {
+        use super::{Tile, TileGrid, TileId};
+        let mut grid = TileGrid::new(12);
+        grid.place(Tile::new("wide", 0, 0, 6, 1)).expect("fits");
+        let id = TileId::new("wide");
+        for col in 0..14 {
+            let asked = grid.landing(&id, col, 3).expect("the tile is there");
+            let mut moved = grid.clone();
+            moved.move_to(&id, col, 3).expect("the tile is there");
+            let landed = moved
+                .tiles()
+                .iter()
+                .find(|t| t.id == id)
+                .map(|t| (t.col, t.row))
+                .expect("still there");
+            assert_eq!(asked, landed, "asked for column {col}");
+        }
+        assert_eq!(
+            grid.landing(&id, 11, 0),
+            Some((6, 0)),
+            "a six-wide tile cannot start past column six of twelve",
+        );
+        assert_eq!(grid.landing(&TileId::new("absent"), 0, 0), None);
+    }
+
     use super::*;
 
     fn dashboard() -> TileGrid {

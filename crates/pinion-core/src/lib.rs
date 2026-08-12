@@ -28,6 +28,7 @@ extern crate self as pinion_core;
 pub mod accelerator;
 pub mod animation;
 pub mod app;
+pub mod availability;
 pub mod cell_metric;
 pub mod cell_value;
 pub mod clipboard;

@@ -331,7 +331,8 @@
     "tier": "t0",
     "capability": "a docking tile grid with drag, snap and resize",
     "verdict": "have",
-    "covered_by": "`widgets::tile_grid` (R1607/R1608) plus the dock tree for the other model"
+    "covered_by": "`widgets::tile_grid` (R1607/R1608) plus the dock tree for the other model",
+    "proven_by": "pinion-core::widgets::tile_grid::tests::r1668_the_landing_a_preview_asks_for_is_the_one_a_move_takes"
   },
   {
     "id": "dashboard.t0.4",
@@ -358,6 +359,15 @@
     "capability": "multi-window: tear-off to an independent window, with an always-on-top option",
     "verdict": "have",
     "covered_by": "`WindowSpec` with `display` and `level` (R1576 / R1610 / R1616 / R1617), and a display that disappears is reported by name"
+  },
+  {
+    "id": "dashboard.t0.7",
+    "plane": "dashboard",
+    "tier": "t0",
+    "capability": "an offered widget that is present, named and RESERVED for a later release, saying what it is waiting for",
+    "verdict": "have",
+    "covered_by": "`pinion_core::availability::Unavailable` on the R1554 disabled cascade: a region declares WHY it is unavailable, the cascade hands that reason to every node in the region, `scene/disabled` publishes the kind, the detail and a derived recourse, and the accessibility tree announces it as the node's state description. R1668 measured the floor by building and running the reference toolkit at 6.11: four disable surfaces, all bools, one accessibility bit whose own source comment records that it used to be called `unavailable`, and no classified reason anywhere -- so a feature booked for an unshipped release and one this build will never have are indistinguishable there",
+    "proven_by": "pinion-core::scene_disabled::tests::r1668_a_descendant_reports_the_regions_reason_without_a_walk"
   },
   {
     "id": "dashboard.t1.1",

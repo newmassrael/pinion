@@ -443,6 +443,15 @@ fn lower_access_node(access: &AccessNode) -> Node {
     if access.state.disabled {
         node.set_disabled();
     }
+    // R1668 §5.40 §5.39 — and WHY, as the node's **state description**, which
+    // is the slot the accessibility layer defines for replacing the default
+    // announcement of a state. `set_disabled` alone leaves a listener with
+    // "dimmed"; the reference toolkit at 6.11 has exactly that bit and no slot
+    // for a reason at all. The phrase is derived from the reason value, so the
+    // announcement and `scene/disabled` cannot disagree.
+    if let Some(reason) = &access.unavailable {
+        node.set_state_description(reason.sentence());
+    }
 
     // R51.98 §5.40 — WAI-ARIA `aria-selected` mapping. Distinct axis
     // from `aria-checked`: container-membership (Listbox option, Tab,

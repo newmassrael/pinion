@@ -102,8 +102,14 @@ fn stamp_inherited_disabled(nodes: &mut [AccessNode], paint: &Scene) {
         return;
     }
     for node in nodes {
-        if census.iter().any(|d| d.tag == node.tag) {
+        if let Some(row) = census.iter().find(|d| d.tag == node.tag) {
             node.state.disabled = true;
+            // R1668 — and WHY, which the flag cannot hold. A screen reader that
+            // is told only "dimmed" leaves the listener unable to distinguish a
+            // control waiting on a precondition they could satisfy from one
+            // booked for a release that has not shipped. The reference
+            // toolkit's accessibility layer carries the bit and nothing else.
+            node.unavailable = Some(row.reason.clone());
         }
     }
 }
@@ -387,6 +393,94 @@ mod tests {
             "the declarer and its member, neither of which said so itself — a \
              binding cannot leave a control inside a disabled group announced \
              as actionable",
+        );
+    }
+
+    /// R1668 — a listener is told **why** a control is inert, not only that it
+    /// is.
+    ///
+    /// The reference toolkit at 6.11 carries one accessibility bit for this
+    /// (measured by running it: `state.disabled = 1`, `Description` and `Help`
+    /// both empty), so a screen reader announces "dimmed" and the person cannot
+    /// learn whether the control is waiting on something they could do, or is
+    /// booked for a release that has not shipped.
+    #[test]
+    fn r1668_a_disabled_region_tells_the_listener_why() {
+        use pinion_core::Scene;
+        use pinion_core::availability::{Unavailable, UnavailableKind};
+        use pinion_core::scene::ContainerNode;
+        use pinion_core::style::LayoutStyle;
+
+        let scene = Scene::Container(ContainerNode::new(vec![
+            Scene::Container(ContainerNode::new(vec![]).with_tag("live")),
+            Scene::Container(
+                ContainerNode::new(vec![Scene::Container(
+                    ContainerNode::new(vec![]).with_tag("inner"),
+                )])
+                .with_tag("booked")
+                .with_layout(
+                    LayoutStyle::new()
+                        .with_unavailable(Unavailable::reserved("the second release")),
+                ),
+            ),
+        ]));
+        let owner = Owner::new();
+        let (nodes, _) = build_access_tree(
+            &owner,
+            Some(&scene),
+            || {
+                vec![
+                    AccessNode::new("live", AriaRole::Button),
+                    AccessNode::new("booked", AriaRole::Group),
+                    AccessNode::new("inner", AriaRole::Button),
+                ]
+            },
+            || None,
+        );
+        let by_tag = |tag: &str| {
+            nodes
+                .iter()
+                .find(|n| n.tag == tag)
+                .unwrap_or_else(|| panic!("no node {tag}"))
+                .clone()
+        };
+
+        assert!(by_tag("live").unavailable.is_none(), "outside every region");
+        for tag in ["booked", "inner"] {
+            let reason = by_tag(tag)
+                .unavailable
+                .unwrap_or_else(|| panic!("{tag} is announced disabled with no reason"));
+            assert_eq!(reason.kind(), UnavailableKind::Reserved);
+            assert_eq!(reason.sentence(), "reserved for the second release");
+        }
+        assert!(
+            by_tag("inner").state.disabled,
+            "the flag and the reason arrive together",
+        );
+    }
+
+    /// R1668 — a node the SCENE never disabled keeps its reason empty even
+    /// when its own widget state says disabled.
+    ///
+    /// The two sources stay separate on this axis where they are OR-ed on the
+    /// flag: the scene knows why it disabled a region, and it does not know why
+    /// a button disabled itself. Inventing a reason there would put a sentence
+    /// in a listener's ear that nobody authored.
+    #[test]
+    fn r1668_a_self_disabled_widget_gets_no_invented_reason() {
+        let owner = Owner::new();
+        let scene = disabled_scene();
+        let (nodes, _) = build_access_tree(
+            &owner,
+            Some(&scene),
+            || vec![AccessNode::new("outer", AriaRole::Button).with_state(self_disabled())],
+            || None,
+        );
+        let outer = &nodes[0];
+        assert!(outer.state.disabled, "its own claim stands");
+        assert!(
+            outer.unavailable.is_none(),
+            "and the scene does not put words in its mouth",
         );
     }
 
