@@ -301,19 +301,42 @@ fn load_bar(c: &CellRender<'_>) -> Scene {
                     bar(track_w, c.theme.resolve(ColorRole::SurfaceContainerHighest)),
                     bar(fill_w, c.theme.resolve(ColorRole::Accent)),
                 ])
-                .with_layout(LayoutStyle::new().with_size(Size::px(track_w, BAR_H))),
+                // ★★ R1673 — the track does NOT shrink, and the deficit goes
+                // to the label beside it.
+                //
+                // The two bars are absolutely placed at the track's origin so
+                // they overlay, and an absolutely-placed child does not shrink
+                // with its parent. So when the flex pass narrowed this
+                // container to fit a cell narrower than `inner` assumed, the
+                // fill bar kept the width it had been sized from and painted
+                // two pixels past the track: measured on fourteen rows of this
+                // grid, and invisible until a box began to own its own edge.
+                //
+                // R1656's rule, applied where it was written to be applied:
+                // hand the deficit to the flex pass rather than recomputing a
+                // width here, so no number in this function has to be right.
+                .with_layout(
+                    LayoutStyle::new()
+                        .with_size(Size::px(track_w, BAR_H))
+                        .with_flex_shrink(0.0),
+                ),
             ),
             // R1536 — NOT presentational. This label is the cell's content,
             // and R1532's own rationale for keeping it was that a bar encodes
             // in pixels and a screen reader needs the number — which the
             // presentational marking then prevented it from ever hearing.
-            Scene::Text(TextNode::styled(
-                c.text.to_string(),
-                Rect::default(),
-                TextStyle::new()
-                    .with_size_px(c.style.label_size_px)
-                    .with_fg(c.fg),
-            )),
+            Scene::Text(
+                TextNode::styled(
+                    c.text.to_string(),
+                    Rect::default(),
+                    TextStyle::new()
+                        .with_size_px(c.style.label_size_px)
+                        .with_fg(c.fg),
+                )
+                // The half that absorbs it: a label may be squeezed to nothing
+                // before the gauge it annotates loses a pixel.
+                .with_layout(LayoutStyle::new().with_min_size(Size::px(0, 0))),
+            ),
         ])
         // R1532 — the cell's own tag. A painter that omits it drops the cell
         // out of pointer routing and out of every tag-addressed RPC.

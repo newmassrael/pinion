@@ -266,6 +266,24 @@ pub fn content_rect(node: &Scene, box_rect: Rect) -> Rect {
         Scene::Container(n) => n.style.border.as_ref(),
         _ => None,
     };
+    content_of(box_rect, border)
+}
+
+/// The content rectangle of a box that strokes `border` inside itself.
+///
+/// The arithmetic half of [`content_rect`], for the side that is **placing**
+/// children and so has the border before it has the node. Pass `None` for a box
+/// that draws no frame and the rectangle comes back unchanged.
+///
+/// ★★ R1673 — lifted at the tenth consumer, and the count is the argument. Three
+/// screens had written the same `const fn panel_content(rect) -> Rect` by hand
+/// with the inset spelled `1`, and a full re-measurement then found seven more
+/// surfaces owing the same repair. A rule with ten independent implementations
+/// is ten chances for one of them to disagree with the check that reports it —
+/// and this one is *already* the check, which is the strongest case for a lift
+/// there is: the placement and the judgement are now the same arithmetic.
+#[must_use]
+pub fn content_of(box_rect: Rect, border: Option<&Border>) -> Rect {
     let Some(border) = border else {
         return box_rect;
     };
@@ -551,6 +569,36 @@ mod tests {
         assert!(
             escapes(&Scene::Container(plain), &mut stub_ink).is_empty(),
             "no border, no content inset",
+        );
+    }
+
+    /// R1673 — the placement half and the judging half are one arithmetic.
+    ///
+    /// [`content_of`] is what a painter calls before it has a node, and
+    /// [`content_rect`] is what the check calls after. If they could disagree,
+    /// a screen could be laid out correctly by its own rule and reported wrong
+    /// by ours — which is the failure three screens' hand-written
+    /// `panel_content` was one edit away from at all times.
+    #[test]
+    fn r1673_placing_and_judging_read_the_same_content_box() {
+        use crate::style::{Border, Color};
+
+        let border = Border::new(Color::rgb(0xEC, 0x5A, 0xA0), 3);
+        let mut framed = ContainerNode::new(Vec::new());
+        framed.rect = Rect::new(10, 20, 100, 40);
+        framed.style = BoxStyle::filled(Color::rgb(0x10, 0x10, 0x10)).with_border(border);
+        let node = Scene::Container(framed);
+
+        let box_rect = Rect::new(10, 20, 100, 40);
+        assert_eq!(
+            content_rect(&node, box_rect),
+            content_of(box_rect, Some(&border)),
+            "the judging half and the placing half are one answer",
+        );
+        assert_eq!(content_of(box_rect, None), box_rect, "no border, no inset");
+        assert_eq!(
+            content_of(box_rect, Some(&border)),
+            Rect::new(13, 23, 94, 34)
         );
     }
 

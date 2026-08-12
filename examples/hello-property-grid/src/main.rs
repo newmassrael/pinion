@@ -120,7 +120,8 @@ use pinion_core::external::{
 };
 use pinion_core::input::{DRAG_CLICK_THRESHOLD_PX, DragCalibration};
 use pinion_core::reactive::{Owner, Signal, batch};
-use pinion_core::scene::{ContainerNode, Rect, TextNode};
+use pinion_core::scene::ScrollAxis;
+use pinion_core::scene::{ContainerNode, Rect, ScrollNode, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
@@ -187,6 +188,16 @@ const ROW_H: u32 = 38;
 /// R919 — the reset-arrow mark size (px) and its inset from the row's trailing
 /// edge (mark size + a small margin), for a modified row's reset affordance.
 const RESET_DOT: u32 = 10;
+
+/// A trailing-edge glyph button's box: at least the LINE BOX of the face it
+/// holds, so the glyph cannot paint above and below its own button.
+///
+/// ★ R1673 — it was [`RESET_DOT`] square, a token, while the glyph inside is a
+/// [`CELL_PX`] face. Measured: the `+` and all three `−` painted six pixels
+/// above and five below their buttons.
+fn glyph_button_side() -> u32 {
+    RESET_DOT.max(pinion_core::containment::line_box(CELL_PX))
+}
 const RESET_DOT_X: u32 = 16;
 /// R936 — the **secondary** trailing-slot inset, one mark + gap to the LEFT of
 /// [`RESET_DOT_X`]. A row with two trailing affordances (an array element's
@@ -320,6 +331,9 @@ const ASSET_CANCEL_CLICK: &str = pinion_core::intent_tag!("asset_cancel", "click
 const ASSET_SCRIM_TAG: &str = "asset_scrim";
 const ASSET_PANEL_TAG: &str = "asset_panel";
 const ASSET_SCROLL_KEY: &str = "property_grid.asset_scroll";
+
+/// R1673 — the scroll state the grid's own viewport is bound to.
+const GRID_SCROLL_KEY: &str = "property_grid.grid_scroll";
 const ASSET_MODAL_STATE_TAG: &str = "asset_modal";
 /// R1176 — the picker's root path + virtualized file-list geometry.
 const ASSET_ROOT_DIR: &str = "/proj";
@@ -3268,11 +3282,15 @@ fn remove_button(k: usize, theme: &Theme) -> Scene {
                 .flex(FlexDirection::Row)
                 .with_align_items(AlignItems::Center)
                 .with_justify(JustifyContent::Center)
+                // The button's RIGHT edge stays where the 10px dot's was, so
+                // growing the box to hold its glyph moves nothing visible and
+                // cannot push the button past the row that owns it.
                 .with_absolute_position(
-                    (NAME_COL_W + VALUE_COL_W).saturating_sub(RESET_DOT_X),
-                    ROW_H.saturating_sub(RESET_DOT) / 2,
+                    (NAME_COL_W + VALUE_COL_W + RESET_DOT)
+                        .saturating_sub(RESET_DOT_X + glyph_button_side()),
+                    ROW_H.saturating_sub(glyph_button_side()) / 2,
                 )
-                .with_size(Size::px(RESET_DOT, RESET_DOT)),
+                .with_size(Size::px(glyph_button_side(), glyph_button_side())),
         ),
     )
 }
@@ -3296,11 +3314,15 @@ fn add_button(theme: &Theme) -> Scene {
                 .flex(FlexDirection::Row)
                 .with_align_items(AlignItems::Center)
                 .with_justify(JustifyContent::Center)
+                // The button's RIGHT edge stays where the 10px dot's was, so
+                // growing the box to hold its glyph moves nothing visible and
+                // cannot push the button past the row that owns it.
                 .with_absolute_position(
-                    (NAME_COL_W + VALUE_COL_W).saturating_sub(RESET_DOT_X),
-                    ROW_H.saturating_sub(RESET_DOT) / 2,
+                    (NAME_COL_W + VALUE_COL_W + RESET_DOT)
+                        .saturating_sub(RESET_DOT_X + glyph_button_side()),
+                    ROW_H.saturating_sub(glyph_button_side()) / 2,
                 )
-                .with_size(Size::px(RESET_DOT, RESET_DOT)),
+                .with_size(Size::px(glyph_button_side(), glyph_button_side())),
         ),
     )
 }
@@ -3698,8 +3720,19 @@ fn popup_origin(view_pos: usize, panel_h: u32) -> (u32, u32) {
     let x = PANEL_PAD + GRID_BORDER + NAME_COL_W;
     let row_step = ROW_H + ROW_GAP;
     let grid_top = PANEL_PAD + TITLE_H + TITLE_GAP + GRID_BORDER;
+    // ★★ R1673 — MINUS what the grid is scrolled by, because the grid scrolls
+    // now and this popup does not: it is a sibling of the scroll region, in
+    // window coordinates, while the row it points at moves under it.
+    //
+    // Written the moment the scroll landed rather than left for a person to
+    // find, because this is the shape this project keeps paying for — one fact
+    // (where is row N) with two derivations, the scene's and this one's. The
+    // scene's is authoritative and folds the offset (`NodeVisit::offset`); this
+    // arithmetic is the copy, so the copy is the one that has to be corrected.
+    let scrolled_by = use_scroll_state(GRID_SCROLL_KEY).offset_y().unsigned_abs();
     let row_top =
-        grid_top + row_step + u32::try_from(view_pos).expect("row fits in u32") * row_step;
+        (grid_top + row_step + u32::try_from(view_pos).expect("row fits in u32") * row_step)
+            .saturating_sub(scrolled_by);
     // Drop below the row, flipping above when it overflows the padded content
     // bottom — the shared R1378 [`anchor::flip_y`] positioner.
     let y = flip_y(
@@ -4180,13 +4213,26 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
             .with_aria_label("Inspector")
             .with_style(
                 BoxStyle::filled(theme.resolve(ColorRole::Surface))
-                    .with_border(Border::new(theme.resolve(ColorRole::Outline), 1)),
+                    .with_border(Border::new(theme.resolve(ColorRole::Outline), GRID_BORDER)),
             )
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
                     .with_align_items(AlignItems::Start)
                     .with_gap(ROW_GAP)
+                    // ★★ R1673 — the frame's own pixels are RESERVED, so a row
+                    // laid at the full column width no longer covers the
+                    // outline. Measured: 29 of this screen's 35 escapes were
+                    // exactly this, one pixel on three edges, every row.
+                    // Padding is the right instrument here and not for the
+                    // stepper buttons below, because these rows are laid out by
+                    // the FLOW and an absolutely-placed child ignores padding.
+                    .with_padding(Rect::new(
+                        GRID_BORDER,
+                        GRID_BORDER,
+                        GRID_BORDER,
+                        GRID_BORDER,
+                    ))
                     .with_focusable(true),
             ),
     );
@@ -4195,6 +4241,34 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     // with a full-window light-dismiss barrier beneath it — the barrier is
     // pushed first so the panel hit-tests on top; a click outside the panel
     // routes `dismiss` to the coordinator (the toggle-close convention).
+    // ★★ R1673 — the grid SCROLLS, because it is taller than the window that
+    // holds it and until now it simply ran off the bottom.
+    //
+    // Measured before this: the grid is 1,160px in an 820px window, so 402px of
+    // it were painted where nobody can see them and `scene/pointer_reach`
+    // reported fourteen widgets a person cannot press. That is the one escape
+    // on this screen `containment` calls a layout decision rather than a slip —
+    // and a decision it is, so it is made here rather than left to a budget
+    // file: a scroll region is what a property grid with more rows than window
+    // has, and the framework has had one since R55.G.4.
+    //
+    // The viewport is DERIVED from what the column above it takes, so a title
+    // that changes height cannot leave this number stale.
+    let grid_viewport_h = WIN_H.saturating_sub(PANEL_PAD * 2 + TITLE_H + TITLE_GAP);
+    let grid = Scene::Scroll(
+        ScrollNode::from_state(
+            use_scroll_state(GRID_SCROLL_KEY),
+            Rect::new(
+                0,
+                0,
+                NAME_COL_W + VALUE_COL_W + GRID_BORDER * 2,
+                grid_viewport_h,
+            ),
+            grid,
+        )
+        .with_axis(ScrollAxis::Vertical),
+    );
+
     let mut children = vec![title, grid];
     children.extend(view_popup_overlay(
         editing,

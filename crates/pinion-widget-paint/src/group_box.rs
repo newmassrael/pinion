@@ -247,6 +247,17 @@ pub fn view_group_box(
                 .with_layout(
                     LayoutStyle::new()
                         .flex(FlexDirection::Column)
+                        // ★★ R1673 — the frame's own pixels are RESERVED. The
+                        // content region grew to the frame's full box, so it
+                        // covered the outline on all four edges — the defect
+                        // `containment` reports from the round a box began to
+                        // own the border it strokes inside itself (R1672).
+                        .with_padding(Rect::new(
+                            style.border_width,
+                            style.border_width,
+                            style.border_width,
+                            style.border_width,
+                        ))
                         .with_flex_grow(1.0),
                 ),
         )
@@ -266,6 +277,27 @@ pub fn view_group_box(
                     .with_flex_grow(1.0),
             ),
     )
+}
+
+/// How tall the title band has to be: **the tallest thing in it**.
+///
+/// ★★ R1673 — derived rather than picked, because three independent tokens
+/// decided one height between them and nobody compared any pair of them:
+/// `title_height`, `CheckboxStyle::box_size` for a checkable group, and the
+/// line box of `title_font_size_px` for the legend that is always there.
+///
+/// Both of the last two were measured escaping. The checkbox was found by the
+/// round's own re-measurement of a consumer; the LEGEND was found by the test
+/// written to cover the checkbox, on its first run, in the arm that has no
+/// checkbox at all — which is the argument for deriving from a list rather than
+/// from the one member somebody happened to be looking at.
+fn title_band_height(check: Option<GroupBoxCheck>, style: &GroupBoxStyle) -> u32 {
+    let legend = pinion_core::containment::line_box(style.title_font_size_px);
+    let control = match check {
+        Some(_) => CheckboxStyle::default().box_size,
+        None => 0,
+    };
+    style.title_height.max(legend).max(control)
 }
 
 /// The title band: a row holding the optional checkbox and the legend, above
@@ -333,7 +365,14 @@ fn title_band_node(
                     .with_justify(justify)
                     .with_gap(style.title_gap)
                     .with_padding(Rect::new(lead, 0, trail, 0))
-                    .with_size(Size::auto().with_height(SizeValue::Px(style.title_height)))
+                    // ★ R1673 — at least as tall as what it holds. The band is
+                    // a token (20) and a checkable group puts a checkbox in it
+                    // whose square is another token (24), so the checkbox stood
+                    // two pixels above and below its own band. A title that
+                    // carries a control is as tall as that control.
+                    .with_size(
+                        Size::auto().with_height(SizeValue::Px(title_band_height(check, style))),
+                    )
                     .with_flex_grow(0.0);
                 // A checkable group's title IS its checkbox: it is the Tab stop
                 // and the click target. A plain group's title is a label, and
@@ -756,5 +795,58 @@ mod tests {
             vec![GroupBoxTag::content("g")],
             "the press stops at the region — the toolkit hands such an event to the parent",
         );
+    }
+
+    /// ★★ R1673 — nothing this widget paints leaves the box that owns it, at
+    /// every size and in both postures.
+    ///
+    /// A counterfactual is why this exists rather than the round's word for it:
+    /// removing the frame reservation from the content region, and removing the
+    /// title band's knowledge of the checkbox it holds, both left this crate's
+    /// whole suite GREEN. The defects were real — measured on
+    /// `hello-group-box`, the content region covered the outline on all four
+    /// edges and the title checkbox stood two pixels above and below its band —
+    /// and only a CONSUMER booting could see them, one screen at a time, which
+    /// is the shape R1655 recorded for this same crate.
+    ///
+    /// The assertion is the framework's own
+    /// [`pinion_core::test_fixtures::screen_ink::assert_contained_ink`], the one
+    /// three screens run, so a widget and the screens holding it are judged by
+    /// one rule rather than by two that can drift.
+    #[test]
+    fn r1673_nothing_a_group_box_paints_leaves_the_box_that_owns_it() {
+        use pinion_core::test_fixtures::screen_ink::assert_contained_ink;
+        use pinion_runtime::layout::compute_layout;
+
+        let theme = Theme::light();
+        for checked in [None, Some(true), Some(false)] {
+            for (label, width, height) in [("opening", 420u32, 260u32), ("narrow", 180, 120)] {
+                let check = checked.map(|checked| GroupBoxCheck {
+                    checked,
+                    interaction: CheckboxState::Idle,
+                });
+                let body = vec![Scene::Box(BoxNode::new(
+                    Rect::new(0, 0, 40, 20),
+                    BoxStyle::filled(theme.resolve(ColorRole::Accent)),
+                ))];
+                let mut scene = Scene::Container(
+                    pinion_core::scene::ContainerNode::new(vec![view_group_box(
+                        "advanced",
+                        "&Advanced",
+                        check,
+                        &theme,
+                        &GroupBoxStyle::default(),
+                        body,
+                    )])
+                    .with_layout(
+                        LayoutStyle::new().with_size(pinion_core::style::Size::px(width, height)),
+                    ),
+                );
+                let mut cache = pinion_text::LayoutCache::new();
+                compute_layout(&mut scene, &mut cache, width, height);
+                let when = format!("{label}, check = {checked:?}");
+                assert_contained_ink(&when, &scene, (width, height));
+            }
+        }
     }
 }

@@ -481,14 +481,20 @@ fn tagged_label(tag: &str, text: impl Into<String>, rect: Rect, px: u32, fg: Col
 /// its own outline, and the channel could not say so until it learned the
 /// border-box / content-box distinction. Named here so the two halves cannot
 /// drift: change the frame's width and both follow.
-const fn panel_content(rect: Rect) -> Rect {
-    Rect::new(1, 1, rect.w.saturating_sub(2), rect.h.saturating_sub(2))
+/// The width of the outline [`panel`] strokes INSIDE its box.
+const PANEL_FRAME: u32 = 1;
+
+fn panel_content(rect: Rect) -> Rect {
+    pinion_core::containment::content_of(
+        Rect::new(0, 0, rect.w, rect.h),
+        Some(&Border::new(Color::rgba(0, 0, 0, 0), PANEL_FRAME)),
+    )
 }
 
 fn panel(tag: &str, rect: Rect, fill: Color, border: Option<Color>, children: Vec<Scene>) -> Scene {
     let mut style = BoxStyle::filled(fill);
     if let Some(colour) = border {
-        style = style.with_border(Border::new(colour, 1));
+        style = style.with_border(Border::new(colour, PANEL_FRAME));
     }
     Scene::Container(
         ContainerNode::new(children)
@@ -501,7 +507,7 @@ fn panel(tag: &str, rect: Rect, fill: Color, border: Option<Color>, children: Ve
 fn box_at(tag: &str, rect: Rect, fill: Color, border: Option<Color>, radius: u32) -> Scene {
     let mut style = BoxStyle::filled(fill).with_corner_radius(radius);
     if let Some(colour) = border {
-        style = style.with_border(Border::new(colour, 1));
+        style = style.with_border(Border::new(colour, PANEL_FRAME));
     }
     Scene::Container(
         ContainerNode::new(Vec::new())

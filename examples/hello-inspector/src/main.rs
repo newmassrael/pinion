@@ -2403,6 +2403,9 @@ fn property_row(
 /// active (cursor) row additionally carries a light border — the paint peer
 /// of the a11y `aria-selected` (fill) and active descendant (`focused`,
 /// border).
+/// The ring an object row strokes inside its own box when it is the cursor.
+const ROW_RING: u32 = 2;
+
 fn object_row(
     index: usize,
     name: &str,
@@ -2419,7 +2422,7 @@ fn object_row(
     };
     let mut style = BoxStyle::filled(fill).with_corner_radius(5);
     if is_cursor {
-        style = style.with_border(Border::new(Color::rgb(0xff, 0xff, 0xff), 2));
+        style = style.with_border(Border::new(Color::rgb(0xff, 0xff, 0xff), ROW_RING));
     }
     Scene::Container(
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
@@ -2437,6 +2440,13 @@ fn object_row(
             LayoutStyle::new()
                 .flex(FlexDirection::Row)
                 .with_align_items(AlignItems::Center)
+                // ★★ R1673 — the cursor ring's pixels are reserved on EVERY
+                // row, cursor or not. The name flowed from the box corner, so
+                // on the cursor row it stood on the ring; reserving it only
+                // when the ring is drawn would slide every name two pixels the
+                // moment the cursor arrives, which is a worse answer than the
+                // defect.
+                .with_padding(Rect::new(ROW_RING, ROW_RING, ROW_RING, ROW_RING))
                 .with_size(Size::px(LIST_W - 16, ROW_H)),
         ),
     )

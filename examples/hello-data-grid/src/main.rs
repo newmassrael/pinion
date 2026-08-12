@@ -275,6 +275,9 @@ const UNDO_KEY: &str = "hello_data_grid::undo";
 /// their total width outgrows the grid viewport (the R784 single-axis scroll,
 /// the read-only grids' `h_scrolled_column` wrap reused on the editable grid).
 const H_SCROLL_KEY: &str = "data_grid_hscroll";
+
+/// The width of the outline the grid strokes inside its own viewport box.
+const GRID_FRAME: u32 = 1;
 /// R896.1 / R897 — the vertical body `ScrollState` cache key. The rows window
 /// against this state's measured viewport and scroll under the pinned header;
 /// R897 made the body **virtualized** (only the visible window is built, via
@@ -5098,7 +5101,7 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
             .with_aria_label("Asset table")
             .with_style(
                 BoxStyle::filled(theme.resolve(ColorRole::Surface))
-                    .with_border(Border::new(theme.resolve(ColorRole::Outline), 1)),
+                    .with_border(Border::new(theme.resolve(ColorRole::Outline), GRID_FRAME)),
             )
             // The fixed viewport bounds both scroll axes. The default
             // `AlignItems::Stretch` makes `scrolled` claim the full
@@ -5109,6 +5112,11 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
                 LayoutStyle::new()
                     .flex(FlexDirection::Column)
                     .with_size(Size::px(GRID_VIEWPORT_W, GRID_VIEWPORT_H))
+                    // ★ R1673 — the frame is INSIDE the declared viewport, so
+                    // its pixels are reserved rather than lent to the scrolling
+                    // body. Without it the body claimed the full box and the
+                    // outline had a gap all the way round it.
+                    .with_padding(Rect::new(GRID_FRAME, GRID_FRAME, GRID_FRAME, GRID_FRAME))
                     .with_focusable(true),
             ),
     );

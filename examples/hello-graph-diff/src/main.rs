@@ -884,24 +884,46 @@ fn link_scene(from: &str, to: &str, stroke: Stroke) -> Option<Scene> {
     ))
 }
 
+/// The outline a node strokes inside its own box.
+const NODE_FRAME: u32 = 1;
+
+/// The clearance a node's name keeps from its frame.
+const NODE_PAD_X: u32 = 10;
+
 fn node_scene(name: &str, x: i32, y: i32, fill: Color, ink: Color, outline: Color) -> Scene {
     let rect = Rect::new(upx(x), upx(y), NODE_W, NODE_H);
+    // ★★ R1673 — the name is placed by the FLOW inside a reserved frame, not by
+    // a rect that reads like a position and is not one.
+    //
+    // It was authored at `(x + 10, y + 9)` in WINDOW coordinates on a text node
+    // whose container is already absolutely placed — and a `TextNode`'s rect is
+    // its box, not its origin (R1653's lesson, one screen over). So every one of
+    // this screen's six names was laid at the container's flow origin, which is
+    // the box corner, and covered the node's own outline on two edges.
+    let line = pinion_core::containment::line_box(NODE_FONT_PX);
+    let inset = NODE_FRAME + NODE_PAD_X;
     Scene::Container(
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
             name,
-            Rect::new(upx(x) + 10, upx(y) + 9, NODE_W - 20, NODE_FONT_PX + 4),
+            Rect::new(0, 0, NODE_W.saturating_sub(inset * 2), line),
             TextStyle::new().with_size_px(NODE_FONT_PX).with_fg(ink),
         ))])
         .with_tag(format!("node.{name}"))
         .with_style(
             BoxStyle::filled(fill)
                 .with_corner_radius(8)
-                .with_border(pinion_core::style::Border::new(outline, 1)),
+                .with_border(pinion_core::style::Border::new(outline, NODE_FRAME)),
         )
         .with_layout(
             LayoutStyle::new()
                 .with_absolute_position(rect.x, rect.y)
-                .with_size(Size::px(rect.w, rect.h)),
+                .with_size(Size::px(rect.w, rect.h))
+                .with_padding(Rect::new(
+                    inset,
+                    NODE_H.saturating_sub(line) / 2,
+                    inset,
+                    NODE_H.saturating_sub(line) / 2,
+                )),
         ),
     )
 }

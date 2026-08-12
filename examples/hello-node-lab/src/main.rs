@@ -1702,12 +1702,10 @@ const PANEL_FRAME: u32 = 1;
 /// its own outline, and the channel could not say so until it learned the
 /// border-box / content-box distinction. Named here so the two halves cannot
 /// drift: change the frame's width and both follow.
-const fn panel_content(rect: Rect) -> Rect {
-    Rect::new(
-        PANEL_FRAME,
-        PANEL_FRAME,
-        rect.w.saturating_sub(PANEL_FRAME * 2),
-        rect.h.saturating_sub(PANEL_FRAME * 2),
+fn panel_content(rect: Rect) -> Rect {
+    pinion_core::containment::content_of(
+        Rect::new(0, 0, rect.w, rect.h),
+        Some(&Border::new(Color::rgba(0, 0, 0, 0), PANEL_FRAME)),
     )
 }
 

@@ -7487,11 +7487,35 @@ fn view_pin_edit_field(edit_field: RootState, top: i32, theme: &Theme, zoom: f64
 /// can never draw a selected node differently.
 fn node_border(selected: bool, theme: &Theme) -> Border {
     if selected {
-        Border::new(theme.resolve(ColorRole::Accent), 2)
+        Border::new(theme.resolve(ColorRole::Accent), NODE_RING.unsigned_abs())
     } else {
-        Border::new(theme.resolve(ColorRole::Outline), 1)
+        Border::new(
+            theme.resolve(ColorRole::Outline),
+            NODE_OUTLINE.unsigned_abs(),
+        )
     }
 }
+
+/// The outline a node card strokes inside its box at rest.
+const NODE_OUTLINE: i32 = 1;
+
+/// The accent ring it strokes instead when selected — the wider of the two.
+const NODE_RING: i32 = 2;
+
+/// The band a card reserves for its own frame: the **widest** the frame ever
+/// gets, whichever it is drawing now.
+///
+/// ★★ R1673 — nothing reserved it, so the header strip and every port stood on
+/// the card's own outline (measured: ten marks across four nodes, one pixel on
+/// three edges of each header and one on the inner edge of each port).
+/// Constant rather than a function of `selected`, for the reason screen C's
+/// card carries the same shape: a content box that changed with the ring would
+/// slide the header and every port by a pixel the moment a node is picked.
+const NODE_FRAME: i32 = if NODE_RING > NODE_OUTLINE {
+    NODE_RING
+} else {
+    NODE_OUTLINE
+};
 
 /// R1243 — a reroute knot: a compact circular dot painted in its wire's
 /// signature colour, in place of a full node card. A reroute
@@ -7573,7 +7597,7 @@ fn view_output_ports(
         }
         out.push(view_port(
             format!("{GRAPH_TAG}#oport_{id}_{j}"),
-            NODE_W - PORT_SIZE,
+            NODE_W - PORT_SIZE - NODE_FRAME,
             port_row_top(j),
             ty.color(),
             zoom,
@@ -7641,11 +7665,16 @@ fn view_node(
             ))
             .with_layout(
                 LayoutStyle::new()
-                    .with_absolute_position(0, 0)
+                    // ★ R1673 — at the card's CONTENT origin, with the frame's
+                    // own pixels taken out of its width on both sides.
+                    .with_absolute_position(upx(wpx(NODE_FRAME, zoom)), upx(wpx(NODE_FRAME, zoom)))
                     .flex(FlexDirection::Row)
                     .with_justify(JustifyContent::Center)
                     .with_align_items(AlignItems::Center)
-                    .with_size(Size::px(upx(wpx(NODE_W, zoom)), upx(wpx(HEADER_H, zoom)))),
+                    .with_size(Size::px(
+                        upx(wpx(NODE_W - NODE_FRAME * 2, zoom)),
+                        upx(wpx(HEADER_H - NODE_FRAME, zoom)),
+                    )),
             ),
     );
 
@@ -7656,7 +7685,7 @@ fn view_node(
     for (i, port) in signature.inputs.iter().enumerate() {
         children.push(view_port(
             format!("{GRAPH_TAG}#iport_{id}_{i}"),
-            0,
+            NODE_FRAME,
             port_row_top(i),
             port.value_type()
                 .map_or(PortType::CONTROL_INK, |t| t.color()),

@@ -233,7 +233,11 @@ pub fn view_checkbox_box(
     };
     let border_color = checkbox_outline_for(theme, interaction);
     let mut box_children: Vec<Scene> = Vec::new();
-    if checked {
+    // ★ R1673 — `None` when the square has no room for a tick at all, and the
+    // glyph is then simply absent. A square that small still reads as checked
+    // (the fill turns accent); painting a one-pixel mark over its own outline
+    // instead would be a clamp that answers where the honest answer is nothing.
+    if let (true, Some(glyph_px)) = (checked, glyph_px_that_fits(style)) {
         let glyph_color = if matches!(interaction, CheckboxState::Disabled) {
             theme.resolve(ColorRole::OnSurfaceMuted)
         } else {
@@ -243,9 +247,7 @@ pub fn view_checkbox_box(
             TextNode::styled(
                 CHECK_GLYPH,
                 Rect::default(),
-                TextStyle::new()
-                    .with_size_px(style.glyph_size_px)
-                    .with_fg(glyph_color),
+                TextStyle::new().with_size_px(glyph_px).with_fg(glyph_color),
             )
             // R51.81 — Presentational so enrich_names_from_scene skips the
             // glyph and lands on the linguistic label (when wrapped by
@@ -268,6 +270,38 @@ pub fn view_checkbox_box(
                     .with_size(Size::px(style.box_size, style.box_size)),
             ),
     )
+}
+
+/// The tick's face: the declared size, or the largest whose LINE BOX fits the
+/// square's **content** — the box less the outline it strokes inside itself.
+///
+/// ★★ R1673 — `box_size` and `glyph_size_px` are two tokens and nothing related
+/// them, so a caller could ask for a face larger than the box holding it and
+/// nothing said so. Measured across the tree: three consumers put a 16-18px
+/// tick in a 14-16px square, where its shaped ink is 20-22 tall, and the check
+/// mark painted three pixels above and below its own box on the property grid,
+/// the data grid and the group box's title. `scene/containment` reports every
+/// one of them now that a box owns its border (R1672).
+///
+/// A ceiling rather than a replacement: a caller whose square is generous keeps
+/// the face it asked for, and only one that cannot hold it is overruled. The
+/// inverse of [`line_box`](pinion_core::containment::line_box)'s
+/// `px * 3 / 2 + 2`, which is a reservation and therefore conservative — a
+/// square that passes this has room for a face the host may shape taller than
+/// ours.
+fn glyph_px_that_fits(style: &CheckboxStyle) -> Option<u32> {
+    let content = style.box_size.saturating_sub(style.border_width * 2);
+    // Stepped down against `line_box` rather than solved by inverting it. The
+    // first draft inverted `px * 3 / 2 + 2` by hand and the sweep caught it
+    // immediately: at three pixels of content the algebra answered "nothing
+    // fits" while a 1px face's line box is exactly three. An inverse written
+    // beside a function is a second copy of that function's arithmetic, free to
+    // disagree with it — asking the function is not.
+    let mut px = style.glyph_size_px.min(content);
+    while px > 0 && pinion_core::containment::line_box(px) > content {
+        px -= 1;
+    }
+    (px > 0).then_some(px)
 }
 
 /// W3C-canonical Unicode CHECK MARK (`U+2713`). Named so the binding
@@ -426,5 +460,64 @@ mod tests {
             .resolve(ColorRole::Accent)
             .lerp(theme.resolve(ColorRole::OnSurface), 0.08);
         assert_eq!(checkbox_accent_for(&theme, CheckboxState::Hover), expected);
+    }
+
+    /// ★★ R1673 — the tick fits the square that holds it, at every size.
+    ///
+    /// The property this pins is a RELATION between two tokens that used to be
+    /// independent: whatever `box_size` and `border_width` a caller sets, the
+    /// face the glyph is drawn at has a line box the square's content can hold.
+    /// Swept rather than sampled, because the failing sizes are the small ones
+    /// and a single fixture picks whichever the author happened to think of.
+    ///
+    /// The counter-assertion is the load-bearing half: a generous square keeps
+    /// the face the caller asked for, so this is a ceiling and not a rewrite.
+    #[test]
+    fn r1673_the_tick_fits_the_square_that_holds_it() {
+        use pinion_core::containment::line_box;
+        let mut checked_once = false;
+        let mut absent_once = false;
+        for box_size in 8..=48u32 {
+            for border_width in 0..=3u32 {
+                let style = CheckboxStyle {
+                    box_size,
+                    border_width,
+                    ..CheckboxStyle::m3_filled()
+                };
+                let content = box_size.saturating_sub(border_width * 2);
+                let Some(px) = glyph_px_that_fits(&style) else {
+                    // No tick fits at all. The sweep found this on its first
+                    // run at an 8px square with a 3px outline: two pixels of
+                    // content, where even a 1px face needs a 3px line box.
+                    assert!(
+                        line_box(1) > content,
+                        "the {box_size}px square with a {border_width}px \
+                         outline offers {content} and refused a tick anyway",
+                    );
+                    absent_once = true;
+                    continue;
+                };
+                assert!(
+                    line_box(px) <= content,
+                    "a {px}px tick needs a {}px line box and the {box_size}px \
+                     square with a {border_width}px outline offers {content}",
+                    line_box(px),
+                );
+                assert!(px <= style.glyph_size_px, "it is a ceiling, not a resize");
+                if px == style.glyph_size_px {
+                    checked_once = true;
+                }
+            }
+        }
+        assert!(
+            checked_once,
+            "no square in the sweep was generous enough to keep the declared \
+             face — this would pass for a helper that always shrinks",
+        );
+        assert!(
+            absent_once,
+            "no square in the sweep was too small for any tick — the `None` \
+             arm is then untested, which is how R1654's class starts",
+        );
     }
 }

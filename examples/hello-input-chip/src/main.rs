@@ -284,9 +284,25 @@ fn chip(item: &InputChip, close_state: ButtonState, theme: &Theme) -> Scene {
                 ButtonState::Idle,
                 theme,
             ))
+            // ★★ R1673 — the padding is HORIZONTAL, which is what the comment
+            // above has always said and what the argument did not do:
+            // `with_padding` takes `(x = left, y = top, w = right, h = bottom)`
+            // and this passed `(0, PAD, 0, PAD)`, so the chip had twelve pixels
+            // of padding above and below its label and NONE beside it. Measured
+            // the round `containment` learned that a box owns its border: every
+            // chip's label sat on its own left outline and every `×` on its
+            // right one, ten marks on this screen.
+            //
+            // The outline is reserved on all four edges for the same reason —
+            // it is ink the chip owns inside its own box.
             .with_layout(chip::chip_layout(
                 Size::auto().with_height(SizeValue::Px(CHIP_HEIGHT)),
-                Some(Rect::new(0, CHIP_PAD_X, 0, CHIP_PAD_X)),
+                Some(Rect::new(
+                    CHIP_PAD_X + chip::OUTLINE_W,
+                    chip::OUTLINE_W,
+                    CHIP_PAD_X + chip::OUTLINE_W,
+                    chip::OUTLINE_W,
+                )),
             )),
     )
 }
