@@ -1194,8 +1194,18 @@ AXES = [
         #    actually are: `hello-paged-stream` is Model/View paging behind an
         #    LRU cache, not the paged CONTAINER, and `hello-app-font` loads an
         #    application face rather than offering a font PICKER.
-        #  * Mnemonic adoption was not re-counted this round and is carried
-        #    forward as-is; a number nobody re-derived is not evidence.
+        #  * Mnemonic adoption is FIVE declaring sites, not the four this list
+        #    has carried since R1554: `group_box` and `menu` in the paint crate,
+        #    and `hello-key-sequence`, `hello-menu-app` and `settings-panel`
+        #    among the screens. Counted over the three declaring entry points
+        #    (`TextNode::mnemonic_styled`, `with_mnemonic*`, `MnemonicLabel`)
+        #    rather than over the word, which appears in the runtime's dispatch
+        #    and in the RPC surface without declaring anything.
+        #    ★ R1672 closed its own round carrying this as "not re-counted",
+        #    then counted it minutes later — which is the point: a carry whose
+        #    discharge is one command is not a carry, it is a thing that was
+        #    not done. The changelog entry is frozen and says the older number;
+        #    this comment is the live one.
         #
         # WHAT R1671 AND R1672 ADDED IS CORRECTNESS, NOT SURFACE, and that is
         # why it is folded into this one point rather than scored separately: a
