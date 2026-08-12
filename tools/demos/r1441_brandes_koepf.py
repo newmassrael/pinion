@@ -44,6 +44,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    assert_no_such_member,
     assert_rpc_error,
     find_by_tag,
     run_demo,
@@ -121,7 +122,12 @@ def body() -> None:
         assert_rpc_error(
             lambda: tf.intervene("/external/node.0.h", 99), data="UnknownIntervenePath"
         )
-        assert_rpc_error(lambda: q(tf, "node.999.h"), data="UnknownIntrospectPath")
+        # ★ R1670 — `node.999.h` is a DECLARED family addressed with an index
+        # the graph does not hold, which R1667 split out of the collapsed
+        # `UnknownIntrospectPath`: that word means stop asking for this name,
+        # and this means read the family's count and ask again. The refusal
+        # names the index it refused against, so a client can act on it.
+        assert_no_such_member(lambda: q(tf, "node.999.h"), saying="999")
 
         # `layout_crossings` — the tidiness metric, derived not cached.
         crossings = q(tf, "layout_crossings")

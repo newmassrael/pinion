@@ -2636,6 +2636,19 @@ ACTION_REFUSED = -32005
 #: range, and `-32602` is published as carrying a closed vocabulary.
 VALUE_OUT_OF_RANGE = -32006
 
+#: R1667 §5.15 — JSON-RPC code for a READ whose family is declared and whose
+#: argument addresses no member: the name is right and the index is not.
+#: Mirrors `pinion_rpc::NO_SUCH_MEMBER`. Opposite instructions to
+#: `-32602 UnknownIntrospectPath`, which means stop asking for that name at all.
+NO_SUCH_MEMBER = -32007
+
+#: R1667 §5.15 — JSON-RPC code for a declared read this instance cannot answer,
+#: because it holds no state to read from. Mirrors
+#: `pinion_rpc::READ_UNAVAILABLE`. Distinct from `NO_SUCH_MEMBER` because the
+#: argument was never the problem: nothing the client varies about the call
+#: helps until the surface is bound.
+READ_UNAVAILABLE = -32008
+
 #: R1565.2 — the codes whose `error.data` is the SURFACE's own sentence rather
 #: than a word from this dispatcher's closed vocabulary. Mirrors the
 #: `data_is_prose` column `rpc/errors` publishes, and is asserted equal to it by
@@ -2644,14 +2657,132 @@ VALUE_OUT_OF_RANGE = -32006
 #:
 #: A test may only MATCH a payload under a code that is not in here. That is the
 #: rule `assert_rpc_error` enforces below: prose is shown, never branched on.
-PROSE_DATA_CODES = frozenset({ACTION_REFUSED, VALUE_OUT_OF_RANGE})
+PROSE_DATA_CODES = frozenset(
+    {ACTION_REFUSED, VALUE_OUT_OF_RANGE, NO_SUCH_MEMBER, READ_UNAVAILABLE}
+)
 
 #: The helper that asserts each prose-carrying code, for the error message a
 #: caller reaching for the wrong one gets.
 _PROSE_HELPER = {
     ACTION_REFUSED: "assert_action_refused(fn, saying=...)",
     VALUE_OUT_OF_RANGE: "assert_out_of_range(fn, saying=...)",
+    NO_SUCH_MEMBER: "assert_no_such_member(fn, saying=...)",
+    READ_UNAVAILABLE: "assert_read_unavailable(fn, saying=...)",
 }
+
+
+def _assert_refused_with_reason(fn, code: int, kind: str, saying: str) -> str:
+    """The body every prose-carrying refusal assertion shares.
+
+    Lifted in R1670 when the read channel's two arrived and made it a fourth and
+    fifth copy — the three-site rule, and the copies had already started to
+    differ in what they said when the call SUCCEEDED, which is the half a reader
+    of a failure message needs most.
+    """
+    try:
+        fn()
+    except RpcError as exc:
+        assert_eq(exc.code, code, f"{kind} saying {saying!r}: JSON-RPC code")
+        reason = exc.data if isinstance(exc.data, str) else (exc.data or {}).get("reason")
+        assert isinstance(reason, str), (
+            f"a {kind} must state a reason; error.data was {exc.data!r}"
+        )
+        assert saying in reason, (
+            f"the {kind} did not say {saying!r}; it said {reason!r}"
+        )
+        return reason
+    raise AssertionError(
+        f"expected a {kind} saying {saying!r}, but the call succeeded"
+    )
+
+
+def assert_no_such_member(fn, *, saying: str) -> str:
+    """Assert `fn()` is refused because the argument addresses NO MEMBER of a
+    declared family, with a stated reason containing `saying`.
+
+    The read channel's peer of `assert_action_refused`, and the reason the four
+    demos this round repaired could not be migrated when R1667 split the read
+    refusal into four arms: the wire gained a vocabulary and the harness did
+    not, so a demo that wanted to say "the name is right and the index is not"
+    had no way to say it and went on asserting the collapsed answer.
+
+    Distinct from `assert_rpc_error(..., data="UnknownIntrospectPath")` in what
+    it tells the CALLER, which is the whole point of the split: that one means
+    stop asking for this name, and this one means read the family's count path
+    and ask again.
+    """
+    return _assert_refused_with_reason(fn, NO_SUCH_MEMBER, "no-such-member refusal", saying)
+
+
+def assert_read_unavailable(fn, *, saying: str) -> str:
+    """Assert `fn()` is refused because this instance holds no state to answer a
+    DECLARED read, with a stated reason containing `saying`.
+
+    Separate from `assert_no_such_member` for the same reason the codes are: the
+    caller's next move differs. A missing member says try another index; this
+    says the argument was never the problem.
+    """
+    return _assert_refused_with_reason(
+        fn, READ_UNAVAILABLE, "read-unavailable refusal", saying
+    )
+
+
+def widest_flat_run(png, rect, colour, *, channel_tolerance: int = 2):
+    """The widest run of `colour` across `rect`'s mid-height row, as
+    `(start_x, length)` in absolute pixels — or `(rect_x, 0)` if there is none.
+
+    ★ R1670 — the helper three demos needed and none had. Each sampled a
+    CONSTANT inset into a rect whose size is derived, with a comment claiming
+    the point was clear of the glyph, and `r760_fab` measured what that is worth:
+    on the smallest FAB the flat run of the declared accent is 15px wide and the
+    icon's ink begins at 16, so the constant 12 sat three pixels from a glyph's
+    antialiased edge. It passed on a real GPU and on lavapipe here, and failed
+    in CI twice, reading a colour 16 off the one it wanted.
+
+    Scanning for the run instead is a MEASUREMENT of the same claim, and it is
+    the stronger one: a fill the binding never painted has no run at all, where
+    a single sample can be right by luck about a wrong picture. Callers assert
+    the run's WIDTH (an interior exists) and then read its centre.
+
+    `colour` is an `(r, g, b)` the caller took from the SCENE, so this is not
+    circular: the pixels are being held to what the scene declared.
+    """
+    x, y, w, h = rect
+    row = sample_png_points(png, [(x + dx, y + h // 2) for dx in range(w)])
+    best_start, best_len, run_start = x, 0, None
+    for dx, sample in enumerate([*row, None]):
+        hit = sample is not None and all(
+            abs(sample[n] - colour[n]) <= channel_tolerance for n in range(3)
+        )
+        if hit and run_start is None:
+            run_start = dx
+        elif not hit and run_start is not None:
+            if dx - run_start > best_len:
+                best_start, best_len = x + run_start, dx - run_start
+            run_start = None
+    return best_start, best_len
+
+
+def assert_interior_is(png, rect, colour, *, label: str, floor: int = 8,
+                       tolerance: int = 12):
+    """Assert `rect` paints a run of `colour` at least `floor` wide across its
+    middle, and that the run's centre really is that colour.
+
+    The two halves are different claims and both are wanted: the width says the
+    binding painted the fill at all (a wrongly-painted surface has no run), and
+    the centre sample says the pixels match the value the scene declared. See
+    `widest_flat_run` for why the run is measured rather than guessed at.
+    """
+    start, length = widest_flat_run(png, rect, colour)
+    _x, y, w, h = rect
+    assert length >= floor, (
+        f"{label}: the widest run of the declared fill across a {w}x{h} surface "
+        f"is {length}px and an interior is at least {floor}px — the surface is "
+        f"not painting the fill its scene declares"
+    )
+    middle = sample_png_points(png, [(start + length // 2, y + h // 2)])[0]
+    assert_pixel_eq(middle, (*colour, 255), label, tolerance=tolerance)
+    return middle
 
 
 def assert_out_of_range(fn, *, saying: str) -> str:
@@ -2664,20 +2795,8 @@ def assert_out_of_range(fn, *, saying: str) -> str:
     was fine and the surface declined), and a helper that accepted either would
     let a test pass while the wire reported the wrong one.
     """
-    try:
-        fn()
-    except RpcError as exc:
-        assert_eq(exc.code, VALUE_OUT_OF_RANGE, f"out-of-range saying {saying!r}: code")
-        reason = exc.data if isinstance(exc.data, str) else (exc.data or {}).get("reason")
-        assert isinstance(reason, str), (
-            f"an out-of-range write must state its range; error.data was {exc.data!r}"
-        )
-        assert saying in reason, (
-            f"refusal did not say {saying!r}; it said {reason!r}"
-        )
-        return reason
-    raise AssertionError(
-        f"expected an out-of-range refusal saying {saying!r}, but the call succeeded"
+    return _assert_refused_with_reason(
+        fn, VALUE_OUT_OF_RANGE, "out-of-range refusal", saying
     )
 
 
@@ -2696,21 +2815,7 @@ def assert_action_refused(fn, *, saying: str) -> str:
     asserts the fact R1564 added: the producer's own sentence, under the code
     that says a well-formed call was declined.
     """
-    try:
-        fn()
-    except RpcError as exc:
-        assert_eq(exc.code, ACTION_REFUSED, f"refusal saying {saying!r}: JSON-RPC code")
-        reason = exc.data if isinstance(exc.data, str) else (exc.data or {}).get("reason")
-        assert isinstance(reason, str), (
-            f"a refusal must state a reason; error.data was {exc.data!r}"
-        )
-        assert saying in reason, (
-            f"refusal did not say {saying!r}; it said {reason!r}"
-        )
-        return reason
-    raise AssertionError(
-        f"expected a refusal saying {saying!r}, but the call succeeded"
-    )
+    return _assert_refused_with_reason(fn, ACTION_REFUSED, "refusal", saying)
 
 
 def assert_rpc_error(fn, *, data: Any, code: int = -32602) -> None:

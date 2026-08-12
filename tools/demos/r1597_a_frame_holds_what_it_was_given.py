@@ -60,6 +60,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
+    assert_no_such_member,
     run_demo,
 )
 
@@ -197,8 +198,15 @@ def body() -> None:
         assert int(cut) in csv(tf, "edge_ids"), "E: one undo restores the hop"
         # An id with no node has no dissolve at all -- a REFUSAL, which is a
         # different fact from "it would cut nothing".
-        reason = refused(tf, "dissolve_severs.9999")
-        assert "Unknown" in reason, f"E: absent is absent, not free: {reason!r}"
+        #
+        # ★ R1670 — and since R1667 it is a refusal that NAMES the id it could
+        # not find, under the code that means "the family is right, this member
+        # is not". The old assertion looked for the word `Unknown`, which was
+        # the collapsed answer's variant name; asserting on the arm and on the
+        # id is the fact, where the word was the encoding.
+        assert_no_such_member(
+            lambda: q(tf, "dissolve_severs.9999"), saying="9999"
+        )
 
         # -- (F) a cycle cannot be authored ----------------------------------
         a = int(inv(tf, "add_node", "Add"))

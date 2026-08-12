@@ -1240,8 +1240,14 @@ impl TableExternal {
                 .parse()
                 .map_err(|_| ReadRefusal::QueryTypeMismatch)?;
             if row >= self.row_count() || col >= self.col_count() {
+                // ★ R1670 — the two dimensions are named SEPARATELY, and the
+                // sentence says which of them is out. The first draft wrote
+                // `0..{rows}.0..{cols}`, which reads as one range with three
+                // dots in it: `cell 10000.0 is outside 0..10000.0..3` tells a
+                // client nothing it can act on, and the whole reason this arm
+                // carries prose is so that it can.
                 return Err(ReadRefusal::no_such_member(format!(
-                    "cell {row}.{col} is outside 0..{}.0..{}",
+                    "cell {row}.{col} is outside rows 0..{} x columns 0..{}",
                     self.row_count(),
                     self.col_count()
                 )));

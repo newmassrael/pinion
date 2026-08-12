@@ -53,6 +53,7 @@ from rpc_verify import (  # noqa: E402
     WORKSPACE_ROOT,
     abs_rects_of,
     assert_eq,
+    assert_interior_is,
     assert_pixel_eq,
     find_by_tag,
     read_png_rgba8,
@@ -173,17 +174,34 @@ def body() -> None:
     assert (png.width, png.height) == VIEWPORT, \
         f"screenshot {png.width}x{png.height} != viewport {VIEWPORT}"
 
-    # Sample 12 px in from each FAB's left edge at mid-height: inside the
-    # accent surface and clear of the centred icon / label glyph.
-    points = []
-    for tag in TAGS:
-        x, y, _w, h = rects[tag]
-        points.append((x + 12, y + h // 2))
+    # ★ R1670 — the claim is that each FAB paints a WIDE RUN of its declared
+    # accent, measured, rather than that one hand-picked pixel happens to be it.
+    #
+    # The old form sampled a constant 12px in from the left edge at mid-height,
+    # with a comment saying that was "clear of the centred icon". Measured, on
+    # the smallest FAB the flat accent run at mid-height is dx 1..15 and the
+    # icon's ink begins at 16 — three pixels of margin. Whether the glyph's
+    # antialiased edge reaches dx=12 then depends on the rasteriser, and it did:
+    # this demo passed on a real GPU and on lavapipe here, and failed in CI for
+    # two runs running, reading (41,128,213) where it wanted (25,118,210).
+    #
+    # A constant probing a derived geometry is the shape this project keeps
+    # finding. The repair is to derive: scan the row, take the longest run of
+    # the fill the SCENE declares, and assert that it is wide enough to be an
+    # interior and that its centre is that colour. Not circular -- the colour
+    # comes from the scene and the width is what a wrongly-painted FAB fails.
     window_corner = (5, 5)
-    samples = sample_png_points(png, [*points, window_corner])
-    for tag, px in zip(TAGS, samples[:-1]):
-        assert_pixel_eq(px, (*accent_rgb, 255), f"{tag} interior is the accent tone", tolerance=12)
-    assert_pixel_eq(samples[-1], (*window_rgb, 255),
+    for tag in TAGS:
+        # A flat floor, and NOT a fraction of the width: measured, the widest
+        # mid-height run is 15 / 21 / 46 / 19 px for widths 40 / 56 / 96 / 248,
+        # because the extended FAB carries a LABEL across its middle and so has
+        # less clear interior than the small one despite being six times wider.
+        # A fraction would have demanded 31px of the widest FAB and got 19 --
+        # the same mistake in the other direction, and this round's first draft
+        # made it. The default floor says "the FAB paints its fill at all".
+        assert_interior_is(png, rects[tag], accent_rgb,
+                           label=f"{tag} interior is the accent tone")
+    assert_pixel_eq(sample_png_points(png, [window_corner])[0], (*window_rgb, 255),
                     f"window background is Surface {window_corner}", tolerance=8)
 
 

@@ -44,6 +44,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    assert_no_such_member,
     assert_rpc_error,
     find_by_tag,
     indexed_tags,
@@ -190,8 +191,15 @@ def body() -> None:
                       f"every painted row {row} is one the filter kept")
 
         # ── (E) the bounds are absent, not empty ────────────────────
-        assert_rpc_error(lambda: model_cell(tf, N, 0), data="UnknownIntrospectPath")
-        assert_rpc_error(lambda: model_cell(tf, 0, NCOLS), data="UnknownIntrospectPath")
+        # ★ R1670 — the two INDEX failures and the malformed ADDRESS are now
+        # different answers, which is R1667's split and the reason it was worth
+        # making: a row past the end says "read the count and ask again" and
+        # names the bounds it refused against, while `cell.0` is not an address
+        # of this family at all and says "stop asking for this name".
+        assert_no_such_member(lambda: model_cell(tf, N, 0), saying=f"rows 0..{N}")
+        assert_no_such_member(
+            lambda: model_cell(tf, 0, NCOLS), saying=f"columns 0..{NCOLS}"
+        )
         assert_rpc_error(lambda: tf.query(f"/{SORT_TAG}/external/cell.0"),
                          data="UnknownIntrospectPath")
         # Contrast, and it is deliberate on both sides: `source_at` past its

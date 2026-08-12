@@ -54,6 +54,7 @@ from rpc_verify import (  # noqa: E402
     read_png_rgba8,
     run_demo,
     sample_png_points,
+    widest_flat_run,
     wait_until,
 )
 
@@ -207,8 +208,13 @@ def dir_and_file_rows_render_distinctly() -> None:
 
     def fill_at(tag: str):
         x, y, _w, h = rects[tag]
-        # Sample left of the glyphs (a clean fill band).
-        return sample_png_points(img, [(x + 5, y + h // 2)])[0]
+        # ★ R1670 — the centre of the WIDEST run of the fill this row is
+        # painted in, rather than a constant five pixels in. Same class as the
+        # one `r760_fab` was failing CI on: a constant probing a derived
+        # geometry is right until a glyph's antialiased edge reaches it.
+        seed = sample_png_points(img, [(x + 5, y + h // 2)])[0][:3]
+        start, length = widest_flat_run(img, rects[tag], seed)
+        return sample_png_points(img, [(start + length // 2, y + h // 2)])[0]
 
     dir_px = fill_at(dir_tag)
     file_px = fill_at(file_tag)

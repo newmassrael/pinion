@@ -56,6 +56,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     sample_png_points,
+    widest_flat_run,
     read_png_rgba8,
     run_demo,
 )
@@ -177,10 +178,18 @@ def body() -> None:
         f"screenshot {png.width}x{png.height} != viewport {VIEWPORT}"
 
     def strip_spot(rect):
-        # A point inside the row strip near its left padding edge, clear of
-        # the cell glyph (col 0 text starts after the cell padding).
+        # ★ R1670 — the WIDEST run of whatever the strip is painted in, at
+        # mid-height, rather than a constant three pixels in from the left
+        # edge. `r760_fab` measured what a constant inset into a derived
+        # geometry is worth: it sat three pixels from a glyph's antialiased
+        # edge and failed in CI twice while passing on two rasterisers here.
+        # A row's padding is wider than a FAB's, so this one was not failing --
+        # it was relying on the same thing.
         x, y, _w, h = rect
-        return (x + 3, y + h // 2)
+        start, length = widest_flat_run(
+            png, rect, sample_png_points(png, [(x + 3, y + h // 2)])[0][:3]
+        )
+        return (start + length // 2, y + h // 2)
 
     p0, p1, p2 = sample_png_points(
         png, [strip_spot(row0_rect), strip_spot(row1_rect), strip_spot(row2_rect)]

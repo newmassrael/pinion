@@ -330,6 +330,82 @@ pub fn rpc_errors() -> RpcErrors {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::collections::BTreeSet;
+
+    /// R1670 — the DEMO harness's mirror of `data_is_prose` agrees with this
+    /// catalogue, checked where a round can see it.
+    ///
+    /// ★ This class has now bitten three times. `tools/rpc_verify.py` carries
+    /// `PROSE_DATA_CODES` because a Python assertion has to know whether a
+    /// payload may be matched or only shown, and the only thing comparing the
+    /// two lived in `tools/demos/r1564_refusal_states_why.py` — a demo, and
+    /// demos run in CI. R1564 and R1565 each split a fact out of `-32602` and
+    /// each learned about the drift from a red `main`; R1667 added two codes
+    /// and learned about it a round later, from a sweep that had been red the
+    /// whole time.
+    ///
+    /// The mirror is the same fact either way; what changes is WHEN it speaks.
+    /// Here it speaks in `cargo test -p pinion-rpc`, which is a gate every
+    /// round that touches this crate already runs, so a code added to one side
+    /// and not the other cannot reach a push.
+    ///
+    /// The demo keeps its own phase (H): that one asks the RUNNING wire, and
+    /// this one asks the source. Two readers of one census is the shape this
+    /// project has been bitten by — the difference is that these two are
+    /// checked against each other rather than left to agree.
+    #[test]
+    fn r1670_the_demo_harness_mirrors_this_catalogues_prose_flag() {
+        let harness =
+            std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/rpc_verify.py");
+        let source = std::fs::read_to_string(&harness)
+            .unwrap_or_else(|why| panic!("the demo harness is at {harness:?}: {why}"));
+        let block = source
+            .split_once("PROSE_DATA_CODES = frozenset(")
+            .expect("the harness declares PROSE_DATA_CODES")
+            .1
+            .split_once(')')
+            .expect("and closes the call")
+            .0;
+        // The harness names its codes through constants, so the mirror is read
+        // from the NAMES rather than from numbers -- a renamed constant with a
+        // stale number would otherwise pass.
+        let mirrored: BTreeSet<i32> = block
+            .split(',')
+            .filter_map(|word| {
+                let word = word.trim().trim_matches(|c| c == '{' || c == '}').trim();
+                (!word.is_empty()).then(|| {
+                    let decl = format!("\n{word} = -");
+                    let at = source.find(&decl).unwrap_or_else(|| {
+                        panic!("the harness names {word} in PROSE_DATA_CODES and never defines it")
+                    });
+                    source[at + decl.len() - 1..]
+                        .lines()
+                        .next()
+                        .and_then(|line| line.trim().parse::<i32>().ok())
+                        .unwrap_or_else(|| panic!("{word} is not an integer code"))
+                })
+            })
+            .collect();
+
+        let published: BTreeSet<i32> = rpc_errors()
+            .errors
+            .iter()
+            .filter(|entry| entry.data_is_prose)
+            .map(|entry| entry.code)
+            .collect();
+
+        assert_eq!(
+            mirrored, published,
+            "`tools/rpc_verify.py::PROSE_DATA_CODES` and this catalogue's \
+             `data_is_prose` disagree. A code here and not there leaves every \
+             demo asserting on it as a matchable word; a code there and not \
+             here makes the harness refuse a payload the wire may hand it.",
+        );
+        assert!(
+            published.len() >= 4,
+            "the population is {published:?}, which is too small to be right",
+        );
+    }
 
     #[test]
     fn r1564_1_every_code_this_crate_emits_is_published() {

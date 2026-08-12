@@ -850,7 +850,7 @@ impl ExternalIntrospect for GridSortExternal {
                 .map_err(|_| ReadRefusal::QueryTypeMismatch)?;
             if row >= self.state.count() || col >= self.state.col_count() {
                 return Err(ReadRefusal::no_such_member(format!(
-                    "cell {row}.{col} is outside 0..{}.0..{}",
+                    "cell {row}.{col} is outside rows 0..{} x columns 0..{}",
                     self.state.count(),
                     self.state.col_count()
                 )));

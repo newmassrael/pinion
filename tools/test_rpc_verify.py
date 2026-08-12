@@ -584,6 +584,72 @@ def test_the_stated_reason_gate_fails_a_silent_region_and_passes_a_stated_one() 
         del rpc_verify._STATED_REASON_EXCEPTIONS["fixture-example"]
 
 
+def test_the_interior_run_is_the_widest_one_and_a_wrong_fill_has_none() -> None:
+    # ★ R1670 — this helper's own negative control, and it is here because a
+    # counterfactual PASSED without it. TWICE: removing the width floor and
+    # taking the FIRST run instead of the widest both left every demo green,
+    # because the tree is painted correctly and a helper with nothing to fail on
+    # is a helper nobody has tested. R1669 recorded this exact lesson about a
+    # different gate and this round repeated it, which is why the note is here
+    # rather than in a memory file.
+    from rpc_verify import Png, assert_interior_is, widest_flat_run
+
+    FILL = (25, 118, 210)
+    GLYPH = (255, 255, 255)
+
+    def strip(spans) -> Png:
+        """One 40x3 row: a list of (length, colour) laid left to right."""
+        row = bytearray()
+        for length, colour in spans:
+            row += bytes([*colour, 255]) * length
+        assert len(row) == 40 * 4, len(row)
+        return Png(width=40, height=3, pixels=bytes(row) * 3)
+
+    rect = (0, 0, 40, 3)
+
+    # A solid strip: the run is the whole width.
+    assert_eq(widest_flat_run(strip([(40, FILL)]), rect, FILL), (0, 40),
+              "run: a solid strip")
+
+    # A glyph band in the middle: the run is the WIDER side, not the first one.
+    png = strip([(8, FILL), (10, GLYPH), (22, FILL)])
+    start, length = widest_flat_run(png, rect, FILL)
+    check((start, length) == (18, 22), f"run: the widest side, got {(start, length)}")
+    check(
+        start + length // 2 >= 18,
+        "run: and its centre is inside that side rather than beside the edge",
+    )
+
+    # The wrong fill entirely: no run at all, and the assertion says so.
+    empty = widest_flat_run(strip([(40, GLYPH)]), rect, FILL)
+    check(empty[1] == 0, f"run: a surface painted otherwise has none, got {empty}")
+    raised = None
+    try:
+        assert_interior_is(strip([(40, GLYPH)]), rect, FILL, label="probe")
+    except AssertionError as exc:
+        raised = str(exc)
+    check(raised is not None, "interior: a wrongly-painted surface fails")
+    check(
+        raised is not None and "not painting the fill its scene declares" in raised,
+        "interior: and the failure says which claim broke",
+    )
+
+    # A run too narrow to be an interior fails on the WIDTH, before the colour
+    # sample can be right by luck.
+    raised = None
+    try:
+        assert_interior_is(
+            strip([(3, FILL), (37, GLYPH)]), rect, FILL, label="probe", floor=8
+        )
+    except AssertionError as exc:
+        raised = str(exc)
+    check(raised is not None, "interior: a 3px run is not an interior")
+
+    # And a legitimate one passes, so the floor is not simply always failing.
+    assert_interior_is(strip([(8, FILL), (10, GLYPH), (22, FILL)]), rect, FILL,
+                       label="probe")
+
+
 def test_a_screen_that_routes_nothing_fails_and_an_empty_roster_does_not() -> None:
     # ★ R1664 — the half this gate used to PRINT. `deliverable: 0` means both
     # "no widgets here" and "every press in this window is dropped", and the
