@@ -1795,6 +1795,7 @@ dependencies = [
  "pinion-gpu",
  "pinion-runtime",
  "pinion-shell",
+ "pinion-widget-paint",
  "serde",
  "serde_json",
  "vello",

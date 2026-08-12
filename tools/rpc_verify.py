@@ -578,63 +578,157 @@ def _pointer_reach_budget() -> dict[str, frozenset[str]]:
     return _POINTER_REACH_BUDGET
 
 
-_TEXT_SMEAR_BUDGET: Optional[dict[str, int]] = None
+#: What a budget row holds when the surface could not be measured on the host
+#: that produced the file, beside the reason it could not.
+UNMEASURED = "unmeasured"
+
+_FC_LIST_CACHE: dict[str, Optional[frozenset]] = {}
 
 
-def _text_smear_budget() -> dict[str, int]:
-    """R1654 — the measured backlog of screens whose runs land on each other.
+def _fc_list_files(conf: Path) -> Optional[frozenset]:
+    """Every font FILE a fontconfig resolves to, by base name, or `None` when
+    `fc-list` is not installed.
 
-    A COUNT per example rather than a list of pairs, because the identity of an
-    overlapping pair is a rectangle and rectangles move: pinning the pairs would
-    make an unrelated layout change look like a new defect. The count is the
-    ratchet — it may fall and never rise — and the same shape
-    `docs/pointer-reach-budget.tsv` uses for the same reason.
+    ★ Files and not families. The first draft asked for `family` and compared
+    the answer to the pinned faces' file stems, which never match: the pin
+    names `NotoSans-Regular.ttf` and the family is `Noto Sans`. It fired on the
+    correctly-pinned run, which is how it was caught. A base name is the
+    identity the pin is written in, so this is a comparison and not a
+    translation.
+
+    Cached per config path: the answer is a property of the file, every demo
+    asks it once at boot, and the sweep runs it 223 times.
     """
-    global _TEXT_SMEAR_BUDGET
-    if _TEXT_SMEAR_BUDGET is None:
-        budget: dict[str, int] = {}
-        path = WORKSPACE_ROOT / "docs" / "text-smear-budget.tsv"
-        if path.is_file():
-            for line in path.read_text(encoding="utf-8").splitlines():
-                if not line.strip() or line.lstrip().startswith("#"):
-                    continue
-                example, _, count = line.partition("\t")
-                if count.strip().isdigit():
-                    budget[example.strip()] = int(count.strip())
-        _TEXT_SMEAR_BUDGET = budget
-    return _TEXT_SMEAR_BUDGET
+    key = str(conf)
+    if key in _FC_LIST_CACHE:
+        return _FC_LIST_CACHE[key]
+    answer: Optional[frozenset]
+    try:
+        out = subprocess.run(
+            ["fc-list", ":", "file"],
+            env={**os.environ, "FONTCONFIG_FILE": key},
+            capture_output=True,
+            text=True,
+            timeout=20,
+            check=False,
+        )
+        answer = (
+            frozenset(
+                Path(line.strip().rstrip(":")).name
+                for line in out.stdout.splitlines()
+                if line.strip()
+            )
+            if out.returncode == 0
+            else None
+        )
+    except (OSError, subprocess.SubprocessError):
+        answer = None
+    _FC_LIST_CACHE[key] = answer
+    return answer
 
 
-_CONTAINMENT_BUDGET: Optional[dict[str, int]] = None
+#: Sentinel for "this file has not been read yet", distinct from `None`, which
+#: is the answer "read, and it does not exist". Conflating them made every
+#: budget read report the file missing — caught by the test, not by a run.
+_MISSING = object()
+_READ_BUDGETS: dict[str, object] = {}
 
 
-def _containment_budget() -> dict[str, int]:
-    """R1656 — the measured backlog of marks painted outside the box that owns
-    them, by example.
+#: Header line a producer writes to say its file is a CENSUS — one row per
+#: example — rather than a list of the non-zero ones. The strict
+#: missing-row rule arms only on a file that says this.
+CENSUS_MARKER = "# census: total"
 
-    A COUNT, for the reason `_text_smear_budget` is one: the identity of an
-    escape is a rectangle and rectangles move, so pinning them would report an
-    unrelated layout change as a new defect. The count only falls.
 
-    The population this was measured against is the point of the file. The
-    class it gates had SEVEN of eight node cards painting a row past their own
-    border on the screen four rounds had called a reproduction, and a person
-    found it because nothing here could: the framework's own reads answered
-    "the run is inside its owner" while the owner they resolved was the canvas.
+def _read_budget(name: str) -> "Optional[tuple[dict[str, object], bool]]":
+    """A ratchet file in its three states (R1661 / R1662).
+
+        <example>\t<count>                  measured, and this is the number
+        <example>\tunmeasured\t<reason>     could not be measured there, stated
+        (no row)                            AN ERROR — the census is total
+
+    Returns `None` when the FILE does not exist, which is a fourth state and a
+    different one: the ratchet has never been produced. R1661 made the missing-
+    ROW distinction; the same argument applies to the file, and enforcing zero
+    against a population nobody has measured makes the producer's first run
+    impossible.
+
+    ★ Why the missing row is an error rather than zero. Before R1661 a surface
+    that could not be booted left no row, and no row read as `0` — the strictest
+    budget there is, chosen by nobody. `hello-audio-device` cannot boot without
+    `snd-dummy`, so it was silently budgeted at 0 while CI, which does load that
+    card, measures 1. An absence that reads as the strictest possible claim is
+    the shape this project keeps paying for.
+
+    ★ ...and why that rule is CONDITIONAL. It can only be true of a file that
+    is a census, and the two files this tree carries were written as lists of
+    the non-zero examples: 25 rows for 223 surfaces. Arming the strict rule
+    against them would fail 198 boot gates — including the boot gates the
+    PRODUCER drives, which is a deadlock where the only way to write a census
+    is to already have one. So a producer stamps its output with
+    [`CENSUS_MARKER`] and the strict rule reads that stamp. The second value
+    returned is that stamp.
     """
-    global _CONTAINMENT_BUDGET
-    if _CONTAINMENT_BUDGET is None:
-        budget: dict[str, int] = {}
-        path = WORKSPACE_ROOT / "docs" / "containment-budget.tsv"
-        if path.is_file():
-            for line in path.read_text(encoding="utf-8").splitlines():
-                if not line.strip() or line.lstrip().startswith("#"):
-                    continue
-                example, _, count = line.partition("\t")
-                if count.strip().isdigit():
-                    budget[example.strip()] = int(count.strip())
-        _CONTAINMENT_BUDGET = budget
-    return _CONTAINMENT_BUDGET
+    path = WORKSPACE_ROOT / "docs" / name
+    if not path.is_file():
+        return None
+    budget: dict[str, object] = {}
+    total = False
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if line.strip() == CENSUS_MARKER:
+            total = True
+        if not line.strip() or line.lstrip().startswith("#"):
+            continue
+        parts = line.split("\t")
+        example = parts[0].strip()
+        value = parts[1].strip() if len(parts) > 1 else ""
+        if value.isdigit():
+            budget[example] = int(value)
+        elif value == UNMEASURED:
+            budget[example] = (UNMEASURED, parts[2].strip() if len(parts) > 2 else "")
+    return budget, total
+
+
+def _budget_for(
+    file_name: str, example: str, gate: str, cache_key: str
+) -> "int | tuple[str, str] | None":
+    """This example's allowance, or `None` when the gate must not run.
+
+    `None` covers the two states a gate answers by REPORTING rather than by
+    judging — the file has never been produced, or this surface has a stated
+    reason it could not be measured — and both print, because a check that
+    silently stopped happening is the failure mode these files exist to prevent.
+    """
+    read = _READ_BUDGETS.get(cache_key, _MISSING)
+    if read is _MISSING:
+        read = _read_budget(file_name)
+        _READ_BUDGETS[cache_key] = read
+    if read is None:
+        print(f"[{gate}] {example}: UNARMED — docs/{file_name} has not been "
+              f"produced (python3 tools/measure_ink_budgets.py)")
+        return None
+    budget, total = read
+    if example not in budget:
+        if not total:
+            # A pre-census file: it lists the non-zero examples, so an absent
+            # row is the zero it was always read as. Silent on purpose — this
+            # is the majority case on such a file and printing it 198 times
+            # would bury the rows that matter.
+            return 0
+        raise AssertionError(
+            f"{example}: docs/{file_name} declares itself a census "
+            f"({CENSUS_MARKER!r}) and has no row for this surface. A missing "
+            f"row used to read as a budget of 0, which is the strictest claim "
+            f"there is and one nobody made. Re-run "
+            f"`python3 tools/measure_ink_budgets.py`, which writes every "
+            f"example including the ones it could not measure."
+        )
+    allowed = budget[example]
+    if isinstance(allowed, tuple):
+        print(f"[{gate}] {example}: UNMEASURED where this file was produced "
+              f"({allowed[1]}) — a host that CAN measure it is owed a number")
+        return None
+    return allowed
 
 
 class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
@@ -652,6 +746,7 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         env: Optional[dict[str, str]] = None,
         ensure_build: bool = True,
         pointer_reach_exempt: Optional[dict[str, str]] = None,
+        measuring: bool = False,
     ) -> None:
         self.example = example
         self.release = release
@@ -702,6 +797,21 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         # round's record, and a name that stops being unreachable fails too —
         # an exemption outliving its defect is a claim nobody re-checked.
         self.pointer_reach_exempt = dict(pointer_reach_exempt or {})
+        # R1662 — the fontconfig this subprocess was launched with, filled in by
+        # `__enter__`; see `_gate_font_pin`.
+        self._env_fontconfig: Optional[Path] = None
+        # R1662 — this surface is being MEASURED for the ink ratchets, so the
+        # three ink gates stand down.
+        #
+        # ★ Not a bypass: a producer cannot be judged by the file it is
+        # producing. Measured while it was happening — a surface whose count
+        # exceeded its committed budget had its boot gate refuse, the producer
+        # recorded `unmeasured` with "a boot gate refused" as the reason, and
+        # the true number it had just been asked for was the one thing that
+        # could not get into the file. The other gates (pointer reach, the font
+        # pin) still run: those are preconditions of a measurement being
+        # meaningful, not the thing being measured.
+        self.measuring = bool(measuring)
 
         self._proc: Optional[subprocess.Popen] = None
         self._inbox: "queue.Queue[str]" = queue.Queue()
@@ -735,6 +845,11 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         pinned = pinned_fontconfig()
         if pinned is not None:
             env["FONTCONFIG_FILE"] = str(pinned)
+        # R1662 — remembered so `_gate_font_pin` can verify the database this
+        # child actually resolves. `None` means the CALLER owns the variable
+        # (the font-source demos), and the gate stands down there rather than
+        # asserting about a database it did not choose.
+        self._env_fontconfig = pinned
         # R1319 — demo-supplied env wins (e.g. `PINION_LOG`), so a demo can observe a
         # level-gated `tracing` line the default `warn` filter would drop.
         env.update(self.extra_env)
@@ -845,7 +960,9 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         try:
             self._gate_pointer_reach()
             self._gate_text_smear()
+            self._gate_font_pin()
             self._gate_containment()
+            self._gate_scroll_reach()
         except BaseException:
             self.shutdown()
             raise
@@ -941,6 +1058,8 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         A binary too old to answer the method is driven without the gate, the
         same tolerance the boot baseline gives.
         """
+        if self.measuring:
+            return  # the producer is not judged by the file it produces
         try:
             resp = self.request("scene/text_painted")
         except RpcError as exc:
@@ -963,7 +1082,11 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
                         and b["y"] < a["y"] + a["h"]
                     ):
                         smeared.append((owner, a["content"], b["content"]))
-        allowed = _text_smear_budget().get(self.example, 0)
+        allowed = _budget_for(
+            "text-smear-budget.tsv", self.example, "text-smear", "smear"
+        )
+        if allowed is None:
+            return
         if len(smeared) > allowed:
             rows = "; ".join(f"{o or '<root>'}: {a!r} over {b!r}" for o, a, b in smeared[:6])
             raise AssertionError(
@@ -1003,6 +1126,8 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         A binary too old to answer the method is driven without the gate, the
         same tolerance the boot baseline gives.
         """
+        if self.measuring:
+            return  # the producer is not judged by the file it produces
         try:
             resp = self.request("scene/containment")
         except RpcError as exc:
@@ -1012,7 +1137,11 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         assert resp is not None
         out = resp.result
         escapes = out.get("escapes", [])
-        allowed = _containment_budget().get(self.example, 0)
+        allowed = _budget_for(
+            "containment-budget.tsv", self.example, "containment", "containment"
+        )
+        if allowed is None:
+            return
         if len(escapes) > allowed:
             rows = "; ".join(
                 f"{(e.get('content') or e.get('tag') or '<a mark>')!r} is "
@@ -1037,6 +1166,126 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
                 f"(smeared {out.get('smeared', 0)} / clipped "
                 f"{out.get('clipped', 0)}) of {out.get('marks', 0)} marks, "
                 f"budget {allowed}"
+            )
+
+    def _gate_font_pin(self) -> None:
+        """R1662 — the font pin is actually ON, and the screen still has text.
+
+        ★ The defect this closes was written down by the round that created the
+        pin and then not built: nothing asks whether the pin took. If
+        `FONTCONFIG_FILE` is unset, or points somewhere else, or the config is
+        malformed, every ink measurement quietly goes back to being a fact about
+        this host's font database — the exact failure R1660 spent a round
+        reproducing, silently reintroduced.
+
+        Two halves, because R1660 measured that one is not enough. Its FIRST
+        repair pinned the shape cache instead of the database and made three
+        hosts agree by painting **no text at all**: zero runs, zero escapes,
+        green for the wrong reason. So this asserts both that the database is
+        the pinned one and that a surface which shapes text still shapes some.
+
+        Skipped when the caller pinned its own fontconfig (the font-source
+        demos, which are ABOUT the database and set it deliberately) and when
+        `fc-list` is absent — an infrastructure absence is not evidence, but it
+        prints, because a check that silently stopped happening is the thing
+        these gates exist to prevent.
+        """
+        conf = self._env_fontconfig
+        if conf is None:
+            return  # the caller owns the database; this is its subject
+        listed = _fc_list_files(conf)
+        if listed is None:
+            print(f"[font-pin] {self.example}: fc-list is absent — the database "
+                  f"cannot be verified from here")
+        else:
+            want = {Path(rel).name for rel in PINNED_FACES}
+            extra = sorted(f for f in listed if f not in want)
+            if extra or not listed:
+                raise AssertionError(
+                    f"{self.example}: the pinned fontconfig at {conf} resolves "
+                    f"the face file(s) {sorted(listed) or 'nothing'} and the pin "
+                    f"is {sorted(want)}. Every ink budget in this tree is measured "
+                    f"through that database, so a pin that did not take turns "
+                    f"the ratchets back into facts about whichever machine ran "
+                    f"them — which is the failure R1660 spent a round "
+                    f"reproducing."
+                )
+        try:
+            painted = self.request("scene/text_painted")
+        except RpcError as exc:
+            if exc.code in (-32601, -32602):
+                return  # stale binary
+            raise
+        assert painted is not None
+        runs = painted.result.get("runs", [])
+        if not runs:
+            return  # a surface with no text is allowed to have none
+        inked = [r for r in runs if r.get("w") and r.get("h")]
+        if not inked:
+            raise AssertionError(
+                f"{self.example}: {len(runs)} text run(s) and not one of them "
+                f"has ink. A pin that leaves the shaper with nothing to find "
+                f"makes every ink gate pass by painting an empty screen — "
+                f"R1660's first repair did exactly this and read as green."
+            )
+
+    def _gate_scroll_reach(self) -> None:
+        """R1662 — nothing on the opening screen is out of the reader's reach.
+
+        For every painted mark the framework answers one of three things: it is
+        on screen, some offset of an enclosing viewport brings it there, or
+        nothing does. Only the third is a defect, and until this gate existed
+        it was indistinguishable from the second — a control below the fold of
+        a pane that scrolls and a control below the fold of a pane that does
+        not both simply stopped being painted.
+
+        The window is a viewport whose range is zero, so a screen with no
+        scrolling panes is judged too: anything it paints past the window edge
+        is lost, which is exactly the finding this gate was built from.
+
+        A binary too old to answer the method is driven without the gate, the
+        same tolerance the boot baseline gives.
+        """
+        if self.measuring:
+            return  # the producer is not judged by the file it produces
+        try:
+            resp = self.request("scene/scroll_reach")
+        except RpcError as exc:
+            if exc.code in (-32601, -32602):
+                return  # stale binary
+            raise
+        assert resp is not None
+        out = resp.result
+        lost = [o for o in out.get("out_of_sight", []) if o.get("reach") == "lost"]
+        allowed = _budget_for(
+            "scroll-reach-budget.tsv", self.example, "scroll-reach", "reach"
+        )
+        if allowed is None:
+            return
+        if len(lost) > allowed:
+            rows = "; ".join(
+                f"{(o.get('content') or o.get('tag') or '<a mark>')!r} is past "
+                f"{o['viewport']['name']} by {max(o.get('short_by') or [0])}px "
+                f"(viewport {o['viewport']['w']}x{o['viewport']['h']}, content "
+                f"{o['viewport']['content_w']}x{o['viewport']['content_h']})"
+                for o in lost[:6]
+            )
+            raise AssertionError(
+                f"{self.example}: {len(lost)} painted mark(s) cannot be brought "
+                f"into view by any gesture and the budget allows {allowed} — "
+                f"{rows}. The repair is a scrolling pane whose range is derived "
+                f"from its content (`pinion_widget_paint::pane::scroll_pane`), "
+                f"not a bigger window: a window a person can resize down puts "
+                f"the content back outside. `docs/scroll-reach-budget.tsv` "
+                f"carries the measured backlog; raising a number there to "
+                f"silence this is the one use that turns the ratchet back into "
+                f"a suggestion."
+            )
+        if lost or allowed or out.get("scrollable"):
+            print(
+                f"[scroll-reach] {self.example}: {len(lost)} lost, "
+                f"{out.get('scrollable', 0)} one scroll away, of "
+                f"{out.get('marks', 0)} marks, budget {allowed}"
             )
 
     def __exit__(self, exc_type, exc, tb) -> None:

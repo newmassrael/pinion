@@ -21,7 +21,19 @@ vendor/sce/target/
 # read the store via `mnemosyne-cli query` instead.)
 
 # Local Claude Code state — settings.local.json, transcripts, etc.
-.claude/
+#
+# The CONTENTS and not the directory: git cannot re-include a path inside an
+# excluded directory, so `.claude/` + a negation silently keeps ignoring it.
+.claude/*
+# ...except what the REPOSITORY declares rather than what this checkout holds.
+# `remote-build.toml` says which executables, system packages and resources a
+# heavy build or test run needs, and which command verifies this tree. That is
+# a property of the workspace, not of one machine's working copy: ignored, a
+# fresh clone declares nothing and whoever runs it is back to guessing — the
+# same shape `docs/SEED_PROMPT.md` being ignored already costs. It names no
+# machine, address or account by construction; those live in the operator's
+# own registry, outside any repository.
+!.claude/remote-build.toml
 
 # Claude-Specific Documentation per global CLAUDE.md convention —
 # local working notes, ad-hoc analyses, and cross-project coordination

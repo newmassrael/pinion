@@ -35950,6 +35950,52 @@
         "hello-endpoint-identity moved 2 -> 1 under the pin, so that surface has a second source of non-determinism beyond the font"
       ]
     },
+    "R1662": {
+      "decision_summary": "A pane says what no scrolling can reach. Two different things stop a mark being on screen and the tree gave them one answer: the pane scrolled past it (the reader scrolls back) and nothing can bring it into view at all (the pane does not scroll, or its content extent stops short). Measured on a synthetic pane before building anything: the reachable row produced NO containment report, and the unreachable row produced fate \"clipped\", the same word a two-pixel line-box rounding gets. So `pinion_core::reach` derives the third fact — for every painted mark, the innermost enclosing viewport, its content extent, its range, and either the least-move offset that shows it or how far past the reachable box it sits. The window is that same function with range (0,0), which is what makes \"this pane does not scroll\" and \"this pane scrolls\" two values of one derivation rather than two checks that must be kept in step. Published as `scene/scroll_reach`; the reference toolkit was probed out-of-tree and has no equivalent — overflow can only be inferred from a scroll bar maximum, which is also its answer for an area that never set a range.",
+      "changes_bullets": [
+        "`pinion_core::reach` — `out_of_sight(scene, window, ink)`, `Reach::{Scrollable,Lost}`, `Viewport{size,content,at,max,fits,reachable,shown}`; 11 tests",
+        "`scene/scroll_reach` — the wire read, its 3 wire types in the census, ctx slot, dispatch arm and shell producer; 5 tests",
+        "`pinion_widget_paint::pane` — `scroll_pane` + `content_extent` + `PanePointer`; the range is DERIVED from the children's declared boxes and lowered as min_size, so a consumer cannot let it go stale",
+        "`FormGeometry::translated` — one translation relating a pane frame to the window frame; rows the scroll carried off the top are dropped, not clamped",
+        "hello-node-lab — palette and inspector are scroll panes; MIN_H 780 -> 360 because the floor no longer has to be the panes' content height; the palette hit test folds the offset",
+        "hello-analyzer-shell — the board scrolls and the floats do not; the hit test folds the offset",
+        "`docs/scroll-reach-budget.tsv` producer in `tools/measure_ink_budgets.py`, plus a boot gate in `rpc_verify`"
+      ],
+      "verification_bullets": [
+        "cargo test -p pinion-core -p pinion-widget-paint -p pinion-rpc -p hello-node-lab -p hello-analyzer-shell: 5545 passed, 0 failed. clippy on those plus pinion-shell with -D pedantic: clean. cargo doc on the three library crates: clean. Demo `r1662_a_pane_says_what_no_scrolling_can_reach.py` PASS: 2529 marks examined, at the declared floor 204 marks one scroll away and 0 lost, and a published offset was scrolled to over the wire, the control arrived, was pressed, and added a node. Counterfactuals 3/3 CAUGHT — un-scrolling the palette, un-scrolling the board, and (first attempt) a sweep whose smallest size was itself set by the defect, which PASSED and was the round's largest finding."
+      ],
+      "impact_refs": [
+        "5.45",
+        "5.32",
+        "5.36",
+        "5.12"
+      ],
+      "carry_forward_bullets": [
+        "The build-failure hole in the measurement producer was found by being hit: a concurrent cargo run took the target lock and 24 consecutive examples were about to be written into the ratchet as \"unmeasured\" with a spurious reason. It now stops instead. The budget file's own absence is reported UNARMED rather than enforced as zero, which is R1661's three-state argument applied to the file as well as to its rows."
+      ],
+      "publishable_decision_summary": "A pane says what no scrolling can reach. Two different things stop a mark being on screen and the tree gave them one answer: the pane scrolled past it (the reader scrolls back) and nothing can bring it into view at all (the pane does not scroll, or its content extent stops short). Measured on a synthetic pane before building anything: the reachable row produced NO containment report, and the unreachable row produced fate \"clipped\", the same word a two-pixel line-box rounding gets. So `pinion_core::reach` derives the third fact — for every painted mark, the innermost enclosing viewport, its content extent, its range, and either the least-move offset that shows it or how far past the reachable box it sits. The window is that same function with range (0,0), which is what makes \"this pane does not scroll\" and \"this pane scrolls\" two values of one derivation rather than two checks that must be kept in step. Published as `scene/scroll_reach`; the reference toolkit was probed out-of-tree and has no equivalent — overflow can only be inferred from a scroll bar maximum, which is also its answer for an area that never set a range.",
+      "publishable_changes_bullets": [
+        "`pinion_core::reach` — `out_of_sight(scene, window, ink)`, `Reach::{Scrollable,Lost}`, `Viewport{size,content,at,max,fits,reachable,shown}`; 11 tests",
+        "`scene/scroll_reach` — the wire read, its 3 wire types in the census, ctx slot, dispatch arm and shell producer; 5 tests",
+        "`pinion_widget_paint::pane` — `scroll_pane` + `content_extent` + `PanePointer`; the range is DERIVED from the children's declared boxes and lowered as min_size, so a consumer cannot let it go stale",
+        "`FormGeometry::translated` — one translation relating a pane frame to the window frame; rows the scroll carried off the top are dropped, not clamped",
+        "hello-node-lab — palette and inspector are scroll panes; MIN_H 780 -> 360 because the floor no longer has to be the panes' content height; the palette hit test folds the offset",
+        "hello-analyzer-shell — the board scrolls and the floats do not; the hit test folds the offset",
+        "`docs/scroll-reach-budget.tsv` producer in `tools/measure_ink_budgets.py`, plus a boot gate in `rpc_verify`"
+      ],
+      "publishable_verification_bullets": [
+        "cargo test -p pinion-core -p pinion-widget-paint -p pinion-rpc -p hello-node-lab -p hello-analyzer-shell: 5545 passed, 0 failed. clippy on those plus pinion-shell with -D pedantic: clean. cargo doc on the three library crates: clean. Demo `r1662_a_pane_says_what_no_scrolling_can_reach.py` PASS: 2529 marks examined, at the declared floor 204 marks one scroll away and 0 lost, and a published offset was scrolled to over the wire, the control arrived, was pressed, and added a node. Counterfactuals 3/3 CAUGHT — un-scrolling the palette, un-scrolling the board, and (first attempt) a sweep whose smallest size was itself set by the defect, which PASSED and was the round's largest finding."
+      ],
+      "publishable_impact_refs": [
+        "5.45",
+        "5.32",
+        "5.36",
+        "5.12"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The build-failure hole in the measurement producer was found by being hit: a concurrent cargo run took the target lock and 24 consecutive examples were about to be written into the ratchet as \"unmeasured\" with a spurious reason. It now stops instead. The budget file's own absence is reported UNARMED rather than enforced as zero, which is R1661's three-state argument applied to the file as well as to its rows."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

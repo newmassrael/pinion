@@ -261,6 +261,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc, MethodWindow)] = &[
     ),
     ("scene/screenshot", MethodOcc::Read, MethodWindow::Path),
     ("scene/scroll", MethodOcc::Read, MethodWindow::Scope),
+    ("scene/scroll_reach", MethodOcc::Read, MethodWindow::Scope),
     ("scene/scroll_state", MethodOcc::Read, MethodWindow::Scope),
     ("scene/set_caret", MethodOcc::Mutate, MethodWindow::Scope),
     ("scene/set_fps", MethodOcc::Mutate, MethodWindow::Scope),

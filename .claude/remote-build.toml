@@ -1,0 +1,61 @@
+# What this repository needs from a build machine, and how it is verified.
+#
+# Machine names, addresses and accounts are deliberately ABSENT: this repository
+# is public, and the registry that maps a requirement to a machine lives outside
+# it (`~/.claude/remote-build/hosts.toml` + `~/.ssh/config`). A new machine is a
+# line there, not an edit here.
+
+send    = "tracked"
+# `target/` is a SYMLINK into a shared compressed volume (R1489). rsync would
+# carry a broken link to the far side, and `cargo clean` deletes the link
+# itself — after which cargo silently rebuilds into a real directory on the
+# root filesystem, which is the incident that volume exists to prevent.
+exclude = ["/target"]
+
+# `cargo` builds it; `python3` drives every demo (`tools/rpc_verify.py`).
+needs = ["cargo", "python3"]
+
+# The three the workspace README names, plus a virtual display.
+#
+# ALSA headers are needed because `examples/hello-audio-device` enables
+# `pinion-audio/cpal-backend` and opens a real output device.
+#
+# Xvfb is here because a demo is not a unit test: `RpcSubprocess` runs the real
+# winit + wgpu pipeline even under `PINION_HIDDEN_WINDOW=1`, so a hidden window
+# is still a window and still needs a display to connect to. The unit suite
+# does not — that split is what decides which commands below are safe to run on
+# a headless machine.
+packages = [
+    "libfontconfig1-dev",
+    "libxkbcommon-dev",
+    "libasound2-dev",
+    "xvfb",
+]
+
+# A silent sound card, for `examples/hello-audio-device` only. Not a package:
+# `snd-dummy` is a kernel module, so a machine satisfies this by having it
+# loaded (`modprobe snd-dummy`, and a line in `/etc/modules-load.d/` to survive
+# a reboot). Stated here because a missing card does not read as missing — the
+# demo boots, opens no device, and the surface measures differently from one
+# that did.
+modules = ["snd-dummy"]
+
+min_ram_gb  = 16
+min_free_gb = 40
+
+[commands]
+# The two that need no display. This is what CI's `lint-and-test` job runs, so
+# a green here means the same thing it means there.
+build  = "cargo test --workspace --no-run"
+verify = "cargo test --workspace --no-fail-fast"
+
+# The demo sweep needs the display `xvfb` provides; run it under `xvfb-run`.
+# Kept out of `verify` on purpose: a machine that has the package but no
+# running server would fail 223 surfaces for one reason that has nothing to do
+# with the tree.
+sweep  = "xvfb-run -a bash tools/sweep_headless.sh"
+
+# `peak_gb_per_task` is deliberately absent. The number this repository has
+# measured (`jobs = 32` OOM-killing `cargo test --workspace`) is about the
+# BUILD's parallelism, not about what one test holds, and inventing a per-test
+# figure would make the executor's RAM arithmetic confidently wrong.

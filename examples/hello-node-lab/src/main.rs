@@ -75,7 +75,7 @@ use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::config_form::{
     Applies, ConfigDefect, ConfigField, ConfigForm, FieldType, Verdict,
 };
-use pinion_core::widgets::scroll::AutoScroll;
+use pinion_core::widgets::scroll::{AutoScroll, ScrollState};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_node_graph::{Document, Item, LinkId, NodeBody, NodeId, ROOT, Side, Socket};
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -83,6 +83,7 @@ use pinion_widget_paint::config_form::{
     FieldGrowth, FormGeometry, FormStyle, RowWrap, form_geometry, row_access_nodes,
     view_config_form,
 };
+use pinion_widget_paint::pane::{PanePointer, scroll_pane};
 
 use graph::{LabNode, Role, Transport};
 
@@ -95,6 +96,18 @@ vello_renderer_impl!(HelloNodeLabRenderer, HelloNodeLabRendererError);
 const WIN_W: u32 = 1440;
 const WIN_H: u32 = 900;
 const VIEW_TAG: &str = "node_lab";
+/// R1662 — the input-router tags the two scrolling side panes answer to,
+/// **taken from the specification** rather than spelled a second time here. The
+/// gate reads the same column, so a pane whose body tag is edited in one place
+/// cannot pass by being edited in two.
+const PALETTE_SCROLL: &str = match spec::PANES[1].body {
+    Some(tag) => tag,
+    None => panic!("the palette declares a scrolling body"),
+};
+const INSPECTOR_SCROLL: &str = match spec::PANES[3].body {
+    Some(tag) => tag,
+    None => panic!("the inspector declares a scrolling body"),
+};
 const THEME_TAG: &str = "app";
 
 const RAIL_W: u32 = spec::PANES[0].width;
@@ -161,19 +174,22 @@ const MIN_W: u32 = RAIL_W + PALETTE_W + (TOOLBAR_RIGHT_CLUSTER + TOOLBAR_LEFT_CL
 /// size axis found the gate chip painted past the pane's right edge when it
 /// was not.
 const TOOLBAR_LEFT_CLUSTER: u32 = 420;
+/// What the canvas needs vertically once the side panes stop dictating the
+/// floor: the launch-gate panel is anchored to the canvas bottom and the hint
+/// strip sits under it, so a canvas shorter than the two together paints one
+/// over the other.
+const CANVAS_FLOOR: u32 = 260;
+
 /// The smallest height, likewise.
-/// ★ R1656 — MEASURED, not asserted. The old floor (`+ 200`) declared a height
-/// at which the palette and the inspector paint 22 of their 46 controls below
-/// the window's own bottom edge — the size axis reported it the first time it
-/// ran, and no check before that had ever laid this screen out at anything but
-/// the design size.
 ///
-/// The panes do not scroll, so the floor IS their content height; making them
-/// scroll would let this number come back down and is the better answer
-/// ([[debt-the-node-lab-panes-do-not-scroll]]). Until then a declared minimum
-/// has to be one the screen can actually paint, because the resize lower bound
-/// is set from it and a person can therefore reach it.
-const MIN_H: u32 = APP_BAR_H + TOOLBAR_H + 680;
+/// ★ R1662 — R1656 wrote the answer down and could not take it: "the panes do
+/// not scroll, so the floor IS their content height; making them scroll would
+/// let this number come back down and is the better answer". They scroll now,
+/// so it came down — from 680 to what the CANVAS chrome needs, which is the
+/// same derivation the width already used. A floor set by content nobody could
+/// scroll to is a window a person cannot make small, and it was 420 pixels of
+/// it ([[debt-the-node-lab-panes-do-not-scroll]]).
+const MIN_H: u32 = APP_BAR_H + TOOLBAR_H + CANVAS_FLOOR;
 
 fn canvas_rect() -> Rect {
     let (w, h) = window_size();
@@ -349,10 +365,56 @@ struct LabState {
     drag: Signal<Option<Drag>>,
     pressed: RefCell<Option<Hit>>,
     toast: Signal<String>,
+    /// R1662 — the two side panes' scroll offsets, held here rather than
+    /// reached for with `use_scroll_state` because the paint and the hit test
+    /// both need them and only the paint runs inside an `Owner` scope. One
+    /// object, so the two cannot read two facts.
+    palette_scroll: Rc<ScrollState>,
+    inspector_scroll: Rc<ScrollState>,
 }
 
 thread_local! {
     static STATE: RefCell<Option<Rc<LabState>>> = const { RefCell::new(None) };
+}
+
+/// The scroll state a pane body tag names, or `None` for a tag that is not a
+/// pane body.
+///
+/// ★ R1662 — one lookup, so a caller that has a `scene/scroll_reach` row (which
+/// names the viewport by tag) can act on it without a second table mapping tags
+/// to states. Test-only here because the screen's own two call sites reach
+/// their state by name; the wire drives a pane through `scene/scroll`, which
+/// resolves the node's own [`ScrollState`] and never needs this table.
+/// A press, moved into the frame a scrolling pane's rectangles are stated in.
+///
+/// ★ R1662 — the pane's content slides under a fixed viewport, so the paint of
+/// a row is `row - offset` and the only way for a hit test written against
+/// `row` to stay true is to ask about `point + offset`. One direction, one
+/// place: the alternative is a second set of rectangles that has to be kept in
+/// step, which is what [`FormGeometry::translated`] avoids on the other pane —
+/// there the geometry itself is published to assistive technology, so it is the
+/// geometry that moves.
+fn in_pane(scroll: &ScrollState, px: u32, py: u32) -> (u32, u32) {
+    let (ox, oy) = scroll.offset();
+    let fold = |v: u32, by: i32| -> u32 {
+        #[allow(
+            clippy::cast_sign_loss,
+            clippy::cast_possible_truncation,
+            reason = "clamped into u32's range on the line above the cast"
+        )]
+        let folded = (i64::from(v) + i64::from(by)).clamp(0, i64::from(u32::MAX)) as u32;
+        folded
+    };
+    (fold(px, ox), fold(py, oy))
+}
+
+#[cfg(test)]
+fn pane_scroll<'s>(state: &'s LabState, body: &str) -> Option<&'s Rc<ScrollState>> {
+    match body {
+        PALETTE_SCROLL => Some(&state.palette_scroll),
+        INSPECTOR_SCROLL => Some(&state.inspector_scroll),
+        _ => None,
+    }
 }
 
 fn use_lab_state() -> Rc<LabState> {
@@ -448,6 +510,8 @@ impl LabState {
             drag: Signal::new(None),
             pressed: RefCell::new(None),
             toast: Signal::new(String::new()),
+            palette_scroll: Rc::new(ScrollState::with_tag(PALETTE_SCROLL)),
+            inspector_scroll: Rc::new(ScrollState::with_tag(INSPECTOR_SCROLL)),
         }
     }
 
@@ -1266,6 +1330,16 @@ impl Hit {
             return Self::Nothing;
         }
         if contains(palette_rect(), px, py) {
+            // ★ R1662 — the palette body SCROLLS, so a press has to be asked
+            // in the frame the rows are stated in. Every rectangle here
+            // (`palette_row`, `discovery_rect`) is written in the unscrolled
+            // window frame, which is where the painter also reads it, so
+            // folding the offset into the QUERY keeps one set of rectangles
+            // rather than two. Without this the paint moved and the hit test
+            // did not: R1662's end-to-end probe pressed the centre of the
+            // scrolled-to `Querier` row and the screen answered `Publisher`,
+            // which is the R1656 class exactly.
+            let (px, py) = in_pane(&state.palette_scroll, px, py);
             for (n, role) in Role::ALL.into_iter().enumerate() {
                 if contains(palette_row(n), px, py) {
                     return Self::Role(role);
@@ -1524,10 +1598,29 @@ fn form_style() -> FormStyle {
 /// Where the inspector's identity block ends and its form begins.
 const INSP_HEAD_H: u32 = 118;
 
-fn inspector_geometry(state: &LabState) -> FormGeometry {
+/// The form's geometry in the frame the PAINTER draws it in: inside the
+/// inspector's scrolling body, so it rides the scroll instead of being shifted
+/// by hand every time the offset moves.
+fn inspector_geometry_local(state: &LabState) -> FormGeometry {
     let form = selected_form(state).unwrap_or_default();
+    form_geometry(&form, (PAD, INSP_HEAD_H), &form_style())
+}
+
+/// The same geometry in WINDOW coordinates — where a pointer meets it and
+/// where assistive technology is told it is.
+///
+/// ★ R1662 — derived from the pane-local one by the pane's placement and its
+/// current scroll offset, through the one translation
+/// [`FormGeometry::translated`] owns. Computing it a second time here is how
+/// the paint and the gesture come to disagree, and a row the scroll has carried
+/// off the top is dropped rather than reported at the edge.
+fn inspector_geometry(state: &LabState) -> FormGeometry {
     let rect = inspector_rect();
-    form_geometry(&form, (rect.x + PAD, rect.y + INSP_HEAD_H), &form_style())
+    let (ox, oy) = state.inspector_scroll.offset();
+    inspector_geometry_local(state).translated(
+        i32::try_from(rect.x).unwrap_or(i32::MAX) - ox,
+        i32::try_from(rect.y).unwrap_or(i32::MAX) - oy,
+    )
 }
 
 // ── Paint helpers ───────────────────────────────────────────────────────────
@@ -1844,12 +1937,28 @@ fn palette(state: &LabState, ink: Ink) -> Scene {
 
     children.extend(palette_legend(rect, ink));
     children.extend(palette_determinism(state, rect, ink));
+    // ★ R1662 — the pane scrolls. Its content is taller than any window this
+    // screen declares a floor for, and before this the overflow was simply
+    // painted past the bottom edge: `scene/scroll_reach` reported the last
+    // rows `lost`, meaning no gesture of any kind reached them. The extent is
+    // derived from `children` by the pane rather than declared here, so it
+    // cannot go stale as rows are added
+    // ([[debt-the-node-lab-panes-do-not-scroll]]).
     panel(
         "lab.palette",
         rect,
         ink.surface,
         Some(ink.outline),
-        children,
+        vec![scroll_pane(
+            &state.palette_scroll,
+            Rect::new(0, 0, rect.w, rect.h),
+            (0, PAD),
+            // Every press on this screen belongs to the one root `External`
+            // that does the screen's own hit test, so the pane must be
+            // invisible to the router (R1655).
+            PanePointer::PassesThrough,
+            children,
+        )],
     )
 }
 
@@ -2529,7 +2638,13 @@ fn inspector(state: &LabState, theme: &Theme, ink: Ink) -> Scene {
             rect,
             ink.surface,
             Some(ink.outline),
-            children,
+            vec![scroll_pane(
+                &state.inspector_scroll,
+                Rect::new(0, 0, rect.w, rect.h),
+                (0, PAD),
+                PanePointer::PassesThrough,
+                children,
+            )],
         );
     };
     children.extend(inspector_identity(state, node, ink));
@@ -2594,7 +2709,10 @@ fn inspector_pane(state: &LabState, theme: &Theme, ink: Ink, mut children: Vec<S
     // rows, the type badges, the applies badges, the defects on their rows and
     // the chips that add a key.
     let form = selected_form(state).unwrap_or_default();
-    let geometry = inspector_geometry(state);
+    // ★ R1662 — the PANE-LOCAL geometry: the form now lives inside the
+    // inspector's scrolling body, so it is placed in the body's frame and the
+    // window-coordinate consumers derive theirs from it.
+    let geometry = inspector_geometry_local(state);
     let painted = view_config_form("lab.form", &form, &geometry, theme);
 
     let pending = form.pending_restart();
@@ -2618,27 +2736,44 @@ fn inspector_pane(state: &LabState, theme: &Theme, ink: Ink, mut children: Vec<S
         )
     };
 
-    let pane = panel("lab.inspector", rect, ink.surface, Some(ink.outline), {
-        children.push(box_at(
-            "lab.inspector.note",
-            Rect::new(PAD, note_y - rect.y, INSP_W - PAD * 2, 40),
-            ink.raised,
-            Some(ink.warn),
-            8,
-        ));
-        children.push(tagged_label(
-            "lab.inspector.note.text",
-            restart_note,
-            Rect::new(PAD + 10, note_y - rect.y + 8, INSP_W - PAD * 2 - 20, 26),
-            10,
-            ink.text_2,
-        ));
-        children
-    });
-
-    Scene::Container(
-        ContainerNode::new(vec![pane, painted])
-            .with_layout(LayoutStyle::new().with_pointer_transparent(true)),
+    children.push(box_at(
+        "lab.inspector.note",
+        Rect::new(PAD, note_y, INSP_W - PAD * 2, 40),
+        ink.raised,
+        Some(ink.warn),
+        8,
+    ));
+    children.push(tagged_label(
+        "lab.inspector.note.text",
+        restart_note,
+        Rect::new(PAD + 10, note_y + 8, INSP_W - PAD * 2 - 20, 26),
+        10,
+        ink.text_2,
+    ));
+    // ★ R1662 — the form is now a CHILD of the pane body rather than a sibling
+    // of the pane. It was a sibling because its geometry was in window
+    // coordinates and nesting it under an absolutely-placed pane offset it
+    // twice (R1648); with the geometry stated in the body's own frame that
+    // reason is gone, and being a sibling is what kept the form from
+    // scrolling. A list field has no bounded length, so no fixed pane floor is
+    // enough — measured at R1652.1, a six-element list puts two chips and the
+    // note below the window ([[debt-the-node-lab-panes-do-not-scroll]]).
+    children.push(painted);
+    panel(
+        "lab.inspector",
+        rect,
+        ink.surface,
+        Some(ink.outline),
+        vec![scroll_pane(
+            &state.inspector_scroll,
+            Rect::new(0, 0, rect.w, rect.h),
+            (0, PAD),
+            // Every press on this screen belongs to the one root `External`
+            // that does the screen's own hit test, so the pane must be
+            // invisible to the router (R1655).
+            PanePointer::PassesThrough,
+            children,
+        )],
     )
 }
 

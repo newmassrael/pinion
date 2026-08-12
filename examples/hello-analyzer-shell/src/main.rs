@@ -92,12 +92,14 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{ColorRole, Theme, ThemeMode, ThemeProvider, use_theme};
 use pinion_core::widgets::card::{Card, CardAffordance, CardChrome, CardState, Remedy};
+use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::widgets::tile_grid::{
     Maximized, Tile, TileDirection, TileGrid, TileId, TileNudge,
 };
 use pinion_core::widgets::transport::{TransportClock, TransportStatus, use_transport_clock};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
+use pinion_widget_paint::pane::{PanePointer, scroll_pane};
 
 // pinion-forge codegen output: `pub struct HelloAnalyzerShellRenderer` + its
 // error type + async `new<...>` + sync `render` / `resize`.
@@ -137,6 +139,9 @@ const EDIT_BAR_H: u32 = 26;
 const FLOAT_W: u32 = 520;
 const FLOAT_H: u32 = 380;
 const FLOAT_STEP: u32 = 30;
+
+/// R1662 — the input-router tag the board's scrolling body answers to.
+const CANVAS_SCROLL: &str = "shell.canvas.body";
 
 const FONT_TITLE: u32 = 13;
 const FONT_BODY: u32 = 12;
@@ -509,6 +514,12 @@ struct ShellState {
     toast: Signal<String>,
     /// The ordinal the next placed card takes.
     next_id: RefCell<u32>,
+    /// R1662 — the board's scroll offset. A board is a grid whose row count is
+    /// the model's, not the window's, so past roughly four and a half rows the
+    /// cards were painted below the window and no gesture reached them
+    /// ([[debt-the-analyzer-canvas-does-not-scroll]]). Held on the state
+    /// because the paint and the hit test both read it.
+    canvas_scroll: Rc<ScrollState>,
 }
 
 impl ShellState {
@@ -562,6 +573,7 @@ impl ShellState {
             drag: Signal::new(None),
             toast: Signal::new("Overview loaded".to_string()),
             next_id: RefCell::new(u(OVERVIEW.len())),
+            canvas_scroll: Rc::new(ScrollState::with_tag(CANVAS_SCROLL)),
         }
     }
 
@@ -959,6 +971,21 @@ impl Hit {
             }
             return Self::Float(float.id.clone());
         }
+        // ★ R1662 — past the floats the question is about the BOARD, which
+        // slides under the canvas. Every rectangle below is stated in the
+        // board's own frame, so the offset is folded into the query once and
+        // the two cannot drift.
+        let (ox, oy) = state.canvas_scroll.offset();
+        let fold = |v: u32, by: i32| -> u32 {
+            #[allow(
+                clippy::cast_sign_loss,
+                clippy::cast_possible_truncation,
+                reason = "clamped into u32's range on the line above the cast"
+            )]
+            let folded = (i64::from(v) + i64::from(by)).clamp(0, i64::from(u32::MAX)) as u32;
+            folded
+        };
+        let (cx, cy) = (fold(cx, ox), fold(cy, oy));
         let board = state.board.get();
         let editing = state.editing.get();
         for card in &state.placed() {
@@ -3514,6 +3541,21 @@ fn view(_state: (), _frame: Frame) -> Scene {
                 .with_layout(absolute(cell_rect(&ghost))),
         ));
     }
+    // ★ R1662 — the BOARD scrolls and the floats do not. A torn-off card is
+    // chrome over the canvas, so it keeps its place when the board slides;
+    // that is the same split the node lab makes between its world surface and
+    // the gate panel floating over it. The scroll range is derived from the
+    // cards themselves by the pane, so a board that grows a row cannot outrun
+    // a number written here.
+    let mut canvas_children = vec![scroll_pane(
+        &state.canvas_scroll,
+        Rect::new(0, 0, canvas_rect().w, canvas_rect().h),
+        (0, GAP),
+        // Every press goes to the one root `External` that runs this screen's
+        // own hit test, so the pane must be invisible to the router (R1655).
+        PanePointer::PassesThrough,
+        canvas_children,
+    )];
     for float in &state.floats.get() {
         if let Some(scene) = float_scene(&state, float, palette) {
             canvas_children.push(scene);

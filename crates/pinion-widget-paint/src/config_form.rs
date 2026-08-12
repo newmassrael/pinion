@@ -256,6 +256,72 @@ pub struct FormGeometry {
 }
 
 impl FormGeometry {
+    /// The same form seen from somewhere else: every rectangle moved by
+    /// `(dx, dy)`.
+    ///
+    /// ★ R1662 — what a scrolling pane needs, and the reason it is here rather
+    /// than in each consumer. A pane that scrolls paints the form in its own
+    /// content frame while a pointer, a screen reader and the wire all ask in
+    /// window coordinates, so the two frames have to be related by exactly one
+    /// piece of arithmetic. Written twice they drift, and the drift is
+    /// invisible: the screen looks right and the press lands on the row above
+    /// ([[debt-paint-and-gesture-read-two-facts]]).
+    ///
+    /// A row or chip the translation would move to a negative coordinate is
+    /// **dropped, not clamped**. Clamping would report it at the edge, which is
+    /// a position it is not at — a screen reader would announce it as visible
+    /// and a hit test would answer it for a press on whatever really is there.
+    /// Dropping says the truthful thing: the reader has scrolled it away.
+    #[must_use]
+    pub fn translated(&self, dx: i32, dy: i32) -> Self {
+        let moved = |r: Rect| -> Option<Rect> {
+            let x = i64::from(r.x) + i64::from(dx);
+            let y = i64::from(r.y) + i64::from(dy);
+            if x < 0 || y < 0 {
+                return None;
+            }
+            #[allow(
+                clippy::cast_sign_loss,
+                clippy::cast_possible_truncation,
+                reason = "both are non-negative on this branch and bounded by u32 + i32"
+            )]
+            Some(Rect::new(
+                x.min(i64::from(u32::MAX)) as u32,
+                y.min(i64::from(u32::MAX)) as u32,
+                r.w,
+                r.h,
+            ))
+        };
+        Self {
+            origin: moved(Rect::new(self.origin.0, self.origin.1, 0, 0))
+                .map_or((0, 0), |r| (r.x, r.y)),
+            rows: self
+                .rows
+                .iter()
+                .filter_map(|row| {
+                    Some(RowBox {
+                        key: row.key.clone(),
+                        row: moved(row.row)?,
+                        header: moved(row.header)?,
+                        control: moved(row.control)?,
+                        wrapped: row.wrapped,
+                        parts: row
+                            .parts
+                            .iter()
+                            .filter_map(|(s, r)| Some((s.clone(), moved(*r)?)))
+                            .collect(),
+                    })
+                })
+                .collect(),
+            chips: self
+                .chips
+                .iter()
+                .filter_map(|(k, r)| Some((k.clone(), moved(*r)?)))
+                .collect(),
+            height: self.height,
+        }
+    }
+
     /// The row at that path, if it is shown.
     #[must_use]
     pub fn row(&self, key: &str) -> Option<&RowBox> {
@@ -1178,6 +1244,49 @@ pub fn row_description(nodes: &[AccessNode], tag_prefix: &str, key: &str) -> Opt
 
 #[cfg(test)]
 mod tests {
+
+    /// ★ R1662 — one piece of arithmetic relates the pane frame to the window
+    /// frame, so a press and a paint cannot read two facts.
+    #[test]
+    fn r1662_a_translated_geometry_moves_every_rectangle_by_the_same_shift() {
+        let form = ConfigForm::new(
+            vec![ConfigField::new("link.tx", "int", Applies::Hot, "8")],
+            vec![ConfigField::new("link.rx", "int", Applies::Hot, "9")],
+        );
+        let local = form_geometry(&form, (14, 40), &FormStyle::default());
+        let moved = local.translated(300, -10);
+        assert_eq!(moved.origin, (314, 30));
+        let a = local.row("link.tx").expect("shown");
+        let b = moved.row("link.tx").expect("still shown");
+        assert_eq!(b.control.x, a.control.x + 300);
+        assert_eq!(b.control.y, a.control.y - 10);
+        assert_eq!(b.control.w, a.control.w, "a shift is not a resize");
+        assert_eq!(b.parts.len(), a.parts.len());
+        assert_eq!(moved.chips.len(), local.chips.len());
+        assert_eq!(moved.height, local.height, "height is not a coordinate");
+    }
+
+    /// ★ What a scroll carries off the top is DROPPED, not clamped to the edge.
+    ///
+    /// Clamping would answer a press on whatever is really at the edge with the
+    /// key of a row that is not there, and would have a screen reader announce
+    /// an off-screen row as visible.
+    #[test]
+    fn r1662_a_row_scrolled_past_the_origin_is_dropped_not_clamped() {
+        let form = ConfigForm::new(
+            vec![
+                ConfigField::new("link.tx", "int", Applies::Hot, "8"),
+                ConfigField::new("link.rx", "int", Applies::Hot, "9"),
+            ],
+            Vec::new(),
+        );
+        let local = form_geometry(&form, (0, 0), &FormStyle::default());
+        let second = local.row("link.rx").expect("shown").row.y;
+        assert!(second > 0, "the fixture needs two rows apart");
+        let moved = local.translated(0, -i32::try_from(second).expect("small"));
+        assert!(moved.row("link.tx").is_none(), "carried off the top");
+        assert_eq!(moved.row("link.rx").map(|r| r.row.y), Some(0));
+    }
 
     /// ★ R1656 — a header's parts fit the header, however long the key is.
     ///

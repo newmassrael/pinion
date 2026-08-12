@@ -1,4 +1,4 @@
-# the measured backlog of painted marks that left their box.
+# the measured backlog of marks no gesture can bring into view.
 #
 # census: total
 #
@@ -25,7 +25,7 @@ hello-async-data	0
 hello-audio	unmeasured	RpcError: [-32099] subprocess exited during boot (rc=1) — 'hello-audio: shell error: No such device or address (os error
 hello-audio-device	0
 hello-audio-rt	0
-hello-autoscale-y	1
+hello-autoscale-y	0
 hello-badge	0
 hello-boxplot	0
 hello-breadcrumb	0
@@ -36,12 +36,12 @@ hello-card	0
 hello-category-axis	0
 hello-cell-editors	0
 hello-cell-select	0
-hello-chart	1
+hello-chart	0
 hello-chart-fill	0
 hello-checkbox	0
-hello-code-fold	2
+hello-code-fold	0
 hello-color-picker	0
-hello-column-reorder	1
+hello-column-reorder	0
 hello-column-select	0
 hello-column-visibility	0
 hello-combobox	0
@@ -54,24 +54,24 @@ hello-conn-lifecycle	0
 hello-contextmenu	0
 hello-cross-filter	0
 hello-crosshair	0
-hello-data-grid	3
+hello-data-grid	0
 hello-datepicker	0
 hello-deviation-grid	0
 hello-dialog	0
 hello-disclosure	0
 hello-displays	0
 hello-dnd	0
-hello-dock-chart	6
+hello-dock-chart	0
 hello-dock-panels	0
-hello-dock-panels-editor	1
+hello-dock-panels-editor	44
 hello-dock-presets	0
 hello-donut	0
 hello-drawer	0
 hello-elevation	0
 hello-elevation-trace	0
 hello-encoded-answer	0
-hello-endpoint-identity	1
-hello-fab	1
+hello-endpoint-identity	0
+hello-fab	0
 hello-file-browser	0
 hello-file-dialog	0
 hello-file-manager	0
@@ -96,14 +96,14 @@ hello-grid-pointer	0
 hello-grid-row-style	0
 hello-grid-search	0
 hello-grid-sort	0
-hello-group-box	2
+hello-group-box	0
 hello-grouped-grid	0
 hello-grouped-grid-sort	0
 hello-grouped-list	0
 hello-grouped-sort	0
 hello-heatmap	0
 hello-hex-dump	0
-hello-histogram-brush	1
+hello-histogram-brush	0
 hello-hyperlink	0
 hello-image	0
 hello-immediate-intent	0
@@ -114,7 +114,7 @@ hello-key-sequence	0
 hello-lazy-list	0
 hello-lazy-tree	0
 hello-legend-toggle	0
-hello-linked-brush	1
+hello-linked-brush	0
 hello-linked-legend	0
 hello-listbox	0
 hello-listbox-multi	0
@@ -152,7 +152,7 @@ hello-polar	0
 hello-popover	0
 hello-print	0
 hello-progress	0
-hello-property-grid	6
+hello-property-grid	64
 hello-radio	0
 hello-radio-group	0
 hello-range-slider	0
@@ -167,9 +167,9 @@ hello-richtext-blocks	0
 hello-richtext-cells	0
 hello-richtext-list	0
 hello-rotate-gesture	0
-hello-row-dissect	1
-hello-scatter	1
-hello-scene-scale	4
+hello-row-dissect	7
+hello-scatter	0
+hello-scene-scale	0
 hello-scrubber	0
 hello-segmented-button	0
 hello-segmented-multi	0
@@ -183,14 +183,14 @@ hello-smart-zoom	0
 hello-snackbar	0
 hello-spinbutton	0
 hello-stat-tiles	0
-hello-status-bar	3
+hello-status-bar	0
 hello-stepper	0
 hello-streaming-log	0
 hello-subscribe	0
 hello-svg-path	0
 hello-syntax-highlight	0
 hello-tab-reorder	0
-hello-tabbed-chart	6
+hello-tabbed-chart	0
 hello-table	0
 hello-table-multi	0
 hello-tabs	0
@@ -198,7 +198,7 @@ hello-tail-reveal	0
 hello-textarea	0
 hello-textfield	0
 hello-textfield-tui	unmeasured	RpcError: [-32099] subprocess exited during boot (rc=1) — 'hello-textfield-tui: shell error: No such device or address (
-hello-textgrid	1
+hello-textgrid	0
 hello-theme	0
 hello-tile-dashboard	0
 hello-time-chart	0
@@ -226,7 +226,7 @@ hello-virtual-list	0
 hello-virtual-nav	0
 hello-virtual-select	0
 hello-virtual-sort	0
-hello-virtual-table	14
+hello-virtual-table	0
 hello-virtual-tree	0
 hello-vn-tide	0
 hello-window-chrome	0

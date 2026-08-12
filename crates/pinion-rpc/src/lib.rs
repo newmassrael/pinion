@@ -51,6 +51,7 @@ pub mod resize;
 pub mod resolve;
 pub mod rewind;
 pub mod screenshot;
+pub mod scroll_reach;
 pub mod scroll_state;
 pub mod simulate;
 pub mod snapshot;

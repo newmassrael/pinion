@@ -590,6 +590,9 @@ pub struct DispatchContext<'a> {
     /// owns them, collected with `pinion_core::containment::escapes`.
     /// `scene/containment` reads it.
     pub containment: Option<crate::containment::ContainmentOutcome>,
+    /// R1662 §5.32 §5.36 — every mark this frame did not show, and whether a
+    /// scroll offset reaches it. `scene/scroll_reach` reads it.
+    pub scroll_reach: Option<crate::scroll_reach::ScrollReachOutcome>,
 
     /// R907 §5.16 §5.7 — per-window frame-timing profiler snapshot.
     /// Resolved by the embedder before dispatch (the
@@ -1673,6 +1676,7 @@ impl<'a> DispatchContext<'a> {
             paint_producer: None,
             access_producer: None,
             containment: None,
+            scroll_reach: None,
             resize_request: None,
             declare_request: None,
             accelerators: Vec::new(),
@@ -1990,6 +1994,14 @@ impl<'a> DispatchContext<'a> {
         self
     }
 
+    /// R1662 §5.32 §5.36 — install the out-of-sight report
+    /// `scene/scroll_reach` reads.
+    #[must_use]
+    pub fn with_scroll_reach(mut self, report: crate::scroll_reach::ScrollReachOutcome) -> Self {
+        self.scroll_reach = Some(report);
+        self
+    }
+
     /// R907 §5.16 §5.7 — builder: attach the per-window frame-timing
     /// profiler snapshot the embedder pre-resolved from
     /// `pinion-shell::ShellCore::frame_timings_for_window`.
@@ -2299,6 +2311,8 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     let text_painted = ctx.text_painted.take();
     // R1656 §5.32 — the same shape: `scene/containment` reads it.
     let containment = ctx.containment.take();
+    // R1662 §5.32 — the same shape: `scene/scroll_reach` reads it.
+    let scroll_reach = ctx.scroll_reach.take();
     // R907 §5.16 — per-window frame-timing profiler snapshot the
     // embedder pre-resolved from `ShellCore::frame_timings_for_window`.
     // Copy out for the dispatch lifetime; `scene/frame_timings` reads
@@ -2857,6 +2871,10 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                 ),
                 "scene/containment" => (
                     crate::containment::handle_scene_containment(containment.as_ref()),
+                    HandlerKind::Read,
+                ),
+                "scene/scroll_reach" => (
+                    crate::scroll_reach::handle_scene_scroll_reach(scroll_reach.as_ref()),
                     HandlerKind::Read,
                 ),
                 "scene/text_backgrounds" => (

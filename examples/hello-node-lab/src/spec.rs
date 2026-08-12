@@ -31,6 +31,15 @@ pub struct PaneSpec {
     pub title: &'static str,
     /// Its width in logical pixels, or 0 for the pane that takes the rest.
     pub width: u32,
+    /// The paint tag of its scrolling body, or `None` when the pane has none.
+    ///
+    /// ★ R1662 — a pane whose content can exceed it must scroll, or the
+    /// overflow is painted outside the window where no gesture reaches it.
+    /// Stated HERE, in the specification, because it is a property of the
+    /// screen and not of one painter: the gate reads this column and checks the
+    /// painted scene against it, so a pane that quietly stops scrolling fails
+    /// rather than going silent.
+    pub body: Option<&'static str>,
 }
 
 /// The four panes, left to right.
@@ -39,21 +48,30 @@ pub const PANES: &[PaneSpec] = &[
         tag: "lab.rail",
         title: "",
         width: 54,
+        // Fixed seats, one per destination: the rail's content is the
+        // specification's own list and cannot outgrow the pane.
+        body: None,
     },
     PaneSpec {
         tag: "lab.palette",
         title: "Node Palette",
         width: 230,
+        body: Some("lab.palette.body"),
     },
     PaneSpec {
         tag: "lab.canvas",
         title: "",
         width: 0,
+        // The canvas moves under a PAN, over a world surface it sizes itself,
+        // rather than over a scrolled body — a different gesture with a
+        // different offset, so it is not this column's business.
+        body: None,
     },
     PaneSpec {
         tag: "lab.inspector",
         title: "Node Inspector",
         width: 312,
+        body: Some("lab.inspector.body"),
     },
 ];
 

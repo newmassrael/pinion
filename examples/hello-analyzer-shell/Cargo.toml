@@ -23,6 +23,8 @@ pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
 # The KPI card's sparkline, which is the capability list's own example of a
 # widget assembled from a box, a label and a chart primitive.
 pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
+# R1662 — the scrolling-pane assembly the board sits in.
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
 vello = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

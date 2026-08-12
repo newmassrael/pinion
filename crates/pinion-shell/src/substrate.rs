@@ -6437,6 +6437,17 @@ impl<V: WidgetView> ShellCore<V> {
                     |paint| pinion_rpc::containment::collect(paint, text_cache_ptr),
                 )
             });
+            // R1662 §5.32 §5.36 §2 #7 — every mark this frame did NOT show, and
+            // whether any scroll offset reaches it. Collected here for the same
+            // reason as its sibling above: the answer needs both the painted
+            // scene and the shape cache, and a text run's reachability is
+            // decided by its shaped ink rather than by its promised box.
+            let scroll_reach = (request.method == "scene/scroll_reach").then(|| {
+                last_paint_scene_ref.map_or_else(
+                    || pinion_rpc::scroll_reach::report((0, 0), &[], 0),
+                    |paint| pinion_rpc::scroll_reach::collect(paint, text_cache_ptr),
+                )
+            });
             let produce_work_ptr = &mut self.produce_work;
             // R1072 §5.37 — the opt-in engine measure for the RPC-side producer,
             // so a `scene/snapshot from: paint` (and the post-dispatch
@@ -6576,6 +6587,11 @@ impl<V: WidgetView> ShellCore<V> {
             // `scene/containment` only.
             if let Some(report) = containment {
                 ctx = ctx.with_containment(report);
+            }
+            // R1662 §5.32 — the out-of-sight report collected above, for
+            // `scene/scroll_reach` only.
+            if let Some(report) = scroll_reach {
+                ctx = ctx.with_scroll_reach(report);
             }
             if let Some(blocks) = text_blocks {
                 ctx = ctx.with_text_blocks(blocks);

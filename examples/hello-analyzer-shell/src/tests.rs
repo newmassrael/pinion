@@ -429,3 +429,121 @@ fn r1653_no_two_text_runs_of_one_widget_are_painted_on_top_of_each_other() {
         );
     });
 }
+
+/// ★★ R1662 — a board taller than the canvas is still a board a person can
+/// reach.
+///
+/// The defect, as R1649 measured it: past roughly four and a half rows a card
+/// is painted below the window and no gesture reaches it — the one structural
+/// difference from the reference tool that the rebuild had not closed
+/// ([[debt-the-analyzer-canvas-does-not-scroll]]). Cards are added until the
+/// board is taller than the canvas, and then the property is asked of the
+/// framework: every painted mark is on screen or some offset brings it there.
+///
+/// ★ The end of it is driven rather than derived — the offset the report
+/// publishes is scrolled to and the card is pressed at the centre it lands in,
+/// so the claim is settled by the screen and not by the arithmetic behind it.
+#[test]
+fn r1662_a_board_taller_than_the_canvas_is_reachable_by_scrolling() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = super::use_shell_state();
+        // Enough cards that the board outgrows the canvas whatever the opening
+        // layout holds: the canvas is a fixed height and each row has a pitch.
+        for _ in 0..12 {
+            super::ShellOracle::add(&state, DEFS[0].kind).expect("the palette offers it");
+        }
+        let paint = || {
+            let mut scene = super::view((), pinion_core::Frame::default());
+            let mut cache = pinion_runtime::LayoutCache::new();
+            pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
+            scene
+        };
+        let scene = paint();
+        let ink = &mut |t: &pinion_core::scene::TextNode| {
+            #[allow(
+                clippy::cast_possible_truncation,
+                reason = "a label is a handful of characters"
+            )]
+            let chars = t.content.chars().count() as u32;
+            (chars * t.style.font_size_px.max(1), t.rect.h)
+        };
+        let out = pinion_core::reach::out_of_sight(&scene, (super::WIN_W, super::WIN_H), ink);
+        let lost: Vec<String> = out
+            .iter()
+            .filter(|o| o.reach.is_lost())
+            .map(|o| {
+                format!(
+                    "{:?} past {} (content {:?}, range {:?})",
+                    o.tag.clone().or_else(|| o.content.clone()),
+                    o.viewport.name,
+                    o.viewport.content,
+                    o.viewport.max
+                )
+            })
+            .collect();
+        assert!(
+            lost.is_empty(),
+            "{} mark(s) no gesture can bring into view:\n  {}",
+            lost.len(),
+            lost.iter()
+                .take(8)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n  ")
+        );
+
+        // The board really did outgrow the canvas — otherwise the property
+        // above is true of a screen that never needed scrolling, which would
+        // make this test pass for the wrong reason.
+        assert!(
+            state.canvas_scroll.max().1 > 0,
+            "the fixture did not make the board overflow: range {:?}",
+            state.canvas_scroll.max()
+        );
+
+        // And a card below the fold answers a press once scrolled to.
+        let below: Vec<(String, (i32, i32))> = out
+            .iter()
+            .filter_map(|o| {
+                let tag = o.tag.clone()?;
+                let card = tag.strip_prefix("card.")?;
+                if card.contains('.') {
+                    return None;
+                }
+                match o.reach {
+                    pinion_core::reach::Reach::Scrollable { to } => Some((tag.clone(), to)),
+                    pinion_core::reach::Reach::Lost { .. } => None,
+                }
+            })
+            .collect();
+        assert!(
+            !below.is_empty(),
+            "no card was below the fold, so the press half checked nothing"
+        );
+        let mut wrong = Vec::new();
+        for (tag, to) in &below {
+            state.canvas_scroll.scroll_to(to.0, to.1);
+            let scene = paint();
+            let Some(rect) = scene.absolute_rects_by_tag().get(tag).copied() else {
+                wrong.push(format!("{tag}: scrolling to {to:?} did not paint it"));
+                continue;
+            };
+            let (px, py) = (rect.x + rect.w / 2, rect.y + rect.h / 2);
+            let got = super::hit_word(&super::Hit::at(&state, px, py));
+            if got != *tag {
+                wrong.push(format!(
+                    "{tag}: after scrolling to {to:?}, a press at ({px},{py}) answered {got}"
+                ));
+            }
+        }
+        state.canvas_scroll.scroll_to(0, 0);
+        assert!(
+            wrong.is_empty(),
+            "{} of {} published offset(s) did not deliver:\n  {}",
+            wrong.len(),
+            below.len(),
+            wrong.join("\n  ")
+        );
+    });
+}

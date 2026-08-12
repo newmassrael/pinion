@@ -40,6 +40,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
+import rpc_verify  # noqa: E402
 from rpc_verify import (  # noqa: E402
     Response,
     RpcError,
@@ -533,6 +534,70 @@ def test_pointer_reach_budget_parses_the_committed_file() -> None:
         all(not k.startswith("#") for k in budget),
         "budget: comment lines are not read as examples",
     )
+
+
+def test_a_budget_file_has_four_states_and_a_missing_row_is_an_error() -> None:
+    # R1662 — the three-state ratchet, plus the state R1661 did not have a name
+    # for: the FILE not existing at all. Each one is a different verdict and
+    # exactly one of them is a failure, which is the whole point — before
+    # R1661 a missing row read as a budget of 0 (the strictest claim there is,
+    # made by nobody) and before R1662 a missing file read the same way for
+    # every surface at once.
+    import tempfile
+
+    with tempfile.TemporaryDirectory() as tmp:
+        docs = Path(tmp) / "docs"
+        docs.mkdir()
+        (docs / "b.tsv").write_text(
+            "# a comment\n"
+            + rpc_verify.CENSUS_MARKER
+            + "\n"
+            "hello-measured\t7\n"
+            "hello-unmeasured\tunmeasured\tno sound card on this host\n",
+            encoding="utf-8",
+        )
+        # The same file WITHOUT the census stamp: a pre-census list of the
+        # non-zero examples, which is what this tree's two ratchets were until
+        # a producer existed. A missing row there is the zero it was always
+        # read as -- arming the strict rule against such a file fails every
+        # surface it does not list, including the boot gates the producer
+        # itself drives, which is a deadlock.
+        (docs / "old.tsv").write_text("hello-measured\t7\n", encoding="utf-8")
+        real_root = rpc_verify.WORKSPACE_ROOT
+        rpc_verify.WORKSPACE_ROOT = Path(tmp)
+        rpc_verify._READ_BUDGETS.clear()
+        try:
+            check(
+                rpc_verify._budget_for("b.tsv", "hello-measured", "g", "k") == 7,
+                "budget: a measured row is its number",
+            )
+            check(
+                rpc_verify._budget_for("b.tsv", "hello-unmeasured", "g", "k") is None,
+                "budget: an unmeasured row reports and does not judge",
+            )
+            raised = False
+            try:
+                rpc_verify._budget_for("b.tsv", "hello-absent", "g", "k")
+            except AssertionError:
+                raised = True
+            check(raised, "budget: a MISSING row is an error, not a zero")
+            check(
+                rpc_verify._budget_for("old.tsv", "hello-absent", "g", "k3") == 0,
+                "budget: a file that does not claim to be a census reads an "
+                "absent row as zero, so a producer can bootstrap one",
+            )
+            rpc_verify._READ_BUDGETS.clear()
+            check(
+                rpc_verify._budget_for("nope.tsv", "hello-measured", "g", "k2") is None,
+                "budget: a file that was never produced is UNARMED, not zero",
+            )
+            check(
+                "#" not in str(rpc_verify._read_budget("b.tsv")),
+                "budget: comment lines are not read as examples",
+            )
+        finally:
+            rpc_verify.WORKSPACE_ROOT = real_root
+            rpc_verify._READ_BUDGETS.clear()
 
 
 def main() -> int:

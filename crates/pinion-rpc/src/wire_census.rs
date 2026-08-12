@@ -1422,6 +1422,22 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "OutOfSightReport",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("tag", WireTy::String, None).nullable(),
+                WireField::new("path", WireTy::String, None),
+                WireField::new("content", WireTy::String, None).nullable(),
+                WireField::new("rect", WireTy::Object, Some("RectReport")),
+                WireField::new("viewport", WireTy::Object, Some("ViewportReport")),
+                WireField::new("reach", WireTy::String, None),
+                WireField::new("to_x", WireTy::Integer, None).nullable(),
+                WireField::new("to_y", WireTy::Integer, None).nullable(),
+                WireField::new("short_by", WireTy::Array, None).nullable(),
+            ],
+        },
+    },
+    WireType {
         name: "OverhangReport",
         shape: WireShape::Object {
             fields: &[
@@ -1659,6 +1675,18 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("at_bottom", WireTy::Boolean, None),
                 WireField::new("at_left", WireTy::Boolean, None),
                 WireField::new("at_right", WireTy::Boolean, None),
+            ],
+        },
+    },
+    WireType {
+        name: "ScrollReachOutcome",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("window", WireTy::Object, Some("RectReport")),
+                WireField::new("marks", WireTy::Integer, None),
+                WireField::new("scrollable", WireTy::Integer, None),
+                WireField::new("lost", WireTy::Integer, None),
+                WireField::new("out_of_sight", WireTy::Array, Some("OutOfSightReport")),
             ],
         },
     },
@@ -2032,6 +2060,23 @@ pub const WIRE_TYPES: &[WireType] = &[
                 // it cannot go stale against the type it describes.
                 WireField::new("provenance", WireTy::String, None)
                     .accepting(&pinion_core::display::UsableRegion::WIRE_NAMES),
+            ],
+        },
+    },
+    WireType {
+        name: "ViewportReport",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("name", WireTy::String, None),
+                WireField::new("w", WireTy::Integer, None),
+                WireField::new("h", WireTy::Integer, None),
+                WireField::new("content_w", WireTy::Integer, None),
+                WireField::new("content_h", WireTy::Integer, None),
+                WireField::new("at_x", WireTy::Integer, None),
+                WireField::new("at_y", WireTy::Integer, None),
+                WireField::new("max_x", WireTy::Integer, None),
+                WireField::new("max_y", WireTy::Integer, None),
+                WireField::new("fits", WireTy::Boolean, None),
             ],
         },
     },

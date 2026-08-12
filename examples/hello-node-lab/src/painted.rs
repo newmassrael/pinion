@@ -153,13 +153,30 @@ struct Painted {
     /// they were the thing R1649 painted in a stack down the left edge with a
     /// 118-assertion demo watching.
     runs: Vec<(String, Rect, Option<String>)>,
+    /// ★ R1662 — tags that are NOT on screen and that a scroll offset would
+    /// bring into view, with the offset that does it.
+    ///
+    /// The panes scroll now, so "painted" stopped being the whole question: a
+    /// control below the fold of a scrolling pane is absent from
+    /// [`Self::tags`] and is not missing — the reader scrolls to it. Kept
+    /// beside the painted set rather than folded into it, because the two are
+    /// different facts and a check that wants "on screen" must still be able
+    /// to ask for exactly that.
+    reachable: BTreeMap<String, (String, (i32, i32))>,
 }
 
 impl Painted {
     /// Run the real pipeline and index what came out of it.
-    fn of(scene: &Scene) -> Self {
+    fn of(scene: &Scene, window: (u32, u32)) -> Self {
         let mut tags = BTreeMap::new();
         let mut runs = Vec::new();
+        let mut reachable = BTreeMap::new();
+        for out in pinion_core::reach::out_of_sight(scene, window, &mut stand_in_ink) {
+            if let (Some(tag), pinion_core::reach::Reach::Scrollable { to }) = (out.tag, out.reach)
+            {
+                reachable.insert(tag, (out.viewport.name, to));
+            }
+        }
         scene.for_each_node(&mut |visit| {
             let Some(rect) = visit.absolute_rect() else {
                 // Clipped entirely away: painted nowhere, so it is not painted.
@@ -178,7 +195,11 @@ impl Painted {
                 runs.push((text.content.clone(), rect, owner));
             }
         });
-        Self { tags, runs }
+        Self {
+            tags,
+            runs,
+            reachable,
+        }
     }
 }
 
@@ -197,7 +218,7 @@ fn painted_at(state: &std::rc::Rc<LabState>, size: (u32, u32)) -> (Painted, Scen
     let mut scene = super::view((), Frame::default());
     let mut cache = pinion_runtime::LayoutCache::new();
     pinion_runtime::compute_layout(&mut scene, &mut cache, size.0, size.1);
-    let shot = Painted::of(&scene);
+    let shot = Painted::of(&scene, size);
     assert!(
         std::rc::Rc::ptr_eq(state, &use_lab_state()),
         "the sweep must drive the state the view reads"
@@ -256,6 +277,9 @@ fn declared_tags(state: &LabState) -> Vec<String> {
     ];
     for pane in spec::PANES {
         want.push(pane.tag.to_owned());
+        if let Some(body) = pane.body {
+            want.push(body.to_owned());
+        }
     }
     for (seat, _) in spec::RAIL {
         want.push(format!("lab.rail.{seat}"));
@@ -435,6 +459,12 @@ fn assert_forward(when: &str, state: &LabState, shot: &Painted, size: (u32, u32)
     let absent: Vec<&String> = want
         .iter()
         .filter(|tag| !shot.tags.contains_key(*tag))
+        // ★ R1662 — a control the pane has scrolled past is not a control the
+        // screen lost: the reader reaches it, and the offset that does is in
+        // the report. Excused only when the derivation SAYS so — an element
+        // that is neither painted nor reachable is still a failure, which is
+        // the half this grant must not swallow.
+        .filter(|tag| !shot.reachable.contains_key(*tag))
         .filter(|tag| {
             // Graph content is excused only when the canvas is too small to
             // hold the world — never when it has the room and simply did not
@@ -478,10 +508,24 @@ fn assert_reachable(when: &str, state: &LabState, shot: &Painted, size: (u32, u3
             r.x + r.w <= size.0 && r.y + r.h <= size.1
         })
         .collect();
+    // ★ R1662 — the floor counts the controls the screen HAS, on screen or one
+    // scroll away, rather than the ones that happen to fit this window. At the
+    // declared floor the side panes show a fraction of their content and the
+    // rest is reachable; counting only the painted ones would have this floor
+    // fall with the window size, which is the shape of a check that empties
+    // itself. A control that is neither painted nor reachable is counted by
+    // neither term, so the floor still bites when one disappears.
+    let scrolled = shot
+        .reachable
+        .keys()
+        .filter(|tag| must_answer(tag).is_some())
+        .count();
     assert!(
-        probes.len() >= 40,
-        "{when}: only {} painted control(s) — a screen that stops painting \
-         controls must fail here, not report a smaller number",
+        probes.len() + scrolled >= 40,
+        "{when}: only {} control(s) — {} painted and {scrolled} one scroll \
+         away. A screen that stops painting controls must fail here, not \
+         report a smaller number",
+        probes.len() + scrolled,
         probes.len()
     );
     let mut unreachable = Vec::new();
@@ -716,6 +760,26 @@ fn assert_contained_ink(when: &str, scene: &Scene, size: (u32, u32)) -> usize {
 /// Split out so a negative control can prove the metric MEASURES: a stand-in
 /// that hands the box back reports every scene as clean, and a check that
 /// cannot fail is indistinguishable from a screen with nothing wrong.
+/// The ink stand-in both containment and reach are measured with.
+///
+/// One function because two stand-ins would drift, and a mark that is "inside
+/// its box" under one measure and "out of reach" under another would be a
+/// disagreement about the screen rather than about the two questions.
+fn stand_in_ink(text: &pinion_core::scene::TextNode) -> (u32, u32) {
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "a label is a handful of characters"
+    )]
+    let chars = text.content.chars().count() as u32;
+    let px = text.style.font_size_px.max(1);
+    let painted = if text.style.overflow.shortens() {
+        text.rect.w.min(chars * px)
+    } else {
+        chars * px
+    };
+    (painted, text.rect.h)
+}
+
 fn ink_escapes(scene: &Scene, size: (u32, u32)) -> (Vec<pinion_core::containment::Escape>, usize) {
     let escapes = pinion_core::containment::escapes(scene, &mut |text| {
         // A monospace stand-in, wider per character than any face this screen
@@ -1352,6 +1416,199 @@ fn r1653_no_two_text_runs_are_painted_on_top_of_each_other() {
             smeared.is_empty(),
             "{} pair(s) of text runs are painted over each other: {smeared:?}",
             smeared.len()
+        );
+    });
+}
+
+/// ★★ R1662 — nothing this screen paints is out of the reader's reach.
+///
+/// The property in one sentence: for every painted mark, either it is on screen
+/// or some offset the enclosing viewport can take brings it there. A mark that
+/// fails both is `lost` — the reader cannot get to it by any gesture, and until
+/// this test existed nothing on this screen could tell that apart from a mark
+/// that is merely scrolled away.
+///
+/// ★ Why this is a different question from the containment sweep beside it.
+/// That one asks whether a mark stayed inside the box that owns it, and it
+/// **forgives** a mark painted entirely below the window — it partitions those
+/// off as "the registered scroll gap". That grant is exactly where the two
+/// panes' overflow was hiding: it was not a scroll gap, because neither pane
+/// scrolled. The verdict is now derived rather than granted, and the grant's
+/// name has to be earned by a pane that really does scroll.
+///
+/// ★ The population is derived twice over — every state, at every size — and
+/// the counts are asserted, so a screen that paints nothing cannot report clean.
+#[test]
+fn r1662_every_mark_is_shown_or_reachable_in_every_state_and_size() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let mut marks = 0usize;
+        let mut scrollable = 0usize;
+        let mut lost: Vec<String> = Vec::new();
+        for (when, mutate) in STATES {
+            mutate(&state);
+            for (how, size) in SIZES {
+                let (_, scene) = painted_and_scene(&state, *size);
+                let mut counted = 0usize;
+                scene.for_each_node(&mut |_| counted += 1);
+                marks += counted;
+                for out in pinion_core::reach::out_of_sight(&scene, *size, &mut stand_in_ink) {
+                    match out.reach {
+                        pinion_core::reach::Reach::Scrollable { .. } => scrollable += 1,
+                        pinion_core::reach::Reach::Lost { short_by } => lost.push(format!(
+                            "{when} {how}: {} is past {} by {short_by:?} \
+                             (viewport {}x{}, content {}x{}, range {:?})",
+                            out.tag
+                                .clone()
+                                .or_else(|| out.content.clone())
+                                .unwrap_or_else(|| out.path.join("/")),
+                            out.viewport.name,
+                            out.viewport.size.0,
+                            out.viewport.size.1,
+                            out.viewport.content.0,
+                            out.viewport.content.1,
+                            out.viewport.max,
+                        )),
+                    }
+                }
+            }
+        }
+        assert!(
+            marks > 1_000,
+            "the sweep examined {marks} mark(s) — an empty screen reports clean"
+        );
+        assert!(
+            lost.is_empty(),
+            "{} mark(s) no gesture can bring into view (of {marks} examined, \
+             {scrollable} merely scrolled away):\n  {}",
+            lost.len(),
+            lost.iter()
+                .take(12)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n  ")
+        );
+    });
+}
+
+/// ★ R1662 — the panes the specification says scroll, do.
+///
+/// A companion to the property above rather than a duplicate of it: that one
+/// would still pass if a pane stopped scrolling and its content happened to
+/// fit. This reads the specification's own column and asks the painted scene
+/// whether the body is there and is a scroll node with a range that came from
+/// its content.
+#[test]
+fn r1662_the_panes_the_specification_says_scroll_are_scroll_panes() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        // The floor size is the one that makes the side panes overflow, which
+        // is the state the property is about.
+        let (_, scene) = painted_and_scene(&state, (super::MIN_W, super::MIN_H));
+        let mut found: Vec<String> = Vec::new();
+        scene.for_each_node(&mut |visit| {
+            if let Scene::Scroll(node) = visit.node
+                && let Some(tag) = node.tag.as_deref()
+            {
+                found.push(tag.to_owned());
+                assert!(
+                    node.state.is_some(),
+                    "{tag} has no state, so the wheel writes nowhere"
+                );
+            }
+        });
+        for pane in spec::PANES {
+            let Some(body) = pane.body else { continue };
+            assert!(
+                found.iter().any(|t| t == body),
+                "{} declares a scrolling body {body} and the screen paints no \
+                 scroll node with that tag — found {found:?}",
+                pane.tag
+            );
+        }
+    });
+}
+
+/// ★★ R1662 — the offset the report publishes actually works.
+///
+/// The property above is a derivation: it says a scroll offset *exists* that
+/// brings each mark into view. This drives that offset through the pane's own
+/// scroll state, repaints, and then presses the control at the centre it landed
+/// in — so the claim is settled by the screen rather than by the arithmetic
+/// that made it. A published offset nobody has ever scrolled to is the kind of
+/// answer that is right until the day the pane's frame changes.
+///
+/// Run at the declared floor, because that is the size where the side panes
+/// have more content than window.
+#[test]
+fn r1662_a_control_one_scroll_away_is_pressable_after_that_scroll() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let floor = (super::MIN_W, super::MIN_H);
+        let mut probed = 0usize;
+        let mut wrong: Vec<String> = Vec::new();
+        for (when, mutate) in STATES {
+            mutate(&state);
+            let (shot, _) = painted_and_scene(&state, floor);
+            let away: Vec<(String, String, (i32, i32))> = shot
+                .reachable
+                .iter()
+                .filter(|(tag, _)| must_answer(tag).is_some())
+                .map(|(tag, (scroller, to))| (tag.clone(), scroller.clone(), *to))
+                .collect();
+            for (tag, scroller, to) in away {
+                let Some(scroll) = super::pane_scroll(&state, &scroller) else {
+                    // A control off the WINDOW rather than off a pane is the
+                    // other property's business; it cannot be scrolled to.
+                    continue;
+                };
+                let before = scroll.offset();
+                scroll.scroll_to(to.0, to.1);
+                let (after, _) = painted_and_scene(&state, floor);
+                probed += 1;
+                match after.tags.get(&tag) {
+                    None => wrong.push(format!(
+                        "{when}: scrolling {scroller} to {to:?} did not bring \
+                         {tag} onto the screen"
+                    )),
+                    Some(rect) => {
+                        let (px, py) = centre(*rect);
+                        let want = must_answer(&tag).expect("filtered above");
+                        let got = Hit::at(&state, px, py).word(&state);
+                        // The same equivalence the design-size probe uses: a
+                        // control that holds affordances inside it answers with
+                        // the one under the cursor, and a list control's centre
+                        // IS an element chip.
+                        if got != want && !same_row(&want, &got) {
+                            wrong.push(format!(
+                                "{when}: after scrolling {scroller} to {to:?}, \
+                                 pressing {tag} at ({px},{py}) answered {got} \
+                                 and not {want}"
+                            ));
+                        }
+                    }
+                }
+                scroll.scroll_to(before.0, before.1);
+            }
+        }
+        assert!(
+            probed >= 20,
+            "only {probed} control(s) were scrolled to — at the declared floor \
+             the side panes hold more than they show, so this must not be small"
+        );
+        assert!(
+            wrong.is_empty(),
+            "{} of {probed} published offset(s) did not deliver:\n  {}",
+            wrong.len(),
+            wrong
+                .iter()
+                .take(10)
+                .cloned()
+                .collect::<Vec<_>>()
+                .join("\n  ")
         );
     });
 }
