@@ -79,6 +79,29 @@ locale = "en"
 # to "reject" + wire into pre-commit once the W3C-citation-shape
 # false-positives (`UAX #9`, `CSS Color 4`) are resolved upstream (the one
 # real matcher gap this PoC measures for the maintainer).
+# ★★★★ R1666 — the symbol resolver the citation gate's own claim requires.
+#
+# The R1665 pin bump (Mnemosyne be4c1647 -> 183a17a5) brought that project's
+# R1144 rule: a run REFUSES to proceed when citations carry a symbol-level
+# binding and no configured resolver covers them, because `severity_binding`
+# then "reads as symbol-level enforcement while this run performs none". This
+# workspace has 3,098 such citations, so `validate-code-refs` stopped — and
+# `pre-push` trusts its exit code, so the push was refused.
+#
+# ★ That refusal is CORRECT and this is not a silencing. The old build ran the
+# weaker file-level check while the config read as the stronger symbol-level
+# one, and nothing said so; the new one makes the workspace choose. Declaring
+# the resolver is choosing the enforcement pinion's config already claimed,
+# which is why the answer is a resolver and not a severity downgrade.
+#
+# Measured while adopting it: pinion's Path B position is unchanged --
+# `severity_binding = "info"` below, because this tree has never adopted
+# add-section-implementation bindings (that is R716's REJECT, still standing,
+# and the `citation_unbound` count is expected rather than a backlog).
+[plugins.symbol_resolver.rust]
+transport = "in-process"
+backend = "tree-sitter-rust"
+
 [plugins.set_equality_validator]
 paths = ["crates/", "examples/"]
 comment_only = true
