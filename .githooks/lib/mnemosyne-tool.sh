@@ -288,11 +288,36 @@ mnemosyne_is_pinned_revision() {
 #     and would discard a developer's local work there.
 #   * HEAD must be the pin. Refused rather than corrected, for the same reason.
 #
+# ★★★★ R1665 — every git call below goes through `mnemosyne_git`, and the
+# reason is a defect this file shipped with for 150 rounds without anyone
+# meeting it.
+#
+# `git commit` exports `GIT_DIR` and `GIT_INDEX_FILE` to its hooks, and those
+# variables OUTRANK `-C`: inside a hook, `git -C vendor/mnemosyne status` reads
+# the parent repository's git dir, so the submodule's worktree check answers
+# about the wrong repository and the revision check never gets to run. The
+# resolver then reports that neither source worked and refuses the commit —
+# with both sources present, correct, and passing when the same function is run
+# from a shell.
+#
+# It was never met because the VENDORED PATH had never been taken inside a
+# hook: an installed build at `$MN_ROOT/<pin>` existed for every pin this tree
+# has used, and the resolver prefers it. R1665 bumped the pin to a revision
+# with no installed build, took the fallback for the first time, and found it
+# broken. A fallback nobody has exercised is a fallback nobody has tested.
+#
+# `env -u` rather than a subshell `unset`, so the scrub is visible at the call
+# and cannot be undone by an intervening assignment.
+mnemosyne_git() {
+    env -u GIT_DIR -u GIT_INDEX_FILE -u GIT_WORK_TREE -u GIT_OBJECT_DIRECTORY \
+        -u GIT_COMMON_DIR -u GIT_PREFIX git "$@"
+}
+
 # Returns 0 when this repo declares no such submodule, so the resolver still
 # works in a tree that has not adopted one.
 mnemosyne_check_vendored_pin() {
     local repo_root="$1" pin="$2" sub="$1/vendor/mnemosyne" gitlink head
-    gitlink="$(git -C "$repo_root" ls-files -s -- vendor/mnemosyne 2>/dev/null \
+    gitlink="$(mnemosyne_git -C "$repo_root" ls-files -s -- vendor/mnemosyne 2>/dev/null \
         | awk '$1 == "160000" { print $2 }')"
     [ -n "$gitlink" ] || return 0
 
@@ -321,7 +346,7 @@ mnemosyne_check_vendored_pin() {
         }
     fi
 
-    head="$(git -C "$sub" rev-parse HEAD 2>/dev/null)" || {
+    head="$(mnemosyne_git -C "$sub" rev-parse HEAD 2>/dev/null)" || {
         echo "mnemosyne-tool: vendor/mnemosyne is not a git checkout" >&2
         return 1
     }
@@ -376,7 +401,7 @@ mnemosyne_build_vendored() {
 # binary is only trustworthy under the same condition the build was.
 mnemosyne_vendored_worktree_clean() {
     local repo_root="$1" sub="$1/vendor/mnemosyne" dirt
-    dirt="$(git -C "$sub" status --porcelain --untracked-files=no 2>/dev/null)" || return 1
+    dirt="$(mnemosyne_git -C "$sub" status --porcelain --untracked-files=no 2>/dev/null)" || return 1
     [ -z "$dirt" ] && return 0
     echo "mnemosyne-tool: vendor/mnemosyne has uncommitted changes, so a build" >&2
     echo "  from it is not the pinned revision, and the build" >&2

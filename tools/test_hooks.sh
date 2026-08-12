@@ -824,6 +824,35 @@ ok "and it is accepted" \
         && echo ok || echo refused)" \
    "ok"
 
+# --- ★ and it is accepted INSIDE A HOOK, which is the only place it runs ---
+#
+# R1665. `git commit` exports `GIT_DIR` and `GIT_INDEX_FILE` to its hooks, and
+# those variables OUTRANK `-C`: every `git -C vendor/mnemosyne ...` in the
+# resolver silently read the PARENT repository instead, so the submodule checks
+# answered about the wrong repo and the resolver reported that no pinned build
+# could be produced — with the submodule present, at the pin, clean, and its
+# binary built and correct.
+#
+# It went 150 rounds unmet because the vendored branch had never been taken
+# inside a hook: an installed build at `$MN_ROOT/<pin>` existed for every pin
+# this tree had used, and the resolver prefers it. R1665 moved the pin to a
+# revision with no installed build and the fallback ran for the first time.
+#
+# The two assertions above pass with and without the fix, because a plain shell
+# has no such environment. Only this one discriminates, which is exactly why it
+# is a separate case rather than an extra condition on those.
+ok "the submodule checks survive the environment `git commit` gives a hook" \
+   "$(GIT_DIR="$mn_live/.git" GIT_INDEX_FILE="$mn_live/.git/index" \
+        mnemosyne_check_vendored_pin "$mn_live" "${live_sha:0:7}" >/dev/null 2>&1 \
+        && echo ok || echo refused)" \
+   "ok"
+
+ok "and so does the worktree-clean check, for the same reason" \
+   "$(GIT_DIR="$mn_live/.git" GIT_INDEX_FILE="$mn_live/.git/index" \
+        mnemosyne_vendored_worktree_clean "$mn_live" >/dev/null 2>&1 \
+        && echo clean || echo refused)" \
+   "clean"
+
 # --- a build from a dirty worktree is not the pinned revision (R1508) ---
 #
 # Upstream's build stamp derives `-dirty` from git metadata and its own docs say

@@ -54,7 +54,7 @@
 # whatever sits on PATH. Bumping the pin therefore means moving the submodule
 # too: `git -C vendor/mnemosyne fetch && git -C vendor/mnemosyne checkout <pin>`
 # then `git add vendor/mnemosyne`, the same dual discipline `vendor/sce` has.
-pin = "be4c164"
+pin = "183a17a"
 
 [schema]
 changelog_titles = ["Changelog"]
