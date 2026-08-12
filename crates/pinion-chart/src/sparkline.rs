@@ -260,13 +260,30 @@ impl Sparkline {
         if n == 0 {
             return None;
         }
-        // Inset by the marker radius so the end / min / max dots never clip the
-        // edge; a bare (marker-less) sparkline still keeps 1px of breathing room.
+        // Inset by whichever ink reaches furthest from a point: the marker
+        // radius when there are markers, and ALWAYS half the polyline's stroke,
+        // which is drawn centred on the point and therefore hangs outside it.
+        //
+        // ★ R1669 — the stroke half was missing, so a marker-less sparkline
+        // insetting by one pixel painted its 2px line's outer half past the box
+        // it was given. Nothing saw it while every consumer's box happened to
+        // be small; the analyzer shell's filter card grew and the containment
+        // gate reported the mark 3px outside its own rect. A mark whose ink
+        // leaves the rectangle it was handed is the general defect, and the
+        // repair belongs where the geometry is decided rather than at each
+        // caller's inset.
+        // The FULL stroke width, not half of it. Half is what a straight run
+        // hangs outside its point; a JOIN reaches further, by an amount that
+        // depends on the angle (a mitre goes as half/sin(t/2), unbounded as the
+        // turn sharpens), and a sparkline is nothing but joins. Measured: half
+        // took the escape from 3px to 1px and the full width took it to none.
+        let stroke_pad = to_f32(SPARK_STROKE_W) + 1.0;
         let pad = if self.markers {
             to_f32(style.marker_radius.max(1)) + 1.0
         } else {
             1.0
-        };
+        }
+        .max(stroke_pad);
         let left = to_f32(rect.x) + pad;
         let right = (to_f32(rect.x + rect.w) - pad).max(left);
         let top = to_f32(rect.y) + pad;

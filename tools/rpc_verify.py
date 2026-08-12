@@ -726,6 +726,14 @@ def _read_budget(name: str) -> "Optional[tuple[dict[str, object], bool]]":
     return budget, total
 
 
+#: R1669 — surfaces allowed to leave an inert region unexplained, and why.
+#:
+#: EMPTY, and that is the state worth keeping. An entry here is a claim that a
+#: region is inert for a reason its author genuinely cannot name, which is a
+#: much rarer thing than it looks: the author wrote the branch that disabled it.
+_STATED_REASON_EXCEPTIONS: dict[str, int] = {}
+
+
 def _budget_for(
     file_name: str, example: str, gate: str, cache_key: str
 ) -> "int | tuple[str, str] | None":
@@ -999,6 +1007,7 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             self._gate_text_smear()
             self._gate_font_pin()
             self._gate_containment()
+            self._gate_stated_reasons()
             self._gate_scroll_reach()
         except BaseException:
             self.shutdown()
@@ -1247,6 +1256,74 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
                 f"(smeared {out.get('smeared', 0)} / clipped "
                 f"{out.get('clipped', 0)}) of {out.get('marks', 0)} marks, "
                 f"budget {allowed}"
+            )
+
+    def _gate_stated_reasons(self) -> None:
+        """R1669 — every inert region on the opening screen says WHY it is inert.
+
+        `scene/disabled` has published a reason since R1668, and
+        `UnavailableKind::Unstated` is deliberately an ARM rather than an
+        absence so that "declared inert, said nothing" is a number somebody can
+        count. Nothing counted it, which is the debt this closes: an arm nobody
+        reports is an `Option::None` with extra steps.
+
+        The count is taken from the RUNNING screen rather than from a source
+        scan, and that difference is the whole reliability of it. A grep for the
+        reasonless builder answers 23 in this tree, of which 18 are test
+        fixtures, 3 are prose and one is the builder's own definition — the real
+        production population is 1, and a text census could not tell those
+        apart. What paints is what is asked.
+
+        Held at zero rather than ratcheted from a backlog: the measurement was
+        taken with the one production site repaired, so there is nothing to
+        carry. A surface that legitimately cannot say why is added to
+        `_STATED_REASON_EXCEPTIONS` with the reason written beside it, and that
+        list is empty.
+
+        A binary too old to answer the method is driven without the gate, the
+        same tolerance the boot baseline gives.
+        """
+        if self.measuring:
+            return  # the producer is not judged by the file it produces
+        try:
+            resp = self.request("scene/disabled")
+        except RpcError as exc:
+            if exc.code in (-32601, -32602):
+                return  # stale binary
+            raise
+        assert resp is not None
+        rows = resp.result.get("disabled", [])
+        # A row whose reason is `unstated` was declared inert by something that
+        # knew why and did not say. A row with any other kind is fine at any
+        # count -- this gate is about the SILENCE, not about how much is inert.
+        silent = [r for r in rows if r.get("reason") == "unstated"]
+        # ★ The floor is ZERO for every surface, and the file is an EXCEPTION
+        # list rather than a census. The other budgets carry a measured backlog
+        # so they have to be total -- a missing row there would hide work. This
+        # one has no backlog to carry (the population was measured at one and
+        # repaired in the same round), so a default of zero is the honest floor
+        # and a file that has to be generated over 224 demos would only be a way
+        # for the gate to go UNARMED.
+        allowed = _STATED_REASON_EXCEPTIONS.get(self.example, 0)
+        if len(silent) > allowed:
+            named = "; ".join(
+                f"{r['tag']} (declared by {r.get('declared_by') or 'itself'})"
+                for r in silent[:6]
+            )
+            raise AssertionError(
+                f"{self.example}: {len(silent)} inert region(s) say nothing "
+                f"about why, and the budget allows {allowed} — {named}. "
+                f"`with_disabled(true)` states the fact and no reason; "
+                f"`with_unavailable(..)` / `with_availability(..)` state both, "
+                f"and the reason is what reaches `scene/disabled`, the "
+                f"accessibility tree's state description, and the person "
+                f"looking at a greyed control wondering what to do about it."
+            )
+        if rows:
+            kinds = sorted({r.get("reason", "?") for r in rows})
+            print(
+                f"[stated-reason] {self.example}: {len(rows)} inert region(s), "
+                f"{len(silent)} silent (budget {allowed}), kinds {kinds}"
             )
 
     def _gate_font_pin(self) -> None:

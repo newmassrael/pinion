@@ -385,16 +385,25 @@ pub const BOARD: &[PlacedSpec] = &[
         col: 0,
         row: 2,
         cols: 6,
-        rows: 1,
+        rows: 2,
     },
     PlacedSpec {
         kind: "filter",
         col: 6,
         row: 2,
         cols: 6,
-        rows: 1,
+        rows: 2,
     },
 ];
+
+// ★ R1669 — the bottom two cards are TWO rows tall, and that is a measurement
+// rather than a preference. At one row the identifier map's body is 140px and
+// its specified header plus seven rows need 144, so the card could never show
+// what this table says it holds -- at any window size, in every state. The
+// painter clamped correctly and the screen was quietly a row short, which the
+// clamp-coverage gate found by noticing that the map's rows were never once
+// observed complete. A card that cannot hold its own specification is a
+// specification that has not been reproduced.
 
 // --- What each placed widget's body holds ------------------------------------
 

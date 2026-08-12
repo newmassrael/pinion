@@ -58,6 +58,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
+use pinion_core::availability::Unavailable;
 use pinion_core::containment::line_box;
 use pinion_core::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
@@ -1791,22 +1792,33 @@ fn rail(ink: Ink) -> Scene {
     // one pane R1651's sweep did not probe.
     let local = |r: Rect| Rect::new(r.x - rect.x, r.y - rect.y, r.w, r.h);
     let mut children = vec![];
-    for (n, (name, locked)) in spec::RAIL.iter().enumerate() {
+    for (n, (name, reserved_for)) in spec::RAIL.iter().enumerate() {
         let seat = local(rail_seat(n));
         let active = *name == spec::RAIL_ACTIVE;
-        children.push(box_at(
+        let mut box_node = box_at(
             &format!("lab.rail.{name}"),
             seat,
             if active { ink.accent_soft } else { ink.surface },
             Some(if active { ink.accent_line } else { ink.surface }),
             10,
-        ));
+        );
+        // ★ R1669 — a reserved seat is DECLARED unavailable with its booking,
+        // not merely drawn in a dimmer ink. The declaration is what makes it
+        // inert to the pointer, fades it, announces the reason to a screen
+        // reader and puts it on `scene/disabled`; the dim ink did one of those
+        // four and nothing could check it.
+        if let Some(why) = reserved_for
+            && let Some(layout) = box_node.layout_style_mut()
+        {
+            *layout = layout.clone().with_unavailable(Unavailable::reserved(*why));
+        }
+        children.push(box_node);
         children.extend(rail_icon(
             name,
             seat,
             if active {
                 ink.accent
-            } else if *locked {
+            } else if reserved_for.is_some() {
                 ink.text_3
             } else {
                 ink.text_2
@@ -3271,8 +3283,11 @@ fn spec_json() -> serde_json::Value {
         "panes": spec::PANES.iter().map(|p| serde_json::json!({
             "tag": p.tag, "title": p.title, "width": p.width, "body": p.body,
         })).collect::<Vec<_>>(),
-        "rail": spec::RAIL.iter().map(|(name, locked)| serde_json::json!({
-            "name": name, "locked": locked, "active": *name == spec::RAIL_ACTIVE,
+        "rail": spec::RAIL.iter().map(|(name, reserved_for)| serde_json::json!({
+            "name": name,
+            "locked": reserved_for.is_some(),
+            "reserved_for": reserved_for,
+            "active": *name == spec::RAIL_ACTIVE,
         })).collect::<Vec<_>>(),
         "roles": spec::ROLES.iter().map(|r| serde_json::json!({
             "name": r.name, "gist": r.gist, "group": r.group, "accepts": r.accepts,

@@ -40,7 +40,9 @@
 //! sections a form it does not need to box.
 
 use pinion_core::Scene;
+use pinion_core::availability::Unavailable;
 use pinion_core::composite_tag::GroupBoxTag;
+use pinion_core::mnemonic::MnemonicLabel;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size,
@@ -161,6 +163,22 @@ impl Default for GroupBoxStyle {
 /// it produces targets the painted title band, which for a checkable group is
 /// the checkbox. The toolkit's group box accepts the same `&` in its title and
 /// does the same thing with it.
+/// Why a checkable group's contents are inert, when they are.
+///
+/// [`None`] for a group with no checkbox, and for one whose box is ticked.
+///
+/// The detail names the CONDITION, which is what
+/// [`UnavailableKind::Precondition`](pinion_core::availability::UnavailableKind::Precondition)
+/// documents its detail to be — and it names it with the title as a reader sees
+/// it, mnemonic marker resolved, so the sentence a listener hears matches the
+/// word painted in the frame.
+fn gate_reason(title: &str, check: Option<GroupBoxCheck>) -> Option<Unavailable> {
+    matches!(check, Some(GroupBoxCheck { checked: false, .. })).then(|| {
+        let shown = MnemonicLabel::parse(title).display;
+        Unavailable::precondition(format!("{shown} is turned on"))
+    })
+}
+
 #[must_use]
 pub fn view_group_box(
     tag: &'static str,
@@ -189,7 +207,15 @@ pub fn view_group_box(
                     // R1554 — THE declaration. One flag; the cascade derives
                     // the Tab order, the pointer refusal, `aria-disabled` and
                     // the ink from it.
-                    .with_disabled(matches!(check, Some(GroupBoxCheck { checked: false, .. }))),
+                    //
+                    // R1669 — and it says WHY, which is the whole reason this
+                    // widget's own title carries a checkbox: the condition is
+                    // in reach of the person reading the greyed panel, and it
+                    // is one tick away. Stating it as a `Precondition` is what
+                    // puts "turn <title> on" on `scene/disabled` and into the
+                    // screen reader's announcement, where a bare flag left a
+                    // listener with "dimmed" and no way to learn the remedy.
+                    .with_availability(gate_reason(title, check)),
             ),
     );
 
@@ -433,6 +459,74 @@ mod tests {
             Some(content_tag.as_str()),
             "an agent that finds `threshold` unresponsive learns what to act on",
         );
+    }
+
+    /// R1669 — the gate says WHY, and the reason names the condition a reader
+    /// can act on: this group's own checkbox, spelled as the frame paints it.
+    ///
+    /// This was the ONE production declaration in the tree that stated no
+    /// reason (measured: every other `with_disabled` site is a test fixture or
+    /// a doc mention), and it is the one where the remedy is a single tick.
+    #[test]
+    fn r1669_a_gated_group_says_which_condition_would_open_it() {
+        use pinion_core::availability::{Recourse, UnavailableKind};
+
+        let scene = app(
+            Some(GroupBoxCheck {
+                checked: false,
+                interaction: CheckboxState::Idle,
+            }),
+            &Theme::default(),
+        );
+        let census = disabled_census(&scene);
+        let content_tag = GroupBoxTag::content(TAG);
+        for row in &census {
+            assert_eq!(
+                row.reason.kind(),
+                UnavailableKind::Precondition,
+                "{} is inert as {:?}",
+                row.tag,
+                row.reason.kind(),
+            );
+            assert_eq!(
+                row.reason.recourse(),
+                Recourse::Satisfy,
+                "the remedy is one tick and the recourse has to say so",
+            );
+            assert_eq!(
+                row.reason.detail(),
+                "Advanced is turned on",
+                "the condition, with the mnemonic marker resolved as the frame paints it",
+            );
+        }
+        assert!(
+            census.iter().any(|d| d.tag == content_tag),
+            "the declarer is in the census",
+        );
+        assert!(
+            census.len() > 1,
+            "and so is its member, carrying the SAME reason without a walk",
+        );
+    }
+
+    /// R1669 — a group whose box is ticked, and one with no box at all, declare
+    /// nothing. Asserted in both directions because a reason that leaked into
+    /// the live case would grey a panel nobody gated.
+    #[test]
+    fn r1669_an_open_group_declares_no_reason() {
+        for check in [
+            None,
+            Some(GroupBoxCheck {
+                checked: true,
+                interaction: CheckboxState::Idle,
+            }),
+        ] {
+            let scene = app(check, &Theme::default());
+            assert!(
+                disabled_census(&scene).is_empty(),
+                "{check:?} gates nothing and must declare nothing",
+            );
+        }
     }
 
     #[test]

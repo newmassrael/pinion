@@ -4128,6 +4128,20 @@ impl LayoutStyle {
         self
     }
 
+    /// (R1669 §5.39) Builder: declare availability from a value that may or may
+    /// not be a reason — the branchless form of
+    /// [`with_unavailable`](Self::with_unavailable).
+    ///
+    /// A caller whose widget is *conditionally* unavailable computes one
+    /// `Option` and hands it over. The alternative is an `if` at the call site
+    /// choosing between two builders, which is where a "live" branch quietly
+    /// loses a declaration the other branch has.
+    #[must_use]
+    pub fn with_availability(mut self, reason: Option<Unavailable>) -> Self {
+        self.unavailable = reason;
+        self
+    }
+
     /// (R1554 §5.39) Whether this node's own declaration says it is
     /// unavailable — the toolkit's `testAttribute(WA_ForceDisabled)`, which
     /// separates self from inherited and names nobody.

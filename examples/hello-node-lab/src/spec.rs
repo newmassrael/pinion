@@ -395,18 +395,26 @@ pub const GESTURES: &[(&str, &str)] = &[
     ("drag a pin", "author a link"),
 ];
 
-/// The icon rail, top to bottom. `locked` marks the destinations the first
-/// release deliberately shows and does not open — the reference exposes the
-/// later scope as locked seats rather than hiding it, so a reader can see what
-/// the tool is going to be.
-pub const RAIL: &[(&str, bool)] = &[
-    ("dashboard", false),
-    ("packets", false),
-    ("keys", false),
-    ("logs", false),
-    ("lab", false),
-    ("topology", true),
-    ("sessions", true),
+/// The icon rail, top to bottom, and the requirement each locked seat waits for.
+///
+/// The reference exposes the later scope as locked seats rather than hiding it,
+/// so a reader can see what the tool is going to be.
+///
+/// ★ R1669 — `Some(requirement)` rather than a bare `true`. R1668 gave the
+/// framework a channel for WHY a region is inert
+/// ([`Unavailable`](pinion_core::availability::Unavailable)) and screen C
+/// adopted it; this screen's rail kept the bool it had when there was nowhere
+/// to put a reason, so its two locked seats were grey and mute — absent from
+/// `scene/disabled`, and announced to a screen reader as ordinary destinations
+/// that simply refuse. Two screens of one tool spelled one concept two ways.
+pub const RAIL: &[(&str, Option<&'static str>)] = &[
+    ("dashboard", None),
+    ("packets", None),
+    ("keys", None),
+    ("logs", None),
+    ("lab", None),
+    ("topology", Some("requirement 12")),
+    ("sessions", Some("requirement 14")),
 ];
 
 /// Which rail seat is the one this screen is.

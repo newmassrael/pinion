@@ -523,6 +523,67 @@ def test_pointer_reach_gate_separates_the_two_unreachable_kinds() -> None:
     tf._gate_pointer_reach()
 
 
+def test_the_stated_reason_gate_fails_a_silent_region_and_passes_a_stated_one() -> None:
+    # ★ R1669 — the gate's own negative control, and it is here because a
+    # counterfactual PASSED without it: blinding `_gate_stated_reasons` (making
+    # its `silent` list always empty) broke nothing, because every surface in
+    # the tree happens to be at zero and a gate with nothing to fire on is a
+    # gate nobody has tested. The demos prove the tree is clean; only this
+    # proves the gate would say so if it were not.
+    tf = RpcSubprocess("fixture-example")
+    tf._proc = None
+    rows: list[dict] = []
+    tf.request = lambda method, params=None, **kw: Response(  # type: ignore[assignment]
+        id=1, result={"disabled": rows}
+    )
+    tf._gate_stated_reasons()  # nothing inert at all: no raise
+
+    rows.append(
+        {
+            "tag": "panel",
+            "self_declared": True,
+            "declared_by": None,
+            "ink": "faded",
+            "reason": "reserved",
+            "detail": "requirement 12",
+            "recourse": "await_release",
+        }
+    )
+    tf._gate_stated_reasons()  # inert WITH a reason: reported, not fatal
+
+    rows.append(
+        {
+            "tag": "mystery",
+            "self_declared": False,
+            "declared_by": "panel",
+            "ink": "faded",
+            "reason": "unstated",
+            "detail": "",
+            "recourse": "nothing",
+        }
+    )
+    raised = None
+    try:
+        tf._gate_stated_reasons()
+    except AssertionError as exc:
+        raised = str(exc)
+    check(raised is not None, "stated-reason: a silent inert region fails the demo")
+    check(
+        raised is not None and "mystery" in raised and "panel" in raised,
+        "stated-reason: the failure names the region AND who declared it, "
+        "which is where the repair goes",
+    )
+
+    # And an exception makes it adoptable for a surface that proves it needs one.
+    import rpc_verify
+
+    rpc_verify._STATED_REASON_EXCEPTIONS["fixture-example"] = 1
+    try:
+        tf._gate_stated_reasons()
+    finally:
+        del rpc_verify._STATED_REASON_EXCEPTIONS["fixture-example"]
+
+
 def test_a_screen_that_routes_nothing_fails_and_an_empty_roster_does_not() -> None:
     # ★ R1664 — the half this gate used to PRINT. `deliverable: 0` means both
     # "no widgets here" and "every press in this window is dropped", and the

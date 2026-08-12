@@ -1499,6 +1499,73 @@ fn r1662_every_mark_is_shown_or_reachable_in_every_state_and_size() {
 /// fit. This reads the specification's own column and asks the painted scene
 /// whether the body is there and is a scroll node with a range that came from
 /// its content.
+/// R1669 — this screen's reserved rail seats are DECLARED with their booking,
+/// exactly as screen C's are.
+///
+/// The debt this closes is that two screens of one tool spelled one concept two
+/// ways. R1668 gave the framework a channel for *why* a region is inert and
+/// screen C adopted it; this rail kept the bare `locked: bool` it had when
+/// there was nowhere to put a reason, so its two seats were grey and mute —
+/// absent from `scene/disabled`, and announced to a screen reader as ordinary
+/// destinations that simply do not respond.
+///
+/// The assertion is the same one screen C carries, deliberately: a law two
+/// screens hold identically is a law, and one screen holding it is a habit.
+#[test]
+fn r1669_every_reserved_rail_seat_is_declared_with_its_booking() {
+    use pinion_core::availability::{Recourse, UnavailableKind};
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let (_, mut scene) = painted_and_scene(&state, (super::WIN_W, super::WIN_H));
+        // The cascade is what the window runs after layout; a sweep that
+        // skipped it would ask "is this seat inert" of a scene where nothing
+        // had resolved.
+        pinion_core::scene_disabled::resolve_disabled(&mut scene);
+        let census: std::collections::BTreeMap<String, _> =
+            pinion_core::scene_disabled::disabled_census(&scene)
+                .into_iter()
+                .map(|row| (row.tag.clone(), row))
+                .collect();
+
+        let mut reserved = 0;
+        for (name, booking) in spec::RAIL {
+            let tag = format!("lab.rail.{name}");
+            match booking {
+                Some(why) => {
+                    reserved += 1;
+                    let row = census.get(&tag).unwrap_or_else(|| {
+                        panic!("the {name} seat is reserved and the screen paints it live")
+                    });
+                    assert_eq!(row.reason.kind(), UnavailableKind::Reserved);
+                    assert_eq!(
+                        row.reason.detail(),
+                        *why,
+                        "the {name} seat reports a booking the specification does not state",
+                    );
+                    assert_eq!(row.reason.recourse(), Recourse::AwaitRelease);
+                }
+                None => assert!(
+                    !census.contains_key(&tag),
+                    "the {name} seat is open and the screen paints it inert",
+                ),
+            }
+        }
+        assert_eq!(reserved, 2, "the reference locks two seats on this rail");
+        // And nothing ELSE on this screen is inert, which is the direction that
+        // catches a region declared unavailable by accident.
+        let unexpected: Vec<&String> = census
+            .keys()
+            .filter(|t| !t.starts_with("lab.rail."))
+            .collect();
+        assert!(
+            unexpected.is_empty(),
+            "this screen paints inert regions nobody declared reserved: {unexpected:?}",
+        );
+    });
+}
+
 #[test]
 fn r1662_the_panes_the_specification_says_scroll_are_scroll_panes() {
     let owner = Owner::new();

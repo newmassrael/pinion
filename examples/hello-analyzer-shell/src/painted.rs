@@ -352,20 +352,9 @@ fn r1668_each_placed_card_paints_the_body_its_kind_is_specified_to_have() {
         for id in &shown_cards(state) {
             let id = id.as_str();
             let kind = super::kind_of(id);
-            let rows = match kind {
-                "packet" => spec::STREAM_ROWS.len(),
-                "decode" => spec::DECODE_ROWS.len(),
-                "keymap" => spec::MAP_ROWS.len(),
-                "filter" => spec::FILTER_CHIPS.len(),
-                other => panic!("{case}: {other} is placed and this check does not know it"),
-            };
-            let stem = match kind {
-                "packet" => format!("card.{id}.row."),
-                "decode" => format!("card.{id}.tree."),
-                "keymap" => format!("card.{id}.map."),
-                "filter" => format!("card.{id}.chip."),
-                _ => unreachable!(),
-            };
+            let (family, rows) = body_family(kind)
+                .unwrap_or_else(|| panic!("{case}: {kind} is placed and unknown here"));
+            let stem = format!("card.{id}.{family}.");
             let painted = shot.family(&stem).len();
             assert!(
                 painted > 0,
@@ -422,6 +411,22 @@ fn r1668_each_placed_card_paints_the_body_its_kind_is_specified_to_have() {
             }
         }
     });
+}
+
+/// The tag family a kind's body rows are painted under, and how many rows the
+/// specification gives it.
+///
+/// One table, read by the body check and by the clamp check next to it: two
+/// copies of "which family is a stream row in" is two things that can disagree
+/// about which clamp was exercised.
+fn body_family(kind: &str) -> Option<(&'static str, usize)> {
+    Some(match kind {
+        "packet" => ("row", spec::STREAM_ROWS.len()),
+        "decode" => ("tree", spec::DECODE_ROWS.len()),
+        "keymap" => ("map", spec::MAP_ROWS.len()),
+        "filter" => ("chip", spec::FILTER_CHIPS.len()),
+        _ => return None,
+    })
 }
 
 /// The text runs the painted scene put inside one tag.
@@ -515,6 +520,122 @@ fn r1668_the_decode_card_lights_exactly_the_specified_bytes() {
             "{case}: card {id} lights {lit:?} and the specification's span is {wanted:?}",
         );
     });
+}
+
+/// R1669 — the sweep reaches **both sides** of every clamp the painters carry.
+///
+/// ★ The debt this closes was found by a counterfactual that PASSED. R1668
+/// deleted the stream body's "a row that would leave the card is not painted"
+/// guard and every gate stayed green — not because the guard was wrong, but
+/// because **no swept state was ever small enough for it to fire**. A guard
+/// whose true branch nothing reaches is untested code that reads as covered,
+/// and adding the state that reaches it produced five real defects in the next
+/// ten minutes.
+///
+/// A test cannot ask whether a branch was taken. What it CAN ask is whether the
+/// OUTCOME that branch exists to produce was observed — a body painting fewer
+/// rows than the specification gives it — and whether the other outcome was
+/// observed too, so "always truncated" cannot pass as coverage either. That is
+/// what this asserts, over a population derived from `spec` rather than from a
+/// list of clamps somebody maintains beside them.
+///
+/// The residue, stated: a clamp whose outcome is not "fewer rows than
+/// specified" is not covered by this. The two in that class are named below and
+/// asked about directly.
+#[test]
+fn r1669_the_sweep_reaches_both_sides_of_every_clamp() {
+    /// What the sweep saw of one observable: its full form, and its clamped one.
+    #[derive(Default, Clone, Copy)]
+    struct Sides {
+        full: bool,
+        clamped: bool,
+    }
+
+    let mut seen: BTreeMap<String, Sides> = BTreeMap::new();
+    let mut note = |what: String, clamped: bool| {
+        let side = seen.entry(what).or_default();
+        if clamped {
+            side.clamped = true;
+        } else {
+            side.full = true;
+        }
+    };
+
+    sweep(|state, shot, _, _| {
+        for id in &shown_cards(state) {
+            let kind = super::kind_of(id);
+            if shot.rect(&format!("card.{id}")).is_none() {
+                continue;
+            }
+            let Some((family, rows)) = body_family(kind) else {
+                continue;
+            };
+            // The rows themselves.
+            let painted = shot.family(&format!("card.{id}.{family}.")).len();
+            note(format!("{kind}: rows"), painted < rows);
+            // And the CELLS of each painted row, which is a second clamp with
+            // the same shape: a column too narrow to say anything is dropped.
+            //
+            // ★ Only for a row that HAS a column to lose. A one-cell row cannot
+            // be clamped and remain a row -- dropping its only cell is the row
+            // going, which is the observable above. Derived rather than
+            // excluded by name: this gate found the filter card's chips that
+            // way and made the reason be stated instead of assumed.
+            for n in 0..painted {
+                let wanted = specified_row(kind, n).len();
+                if wanted < 2 {
+                    continue;
+                }
+                let cells = run_words(shot, &format!("card.{id}.{family}.{n}")).len();
+                note(format!("{kind}: cells"), cells < wanted);
+            }
+            // The two all-or-nothing clamps, asked about by name because their
+            // outcome is a presence rather than a count.
+            if kind == "decode" {
+                note(
+                    "decode: byte pane".to_owned(),
+                    shot.family(&format!("card.{id}.byte.")).is_empty(),
+                );
+            }
+            if kind == "filter" {
+                note(
+                    "filter: stat tiles".to_owned(),
+                    shot.family(&format!("card.{id}.stat.")).is_empty(),
+                );
+            }
+        }
+    });
+
+    // The population is what the sweep produced, and it must not be empty --
+    // a derivation that quietly yields nothing is the failure this whole
+    // module's populations are written to avoid (R1651.1).
+    assert!(
+        seen.len() >= 9,
+        "the sweep observed only {} clamp outcome(s): {:?}",
+        seen.len(),
+        seen.keys().collect::<Vec<_>>(),
+    );
+    let unreached: Vec<&String> = seen
+        .iter()
+        .filter(|(_, side)| !side.clamped)
+        .map(|(what, _)| what)
+        .collect();
+    assert!(
+        unreached.is_empty(),
+        "no swept state reaches the clamped side of {unreached:?} — the guard \
+         is there and nothing exercises it, so deleting it would change nothing \
+         and no gate would say so",
+    );
+    let never_full: Vec<&String> = seen
+        .iter()
+        .filter(|(_, side)| !side.full)
+        .map(|(what, _)| what)
+        .collect();
+    assert!(
+        never_full.is_empty(),
+        "the sweep never sees {never_full:?} unclamped, so 'always truncated' \
+         would pass every check above it",
+    );
 }
 
 // -- 2. Backward: nothing is on the screen that the specification does not own -

@@ -518,3 +518,37 @@ fn r1654_a_frame_is_derived_from_its_members_and_moves_them() {
         );
     });
 }
+
+/// R1669 — every reserved rail seat names a REQUIREMENT, and the open ones name
+/// nothing.
+///
+/// ★ Here because a counterfactual passed without it. The painted gate and the
+/// demo both read the booking out of `spec` and compare it to what the screen
+/// reports — so changing the specification's `"requirement 12"` to `"later"`
+/// changed both sides and neither noticed. A check that compares a thing to
+/// itself is not a check; this pins the SHAPE, which is the part the
+/// specification cannot move on its own.
+#[test]
+fn r1669_a_reserved_seat_names_a_requirement() {
+    let reserved: Vec<&str> = super::spec::RAIL
+        .iter()
+        .filter_map(|(_, booking)| *booking)
+        .collect();
+    assert_eq!(reserved.len(), 2, "the reference locks two seats");
+    for booking in reserved {
+        assert!(
+            booking.starts_with("requirement "),
+            "a seat is booked under {booking:?}, which names no requirement",
+        );
+        assert!(
+            booking["requirement ".len()..].parse::<u32>().is_ok(),
+            "{booking:?} names no requirement NUMBER, so nothing traces to it",
+        );
+    }
+    assert!(
+        super::spec::RAIL
+            .iter()
+            .any(|(name, booking)| *name == super::spec::RAIL_ACTIVE && booking.is_none()),
+        "the seat this screen IS cannot be a reserved one",
+    );
+}
