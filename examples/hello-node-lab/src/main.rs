@@ -53,7 +53,7 @@
 mod graph;
 mod spec;
 
-use std::cell::{Cell, RefCell};
+use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
@@ -165,24 +165,18 @@ fn window_size() -> (u32, u32) {
         // origin — which is why the inspector on the far right dies first and
         // the palette on the left goes on working.
         //
-        // ★★ The value comes from [`External::on_resize`], which is §5.15's own
-        // lifecycle arm and which R1656 wired for exactly this class — that
-        // round used it for the CURSOR's basis and left the LAYOUT reading a
-        // constant. Taking it from the framework's channel rather than caching
-        // what the paint happened to see is what makes this a fact with an
-        // owner instead of a second guess.
-        _ => ANNOUNCED_SIZE.with(Cell::get),
+        // ★★ R1684.4 — the FRAMEWORK's answer, not a cache of this screen's.
+        // `pinion_core::external::surface_size` is recorded by the same pass
+        // that announces `on_resize`, from the same rectangle the pointer
+        // fractions are fractions of. R1684.3 kept this in a thread-local here
+        // and that was a workaround: the next screen to hit-test its own
+        // surface would have written the same one.
+        //
+        // The design size is the fallback only for a surface that has never
+        // been painted, which is the one case the framework has nothing to say
+        // about.
+        _ => pinion_core::external::surface_size(VIEW_TAG).unwrap_or((WIN_W, WIN_H)),
     }
-}
-
-thread_local! {
-    /// The surface size the shell last announced through `External::on_resize`
-    /// — see [`window_size`].
-    ///
-    /// A `Cell` and not a `Signal`: it is what the shell said, not a value this
-    /// screen derives, and a reactive write from a lifecycle callback would
-    /// dirty the tree from outside a paint.
-    static ANNOUNCED_SIZE: Cell<(u32, u32)> = const { Cell::new((WIN_W, WIN_H)) };
 }
 
 /// The smallest window this screen lays out in.
@@ -7198,17 +7192,16 @@ impl External for LabOracle {
 
     /// R1656 §5.15 — the shell's resize notification, which is how this widget
     /// knows what a pointer fraction is a fraction OF.
-    /// ★★★ R1684.3 — the announcement feeds the LAYOUT as well as the cursor.
+    /// ★ R1656 — kept because this oracle turns a pointer FRACTION back into
+    /// pixels and needs the basis in hand.
     ///
-    /// R1656 wired this arm so a pointer FRACTION could be turned back into
-    /// pixels, and stopped there: every rectangle on this screen is derived
-    /// from [`window_size`], which could only answer from inside an owner
-    /// scope — and no pointer handler or wire action has one. So the paint
-    /// reflowed on a resize and the hit test went on using the design size.
-    /// One announcement, both readers.
+    /// ★★ R1684.4 — it no longer records the size for the LAYOUT's sake: the
+    /// framework does that itself now
+    /// ([`pinion_core::external::surface_size`]), which is what [`window_size`]
+    /// reads. R1684.3 recorded it here, and that was a per-screen cache of a
+    /// fact every self-hit-testing screen needs.
     fn on_resize(&mut self, width: u32, height: u32) {
         self.surface = (width.max(1), height.max(1));
-        ANNOUNCED_SIZE.with(|seen| seen.set(self.surface));
     }
 
     fn introspect(&self) -> Option<&dyn ExternalIntrospect> {

@@ -27,6 +27,8 @@
 //! and to give tests/examples a baseline.
 
 use std::borrow::Cow;
+use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use serde_json::value::RawValue;
@@ -34,6 +36,72 @@ use serde_json::value::RawValue;
 use crate::Event;
 use crate::input::{GesturePhase, Modifiers, PointerKind, RawPointerButton};
 use crate::intent::Intent;
+
+thread_local! {
+    /// Tag -> the size the framework last announced for that surface.
+    static SURFACE_SIZES: RefCell<BTreeMap<String, (u32, u32)>> =
+        const { RefCell::new(BTreeMap::new()) };
+}
+
+/// ★★★ R1684.4 — **the size a surface was last laid out at, readable from
+/// anywhere.**
+///
+/// # Why this exists
+///
+/// A widget could only learn its own size two ways, and both have a scope
+/// attached. `use_viewport_size()` answers inside an [`Owner`] scope and
+/// nowhere else; `External::on_resize` is handed the number once and then it is
+/// the widget's problem to keep. The framework itself calls a widget's
+/// `pointer_press`, `pointer_move`, `invoke` and `query` **outside** any owner
+/// scope — so a screen that hit-tests its own surface has to remember the size
+/// by hand, in a cache of its own, in every such screen.
+///
+/// That is not hypothetical. `hello-node-lab` carries three hand-written caches
+/// of framework facts for exactly this reason (a scroll state, an edit buffer,
+/// and — until this function existed — its window size), and the third was
+/// found by a person maximising the window and reporting that the settings rows
+/// had stopped selecting: the paint reflowed, the hit test went on using the
+/// size the screen was designed at, and the error grew with distance from the
+/// origin. The mature retained-mode toolkits this project is judged against have
+/// no such split — a widget's own size is plain state there, answerable in every
+/// callback.
+///
+/// So it is plain state here too. `announce_external_sizes` records every
+/// surface it tells, on the same pass and from the same rectangle, so the size a
+/// widget reads and the size its pointer fractions are fractions OF are one
+/// derivation.
+///
+/// Answers `None` for a tag that has never been painted — which is the truthful
+/// answer, and the reason a caller with a design size to fall back on must say
+/// so itself rather than being handed a plausible number.
+///
+/// [`Owner`]: crate::reactive::Owner
+#[must_use]
+pub fn surface_size(tag: &str) -> Option<(u32, u32)> {
+    SURFACE_SIZES.with(|sizes| sizes.borrow().get(tag).copied())
+}
+
+/// Record what the framework just announced to a surface — called by the layer
+/// that calls [`External::on_resize`], never by a widget.
+///
+/// ★ Public because the announcer lives in `pinion-runtime`, one crate up. It
+/// is the framework's own bookkeeping: a widget calling this would be inventing
+/// a size rather than reading one.
+pub fn record_surface_size(tag: &str, width: u32, height: u32) {
+    SURFACE_SIZES.with(|sizes| {
+        sizes
+            .borrow_mut()
+            .insert(tag.to_owned(), (width.max(1), height.max(1)));
+    });
+}
+
+/// Forget a surface that is no longer painted, so a stale size cannot be read
+/// back for something that is not on screen.
+pub fn forget_surface_size(tag: &str) {
+    SURFACE_SIZES.with(|sizes| {
+        sizes.borrow_mut().remove(tag);
+    });
+}
 
 /// Render backends an `External` may declare support for (§5.15 item 1).
 #[non_exhaustive]
@@ -3046,6 +3114,14 @@ pub trait External: core::fmt::Debug {
     // --- 6. DPI / resize notification ---
 
     fn on_dpi_change(&mut self, _scale: f32) {}
+
+    /// The surface this widget was laid out at changed size.
+    ///
+    /// ★★★ R1684.4 — **the framework records this for you; see
+    /// [`surface_size`].** Implement it when the size has to be acted on
+    /// (recomputing a cached layout, telling a game loop); do NOT implement it
+    /// merely to remember the number, because remembering it by hand is what
+    /// this arm's history is made of.
     fn on_resize(&mut self, _width: u32, _height: u32) {}
 
     // --- 7. Async state change channel (pull form) ---

@@ -3069,9 +3069,7 @@ fn r1684_3_a_press_lands_where_the_paint_put_it_after_a_resize() {
         super::reset_lab_state();
         let state = use_lab_state();
         let shot = painted_at(&state, SIZES[1].1).0;
-        let mut oracle = super::LabOracle::new();
-        oracle.attach(std::rc::Rc::clone(&state));
-        pinion_core::external::External::on_resize(&mut oracle, SIZES[1].1.0, SIZES[1].1.1);
+        pinion_core::external::record_surface_size(super::VIEW_TAG, SIZES[1].1.0, SIZES[1].1.1);
         (state, shot)
     });
 

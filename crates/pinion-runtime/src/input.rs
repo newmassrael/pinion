@@ -5084,6 +5084,76 @@ mod tests {
         );
     }
 
+    /// ★★★ R1684.4 §5.15 — **the size is READABLE on every frame, not only on
+    /// the frame it changed**, and a surface that leaves the screen stops
+    /// answering.
+    ///
+    /// `on_resize` is an event and is deliberately suppressed when nothing
+    /// moved; `surface_size` is a QUESTION and must answer whenever the surface
+    /// is painted. Recording it behind the suppression would leave the first
+    /// steady frame after a resize correct and every later one silent, which is
+    /// the worse failure — it looks like it works.
+    ///
+    /// Written because its counterfactual PASSED: dropping the forget on an
+    /// unpainted surface was caught by nothing at all.
+    ///
+    /// ★ A third counterfactual — moving the record below the announcement's
+    /// debounce — also passed, and that one is NOT a gap: the store is a map
+    /// that persists across frames, so a debounced frame changes nothing and a
+    /// changed frame is never debounced. The two orderings are equivalent, the
+    /// comment that claimed otherwise was corrected rather than defended, and
+    /// no test is written for a difference that does not exist.
+    #[test]
+    fn r1684_4_the_announced_size_is_readable_on_every_frame() {
+        let (handle, _sizes) = SizedExternal::new();
+        let mut state = Scene::Container(ContainerNode::new(vec![external_at(
+            "canvas",
+            Rect::new(0, 0, 0, 0),
+            handle,
+        )]));
+        let paint = painted_as("canvas", Rect::new(0, 0, 1440, 900));
+        let mut known = std::collections::HashMap::new();
+        pinion_core::external::forget_surface_size("canvas");
+
+        assert_eq!(
+            pinion_core::external::surface_size("canvas"),
+            None,
+            "a surface nobody has painted has no size to report"
+        );
+
+        announce_external_sizes(&paint, &mut state, &mut known);
+        assert_eq!(
+            pinion_core::external::surface_size("canvas"),
+            Some((1440, 900))
+        );
+
+        // A STILL window announces nothing — and the question still answers.
+        assert_eq!(announce_external_sizes(&paint, &mut state, &mut known), 0);
+        assert_eq!(
+            pinion_core::external::surface_size("canvas"),
+            Some((1440, 900)),
+            "★ the suppression is on the announcement, not on the answer"
+        );
+
+        let grown = painted_as("canvas", Rect::new(0, 0, 2494, 1531));
+        announce_external_sizes(&grown, &mut state, &mut known);
+        assert_eq!(announce_external_sizes(&grown, &mut state, &mut known), 0);
+        assert_eq!(
+            pinion_core::external::surface_size("canvas"),
+            Some((2494, 1531)),
+            "★ and it is the size the surface is at now"
+        );
+
+        // Painted no more — a torn-off pane, a hidden one.
+        let gone = painted_as("elsewhere", Rect::new(0, 0, 100, 100));
+        announce_external_sizes(&gone, &mut state, &mut known);
+        assert_eq!(
+            pinion_core::external::surface_size("canvas"),
+            None,
+            "★ a surface that is not on screen does not answer a stale size"
+        );
+    }
+
     /// ★ The size announced is the WIDGET's rect, not the window's — because
     /// that is the rect `pointer_move` normalises over. A viewport inset by a
     /// toolbar would otherwise be handed a basis it never had.
@@ -13061,11 +13131,27 @@ pub fn announce_external_sizes(
             // Not painted this frame (a torn-off surface, a hidden pane). Drop
             // the memory so its size is announced again when it returns.
             known.remove(&tag);
+            pinion_core::external::forget_surface_size(&tag);
             continue;
         };
         if rect.w == 0 || rect.h == 0 {
             continue; // a degenerate layout is not a size worth acting on
         }
+        // ★★ R1684.4 — the size is recorded for readers as well as announced to
+        // the widget: `on_resize` is an EVENT and is debounced by `known`,
+        // while `surface_size` is a QUESTION that must answer on every frame
+        // the surface is painted.
+        //
+        // ★ Placed above the debounce rather than below it, and the honest
+        // reason is not the one first written here. A counterfactual that moved
+        // it below PASSED, which is the measurement: the store is a map that
+        // persists across frames, so a debounced frame changes nothing either
+        // way, and a frame that DOES change is never debounced. The two
+        // orderings are equivalent today. It sits here because this is the
+        // point at which the rectangle is known to be real — after the
+        // degenerate-layout guard and before any early return — so the record
+        // cannot come to depend on what the announcement decides.
+        pinion_core::external::record_surface_size(&tag, rect.w, rect.h);
         if known.get(&tag) == Some(&(rect.w, rect.h)) {
             continue;
         }
