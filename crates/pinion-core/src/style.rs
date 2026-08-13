@@ -4643,6 +4643,70 @@ mod tests {
         }
     }
 
+    /// ★★ R1679 — the two demos that restate this census by hand are told, HERE,
+    /// when it moves.
+    ///
+    /// Those restatements are deliberate and must stay hand-written: their job
+    /// is to fail when the projection and the type drift together, and a list
+    /// derived from the wire would agree with the wire by construction. What
+    /// was missing is that nothing told an author who adds an arm that two
+    /// files elsewhere have to move with it — R1674 added `Chrome`, the wire
+    /// followed automatically because the projection iterates [`BoxFacet::ALL`],
+    /// and both demos went red on CI a round later.
+    ///
+    /// So this asserts the restatements AGREE, at the place the arm is added,
+    /// and names the files in its failure. The independence is untouched: each
+    /// demo still checks the running application's wire against its own literal
+    /// list. Only the moment of discovery moves — from a CI run to the commit
+    /// that caused it.
+    #[test]
+    fn r1679_the_demo_restatements_of_this_census_are_told_when_it_moves() {
+        // Relative to this crate's manifest, which is where a workspace test's
+        // working directory is not.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(std::path::Path::parent)
+            .expect("crates/<name> sits two below the workspace root");
+        let mut census: Vec<&str> = BoxFacet::ALL.iter().map(|f| f.name()).collect();
+        census.sort_unstable();
+
+        // (file, the name each one binds its restatement to)
+        let mirrors = [
+            ("tools/demos/r1514_wire_carries_every_facet.py", "CENSUS"),
+            (
+                "tools/demos/r1516_wire_names_every_node_kind.py",
+                "BOX_FACETS",
+            ),
+        ];
+        for (path, binding) in mirrors {
+            let full = root.join(path);
+            let source = std::fs::read_to_string(&full)
+                .unwrap_or_else(|why| panic!("{path} is readable from this test: {why}"));
+            let opened = source
+                .find(&format!("{binding} = ["))
+                .unwrap_or_else(|| panic!("{path} binds `{binding}` to a list"));
+            let start = source[opened..].find('[').expect("the bracket just found") + opened;
+            let end = start
+                + source[start..]
+                    .find(']')
+                    .unwrap_or_else(|| panic!("{path}'s `{binding}` list is closed"));
+            let mut restated: Vec<&str> = source[start + 1..end]
+                .split(',')
+                .map(|word| word.trim().trim_matches('"'))
+                .filter(|word| !word.is_empty())
+                .collect();
+            restated.sort_unstable();
+            assert_eq!(
+                restated, census,
+                "★ `{binding}` in {path} restates this census and no longer \
+                 matches it. That list is hand-written ON PURPOSE — it is what \
+                 fails when the wire and the type drift together — so the \
+                 repair is to edit it, not to derive it. Adding a `BoxFacet` \
+                 arm means editing both files in this table.",
+            );
+        }
+    }
+
     /// A default style declares nothing: `is_declared` measures divergence
     /// from the default, so this is the zero the other assertions read
     /// against.

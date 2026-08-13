@@ -124,6 +124,52 @@ const STATES: &[SweptState] = &[
     ("running", |state| {
         state.running.set(true);
     }),
+    // ★★ R1679 — a card the PALETTE added, then moved. The state the layout
+    // predicate was blind to: its population was the specification's node list,
+    // so a card that is not in the specification could be dragged anywhere and
+    // the screen reported its layout unchanged (measured: [502,476] to
+    // [562,512], `changed.layout` false). Every earlier swept state adds a card
+    // or drags one, and none did both — which is why nothing saw it.
+    ("with a card the palette added, then dragged", |state| {
+        // The view first, through the screen's own operation: the states
+        // are cumulative and two before this one move the view, so without
+        // it the card is off the viewport and there is nothing to press.
+        // "A person pressed home, then moved a card they had added" is a
+        // session; a state reached by assignment is not.
+        super::ResetScope::View.apply(state);
+        // ★ SELF-CONTAINED, and that is not a detail: these states have two
+        // consumers with opposite assumptions. The painted sweeps apply
+        // them cumulatively — state n is state n-1 plus one edit — while
+        // R1677's operation gate and R1679's affordance gate reset the
+        // screen before each one, because their rows have to be
+        // independent. A state that leaned on an earlier one for the card
+        // it drags passed the first three and panicked in the fourth.
+        let added_card = |state: &std::rc::Rc<LabState>| {
+            state.cards().into_iter().find(|n| {
+                let name = state.name_of(*n);
+                !spec::NODES.iter().any(|want| want.id == name)
+            })
+        };
+        if added_card(state).is_none() {
+            super::add_node(state, Role::Publisher);
+        }
+        let node = added_card(state).expect("a card was added, so one is here");
+        // ★ The aim comes from the PAINTED tag. `card_rect` answers in the
+        // world surface's coordinates and `move_cursor` takes the window's;
+        // the first draft passed one to the other, the drag silently went
+        // nowhere, and the counterfactual for the very defect this state
+        // exists for PASSED.
+        let shot = painted(state);
+        let seat = *shot
+            .tags
+            .get(&format!("lab.node.{}", state.name_of(node)))
+            .expect("the added card is painted with the view back home");
+        let (px, py) = centre(seat);
+        super::move_cursor(state, px, py);
+        super::press(state);
+        super::move_cursor(state, px + 60, py + 36);
+        super::release(state);
+    }),
 ];
 
 /// The window sizes the screen is swept at.
@@ -1961,3 +2007,103 @@ fn r1677_every_declared_way_of_causing_an_operation_causes_it() {
 /// — so a prose judgement had been carrying them as half-present. The gate
 /// disagreeing with the reading that motivated it is the gate doing its job.
 const ABSENT_OPERATIONS: usize = 13;
+
+/// ★★★ R1679 — **the affordance is painted exactly when pressing it would do
+/// something**, judged by DOING it rather than by asking the predicate.
+///
+/// This closes the hole R1678's own counterfactual found. `changed_scopes`
+/// decides which reset buttons are painted, and `declared_tags` reads the same
+/// function to decide which the specification demands — so a version of it that
+/// always answered yes moved the paint and the specification together and all
+/// thirty-six checks here passed. Only the demo caught it, from outside, and a
+/// demo is CI-only.
+///
+/// The repair is not a second copy of the predicate. It is to stop consulting
+/// the predicate at all: in each swept state, for each gated scope, take the
+/// witness, apply the reset, take it again — and assert the button was painted
+/// **iff** the value moved. A `changed_scopes` that lies in either direction
+/// fails here, and nothing in this test knows what it answers.
+///
+/// Both directions are real defects. A button painted over a scope with nothing
+/// to put back does nothing when pressed, which is a control that lies; a scope
+/// with something to put back and no button strands the change behind a wire
+/// call no person can make.
+#[test]
+fn r1679_a_reset_affordance_is_painted_exactly_when_it_would_do_something() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let gated: Vec<super::ResetScope> = super::ResetScope::ALL
+            .into_iter()
+            .filter(|scope| scope.gated())
+            .collect();
+        assert!(
+            !gated.is_empty(),
+            "no scope is conditional, so this test asserts nothing"
+        );
+        let mut checked = 0;
+        let mut wrong = Vec::new();
+
+        for (when, mutate) in STATES {
+            for scope in &gated {
+                // Each scope is judged on its OWN screen: applying one reset
+                // changes what the next has to put back, and a state where the
+                // earlier resets already ran is not the state being described.
+                super::reset_lab_state();
+                let state = use_lab_state();
+                mutate(&state);
+                let shot = painted(&state);
+                let tag = format!("lab.reset.{}", scope.wire());
+                let is_painted = shot.tags.contains_key(&tag);
+
+                let reads = scope_witness(*scope);
+                let before = witness(&state, reads);
+                scope.apply(&state);
+                let moved = witness(&state, reads) != before;
+                checked += 1;
+
+                if is_painted != moved {
+                    wrong.push(format!(
+                        "{when}: `{}` is {} and pressing it would {}",
+                        scope.wire(),
+                        if is_painted { "painted" } else { "absent" },
+                        if moved {
+                            "change the screen"
+                        } else {
+                            "do nothing"
+                        },
+                    ));
+                }
+            }
+        }
+
+        assert_eq!(
+            checked,
+            STATES.len() * gated.len(),
+            "every scope is judged in every swept state"
+        );
+        assert!(
+            wrong.is_empty(),
+            "{} of {checked} reset affordance(s) disagree with what pressing \
+             them would do:\n  {}",
+            wrong.len(),
+            wrong.join("\n  ")
+        );
+    });
+}
+
+/// The slot that moves when a scope is put back — read off the operation table
+/// rather than restated here, so a scope whose witness changes moves this too.
+fn scope_witness(scope: super::ResetScope) -> &'static str {
+    let name = match scope {
+        super::ResetScope::Nodes => "reset the node set",
+        super::ResetScope::Layout => "reset the layout",
+        super::ResetScope::Fields => "reset the fields",
+        super::ResetScope::Links => "reset the links",
+        super::ResetScope::View => "reset the view",
+    };
+    spec::OPERATIONS
+        .iter()
+        .find(|op| op.name == name)
+        .unwrap_or_else(|| panic!("the operation table holds {name:?}"))
+        .witness
+}

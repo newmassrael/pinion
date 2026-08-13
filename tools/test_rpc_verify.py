@@ -906,6 +906,102 @@ def test_a_boot_that_raises_still_reaps_the_child() -> None:
             check(len(reaped) <= 1, "a boot that succeeds is not reaped twice")
 
 
+def test_no_demo_aims_a_press_with_the_placement_reader() -> None:
+    """★★★ R1679 — a press point never comes from `unclipped_rects_of`.
+
+    R1676 gave the harness two readers because there are two questions: where a
+    pointer can REACH a mark (`abs_rects_of`, clipped, the authority a press is
+    routed by) and where the view PUT it (`unclipped_rects_of`, which reports a
+    rectangle that may be entirely off screen). Which one a caller wants is a
+    property of the assertion being made, and nothing said so — the debt this
+    closes.
+
+    Aiming a press with the placement reader re-creates the exact defect R1676
+    paid off: a cell reported at `x=-31 w=100` inside a viewport starting at
+    `x=21`, its centre two pixels left of anything, the press silently dropped
+    and the RELEASE landing on a different cell. That failure surfaces sixty
+    lines later as a value that did not change, naming neither the press nor the
+    geometry, which is why it has to be refused at the source instead.
+
+    Measured when this was written: 25 demos read the placement reader and NONE
+    of them aims a press with it. The gate holds that at zero rather than
+    discovering it again.
+
+    # What it can and cannot see
+
+    Taint over assignments, by AST rather than by text — a name bound from the
+    placement reader is tainted, and so is any name bound from an expression
+    mentioning a tainted one, which covers the `x, y, w, h = rects[tag]` unpack
+    every demo writes. Repeated to a fixed point so definition order does not
+    matter.
+
+    It does NOT follow a rect through a function parameter or a container, and
+    it does not know which reader a helper used internally. Those would need
+    real dataflow; what is caught is the shape every demo actually writes, and
+    the limit is stated here rather than left for a reader to discover by
+    getting away with it.
+    """
+    import ast
+
+    placement = "unclipped_rects_of"
+    # The keywords that ARE a point: everything the harness presses, hovers or
+    # drags with. Read off the harness's own signatures rather than guessed.
+    point_kwargs = {"at", "from_at", "to_at"}
+    demos = sorted((Path(__file__).resolve().parent / "demos").glob("*.py"))
+    check(len(demos) > 100, f"the demo scan found {len(demos)} file(s)")
+
+    readers, offenders = 0, []
+    for path in demos:
+        source = path.read_text(encoding="utf-8")
+        if placement not in source:
+            continue
+        readers += 1
+        tree = ast.parse(source)
+
+        tainted: set[str] = set()
+        for _ in range(4):  # to a fixed point; four is far past any demo's depth
+            for node in ast.walk(tree):
+                if not isinstance(node, (ast.Assign, ast.AnnAssign)):
+                    continue
+                value = node.value
+                if value is None:
+                    continue
+                names = {n.id for n in ast.walk(value) if isinstance(n, ast.Name)}
+                calls = {
+                    c.func.id
+                    for c in ast.walk(value)
+                    if isinstance(c, ast.Call) and isinstance(c.func, ast.Name)
+                }
+                if placement not in calls and not (names & tainted):
+                    continue
+                targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+                for target in targets:
+                    for bound in ast.walk(target):
+                        if isinstance(bound, ast.Name):
+                            tainted.add(bound.id)
+
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.Call):
+                continue
+            for kw in node.keywords:
+                if kw.arg not in point_kwargs:
+                    continue
+                reached = {n.id for n in ast.walk(kw.value) if isinstance(n, ast.Name)}
+                if reached & tainted:
+                    offenders.append(
+                        f"{path.name}:{node.lineno} aims `{kw.arg}=` with "
+                        f"{sorted(reached & tainted)}"
+                    )
+
+    check(readers > 0, f"{readers} demo(s) read the placement reader, so this is not vacuous")
+    check(
+        not offenders,
+        "a press point is derived from the PLACEMENT reader, which reports "
+        "rectangles no pointer can reach — use `abs_rects_of`, whose answer is "
+        "the one the router resolves a press by: " + "; ".join(offenders),
+    )
+
+
 def main() -> int:
     # R1580 — the population is DERIVED from this module, not listed.
     #

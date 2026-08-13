@@ -353,6 +353,21 @@ struct LabState {
     ids: RefCell<BTreeMap<String, NodeId>>,
     forms: Tracked<BTreeMap<NodeId, ConfigForm>>,
     frames: RefCell<BTreeMap<NodeId, String>>,
+    /// ★★ R1679 — where each card came into being: its canvas position and the
+    /// host it started on.
+    ///
+    /// A record rather than a derivation, and the reason is the one case a
+    /// derivation cannot cover. The opening cards' placement IS in
+    /// [`spec::NODES`] and R1678 compared against it directly — but a card the
+    /// palette adds is not in the specification at all, so it had no baseline,
+    /// and the layout predicate answered "unchanged" for a card a person had
+    /// visibly dragged across the canvas.
+    ///
+    /// Written once at creation, from the specification for the opening cards
+    /// and from the placement arithmetic for an added one, so the two kinds of
+    /// card answer the same question the same way and the scope has ONE
+    /// population instead of a rule with an exception in it.
+    opened_at: RefCell<BTreeMap<NodeId, Placement>>,
     selected: Signal<Option<NodeId>>,
     selected_link: Signal<Option<LinkId>>,
     zoom: Signal<u32>,
@@ -479,11 +494,29 @@ impl LabState {
         let selected_link = seed_links(&mut doc, &ids);
 
         let selected = ids.get(spec::SELECTED_NODE).copied();
+        // R1679 — the opening placement of every card the specification
+        // describes, recorded from the specification itself so the record and
+        // the graph cannot have been built from different numbers.
+        let opened_at: BTreeMap<NodeId, Placement> = spec::NODES
+            .iter()
+            .filter_map(|want| {
+                let id = *ids.get(want.id)?;
+                let (x, y, _) = want.rect;
+                Some((
+                    id,
+                    Placement {
+                        at: (i32::try_from(x).unwrap_or(0), i32::try_from(y).unwrap_or(0)),
+                        host: Some(want.frame.to_owned()),
+                    },
+                ))
+            })
+            .collect();
         Self {
             doc: Tracked::new(doc),
             ids: RefCell::new(ids),
             forms: Tracked::new(forms),
             frames: RefCell::new(frames),
+            opened_at: RefCell::new(opened_at),
             selected: Signal::new(selected),
             selected_link: Signal::new(selected_link),
             zoom: Signal::new(spec::OPENING_ZOOM),
@@ -778,22 +811,14 @@ impl ResetScope {
                         .zip(spec::NODES)
                         .any(|(name, want)| name != want.id)
             }
-            Self::Layout => spec::NODES.iter().any(|want| {
-                let Some(node) = state.node_of(want.id) else {
-                    return false;
-                };
-                let doc = state.doc.borrow();
-                let Some(slot) = doc.tree(ROOT).and_then(|t| t.node(node)) else {
-                    return false;
-                };
-                let (x, y, _) = want.rect;
-                let frame = slot
-                    .parent
-                    .and_then(|f| state.frames.borrow().get(&f).cloned());
-                slot.x != i32::try_from(x).unwrap_or(0)
-                    || slot.y != i32::try_from(y).unwrap_or(0)
-                    || frame.as_deref() != Some(want.frame)
-            }),
+            // ★ R1679 — over EVERY card, against where each came into being.
+            // The population was `spec::NODES`, which cannot see a card the
+            // palette added: measured, dragging one moved it 60 by 36 and this
+            // answered false.
+            Self::Layout => state
+                .cards()
+                .into_iter()
+                .any(|node| placed_as_opened(state, node) == Some(false)),
             // The form answers for itself — values and shape both. See
             // `ConfigForm::edited`, which is where that question belongs.
             Self::Fields => state.forms.borrow().values().any(ConfigForm::edited),
@@ -846,26 +871,7 @@ impl ResetScope {
                     state.selected.set(state.node_of(spec::SELECTED_NODE));
                 }
             }
-            Self::Layout => {
-                for want in spec::NODES {
-                    let Some(node) = state.node_of(want.id) else {
-                        continue;
-                    };
-                    let frame = state
-                        .frames
-                        .borrow()
-                        .iter()
-                        .find(|(_, name)| name.as_str() == want.frame)
-                        .map(|(id, _)| *id);
-                    let mut doc = state.doc.borrow_mut();
-                    if let Some(slot) = doc.tree_mut(ROOT).and_then(|t| t.node_mut(node)) {
-                        let (x, y, _) = want.rect;
-                        slot.x = i32::try_from(x).unwrap_or(0);
-                        slot.y = i32::try_from(y).unwrap_or(0);
-                    }
-                    doc.set_parent(ROOT, node, frame).ok();
-                }
-            }
+            Self::Layout => put_cards_back(state),
             Self::Fields => {
                 let nodes: Vec<NodeId> = state.forms.borrow().keys().copied().collect();
                 for form in state.forms.borrow_mut().values_mut() {
@@ -878,20 +884,76 @@ impl ResetScope {
                     sync_node(state, node);
                 }
             }
+            // ★★ R1679 — a DIFF, not a rebuild, and the gate is what forced it.
+            //
+            // The first version cleared every link and re-authored the whole
+            // set from the specification. Correct in what it left behind and
+            // wrong in what it published: the model assigns a fresh identifier
+            // to each new link, so putting an UNTOUCHED graph back renumbered
+            // all seven of them. `r1679_a_reset_affordance_is_painted_exactly_
+            // when_it_would_do_something` caught it in all eight swept states —
+            // the affordance was correctly absent and pressing it would still
+            // have changed the screen.
+            //
+            // The reference's reset is idempotent because it drops an overlay
+            // that is already empty. This one has to earn that: it removes only
+            // the links the specification does not have and adds only the ones
+            // it is missing, so a link nobody touched keeps its identity and a
+            // reset over an unchanged graph does nothing at all.
+            //
+            // ★ Deliberately does NOT consult `changed`. An `apply` that
+            // early-returned on "nothing differs" would make the gate above
+            // compare the predicate with itself, which is the tautology this
+            // whole round exists to remove.
             Self::Links => {
+                let mut want: Vec<(String, String)> = spec::LINKS
+                    .iter()
+                    .map(|(a, b)| ((*a).to_owned(), (*b).to_owned()))
+                    .collect();
+                let mut drop_these: Vec<LinkId> = Vec::new();
+                {
+                    let doc = state.doc.borrow();
+                    if let Some(tree) = doc.tree(ROOT) {
+                        for link in tree.links() {
+                            let pair = (state.name_of(link.from.node), state.name_of(link.to.node));
+                            // One `want` entry per live link, so a duplicated
+                            // pair keeps exactly as many as the specification
+                            // declares and no more.
+                            match want.iter().position(|p| *p == pair) {
+                                Some(at) => {
+                                    want.remove(at);
+                                }
+                                None => drop_these.push(link.id),
+                            }
+                        }
+                    }
+                }
                 {
                     let mut doc = state.doc.borrow_mut();
-                    let live: Vec<LinkId> = doc
-                        .tree(ROOT)
-                        .map(|t| t.links().iter().map(|l| l.id).collect())
-                        .unwrap_or_default();
-                    for link in live {
+                    for link in drop_these {
                         doc.disconnect(ROOT, link).ok();
                     }
                 }
-                let ids = state.ids.borrow().clone();
-                let selected = seed_links(&mut state.doc.borrow_mut(), &ids);
-                state.selected_link.set(selected);
+                for (from, to) in want {
+                    let (Some(a), Some(b)) = (state.node_of(&from), state.node_of(&to)) else {
+                        continue;
+                    };
+                    connect(state, a, b).ok();
+                }
+                if let Some(id) = state
+                    .node_of(spec::SELECTED_LINK.0)
+                    .zip(state.node_of(spec::SELECTED_LINK.1))
+                    .and_then(|(a, b)| {
+                        let doc = state.doc.borrow();
+                        let tree = doc.tree(ROOT)?;
+                        tree.links()
+                            .iter()
+                            .find(|l| l.from.node == a && l.to.node == b)
+                            .map(|l| l.id)
+                    })
+                {
+                    state.selected_link.set(Some(id));
+                }
             }
             Self::View => {
                 state.zoom.set(spec::OPENING_ZOOM);
@@ -899,6 +961,65 @@ impl ResetScope {
             }
         }
     }
+}
+
+/// Put every card back where it came into being, on the host it started on.
+///
+/// One function because the two halves are one operation — see [`Placement`].
+fn put_cards_back(state: &Rc<LabState>) {
+    for node in state.cards() {
+        let Some(opened) = state.opened_at.borrow().get(&node).cloned() else {
+            continue;
+        };
+        let frame = opened.host.and_then(|want| {
+            state
+                .frames
+                .borrow()
+                .iter()
+                .find(|(_, name)| **name == want)
+                .map(|(id, _)| *id)
+        });
+        let mut doc = state.doc.borrow_mut();
+        if let Some(slot) = doc.tree_mut(ROOT).and_then(|t| t.node_mut(node)) {
+            slot.x = opened.at.0;
+            slot.y = opened.at.1;
+        }
+        doc.set_parent(ROOT, node, frame).ok();
+    }
+}
+
+/// Where a card came into being: its canvas position, and the host it started
+/// on — `None` for a card the palette added, which belongs to no host until it
+/// is dropped on one.
+///
+/// A named pair rather than a tuple because both halves are put back TOGETHER
+/// by one operation (the reference's layout reset clears position and host in
+/// one call and says so in its own message), and a caller holding two loose
+/// values can restore one of them.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct Placement {
+    at: (i32, i32),
+    host: Option<String>,
+}
+
+/// Whether this card sits where it came into being, on the host it started on.
+///
+/// `None` when nothing recorded its opening placement — which cannot happen for
+/// a card this screen created, and is answered as "no opinion" rather than as
+/// "unchanged" so a gap in the record can never read as a clean screen.
+fn placed_as_opened(state: &LabState, node: NodeId) -> Option<bool> {
+    let opened = state.opened_at.borrow().get(&node).cloned()?;
+    let doc = state.doc.borrow();
+    let slot = doc.tree(ROOT).and_then(|t| t.node(node))?;
+    let host = slot
+        .parent
+        .and_then(|f| state.frames.borrow().get(&f).cloned());
+    Some(
+        Placement {
+            at: (slot.x, slot.y),
+            host,
+        } == opened,
+    )
 }
 
 /// The scopes with something to put back, in census order — the panel's
@@ -4396,6 +4517,18 @@ fn add_node(state: &Rc<LabState>, role: Role) {
     }
     state.ids.borrow_mut().insert(name.clone(), id);
     state.forms.borrow_mut().insert(id, form_for(&name, role));
+    // ★ R1679 — where this card came into being, which is the only thing a
+    // layout reset can put it back to. A card the specification does not
+    // describe has no other source, and without this the layout predicate was
+    // blind to it: measured, dragging an added card moved it from [502,476] to
+    // [562,512] while `changed.layout` stayed false.
+    state.opened_at.borrow_mut().insert(
+        id,
+        Placement {
+            at: (cx, cy),
+            host: None,
+        },
+    );
     state.selected.set(Some(id));
     state.say(format!("added {name}"));
 }
