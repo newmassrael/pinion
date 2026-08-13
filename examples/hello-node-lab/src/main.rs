@@ -378,6 +378,23 @@ thread_local! {
     static STATE: RefCell<Option<Rc<LabState>>> = const { RefCell::new(None) };
 }
 
+/// Put the screen back to the state it opens in.
+///
+/// ★ R1677 — the operation gate needs it, and needs it for a reason worth
+/// stating: it asks of each operation "does causing it change something", which
+/// is only a fair question from a screen that has not already been changed by
+/// the operation before. The swept states next door are deliberately
+/// cumulative — a session with the tool is one edit on top of another — and
+/// that is the wrong shape for a gate whose rows have to be independent.
+///
+/// Test-only because production has exactly one screen and never wants a
+/// second: a reset reachable from the running application would be an
+/// operation nobody declared.
+#[cfg(test)]
+fn reset_lab_state() {
+    STATE.with(|slot| *slot.borrow_mut() = None);
+}
+
 /// The scroll state a pane body tag names, or `None` for a tag that is not a
 /// pane body.
 ///
@@ -2923,6 +2940,12 @@ const FIELDS: &[SchemaField] = &{
         SchemaField::new("document", "string"),
         SchemaField::new("nodes", "string"),
         SchemaField::new("links", "string"),
+        // ★ R1677 — declared, because since R1637 the declaration is a
+        // PRECONDITION of dispatch and not a description of it: an arm added to
+        // `query` without a line here answers `UnknownIntrospectPath`, which is
+        // what these two did on their first drive.
+        SchemaField::new("layout", "string"),
+        SchemaField::new("frames", "string"),
         SchemaField::new("roles", "string"),
         SchemaField::new("toast", "string"),
         SchemaField::action("select", "string"),
@@ -3090,6 +3113,61 @@ impl ExternalIntrospect for LabOracle {
                     .to_string(),
                 )
             }
+            // ★★ R1677 — WHERE the cards are, which nothing published until the
+            // operation gate asked for it. Three of the reference's operations
+            // move a node or a frame, and an agent driving any of them could
+            // not observe its own result: the canvas positions existed only
+            // inside the document and reached the wire nowhere. A gesture whose
+            // effect cannot be read is one no test can distinguish from a
+            // gesture that did nothing, which is exactly how "the frame drags
+            // but does not select" survived.
+            //
+            // Canvas coordinates, not window ones: this is where a node sits in
+            // the GRAPH, which is what a caller placing or comparing nodes
+            // means. `scene/tag_rects` answers the window question for the same
+            // cards, and the two are deliberately different reads.
+            "layout" => text(
+                serde_json::Value::Object(
+                    state
+                        .cards()
+                        .into_iter()
+                        .filter_map(|node| {
+                            let doc = state.doc.borrow();
+                            let slot = doc.tree(ROOT)?.node(node)?;
+                            Some((
+                                state.name_of(node),
+                                serde_json::json!([slot.x, slot.y]),
+                            ))
+                        })
+                        .collect(),
+                )
+                .to_string(),
+            ),
+            // ★ R1677 — which host each card starts on. The membership a drop
+            // changes, and the other half of the same silence: `apply_frame`
+            // re-parents a node and the only witness was a toast sentence.
+            "frames" => text(
+                serde_json::Value::Object(
+                    state
+                        .cards()
+                        .into_iter()
+                        .map(|node| {
+                            let frame = state
+                                .doc
+                                .borrow()
+                                .tree(ROOT)
+                                .and_then(|t| t.node(node))
+                                .and_then(|slot| slot.parent)
+                                .and_then(|f| state.frames.borrow().get(&f).cloned());
+                            (
+                                state.name_of(node),
+                                frame.map_or(serde_json::Value::Null, serde_json::Value::String),
+                            )
+                        })
+                        .collect(),
+                )
+                .to_string(),
+            ),
             "roles" => text(
                 Role::ALL
                     .into_iter()
@@ -3363,6 +3441,18 @@ fn spec_json() -> serde_json::Value {
         })).collect::<Vec<_>>(),
         "addable": spec::ADDABLE,
         "gestures": spec::GESTURES.iter().map(|(g, w)| serde_json::json!([g, w])).collect::<Vec<_>>(),
+        // ★★ R1677 — what the screen can be asked to DO, beside what it has.
+        // Published for the same reason every other row here is: a demo that
+        // carried its own copy of this list would be checking the list against
+        // itself. `absent` is derived rather than stored, so an operation
+        // cannot be declared missing and reachable at once.
+        "operations": spec::OPERATIONS.iter().map(|op| serde_json::json!({
+            "name": op.name,
+            "verb": op.verb.map(|(verb, arg)| serde_json::json!([verb, arg])),
+            "gesture": op.gesture,
+            "witness": op.witness,
+            "absent": op.verb.is_none() && !op.gesture,
+        })).collect::<Vec<_>>(),
         "graph": spec::GRAPH_NAME,
         "zoom": spec::OPENING_ZOOM,
     })

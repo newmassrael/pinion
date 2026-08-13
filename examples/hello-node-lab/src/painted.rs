@@ -58,6 +58,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use pinion_core::external::{ExternalIntrospect, IntrospectValue};
 use pinion_core::reactive::Owner;
 use pinion_core::scene::Rect;
 use pinion_core::{Frame, Scene};
@@ -1607,3 +1608,284 @@ fn r1662_a_control_one_scroll_away_is_pressable_after_that_scroll() {
         );
     });
 }
+
+// ─────────────────────────────────────────────────────────────────
+// R1677 — the operations, which a census of the painted screen cannot see
+// ─────────────────────────────────────────────────────────────────
+
+/// The gesture that causes one operation, joined to [`spec::OPERATIONS`] by the
+/// specification's own word for it.
+///
+/// A function rather than a value because a gesture *is* a sequence — put the
+/// cursor here, press, travel there, release — and none of that is something
+/// the specification table can hold. What the table holds is *whether* one
+/// exists; what lives here is the one that does. The gate asserts the two agree
+/// in both directions, so a declared gesture with no driver and a driver for an
+/// undeclared one are both failures.
+///
+/// ★ Every driver aims at a rectangle READ OUT OF THE PAINTED SCENE and goes
+/// through this screen's own pointer entry points. Two rules, and each has a
+/// round behind it: R1653 found three consecutive rounds of defects that every
+/// test missed because the tests asked the geometry *helper* where a control
+/// was and the helper was right each time, so the aim comes from the paint; and
+/// the `panned` swept state records why the press is a press — a state a test
+/// reaches by assignment can be one no mouse can produce, and an operation
+/// "caused" that way proves nothing about whether a person can cause it.
+type OperationDriver = (&'static str, fn(&std::rc::Rc<LabState>, &Painted));
+
+const OPERATION_GESTURES: &[OperationDriver] = &[
+    ("add a node", |state, shot| {
+        press_tag(state, shot, "lab.palette.role.Responder");
+    }),
+    ("move a node", |state, shot| {
+        drag_tag(state, shot, "lab.node.P-03", (40, 24));
+    }),
+    ("re-parent a node between frames", |state, shot| {
+        // Onto the other host's frame, which is where a drop changes whose
+        // machine the node starts on.
+        drag_between(state, shot, "lab.node.P-03", "lab.frame.host-b");
+    }),
+    ("move a frame and its members", |state, shot| {
+        drag_tag(state, shot, "lab.frame.host-b.name", (30, 0));
+    }),
+    ("add a field from the catalogue", |state, shot| {
+        press_tag(state, shot, "lab.form.add.timestamping");
+    }),
+    ("edit a field", |state, shot| {
+        // Growing a list field by one element: an edit a person performs with
+        // the pointer alone. NOT the integer stepper, which the gate's first
+        // run showed is already at its field's ceiling on the opening screen —
+        // a driver that clamps causes nothing and would have read as a defect.
+        press_tag(state, shot, "lab.form.item.listen.endpoints.add");
+    }),
+    ("author a link", |state, shot| {
+        drag_between(state, shot, "lab.pin.S-01.dial", "lab.pin.P-02.accept");
+    }),
+    ("pan", |state, _| {
+        let canvas = canvas_rect();
+        let from = (canvas.x + canvas.w / 2, canvas.y + canvas.h / 2);
+        drag_from(state, from, (-30, 20));
+    }),
+    ("zoom", |state, shot| {
+        press_tag(state, shot, "lab.toolbar.zoom.in");
+    }),
+    ("toggle discovery", |state, shot| {
+        press_tag(state, shot, "lab.palette.discovery");
+    }),
+];
+
+/// Press and release at the centre of a painted tag.
+fn press_tag(state: &std::rc::Rc<LabState>, shot: &Painted, tag: &str) {
+    let rect = *shot
+        .tags
+        .get(tag)
+        .unwrap_or_else(|| panic!("{tag} is painted, so a person can aim at it"));
+    let at = centre(rect);
+    super::move_cursor(state, at.0, at.1);
+    super::press(state);
+    super::release(state);
+}
+
+/// Press at a painted tag's centre and travel by a delta before releasing.
+fn drag_tag(state: &std::rc::Rc<LabState>, shot: &Painted, tag: &str, by: (i32, i32)) {
+    let rect = *shot
+        .tags
+        .get(tag)
+        .unwrap_or_else(|| panic!("{tag} is painted, so a person can aim at it"));
+    drag_from(state, centre(rect), by);
+}
+
+/// Press at one painted tag's centre and release at another's.
+fn drag_between(state: &std::rc::Rc<LabState>, shot: &Painted, from: &str, to: &str) {
+    let a = centre(
+        *shot
+            .tags
+            .get(from)
+            .unwrap_or_else(|| panic!("{from} is painted")),
+    );
+    let b = centre(
+        *shot
+            .tags
+            .get(to)
+            .unwrap_or_else(|| panic!("{to} is painted")),
+    );
+    super::move_cursor(state, a.0, a.1);
+    super::press(state);
+    super::move_cursor(state, b.0, b.1);
+    super::release(state);
+}
+
+/// The whole gesture from a point, by a signed delta.
+fn drag_from(state: &std::rc::Rc<LabState>, from: (u32, u32), by: (i32, i32)) {
+    super::move_cursor(state, from.0, from.1);
+    super::press(state);
+    let to = (
+        u32::try_from(i64::from(from.0) + i64::from(by.0)).unwrap_or(0),
+        u32::try_from(i64::from(from.1) + i64::from(by.1)).unwrap_or(0),
+    );
+    super::move_cursor(state, to.0, to.1);
+    super::release(state);
+}
+
+/// Read one witness slot through the screen's OWN wire surface.
+///
+/// Not a second reader written here: the operation gate's whole claim is that
+/// driving an operation changes something an agent can observe, and "an agent"
+/// means this exact code path. A helper that reached into `LabState` instead
+/// would be asserting that the state moved, which is a weaker statement and the
+/// one R1653 caught three rounds of defects hiding behind.
+fn witness(state: &std::rc::Rc<LabState>, slot: &str) -> String {
+    let mut oracle = super::LabOracle::new();
+    oracle.attach(std::rc::Rc::clone(state));
+    match oracle.query(slot) {
+        Ok(value) => format!("{value:?}"),
+        // A refusal is a reading too — "no node is selected" is a state the
+        // witness legitimately passes through, and an operation that moves the
+        // screen out of it has changed the answer.
+        Err(refusal) => format!("refused: {refusal:?}"),
+    }
+}
+
+/// ★★★ R1677 — **every way this screen says an operation can be caused causes
+/// it**, and the ways it says are the reference's own list.
+///
+/// This is the check the rest of this module cannot perform. Everything above
+/// compares the painted scene with [`spec`], which can only ever find drift in
+/// something that is *drawn*. An operation the screen does not answer draws
+/// nothing, so a census of the paint is blind to it by construction — and the
+/// measurement is that sixteen of the reference's thirty operations were absent
+/// while every check here was green.
+///
+/// Three assertions, and each catches a different way this can go wrong:
+///
+/// 1. **The two tables agree.** Every operation declaring a gesture has a
+///    driver and every driver names a declared operation. A `gesture: true`
+///    with nothing behind it is the exact failure mode of the hint strip that
+///    advertised a wheel zoom no wheel produced.
+/// 2. **A declared way works.** For each operation, from a fresh screen, the
+///    witness before and after must DIFFER — separately for the verb and for
+///    the gesture, because the defects a person reports on this screen live
+///    precisely between those two columns. Every user report this screen has
+///    collected had the shape "the wire does it and the pointer does not".
+/// 3. **The absent set is exactly the declared one.** An operation the table
+///    says is missing that turns out to work fails just as loudly as one that
+///    is claimed and does not — a stale declaration is how a gate stops
+///    measuring without anybody noticing.
+///
+/// The count of absent operations is a RATCHET rather than a target: this
+/// screen genuinely cannot do sixteen of the thirty today, and a gate that
+/// simply failed would have to be switched off. It fails when the number grows,
+/// and it fails when the number shrinks without the table being updated, so the
+/// only way past it is to move a row.
+#[test]
+fn r1677_every_declared_way_of_causing_an_operation_causes_it() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let declared: BTreeSet<&str> = spec::OPERATIONS
+            .iter()
+            .filter(|op| op.gesture)
+            .map(|op| op.name)
+            .collect();
+        let driven: BTreeSet<&str> = OPERATION_GESTURES.iter().map(|(name, _)| *name).collect();
+        assert_eq!(
+            declared, driven,
+            "★ the specification and the drivers name different operations — \
+             a gesture declared with nothing behind it is what put a wheel on \
+             the hint strip that no wheel answers"
+        );
+        let names: BTreeSet<&str> = spec::OPERATIONS.iter().map(|op| op.name).collect();
+        assert_eq!(
+            names.len(),
+            spec::OPERATIONS.len(),
+            "the operations are named uniquely, or the join above is ambiguous"
+        );
+
+        let mut inert = Vec::new();
+        let mut exercised = 0;
+
+        for op in spec::OPERATIONS {
+            if let Some((verb, arg)) = op.verb {
+                super::reset_lab_state();
+                let state = use_lab_state();
+                let before = witness(&state, op.witness);
+                let mut oracle = super::LabOracle::new();
+                oracle.attach(std::rc::Rc::clone(&state));
+                let answer = oracle.invoke(verb, IntrospectValue::Text((*arg).to_owned()));
+                let after = witness(&state, op.witness);
+                exercised += 1;
+                if answer.is_err() {
+                    inert.push(format!(
+                        "{:?}: the wire refused `{verb} {arg}` ({answer:?})",
+                        op.name
+                    ));
+                } else if before == after {
+                    inert.push(format!(
+                        "{:?}: `{verb} {arg}` was accepted and `{}` did not move",
+                        op.name, op.witness
+                    ));
+                }
+            }
+            if let Some((_, drive)) = OPERATION_GESTURES.iter().find(|(n, _)| *n == op.name) {
+                super::reset_lab_state();
+                let state = use_lab_state();
+                let shot = painted(&state);
+                let before = witness(&state, op.witness);
+                drive(&state, &shot);
+                let after = witness(&state, op.witness);
+                exercised += 1;
+                if before == after {
+                    inert.push(format!(
+                        "{:?}: the gesture ran and `{}` did not move — this is \
+                         the column a wire-driven test cannot see",
+                        op.name, op.witness
+                    ));
+                }
+            }
+        }
+
+        assert!(
+            inert.is_empty(),
+            "{} of {exercised} declared way(s) of causing an operation caused \
+             nothing:\n  {}",
+            inert.len(),
+            inert.join("\n  ")
+        );
+
+        // The ratchet, printed whether it fires or not: the number is the
+        // measurement this gate exists to keep honest.
+        let absent: Vec<&str> = spec::OPERATIONS
+            .iter()
+            .filter(|op| op.verb.is_none() && !op.gesture)
+            .map(|op| op.name)
+            .collect();
+        assert_eq!(
+            absent.len(),
+            ABSENT_OPERATIONS,
+            "★ this screen answers {} of the reference's {} operations and the \
+             ratchet says {}. Growing is a regression; shrinking means the \
+             table moved and this number has to move with it:\n  {}",
+            spec::OPERATIONS.len() - absent.len(),
+            spec::OPERATIONS.len(),
+            spec::OPERATIONS.len() - ABSENT_OPERATIONS,
+            absent.join("\n  ")
+        );
+    });
+}
+
+/// How many of the reference's operations this screen cannot do at all.
+///
+/// A measurement, not a target — see the gate above for why it is a ratchet.
+/// It moves DOWN when a row of [`spec::OPERATIONS`] gains a verb or a gesture,
+/// and the gate refuses either direction of drift.
+///
+/// ★ **Eighteen, and the hand comparison that preceded this gate said sixteen.**
+/// Worth keeping the discrepancy visible rather than quietly adopting one
+/// number: that comparison was a three-way reading — answered, partly answered,
+/// absent — and "partly" is a judgement. This is binary and mechanical: an
+/// operation is absent when there is no verb AND no gesture, which is a
+/// property of the table a machine settles. Two rows the reading called partly
+/// answered have neither way in at all — the configuration export says how many
+/// keys there are without exporting them, and the launch script does not exist
+/// — so a prose judgement had been carrying them as half-present. The gate
+/// disagreeing with the reading that motivated it is the gate doing its job.
+const ABSENT_OPERATIONS: usize = 18;

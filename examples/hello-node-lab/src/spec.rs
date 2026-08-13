@@ -419,3 +419,295 @@ pub const RAIL: &[(&str, Option<&'static str>)] = &[
 
 /// Which rail seat is the one this screen is.
 pub const RAIL_ACTIVE: &str = "lab";
+
+/// ★★★ R1677 — **what the screen can be asked to DO**, which nothing in this
+/// table said until now.
+///
+/// Everything above describes what the screen *has*: panes, roles, cards,
+/// fields, gestures on a hint strip. `painted.rs` compares the painted scene
+/// against all of it, in both directions, and that comparison is why several
+/// rounds of drift were caught. It cannot catch a missing OPERATION, and the
+/// reason is structural: an operation the screen does not answer paints
+/// nothing, so there is no tag to look for and no run to measure. A census of
+/// what is on screen is blind, by construction, to what the screen cannot do.
+///
+/// Measured, and the size of the blind spot is the argument: the reference
+/// prototype publishes its own operation list and measures its own coverage
+/// against it, so the population here is *its* declaration rather than anyone's
+/// reading. Against those thirty, this screen answered seven outright, seven in
+/// part, and **sixteen not at all** — and every check in this example was green
+/// while sixteen thirtieths of the tool were missing. Three of the missing are
+/// not scattered: there is no reset of any kind (five operations), and half of
+/// a link's life is absent (delete, rewire, choose an endpoint, adopt an
+/// observed one, reset).
+///
+/// So the operations become part of the specification, and the gate asks the
+/// question the census cannot: **for every way this table says an operation can
+/// be caused, causing it that way changes something observable.**
+///
+/// # Why two columns of cause and not one
+///
+/// Because the failure this screen keeps producing lives exactly between them.
+/// Every defect a person reported while using this tool had the same shape: the
+/// screen advertises an operation, an agent driving the wire gets it, and the
+/// pointer does not. A wheel that zooms through `send` and not through the
+/// wheel hook; a form row whose press resolves to a named target and then falls
+/// through an unhandled arm; a frame that drags without selecting. One column
+/// would have hidden every one of them, because the column that works is the
+/// one a test naturally drives.
+///
+/// So [`verb`](OperationSpec::verb) is what an agent uses, [`gesture`] is
+/// whether a person has a way in, and the gate drives BOTH — the second through
+/// this screen's own pointer handlers, never by writing the state, because a
+/// state a test invents can be one no mouse can reach.
+///
+/// # `Absent` is a row, not a gap
+///
+/// An operation this screen cannot do is written down with `verb: None`, which
+/// is what lets it be counted, ratcheted and — the direction that matters more
+/// — **falsified**: if a `None` row turns out to work, the declaration is stale
+/// and the gate fails on that too. A table that only listed what works would
+/// leave the sixteen exactly as invisible as they were.
+///
+/// [`gesture`]: OperationSpec::gesture
+pub struct OperationSpec {
+    /// What the operation is called, in the tool-class words this table uses
+    /// throughout.
+    pub name: &'static str,
+    /// The action an agent invokes, and an argument that exercises it — or
+    /// `None` when this screen has no path to the operation at all.
+    pub verb: Option<(&'static str, &'static str)>,
+    /// Whether a person can cause it with the pointer or the keyboard.
+    ///
+    /// A bool here and the driver in `painted.rs`, because the driver is a
+    /// gesture — a press at a place, a drag between two — and a gesture is not
+    /// a value this table can hold. The gate asserts the two agree in both
+    /// directions: a `true` with no driver, and a driver for a `false`, are
+    /// both failures.
+    pub gesture: bool,
+    /// The introspection slot whose value must DIFFER once the operation has
+    /// run. Named per operation rather than derived, because "what changed" is
+    /// the part of an operation a reader most needs and the part a test is
+    /// most tempted to skip.
+    pub witness: &'static str,
+}
+
+/// The thirty operations, in the reference's own order.
+///
+/// The order is kept because it groups the way the tool does — the node's life,
+/// then the frame's, then the form's, then the link's, then the view's, then
+/// what leaves the screen — and a re-sorted list would lose the grouping that
+/// makes the clusters of absence visible at a glance.
+///
+/// Every row below is MEASURED against this screen as it stands, not wished
+/// for: the `verb` column holds an action the wire actually routes today, and
+/// `gesture` says whether a pointer or key path actually reaches it. The gate
+/// drives both and would fail on an optimistic entry.
+pub const OPERATIONS: &[OperationSpec] = &[
+    // ── a node's life ────────────────────────────────────────────
+    // ★ The asymmetry runs the other way here: a person can add a node from
+    // the palette and an AGENT cannot, because `add_node` is an internal
+    // function with no arm on the wire. Nothing said so until this column
+    // existed.
+    OperationSpec {
+        name: "add a node",
+        verb: None,
+        gesture: true,
+        witness: "nodes",
+    },
+    OperationSpec {
+        name: "delete a node",
+        verb: None,
+        gesture: false,
+        witness: "nodes",
+    },
+    OperationSpec {
+        name: "rename a node",
+        verb: None,
+        gesture: false,
+        witness: "nodes",
+    },
+    OperationSpec {
+        name: "reset the node set",
+        verb: None,
+        gesture: false,
+        witness: "nodes",
+    },
+    OperationSpec {
+        name: "move a node",
+        verb: None,
+        gesture: true,
+        witness: "layout",
+    },
+    OperationSpec {
+        name: "reset the layout",
+        verb: None,
+        gesture: false,
+        witness: "layout",
+    },
+    OperationSpec {
+        name: "collapse a node",
+        verb: None,
+        gesture: false,
+        witness: "layout",
+    },
+    OperationSpec {
+        name: "disable a node",
+        verb: None,
+        gesture: false,
+        witness: "nodes",
+    },
+    // ── a frame's life ───────────────────────────────────────────
+    OperationSpec {
+        name: "re-parent a node between frames",
+        verb: None,
+        gesture: true,
+        witness: "frames",
+    },
+    OperationSpec {
+        name: "move a frame and its members",
+        verb: None,
+        gesture: true,
+        witness: "layout",
+    },
+    // ── the form ─────────────────────────────────────────────────
+    OperationSpec {
+        name: "add a field from the catalogue",
+        verb: Some(("add_field", "timestamping")),
+        gesture: true,
+        witness: "form",
+    },
+    OperationSpec {
+        name: "add a field by typing its key",
+        verb: None,
+        gesture: false,
+        witness: "form",
+    },
+    OperationSpec {
+        name: "edit a field",
+        verb: Some(("set_field", "id=a9")),
+        gesture: true,
+        witness: "form",
+    },
+    // ★ The wire can remove a field and the screen offers no way to: an
+    // operation with a verb and no gesture is as much a gap as the reverse,
+    // and this column is the first thing to say it.
+    OperationSpec {
+        name: "remove a field",
+        verb: Some(("remove_field", "control.permissions")),
+        gesture: false,
+        witness: "form",
+    },
+    OperationSpec {
+        name: "reset the fields",
+        verb: None,
+        gesture: false,
+        witness: "form",
+    },
+    // ── a link's life ────────────────────────────────────────────
+    OperationSpec {
+        name: "author a link",
+        verb: Some(("connect", "S-01,P-02")),
+        gesture: true,
+        witness: "links",
+    },
+    OperationSpec {
+        name: "delete a link",
+        verb: None,
+        gesture: false,
+        witness: "links",
+    },
+    OperationSpec {
+        name: "rewire a link",
+        verb: None,
+        gesture: false,
+        witness: "links",
+    },
+    OperationSpec {
+        name: "select a link endpoint",
+        verb: None,
+        gesture: false,
+        witness: "selected_link",
+    },
+    OperationSpec {
+        name: "adopt an observed link",
+        verb: None,
+        gesture: false,
+        witness: "links",
+    },
+    OperationSpec {
+        name: "reset the links",
+        verb: None,
+        gesture: false,
+        witness: "links",
+    },
+    // ── the view ─────────────────────────────────────────────────
+    OperationSpec {
+        name: "pan",
+        verb: None,
+        gesture: true,
+        witness: "pan",
+    },
+    // ★ The zoom BUTTONS are the gesture; the wheel the hint strip advertises
+    // is not, and `send WheelUp` moving the zoom is what made that look
+    // answered. A verb is not a gesture.
+    OperationSpec {
+        name: "zoom",
+        verb: Some(("zoom_by", "in")),
+        gesture: true,
+        witness: "zoom",
+    },
+    OperationSpec {
+        name: "fit the graph to the view",
+        verb: None,
+        gesture: false,
+        witness: "zoom",
+    },
+    OperationSpec {
+        name: "reset the view",
+        verb: None,
+        gesture: false,
+        witness: "zoom",
+    },
+    // ── what leaves the screen ───────────────────────────────────
+    OperationSpec {
+        name: "export the configuration",
+        verb: None,
+        gesture: false,
+        witness: "document",
+    },
+    OperationSpec {
+        name: "produce the launch script",
+        verb: None,
+        gesture: false,
+        witness: "document",
+    },
+    // ★ The master discovery switch is written through `scene/intervene`, not
+    // through an action — it is a published slot with a value, and an action
+    // that set it would be a second path to one fact. `verb` is `None` because
+    // this column is the ACTION column; that is a limit of the column and is
+    // stated here rather than papered over with an action nobody needs.
+    OperationSpec {
+        name: "toggle discovery",
+        verb: None,
+        gesture: true,
+        witness: "discovery",
+    },
+    // ★★ `gesture: false` is MEASURED. The verdict is derived from the form,
+    // so causing it means making a value cross a bound — and no affordance on
+    // this screen can: the integer stepper clamps at the field's ceiling (which
+    // is correct), and the text rows have no pointer path at all. An agent can
+    // close the gate and a person cannot.
+    OperationSpec {
+        name: "validate",
+        verb: Some(("set_field", "transport.link.tx.batch_size=70000")),
+        gesture: false,
+        witness: "verdict",
+    },
+    OperationSpec {
+        name: "go to the first problem",
+        verb: None,
+        gesture: false,
+        witness: "selected",
+    },
+];
