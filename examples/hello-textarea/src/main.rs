@@ -972,16 +972,16 @@ impl WidgetView for TextAreaView {
             return None;
         }
         let (interaction, caret_byte) = *state;
-        let field_rect = pinion_shell::rect_for_tag(scene, TA_TAG)?;
+        // ★ R1684.1 — the scene walk is the lifted helper's now.
         let theme = use_theme(THEME_TAG).theme_animated();
-        Some(tf_paint::ime_caret_rect_for(
+        tf_paint::ime_caret_rect_in_scene(
             TA_TAG,
             interaction,
             caret_byte,
-            field_rect,
+            scene,
             &theme,
             &ta_style(),
-        ))
+        )
     }
 
     /// R762 / R763 reused verbatim against the multi-line layout: the

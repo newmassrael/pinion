@@ -762,16 +762,16 @@ impl WidgetView for FileSaveView {
             return None;
         }
         let (interaction, caret_byte) = (state.3, state.4);
-        let field_rect = pinion_shell::rect_for_tag(scene, FILENAME_TAG)?;
+        // ★ R1684.1 — the scene walk is the lifted helper's now.
         let theme = use_theme(THEME_TAG).theme_animated();
-        Some(tf_paint::ime_caret_rect_for(
+        tf_paint::ime_caret_rect_in_scene(
             FILENAME_TAG,
             interaction,
             caret_byte,
-            field_rect,
+            scene,
             &theme,
             &filename_style(),
-        ))
+        )
     }
 }
 

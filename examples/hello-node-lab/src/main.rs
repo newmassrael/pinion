@@ -4429,18 +4429,22 @@ fn field_byte_at(
     // Compared in the pointer's own units rather than by casting it to the
     // rectangle's: a cast would round a point just outside the left edge INTO
     // the box, and a press half a pixel above it out of one it is in.
+    //
+    // ★ The containment question is THIS screen's, not the helper's: every
+    // press here is routed to one root external, so "was it in the box" cannot
+    // be answered by the tag comparison the sibling bindings use.
     if !contains_point(rect, x, y) {
         return None;
     }
-    Some(tf_paint::byte_for_field_point(
+    tf_paint::byte_for_scene_point(
         EDIT_TAG,
         interaction,
+        scene,
         x,
         y,
-        rect,
         &use_theme(THEME_TAG).theme_animated(),
         &edit_field_style(rect),
-    ))
+    )
 }
 
 /// How the one field is drawn at a given rectangle.

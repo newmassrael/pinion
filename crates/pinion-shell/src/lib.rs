@@ -348,15 +348,27 @@ impl WindowPolicy {
 }
 
 // R791.1 §5.13 §5.38 — the per-binding `WidgetView::ime_caret_rect` body
-// (focus-guard + `rect_for_tag` walk + `tf_paint::ime_caret_rect_for`) is
-// NOT lifted here, by deliberate dep-graph design: `pinion-widget-paint`
-// (which owns `ime_caret_rect_for`) does not dep `pinion-runtime` (which
-// owns `rect_for_tag`) so it stays backend-agnostic + TUI-reusable, and
-// `pinion-shell` deps `pinion-widget-paint` only as a *dev*-dependency so
-// the generic shell never couples to a specific widget's paint. The
-// binding is the sole crate that sees both `rect_for_tag` and the
-// TextField caret composition, so the ~5-line wrapper is irreducibly
-// binding-side (a precedented-defer, not a liftable SSOT). Audited R791.1.
+// (focus-guard + `rect_for_tag` walk + `tf_paint::ime_caret_rect_for`) was
+// NOT lifted, by what R791.1 recorded as deliberate dep-graph design:
+// `pinion-widget-paint` does not dep `pinion-runtime` (which owns
+// `rect_for_tag`) so it stays backend-agnostic + TUI-reusable, and the
+// binding is the sole crate seeing both.
+//
+// ★★★ R1684.1 — **that premise was false, and the walk IS lifted now.**
+// `pinion_runtime::rect_for_tag` is a one-line wrapper over
+// `Scene::rect_for_tag_absolute`, a method on the scene type
+// `pinion-widget-paint` already depends on — so the dependency the defer
+// protected against was never required to do the walk there. Measured when
+// a ninth binding was about to write the same four lines: SEVEN copies of
+// the caret composition and FOUR of the pointer hit-test, byte-identical
+// apart from the tag and the style. They now call
+// `tf_paint::ime_caret_rect_in_scene` / `byte_for_scene_point`.
+//
+// What stays binding-side is the FOCUS GUARD, which is a policy rather
+// than a composition: which tag this binding owns, and whether a press
+// routed elsewhere should move its caret, are decisions only the binding
+// can make — `hello-node-lab` answers the second one differently from
+// every other binding because its presses all reach one root external.
 
 /// R51.109.1 §5.41 — Vello specialization of [`WidgetRenderer`].
 ///

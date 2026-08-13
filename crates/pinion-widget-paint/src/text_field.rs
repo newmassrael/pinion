@@ -1234,6 +1234,83 @@ pub fn ime_caret_rect_for(
     )
 }
 
+/// ★★★ R1684.1 — [`ime_caret_rect_for`] with the field's rectangle taken
+/// **from the painted scene** instead of from the caller.
+///
+/// Every binding that has a text field wrote the same four lines: look the
+/// tag's rectangle up in the scene, read the theme, call the helper. Measured
+/// at R1684.1 — **seven** copies of this one and **four** of
+/// [`byte_for_scene_point`]'s, byte-identical apart from the tag and the
+/// style.
+///
+/// ★★ **R791.1 audited this exact duplication and deferred it, on a premise
+/// that is no longer true.** The recorded reason was that the scene walk lives
+/// in `pinion_runtime::rect_for_tag`, which this crate deliberately does not
+/// depend on so it stays backend-agnostic and reusable from the TUI. But that
+/// function is a one-line wrapper over [`Scene::rect_for_tag_absolute`], a
+/// method on the scene type this crate already has — so the dependency the
+/// defer was protecting against was never needed. A stated limit that nobody
+/// re-checks is the shape this project keeps paying for.
+///
+/// Answers `None` when the tag is not painted, which is what a caller wants:
+/// a field that is not on screen has no caret to place.
+///
+/// # Panics
+///
+/// Panics when called outside an `Owner::run(...)` scope (same shape as
+/// [`view_field`]).
+#[must_use]
+pub fn ime_caret_rect_in_scene(
+    tag: &'static str,
+    interaction: TextFieldState,
+    caret_byte: u32,
+    scene: &Scene,
+    theme: &Theme,
+    style: &TextFieldStyle,
+) -> Option<CaretRect> {
+    let field_rect = scene.rect_for_tag_absolute(tag)?;
+    Some(ime_caret_rect_for(
+        tag,
+        interaction,
+        caret_byte,
+        field_rect,
+        theme,
+        style,
+    ))
+}
+
+/// ★★★ R1684.1 — [`byte_for_field_point`] with the field's rectangle taken
+/// **from the painted scene** instead of from the caller.
+///
+/// The pointer half of [`ime_caret_rect_in_scene`], lifted for the same reason
+/// and in the same round. See that function for the measurement and for why
+/// R791.1's defer no longer holds.
+///
+/// # Panics
+///
+/// Panics when called outside an `Owner::run(...)` scope.
+#[must_use]
+pub fn byte_for_scene_point(
+    tag: &'static str,
+    interaction: TextFieldState,
+    scene: &Scene,
+    point_x: f32,
+    point_y: f32,
+    theme: &Theme,
+    style: &TextFieldStyle,
+) -> Option<usize> {
+    let field_rect = scene.rect_for_tag_absolute(tag)?;
+    Some(byte_for_field_point(
+        tag,
+        interaction,
+        point_x,
+        point_y,
+        field_rect,
+        theme,
+        style,
+    ))
+}
+
 /// R762 §5.36 §5.38 — **reverse** of [`ime_caret_rect_for`]: hit-test a
 /// window-coord pointer point to the UTF-8 byte offset under it, for
 /// click-to-position-caret. Subtracts the field origin + padding to
@@ -1570,6 +1647,42 @@ mod tests {
 
     fn with_owner<R>(f: impl FnOnce() -> R) -> R {
         Owner::new().run(f)
+    }
+
+    /// ★★★ R1684.1 — **a field that is not painted has no caret and no byte**,
+    /// on both lifted scene-walking helpers.
+    ///
+    /// The `?` on the walk is the whole contract, and a counterfactual that
+    /// replaced it with a default rectangle passed every test in nine crates:
+    /// an unpainted field would have reported a caret at the window origin,
+    /// which is where the IME anchors its candidate popup. Every binding that
+    /// used to do this walk itself had the same `?` and the same absence of a
+    /// test for it — lifting the code is what made one test enough.
+    #[test]
+    fn r1684_1_an_unpainted_field_has_no_caret_and_no_byte() {
+        with_owner(|| {
+            let theme = Theme::default();
+            let style = TextFieldStyle::m3_filled();
+            let empty = Scene::Container(ContainerNode::new(vec![]).with_tag("elsewhere"));
+            assert_eq!(
+                ime_caret_rect_in_scene("tf", TextFieldState::Focused, 0, &empty, &theme, &style),
+                None,
+                "no rectangle carries the tag, so there is no caret to place"
+            );
+            assert_eq!(
+                byte_for_scene_point(
+                    "tf",
+                    TextFieldState::Focused,
+                    &empty,
+                    10.0,
+                    10.0,
+                    &theme,
+                    &style
+                ),
+                None,
+                "and no point in it is a byte of a field that is not there"
+            );
+        });
     }
 
     #[test]

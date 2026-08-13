@@ -2698,16 +2698,18 @@ impl WidgetView for TodoMvcView {
         // R657 §5.16 §5.38 — field rect walk stays binding-side; the
         // caret composition (splice + LayoutCache lookup + window-
         // coord sum) is the lifted helper.
-        let field_rect = pinion_shell::rect_for_tag(scene, tag)?;
+        // ★ R1684.1 — the scene walk is the lifted helper's now, and this
+        // binding is why the helper takes the tag rather than closing over
+        // one: two fields, and which is being edited decides.
         let theme = use_theme(THEME_TAG).theme_animated();
-        Some(tf_paint::ime_caret_rect_for(
+        tf_paint::ime_caret_rect_in_scene(
             tag,
             fld_interaction,
             fld_caret,
-            field_rect,
+            scene,
             &theme,
             &tf_paint::TextFieldStyle::m3_filled(),
-        ))
+        )
     }
 }
 

@@ -38188,6 +38188,116 @@
         "not open."
       ]
     },
+    "R1684.1": {
+      "decision_summary": "The scene walk every text-field binding wrote by hand is lifted, and the audit\nthat deferred it rested on a premise that is no longer true.\n\nR1684's round-close self-grep — \"is what I just wrote the third copy of\nsomething?\" — found that it was the FOURTH. Measured: seven bindings compose an\nIME caret rectangle the same four lines (look the tag's rect up in the painted\nscene, read the theme, call `tf_paint::ime_caret_rect_for`), and four compose a\npointer hit-test the same way over `byte_for_field_point`. Byte-identical apart\nfrom the tag and the style.\n\nR791.1 audited exactly this duplication and recorded a deliberate defer: the\nscene walk lives in `pinion_runtime::rect_for_tag`, and `pinion-widget-paint`\ndoes not depend on `pinion-runtime` so it stays backend-agnostic and reusable\nfrom the TUI, which makes the wrapper \"irreducibly binding-side\".\n\nThat is false today, and cheap to check: `rect_for_tag` is a ONE-LINE wrapper\nover `Scene::rect_for_tag_absolute`, a method on the scene type\n`pinion-widget-paint` already depends on. The dependency the defer was\nprotecting against was never needed to do the walk there.\n\nSo `ime_caret_rect_in_scene` and `byte_for_scene_point` take the scene, and the\neleven call sites lose four lines each. What stays binding-side is the FOCUS\nGUARD, which is policy rather than composition — `hello-node-lab` answers \"was\nthis press mine\" by geometry where every sibling answers it by tag comparison,\nbecause all of its presses reach one root external.\n\nThe general lesson is the one this session keeps paying for: a stated limit\nnobody re-checks outlives the thing that made it true. R1681.2 was the same\nshape, and so was R1684's discovery that a press does not reach the field's own\nexternal.",
+      "changes_bullets": [
+        "`pinion_widget_paint::text_field::ime_caret_rect_in_scene` and",
+        "`byte_for_scene_point` — the existing helpers with the field's rectangle",
+        "taken from the painted scene, answering `None` when the tag is not painted.",
+        "Eleven call sites rewired: `hello-textfield`, `hello-textarea`,",
+        "`hello-find-replace`, `hello-syntax-highlight`, `hello-file-save-dialog`,",
+        "`hello-file-manager`, `todomvc` (caret), and `hello-textfield`,",
+        "`hello-find-replace`, `hello-syntax-highlight`, `hello-node-lab` (pointer).",
+        "The R791.1 note in `pinion-shell` is corrected in place rather than deleted:",
+        "it now carries what it claimed, why that was false, and what genuinely does",
+        "stay binding-side.",
+        "`r1684_1_an_unpainted_field_has_no_caret_and_no_byte` — the `?` on the walk",
+        "is the contract, and it had no test in any of the eleven sites."
+      ],
+      "verification_bullets": [
+        "Every crate the lift touches, tested and linted together:",
+        "`cargo test -p pinion-widget-paint -p hello-textfield -p hello-textarea",
+        "-p hello-find-replace -p hello-syntax-highlight -p hello-file-save-dialog",
+        "-p hello-file-manager -p todomvc -p hello-node-lab --features",
+        "pinion-runtime/vello` — ten suites, all ok.",
+        "The same set under `cargo clippy --all-targets`, clean.",
+        "`cargo fmt --all --check`.",
+        "The demos that drive the two paths this touches, run locally against release",
+        "builds: r762 (click-to-caret), r763 (drag select), hello_textfield_compose (the",
+        "IME caret rectangle itself), r764 (textarea caret), r790 (save dialog), r791",
+        "(file-manager rename), r793 (commit on blur), todomvc_r666, and R1684's own",
+        "window demo. All pass.",
+        "Two counterfactuals, both caught after the second was written:",
+        "Making the walk fall back to a default rectangle instead of answering `None`",
+        "PASSED all ten suites on the first run — a field that is not painted would",
+        "have reported a caret at the window origin, which is where an IME anchors its",
+        "candidate popup. That contract had no test at any of the eleven sites it used",
+        "to live at; lifting the code is what made one test enough to cover it.",
+        "Dropping the field's origin from the pointer walk is caught by the demos'",
+        "byte assertions and by `hello-node-lab`'s caret round-trip gate."
+      ],
+      "impact_refs": [
+        "5.36",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "Nothing carried. Two facts worth stating rather than carrying:",
+        "**The focus guard is deliberately NOT lifted**, and the reason is that it is",
+        "a policy: which tag a binding owns, and whether a press the router sent",
+        "elsewhere should move its caret. `hello-node-lab` answers the second",
+        "differently from every sibling — by geometry rather than by tag comparison —",
+        "because all of its presses arrive at one root external. A lift that folded",
+        "that in would have to encode one answer.",
+        "**`ime_caret_rect_for` and `byte_for_field_point` stay public.** A caller that",
+        "already has the rectangle (a test, a composite that lays a field out itself)",
+        "should not have to put it in a scene first, and the scene-walking pair is",
+        "written in terms of them rather than beside them."
+      ],
+      "publishable_decision_summary": "The scene walk every text-field binding wrote by hand is lifted, and the audit\nthat deferred it rested on a premise that is no longer true.\n\nR1684's round-close self-grep — \"is what I just wrote the third copy of\nsomething?\" — found that it was the FOURTH. Measured: seven bindings compose an\nIME caret rectangle the same four lines (look the tag's rect up in the painted\nscene, read the theme, call `tf_paint::ime_caret_rect_for`), and four compose a\npointer hit-test the same way over `byte_for_field_point`. Byte-identical apart\nfrom the tag and the style.\n\nR791.1 audited exactly this duplication and recorded a deliberate defer: the\nscene walk lives in `pinion_runtime::rect_for_tag`, and `pinion-widget-paint`\ndoes not depend on `pinion-runtime` so it stays backend-agnostic and reusable\nfrom the TUI, which makes the wrapper \"irreducibly binding-side\".\n\nThat is false today, and cheap to check: `rect_for_tag` is a ONE-LINE wrapper\nover `Scene::rect_for_tag_absolute`, a method on the scene type\n`pinion-widget-paint` already depends on. The dependency the defer was\nprotecting against was never needed to do the walk there.\n\nSo `ime_caret_rect_in_scene` and `byte_for_scene_point` take the scene, and the\neleven call sites lose four lines each. What stays binding-side is the FOCUS\nGUARD, which is policy rather than composition — `hello-node-lab` answers \"was\nthis press mine\" by geometry where every sibling answers it by tag comparison,\nbecause all of its presses reach one root external.\n\nThe general lesson is the one this session keeps paying for: a stated limit\nnobody re-checks outlives the thing that made it true. R1681.2 was the same\nshape, and so was R1684's discovery that a press does not reach the field's own\nexternal.",
+      "publishable_changes_bullets": [
+        "`pinion_widget_paint::text_field::ime_caret_rect_in_scene` and",
+        "`byte_for_scene_point` — the existing helpers with the field's rectangle",
+        "taken from the painted scene, answering `None` when the tag is not painted.",
+        "Eleven call sites rewired: `hello-textfield`, `hello-textarea`,",
+        "`hello-find-replace`, `hello-syntax-highlight`, `hello-file-save-dialog`,",
+        "`hello-file-manager`, `todomvc` (caret), and `hello-textfield`,",
+        "`hello-find-replace`, `hello-syntax-highlight`, `hello-node-lab` (pointer).",
+        "The R791.1 note in `pinion-shell` is corrected in place rather than deleted:",
+        "it now carries what it claimed, why that was false, and what genuinely does",
+        "stay binding-side.",
+        "`r1684_1_an_unpainted_field_has_no_caret_and_no_byte` — the `?` on the walk",
+        "is the contract, and it had no test in any of the eleven sites."
+      ],
+      "publishable_verification_bullets": [
+        "Every crate the lift touches, tested and linted together:",
+        "`cargo test -p pinion-widget-paint -p hello-textfield -p hello-textarea",
+        "-p hello-find-replace -p hello-syntax-highlight -p hello-file-save-dialog",
+        "-p hello-file-manager -p todomvc -p hello-node-lab --features",
+        "pinion-runtime/vello` — ten suites, all ok.",
+        "The same set under `cargo clippy --all-targets`, clean.",
+        "`cargo fmt --all --check`.",
+        "The demos that drive the two paths this touches, run locally against release",
+        "builds: r762 (click-to-caret), r763 (drag select), hello_textfield_compose (the",
+        "IME caret rectangle itself), r764 (textarea caret), r790 (save dialog), r791",
+        "(file-manager rename), r793 (commit on blur), todomvc_r666, and R1684's own",
+        "window demo. All pass.",
+        "Two counterfactuals, both caught after the second was written:",
+        "Making the walk fall back to a default rectangle instead of answering `None`",
+        "PASSED all ten suites on the first run — a field that is not painted would",
+        "have reported a caret at the window origin, which is where an IME anchors its",
+        "candidate popup. That contract had no test at any of the eleven sites it used",
+        "to live at; lifting the code is what made one test enough to cover it.",
+        "Dropping the field's origin from the pointer walk is caught by the demos'",
+        "byte assertions and by `hello-node-lab`'s caret round-trip gate."
+      ],
+      "publishable_impact_refs": [
+        "5.36",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Nothing carried. Two facts worth stating rather than carrying:",
+        "**The focus guard is deliberately NOT lifted**, and the reason is that it is",
+        "a policy: which tag a binding owns, and whether a press the router sent",
+        "elsewhere should move its caret. `hello-node-lab` answers the second",
+        "differently from every sibling — by geometry rather than by tag comparison —",
+        "because all of its presses arrive at one root external. A lift that folded",
+        "that in would have to encode one answer.",
+        "**`ime_caret_rect_for` and `byte_for_field_point` stay public.** A caller that",
+        "already has the rectangle (a test, a composite that lays a field out itself)",
+        "should not have to put it in a scene first, and the scene-walking pair is",
+        "written in terms of them rather than beside them."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

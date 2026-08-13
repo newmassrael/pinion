@@ -555,16 +555,16 @@ impl WidgetView for FindReplaceView {
         // — see crate docs for the dep-graph rationale). The caret
         // composition (splice + LayoutCache lookup + window-coord
         // sum) is the lifted [`tf_paint::ime_caret_rect_for`] helper.
-        let field_rect = pinion_shell::rect_for_tag(scene, TF_TAG)?;
+        // ★ R1684.1 — the scene walk is the lifted helper's now.
         let theme = use_theme(THEME_TAG).theme_animated();
-        Some(tf_paint::ime_caret_rect_for(
+        tf_paint::ime_caret_rect_in_scene(
             TF_TAG,
             interaction,
             caret_byte,
-            field_rect,
+            scene,
             &theme,
             &tf_paint::TextFieldStyle::m3_filled(),
-        ))
+        )
     }
 
     /// R762 §5.36 §5.38 / R763 §5.22 — reverse of
@@ -663,17 +663,16 @@ fn hit_test_field_byte(
     y: f32,
 ) -> Option<usize> {
     let (interaction, _caret_byte) = state;
-    let field_rect = pinion_shell::rect_for_tag(scene, TF_TAG)?;
     let theme = use_theme(THEME_TAG).theme_animated();
-    Some(tf_paint::byte_for_field_point(
+    tf_paint::byte_for_scene_point(
         TF_TAG,
         interaction,
+        scene,
         x,
         y,
-        field_rect,
         &theme,
         &tf_paint::TextFieldStyle::m3_filled(),
-    ))
+    )
 }
 
 // R698 §5.16 §5.38 — TextField state <-> SCXML id mapping now routes

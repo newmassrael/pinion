@@ -704,17 +704,17 @@ impl WidgetView for FileManagerView {
         if focused != Some(RENAME_TF_TAG) {
             return None;
         }
-        let field_rect = pinion_shell::rect_for_tag(scene, RENAME_TF_TAG)?;
         let theme = use_theme(THEME_TAG).theme_animated();
         // The field fills a list row; mirror the paint style's row sizing.
-        Some(tf_paint::ime_caret_rect_for(
+        // ★ R1684.1 — the scene walk is the lifted helper's now.
+        tf_paint::ime_caret_rect_in_scene(
             RENAME_TF_TAG,
             state.4,
             state.5,
-            field_rect,
+            scene,
             &theme,
             &rename_field_style(LIST_W, ROW_PITCH),
-        ))
+        )
     }
 }
 
