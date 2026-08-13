@@ -476,41 +476,7 @@ impl LabState {
         let mut forms = BTreeMap::new();
         seed_nodes(&mut doc, &frame_ids, &mut ids, &mut forms);
 
-        let mut selected_link = None;
-
-        for (from, to) in spec::LINKS {
-            let (Some(&a), Some(&b)) = (ids.get(*from), ids.get(*to)) else {
-                continue;
-            };
-            // Port 0 on each side: the taxonomy declares exactly one dial and
-            // at most one accept, so the index is not a guess.
-            // Land on the first accept port nothing has taken, growing the run
-            // when they are all busy: a router is dialled by four peers on one
-            // pin, and the run is how the model holds that.
-            let taken: Vec<u32> = doc
-                .tree(ROOT)
-                .map(|t| {
-                    t.links()
-                        .iter()
-                        .filter(|l| l.to.node == b)
-                        .map(|l| l.to.port)
-                        .collect()
-                })
-                .unwrap_or_default();
-            let arity = doc
-                .signature(ROOT, b)
-                .map_or(0, |s| u32::try_from(s.inputs.len()).unwrap_or(0));
-            let port = (0..arity).find(|p| !taken.contains(p)).unwrap_or_else(|| {
-                doc.insert_item(ROOT, b, Side::Input, arity, Item::plain())
-                    .ok();
-                arity
-            });
-            if let Ok(made) = doc.connect(ROOT, Socket::new(a, 0), Socket::new(b, port)) {
-                if (*from, *to) == spec::SELECTED_LINK {
-                    selected_link = Some(made.link);
-                }
-            }
-        }
+        let selected_link = seed_links(&mut doc, &ids);
 
         let selected = ids.get(spec::SELECTED_NODE).copied();
         Self {
@@ -712,6 +678,282 @@ fn seed_nodes(
         ids.insert(node.id.to_owned(), id);
         forms.insert(id, form);
     }
+}
+
+/// ★★★ R1678 — what a reset puts back, and the fact its affordance is derived
+/// from.
+///
+/// The reference tool keeps every edit as an OVERLAY on the opening state, so
+/// each of its five resets is one `clear` and each "is there anything to put
+/// back" is one `is_empty`. This screen mutates its document in place instead,
+/// so both facts are derived by comparing against [`crate::spec`] — which is
+/// where the opening state came from in the first place (`seed_nodes` /
+/// `seed_links` build it from exactly these constants), so there is no snapshot
+/// that could fall out of step with anything.
+///
+/// **The two halves are one type on purpose.** A screen that decided for itself
+/// when to show a "put it back" affordance would be a second author of the
+/// rule, and the failure mode is silent in both directions: an affordance shown
+/// over an unchanged screen does nothing when pressed, and one hidden over a
+/// changed screen strands the change. [`changed`](Self::changed) and
+/// [`apply`](Self::apply) are asserted against each other — after an apply, the
+/// scope reports unchanged.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum ResetScope {
+    /// Which cards exist — the palette's additions go away.
+    Nodes,
+    /// Where the cards sit AND which host each starts on.
+    ///
+    /// One scope covering two facts because that is what the reference does
+    /// (measured: its layout reset clears both maps and says so in its own
+    /// toast). They belong together — a card dragged onto another host has
+    /// moved and been re-parented by one gesture, so putting one back without
+    /// the other leaves a state no gesture could have produced.
+    Layout,
+    /// Every form: values, and rows added or taken away.
+    Fields,
+    /// The authored links, and which one is selected.
+    Links,
+    /// Pan and zoom.
+    View,
+}
+
+impl ResetScope {
+    /// The census. Consumers iterate this rather than re-listing the arms.
+    const ALL: [Self; 5] = [
+        Self::Nodes,
+        Self::Layout,
+        Self::Fields,
+        Self::Links,
+        Self::View,
+    ];
+
+    /// The scope words, as the declaration publishes them.
+    ///
+    /// Built FROM [`ALL`](Self::ALL) rather than listed beside it, so the
+    /// vocabulary an agent is offered and the arms this type has cannot come
+    /// apart — a hand-written copy would still compile with an arm missing.
+    const WIRE_NAMES: [&'static str; Self::ALL.len()] = {
+        let mut out = [""; Self::ALL.len()];
+        let mut n = 0;
+        while n < Self::ALL.len() {
+            out[n] = Self::ALL[n].wire();
+            n += 1;
+        }
+        out
+    };
+
+    /// The word the wire and the specification call this scope.
+    const fn wire(self) -> &'static str {
+        match self {
+            Self::Nodes => "nodes",
+            Self::Layout => "layout",
+            Self::Fields => "fields",
+            Self::Links => "links",
+            Self::View => "view",
+        }
+    }
+
+    /// Whether this scope has an affordance ON THE PANEL, which it has only
+    /// when there is something to put back.
+    ///
+    /// ★ The view is deliberately not one of these — measured on the reference,
+    /// its four graph resets are wrapped in a conditional and its VIEW reset is
+    /// not, sitting unconditionally in the zoom cluster. That asymmetry is a
+    /// judgement worth keeping: pan and zoom always have a home to go to and
+    /// the button is one glyph wide, while a graph reset that appears out of
+    /// nowhere over an untouched screen is an invitation to destroy work.
+    const fn gated(self) -> bool {
+        !matches!(self, Self::View)
+    }
+
+    /// Whether the screen differs from what it opened as, in this scope.
+    fn changed(self, state: &LabState) -> bool {
+        match self {
+            Self::Nodes => {
+                let now: Vec<String> = state.cards().iter().map(|n| state.name_of(*n)).collect();
+                now.len() != spec::NODES.len()
+                    || now
+                        .iter()
+                        .zip(spec::NODES)
+                        .any(|(name, want)| name != want.id)
+            }
+            Self::Layout => spec::NODES.iter().any(|want| {
+                let Some(node) = state.node_of(want.id) else {
+                    return false;
+                };
+                let doc = state.doc.borrow();
+                let Some(slot) = doc.tree(ROOT).and_then(|t| t.node(node)) else {
+                    return false;
+                };
+                let (x, y, _) = want.rect;
+                let frame = slot
+                    .parent
+                    .and_then(|f| state.frames.borrow().get(&f).cloned());
+                slot.x != i32::try_from(x).unwrap_or(0)
+                    || slot.y != i32::try_from(y).unwrap_or(0)
+                    || frame.as_deref() != Some(want.frame)
+            }),
+            // The form answers for itself — values and shape both. See
+            // `ConfigForm::edited`, which is where that question belongs.
+            Self::Fields => state.forms.borrow().values().any(ConfigForm::edited),
+            Self::Links => {
+                let doc = state.doc.borrow();
+                let Some(tree) = doc.tree(ROOT) else {
+                    return false;
+                };
+                let mut now: Vec<(String, String)> = tree
+                    .links()
+                    .iter()
+                    .map(|l| (state.name_of(l.from.node), state.name_of(l.to.node)))
+                    .collect();
+                let mut want: Vec<(String, String)> = spec::LINKS
+                    .iter()
+                    .map(|(a, b)| ((*a).to_owned(), (*b).to_owned()))
+                    .collect();
+                now.sort();
+                want.sort();
+                now != want
+            }
+            Self::View => state.zoom.get() != spec::OPENING_ZOOM || state.pan.get() != (0, 0),
+        }
+    }
+
+    /// Put this scope back to what the screen opened with.
+    fn apply(self, state: &Rc<LabState>) {
+        match self {
+            Self::Nodes => {
+                let keep: Vec<&str> = spec::NODES.iter().map(|n| n.id).collect();
+                let strays: Vec<NodeId> = state
+                    .cards()
+                    .into_iter()
+                    .filter(|n| !keep.contains(&state.name_of(*n).as_str()))
+                    .collect();
+                {
+                    let mut doc = state.doc.borrow_mut();
+                    for node in &strays {
+                        doc.remove_node(ROOT, *node).ok();
+                    }
+                }
+                let mut ids = state.ids.borrow_mut();
+                ids.retain(|_, id| !strays.contains(id));
+                drop(ids);
+                state
+                    .forms
+                    .borrow_mut()
+                    .retain(|id, _| !strays.contains(id));
+                if state.selected.get().is_some_and(|n| strays.contains(&n)) {
+                    state.selected.set(state.node_of(spec::SELECTED_NODE));
+                }
+            }
+            Self::Layout => {
+                for want in spec::NODES {
+                    let Some(node) = state.node_of(want.id) else {
+                        continue;
+                    };
+                    let frame = state
+                        .frames
+                        .borrow()
+                        .iter()
+                        .find(|(_, name)| name.as_str() == want.frame)
+                        .map(|(id, _)| *id);
+                    let mut doc = state.doc.borrow_mut();
+                    if let Some(slot) = doc.tree_mut(ROOT).and_then(|t| t.node_mut(node)) {
+                        let (x, y, _) = want.rect;
+                        slot.x = i32::try_from(x).unwrap_or(0);
+                        slot.y = i32::try_from(y).unwrap_or(0);
+                    }
+                    doc.set_parent(ROOT, node, frame).ok();
+                }
+            }
+            Self::Fields => {
+                let nodes: Vec<NodeId> = state.forms.borrow().keys().copied().collect();
+                for form in state.forms.borrow_mut().values_mut() {
+                    form.revert();
+                }
+                // The pins are DERIVED from the form (`sync_node`), so a revert
+                // that stopped at the values would leave a card drawing the
+                // transport of an endpoint it no longer holds.
+                for node in nodes {
+                    sync_node(state, node);
+                }
+            }
+            Self::Links => {
+                {
+                    let mut doc = state.doc.borrow_mut();
+                    let live: Vec<LinkId> = doc
+                        .tree(ROOT)
+                        .map(|t| t.links().iter().map(|l| l.id).collect())
+                        .unwrap_or_default();
+                    for link in live {
+                        doc.disconnect(ROOT, link).ok();
+                    }
+                }
+                let ids = state.ids.borrow().clone();
+                let selected = seed_links(&mut state.doc.borrow_mut(), &ids);
+                state.selected_link.set(selected);
+            }
+            Self::View => {
+                state.zoom.set(spec::OPENING_ZOOM);
+                state.pan.set((0, 0));
+            }
+        }
+    }
+}
+
+/// The scopes with something to put back, in census order — the panel's
+/// affordances, and the one list both the paint and the hit test read.
+fn changed_scopes(state: &LabState) -> Vec<ResetScope> {
+    ResetScope::ALL
+        .into_iter()
+        .filter(|scope| scope.gated() && scope.changed(state))
+        .collect()
+}
+
+/// Author the opening links onto `doc`, and answer which one the screen opens
+/// with selected.
+///
+/// ★ R1678 — lifted out of `opening` because a reset PUTS THESE BACK, and the
+/// port-picking below is the kind of arithmetic that is quietly wrong in a
+/// second copy: an accept pin is a variadic run, so which slot a link lands in
+/// depends on what is already there. Two implementations would agree on the
+/// opening graph (nothing is there yet) and disagree the moment a reset ran
+/// over a graph somebody had edited — which is exactly when nobody is looking.
+fn seed_links(doc: &mut Document<LabNode>, ids: &BTreeMap<String, NodeId>) -> Option<LinkId> {
+    let mut selected_link = None;
+    for (from, to) in spec::LINKS {
+        let (Some(&a), Some(&b)) = (ids.get(*from), ids.get(*to)) else {
+            continue;
+        };
+        // Port 0 on the dial side: the taxonomy declares exactly one.
+        // Land on the first accept port nothing has taken, growing the run
+        // when they are all busy: a router is dialled by four peers on one
+        // pin, and the run is how the model holds that.
+        let taken: Vec<u32> = doc
+            .tree(ROOT)
+            .map(|t| {
+                t.links()
+                    .iter()
+                    .filter(|l| l.to.node == b)
+                    .map(|l| l.to.port)
+                    .collect()
+            })
+            .unwrap_or_default();
+        let arity = doc
+            .signature(ROOT, b)
+            .map_or(0, |s| u32::try_from(s.inputs.len()).unwrap_or(0));
+        let port = (0..arity).find(|p| !taken.contains(p)).unwrap_or_else(|| {
+            doc.insert_item(ROOT, b, Side::Input, arity, Item::plain())
+                .ok();
+            arity
+        });
+        if let Ok(made) = doc.connect(ROOT, Socket::new(a, 0), Socket::new(b, port)) {
+            if (*from, *to) == spec::SELECTED_LINK {
+                selected_link = Some(made.link);
+            }
+        }
+    }
+    selected_link
 }
 
 /// The configuration form a node of that role opens with.
@@ -1290,6 +1532,8 @@ enum Hit {
     Role(Role),
     DiscoveryToggle,
     Zoom(bool),
+    /// R1678 — an affordance that puts one scope back to what it opened as.
+    Reset(ResetScope),
     Config,
     Run,
     Node(NodeId),
@@ -1369,6 +1613,9 @@ impl Hit {
             return Self::Nothing;
         }
         if contains(toolbar_rect(), px, py) {
+            if contains(view_reset_rect(), px, py) {
+                return Self::Reset(ResetScope::View);
+            }
             if contains(zoom_rect(false), px, py) {
                 return Self::Zoom(false);
             }
@@ -1382,6 +1629,14 @@ impl Hit {
                 return Self::Run;
             }
             return Self::Nothing;
+        }
+        // ★ R1678 — the gate panel's reset row, BEFORE the canvas: the panel
+        // floats over the canvas, so a press inside it that fell through to
+        // the world would pan the graph out from under the button.
+        for (scope, seat) in reset_seats(state) {
+            if contains(seat, px, py) {
+                return Self::Reset(scope);
+            }
         }
         if contains(canvas_rect(), px, py) {
             // ★ The canvas is a viewport onto a world surface, so a press is
@@ -1435,6 +1690,7 @@ impl Hit {
             Self::Role(role) => format!("role:{}", role.name()),
             Self::DiscoveryToggle => "discovery".into(),
             Self::Zoom(up) => format!("zoom:{}", if *up { "in" } else { "out" }),
+            Self::Reset(scope) => format!("reset:{}", scope.wire()),
             Self::Config => "config".into(),
             Self::Run => "run".into(),
             Self::Node(id) => format!("node:{}", state.name_of(*id)),
@@ -1573,16 +1829,68 @@ fn run_rect() -> Rect {
 }
 
 /// The launch gate panel, bottom right of the canvas.
+///
+/// ★ R1678 — it grows a row when there is something to put back. The height is
+/// derived from [`changed_scopes`] rather than reserved, because a permanently
+/// reserved strip is a band of empty panel on the screen a person spends the
+/// most time looking at, and the reference makes the same choice (its reset
+/// affordances are conditional, not disabled).
 fn gate_rect(state: &LabState) -> Rect {
     let canvas = canvas_rect();
     let lines = u32::try_from(state.gate_lines().len()).unwrap_or(0) + 1;
-    let h = 34 + lines * 20;
+    let resets = u32::from(!changed_scopes(state).is_empty()) * RESET_ROW_H;
+    let h = 34 + lines * 20 + resets;
     Rect::new(
         canvas.x + canvas.w - 262,
         canvas.y + canvas.h - h - 12,
         250,
         h,
     )
+}
+
+/// The height the reset row adds to the gate panel: the buttons plus the gap
+/// above them.
+const RESET_ROW_H: u32 = 32;
+/// One reset button's height.
+const RESET_BTN_H: u32 = 22;
+
+/// Where each reset affordance sits, window-absolute — **the one list the paint
+/// and the hit test both read**.
+///
+/// R1651.1 is why it is one list: that round painted the option chips
+/// content-hugging and hit-tested them by equal division, so the second chip
+/// answered for the first. A seat computed twice is two layouts.
+fn reset_seats(state: &LabState) -> Vec<(ResetScope, Rect)> {
+    let scopes = changed_scopes(state);
+    if scopes.is_empty() {
+        return Vec::new();
+    }
+    let gate = gate_rect(state);
+    let inner = gate.w - 24;
+    let gap = 6;
+    let count = u32::try_from(scopes.len()).unwrap_or(1);
+    let each = (inner + gap).saturating_sub(gap * count) / count;
+    let y = gate.y + gate.h - RESET_BTN_H - 8;
+    scopes
+        .into_iter()
+        .enumerate()
+        .map(|(n, scope)| {
+            let n = u32::try_from(n).unwrap_or(0);
+            (
+                scope,
+                Rect::new(gate.x + 12 + n * (each + gap), y, each, RESET_BTN_H),
+            )
+        })
+        .collect()
+}
+
+/// The view reset's seat in the toolbar's zoom cluster.
+///
+/// Unconditional, beside the zoom controls, which is where the reference keeps
+/// it — see [`ResetScope::gated`] for why this one is not on the panel.
+fn view_reset_rect() -> Rect {
+    let out = zoom_rect(false);
+    Rect::new(out.x - 40, out.y, 34, 24)
 }
 
 fn hint_rect() -> Rect {
@@ -2243,6 +2551,22 @@ fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
             ink.text,
         ));
     }
+    // ★ R1678 — unconditional, beside the zoom controls, which is where the
+    // reference keeps the view reset. See `ResetScope::gated`.
+    let view_reset = local(view_reset_rect());
+    children.push(box_at(
+        "lab.reset.view",
+        view_reset,
+        ink.raised,
+        Some(ink.outline),
+        6,
+    ));
+    children.push(label(
+        "home",
+        Rect::new(view_reset.x + 4, view_reset.y + 6, 28, 12),
+        FONT_SMALL,
+        ink.text_3,
+    ));
     children.push(tagged_label(
         "lab.toolbar.zoom",
         format!("{}%", state.zoom.get()),
@@ -2642,6 +2966,24 @@ fn canvas_overlays(state: &LabState, ink: Ink) -> Vec<Scene> {
             if *blocks { ink.err } else { ink.warn },
         ));
     }
+    // ★ R1678 — one button per scope that has something to put back, from the
+    // SAME list the hit test resolves against.
+    for (scope, seat) in reset_seats(state) {
+        let seat = local(seat);
+        children.push(box_at(
+            &format!("lab.reset.{}", scope.wire()),
+            seat,
+            ink.raised,
+            Some(ink.outline),
+            6,
+        ));
+        children.push(label(
+            scope.wire(),
+            Rect::new(seat.x + 7, seat.y + 5, seat.w.saturating_sub(14), 12),
+            FONT_SMALL,
+            ink.text_2,
+        ));
+    }
 
     let hint = local(hint_rect());
     children.push(box_at("lab.hint", hint, ink.surface, Some(ink.outline), 8));
@@ -2946,6 +3288,7 @@ const FIELDS: &[SchemaField] = &{
         // what these two did on their first drive.
         SchemaField::new("layout", "string"),
         SchemaField::new("frames", "string"),
+        SchemaField::new("changed", "string"),
         SchemaField::new("roles", "string"),
         SchemaField::new("toast", "string"),
         SchemaField::action("select", "string"),
@@ -2963,6 +3306,20 @@ const FIELDS: &[SchemaField] = &{
         ),
         SchemaField::action("add_field", "string"),
         SchemaField::action("remove_field", "string"),
+        // R1678 — the scope vocabulary is published, so an agent reads the five
+        // rather than discovering them by rejection.
+        SchemaField::action_with(
+            "reset",
+            "string",
+            ArgForm::Scalar,
+            const {
+                &[SchemaArg::one_of(
+                    "scope",
+                    "string",
+                    &ResetScope::WIRE_NAMES,
+                )]
+            },
+        ),
         // `zoom_by`, not `zoom`: `zoom` is a declared READ, and one address
         // holding both channels makes "what does this answer" depend on which
         // verb you happened to use. The determinism switch needs no action at
@@ -3113,6 +3470,28 @@ impl ExternalIntrospect for LabOracle {
                     .to_string(),
                 )
             }
+            // ★★ R1678 — which scopes differ from what the screen opened as.
+            //
+            // Published because the affordances are DERIVED from it: a reset
+            // button exists exactly when its scope is here, so a driver that
+            // read the screen and a person looking at it are reading one fact.
+            // The reference publishes the same predicates to its own view for
+            // the same reason (measured — three of its four gated resets are
+            // wrapped in a conditional on one of these).
+            "changed" => text(
+                serde_json::Value::Object(
+                    ResetScope::ALL
+                        .into_iter()
+                        .map(|scope| {
+                            (
+                                scope.wire().to_owned(),
+                                serde_json::Value::Bool(scope.changed(state)),
+                            )
+                        })
+                        .collect(),
+                )
+                .to_string(),
+            ),
             // ★★ R1677 — WHERE the cards are, which nothing published until the
             // operation gate asked for it. Three of the reference's operations
             // move a node or a frame, and an agent driving any of them could
@@ -3287,6 +3666,27 @@ impl ExternalIntrospect for LabOracle {
                 sync_node(&state, node);
                 Ok(IntrospectValue::Text(key.trim().to_owned()))
             }
+            // ★★ R1678 — one action with a scope argument, not five actions.
+            // The scopes are a closed set the specification already names, and
+            // five verbs would be five places for that set to drift; the
+            // declaration below publishes the options, so an agent discovers
+            // them rather than guessing.
+            "reset" => {
+                let word = Self::text(&args)?;
+                let scope = ResetScope::ALL
+                    .into_iter()
+                    .find(|s| s.wire() == word.trim())
+                    .ok_or_else(|| {
+                        InvokeError::rejected(format!(
+                            "{:?} is not a scope; they are {}",
+                            word.trim(),
+                            ResetScope::ALL.map(ResetScope::wire).join(" / ")
+                        ))
+                    })?;
+                scope.apply(&state);
+                state.say(format!("{} back to how it opened", scope.wire()));
+                Ok(IntrospectValue::Text(scope.wire().to_owned()))
+            }
             "zoom_by" => {
                 let word = Self::text(&args)?;
                 let now = state.zoom.get();
@@ -3441,6 +3841,15 @@ fn spec_json() -> serde_json::Value {
         })).collect::<Vec<_>>(),
         "addable": spec::ADDABLE,
         "gestures": spec::GESTURES.iter().map(|(g, w)| serde_json::json!([g, w])).collect::<Vec<_>>(),
+        // ★ R1678 — the reset affordances, and which of them are CONDITIONAL.
+        // Published rather than left for a reader to infer from the operations
+        // list, because the conditional ones are the reason a backward check
+        // must accept a tag that is not always there — and R1664 is what
+        // happens when a family reaches the paint tree and not this table.
+        "resets": ResetScope::ALL.iter().map(|scope| serde_json::json!({
+            "scope": scope.wire(),
+            "gated": scope.gated(),
+        })).collect::<Vec<_>>(),
         // ★★ R1677 — what the screen can be asked to DO, beside what it has.
         // Published for the same reason every other row here is: a demo that
         // carried its own copy of this list would be checking the list against
@@ -3451,6 +3860,7 @@ fn spec_json() -> serde_json::Value {
             "verb": op.verb.map(|(verb, arg)| serde_json::json!([verb, arg])),
             "gesture": op.gesture,
             "witness": op.witness,
+            "needs": op.needs,
             "absent": op.verb.is_none() && !op.gesture,
         })).collect::<Vec<_>>(),
         "graph": spec::GRAPH_NAME,
@@ -3728,6 +4138,10 @@ fn release(state: &Rc<LabState>) {
             } else {
                 "discovery off"
             });
+        }
+        Hit::Reset(scope) => {
+            scope.apply(state);
+            state.say(format!("{} back to how it opened", scope.wire()));
         }
         Hit::Zoom(up) => {
             let zoom = state.zoom.get();

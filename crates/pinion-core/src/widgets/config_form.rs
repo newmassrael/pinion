@@ -643,6 +643,18 @@ impl ConfigField {
     pub fn settle(&mut self) {
         self.original.clone_from(&self.value);
     }
+
+    /// Put the value back to what the form opened with.
+    ///
+    /// ★ R1678 — the mirror of [`settle`](Self::settle), and the asymmetry it
+    /// closes is the whole reason it exists: a form could move its baseline
+    /// FORWARD and had no way back to it. `edited()` asks the question, this
+    /// answers it, and after this call `edited()` is false by construction —
+    /// which is what makes "is there anything to put back" and "put it back"
+    /// one fact instead of two.
+    pub fn revert(&mut self) {
+        self.value.clone_from(&self.original);
+    }
 }
 
 /// A node's whole configuration form: the fields it holds, and the keys it
@@ -655,6 +667,20 @@ impl ConfigField {
 pub struct ConfigForm {
     fields: Vec<ConfigField>,
     addable: Vec<ConfigField>,
+    /// R1678 — the keys this form opened with, in the order it showed them.
+    ///
+    /// The membership half of "has this been changed", which
+    /// [`ConfigField::edited`] cannot carry: a row that was ADDED after the
+    /// form opened is not edited (its value is its original), and a row that
+    /// was REMOVED is not in `fields` to be asked. Both are changes, and
+    /// neither was expressible until this list existed.
+    ///
+    /// A list of keys rather than a copy of the rows, because
+    /// [`add`](Self::add) and [`remove`](Self::remove) only ever MOVE a field
+    /// between `fields` and `addable` — the union of the two is invariant, so
+    /// the keys are enough to put the membership back and the rows themselves
+    /// are never lost.
+    opened_with: Vec<String>,
 }
 
 impl ConfigForm {
@@ -668,6 +694,7 @@ impl ConfigForm {
         let mut form = Self {
             fields: Vec::new(),
             addable: Vec::new(),
+            opened_with: Vec::new(),
         };
         for field in fields {
             form.upsert(field);
@@ -679,6 +706,7 @@ impl ConfigForm {
                 form.addable.push(candidate);
             }
         }
+        form.opened_with = form.fields.iter().map(|f| f.key().to_owned()).collect();
         form
     }
 
@@ -772,11 +800,74 @@ impl ConfigForm {
             .collect()
     }
 
-    /// Accept every current value — what a successful launch does.
+    /// Accept every current value **and the current shape** — what a successful
+    /// launch does.
+    ///
+    /// R1678 added the second half. A launch's meaning is "what is running now
+    /// IS what the screen shows", and a form that settled its values while
+    /// still reporting its added rows as changes would contradict that in the
+    /// one place a person looks to check it.
     pub fn settle(&mut self) {
         for field in &mut self.fields {
             field.settle();
         }
+        self.opened_with = self.fields.iter().map(|f| f.key().to_owned()).collect();
+    }
+
+    /// ★★ R1678 — whether this form differs from the state it opened in, in
+    /// **either** way it can: a value that was changed, or a row that was
+    /// added or taken away.
+    ///
+    /// Derived, and that is the point. The reference tool keeps every edit as
+    /// an overlay on the opening state, so it answers this with one `is_empty`
+    /// and reverts with one `clear`; this type mutates in place, so the same
+    /// fact has to come from a comparison — and it has to come from ONE
+    /// comparison, or a screen showing a "put it back" affordance would be
+    /// deciding for itself when there is anything to put back.
+    ///
+    /// The membership half is not decoration: measured on the reference, three
+    /// of its four gated reset affordances are gated on a predicate that counts
+    /// added and hidden rows as well as edited values.
+    #[must_use]
+    pub fn edited(&self) -> bool {
+        self.fields.iter().any(ConfigField::edited)
+            || self.fields.len() != self.opened_with.len()
+            || self
+                .fields
+                .iter()
+                .zip(&self.opened_with)
+                .any(|(field, key)| field.key() != key)
+    }
+
+    /// ★★ R1678 — put the whole form back to the state it opened in: every
+    /// value, and every row that was added or taken away.
+    ///
+    /// The rows themselves are never rebuilt, only moved back: [`add`](Self::add)
+    /// and [`remove`](Self::remove) shuttle a field between `fields` and
+    /// `addable`, so this partitions that union by the opening key list and
+    /// restores the opening ORDER — which a set-based repair would lose, and
+    /// the order is what a reader navigates the form by.
+    ///
+    /// [`edited`](Self::edited) is false afterwards, always. That is asserted
+    /// rather than assumed, because the two are one fact and a revert that left
+    /// the form still reporting a change would make the affordance that ran it
+    /// reappear.
+    pub fn revert(&mut self) {
+        let mut held: Vec<ConfigField> = std::mem::take(&mut self.fields);
+        held.append(&mut self.addable);
+        for field in &mut held {
+            field.revert();
+        }
+        // The opening order, then whatever is left offered — sorted, which is
+        // the order `remove` maintains for `addable`.
+        for key in &self.opened_with {
+            if let Some(at) = held.iter().position(|f| f.key() == key) {
+                let field = held.remove(at);
+                self.fields.push(field);
+            }
+        }
+        self.addable = held;
+        self.addable.sort_by(|a, b| a.key().cmp(b.key()));
     }
 
     /// Every way this form is wrong, row by row, in row order.
@@ -1579,6 +1670,73 @@ mod tests {
             "★ and the launch gate still sees it"
         );
         assert!(!form.verdict().may_launch());
+    }
+
+    /// ★★ R1678 — a form says whether it differs from what it opened as, and
+    /// puts itself back.
+    ///
+    /// The three ways it can differ are asserted SEPARATELY, because a
+    /// value-only baseline answers the first and silently misses the other two
+    /// — and that is exactly the state this type was in: `ConfigField::edited`
+    /// has existed since R1651 and a row ADDED after the form opened is not
+    /// edited, while a row REMOVED is not there to be asked.
+    #[test]
+    fn r1678_a_form_says_whether_it_differs_from_what_it_opened_as() {
+        let opened = form();
+        assert!(
+            !opened.edited(),
+            "a form as it opens has nothing to put back"
+        );
+
+        // (1) a value.
+        let mut changed = form();
+        changed.set("connect.endpoints", "t/9:9").expect("hot row");
+        assert!(changed.edited(), "an edited value is a difference");
+        changed.revert();
+        assert_eq!(changed, opened, "and reverting restores it exactly");
+        assert!(!changed.edited());
+
+        // (2) a row that was added — NOT edited, and still a difference.
+        let mut grown = form();
+        grown.add("timestamping").expect("offered");
+        assert!(
+            !grown.fields().iter().any(ConfigField::edited),
+            "★ the added row's value IS its original, so no field is edited — \
+             this is the case a value-only baseline cannot see"
+        );
+        assert!(grown.edited(), "★ and it is a difference all the same");
+        grown.revert();
+        assert_eq!(grown, opened, "the row goes back to being offered");
+
+        // (3) a row that was taken away.
+        let mut shrunk = form();
+        shrunk.remove("connect.endpoints").expect("held");
+        assert!(shrunk.edited(), "a removed row is a difference");
+        shrunk.revert();
+        assert_eq!(
+            shrunk, opened,
+            "★ including its ORDER — a set-based repair would put it back last"
+        );
+
+        // Composed, because a session is not one edit: every kind at once.
+        let mut all = form();
+        all.set("id", "a9").expect("held");
+        all.add("timestamping").expect("offered");
+        all.remove("listen.endpoints").expect("held");
+        assert!(all.edited());
+        all.revert();
+        assert_eq!(all, opened, "one revert undoes all three kinds together");
+
+        // A launch accepts the shape as well as the values, so a form settled
+        // after growing a row reports nothing to put back — and reverting then
+        // keeps the new row rather than dropping it.
+        let mut settled = form();
+        settled.add("timestamping").expect("offered");
+        settled.settle();
+        assert!(!settled.edited(), "★ a launch accepts the shape too");
+        let after = settled.clone();
+        settled.revert();
+        assert_eq!(settled, after, "and the settled shape is what revert keeps");
     }
 
     #[test]

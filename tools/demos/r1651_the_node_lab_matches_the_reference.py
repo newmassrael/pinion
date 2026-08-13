@@ -166,6 +166,14 @@ def body() -> None:
             for tag in (f"lab.frame.{frame['name']}", f"lab.frame.{frame['name']}.name"):
                 if tag not in painted:
                     missing.append(tag)
+        # ★ R1678 — the reset the specification says is UNCONDITIONAL has to be
+        # on the opening screen. Read off the `gated` column rather than named
+        # here, so a scope that changed its mind about being conditional moves
+        # this check with it.
+        for reset in spec["resets"]:
+            tag = f"lab.reset.{reset['scope']}"
+            if not reset["gated"] and tag not in painted:
+                missing.append(tag)
         for node in spec["nodes"]:
             for tag in (
                 f"lab.node.{node['id']}",
@@ -257,6 +265,12 @@ def body() -> None:
                 declared.add(f"lab.form.item.{field['key']}.{n}")
         for key in spec["addable"]:
             declared.add(f"lab.form.add.{key}")
+        # ★ R1678 — every reset affordance is a permitted tag; only the
+        # UNGATED one is demanded above, because the other four are painted
+        # exactly when their scope has something to put back and the screen
+        # this demo drives has just opened.
+        for reset in spec["resets"]:
+            declared.add(f"lab.reset.{reset['scope']}")
         # The families the specification names as a WHOLE rather than per item,
         # because the reference describes those regions as a block ("title,
         # meta, chip, zoom, config, Run") and a table written at element

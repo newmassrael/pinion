@@ -490,6 +490,22 @@ pub struct OperationSpec {
     /// the part of an operation a reader most needs and the part a test is
     /// most tempted to skip.
     pub witness: &'static str,
+    /// ★★ R1678 — the operation that has to have run first, by name, or `None`
+    /// when this one can be caused from the screen as it opens.
+    ///
+    /// A real property of the tool, not a convenience for the gate. Putting
+    /// something back is only possible once it has been changed, which is why
+    /// the reference wraps four of its five reset affordances in a conditional
+    /// and shows them only when there is something to put back — the operation
+    /// and its precondition are one design, and a table that recorded the first
+    /// without the second would describe a screen where the buttons are always
+    /// there.
+    ///
+    /// It names an operation rather than describing a state, so the gate
+    /// reaches the precondition the way a person would — by doing the earlier
+    /// thing — and a `needs` pointing at an operation this table does not hold
+    /// is a failure.
+    pub needs: Option<&'static str>,
 }
 
 /// The thirty operations, in the reference's own order.
@@ -514,48 +530,56 @@ pub const OPERATIONS: &[OperationSpec] = &[
         verb: None,
         gesture: true,
         witness: "nodes",
+        needs: None,
     },
     OperationSpec {
         name: "delete a node",
         verb: None,
         gesture: false,
         witness: "nodes",
+        needs: None,
     },
     OperationSpec {
         name: "rename a node",
         verb: None,
         gesture: false,
         witness: "nodes",
+        needs: None,
     },
     OperationSpec {
         name: "reset the node set",
-        verb: None,
-        gesture: false,
+        verb: Some(("reset", "nodes")),
+        gesture: true,
         witness: "nodes",
+        needs: Some("add a node"),
     },
     OperationSpec {
         name: "move a node",
         verb: None,
         gesture: true,
         witness: "layout",
+        needs: None,
     },
     OperationSpec {
         name: "reset the layout",
-        verb: None,
-        gesture: false,
+        verb: Some(("reset", "layout")),
+        gesture: true,
         witness: "layout",
+        needs: Some("move a node"),
     },
     OperationSpec {
         name: "collapse a node",
         verb: None,
         gesture: false,
         witness: "layout",
+        needs: None,
     },
     OperationSpec {
         name: "disable a node",
         verb: None,
         gesture: false,
         witness: "nodes",
+        needs: None,
     },
     // ── a frame's life ───────────────────────────────────────────
     OperationSpec {
@@ -563,12 +587,14 @@ pub const OPERATIONS: &[OperationSpec] = &[
         verb: None,
         gesture: true,
         witness: "frames",
+        needs: None,
     },
     OperationSpec {
         name: "move a frame and its members",
         verb: None,
         gesture: true,
         witness: "layout",
+        needs: None,
     },
     // ── the form ─────────────────────────────────────────────────
     OperationSpec {
@@ -576,18 +602,21 @@ pub const OPERATIONS: &[OperationSpec] = &[
         verb: Some(("add_field", "timestamping")),
         gesture: true,
         witness: "form",
+        needs: None,
     },
     OperationSpec {
         name: "add a field by typing its key",
         verb: None,
         gesture: false,
         witness: "form",
+        needs: None,
     },
     OperationSpec {
         name: "edit a field",
         verb: Some(("set_field", "id=a9")),
         gesture: true,
         witness: "form",
+        needs: None,
     },
     // ★ The wire can remove a field and the screen offers no way to: an
     // operation with a verb and no gesture is as much a gap as the reverse,
@@ -597,12 +626,14 @@ pub const OPERATIONS: &[OperationSpec] = &[
         verb: Some(("remove_field", "control.permissions")),
         gesture: false,
         witness: "form",
+        needs: None,
     },
     OperationSpec {
         name: "reset the fields",
-        verb: None,
-        gesture: false,
+        verb: Some(("reset", "fields")),
+        gesture: true,
         witness: "form",
+        needs: Some("edit a field"),
     },
     // ── a link's life ────────────────────────────────────────────
     OperationSpec {
@@ -610,36 +641,42 @@ pub const OPERATIONS: &[OperationSpec] = &[
         verb: Some(("connect", "S-01,P-02")),
         gesture: true,
         witness: "links",
+        needs: None,
     },
     OperationSpec {
         name: "delete a link",
         verb: None,
         gesture: false,
         witness: "links",
+        needs: None,
     },
     OperationSpec {
         name: "rewire a link",
         verb: None,
         gesture: false,
         witness: "links",
+        needs: None,
     },
     OperationSpec {
         name: "select a link endpoint",
         verb: None,
         gesture: false,
         witness: "selected_link",
+        needs: None,
     },
     OperationSpec {
         name: "adopt an observed link",
         verb: None,
         gesture: false,
         witness: "links",
+        needs: None,
     },
     OperationSpec {
         name: "reset the links",
-        verb: None,
-        gesture: false,
+        verb: Some(("reset", "links")),
+        gesture: true,
         witness: "links",
+        needs: Some("author a link"),
     },
     // ── the view ─────────────────────────────────────────────────
     OperationSpec {
@@ -647,6 +684,7 @@ pub const OPERATIONS: &[OperationSpec] = &[
         verb: None,
         gesture: true,
         witness: "pan",
+        needs: None,
     },
     // ★ The zoom BUTTONS are the gesture; the wheel the hint strip advertises
     // is not, and `send WheelUp` moving the zoom is what made that look
@@ -656,18 +694,25 @@ pub const OPERATIONS: &[OperationSpec] = &[
         verb: Some(("zoom_by", "in")),
         gesture: true,
         witness: "zoom",
+        needs: None,
     },
     OperationSpec {
         name: "fit the graph to the view",
         verb: None,
         gesture: false,
         witness: "zoom",
+        needs: None,
     },
+    // ★ The one reset whose affordance is UNCONDITIONAL — see
+    // `ResetScope::gated`. It still `needs` a change, because a reset over an
+    // unchanged view moves nothing and the gate would be asserting that a
+    // no-op is an operation.
     OperationSpec {
         name: "reset the view",
-        verb: None,
-        gesture: false,
+        verb: Some(("reset", "view")),
+        gesture: true,
         witness: "zoom",
+        needs: Some("zoom"),
     },
     // ── what leaves the screen ───────────────────────────────────
     OperationSpec {
@@ -675,12 +720,14 @@ pub const OPERATIONS: &[OperationSpec] = &[
         verb: None,
         gesture: false,
         witness: "document",
+        needs: None,
     },
     OperationSpec {
         name: "produce the launch script",
         verb: None,
         gesture: false,
         witness: "document",
+        needs: None,
     },
     // ★ The master discovery switch is written through `scene/intervene`, not
     // through an action — it is a published slot with a value, and an action
@@ -692,6 +739,7 @@ pub const OPERATIONS: &[OperationSpec] = &[
         verb: None,
         gesture: true,
         witness: "discovery",
+        needs: None,
     },
     // ★★ `gesture: false` is MEASURED. The verdict is derived from the form,
     // so causing it means making a value cross a bound — and no affordance on
@@ -703,11 +751,13 @@ pub const OPERATIONS: &[OperationSpec] = &[
         verb: Some(("set_field", "transport.link.tx.batch_size=70000")),
         gesture: false,
         witness: "verdict",
+        needs: None,
     },
     OperationSpec {
         name: "go to the first problem",
         verb: None,
         gesture: false,
         witness: "selected",
+        needs: None,
     },
 ];

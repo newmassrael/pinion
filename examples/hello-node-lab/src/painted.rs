@@ -299,6 +299,15 @@ fn declared_tags(state: &LabState) -> Vec<String> {
         want.push(format!("lab.frame.{}", frame.name));
         want.push(format!("lab.frame.{}.name", frame.name));
     }
+    // ★ R1678 — the reset affordances, derived from the same list that decides
+    // which are painted. The gated four are demanded exactly when their scope
+    // has something to put back, so this is not "the family may or may not be
+    // there": at any moment the specification names precisely the buttons that
+    // must exist, and the backward check names any other as invented.
+    want.push("lab.reset.view".to_owned());
+    for scope in super::changed_scopes(state) {
+        want.push(format!("lab.reset.{}", scope.wire()));
+    }
     // The cards are the ones the model holds, not the ones the specification
     // opened with — R1651's real-mouse defect was a canvas that drew the
     // specification's list and therefore could never show an added node.
@@ -1672,6 +1681,26 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
     ("toggle discovery", |state, shot| {
         press_tag(state, shot, "lab.palette.discovery");
     }),
+    // ★ R1678 — the five resets. Four are painted only once their scope has
+    // something to put back, which is why every one of them declares a `needs`:
+    // the gate causes that first, and the button the driver aims at is painted
+    // BECAUSE it did. A driver that found its tag missing would panic here
+    // rather than pass quietly, which is the point.
+    ("reset the node set", |state, shot| {
+        press_tag(state, shot, "lab.reset.nodes");
+    }),
+    ("reset the layout", |state, shot| {
+        press_tag(state, shot, "lab.reset.layout");
+    }),
+    ("reset the fields", |state, shot| {
+        press_tag(state, shot, "lab.reset.fields");
+    }),
+    ("reset the links", |state, shot| {
+        press_tag(state, shot, "lab.reset.links");
+    }),
+    ("reset the view", |state, shot| {
+        press_tag(state, shot, "lab.reset.view");
+    }),
 ];
 
 /// Press and release at the centre of a painted tag.
@@ -1725,6 +1754,47 @@ fn drag_from(state: &std::rc::Rc<LabState>, from: (u32, u32), by: (i32, i32)) {
     );
     super::move_cursor(state, to.0, to.1);
     super::release(state);
+}
+
+/// ★★ R1678 — bring the screen to the state an operation needs before it can
+/// be caused at all.
+///
+/// Reached the way a person reaches it: by causing the earlier operation the
+/// specification names, preferring its GESTURE where it has one. A setup that
+/// wrote the state directly would let a reset be "proven" against a state no
+/// session can produce — the rule the swept states next door already state, and
+/// the reason `needs` names an operation rather than describing a condition.
+///
+/// Panics rather than skipping on a `needs` this table cannot satisfy: an
+/// unreachable precondition would silently stop exercising the operation that
+/// declared it, which is a gate quietly covering less than it says.
+fn reach_precondition(op: &spec::OperationSpec, state: &std::rc::Rc<LabState>) {
+    let Some(earlier) = op.needs else { return };
+    let earlier = spec::OPERATIONS
+        .iter()
+        .find(|o| o.name == earlier)
+        .unwrap_or_else(|| {
+            panic!(
+                "{:?} needs {earlier:?}, which this table does not hold",
+                op.name
+            )
+        });
+    if let Some((_, drive)) = OPERATION_GESTURES.iter().find(|(n, _)| *n == earlier.name) {
+        let shot = painted(state);
+        drive(state, &shot);
+        return;
+    }
+    let (verb, arg) = earlier.verb.unwrap_or_else(|| {
+        panic!(
+            "{:?} needs {:?}, which has no way in at all",
+            op.name, earlier.name
+        )
+    });
+    let mut oracle = super::LabOracle::new();
+    oracle.attach(std::rc::Rc::clone(state));
+    oracle
+        .invoke(verb, IntrospectValue::Text(arg.to_owned()))
+        .unwrap_or_else(|why| panic!("{:?}'s precondition refused: {why:?}", op.name));
 }
 
 /// Read one witness slot through the screen's OWN wire surface.
@@ -1807,6 +1877,7 @@ fn r1677_every_declared_way_of_causing_an_operation_causes_it() {
             if let Some((verb, arg)) = op.verb {
                 super::reset_lab_state();
                 let state = use_lab_state();
+                reach_precondition(op, &state);
                 let before = witness(&state, op.witness);
                 let mut oracle = super::LabOracle::new();
                 oracle.attach(std::rc::Rc::clone(&state));
@@ -1828,6 +1899,7 @@ fn r1677_every_declared_way_of_causing_an_operation_causes_it() {
             if let Some((_, drive)) = OPERATION_GESTURES.iter().find(|(n, _)| *n == op.name) {
                 super::reset_lab_state();
                 let state = use_lab_state();
+                reach_precondition(op, &state);
                 let shot = painted(&state);
                 let before = witness(&state, op.witness);
                 drive(&state, &shot);
@@ -1888,4 +1960,4 @@ fn r1677_every_declared_way_of_causing_an_operation_causes_it() {
 /// keys there are without exporting them, and the launch script does not exist
 /// — so a prose judgement had been carrying them as half-present. The gate
 /// disagreeing with the reading that motivated it is the gate doing its job.
-const ABSENT_OPERATIONS: usize = 18;
+const ABSENT_OPERATIONS: usize = 13;
