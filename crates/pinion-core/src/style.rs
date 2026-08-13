@@ -3825,6 +3825,87 @@ impl Size {
     }
 }
 
+/// (R1685 §5.21 §5.45) What happens to a child that does not fit — CSS
+/// `overflow`, declared on the box rather than discovered by the renderer.
+///
+/// # One declaration, both halves
+///
+/// A box that says "content which does not fit is cut here" is making two
+/// statements at once, and until R1685 this tree could only make one of them:
+///
+/// - **Layout**: the box may shrink below its content. CSS calls the thing
+///   being overridden the *automatic minimum size*, and the override is
+///   [`Self::Hidden`]'s to make. Before R1685 a consumer spelled this by hand
+///   as [`LayoutStyle::min_size`] `= Px(0)` — the effect without the reason,
+///   which is why [`view_splitter`](crate::widgets) reads as arithmetic.
+/// - **Paint**: the ink of a child that escapes is not drawn. Before R1685
+///   the only node that could say this was [`Scene::Scroll`](crate::Scene),
+///   so a region that had to clip had to also become scrollable.
+///
+/// Splitting them cost a consumer a round: the layout half is reachable and
+/// documented, so a port reads `min_size` and concludes `overflow: hidden`
+/// arrived, then finds the paint half missing at the far end of the work.
+/// The two halves are one word here because they are one word in CSS.
+///
+/// # Why there is no `overflow-x` / `overflow-y`
+///
+/// CSS has the pair, but it cannot express a mixed *clipping* box: when one
+/// axis is a clipping value and the other is `visible`, the `visible` one
+/// computes to `auto`, i.e. the box becomes scrollable. So a per-axis split
+/// buys exactly one thing — letting one axis scroll — and scrolling here is
+/// [`Scene::Scroll`](crate::Scene)'s job, which already has a per-axis
+/// [`ScrollAxis`](crate::scene::ScrollAxis). One field states the whole rule.
+///
+/// # Why there is no `Scroll`, and no `Clip`
+///
+/// `Scroll` is absent because [`Scene::Scroll`](crate::Scene) is the scrolling
+/// model; a second one reachable from a style field would be two answers to
+/// one question, and the node is the richer answer (offset state, input
+/// routing, linked followers, reachability). **The node you choose is the
+/// declaration**: `Scroll` means a range a reader can move, `Hidden` means a
+/// window nothing moves — and [`reach`](crate::reach) reports them differently
+/// for exactly that reason.
+///
+/// CSS's `clip` is absent because taffy reads it as "cut the ink but keep the
+/// content-based minimum", which is *not* CSS's own rule (CSS relaxes the
+/// automatic minimum for every non-`visible` value). Exposing it would publish
+/// an engine quirk as if it were the cascade. A consumer that genuinely wants
+/// that pair can have the variant then, with its divergence written down.
+///
+/// # What this does NOT govern
+///
+/// A leaf's own ink. A [`Scene::Text`](crate::Scene) too long for its rect is
+/// [`TextOverflow`]'s business, and a
+/// [`Scene::Image`](crate::Scene)'s is [`Fit`]'s: those are rasterisation
+/// policies for one node's own paint, while this declares a window over
+/// *other* nodes. Setting `Hidden` on a leaf is legal and does the layout half
+/// only — the leaf has no subtree to cut.
+#[non_exhaustive]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Hash)]
+pub enum Overflow {
+    /// Content that does not fit is painted anyway, and the box keeps CSS's
+    /// automatic minimum size. The default, and every pre-R1685 binding.
+    #[default]
+    Visible,
+    /// Content that does not fit is cut at this box, and the box may shrink
+    /// below its content (the automatic minimum size becomes zero).
+    Hidden,
+}
+
+impl Overflow {
+    /// Does this declare a window over the node's children — the fact every
+    /// renderer must observe, and the one
+    /// [`Scene::clips_subtree`](crate::Scene::clips_subtree) answers per node?
+    ///
+    /// One predicate rather than two (`clips` / `zeroes_automatic_minimum`)
+    /// because with two variants the answers cannot differ. A `Clip` variant
+    /// would make them differ, and would arrive with the second name.
+    #[must_use]
+    pub const fn clips(self) -> bool {
+        matches!(self, Self::Hidden)
+    }
+}
+
 /// Layout sidecar — companion to [`BoxStyle`] / [`TextStyle`] / etc.
 ///
 /// Carries the flex + sizing information the §5.21 R23 layout pass
@@ -3882,7 +3963,24 @@ pub struct LayoutStyle {
     /// grid, an image, a nested scroll area) distributes by ratio instead
     /// of pinning to content; the cross axis stays `Auto` so
     /// [`AlignItems::Stretch`] still fills it.
+    ///
+    /// (R1685) That override is the *effect*; [`Self::overflow`] is the
+    /// *reason*. A box that shrinks below its content because its content is
+    /// cut there says so with `Overflow::Hidden`, which zeroes the automatic
+    /// minimum on both axes and declares the clip in the same word. Reach for
+    /// this field when the minimum is a sizing decision of its own — a ratio
+    /// child that must distribute by share (the splitter above) rather than a
+    /// region whose overflow is hidden.
     pub min_size: Size,
+    /// (R1685 §5.21 §5.45) What happens to a child that does not fit — CSS
+    /// `overflow`, lowered to taffy `Style.overflow` on both axes AND read by
+    /// every renderer as the clip declaration. See [`Overflow`] for why it is
+    /// one field, why it has no `Scroll` variant, and what it does not govern.
+    ///
+    /// The default [`Overflow::Visible`] is taffy's own default and CSS's, so
+    /// every pre-R1685 binding lowers to the identical taffy style and paints
+    /// through the identical (clip-free) path.
+    pub overflow: Overflow,
     pub flex_grow: f32,
     /// (R1536 §5.21) Flex `flex-shrink` — how much of a deficit this child
     /// absorbs when the line overflows. `1.0` (the default, and taffy's and
@@ -4241,6 +4339,9 @@ impl LayoutStyle {
             // (R1086 §5.21) Both axes `Auto` = taffy `min_size: Auto` =
             // the CSS automatic flex minimum (pre-R1086 behaviour).
             min_size: Size::auto(),
+            // (R1685 §5.21) CSS's default and taffy's: nothing is cut, and the
+            // automatic minimum stands. Pre-R1685 layout and paint preserved.
+            overflow: Overflow::Visible,
             flex_grow: 0.0,
             // CSS / taffy default: a child gives up space under pressure.
             flex_shrink: 1.0,
@@ -4520,6 +4621,21 @@ impl LayoutStyle {
         self
     }
 
+    /// (R1685 §5.21 §5.45) Builder: what happens to a child that does not fit
+    /// — CSS `overflow`. `with_overflow(Overflow::Hidden)` is the whole of
+    /// `overflow: hidden`: the box may shrink below its content AND the ink
+    /// that escapes is cut, on every backend.
+    ///
+    /// The canonical use is a region that must yield in a column whose other
+    /// rows are fixed — a body between a header and a footer — where nothing
+    /// should scroll. Reach for [`Scene::Scroll`](crate::Scene) instead when
+    /// the reader is meant to be able to move to the part that does not fit.
+    #[must_use]
+    pub const fn with_overflow(mut self, overflow: Overflow) -> Self {
+        self.overflow = overflow;
+        self
+    }
+
     /// (R1536 §5.21) Builder: flex-shrink factor. `0.0` pins the child at its
     /// [`Self::size`] when the line overflows; `1.0` (the default) lets it give
     /// up space. See [`Self::flex_shrink`].
@@ -4580,6 +4696,11 @@ impl core::hash::Hash for LayoutStyle {
         // §5.16 paint-fragment cache stays bit-identical for every existing
         // binding.
         self.min_size.hash(hasher);
+        // (R1685 §5.21 §5.16) The clip is part of what a fragment looks like:
+        // two nodes identical but for `overflow` paint different pixels, so a
+        // key that skipped this field would serve the unclipped fragment for
+        // the clipped node. Fieldless enum = one discriminant byte.
+        self.overflow.hash(hasher);
         self.flex_grow.to_bits().hash(hasher);
         self.padding.hash(hasher);
         self.margin.hash(hasher);
@@ -5949,6 +6070,46 @@ mod tests {
             .with_flex_grow(0.7);
         assert_eq!(style.flex_basis, Some(SizeValue::Px(0)));
         assert!((style.flex_grow - 0.7).abs() < f32::EPSILON);
+    }
+
+    /// R1685 — the declaration's own surface: the default is CSS's, the
+    /// predicate every renderer reads answers for both variants, and the
+    /// §5.16 paint-fragment cache key moves with it.
+    ///
+    /// The cache assertion is the one that has teeth: two nodes identical but
+    /// for `overflow` paint different pixels, so a key that skipped the field
+    /// would serve the unclipped fragment for the clipped node — a stale-pixel
+    /// bug that no clip test in any renderer would catch, because the renderer
+    /// would never be asked to draw it.
+    #[test]
+    fn r1685_overflow_defaults_to_visible_and_keys_the_paint_cache() {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        assert_eq!(Overflow::default(), Overflow::Visible);
+        assert_eq!(LayoutStyle::new().overflow, Overflow::Visible);
+        assert!(!Overflow::Visible.clips());
+        assert!(Overflow::Hidden.clips());
+        assert_eq!(
+            LayoutStyle::new().with_overflow(Overflow::Hidden).overflow,
+            Overflow::Hidden
+        );
+        assert_ne!(
+            LayoutStyle::new(),
+            LayoutStyle::new().with_overflow(Overflow::Hidden)
+        );
+
+        let key = |style: LayoutStyle| {
+            let mut hasher = DefaultHasher::new();
+            style.hash(&mut hasher);
+            hasher.finish()
+        };
+        assert_ne!(
+            key(LayoutStyle::new()),
+            key(LayoutStyle::new().with_overflow(Overflow::Hidden)),
+            "overflow must participate in LayoutStyle::hash — the fragment \
+             cache would otherwise reuse the unclipped drawing"
+        );
     }
 
     #[test]

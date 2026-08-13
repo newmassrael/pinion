@@ -1,0 +1,34 @@
+[package]
+name = "hello-overflow-clip"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1685 §5.21 §5.45 — a column whose body yields and cuts what does not fit: the consumer case for LayoutStyle::overflow"
+publish = false
+
+[[bin]]
+name = "hello-overflow-clip"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# R1685 — `WidgetA11y` for the screen's group node.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+pinion-derive = { path = "../../crates/pinion-derive", version = "0.0.1" }
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R1537 §5.16 — the emitted renderer owns its wgpu device through pinion-gpu.
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
+vello = { workspace = true }
+
+[dev-dependencies]
+# R1685 — the module tests run a real layout pass over the view.
+pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }
+pinion-text = { path = "../../crates/pinion-text", version = "0.0.1" }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

@@ -4137,8 +4137,27 @@ def _walk_tag_rects(snap: Any, *, clipped: bool) -> dict[str, tuple[int, int, in
         if tag and isinstance(rect, dict):
             keep(tag, place(rect["x"] + xoff, rect["y"] + yoff,
                             rect["w"], rect["h"], clip))
+        # ★★ R1685 — a Scroll is no longer the only node that cuts its
+        # children: a container that declares `overflow: hidden` publishes
+        # `clips: true` and narrows the same way. This mirror had the clip
+        # welded to the node KIND — the same shape the framework itself had,
+        # and the reason a second clipping kind was expensive — so without
+        # this arm it reports a cut mark at its full size and, for one wholly
+        # cut away, reports a rectangle where nothing is drawn. Measured the
+        # first time this ran: three tags, two partly cut and one gone.
+        #
+        # No offset arm beside it, deliberately: a container does not move its
+        # children, it only stops drawing them past its edge. That asymmetry is
+        # the framework's (`Scene::clip_window` versus the scroll's frame
+        # shift), and mirroring only half of it is what keeps the two answers
+        # the same shape.
+        child_clip = clip
+        if node.get("clips") and isinstance(rect, dict):
+            child_clip = _clipped_into(
+                rect["x"] + xoff, rect["y"] + yoff, rect["w"], rect["h"], clip
+            ) or (0, 0, 0, 0)
         for child in (node.get("children") or []):
-            walk(child, xoff, yoff, clip)
+            walk(child, xoff, yoff, child_clip)
 
     walk(snap, 0, 0, None)
     return {tag: rect for tag, rect in out.items() if rect is not None}

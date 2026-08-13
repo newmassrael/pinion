@@ -133,8 +133,8 @@ pub use storage::{InMemoryStorage, Storage};
 pub use style::{
     Align, AlignItems, Border, BoxStyle, Color, ColorStop, Display, Extend, Fit, FlexDirection,
     FontFamily, FontStyle, FontWeight, GenericFontFamily, Gradient, GradientKind, ImageStyle,
-    JustifyContent, LayoutStyle, LineHeight, PathStyle, Size, SizeValue, Stroke, StrokeCap,
-    TextAlign, TextDecoration, TextOverflow, TextStyle, scale_normalized_to_px,
+    JustifyContent, LayoutStyle, LineHeight, Overflow, PathStyle, Size, SizeValue, Stroke,
+    StrokeCap, TextAlign, TextDecoration, TextOverflow, TextStyle, scale_normalized_to_px,
 };
 pub use syntax::{SyntaxPalette, highlight_code};
 pub use term_grid::{

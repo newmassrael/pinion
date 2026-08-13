@@ -185,6 +185,16 @@ fn to_vello_inner<F>(
     match scene {
         Scene::Container(c) => {
             paint_box_decoration(out, c.rect, &c.style, c.style.fill, transform);
+            // (R1685 §5.45) The clip goes on AFTER the node's own decoration
+            // and around its children only, because that is what the
+            // declaration says: a window over what is inside. CSS agrees for a
+            // concrete reason — `overflow` clips to the padding box, so a
+            // border stroke, which straddles the edge, is not cut in half by
+            // the box's own clip.
+            let clip = clip_shape_of(scene);
+            if let Some(shape) = &clip {
+                out.push_clip_layer(Fill::NonZero, transform, shape);
+            }
             for child in &c.children {
                 to_vello_inner(
                     child,
@@ -196,6 +206,9 @@ fn to_vello_inner<F>(
                     transform,
                 );
             }
+            if clip.is_some() {
+                out.pop_layer();
+            }
         }
         Scene::Box(b) => {
             let fill = fill_hook(b).unwrap_or(b.style.fill);
@@ -206,14 +219,14 @@ fn to_vello_inner<F>(
             // R55.E.1 — viewport clip in the parent's coordinate
             // frame; Vello applies the supplied transform to the
             // clip shape so the resulting screen-space clip lands
-            // at `transform * viewport`.
-            let viewport_clip = KurboRect::new(
-                f64::from(s.viewport.x),
-                f64::from(s.viewport.y),
-                f64::from(s.viewport.x.saturating_add(s.viewport.w)),
-                f64::from(s.viewport.y.saturating_add(s.viewport.h)),
-            );
-            out.push_clip_layer(Fill::NonZero, transform, &viewport_clip);
+            // at `transform * viewport`. (R1685) The rect comes from
+            // the node's own declaration, the same call the container
+            // arm makes, so the two cannot come to differ about what
+            // a clip window is.
+            let clip = clip_shape_of(scene);
+            if let Some(shape) = &clip {
+                out.push_clip_layer(Fill::NonZero, transform, shape);
+            }
             // Content paints in content-intrinsic coordinates; the
             // scroll container shifts so that content-intrinsic
             // `(0, 0)` lands at viewport `(viewport.x - offset_x,
@@ -232,7 +245,9 @@ fn to_vello_inner<F>(
                 out,
                 child_transform,
             );
-            out.pop_layer();
+            if clip.is_some() {
+                out.pop_layer();
+            }
         }
         // R681 §2 #4 — ImmediateModeNode paints through the
         // backend-agnostic [`ImmediatePainter`] surface. The shell's
@@ -901,6 +916,24 @@ fn append_placed(out: &mut VelloScene, fragment: &VelloScene, transform: Affine)
     }
 }
 
+/// (R1685 §5.45) The clip shape this node declares, in its own coordinate
+/// frame — the Vello reading of [`Scene::clip_window`].
+///
+/// Both walkers ask this rather than matching on the node kind, which is what
+/// made a second clipping kind free here: before R1685 each of them spelled
+/// `Scene::Scroll(s) => KurboRect::new(s.viewport…)`, so the clip was a fact
+/// about a *variant* in four places instead of a fact about a *node* in one.
+fn clip_shape_of(scene: &Scene) -> Option<KurboRect> {
+    scene.clip_window().map(|w| {
+        KurboRect::new(
+            f64::from(w.x),
+            f64::from(w.y),
+            f64::from(w.x.saturating_add(w.w)),
+            f64::from(w.y.saturating_add(w.h)),
+        )
+    })
+}
+
 /// (R1520 §5.16) The overlap of two rects; empty (`w == 0 || h == 0`) when
 /// they do not meet.
 ///
@@ -1457,6 +1490,20 @@ fn encode_node<F>(
     match scene {
         Scene::Container(c) => {
             paint_box_decoration(&mut sub, c.rect, &c.style, c.style.fill, transform);
+            // (R1685 §5.45) Same rule as the uncached walker: decoration first,
+            // then a window over the children. The screen-space `clip` narrows
+            // too — a fragment whose ink the container cuts away must not
+            // report damage out there, exactly as a scroll's does not.
+            let clip_shape = clip_shape_of(scene);
+            if let Some(shape) = &clip_shape {
+                sub.push_clip_layer(Fill::NonZero, transform, shape);
+            }
+            let inner_clip = if clip_shape.is_some() {
+                let own = screen_bounds(c.rect, placement);
+                Some(clip.map_or(own, |outer| intersection(outer, own)))
+            } else {
+                clip
+            };
             for (index, child) in c.children.iter().enumerate() {
                 to_vello_cached_inner(
                     child,
@@ -1464,9 +1511,12 @@ fn encode_node<F>(
                     &mut sub,
                     transform,
                     placement,
-                    clip,
+                    inner_clip,
                     Some(index),
                 );
+            }
+            if clip_shape.is_some() {
+                sub.pop_layer();
             }
         }
         Scene::Box(b) => {
@@ -1475,13 +1525,10 @@ fn encode_node<F>(
         }
         Scene::Text(t) => paint_text(&mut sub, t, session.text_cache, session.engine, transform),
         Scene::Scroll(s) => {
-            let viewport_clip = KurboRect::new(
-                f64::from(s.viewport.x),
-                f64::from(s.viewport.y),
-                f64::from(s.viewport.x.saturating_add(s.viewport.w)),
-                f64::from(s.viewport.y.saturating_add(s.viewport.h)),
-            );
-            sub.push_clip_layer(Fill::NonZero, transform, &viewport_clip);
+            let viewport_clip = clip_shape_of(scene);
+            if let Some(shape) = &viewport_clip {
+                sub.push_clip_layer(Fill::NonZero, transform, shape);
+            }
             let dx = f64::from(s.viewport.x) - f64::from(s.offset_x);
             let dy = f64::from(s.viewport.y) - f64::from(s.offset_y);
             let shift = Affine::translate((dx, dy));
@@ -1508,7 +1555,9 @@ fn encode_node<F>(
                 inner_clip,
                 None,
             );
-            sub.pop_layer();
+            if viewport_clip.is_some() {
+                sub.pop_layer();
+            }
         }
         Scene::ImmediateModeNode(node) => {
             paint_immediate_mode_node(&mut sub, node, transform);

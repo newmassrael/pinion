@@ -51,8 +51,8 @@
 
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
-    AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, SizeValue,
-    TextOverflow, TextStyle,
+    AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Overflow, Size,
+    SizeValue, TextOverflow, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::{Color, Scene};
@@ -301,6 +301,9 @@ fn build_control(
                     .with_justify(JustifyContent::Center)
                     .with_size(Size::auto().with_height(SizeValue::Px(style.item_height)))
                     // ★★ R1674 — a control may shrink below its label.
+                    // ★★★ R1685 — and what happens to a label that still does
+                    // not fit is now the SAME declaration rather than a second
+                    // one.
                     //
                     // Measured by this crate's frame gate on its first run: a
                     // five-control bar in a 180px window painted its last
@@ -311,17 +314,28 @@ fn build_control(
                     // min-content width however tight the line gets, so the
                     // overflow had nowhere to go but out.
                     //
-                    // `Px(0)` on the main axis is the documented override
-                    // (`LayoutStyle::min_size`), and with the label eliding
-                    // above, a bar that runs out of room now degrades to
-                    // shortened labels instead of ink outside itself.
+                    // R1674 and R1680 each answered that with `min_size: Px(0)`
+                    // — the effect of `overflow: hidden` written as arithmetic,
+                    // because the declaration did not exist yet. `Hidden` says
+                    // it once and says it for both halves: the control may
+                    // shrink below its label (the release those two spelled by
+                    // hand) AND ink that still escapes is cut at the control.
+                    //
+                    // The second half is not redundancy. R1680's red was INK
+                    // past the box, not a box past the bar: `TextOverflow`
+                    // shortens a run to fit its own rect, and a glyph whose ink
+                    // exceeds the advance that rect was measured from still
+                    // paints outside it — which is why that gate was green on
+                    // this host and red under the CI runner's font. A clip is
+                    // the font-independent half, and it is the renderer's
+                    // obligation rather than a measurement anyone can get wrong.
                     //
                     // ⚠ This is not the floor's shape. A toolbar there grows an
                     // extension button and moves the overflowing actions into a
                     // popup, which keeps every label whole and is better; that
                     // is an affordance with its own state, not a containment
                     // fix, and it is registered rather than half-built here.
-                    .with_min_size(Size::auto().with_width(SizeValue::Px(0)))
+                    .with_overflow(Overflow::Hidden)
                     .with_padding(Rect::new(style.item_padding, 0, style.item_padding, 0)),
             ),
     )
@@ -640,6 +654,81 @@ mod tests {
         assert_eq!(
             tag_border(&scene, "toolbar#0"),
             Some(Border::new(t.resolve(ColorRole::Accent), 2))
+        );
+    }
+
+    /// ★★★ R1685 — a label whose INK is wider than any box it could be given
+    /// does not paint over the control beside it.
+    ///
+    /// This is the half `min_size` and `TextOverflow` cannot reach, and the
+    /// reason the control now declares `Overflow::Hidden`. Both of those work
+    /// on the box: the minimum lets the box shrink, the elide shortens a run to
+    /// fit the box it was measured into. Neither can help when the *ink* of the
+    /// shaped run exceeds the advance that box came from — which is not
+    /// hypothetical, it is R1680's CI red, where "Undo" overhung by 2 pixels
+    /// left and 1 right under the runner's font while this host's font fit.
+    ///
+    /// So the measurement here has **no font in it**: ink is 40 pixels per
+    /// character, far past anything the layout could have allotted, and the
+    /// verdict is therefore the same on every host — which is the property the
+    /// gate that caught R1680 does not have (it measures with the host's own
+    /// cache, so it is green here and was red in CI).
+    ///
+    /// What is asserted is the FATE, not the absence: ink past its box is still
+    /// a loss and `scene/containment` still reports it (a clip hiding the
+    /// report would be the silence that module exists to end). The claim is
+    /// that the loss is now `Clipped` — cut at the control — where before it
+    /// was `Smeared` over whatever is next to it.
+    #[test]
+    fn r1685_a_labels_ink_is_cut_at_its_control_whatever_the_font_does() {
+        let scene = view_toolbar(
+            "toolbar",
+            &LABELS,
+            &[false; 5],
+            &[false; 5],
+            0,
+            false,
+            &theme(),
+            &ToolbarStyle::m3_default(),
+        );
+        let mut scene = Scene::Container(
+            ContainerNode::new(vec![scene])
+                .with_layout(LayoutStyle::new().with_size(pinion_core::style::Size::px(420, 60))),
+        );
+        let mut cache = pinion_text::LayoutCache::new();
+        pinion_runtime::layout::compute_layout(&mut scene, &mut cache, 420, 60);
+
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "the fixture labels are a handful of characters"
+        )]
+        let found = pinion_core::containment::escapes(&scene, &mut |t| {
+            ((t.content.chars().count() as u32) * 40, t.rect.h.max(12))
+        });
+        let from_labels: Vec<_> = found
+            .iter()
+            .filter(|e| e.owner.starts_with("toolbar#"))
+            .collect();
+        assert!(
+            !from_labels.is_empty(),
+            "the stand-in ink is 40px per character, so every label must \
+             overflow its control — a gate that found none would be measuring \
+             nothing: {found:?}"
+        );
+        let smeared: Vec<_> = from_labels
+            .iter()
+            .filter(|e| e.fate != pinion_core::containment::Fate::Clipped)
+            .collect();
+        assert!(
+            smeared.is_empty(),
+            "{} label(s) painted over what is beside them instead of being cut \
+             at their control — the control's `Overflow::Hidden` did not reach \
+             the walk: {:?}",
+            smeared.len(),
+            smeared
+                .iter()
+                .map(|e| (e.content.clone(), e.owner.clone(), e.fate))
+                .collect::<Vec<_>>()
         );
     }
 

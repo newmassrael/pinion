@@ -27,6 +27,10 @@
 //! `DeviceRGB` sRGB), and [`Scene::Scroll`] (a viewport clip plus the
 //! `translate(viewport - offset)` the vello adapter applies, so scrolled
 //! content lands in the right place and is clipped to its viewport).
+//! R1685 — and the clip a *container* declares
+//! ([`Overflow::Hidden`](pinion_core::style::Overflow::Hidden)), which is the
+//! same window through the same PDF `q` / `W n` / `Q` bracket: this projector
+//! is one of the three renderers `backend_parity` holds to the declaration.
 //!
 //! Deferred (rendered as nothing, a documented carry — additive when a
 //! consumer arrives):
@@ -234,8 +238,24 @@ impl ContentBuilder {
             Scene::Box(n) => self.paint_box(n.rect, &n.style, tx, ty),
             Scene::Container(n) => {
                 self.paint_box(n.rect, &n.style, tx, ty);
+                // (R1685 §5.45) A container clips when it declares
+                // `Overflow::Hidden`, and a renderer may not decide that ink
+                // the scene calls hidden is worth drawing. Same `q` / `Q`
+                // bracket as the scroll arm below, for the same reason —
+                // including the alpha restore, which is what `Q` does to the
+                // graphics state whatever put the clip there.
+                let clip = scene.clip_window();
+                let saved_alpha = self.current_alpha;
+                if let Some(window) = clip {
+                    self.ops.push_str("q\n");
+                    self.clip_rect(window, tx, ty);
+                }
                 for child in &n.children {
                     self.walk(child, tx, ty);
+                }
+                if clip.is_some() {
+                    self.ops.push_str("Q\n");
+                    self.current_alpha = saved_alpha;
                 }
             }
             Scene::Text(n) => self.paint_text(n, tx, ty),

@@ -234,28 +234,21 @@ fn to_buffer_inner(
     cursor_blink_on: bool,
 ) {
     match scene {
-        Scene::Container(c) => paint_container(c, buf, clip, offset_px, cursor_blink_on),
+        Scene::Container(c) => paint_container(
+            c,
+            scene.clip_window(),
+            buf,
+            clip,
+            offset_px,
+            cursor_blink_on,
+        ),
         Scene::Text(t) => paint_text_inner(t, buf, clip, offset_px),
         Scene::Box(b) => paint_box(b, buf, clip, offset_px),
         Scene::Scroll(s) => {
-            // Viewport in screen pixels = parent's pixel frame +
-            // cumulative offset. i64 throughout to absorb the
-            // adversarial offset case (R55.E.1 mirror:
-            // `with_offset(i32::MAX, ...)`) without intermediate wrap.
-            // Distinct `left_*` / `top_*` etc. naming avoids the
-            // clippy::similar_names trip the `sx0`/`sy0` shorthand
-            // would otherwise hit.
-            let left_px = i64::from(s.viewport.x) + i64::from(offset_px.0);
-            let top_px = i64::from(s.viewport.y) + i64::from(offset_px.1);
-            let right_px = left_px + i64::from(s.viewport.w);
-            let bottom_px = top_px + i64::from(s.viewport.h);
-            let viewport_clip = CellClip {
-                x0: pixels_to_cell_floor(left_px, CELL.cell_w()),
-                y0: pixels_to_cell_floor(top_px, CELL.cell_h()),
-                x1: pixels_to_cell_floor(right_px, CELL.cell_w()),
-                y1: pixels_to_cell_floor(bottom_px, CELL.cell_h()),
+            let new_clip = match scene.clip_window() {
+                Some(window) => clip.intersect(cell_clip_of(window, offset_px)),
+                None => clip,
             };
-            let new_clip = clip.intersect(viewport_clip);
             if new_clip.is_empty() {
                 // Viewport entirely off-screen — skip the recursion
                 // (and the shape work it would do) entirely.
@@ -305,14 +298,49 @@ fn to_buffer_inner(
 /// box-style call.
 fn paint_container(
     c: &ContainerNode,
+    window: Option<pinion_core::scene::Rect>,
     buf: &mut Buffer,
     clip: CellClip,
     offset_px: (i32, i32),
     cursor_blink_on: bool,
 ) {
     paint_box_style(&c.rect, &c.style, buf, clip, offset_px);
+    // (R1685 §5.45) `window` is `Scene::clip_window` — `Some` when this
+    // container declares `Overflow::Hidden`. The container's own box is
+    // painted first and unclipped (the border cells are the box, not its
+    // contents); the children see the narrowed clip. The cell arithmetic is
+    // the scroll arm's, shared rather than copied, because a clip that
+    // rounded to cells one way here and another way there would put the two
+    // clipping kinds a half-cell apart on the same terminal.
+    let child_clip = match window {
+        Some(window) => clip.intersect(cell_clip_of(window, offset_px)),
+        None => clip,
+    };
+    if child_clip.is_empty() {
+        return;
+    }
     for child in &c.children {
-        to_buffer_inner(child, buf, clip, offset_px, cursor_blink_on);
+        to_buffer_inner(child, buf, child_clip, offset_px, cursor_blink_on);
+    }
+}
+
+/// (R1685 §5.45 §5.41) A clip window in this node's own pixel frame, projected
+/// onto the screen cell grid.
+///
+/// i64 throughout to absorb the adversarial offset case (R55.E.1 mirror:
+/// `with_offset(i32::MAX, ...)`) without intermediate wrap. Distinct `left_*` /
+/// `top_*` naming avoids the `clippy::similar_names` trip the `sx0`/`sy0`
+/// shorthand would otherwise hit.
+fn cell_clip_of(window: pinion_core::scene::Rect, offset_px: (i32, i32)) -> CellClip {
+    let left_px = i64::from(window.x) + i64::from(offset_px.0);
+    let top_px = i64::from(window.y) + i64::from(offset_px.1);
+    let right_px = left_px + i64::from(window.w);
+    let bottom_px = top_px + i64::from(window.h);
+    CellClip {
+        x0: pixels_to_cell_floor(left_px, CELL.cell_w()),
+        y0: pixels_to_cell_floor(top_px, CELL.cell_h()),
+        x1: pixels_to_cell_floor(right_px, CELL.cell_w()),
+        y1: pixels_to_cell_floor(bottom_px, CELL.cell_h()),
     }
 }
 

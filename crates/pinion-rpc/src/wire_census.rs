@@ -2088,6 +2088,9 @@ pub const WIRE_TYPES: &[WireType] = &[
         shape: WireShape::Object {
             fields: &[
                 WireField::new("name", WireTy::String, None),
+                // R1685 — the frame `rect` is in; see `ViewportReport`.
+                WireField::new("origin_x", WireTy::Integer, None),
+                WireField::new("origin_y", WireTy::Integer, None),
                 WireField::new("w", WireTy::Integer, None),
                 WireField::new("h", WireTy::Integer, None),
                 WireField::new("content_w", WireTy::Integer, None),

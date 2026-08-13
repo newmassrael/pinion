@@ -3462,6 +3462,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-overflow-clip"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-derive",
+ "pinion-forge",
+ "pinion-gpu",
+ "pinion-runtime",
+ "pinion-shell",
+ "pinion-text",
+ "vello",
+]
+
+[[package]]
 name = "hello-packet-view"
 version = "0.0.1"
 dependencies = [

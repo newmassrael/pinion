@@ -615,6 +615,18 @@ pub fn escapes(scene: &Scene, ink_of: InkOf<'_>) -> Vec<Escape> {
             // a check that fires on the normal case is a check nobody keeps.
             // Marks INSIDE that content are still judged against their own
             // boxes, which is where the question is meaningful.
+            //
+            // ★★ R1685 — and a box that clips because it declares
+            // `Overflow::Hidden` gets NO such exemption, deliberately. The two
+            // look alike (a child taller than its parent, by design in both
+            // cases) and they differ in the only thing this module is about:
+            // under a scroll the reader can still get to it, and under a
+            // hidden box the content is GONE. So the scroll case is normal and
+            // the hidden case is a loss, even when it is an intended one — the
+            // module's own rule is that a clip must not silently swallow the
+            // report, because "this label ends here" and "this label is too
+            // long" look identical on screen. `reach` then says which marks
+            // actually went, which is the actionable half.
             return;
         }
         // Where this mark sits with no clip folded in: `absolute_rect` answers
@@ -1021,6 +1033,56 @@ mod tests {
         assert!(
             !cut.is_empty(),
             "the scroll's clip cuts the overhang, and that is still a loss: {found:?}"
+        );
+    }
+
+    /// ★★ R1685 — a clip a *container* declares cuts the same way, and is
+    /// reported the same way.
+    ///
+    /// The fate is read off [`NodeVisit::clip`], which since R1685 is folded
+    /// from the node's own declaration rather than from its kind — so this
+    /// arrives with no arm here mentioning containers at all. It is asserted
+    /// because "it falls out" is a claim about code, and this is the behaviour.
+    ///
+    /// ★ And the same escape under a container that declares NOTHING is
+    /// `Smeared`, not `Clipped`: the two rows differ only in the declaration,
+    /// which is what makes this a test of the declaration.
+    #[test]
+    fn r1685_an_overflow_container_cuts_the_overhang_and_says_so() {
+        let long = || text("a much longer string", Rect::new(0, 0, 40, 12), None);
+        let cutting = {
+            let mut node =
+                ContainerNode::new(vec![boxed(Rect::new(0, 0, 40, 20), "card", vec![long()])]);
+            node.rect = Rect::new(0, 0, 40, 20);
+            node.layout =
+                crate::style::LayoutStyle::new().with_overflow(crate::style::Overflow::Hidden);
+            Scene::Container(node)
+        };
+        let smearing = {
+            let mut node =
+                ContainerNode::new(vec![boxed(Rect::new(0, 0, 40, 20), "card", vec![long()])]);
+            node.rect = Rect::new(0, 0, 40, 20);
+            Scene::Container(node)
+        };
+
+        let cut = escapes(&cutting, &mut stub_ink);
+        assert!(
+            cut.iter().any(|e| e.fate == Fate::Clipped),
+            "the container declares the clip, so the overhang is cut and the \
+             reader loses it silently: {cut:?}"
+        );
+        let smeared = escapes(&smearing, &mut stub_ink);
+        assert!(
+            smeared.iter().all(|e| e.fate == Fate::Smeared),
+            "the same overhang under a container that declares nothing is \
+             painted over its neighbours, not cut: {smeared:?}"
+        );
+        assert_eq!(
+            cut.len(),
+            smeared.len(),
+            "the declaration changes the FATE of the escape, never whether it \
+             is reported — a clip that hid the report would be the silence \
+             this module exists to end"
         );
     }
 

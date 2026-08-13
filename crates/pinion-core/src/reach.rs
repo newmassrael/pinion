@@ -22,13 +22,30 @@
 //!
 //! # The window is a viewport with no range
 //!
-//! A mark with no [`Scene::Scroll`] ancestor is judged against the window,
-//! whose scroll range is zero. That is not a special case bolted on: it is the
-//! same arithmetic with `max == (0, 0)`, and it is what makes "this pane does
-//! not scroll, so its content is lost" and "this pane scrolls, so its content
-//! is merely off-view" two values of one function instead of two unrelated
+//! A mark with no clipping ancestor is judged against the window, whose scroll
+//! range is zero. That is not a special case bolted on: it is the same
+//! arithmetic with `max == (0, 0)`, and it is what makes "this pane does not
+//! scroll, so its content is lost" and "this pane scrolls, so its content is
+//! merely off-view" two values of one function instead of two unrelated
 //! checks. Making a pane scrollable moves its overflow from [`Reach::Lost`] to
 //! [`Reach::Scrollable`], and that move is the thing a gate can watch.
+//!
+//! # The node you chose is the declaration (R1685)
+//!
+//! Since R1685 a box can clip without scrolling —
+//! [`Overflow::Hidden`](crate::style::Overflow::Hidden) — and the two kinds of
+//! clip get different verdicts here, which is the point of having both. A
+//! [`Scene::Scroll`] publishes a range a reader can move, so its overflow is
+//! [`Reach::Scrollable`]. A hidden box publishes no range, so its overflow is
+//! [`Reach::Lost`]: nothing brings it back.
+//!
+//! That is also why this module is the reason the workaround was worth
+//! refusing. Before the declaration existed, a region that had to clip could
+//! only do it by becoming a `Scroll` with a pinned offset — and this module,
+//! which reads the range off the geometry, would have called every cut mark
+//! "scrollable to y=152" while no gesture in the application could move it. A
+//! false *reachable* is the exact error this module was written to end, and the
+//! workaround would have manufactured it.
 //!
 //! # The reference cannot answer this
 //!
@@ -77,6 +94,21 @@ pub struct Viewport {
     /// The enclosing scroll node's tag, or [`WINDOW`], or [`UNTAGGED`] for a
     /// scroll node that carries no tag.
     pub name: String,
+    /// (R1685) Where this window sits **in the frame the marks it judges are
+    /// expressed in**.
+    ///
+    /// `(0, 0)` for a [`Scene::Scroll`], whose content is stored in its own
+    /// frame with the origin at the top-left — that is why every box below
+    /// used to start at zero and why nothing needed this field.
+    ///
+    /// A box that clips because it declares
+    /// [`Overflow::Hidden`](crate::style::Overflow::Hidden) introduces **no
+    /// frame**: its children keep the coordinates its own rect is in, so its
+    /// window starts where it does. Assuming zero there judged every label in
+    /// a toolbar control against a box at the far left of the window and
+    /// reported six of them lost — measured, on two real screens, by the
+    /// ratchet that exists for it.
+    pub origin: (u32, u32),
     /// The viewport's size — the window it shows onto the content.
     pub size: (u32, u32),
     /// The content's extent along each axis, as the laid-out subtree reports
@@ -100,8 +132,8 @@ impl Viewport {
         self.max.0 == 0 && self.max.1 == 0
     }
 
-    /// The content-space box every offset in range can, between them, bring
-    /// into view: `[0, max + size]` on each axis.
+    /// The box every offset in range can, between them, bring into view:
+    /// `[origin, origin + max + size]` on each axis.
     ///
     /// Not `[0, content]`: when the content is smaller than the viewport the
     /// range is zero and the reachable box is the viewport, so a mark parked in
@@ -114,14 +146,14 @@ impl Viewport {
             reason = "max is produced by max_scroll_offset, which clamps at 0"
         )]
         Rect::new(
-            0,
-            0,
+            self.origin.0,
+            self.origin.1,
             self.max.0 as u32 + self.size.0,
             self.max.1 as u32 + self.size.1,
         )
     }
 
-    /// The content-space box on screen at the current offset.
+    /// The box on screen at the current offset, in the frame its marks use.
     #[must_use]
     pub fn shown(&self) -> Rect {
         #[allow(
@@ -129,8 +161,8 @@ impl Viewport {
             reason = "an offset is clamped into 0..=max before it reaches a scene"
         )]
         Rect::new(
-            self.at.0.max(0) as u32,
-            self.at.1.max(0) as u32,
+            self.origin.0.saturating_add(self.at.0.max(0) as u32),
+            self.origin.1.saturating_add(self.at.1.max(0) as u32),
             self.size.0,
             self.size.1,
         )
@@ -250,6 +282,8 @@ pub fn out_of_sight(scene: &Scene, window: (u32, u32), ink_of: InkOf<'_>) -> Vec
 
     let window_viewport = Viewport {
         name: WINDOW.to_owned(),
+        // The window's own frame is the one top-level marks are already in.
+        origin: (0, 0),
         size: window,
         content: window,
         at: (0, 0),
@@ -269,9 +303,9 @@ pub fn out_of_sight(scene: &Scene, window: (u32, u32), ink_of: InkOf<'_>) -> Vec
             .ancestors
             .iter()
             .rev()
-            .find_map(|a| match a {
-                Scene::Scroll(s) => Some(viewport_of(s, absolute.get(&std::ptr::from_ref(*a)))),
-                _ => None,
+            .find_map(|a| {
+                a.clips_subtree()
+                    .then(|| viewport_of(a, absolute.get(&std::ptr::from_ref(*a))))
             })
             .unwrap_or_else(|| window_viewport.clone());
 
@@ -313,23 +347,63 @@ pub fn out_of_sight(scene: &Scene, window: (u32, u32), ink_of: InkOf<'_>) -> Vec
 }
 
 /// Read a scroll node as a viewport.
-fn viewport_of(s: &crate::scene::ScrollNode, absolute: Option<&Rect>) -> Viewport {
-    // The content rect is scroll-local with its origin at (0, 0), so `w`/`h`
-    // already ARE the intrinsic extent — the same reading
-    // `update_scroll_state_bounds` does when it publishes the bound.
-    let content = s.content.rect();
-    let size = absolute.map_or((s.viewport.w, s.viewport.h), |r| (r.w, r.h));
+fn viewport_of(node: &Scene, absolute: Option<&Rect>) -> Viewport {
+    let window = node.clip_window().unwrap_or_default();
+    // ★★ R1685 — WHICH FRAME the marks under this window are expressed in, and
+    // the two clipping kinds answer differently.
+    //
+    // A scroll's content is stored in the scroll's own frame with its origin at
+    // the top-left, and its on-screen size is read from the absolute map so an
+    // outer clip narrowing it is folded in. A container introduces no frame at
+    // all: its children keep the coordinates the container's own rect is in, so
+    // its window starts where that rect starts and is that rect's size. Reading
+    // an ancestor's narrowing into it here would mix the two frames; the
+    // container is itself a mark judged against ITS enclosing window, which is
+    // the composition this module already documents for nested scrolls.
+    let (origin, size) = match node {
+        Scene::Scroll(_) => (
+            (0, 0),
+            absolute.map_or((window.w, window.h), |r| (r.w, r.h)),
+        ),
+        _ => ((window.x, window.y), (window.w, window.h)),
+    };
+    // ★★ R1685 — the two clipping kinds answer this differently, and the
+    // difference IS the module's subject.
+    //
+    // A [`Scene::Scroll`] has a range: its content rect is scroll-local with
+    // its origin at (0, 0), so `w`/`h` already ARE the intrinsic extent — the
+    // same reading `update_scroll_state_bounds` does when it publishes the
+    // bound. A mark past the viewport is [`Reach::Scrollable`]; the reader
+    // moves.
+    //
+    // A box that clips because it declares `Overflow::Hidden` has NO range,
+    // and saying so is not a special case bolted on here: CSS's own rule is
+    // that content overflowing a hidden box does not contribute to a scroll
+    // region, so the box's own extent *is* its scroll region. Feeding that
+    // through the same arithmetic yields `max == (0, 0)`, and a mark past it
+    // comes out [`Reach::Lost`] — which is the true statement. Deriving the
+    // range from geometry alone (what this did before R1685, when a scroll was
+    // the only thing that could clip) would answer "scroll to y=152" about a
+    // window nothing can move, and this module exists to end exactly that
+    // class of answer.
+    let (content, at) = match node {
+        Scene::Scroll(s) => {
+            let content = s.content.rect();
+            ((content.w, content.h), (s.offset_x, s.offset_y))
+        }
+        _ => (size, (0, 0)),
+    };
     Viewport {
-        name: s
-            .tag
-            .as_ref()
+        name: node
+            .tag()
             .map_or_else(|| UNTAGGED.to_owned(), ToString::to_string),
+        origin,
         size,
-        content: (content.w, content.h),
-        at: (s.offset_x, s.offset_y),
+        content,
+        at,
         max: (
-            max_scroll_offset(content.w, size.0),
-            max_scroll_offset(content.h, size.1),
+            max_scroll_offset(content.0, size.0),
+            max_scroll_offset(content.1, size.1),
         ),
     }
 }
@@ -435,6 +509,153 @@ mod tests {
 
     fn by_tag<'r>(found: &'r [OutOfSight], tag: &str) -> Option<&'r OutOfSight> {
         found.iter().find(|o| o.tag.as_deref() == Some(tag))
+    }
+
+    /// (R1685) The same three rows behind a box that clips because it says so
+    /// — byte-for-byte the geometry of [`pane`], with the only difference being
+    /// which node carries the window.
+    fn hidden_pane() -> Scene {
+        let mut node = ContainerNode::new(vec![boxed(
+            Rect::new(0, 0, 100, 300),
+            "pane.content",
+            vec![
+                text("a", Rect::new(0, 0, 60, 12), "row.a"),
+                text("b", Rect::new(0, 240, 60, 12), "row.b"),
+                text("c", Rect::new(0, 400, 60, 12), "row.c"),
+            ],
+        )]);
+        node.rect = Rect::new(0, 0, 100, 100);
+        node.tag = Some("pane".into());
+        node.layout =
+            crate::style::LayoutStyle::new().with_overflow(crate::style::Overflow::Hidden);
+        Scene::Container(node)
+    }
+
+    /// ★★★ R1685 — the headline, and the reason the workaround was refused.
+    ///
+    /// [`pane`] and [`hidden_pane`] place the same rows at the same coordinates
+    /// behind the same 100-tall window. The only difference is the node that
+    /// carries the window, and that difference is the whole verdict: a scroll
+    /// publishes a range a reader can move, so `row.b` is one scroll away; a
+    /// box that clips publishes none, so the same row is lost.
+    ///
+    /// Before R1685 a region that had to clip could only do it by becoming a
+    /// scroll nobody scrolls — and this module would then have answered
+    /// "scrollable to y=152" about a window no gesture in the application can
+    /// move. A false *reachable* is the error this module exists to end, so the
+    /// declaration had to be the thing that decides.
+    #[test]
+    fn r1685_a_hidden_box_loses_what_a_scroll_of_the_same_shape_only_hides() {
+        let scrolled = out_of_sight(&pane(0), (400, 400), &mut stub_ink);
+        let hidden = out_of_sight(&hidden_pane(), (400, 400), &mut stub_ink);
+
+        // The fixtures really are the same shape: both hide the same two rows.
+        let names = |found: &[OutOfSight]| {
+            let mut v: Vec<String> = found.iter().filter_map(|o| o.tag.clone()).collect();
+            v.sort();
+            v
+        };
+        assert_eq!(
+            names(&scrolled),
+            names(&hidden),
+            "the two fixtures must hide the same marks, or the verdicts below \
+             are about different geometry"
+        );
+
+        let b_scrolled = by_tag(&scrolled, "row.b").expect("row.b is off screen");
+        assert_eq!(b_scrolled.reach, Reach::Scrollable { to: (0, 152) });
+
+        // ★ The invariant that keeps `least_move` sound, asserted rather than
+        // reasoned about: a non-scroll window is the only kind with a non-zero
+        // `origin`, and it can never be `Scrollable`, because its content IS
+        // its own extent so its range is zero on both axes. `least_move` works
+        // in offsets and knows nothing about `origin`; if a viewport with one
+        // ever produced an offset, that offset would be in the wrong frame.
+        assert!(
+            hidden
+                .iter()
+                .all(|o| matches!(o.reach, Reach::Lost { .. }) || o.viewport.origin == (0, 0)),
+            "a viewport with an origin published an offset, which `least_move` \
+             expresses in the scroll frame: {hidden:?}"
+        );
+
+        let b_hidden = by_tag(&hidden, "row.b").expect("row.b is off screen");
+        let Reach::Lost { short_by } = b_hidden.reach else {
+            panic!(
+                "a box that clips has no range, so nothing brings row.b back: \
+                 {b_hidden:?}"
+            );
+        };
+        // The reachable box is the window itself (100 tall); the row ends at 252.
+        assert_eq!(short_by.bottom, 152, "{b_hidden:?}");
+        assert_eq!(b_hidden.viewport.name, "pane");
+        assert_eq!(
+            b_hidden.viewport.max,
+            (0, 0),
+            "a hidden box has no range at all"
+        );
+        assert!(
+            b_hidden.viewport.fits(),
+            "and it says so: CSS's rule is that content overflowing a hidden \
+             box does not contribute to a scroll region, so the box's own \
+             extent IS its scroll region"
+        );
+    }
+
+    /// ★★★ R1685 — a hidden box away from the origin judges its children in
+    /// the frame they are actually in.
+    ///
+    /// The test above cannot see this: its box sits at `(0, 0)`, where a
+    /// window's origin and the frame's origin are the same number, so every
+    /// arithmetic that confuses the two passes. A scroll's content IS stored in
+    /// its own frame with the origin at the top-left, and this module was built
+    /// when a scroll was the only thing that could clip — so the boxes it
+    /// compares started at zero, and a container clip inherited that.
+    ///
+    /// Measured, and not by a unit test: adopting the declaration on the
+    /// toolbar's controls reported six labels — one per control past the first
+    /// — as marks no gesture can reach, on two real screens. Each was judged
+    /// against a window at the far left of the window while sitting at its own
+    /// control's x. The ratchet caught it; this pins it.
+    #[test]
+    fn r1685_a_hidden_box_away_from_the_origin_does_not_lose_what_it_holds() {
+        let mut label = ContainerNode::new(vec![text("hi", Rect::new(206, 8, 40, 12), "label")]);
+        label.rect = Rect::new(204, 4, 48, 20);
+        let mut control = ContainerNode::new(vec![Scene::Container(label)]);
+        control.rect = Rect::new(200, 0, 56, 28);
+        control.tag = Some("control".into());
+        control.layout =
+            crate::style::LayoutStyle::new().with_overflow(crate::style::Overflow::Hidden);
+
+        let found = out_of_sight(&Scene::Container(control), (400, 400), &mut stub_ink);
+        assert!(
+            found.is_empty(),
+            "the label is inside its control, which is inside the window — \
+             nothing here is out of sight: {found:?}"
+        );
+    }
+
+    /// (R1685) A container that does NOT declare the clip is not a viewport,
+    /// so its children are judged against the window as they always were.
+    ///
+    /// The counterfactual that keeps the test above honest: if every container
+    /// became a zero-range viewport, every mark below any box would report
+    /// `Lost` and the assertion would pass for a reason that has nothing to do
+    /// with the declaration.
+    #[test]
+    fn r1685_a_container_that_declares_nothing_is_not_a_viewport() {
+        let mut node = ContainerNode::new(vec![text("b", Rect::new(0, 240, 60, 12), "row.b")]);
+        node.rect = Rect::new(0, 0, 100, 100);
+        node.tag = Some("pane".into());
+        let found = out_of_sight(&Scene::Container(node), (400, 400), &mut stub_ink);
+        // 240 is inside the 400x400 window, so nothing is out of sight at all —
+        // the row hangs out of its parent (which is `containment`'s question),
+        // and the reader can see it (which is this module's).
+        assert!(
+            found.is_empty(),
+            "an undeclared container clips nothing, so nothing it holds is out \
+             of sight: {found:?}"
+        );
     }
 
     /// ★ The question this module exists for, half one: a mark the range

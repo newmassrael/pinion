@@ -5472,6 +5472,11 @@ fn snapshot_node_to_json(node: SnapshotNode) -> Value {
             obj.insert("rect".to_string(), snapshot_rect_to_json(snap.rect));
             obj.insert("tag".to_string(), snapshot_tag_to_json(snap.tag.as_deref()));
             obj.insert("style".to_string(), box_style_to_json(&snap.style));
+            // R1685 — the clip declaration, so a client reading a child rect
+            // that leaves its parent can tell whether that ink reaches the
+            // screen. Always present rather than omitted-when-false: an absent
+            // key reads as "the question was not asked".
+            obj.insert("clips".to_string(), Value::Bool(snap.clips));
             let children = snap
                 .children
                 .into_iter()

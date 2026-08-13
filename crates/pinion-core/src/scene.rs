@@ -278,24 +278,38 @@ impl SceneNodeKind {
         }
     }
 
-    /// Whether this kind clips a *child subtree* to a window of its own —
-    /// the declaration every renderer must observe, since ink the scene
-    /// says is hidden must not reach the surface on any backend.
+    /// Whether nodes of this kind can clip a *child subtree* to a window of
+    /// their own — the declaration every renderer must observe, since ink the
+    /// scene says is hidden must not reach the surface on any backend.
     ///
-    /// Only [`Scene::Scroll`] does (to its `viewport`). A [`Scene::Text`],
-    /// [`Scene::Image`] or [`Scene::TextGrid`] confines its *own* glyphs or
-    /// pixels to its rect, which is leaf rasterisation rather than a clip
-    /// declared over other nodes; a [`Scene::Container`] does not clip at
-    /// all, which is precisely why `Scroll` exists.
+    /// # Kind and node are two questions since R1685
+    ///
+    /// This is the kind half: a kind answers `true` when it holds children at
+    /// all, because a clip is something a node does *to a subtree*. Those are
+    /// [`Container`](Self::Container) and [`Scroll`](Self::Scroll) — precisely
+    /// the two kinds [`Scene::child_nodes`] returns a non-empty slice for, and
+    /// the bijection is asserted rather than restated.
+    ///
+    /// Whether a particular node *does* clip is [`Scene::clips_subtree`]:
+    /// `Scroll` always does (to its `viewport`), a `Container` does when its
+    /// [`LayoutStyle::overflow`](crate::style::LayoutStyle::overflow) says so.
+    /// Before R1685 one question sufficed, because `Scroll` was the only kind
+    /// that could clip and so a kind *was* a node — and that conflation is what
+    /// made a second clipping kind expensive: every consumer had spelled the
+    /// clip as `matches!(node, Scene::Scroll(_))`.
+    ///
+    /// A [`Text`](Self::Text), [`Image`](Self::Image) or
+    /// [`TextGrid`](Self::TextGrid) confines its *own* glyphs or pixels to its
+    /// rect, which is leaf rasterisation rather than a clip declared over other
+    /// nodes — see [`Overflow`](crate::style::Overflow) for that boundary.
     #[must_use]
-    pub const fn clips_subtree(self) -> bool {
+    pub const fn can_clip_subtree(self) -> bool {
         match self {
-            Self::Scroll => true,
+            Self::Scroll | Self::Container => true,
             Self::Box
             | Self::Text
             | Self::Path
             | Self::Image
-            | Self::Container
             | Self::Effect
             | Self::External
             | Self::ImmediateModeNode
@@ -473,6 +487,35 @@ impl Scene {
         }
     }
 
+    /// (R1685 §5.45 §5.21) Whether this node clips its children — the node
+    /// half of [`SceneNodeKind::can_clip_subtree`].
+    ///
+    /// [`Scene::Scroll`] always does; any kind that holds children does when
+    /// its layout declares
+    /// [`Overflow::Hidden`](crate::style::Overflow::Hidden). A kind with no
+    /// children never does, whatever it declares — the declaration is still
+    /// read for its layout half (a leaf may shrink below its content), it
+    /// simply has no subtree to cut.
+    #[must_use]
+    pub fn clips_subtree(&self) -> bool {
+        self.node_kind().can_clip_subtree()
+            && (matches!(self, Scene::Scroll(_))
+                || self.layout_style().is_some_and(|l| l.overflow.clips()))
+    }
+
+    /// (R1685 §5.45) The window this node cuts its subtree to, **in its own
+    /// coordinate frame**, or `None` when it cuts nothing.
+    ///
+    /// The one fact the walk, both renderers, [`containment`](crate::containment)
+    /// and [`reach`](crate::reach) read instead of asking which *kind* a node
+    /// is — so a third clipping kind costs each of them nothing. For a
+    /// [`Scene::Scroll`] the window is its `viewport`, which is also what
+    /// [`Self::rect`] returns; for every other kind it is the node's own rect.
+    #[must_use]
+    pub fn clip_window(&self) -> Option<Rect> {
+        self.clips_subtree().then(|| self.rect())
+    }
+
     /// (R1650 §5.2 §5.32) The child scenes this node holds, in declaration
     /// (paint) order — the single enumeration of *which arms have children*.
     ///
@@ -573,26 +616,30 @@ impl Scene {
             offset,
             clip,
         })?;
-        // A scroll shifts its content by `viewport - offset` and tightens the
-        // clip to its own window-absolute viewport; every other kind hands its
-        // children the frame it was given. Stated once, here.
-        let (inner_offset, inner_clip) = match self {
+        // A node that declares a clip tightens the frame to its own
+        // window-absolute window; a scroll additionally shifts its content by
+        // `viewport - offset`. Two rules, stated once, here — and the first
+        // asks [`Self::clip_window`] rather than which kind this is, which is
+        // what let R1685 add a second clipping kind without touching the walk.
+        let inner_clip = match self.clip_window() {
+            // `None` from the intersection would mean "nothing of this window
+            // survives the enclosing clip", and an empty rect is how that is
+            // carried down: the nodes inside are still visited — a walk that
+            // omits nodes is the failure this exists to end — and each reports
+            // `absolute_rect() == None`, which is the honest answer.
+            Some(window) => {
+                Some(translate_rect_into_clip(window, offset.0, offset.1, clip).unwrap_or_default())
+            }
+            None => clip,
+        };
+        // The frame shift stays a scroll's own: a container does not move its
+        // children, it only stops drawing them past its edge.
+        let inner_offset = match self {
             Scene::Scroll(n) => (
-                (
-                    offset.0 + i64::from(n.viewport.x) - i64::from(n.offset_x),
-                    offset.1 + i64::from(n.viewport.y) - i64::from(n.offset_y),
-                ),
-                // `None` here would mean "nothing of this viewport survives the
-                // enclosing clip", and an empty rect is how that is carried
-                // down: the nodes inside are still visited — a walk that omits
-                // nodes is the failure this exists to end — and each reports
-                // `absolute_rect() == None`, which is the honest answer.
-                Some(
-                    translate_rect_into_clip(n.viewport, offset.0, offset.1, clip)
-                        .unwrap_or_default(),
-                ),
+                offset.0 + i64::from(n.viewport.x) - i64::from(n.offset_x),
+                offset.1 + i64::from(n.viewport.y) - i64::from(n.offset_y),
             ),
-            _ => (offset, clip),
+            _ => offset,
         };
         let transparent_path = matches!(self, Scene::Scroll(_));
         ancestors.push(self);
@@ -9018,6 +9065,141 @@ mod tests {
              60,0 20x10 here, so two surfaces reported two different nodes for \
              one address"
         );
+    }
+
+    /// ★★★ R1685 — the walk folds the clip a CONTAINER declares, and it does
+    /// it through the same arithmetic the scroll gets.
+    ///
+    /// `absolute_rect()` is the read every consumer of the walk shares
+    /// (`containment` decides a fate with it, `reach` judges against it, the
+    /// tag index answers `None` from it), so a clip that reached the renderers
+    /// but not the walk would put the picture and every derivation about it
+    /// into disagreement. The pair below is the same geometry twice with the
+    /// declaration as the only difference.
+    #[test]
+    fn r1685_a_container_that_declares_a_clip_folds_it_into_the_walk() {
+        let build = |hidden: bool| {
+            let mut node = ContainerNode::new(vec![
+                tagged_box_at(0, 0, 20, 10, "inside"),
+                tagged_box_at(0, 80, 20, 10, "past"),
+            ]);
+            node.rect = Rect::new(0, 0, 50, 50);
+            if hidden {
+                node.layout =
+                    crate::style::LayoutStyle::new().with_overflow(crate::style::Overflow::Hidden);
+            }
+            Scene::Container(node)
+        };
+
+        let visible = build(false);
+        assert!(
+            !visible.clips_subtree(),
+            "a container clips nothing until it says so"
+        );
+        assert_eq!(visible.clip_window(), None);
+        assert_eq!(
+            visible.rect_for_tag_absolute("past"),
+            Some(Rect::new(0, 80, 20, 10)),
+            "with no declaration the mark paints where it was placed, outside \
+             its parent — which is `containment`'s complaint and not a clip"
+        );
+
+        let hidden = build(true);
+        assert!(hidden.clips_subtree());
+        assert_eq!(
+            hidden.clip_window(),
+            Some(Rect::new(0, 0, 50, 50)),
+            "the window is the node's own box"
+        );
+        assert_eq!(
+            hidden.rect_for_tag_absolute("inside"),
+            Some(Rect::new(0, 0, 20, 10)),
+            "what fits is untouched"
+        );
+        assert_eq!(
+            hidden.rect_for_tag_absolute("past"),
+            None,
+            "★ and what does not fit is not anywhere on screen — the same \
+             answer this walk has always given inside a Scroll, now from a \
+             declaration instead of from a variant"
+        );
+        // The node is still VISITED. A walk that omits nodes is the failure
+        // `try_for_each_node` exists to end, and the clip must not become a
+        // second way to disappear from it.
+        let mut seen = 0;
+        hidden.for_each_node(&mut |_| seen += 1);
+        assert_eq!(seen, 3, "parent and both children");
+    }
+
+    /// ★★ R1685 — what the pointer does with the cut half, measured rather
+    /// than assumed.
+    ///
+    /// The finding is that this direction was already closed, and by something
+    /// else: [`Self::hit_test`] gates every descent on the node's own rect, so
+    /// a child painted past its parent has never been reachable there. What
+    /// R1685 changes is the OTHER side — the paint now agrees with the pointer
+    /// instead of showing ink nothing can press.
+    ///
+    /// ⚠ Stated because it is the honest half: with the default `Visible` the
+    /// two still disagree, and in the direction that is a defect (the ink is on
+    /// screen and the press falls through it). That is
+    /// [[debt-paint-and-gesture-read-two-facts]] and it is NOT closed here.
+    /// Declaring the clip is what makes the two answers meet.
+    #[test]
+    fn r1685_the_pointer_never_reached_the_cut_half_and_now_the_paint_agrees() {
+        let build = |hidden: bool| {
+            let mut node = ContainerNode::new(vec![tagged_box_at(0, 80, 20, 10, "past")]);
+            node.rect = Rect::new(0, 0, 50, 50);
+            node.tag = Some("owner".into());
+            if hidden {
+                node.layout =
+                    crate::style::LayoutStyle::new().with_overflow(crate::style::Overflow::Hidden);
+            }
+            Scene::Container(node)
+        };
+        for hidden in [false, true] {
+            let scene = build(hidden);
+            assert!(
+                scene.hit_test(10, 85).is_none(),
+                "the pointer has never reached a child past its parent's box \
+                 (hidden={hidden})"
+            );
+        }
+        // And the paint answer is what moved: visible still puts ink at 80,
+        // hidden puts none anywhere.
+        assert!(build(false).rect_for_tag_absolute("past").is_some());
+        assert!(build(true).rect_for_tag_absolute("past").is_none());
+    }
+
+    /// ★ R1685 — a kind with no children cannot clip a subtree, whatever its
+    /// layout declares. The declaration is still legal there (it has a layout
+    /// half — a leaf may shrink below its content), it simply has nothing to
+    /// cut, and the two links of the census have to agree about that.
+    #[test]
+    fn r1685_a_leaf_declares_the_layout_half_and_clips_nothing() {
+        let leaf = Scene::Box(
+            BoxNode::new(Rect::new(0, 0, 10, 10), BoxStyle::default()).with_layout(
+                crate::style::LayoutStyle::new().with_overflow(crate::style::Overflow::Hidden),
+            ),
+        );
+        assert!(
+            leaf.layout_style()
+                .is_some_and(|l| l.overflow == crate::style::Overflow::Hidden),
+            "the declaration is carried"
+        );
+        assert!(!leaf.clips_subtree(), "and it clips no subtree");
+        assert_eq!(leaf.clip_window(), None);
+        assert!(!SceneNodeKind::Box.can_clip_subtree());
+        // The census's own rule, over every kind: a kind can clip exactly when
+        // it holds children.
+        for kind in SceneNodeKind::ALL {
+            assert_eq!(
+                kind.can_clip_subtree(),
+                matches!(kind, SceneNodeKind::Container | SceneNodeKind::Scroll),
+                "Scene::{} and the two kinds that hold children",
+                kind.name()
+            );
+        }
     }
 
     /// The early exit is real: the visitor is not called again after it breaks.

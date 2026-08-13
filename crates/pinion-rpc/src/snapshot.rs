@@ -232,6 +232,19 @@ pub struct ContainerSnapshot {
     pub rect: Rect,
     pub tag: Option<String>,
     pub style: BoxStyle,
+    /// (R1685 §5.45 §2 #7) Whether this container cuts its children at its own
+    /// box — [`Scene::clips_subtree`](pinion_core::Scene::clips_subtree), which
+    /// for a container is its
+    /// [`Overflow`](pinion_core::style::Overflow) declaration.
+    ///
+    /// On the wire because without it a snapshot is ambiguous exactly where it
+    /// matters: a child whose rect lies partly outside its parent's is either
+    /// painted over the neighbours or not painted at all, and before R1685 the
+    /// scroll node's `viewport` was the only thing that let a reader tell. The
+    /// derivations answer the consequence (`scene/containment` says the mark
+    /// was cut, `scene/scroll_reach` says nothing brings it back); this is the
+    /// declaration those consequences follow from.
+    pub clips: bool,
     pub children: Vec<SnapshotNode>,
 }
 
@@ -606,6 +619,9 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
             rect: node.rect,
             tag: cow_to_owned(node.tag.as_ref()),
             style: node.style.clone(),
+            // (R1685) Asked of the `Scene`, not read off `node.layout`, so the
+            // answer here is the one the walk and every renderer act on.
+            clips: scene.clips_subtree(),
             children: node.children.iter().map(snapshot_root).collect(),
         }),
         Scene::Effect(_) => SnapshotNode::Effect,
@@ -1364,6 +1380,36 @@ mod tests {
                     matches_box(&snap.children[1], Some("inner"));
                 }
                 other => panic!("expected Container, got {other:?}"),
+            }
+        }
+
+        /// ★★ R1685 — the clip declaration is on the wire, and it is the
+        /// NODE's answer rather than a re-reading of the style field.
+        ///
+        /// Without it a snapshot is ambiguous exactly where it matters: a
+        /// child whose rect leaves its parent's is either painted over the
+        /// neighbours or not painted at all, and nothing in the dump said
+        /// which. The derivations report the consequence; this is the
+        /// declaration they follow from.
+        #[test]
+        fn r1685_a_container_publishes_whether_it_cuts_its_children() {
+            let build = |hidden: bool| {
+                let mut node = ContainerNode::new(vec![leaf_box(Some("inner"))]);
+                node.rect = Rect::new(0, 0, 20, 20);
+                if hidden {
+                    node.layout = pinion_core::style::LayoutStyle::new()
+                        .with_overflow(pinion_core::style::Overflow::Hidden);
+                }
+                Scene::Container(node)
+            };
+            for (hidden, expected) in [(false, false), (true, true)] {
+                match snapshot(&build(hidden), "").unwrap() {
+                    SnapshotNode::Container(snap) => assert_eq!(
+                        snap.clips, expected,
+                        "a container declaring hidden={hidden} publishes clips={expected}"
+                    ),
+                    other => panic!("expected Container, got {other:?}"),
+                }
             }
         }
 

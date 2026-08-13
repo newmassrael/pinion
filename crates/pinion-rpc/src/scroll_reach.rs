@@ -49,6 +49,17 @@ use crate::containment::RectReport;
 pub struct ViewportReport {
     /// The enclosing scroll node's tag, or `<window>`.
     pub name: String,
+    /// (R1685) Where this window sits in the frame `rect` is expressed in.
+    ///
+    /// `0` for a scroll (its content has its own frame, with the origin at the
+    /// top-left) and the box's own position for a container that clips because
+    /// it declares `overflow: hidden`, which introduces no frame. Without it a
+    /// client holding a mark's `rect` and this viewport cannot say where one
+    /// sits inside the other — the numbers would be in two frames with nothing
+    /// naming either.
+    pub origin_x: u32,
+    /// The vertical half of [`Self::origin_x`].
+    pub origin_y: u32,
     /// The viewport's width.
     pub w: u32,
     /// The viewport's height.
@@ -167,6 +178,8 @@ pub fn report(window: (u32, u32), out: &[OutOfSight], marks: usize) -> ScrollRea
                     rect: o.rect.into(),
                     viewport: ViewportReport {
                         name: o.viewport.name.clone(),
+                        origin_x: o.viewport.origin.0,
+                        origin_y: o.viewport.origin.1,
                         w: o.viewport.size.0,
                         h: o.viewport.size.1,
                         content_w: o.viewport.content.0,
@@ -234,6 +247,7 @@ mod tests {
     fn viewport() -> Viewport {
         Viewport {
             name: "pane".into(),
+            origin: (0, 0),
             size: (100, 100),
             content: (100, 300),
             at: (0, 0),

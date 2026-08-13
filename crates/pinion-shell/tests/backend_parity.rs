@@ -99,7 +99,8 @@ use pinion_core::scene::{
     BoxNode, ContainerNode, Rect, Scene, SceneNodeKind, ScrollNode, TextNode,
 };
 use pinion_core::style::{
-    Border, BoxFacet, BoxShadow, BoxStyle, Chrome, Color, Gradient, TextStyle,
+    Border, BoxFacet, BoxShadow, BoxStyle, Chrome, Color, Gradient, LayoutStyle, Overflow,
+    TextStyle,
 };
 use pinion_runtime::paint_adapter::to_vello;
 use pinion_text::LayoutCache;
@@ -662,6 +663,25 @@ fn clipped_content() -> Scene {
 const NARROW: Rect = Rect::new(4, 2, 12, 8);
 const WIDE: Rect = Rect::new(4, 2, 200, 120);
 
+/// ★★ R1685 — the clip fixtures are rendered inside a box of CONSTANT size,
+/// and without it one third of the clip matrix was vacuous.
+///
+/// The pair differs in the clipping node's own extent, so the SCENE BOUNDS
+/// differ too — and the PDF projector derives its page size from
+/// `PageSize::from_scene_bounds`. Its two artifacts therefore differed in the
+/// page header whatever it did with the clip, and the inequality below was
+/// satisfied by paper size. Measured by the R1685 counterfactual: deleting the
+/// projector's clip entirely left this file green.
+///
+/// That is the exact failure this file was written for, one level down — an
+/// assertion that cannot fail reads as a contract. The frame pins the bounds so
+/// the only thing left that can move the bytes is the clip.
+fn framed(inner: Scene) -> Scene {
+    let mut outer = ContainerNode::new(vec![inner]);
+    outer.rect = Rect::new(0, 0, 240, 140);
+    Scene::Container(outer)
+}
+
 /// R1516 — the clip axis, from the same census as the styled-node axis.
 ///
 /// A [`BoxFacet`] is ADDITIVE: declaring it adds ink, so "the renderer
@@ -680,11 +700,22 @@ const WIDE: Rect = Rect::new(4, 2, 200, 120);
 fn clipping_scene(kind: SceneNodeKind, viewport: Rect) -> Option<Scene> {
     match kind {
         SceneNodeKind::Scroll => Some(Scene::Scroll(ScrollNode::new(viewport, clipped_content()))),
+        // ★ R1685 — the second clipping kind. A container clips when it
+        // declares it, so the fixture declares it: same content, same origin,
+        // same pair of windows, and the only difference from the scroll above
+        // is which node carries the window. A renderer that learned the clip as
+        // "what a Scroll does" rather than as "what a node declares" passes the
+        // row above and fails this one.
+        SceneNodeKind::Container => {
+            let mut node = ContainerNode::new(vec![clipped_content()])
+                .with_layout(LayoutStyle::new().with_overflow(Overflow::Hidden));
+            node.rect = viewport;
+            Some(Scene::Container(node))
+        }
         SceneNodeKind::Box
         | SceneNodeKind::Text
         | SceneNodeKind::Path
         | SceneNodeKind::Image
-        | SceneNodeKind::Container
         | SceneNodeKind::Effect
         | SceneNodeKind::External
         | SceneNodeKind::ImmediateModeNode
@@ -712,14 +743,34 @@ fn r1516_the_node_axis_is_the_census() {
         );
         assert_eq!(
             clipping_scene(kind, NARROW).is_some(),
-            kind.clips_subtree(),
-            "the census says Scene::{} clips its subtree = {}; this file's \
+            kind.can_clip_subtree(),
+            "the census says Scene::{} can clip its subtree = {}; this file's \
              fixtures say otherwise",
             kind.name(),
-            kind.clips_subtree()
+            kind.can_clip_subtree()
         );
         styled += usize::from(kind.carries_box_style());
-        clipping += usize::from(kind.clips_subtree());
+        clipping += usize::from(kind.can_clip_subtree());
+        // ★ R1685 — the kind census answers "can", and a kind that can must
+        // hold children, because a clip is something a node does to a subtree.
+        // Asserted against `child_nodes` rather than restated, so the day a
+        // kind gains children this file says whether it can clip them.
+        let fixture = clipping_scene(kind, NARROW);
+        assert_eq!(
+            kind.can_clip_subtree(),
+            fixture
+                .as_ref()
+                .is_some_and(|s| !s.child_nodes().is_empty()),
+            "Scene::{} says it can clip a subtree = {}, but the fixture it \
+             builds {} children to clip",
+            kind.name(),
+            kind.can_clip_subtree(),
+            if kind.can_clip_subtree() {
+                "has no"
+            } else {
+                "has"
+            }
+        );
     }
     // The axes are non-empty: a census filtered down to nothing would let
     // every matrix below pass by iterating zero cells.
@@ -730,9 +781,26 @@ fn r1516_the_node_axis_is_the_census() {
 /// Every renderer carries the clip declaration into its artifact.
 #[test]
 fn r1516_every_renderer_carries_the_clip_declaration() {
-    for kind in SceneNodeKind::ALL.into_iter().filter(|k| k.clips_subtree()) {
+    for kind in SceneNodeKind::ALL
+        .into_iter()
+        .filter(|k| k.can_clip_subtree())
+    {
         let narrow = clipping_scene(kind, NARROW).expect("the census says this kind clips");
         let wide = clipping_scene(kind, WIDE).expect("the census says this kind clips");
+        // ★ R1685 — the fixture must actually be clipping. `can_clip_subtree`
+        // is the kind's answer; a container that forgot to declare
+        // `Overflow::Hidden` would render narrow and wide differently anyway
+        // (its own box is a different size) and the row below would pass
+        // without a clip ever existing.
+        assert!(
+            narrow.clips_subtree() && wide.clips_subtree(),
+            "the Scene::{} fixture does not declare a clip, so the rows below \
+             would compare two unclipped scenes",
+            kind.name()
+        );
+        // Rendered inside a constant frame — see `framed` for the third of this
+        // matrix that was answering with its page size.
+        let (narrow, wide) = (framed(narrow), framed(wide));
         for renderer in &RENDERERS {
             // Determinism first, for the reason the facet matrix asserts it.
             let a = (renderer.render)(&narrow);

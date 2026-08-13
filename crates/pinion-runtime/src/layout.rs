@@ -39,9 +39,9 @@ use pinion_core::scene::{
 };
 use pinion_core::style::{
     AlignItems, Display, FlexDirection, GridPlacement, GridTrack, JustifyContent, LayoutStyle,
-    SizeValue, TextStyle,
+    Overflow, SizeValue, TextStyle,
 };
-use taffy::geometry::MinMax;
+use taffy::geometry::{MinMax, Point as TaffyPoint};
 
 use pinion_text::LayoutCache;
 use std::collections::HashMap;
@@ -53,7 +53,8 @@ use taffy::prelude::{
 use taffy::style::{
     AlignItems as TaffyAlign, Dimension, Display as TaffyDisplay, FlexDirection as TaffyFlexDir,
     GridPlacement as TaffyGridPlacement, JustifyContent as TaffyJustify, MaxTrackSizingFunction,
-    MinTrackSizingFunction, Position as TaffyPosition, Style as TaffyStyle, TrackSizingFunction,
+    MinTrackSizingFunction, Overflow as TaffyOverflow, Position as TaffyPosition,
+    Style as TaffyStyle, TrackSizingFunction,
 };
 
 /// R47.4 §5.36 — taffy `NodeContext` for leaves that need an intrinsic
@@ -1587,6 +1588,22 @@ fn to_taffy_style(layout: &LayoutStyle) -> TaffyStyle {
         width: to_dimension(layout.min_size.width),
         height: to_dimension(layout.min_size.height),
     };
+    // (R1685 §5.21 §5.45) `LayoutStyle::overflow` — the layout half of the one
+    // declaration whose paint half is the clip `Scene::clip_window` publishes.
+    // taffy has carried this property all along; not lowering it is what left
+    // a consumer spelling `overflow: hidden`'s layout effect by hand as
+    // `min_size: Px(0)` and then finding no way to say the paint half at all.
+    //
+    // `Overflow::Hidden` zeroes the CSS automatic minimum size on both axes,
+    // which is the same relaxation `min_size: Px(0)` produces and the reason
+    // this pair is one word. Both axes take the same value because the field
+    // is one (see `Overflow`: a mixed clipping/visible box is not expressible
+    // in CSS either). `Visible` is taffy's struct default, so every pre-R1685
+    // binding lowers bit-identically.
+    s.overflow = TaffyPoint {
+        x: to_taffy_overflow(layout.overflow),
+        y: to_taffy_overflow(layout.overflow),
+    };
     s.flex_grow = layout.flex_grow;
     // (R1536 §5.21) `flex-shrink`. Defaults to `1.0` on both sides, so every
     // pre-R1536 binding lowers bit-identically.
@@ -1637,6 +1654,30 @@ fn to_taffy_style(layout: &LayoutStyle) -> TaffyStyle {
         };
     }
     s
+}
+
+/// (R1685 §5.21) Lower one [`Overflow`] to taffy's.
+///
+/// Two variants map to two, and the pair taffy has that this does not —
+/// `Clip` and `Scroll` — is a decision recorded on [`Overflow`], not an
+/// omission: `Scroll` would be a second scrolling model beside
+/// [`Scene::Scroll`], and taffy's `Clip` keeps a content-based minimum where
+/// CSS relaxes it, so publishing it would publish an engine quirk.
+fn to_taffy_overflow(value: Overflow) -> TaffyOverflow {
+    // Derived from the same predicate the renderers read, not from a second
+    // list of variants. That is the whole thesis of R1685 applied to its own
+    // lowering: a declaration whose halves are matched separately is a
+    // declaration whose halves can disagree, and this file is where the layout
+    // half is decided.
+    //
+    // The day `Overflow` gains a variant that clips WITHOUT relaxing the
+    // automatic minimum (CSS `clip` as taffy reads it), this becomes two
+    // questions and takes the second predicate — see `Overflow::clips`.
+    if value.clips() {
+        TaffyOverflow::Hidden
+    } else {
+        TaffyOverflow::Visible
+    }
 }
 
 #[allow(clippy::cast_precision_loss, clippy::match_same_arms)]
@@ -1998,6 +2039,74 @@ mod tests {
             b.rect.y >= 600,
             "without min:0 the second panel overflows off-screen, got y={}",
             b.rect.y,
+        );
+    }
+
+    /// ★★★ R1685 — the layout half of `overflow: hidden`, from the
+    /// declaration instead of from arithmetic that has the same effect.
+    ///
+    /// This is [`r1086_min_size_height_zero_lets_large_content_flex_child_distribute_by_ratio`]
+    /// with one word changed: `Overflow::Hidden` in place of
+    /// `min_size.height = Px(0)`. Both children must land on the same numbers,
+    /// because CSS's automatic minimum size is what both are overriding — and
+    /// the pair of tests is the proof that a consumer who says what they MEAN
+    /// gets what the hand-spelled minimum gave them.
+    ///
+    /// The witness below it is the same relation the R1086 pair has: with the
+    /// declaration left at its `Visible` default the second panel walks off
+    /// the viewport, so this test cannot pass by the layout being insensitive
+    /// to the field.
+    #[test]
+    fn r1685_overflow_hidden_relaxes_the_automatic_minimum_like_min_size_zero() {
+        let ratio_child = |hidden: bool| {
+            let inner = Scene::Box(
+                BoxNode::filled(Rect::default(), Color::default())
+                    .with_layout(LayoutStyle::new().with_size(Size::px(100, 800))),
+            );
+            let mut layout = LayoutStyle::new()
+                .with_flex_basis(SizeValue::Px(0))
+                .with_flex_grow(0.5);
+            if hidden {
+                layout = layout.with_overflow(Overflow::Hidden);
+            }
+            Scene::Container(ContainerNode::new(vec![inner]).with_layout(layout))
+        };
+        let lay_out = |children: Vec<Scene>| {
+            let mut scene = Scene::Container(
+                ContainerNode::new(children)
+                    .with_layout(LayoutStyle::new().flex(FlexDirection::Column)),
+            );
+            compute_layout(&mut scene, &mut cache(), 960, 600);
+            let Scene::Container(c) = &scene else {
+                panic!("container")
+            };
+            c.children
+                .iter()
+                .map(pinion_core::scene::Scene::rect)
+                .collect::<Vec<_>>()
+        };
+
+        let declared = lay_out(vec![ratio_child(true), ratio_child(true)]);
+        let by_hand = lay_out(vec![
+            big_content_child(0.5, true),
+            big_content_child(0.5, true),
+        ]);
+        assert_eq!(
+            declared, by_hand,
+            "`Overflow::Hidden` and `min_size: Px(0)` override the same CSS \
+             rule, so they must produce the same layout"
+        );
+        assert!(
+            declared[1].y + declared[1].h <= 600,
+            "and that layout is the one that fits: {declared:?}"
+        );
+
+        // The witness: nothing here is insensitive to the declaration.
+        let visible = lay_out(vec![ratio_child(false), ratio_child(false)]);
+        assert!(
+            visible[1].y >= 600,
+            "with `Visible` the automatic minimum pins each child at its 800px \
+             content and the second panel leaves the viewport: {visible:?}"
         );
     }
 

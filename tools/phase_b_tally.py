@@ -932,6 +932,16 @@ AXES = [
                 # UNCLASSIFIED at the push that shipped it — which is the
                 # census doing its job.
                 "key-sequence",
+                # R1685 — a region that cuts what does not fit in it
+                # (`overflow: hidden`). Filed here rather than under a layout
+                # axis because there is no layout axis: what this closes is a
+                # catalog-class gap — a control whose label must stop at the
+                # control, and a screen whose chrome holds while its body
+                # yields — and the binding is a whole screen, which is how
+                # `settings-panel` and `todomvc` are filed too. Added on the
+                # round that built it, after the tool reported it UNCLASSIFIED
+                # at that round's own push.
+                "overflow-clip",
             ]),
         ],
         # R1533 re-judgment, 82 -> 84, demanded by the tool: the round ledger
