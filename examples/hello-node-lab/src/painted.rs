@@ -413,7 +413,17 @@ fn must_answer(tag: &str) -> Option<String> {
     {
         return Some(format!("node:{rest}"));
     }
+    // ★★ R1681.3 — the picked link's own seats. Declared here BECAUSE the card
+    // sweeps now excuse whatever this chrome covers: an exception that took
+    // reachability away without demanding it back would be a way to pass by
+    // painting an affordance nobody can press.
+    if let Some(rest) = tag.strip_prefix("lab.link.endpoint.")
+        && !rest.contains('.')
+    {
+        return Some(format!("link:endpoint:{rest}"));
+    }
     match tag {
+        "lab.link.act" => Some("link:act".into()),
         "lab.toolbar.zoom.in" => Some("zoom:in".into()),
         "lab.toolbar.zoom.out" => Some("zoom:out".into()),
         "lab.toolbar.config" => Some("config".into()),
@@ -588,6 +598,20 @@ fn assert_reachable(when: &str, state: &LabState, shot: &Painted, size: (u32, u3
     for (tag, want) in &probes {
         let rect = shot.tags[*tag];
         let (px, py) = centre(rect);
+        // ★★ R1681.3 — the picked link's own chrome legitimately covers what it
+        // is drawn over: it is an affordance the person summoned, the reference
+        // draws it in the same place, and the seats themselves are probed here
+        // too (see `must_answer`), so this excuses nothing it does not replace
+        // with something reachable.
+        //
+        // ★★★ NOT for the chrome's OWN tags, and a counterfactual is what said
+        // so: a first draft excused every probe the chrome covered, which
+        // includes the chrome, so making the `delete` seat unpressable left
+        // this sweep green. An exception that swallows the thing it is
+        // exchanged for is not an exception, it is a hole.
+        if !tag.starts_with("lab.link.") && super::chrome_covers(state, px, py) {
+            continue;
+        }
         let got = Hit::at(state, px, py).word(state);
         if &got != want && !same_row(want, &got) {
             unreachable.push((tag, want.clone(), got, rect));
@@ -729,6 +753,50 @@ fn r1656_the_containment_check_reports_a_scene_built_to_break_it() {
          returns the box back reports every screen as clean, and that is the \
          defect this round exists to make visible"
     );
+}
+
+/// ★★★ R1681.3 — what a press over the picked link's chrome reaches is what a
+/// person SEES there.
+///
+/// The two orders have to agree and nothing made them. `Hit::at` resolves the
+/// chrome before everything else on the canvas, and the chrome was painted with
+/// the wires — before the cards — so a card drawn afterwards covered it while a
+/// press over that card answered `link:act`. A screen showing one thing and
+/// answering another is this example's oldest defect class, and it was found by
+/// LOOKING AT THE RUNNING APP rather than by any check here.
+///
+/// Asserted as an order over the painted tags rather than by sampling pixels,
+/// because "later wins" is the rule the renderer actually follows and a sample
+/// only reaches the overlaps that happen to exist today.
+#[test]
+fn r1681_the_picked_links_chrome_paints_over_what_a_press_over_it_reaches() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let (_, scene) = painted_at(&state, (WIN_W, WIN_H));
+        let mut order: Vec<String> = Vec::new();
+        scene.for_each_node(&mut |visit| {
+            if let Some(tag) = visit.node.tag() {
+                order.push(tag.to_owned());
+            }
+        });
+        let last_card = order
+            .iter()
+            .rposition(|tag| tag.starts_with("lab.node.") && !tag[9..].contains('.'))
+            .expect("cards are painted");
+        for seat in ["lab.link.label", "lab.link.act"] {
+            let at = order
+                .iter()
+                .position(|tag| tag == seat)
+                .unwrap_or_else(|| panic!("{seat} is painted on the opening screen"));
+            assert!(
+                at > last_card,
+                "★ {seat} is painted at {at}, BEFORE the last card at \
+                 {last_card} — so a card covers it while a press over that \
+                 card answers the seat"
+            );
+        }
+    });
 }
 
 /// ★★ R1681.2 — a reported link is drawn in a RHYTHM a drawn one is not.
@@ -1270,6 +1338,18 @@ fn r1655_a_press_anywhere_on_a_card_reaches_that_card() {
                     for j in 0..6u32 {
                         let px = rect.x + 1 + (rect.w.saturating_sub(2)) * i / 5;
                         let py = rect.y + 1 + (rect.h.saturating_sub(2)) * j / 5;
+                        // ★★ R1681.3 — a point the PICKED LINK'S OWN CHROME
+                        // covers is not a hole in this card. It is an
+                        // affordance the person summoned by picking that link,
+                        // drawn where the reference draws it, and a screen that
+                        // moved it off the wire to keep this sweep quiet put it
+                        // 240px from the wire it annotates — measured on the
+                        // running app. The exception is DERIVED from the same
+                        // function that paints it, so a chrome that wandered
+                        // anywhere else is still caught here.
+                        if super::chrome_covers(&state, px, py) {
+                            continue;
+                        }
                         sampled += 1;
                         let got = Hit::at(&state, px, py);
                         if got == Hit::Node(node) {

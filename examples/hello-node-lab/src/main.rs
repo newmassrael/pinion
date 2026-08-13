@@ -2972,6 +2972,18 @@ fn canvas_world(state: &LabState, ink: Ink) -> Vec<Scene> {
     }
     children.extend(canvas_wires(state, ink));
     children.extend(canvas_cards(state, ink));
+    // ★★★ R1681.3 — the picked link's affordances paint LAST, because they are
+    // what a press over them reaches.
+    //
+    // They were painted with the wires, which is where they belong visually and
+    // is wrong: a card drawn afterwards covers them, while `Hit::at` tests them
+    // FIRST. So the screen showed a card and answered `link:act` for the same
+    // pixel — the paint and the hit test disagreeing about which thing is on
+    // top, which is this screen's oldest defect class and the reason R1656
+    // exists. Found by looking at the running app, not by any check here.
+    if let Some(chrome) = link_chrome(state) {
+        children.extend(link_affordances(&chrome, ink));
+    }
     children
 }
 
@@ -3097,13 +3109,14 @@ fn link_chrome(state: &LabState) -> Option<LinkChrome> {
     let line = line_box(font);
     let pad = (font / 2).max(3);
     let seat_h = line + pad;
-    // Three fifths of the type size per character: a conservative average
-    // advance for a proportional face, in the spirit of `line_box` — over-
-    // reserve a little rather than clip a run. A whole em per character, which
-    // this first said, made a sixteen-character address a seat wider than the
-    // card it belongs to.
+    // Seven tenths of the type size per character, in the spirit of `line_box`:
+    // over-reserve a little rather than clip a run. Both bounds either side of
+    // this were MEASURED on the running screen — a whole em made a sixteen-
+    // character address a seat wider than the card it belongs to, and three
+    // fifths elided `tcp/0.0.0.0:7447` down to `…0.7447`, losing the scheme,
+    // which is the half that carries the transport.
     let seat_w =
-        |text: &str| -> u32 { u32::try_from(text.len()).unwrap_or(8) * font * 3 / 5 + pad * 2 };
+        |text: &str| -> u32 { u32::try_from(text.len()).unwrap_or(8) * font * 7 / 10 + pad * 2 };
     let gap = (font / 2).max(2);
 
     let mut chips = Vec::new();
@@ -3136,19 +3149,26 @@ fn link_chrome(state: &LabState) -> Option<LinkChrome> {
         seat_h,
     );
 
-    // ★★ R1681 — and then the whole column moves until it covers no card, and
-    // is kept inside what the canvas is showing.
+    // ★★★ R1681.3 — the column sits ON its wire, and is only moved to stay
+    // inside what the canvas is showing.
     //
-    // Neither half is a nicety. This screen holds an invariant that a press
-    // ANYWHERE on a card reaches that card (R1655), and a floating affordance
-    // is the one thing that can break it — measured, at the zoomed-out sweep
-    // the `delete` seat covered nine sampled points of one card, its centre and
-    // its accept pin among them. That overlap is structural rather than a bad
-    // constant: a card shrinks with the zoom while this column does not,
-    // because its parts are derived from a type size with a legibility floor
-    // under it. And a column nudged out of the viewport would trade one
-    // unreachable affordance for another, which is what the first draft of this
-    // did — measured, both endpoint seats left the visible world entirely.
+    // R1681 moved it clear of every card as well, to satisfy this screen's
+    // invariant that a press ANYWHERE on a card reaches that card (R1655). The
+    // running screen is what showed the price: measured, the picked link's
+    // label and its `delete` seat ended up **240 pixels below the wire they
+    // belong to**, past two other cards, because up and down were blocked at
+    // every step until they were not. An annotation that far from what it
+    // annotates is not an annotation.
+    //
+    // So the invariant is the thing that gives, and precisely: a press covered
+    // by the PICKED LINK'S OWN CHROME is not an unexplained hole in a card, it
+    // is an affordance the person summoned by picking that link, and the
+    // reference draws it exactly there. The gate learns that exception from
+    // THIS function rather than from a list beside it, so a chrome that wandered
+    // somewhere absurd would still be caught covering cards it has no business
+    // covering. What is left unmoved is the viewport clamp — an affordance
+    // nudged off-screen would trade one unreachable thing for another, which is
+    // what the first draft of R1681 measured itself doing.
     let mut parts: Vec<Rect> = chips
         .iter()
         .map(|(_, seat)| *seat)
@@ -3251,21 +3271,31 @@ fn link_affordances(chrome: &LinkChrome, ink: Ink) -> Vec<Scene> {
     out
 }
 
-/// Where the picked link's column goes, as an offset from the wire's middle
-/// (R1681).
+/// Whether the picked link's own chrome covers this window point (R1681.3).
 ///
-/// Two rules, in order: it must be inside what the canvas is showing, and it
-/// should cover no card. The first is a hard requirement — an affordance
-/// off-screen is not one — so the search takes the smallest lift that satisfies
-/// both, and if none does, the smallest that at least keeps the column visible.
-/// Answers `(0, 0)` when the reference's own placement already works, which is
-/// the common case.
+/// ★★ The exception the card sweeps take, derived from the function that PAINTS
+/// the chrome rather than restated beside them. A summoned overlay covering
+/// part of a card is what the reference does and what a person expects; a
+/// screen that moved the overlay instead put it 240 pixels from the wire it
+/// annotates, which is the thing this exception exists to avoid re-doing.
+#[cfg(test)]
+fn chrome_covers(state: &LabState, px: u32, py: u32) -> bool {
+    let Some(chrome) = link_chrome(state) else {
+        return false;
+    };
+    let (cx, cy) = window_to_content(state, px, py);
+    holds(chrome.act, cx, cy)
+        || holds(chrome.label, cx, cy)
+        || chrome.chips.iter().any(|(_, seat)| holds(*seat, cx, cy))
+}
+
+/// Where the picked link's column goes, as an offset from the wire's middle
+/// (R1681, narrowed R1681.3).
+///
+/// One rule: it must be inside what the canvas is showing. Answers `(0, 0)`
+/// whenever the reference's own placement — on the wire — already fits, which
+/// is nearly always.
 fn placement(state: &LabState, parts: &[Rect], step: u32) -> (i32, i32) {
-    let cards: Vec<Rect> = state
-        .cards()
-        .into_iter()
-        .filter_map(|node| card_rect(state, node))
-        .collect();
     let canvas = canvas_rect();
     let (ox, oy) = world_offset(state, state.pan.get());
     let shown = Rect::new(
@@ -3291,12 +3321,6 @@ fn placement(state: &LabState, parts: &[Rect], step: u32) -> (i32, i32) {
                 && r.y + r.h <= shown.y + shown.h
         })
     };
-    let clear = |by: (i32, i32)| {
-        !parts
-            .iter()
-            .any(|part| cards.iter().any(|card| overlaps(moved(part, by), *card)))
-    };
-
     // The horizontal nudge is a clamp, not a search: a column wider than the
     // gap it sits in has one place to be, against whichever edge crowds it.
     let left = parts.iter().map(|p| p.x).min().unwrap_or(shown.x);
@@ -3309,27 +3333,13 @@ fn placement(state: &LabState, parts: &[Rect], step: u32) -> (i32, i32) {
         0
     };
 
+    // Vertically it moves only when it has to, and then by whole rows so the
+    // column does not creep pixel by pixel as the graph is panned.
     let step = i32::try_from(step).unwrap_or(2).max(2);
-    let mut visible = None;
-    for up in 0..64i32 {
-        for by in [(dx, -up * step), (dx, up * step)] {
-            if !inside(by) {
-                continue;
-            }
-            if clear(by) {
-                return by;
-            }
-            if visible.is_none() {
-                visible = Some(by);
-            }
-        }
-    }
-    visible.unwrap_or((dx, 0))
-}
-
-/// Whether two rectangles share any pixel.
-const fn overlaps(a: Rect, b: Rect) -> bool {
-    a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+    (0..64i32)
+        .flat_map(|off| [(dx, -off * step), (dx, off * step)])
+        .find(|by| inside(*by))
+        .unwrap_or((dx, 0))
 }
 
 /// The wires — drawn and reported — and the affordances the picked one carries.
@@ -3394,10 +3404,6 @@ fn canvas_wires(state: &LabState, ink: Ink) -> Vec<Scene> {
                 Some(Dash::DOTTED),
             ));
         }
-    }
-
-    if let Some(chrome) = link_chrome(state) {
-        children.extend(link_affordances(&chrome, ink));
     }
 
     // A link in flight follows the cursor, so a drag shows what it will do

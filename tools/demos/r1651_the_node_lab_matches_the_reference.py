@@ -473,6 +473,22 @@ def body() -> None:
             for tag, want in probes:
                 answered = inv(tf, "point", at(tf, tag))
                 if answered != want and not same_row(want, answered):
+                    # ★★ R1681.3 — the picked link's own chrome legitimately
+                    # covers what it is drawn over. It is an affordance the
+                    # person summoned by picking that link, the reference draws
+                    # it in exactly that place, and a screen that moved it clear
+                    # of every card instead put it 240px from the wire it
+                    # annotates (measured on the running app). Recognised by the
+                    # ANSWER, which is the screen's own vocabulary, rather than
+                    # by a rectangle this side would have to re-derive.
+                    #
+                    # ★ Never for the chrome's own seats: `lab.link.*` is
+                    # excluded, so "the delete seat is painted where nothing
+                    # presses it" still fails here.
+                    if answered.startswith(
+                        ("link:act", "link:endpoint:")
+                    ) and not tag.startswith("lab.link."):
+                        continue
                     bad.append((tag, want, answered))
             assert not bad, (
                 f"{when}: {len(bad)} of {len(probes)} painted control(s) are drawn "
