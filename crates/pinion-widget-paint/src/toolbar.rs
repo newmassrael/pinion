@@ -258,18 +258,38 @@ fn build_control(
     } else {
         ColorRole::OnSurface
     };
-    let label_node = Scene::Text(TextNode::styled(
-        label,
-        Rect::default(),
-        TextStyle::new()
-            .with_size_px(style.item_font_px)
-            .with_fg(theme.resolve(label_role))
-            // ★ R1674 — what happens when the bar is too narrow for its
-            // controls is STATED. See the size declaration below for what was
-            // measured; the default `Visible` is what turned a bar that did not
-            // fit into a control painted outside the bar entirely.
-            .with_overflow(TextOverflow::Ellipsis),
-    ));
+    let label_node = Scene::Text(
+        TextNode::styled(
+            label,
+            Rect::default(),
+            TextStyle::new()
+                .with_size_px(style.item_font_px)
+                .with_fg(theme.resolve(label_role))
+                // ★ R1674 — what happens when the bar is too narrow for its
+                // controls is STATED. See the size declaration below for what
+                // was measured; the default `Visible` is what turned a bar that
+                // did not fit into a control painted outside the bar entirely.
+                .with_overflow(TextOverflow::Ellipsis),
+        )
+        // ★★ R1680 — the SAME release the control gets from the bar, one level
+        // down: the label must be allowed to shrink below its own content.
+        //
+        // R1674 gave the control `min_size: 0` so a bar that runs out of room
+        // shrinks it, and left the label at its automatic minimum — so taffy
+        // kept the text box at its content width, centred it in a narrower
+        // control, and the ink spilled out BOTH sides. The elide policy above
+        // could not help: `TextOverflow` shortens a run to fit ITS OWN rect,
+        // and that rect was the full content width, so the run always "fit".
+        // A policy applied to the wrong box is not a policy.
+        //
+        // Measured, and only off this host: with the workspace's own font the
+        // labels fit and the gate was green, and under the CI runner's DejaVu
+        // "Undo" overhung by 2 left and 1 right. That is exactly the exposure
+        // [[debt-ten-painters-pin-a-box-and-state-no-overflow-policy]] recorded
+        // one round earlier — a box whose size does not move with the font it
+        // is measured against — and it turned into a red on the next run.
+        .with_layout(LayoutStyle::new().with_min_size(Size::auto().with_width(SizeValue::Px(0)))),
+    );
     Scene::Container(
         ContainerNode::new(vec![label_node])
             .with_tag(composite_item_tag(bar_tag, index))
