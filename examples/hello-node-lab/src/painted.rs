@@ -3039,6 +3039,86 @@ fn seed_and_commit_faults(state: &std::rc::Rc<LabState>, target: &str, key: &str
     faults
 }
 
+/// ★★★ R1684.3 — **the hit test answers where the paint put things when it is
+/// asked from OUTSIDE an owner scope**, which is the only place production ever
+/// asks it.
+///
+/// Reported by a person: maximise the window and the settings rows stop
+/// selecting. Measured through the wire: after a resize the paint puts a form
+/// control at x≈2339 and `point` refuses it as "outside the 1440x900 window".
+/// `window_size()` reads the live viewport through a hook that only answers
+/// inside an owner scope, and every pointer handler and every wire action on
+/// this screen runs outside one — so they were laying out against the DESIGN
+/// size while the paint used the live one.
+///
+/// ★★ **The whole size axis of the sweep next door was void for the hit test,
+/// and this is why it could not see this.** Those checks run inside
+/// `owner.run(...)`, so both the paint and the hit test resolve the hook and
+/// agree by construction — the fixture makes the two facts one, which is the
+/// exact shape R1682's passing counterfactual had. So this test deliberately
+/// leaves the scope before it presses, and that is the whole point of it.
+#[test]
+fn r1684_3_a_press_lands_where_the_paint_put_it_after_a_resize() {
+    let owner = Owner::new();
+    // Paint at a maximised size INSIDE the scope, then ANNOUNCE it the way the
+    // shell does — `announce_external_sizes` calls `External::on_resize` with
+    // the tag's painted rectangle after every paint (R1656). Announcing it here
+    // rather than having the paint record it on the way past is what makes this
+    // drive the framework's contract instead of a side effect.
+    let (state, shot) = owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+        let shot = painted_at(&state, SIZES[1].1).0;
+        let mut oracle = super::LabOracle::new();
+        oracle.attach(std::rc::Rc::clone(&state));
+        pinion_core::external::External::on_resize(&mut oracle, SIZES[1].1.0, SIZES[1].1.1);
+        (state, shot)
+    });
+
+    // ★ And ask from outside it, the way a pointer handler and the wire do.
+    assert!(
+        Owner::current().is_none(),
+        "this test's whole claim is that the question is asked with no scope"
+    );
+    let mut wrong = Vec::new();
+    let mut probed = 0;
+    for (tag, rect) in &shot.tags {
+        let Some(want) = must_answer(tag) else {
+            continue;
+        };
+        let (px, py) = centre(*rect);
+        probed += 1;
+        let word = Hit::at(&state, px, py).word(&state);
+        // A centre may land on something smaller painted over it — a list's
+        // first element row sits in the middle of its control. Excused only
+        // when that something is itself painted at the point, which is asked of
+        // the scene rather than assumed (the rule the corner check states).
+        let nested = word != want
+            && shot.tags.iter().any(|(other, other_rect)| {
+                must_answer(other).as_deref() == Some(word.as_str())
+                    && px >= other_rect.x
+                    && px < other_rect.x + other_rect.w
+                    && py >= other_rect.y
+                    && py < other_rect.y + other_rect.h
+            });
+        if word != want && !nested {
+            wrong.push(format!(
+                "{tag} is painted at {rect:?} and a press at its centre \
+                 ({px},{py}) answers {word:?}, not {want:?}"
+            ));
+        }
+    }
+
+    assert!(probed > 0, "nothing pressable was painted");
+    assert!(
+        wrong.is_empty(),
+        "{} of {probed} control(s) are unreachable once the window has been \
+         resized — the paint reflowed and the hit test did not:\n  {}",
+        wrong.len(),
+        wrong.join("\n  ")
+    );
+}
+
 /// The tag of the seat a field target names, in the form painter's vocabulary.
 ///
 /// The inverse of the target grammar the wire reads back — `value:<key>` is a

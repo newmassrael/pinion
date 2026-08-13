@@ -38366,6 +38366,92 @@
         "framework-level one."
       ]
     },
+    "R1684.3": {
+      "decision_summary": "A press lands where the paint put it after a resize — and the reason it did not\nis a framework gap this repairs only for one screen.\n\nReported by a person testing the running window: maximise it and the settings\nrows stop selecting. Measured through the wire rather than reasoned about —\nafter `scene/resize` the paint puts a form control at x≈2339 and `point`\nrefuses it as \"outside the 1440x900 window\".\n\n`window_size()` reads the live viewport through `use_viewport_size()`, a hook\nthat only answers inside an `Owner` scope. The shell paints inside one and\ncalls this screen's pointer handlers and wire actions OUTSIDE one, so they were\nlaying every rectangle out against the DESIGN size while the paint used the\nlive one. The error grows with distance from the origin, which is why the\ninspector on the far right dies first and the palette on the left goes on\nworking — exactly what was reported.\n\nThe value now comes from `External::on_resize`, which is §5.15's own lifecycle\narm and which R1656 wired for precisely this class: that round used the\nannouncement for the CURSOR's basis and left the LAYOUT reading a constant. One\nannouncement, both readers.\n\n★★ This is a WORKAROUND and is registered as one. The framework hands a widget\nits own size through a reactive hook that cannot answer in the callbacks the\nframework itself invokes, so every screen that hit-tests its own surface\ninvents a cache — three of them in this one file (scroll offsets R1662, edit\nbuffer R1683, window size here). The first two PANIC outside a scope and were\nfound immediately; this one answered a plausible default and stayed invisible\nuntil somebody resized a window. The mature retained-mode toolkits this project\nis judged against have no such split: a widget's own size is plain state there,\nanswerable in every callback and updated by a resize event.",
+      "changes_bullets": [
+        "`External::on_resize` on this screen's oracle now feeds the LAYOUT as well as",
+        "the cursor basis, through `ANNOUNCED_SIZE`; `window_size()` falls back to what",
+        "the shell announced instead of the size the screen was designed at.",
+        "`r1684_3_a_press_lands_where_the_paint_put_it_after_a_resize` — paints at the",
+        "maximised size inside an owner scope, announces it the way the shell does, and",
+        "then presses from OUTSIDE the scope, which is where production asks."
+      ],
+      "verification_bullets": [
+        "The wire probe that found it, re-run: at 2494x1531 a press at the form",
+        "control's painted centre (2339,253) answers `field:id`. Before the fix it was",
+        "refused as outside a 1440x900 window.",
+        "`cargo test -p hello-node-lab --features pinion-runtime/vello` — 57 passed.",
+        "`cargo clippy -p hello-node-lab --all-targets` clean; `cargo fmt --all --check`.",
+        "Seven demos that drive this screen, re-run against a release build.",
+        "2/2 counterfactuals caught: falling back to the design size off a scope, and",
+        "dropping the announcement on the floor.",
+        "★ The size axis of the in-process sweep was VOID for the hit test and this is",
+        "why nothing saw the defect: those checks run inside `owner.run(...)`, so the",
+        "paint and the hit test both resolve the hook and agree by construction. The new",
+        "test leaves the scope on purpose."
+      ],
+      "impact_refs": [
+        "5.15",
+        "5.35"
+      ],
+      "carry_forward_bullets": [
+        "One carry, and it is the framework's rather than this screen's:",
+        "[[debt-a-widget-cannot-read-its-own-size-outside-a-scope]].",
+        "A widget can only read its own surface size through a hook that answers inside",
+        "an `Owner` scope, and the shell invokes `External::pointer_press`,",
+        "`pointer_move`, `invoke` and `query` outside one — while wrapping",
+        "`position_caret_for_point` inside one. That asymmetry is what makes every",
+        "self-hit-testing screen keep a hand-written cache.",
+        "Two candidate repairs are written down there: run the External dispatch inside",
+        "the shell's root owner (symmetry, but the auto-subscribe behaviour of",
+        "`Signal::get` has to be measured first), or give the widget its size as plain",
+        "state the way the mature retained-mode toolkits do. Neither is chosen here, and the population — how many",
+        "screens hit-test their own surface and die on a resize — is unmeasured; R1656's",
+        "sibling fix names four candidates."
+      ],
+      "publishable_decision_summary": "A press lands where the paint put it after a resize — and the reason it did not\nis a framework gap this repairs only for one screen.\n\nReported by a person testing the running window: maximise it and the settings\nrows stop selecting. Measured through the wire rather than reasoned about —\nafter `scene/resize` the paint puts a form control at x≈2339 and `point`\nrefuses it as \"outside the 1440x900 window\".\n\n`window_size()` reads the live viewport through `use_viewport_size()`, a hook\nthat only answers inside an `Owner` scope. The shell paints inside one and\ncalls this screen's pointer handlers and wire actions OUTSIDE one, so they were\nlaying every rectangle out against the DESIGN size while the paint used the\nlive one. The error grows with distance from the origin, which is why the\ninspector on the far right dies first and the palette on the left goes on\nworking — exactly what was reported.\n\nThe value now comes from `External::on_resize`, which is §5.15's own lifecycle\narm and which R1656 wired for precisely this class: that round used the\nannouncement for the CURSOR's basis and left the LAYOUT reading a constant. One\nannouncement, both readers.\n\n★★ This is a WORKAROUND and is registered as one. The framework hands a widget\nits own size through a reactive hook that cannot answer in the callbacks the\nframework itself invokes, so every screen that hit-tests its own surface\ninvents a cache — three of them in this one file (scroll offsets R1662, edit\nbuffer R1683, window size here). The first two PANIC outside a scope and were\nfound immediately; this one answered a plausible default and stayed invisible\nuntil somebody resized a window. The mature retained-mode toolkits this project\nis judged against have no such split: a widget's own size is plain state there,\nanswerable in every callback and updated by a resize event.",
+      "publishable_changes_bullets": [
+        "`External::on_resize` on this screen's oracle now feeds the LAYOUT as well as",
+        "the cursor basis, through `ANNOUNCED_SIZE`; `window_size()` falls back to what",
+        "the shell announced instead of the size the screen was designed at.",
+        "`r1684_3_a_press_lands_where_the_paint_put_it_after_a_resize` — paints at the",
+        "maximised size inside an owner scope, announces it the way the shell does, and",
+        "then presses from OUTSIDE the scope, which is where production asks."
+      ],
+      "publishable_verification_bullets": [
+        "The wire probe that found it, re-run: at 2494x1531 a press at the form",
+        "control's painted centre (2339,253) answers `field:id`. Before the fix it was",
+        "refused as outside a 1440x900 window.",
+        "`cargo test -p hello-node-lab --features pinion-runtime/vello` — 57 passed.",
+        "`cargo clippy -p hello-node-lab --all-targets` clean; `cargo fmt --all --check`.",
+        "Seven demos that drive this screen, re-run against a release build.",
+        "2/2 counterfactuals caught: falling back to the design size off a scope, and",
+        "dropping the announcement on the floor.",
+        "★ The size axis of the in-process sweep was VOID for the hit test and this is",
+        "why nothing saw the defect: those checks run inside `owner.run(...)`, so the",
+        "paint and the hit test both resolve the hook and agree by construction. The new",
+        "test leaves the scope on purpose."
+      ],
+      "publishable_impact_refs": [
+        "5.15",
+        "5.35"
+      ],
+      "publishable_carry_forward_bullets": [
+        "One carry, and it is the framework's rather than this screen's:",
+        "[[debt-a-widget-cannot-read-its-own-size-outside-a-scope]].",
+        "A widget can only read its own surface size through a hook that answers inside",
+        "an `Owner` scope, and the shell invokes `External::pointer_press`,",
+        "`pointer_move`, `invoke` and `query` outside one — while wrapping",
+        "`position_caret_for_point` inside one. That asymmetry is what makes every",
+        "self-hit-testing screen keep a hand-written cache.",
+        "Two candidate repairs are written down there: run the External dispatch inside",
+        "the shell's root owner (symmetry, but the auto-subscribe behaviour of",
+        "`Signal::get` has to be measured first), or give the widget its size as plain",
+        "state the way the mature retained-mode toolkits do. Neither is chosen here, and the population — how many",
+        "screens hit-test their own surface and die on a resize — is unmeasured; R1656's",
+        "sibling fix names four candidates."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

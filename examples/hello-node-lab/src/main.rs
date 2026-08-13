@@ -53,7 +53,7 @@
 mod graph;
 mod spec;
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
@@ -151,8 +151,38 @@ fn window_size() -> (u32, u32) {
         pinion_core::reactive::Owner::current().map(|_| pinion_core::reactive::use_viewport_size());
     match live {
         Some((w, h)) if w >= MIN_W && h >= MIN_H => (w, h),
-        _ => (WIN_W, WIN_H),
+        // ★★★ R1684.3 — **the size the SHELL last announced, not the size this
+        // screen was designed at.**
+        //
+        // Reported by a person: "maximise the window and the form rows stop
+        // selecting". Measured through the wire — after a resize the paint puts
+        // a form control at x≈2339 and `point` refuses it as "outside the
+        // 1440x900 window". Every pointer handler and every wire action on this
+        // screen runs OUTSIDE an owner scope (the same fact R1662 met with the
+        // scroll offsets and R1683 with the edit buffer), so the hook cannot
+        // answer and the DESIGN size was answering instead. The paint reflows,
+        // the hit test does not, and the error grows with distance from the
+        // origin — which is why the inspector on the far right dies first and
+        // the palette on the left goes on working.
+        //
+        // ★★ The value comes from [`External::on_resize`], which is §5.15's own
+        // lifecycle arm and which R1656 wired for exactly this class — that
+        // round used it for the CURSOR's basis and left the LAYOUT reading a
+        // constant. Taking it from the framework's channel rather than caching
+        // what the paint happened to see is what makes this a fact with an
+        // owner instead of a second guess.
+        _ => ANNOUNCED_SIZE.with(Cell::get),
     }
+}
+
+thread_local! {
+    /// The surface size the shell last announced through `External::on_resize`
+    /// — see [`window_size`].
+    ///
+    /// A `Cell` and not a `Signal`: it is what the shell said, not a value this
+    /// screen derives, and a reactive write from a lifecycle callback would
+    /// dirty the tree from outside a paint.
+    static ANNOUNCED_SIZE: Cell<(u32, u32)> = const { Cell::new((WIN_W, WIN_H)) };
 }
 
 /// The smallest window this screen lays out in.
@@ -7168,8 +7198,17 @@ impl External for LabOracle {
 
     /// R1656 §5.15 — the shell's resize notification, which is how this widget
     /// knows what a pointer fraction is a fraction OF.
+    /// ★★★ R1684.3 — the announcement feeds the LAYOUT as well as the cursor.
+    ///
+    /// R1656 wired this arm so a pointer FRACTION could be turned back into
+    /// pixels, and stopped there: every rectangle on this screen is derived
+    /// from [`window_size`], which could only answer from inside an owner
+    /// scope — and no pointer handler or wire action has one. So the paint
+    /// reflowed on a resize and the hit test went on using the design size.
+    /// One announcement, both readers.
     fn on_resize(&mut self, width: u32, height: u32) {
         self.surface = (width.max(1), height.max(1));
+        ANNOUNCED_SIZE.with(|seen| seen.set(self.surface));
     }
 
     fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
