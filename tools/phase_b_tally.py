@@ -1218,9 +1218,42 @@ AXES = [
         # follow it in the crate, so its steppers stopped standing on their own
         # outline for every consumer at once. Real, and the kind of thing an
         # axis measured in catalogue BREADTH cannot show as more than a point.
-        "judged_at": 1672,
+        #
+        # ★★ R1680 RE-JUDGMENT — 98 HOLDS, and holding still is the honest
+        # outcome here. The tool demanded a look (round-axis 16 -> 22, +38%),
+        # and a look is what it gets: six rounds declared this axis since R1672
+        # and every one of them added CORRECTNESS to widgets the catalogue
+        # already has, not surface it lacks.
+        #
+        # What they added, none of it a new member: a box says where its own
+        # chrome ends and all fifteen bordered painters in the crate are asked
+        # whether they keep their contents inside it (R1674); the check mark
+        # became a path, so the commonest glyph in the catalogue stopped asking
+        # the host which fonts it has; the settings form gained `revert` and
+        # `edited`, the mirror `settle` never had, covering values AND the rows
+        # added or taken away (R1678); and a toolbar label may finally shrink
+        # below its own text, so the elide policy fires against the box that
+        # actually constrains it (R1680).
+        #
+        # THE NAMED GAPS ARE RE-MEASURED AND UNMOVED, which is what decides it.
+        # `External::wheel` still has exactly TWO implementors in the widget
+        # catalogue — `slider` and `spin_button`, the same two since R1554 — so
+        # the largest cross-cutting item on this axis is where it was, and the
+        # analyzer's node canvas hitting it from a consumer screen this session
+        # (its hint strip advertises a wheel zoom no wheel answers) is evidence
+        # the gap is real rather than evidence it shrank. The four absent
+        # widget kinds — dial, a paged container, font picker, a canned message
+        # box — are still four.
+        #
+        # A round that improves a widget the tree already has creates no
+        # artifact, which is exactly why `docs/phase-b-rounds.tsv` exists; what
+        # it cannot do is turn depth into breadth. Six rounds of correctness on
+        # an axis whose remaining 2% is four missing widget kinds and one
+        # missing input hook does not move the number, and saying so is the
+        # judgment.
+        "judged_at": 1680,
         "completion": 98,
-        "evidence_snapshot": {"example-name": 77, "round-axis": 16},
+        "evidence_snapshot": {"example-name": 77, "round-axis": 22},
     },
     {
         "key": "dataviz",
