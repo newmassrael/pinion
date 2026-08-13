@@ -576,8 +576,23 @@ fn reset_lab_state() {
 /// step, which is what [`FormGeometry::translated`] avoids on the other pane —
 /// there the geometry itself is published to assistive technology, so it is the
 /// geometry that moves.
+///
+/// ★★★ R1684.2 — **[`PANEL_FRAME`] is part of it, and its absence was the same
+/// defect the inspector had.** The palette's rectangles are written in window
+/// coordinates that embed the pane's origin and NOT the outline the body is
+/// drawn inside, while the paint hands the body [`panel_content`] — so every
+/// row was hit-tested one pixel up and left of where it is painted. Found by
+/// generalising R1684's corner check from one tag family to every pressable tag
+/// the screen declares: 243 of 2464 corners answered `nothing`, and the pattern
+/// was the signature — the top-left corner of each palette row resolved and the
+/// other three did not, which is exactly what a rectangle shifted by one looks
+/// like.
+///
+/// That is the second instance of the class in one screen, and both were
+/// invisible for the same reason: every check aimed at a centre.
 fn in_pane(scroll: &ScrollState, px: u32, py: u32) -> (u32, u32) {
     let (ox, oy) = scroll.offset();
+    let frame = i32::try_from(PANEL_FRAME).unwrap_or(0);
     let fold = |v: u32, by: i32| -> u32 {
         #[allow(
             clippy::cast_sign_loss,
@@ -587,7 +602,7 @@ fn in_pane(scroll: &ScrollState, px: u32, py: u32) -> (u32, u32) {
         let folded = (i64::from(v) + i64::from(by)).clamp(0, i64::from(u32::MAX)) as u32;
         folded
     };
-    (fold(px, ox), fold(py, oy))
+    (fold(px, ox - frame), fold(py, oy - frame))
 }
 
 #[cfg(test)]

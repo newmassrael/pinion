@@ -3077,13 +3077,20 @@ fn r1684_a_control_answers_at_its_edges_not_only_its_middle() {
             let state = use_lab_state();
             mutate(&state);
             let shot = painted(&state);
-            for (tag, rect) in &shot.tags {
-                let Some(key) = tag.strip_prefix("lab.form.control.") else {
-                    continue;
-                };
-                if rect.w == 0 || rect.h == 0 {
-                    continue;
-                }
+            // ★ The population is every pressable tag the screen declares, not
+            // one family. The defect this was written for was found in the
+            // settings form; nothing makes that pane special, and a gate that
+            // only watches where the last defect was is a gate that finds the
+            // last defect.
+            let demanded: Vec<(&String, Rect, String)> = shot
+                .tags
+                .iter()
+                .filter_map(|(tag, rect)| must_answer(tag).map(|want| (tag, *rect, want)))
+                .filter(|(_, rect, _)| rect.w > 0 && rect.h > 0)
+                .collect();
+            assert!(!demanded.is_empty(), "{when}: nothing pressable is painted");
+
+            for (tag, rect, want) in &demanded {
                 for (corner, (px, py)) in [
                     ("top left", (rect.x, rect.y)),
                     ("top right", (rect.x + rect.w - 1, rect.y)),
@@ -3092,22 +3099,41 @@ fn r1684_a_control_answers_at_its_edges_not_only_its_middle() {
                 ] {
                     probed += 1;
                     let word = Hit::at(&state, px, py).word(&state);
-                    if !word.contains(key) {
+                    if word == *want {
+                        continue;
+                    }
+                    // ★★ A corner may legitimately land inside a SMALLER
+                    // affordance painted over this one — a stepper at the end
+                    // of a number row, a pin on the edge of a card, the picked
+                    // link's chrome. That is only an excuse when the thing
+                    // answering is itself painted THERE, which is asked of the
+                    // scene rather than assumed: an answer naming something
+                    // that is somewhere else is exactly the drift this looks
+                    // for.
+                    let nested = demanded.iter().any(|(other, other_rect, other_want)| {
+                        other != tag
+                            && *other_want == word
+                            && px >= other_rect.x
+                            && px < other_rect.x + other_rect.w
+                            && py >= other_rect.y
+                            && py < other_rect.y + other_rect.h
+                    });
+                    if !nested {
                         wrong.push(format!(
-                            "{when}: the {corner} of {key}'s control ({rect:?}) is \
-                             answered as {word:?}"
+                            "{when}: the {corner} of {tag} ({rect:?}) is answered \
+                             as {word:?}, and nothing painted there answers that"
                         ));
                     }
                 }
             }
         }
 
-        assert!(probed > 0, "no control was probed");
+        assert!(probed > 0, "nothing was probed");
         assert!(
             wrong.is_empty(),
-            "{} of {probed} control corner(s) are answered by something else — \
-             the shape a paint/hit-test drift takes before it is big enough to \
-             see:\n  {}",
+            "{} of {probed} corner(s) are answered by something that is not \
+             painted there — the shape a paint/hit-test drift takes before it \
+             is big enough to see:\n  {}",
             wrong.len(),
             wrong.join("\n  ")
         );

@@ -38298,6 +38298,74 @@
         "written in terms of them rather than beside them."
       ]
     },
+    "R1684.2": {
+      "decision_summary": "The corner check is asked of every pressable tag, and it immediately found the\nsame one-pixel defect in the other pane.\n\nR1684 found that the settings form's window geometry was short by the panel\nframe, repaired it, and wrote a gate that aims at a control's CORNERS because a\ncentre absorbs any error smaller than half the control. That gate was scoped to\none tag family — the family the defect had been found in.\n\nA gate that only watches where the last defect was is a gate that finds the last\ndefect. The screen already declares every pressable tag and what a press on it\nmust answer (`must_answer`, the population three other checks use), so the\ncorner check now uses that: 2464 corners across eight swept states.\n\nIt reported 243 failures on the first run, and the pattern was the signature\nrather than noise — for each palette row the TOP-LEFT corner resolved and the\nother three did not, which is exactly what a rectangle shifted by one pixel\nlooks like. The palette's rectangles are written in window coordinates that\nembed the pane's origin and not the outline its scrolling body is drawn inside,\nwhile the paint hands that body `panel_content`. Second instance of one class in\none screen, both invisible for the same reason.\n\nA corner may legitimately be answered by something else — a stepper at the end\nof a number row, a pin on a card's edge, the picked link's chrome — so the\nexcuse is asked of the SCENE rather than assumed: the thing that answered must\nitself be painted at that point. An answer naming something that is somewhere\nelse is the drift this exists to find.",
+      "changes_bullets": [
+        "`in_pane` — the palette's one query transform now carries `PANEL_FRAME`, so",
+        "its rows are hit-tested where they are painted. One caller, and the fix is in",
+        "the transform rather than in each rectangle.",
+        "`r1684_a_control_answers_at_its_edges_not_only_its_middle` — the population is",
+        "every tag `must_answer` declares, not one family. A corner answered by",
+        "something else is excused only when that something is painted at that point,",
+        "which is asked of the scene."
+      ],
+      "verification_bullets": [
+        "`cargo test -p hello-node-lab --features pinion-runtime/vello` — 56 passed,",
+        "the corner gate now probing 2464 corners in eight states.",
+        "`cargo clippy -p hello-node-lab --all-targets` clean; `cargo fmt --all",
+        "--check`.",
+        "All eight demos that drive this screen, re-run against a release build: the",
+        "palette hit test moved by a pixel and r1651 and r1662 are what would have",
+        "noticed a regression there.",
+        "Two counterfactuals, both caught: dropping the frame term from the palette's",
+        "query, and narrowing the corner check back to one tag family."
+      ],
+      "impact_refs": [
+        "5.21",
+        "5.35"
+      ],
+      "carry_forward_bullets": [
+        "Nothing carried.",
+        "Stated: the corner check covers this screen's declared pressable tags. Whether",
+        "the other thirty-eight surfaces in the tree have the same class is not asked by",
+        "anything here, and this round did not measure it — the check is written against",
+        "one screen's `must_answer`, which is that screen's own declaration and not a",
+        "framework-level one."
+      ],
+      "publishable_decision_summary": "The corner check is asked of every pressable tag, and it immediately found the\nsame one-pixel defect in the other pane.\n\nR1684 found that the settings form's window geometry was short by the panel\nframe, repaired it, and wrote a gate that aims at a control's CORNERS because a\ncentre absorbs any error smaller than half the control. That gate was scoped to\none tag family — the family the defect had been found in.\n\nA gate that only watches where the last defect was is a gate that finds the last\ndefect. The screen already declares every pressable tag and what a press on it\nmust answer (`must_answer`, the population three other checks use), so the\ncorner check now uses that: 2464 corners across eight swept states.\n\nIt reported 243 failures on the first run, and the pattern was the signature\nrather than noise — for each palette row the TOP-LEFT corner resolved and the\nother three did not, which is exactly what a rectangle shifted by one pixel\nlooks like. The palette's rectangles are written in window coordinates that\nembed the pane's origin and not the outline its scrolling body is drawn inside,\nwhile the paint hands that body `panel_content`. Second instance of one class in\none screen, both invisible for the same reason.\n\nA corner may legitimately be answered by something else — a stepper at the end\nof a number row, a pin on a card's edge, the picked link's chrome — so the\nexcuse is asked of the SCENE rather than assumed: the thing that answered must\nitself be painted at that point. An answer naming something that is somewhere\nelse is the drift this exists to find.",
+      "publishable_changes_bullets": [
+        "`in_pane` — the palette's one query transform now carries `PANEL_FRAME`, so",
+        "its rows are hit-tested where they are painted. One caller, and the fix is in",
+        "the transform rather than in each rectangle.",
+        "`r1684_a_control_answers_at_its_edges_not_only_its_middle` — the population is",
+        "every tag `must_answer` declares, not one family. A corner answered by",
+        "something else is excused only when that something is painted at that point,",
+        "which is asked of the scene."
+      ],
+      "publishable_verification_bullets": [
+        "`cargo test -p hello-node-lab --features pinion-runtime/vello` — 56 passed,",
+        "the corner gate now probing 2464 corners in eight states.",
+        "`cargo clippy -p hello-node-lab --all-targets` clean; `cargo fmt --all",
+        "--check`.",
+        "All eight demos that drive this screen, re-run against a release build: the",
+        "palette hit test moved by a pixel and r1651 and r1662 are what would have",
+        "noticed a regression there.",
+        "Two counterfactuals, both caught: dropping the frame term from the palette's",
+        "query, and narrowing the corner check back to one tag family."
+      ],
+      "publishable_impact_refs": [
+        "5.21",
+        "5.35"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Nothing carried.",
+        "Stated: the corner check covers this screen's declared pressable tags. Whether",
+        "the other thirty-eight surfaces in the tree have the same class is not asked by",
+        "anything here, and this round did not measure it — the check is written against",
+        "one screen's `must_answer`, which is that screen's own declaration and not a",
+        "framework-level one."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
