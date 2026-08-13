@@ -38570,6 +38570,70 @@
         "resize. R1656's sibling fix names four candidates."
       ]
     },
+    "R1684.5": {
+      "decision_summary": "The statechart engine is bumped, and the reason to check it carefully is what\nthe seventeen commits contain.\n\n`vendor/sce` tracks upstream `main` and had not moved since 615cb3f. The bump\ntakes it to 23f1758 — seventeen commits, and four of them are PARALLEL-state\nfixes: a transition that exited and entered twice, a nested parallel whose\nregions did not all stay live below one level, `currentState` settling on an\natomic state inside a parallel machine, and a `done.state` delivery check across\nevery backend.\n\nThat matters here rather than being upstream's business, because one of this\nproject's twelve widget statecharts uses a parallel region: `dock_panel.scxml`.\nSo the verification is aimed at it rather than at the tree in general.",
+      "changes_bullets": [
+        "`vendor/sce` gitlink: 615cb3f -> 23f1758 (upstream `main`, seventeen commits)."
+      ],
+      "verification_bullets": [
+        "`cargo test -p pinion-core -p pinion-runtime -p pinion-forge --features",
+        "pinion-runtime/vello` — the crates that embed the engine and the one that",
+        "emits from it. All ok.",
+        "The consumers of the one statechart with a parallel region (`dock_panel`):",
+        "`cargo test -p hello-dock-panels -p hello-dock-panels-editor -p",
+        "hello-dock-presets -p hello-node-lab`. All ok.",
+        "Demos: `r1096_dock_tab_click` and `r1097_dock_pointer_reorganize` drive that",
+        "statechart through a real shell; `r1684` re-run because this round's work is",
+        "in it. All pass.",
+        "The remote builder transfers submodule working trees as well as tracked files",
+        "and proves tree equality before running, so these results are against the",
+        "bumped engine rather than a stale checkout — checked rather than assumed,",
+        "because `git ls-files` does not include submodule contents."
+      ],
+      "impact_refs": [
+        "5.4",
+        "5.14"
+      ],
+      "carry_forward_bullets": [
+        "Nothing carried.",
+        "Stated: what was verified is this project's USE of the engine — the crates that",
+        "embed it, the one statechart with a parallel region, and the demos that drive",
+        "it. Upstream's own suite is upstream's; a bump that broke something this project",
+        "does not exercise would not be visible here, and pinning to a branch means the",
+        "next bump inherits whatever landed meanwhile."
+      ],
+      "publishable_decision_summary": "The statechart engine is bumped, and the reason to check it carefully is what\nthe seventeen commits contain.\n\n`vendor/sce` tracks upstream `main` and had not moved since 615cb3f. The bump\ntakes it to 23f1758 — seventeen commits, and four of them are PARALLEL-state\nfixes: a transition that exited and entered twice, a nested parallel whose\nregions did not all stay live below one level, `currentState` settling on an\natomic state inside a parallel machine, and a `done.state` delivery check across\nevery backend.\n\nThat matters here rather than being upstream's business, because one of this\nproject's twelve widget statecharts uses a parallel region: `dock_panel.scxml`.\nSo the verification is aimed at it rather than at the tree in general.",
+      "publishable_changes_bullets": [
+        "`vendor/sce` gitlink: 615cb3f -> 23f1758 (upstream `main`, seventeen commits)."
+      ],
+      "publishable_verification_bullets": [
+        "`cargo test -p pinion-core -p pinion-runtime -p pinion-forge --features",
+        "pinion-runtime/vello` — the crates that embed the engine and the one that",
+        "emits from it. All ok.",
+        "The consumers of the one statechart with a parallel region (`dock_panel`):",
+        "`cargo test -p hello-dock-panels -p hello-dock-panels-editor -p",
+        "hello-dock-presets -p hello-node-lab`. All ok.",
+        "Demos: `r1096_dock_tab_click` and `r1097_dock_pointer_reorganize` drive that",
+        "statechart through a real shell; `r1684` re-run because this round's work is",
+        "in it. All pass.",
+        "The remote builder transfers submodule working trees as well as tracked files",
+        "and proves tree equality before running, so these results are against the",
+        "bumped engine rather than a stale checkout — checked rather than assumed,",
+        "because `git ls-files` does not include submodule contents."
+      ],
+      "publishable_impact_refs": [
+        "5.4",
+        "5.14"
+      ],
+      "publishable_carry_forward_bullets": [
+        "Nothing carried.",
+        "Stated: what was verified is this project's USE of the engine — the crates that",
+        "embed it, the one statechart with a parallel region, and the demos that drive",
+        "it. Upstream's own suite is upstream's; a bump that broke something this project",
+        "does not exercise would not be visible here, and pinning to a branch means the",
+        "next bump inherits whatever landed meanwhile."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
