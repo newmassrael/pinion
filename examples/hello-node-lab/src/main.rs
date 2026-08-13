@@ -78,7 +78,9 @@ use pinion_core::widgets::config_form::{
 };
 use pinion_core::widgets::scroll::{AutoScroll, ScrollState};
 use pinion_core::{Frame, Scene, WidgetCore};
-use pinion_node_graph::{Document, Item, LinkId, NodeBody, NodeId, ROOT, Side, Socket};
+use pinion_node_graph::{
+    Document, Item, LinkId, LinkLayer, NodeBody, NodeId, ROOT, Relinked, Side, Socket,
+};
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use pinion_widget_paint::config_form::{
     FieldGrowth, FormGeometry, FormStyle, RowWrap, form_geometry, row_access_nodes,
@@ -341,8 +343,46 @@ enum Drag {
     },
     /// A link is being authored out of this node's dial pin.
     Wire { from: NodeId },
+    /// ★ R1681 — a link that is already there is being re-aimed: it was picked
+    /// up off the accept pin it lands on, and it follows the cursor from the
+    /// pin that dials it.
+    ///
+    /// The link stays in the document for the whole drag, which the reference
+    /// cannot do — its author-a-link has no way to move an end, so it splices
+    /// the wire out on pick-up and re-adds it on drop, and a release that
+    /// refuses has to remember to put it back. Here the move is one atomic
+    /// verb, so nothing is taken out until something takes its place.
+    Rewire { link: LinkId, from: NodeId },
     /// A host frame is being moved, and every card it holds moves with it.
     Frame { frame: NodeId, from: (i32, i32) },
+}
+
+/// Which link the canvas has picked out (R1681).
+///
+/// Two arms because there are two kinds of link on this canvas and only one of
+/// them is in the graph. A reported link is a **claim about** the topology, it
+/// carries no [`LinkId`] because it is not a link, and the affordance it offers
+/// is the opposite one: an authored link can be deleted, and a reported link
+/// can only be taken into the drawing. The reference reaches the same split and
+/// spells it as a flag on the wire plus a predicate; the difference is that
+/// here a reported link cannot be handed to anything that takes a `LinkId`.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+enum LinkPick {
+    /// One somebody drew.
+    Authored(LinkId),
+    /// One a source reported, named by the pair it runs between — which is the
+    /// only identity an observation has.
+    Observed(Socket, Socket),
+}
+
+impl LinkPick {
+    /// The authored link, or `None` for a reported one.
+    const fn authored(self) -> Option<LinkId> {
+        match self {
+            Self::Authored(id) => Some(id),
+            Self::Observed(..) => None,
+        }
+    }
 }
 
 /// Everything the screen is.
@@ -369,7 +409,7 @@ struct LabState {
     /// population instead of a rule with an exception in it.
     opened_at: RefCell<BTreeMap<NodeId, Placement>>,
     selected: Signal<Option<NodeId>>,
-    selected_link: Signal<Option<LinkId>>,
+    selected_link: Signal<Option<LinkPick>>,
     zoom: Signal<u32>,
     pan: Signal<(i32, i32)>,
     running: Signal<bool>,
@@ -491,7 +531,7 @@ impl LabState {
         let mut forms = BTreeMap::new();
         seed_nodes(&mut doc, &frame_ids, &mut ids, &mut forms);
 
-        let selected_link = seed_links(&mut doc, &ids);
+        let selected_link = seed_links(&mut doc, &forms, &ids).map(LinkPick::Authored);
 
         let selected = ids.get(spec::SELECTED_NODE).copied();
         // R1679 — the opening placement of every card the specification
@@ -962,7 +1002,7 @@ impl ResetScope {
                             .map(|l| l.id)
                     })
                 {
-                    state.selected_link.set(Some(id));
+                    state.selected_link.set(Some(LinkPick::Authored(id)));
                 }
             }
             Self::View => {
@@ -1050,38 +1090,54 @@ fn changed_scopes(state: &LabState) -> Vec<ResetScope> {
 /// depends on what is already there. Two implementations would agree on the
 /// opening graph (nothing is there yet) and disagree the moment a reset ran
 /// over a graph somebody had edited — which is exactly when nobody is looking.
-fn seed_links(doc: &mut Document<LabNode>, ids: &BTreeMap<String, NodeId>) -> Option<LinkId> {
+fn seed_links(
+    doc: &mut Document<LabNode>,
+    forms: &BTreeMap<NodeId, ConfigForm>,
+    ids: &BTreeMap<String, NodeId>,
+) -> Option<LinkId> {
     let mut selected_link = None;
     for (from, to) in spec::LINKS {
         let (Some(&a), Some(&b)) = (ids.get(*from), ids.get(*to)) else {
             continue;
         };
-        // Port 0 on the dial side: the taxonomy declares exactly one.
-        // Land on the first accept port nothing has taken, growing the run
-        // when they are all busy: a router is dialled by four peers on one
-        // pin, and the run is how the model holds that.
-        let taken: Vec<u32> = doc
-            .tree(ROOT)
-            .map(|t| {
-                t.links()
-                    .iter()
-                    .filter(|l| l.to.node == b)
-                    .map(|l| l.to.port)
-                    .collect()
-            })
-            .unwrap_or_default();
-        let arity = doc
-            .signature(ROOT, b)
-            .map_or(0, |s| u32::try_from(s.inputs.len()).unwrap_or(0));
-        let port = (0..arity).find(|p| !taken.contains(p)).unwrap_or_else(|| {
-            doc.insert_item(ROOT, b, Side::Input, arity, Item::plain())
-                .ok();
-            arity
-        });
-        if let Ok(made) = doc.connect(ROOT, Socket::new(a, 0), Socket::new(b, port)) {
-            if (*from, *to) == spec::SELECTED_LINK {
-                selected_link = Some(made.link);
+        // ★ R1681 — the SAME endpoint arithmetic the canvas uses, not a second
+        // copy of it. Port 0 on the dial side: the taxonomy declares one.
+        let Ok(endpoint) = landing_endpoint(doc, forms, a, b) else {
+            continue;
+        };
+        let Some(port) = open_slot_in(doc, b, endpoint.as_deref()) else {
+            continue;
+        };
+        match doc.connect(ROOT, Socket::new(a, 0), Socket::new(b, port)) {
+            Ok(made) => {
+                if (*from, *to) == spec::SELECTED_LINK {
+                    selected_link = Some(made.link);
+                }
             }
+            Err(_) => {
+                doc.remove_item(ROOT, b, Side::Input, port).ok();
+            }
+        }
+    }
+    // ★ R1681 — what a source REPORTED, beside what the specification drew.
+    // Seeded here because it is part of the opening state a reset puts back,
+    // and because an "adopt" affordance with nothing to adopt is an affordance
+    // no test and no person can reach.
+    for (from, to) in spec::OBSERVED {
+        let (Some(&a), Some(&b)) = (ids.get(*from), ids.get(*to)) else {
+            continue;
+        };
+        let Ok(endpoint) = landing_endpoint(doc, forms, a, b) else {
+            continue;
+        };
+        let Some(port) = open_slot_in(doc, b, endpoint.as_deref()) else {
+            continue;
+        };
+        if doc
+            .observe(ROOT, Socket::new(a, 0), Socket::new(b, port))
+            .is_err()
+        {
+            doc.remove_item(ROOT, b, Side::Input, port).ok();
         }
     }
     selected_link
@@ -1673,6 +1729,14 @@ enum Hit {
         dial: bool,
     },
     Link(LinkId),
+    /// ★ R1681 — a link a source reported, which is not in the graph and so
+    /// cannot be named by a [`LinkId`].
+    Observed(Socket, Socket),
+    /// The picked link's one act: delete it, or — when it is a reported one —
+    /// take it into the drawing.
+    LinkAct,
+    /// One endpoint seat of the picked link's target.
+    Endpoint(usize),
     /// A host frame's tab strip — its handle.
     Frame(NodeId),
     Field(String),
@@ -1770,47 +1834,72 @@ impl Hit {
             }
         }
         if contains(canvas_rect(), px, py) {
-            // ★ The canvas is a viewport onto a world surface, so a press is
-            // resolved in the surface's coordinates — the same ones the painter
-            // places cards in. One conversion, at the boundary.
-            let (cx, cy) = window_to_content(state, px, py);
-            // Pins before cards: a pin overhangs its card's edge, and the pin
-            // is the smaller target, so testing the card first would make a
-            // link impossible to author with a real mouse.
-            for node in state.cards() {
-                let Some(card) = card_rect(state, node) else {
-                    continue;
-                };
-                if holds(pin_rect(state, card, true), cx, cy) {
-                    return Self::Pin { node, dial: true };
-                }
-                if state.role_of(node).is_some_and(Role::accepts)
-                    && holds(pin_rect(state, card, false), cx, cy)
-                {
-                    return Self::Pin { node, dial: false };
-                }
-            }
-            for node in state.cards().into_iter().rev() {
-                if card_rect(state, node).is_some_and(|r| holds(r, cx, cy)) {
-                    return Self::Node(node);
-                }
-            }
-            if let Some(link) = link_at(state, cx, cy) {
-                return Self::Link(link);
-            }
-            // The frame's TAB, not its interior: the interior is where the
-            // cards are, and a group that swallowed presses over its own
-            // members would make a node undraggable the moment it joined one.
-            for (id, _) in frames_of(state) {
-                let r = frame_rect_of(state, id);
-                let tab = Rect::new(r.x, r.y, r.w, scaled(state, FRAME_TAB).max(10));
-                if holds(tab, cx, cy) {
-                    return Self::Frame(id);
-                }
-            }
-            return Self::Canvas;
+            return Self::on_canvas(state, px, py);
         }
         Self::Nothing
+    }
+
+    /// What a press inside the canvas viewport reaches.
+    fn on_canvas(state: &LabState, px: u32, py: u32) -> Self {
+        // ★ The canvas is a viewport onto a world surface, so a press is
+        // resolved in the surface's coordinates — the same ones the painter
+        // places cards in. One conversion, at the boundary.
+        let (cx, cy) = window_to_content(state, px, py);
+        // ★★ R1681 — the picked link's own affordances, before everything else
+        // on the canvas: they float over the graph, and a press that fell
+        // through to the world would pan the canvas out from under the button.
+        // The rectangles are the PAINTER's, read from one derivation, so "it is
+        // drawn there" and "it is pressed there" cannot be two answers.
+        if let Some(chrome) = link_chrome(state) {
+            if holds(chrome.act, cx, cy) {
+                return Self::LinkAct;
+            }
+            for (n, (_, seat)) in chrome.chips.iter().enumerate() {
+                if holds(*seat, cx, cy) {
+                    return Self::Endpoint(n);
+                }
+            }
+        }
+        // Pins before cards: a pin overhangs its card's edge, and the pin is
+        // the smaller target, so testing the card first would make a link
+        // impossible to author with a real mouse.
+        for node in state.cards() {
+            let Some(card) = card_rect(state, node) else {
+                continue;
+            };
+            if holds(pin_rect(state, card, true), cx, cy) {
+                return Self::Pin { node, dial: true };
+            }
+            if state.role_of(node).is_some_and(Role::accepts)
+                && holds(pin_rect(state, card, false), cx, cy)
+            {
+                return Self::Pin { node, dial: false };
+            }
+        }
+        for node in state.cards().into_iter().rev() {
+            if card_rect(state, node).is_some_and(|r| holds(r, cx, cy)) {
+                return Self::Node(node);
+            }
+        }
+        if let Some(link) = link_at(state, cx, cy) {
+            return Self::Link(link);
+        }
+        // Reported links AFTER drawn ones: where the two run together the drawn
+        // one is the one somebody made a decision about.
+        if let Some((from, to)) = observed_at(state, cx, cy) {
+            return Self::Observed(from, to);
+        }
+        // The frame's TAB, not its interior: the interior is where the cards
+        // are, and a group that swallowed presses over its own members would
+        // make a node undraggable the moment it joined one.
+        for (id, _) in frames_of(state) {
+            let r = frame_rect_of(state, id);
+            let tab = Rect::new(r.x, r.y, r.w, scaled(state, FRAME_TAB).max(10));
+            if holds(tab, cx, cy) {
+                return Self::Frame(id);
+            }
+        }
+        Self::Canvas
     }
 
     /// The word the wire answers a press with.
@@ -1831,6 +1920,13 @@ impl Hit {
                 if *dial { "dial" } else { "accept" }
             ),
             Self::Link(id) => format!("link:{}", id.0),
+            Self::Observed(from, to) => format!(
+                "observed:{}>{}",
+                state.name_of(from.node),
+                state.name_of(to.node)
+            ),
+            Self::LinkAct => "link:act".into(),
+            Self::Endpoint(n) => format!("link:endpoint:{n}"),
             Self::Frame(id) => format!(
                 "frame:{}",
                 state.frames.borrow().get(id).cloned().unwrap_or_default()
@@ -1876,6 +1972,67 @@ fn link_at(state: &LabState, px: i64, py: i64) -> Option<LinkId> {
         }
     }
     None
+}
+
+/// The reported link whose wire passes within a few pixels of the cursor
+/// (R1681).
+///
+/// The same chord sampling as [`link_at`], over the other layer. Two functions
+/// and not one because what they answer with is different — an observation has
+/// no id — and folding them together would mean inventing one.
+fn observed_at(state: &LabState, px: i64, py: i64) -> Option<(Socket, Socket)> {
+    for seen in state.doc.borrow().observations(ROOT) {
+        let (Some(a), Some(b)) = (
+            card_rect(state, seen.from.node),
+            card_rect(state, seen.to.node),
+        ) else {
+            continue;
+        };
+        let (ax, ay) = centre(pin_rect(state, a, true));
+        let (bx, by) = centre(pin_rect(state, b, false));
+        for step in 0..=20u32 {
+            let t = f64::from(step) / 20.0;
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a lerp between two pixels is a pixel"
+            )]
+            let (lx, ly) = (
+                (f64::from(ax) + (f64::from(bx) - f64::from(ax)) * t) as i64,
+                (f64::from(ay) + (f64::from(by) - f64::from(ay)) * t) as i64,
+            );
+            if px.abs_diff(lx) <= 6 && py.abs_diff(ly) <= 6 {
+                return Some((seen.from, seen.to));
+            }
+        }
+    }
+    None
+}
+
+/// The drawn link landing on `node`'s accept pin that a cursor at `at` is
+/// nearest to — the one a press on that pin picks up (R1681).
+///
+/// The reference's rule, and the reason it is the nearest and not the first: an
+/// accept pin can hold several wires and the one a person means is the one they
+/// are pointing at. A **reported** link is deliberately not eligible — it is
+/// not in the drawing, so there is nothing to pick up.
+fn link_into_pin(state: &LabState, node: NodeId, at: (i64, i64)) -> Option<LinkId> {
+    let doc = state.doc.borrow();
+    let mut best: Option<(u64, LinkId)> = None;
+    for link in doc.tree(ROOT)?.links() {
+        if link.to.node != node {
+            continue;
+        }
+        let Some(card) = card_rect(state, link.from.node) else {
+            continue;
+        };
+        let (ax, ay) = centre(pin_rect(state, card, true));
+        let reach = at.0.abs_diff(i64::from(ax)).pow(2) + at.1.abs_diff(i64::from(ay)).pow(2);
+        if best.is_none_or(|(held, _)| reach < held) {
+            best = Some((reach, link.id));
+        }
+    }
+    best.map(|(_, id)| id)
 }
 
 // ── Chrome rectangles ───────────────────────────────────────────────────────
@@ -2847,21 +3004,336 @@ fn canvas_grid(state: &LabState, ink: Ink) -> Vec<Scene> {
     children
 }
 
-/// The wires, and the label the selected one alone carries.
+/// Where the picked link's own affordances sit, in the world surface's
+/// coordinates (R1681).
+///
+/// ★ ONE authority, read by the painter and by the hit test. R1653 found three
+/// consecutive rounds of defects that hid because a control's paint and its
+/// press were two arithmetics that agreed until they did not; every rectangle
+/// on this screen that a person aims at comes from a single derivation for that
+/// reason, and these three are no different.
+struct LinkChrome {
+    /// The type size every part of it is drawn at, and therefore the size every
+    /// part of it is derived FROM.
+    font: u32,
+    /// The endpoint caption at the wire's middle.
+    label: Rect,
+    /// The word the label carries.
+    caption: String,
+    /// One seat per endpoint the target listens on — **empty unless there is
+    /// more than one**, because a choice between one thing is not a choice, and
+    /// the reference draws the row only when the target listens twice.
+    chips: Vec<(String, Rect)>,
+    /// Which of those the link took.
+    current: usize,
+    /// The delete-or-adopt seat below the wire.
+    act: Rect,
+    /// Whether that seat adopts (a reported link) rather than deletes (a drawn
+    /// one). The reference's one button with two meanings, and it is one button
+    /// because the two are the same question — *should this link be in the
+    /// drawing* — answered from opposite sides.
+    adopt: bool,
+}
+
+/// The chrome of whichever link is picked, or `None` when none is.
+fn link_chrome(state: &LabState) -> Option<LinkChrome> {
+    let pick = state.selected_link.get()?;
+    let (from_socket, to_socket, adopt) = match pick {
+        LinkPick::Authored(id) => {
+            let link = state.doc.borrow().tree(ROOT)?.link(id).copied()?;
+            (link.from, link.to, false)
+        }
+        LinkPick::Observed(from, to) => (from, to, true),
+    };
+    let dials = card_rect(state, from_socket.node)?;
+    let accepts = card_rect(state, to_socket.node)?;
+    let from = centre(pin_rect(state, dials, true));
+    let to = centre(pin_rect(state, accepts, false));
+    let mid = (u32::midpoint(from.0, to.0), u32::midpoint(from.1, to.1));
+
+    let endpoints = endpoints_of(state, to_socket.node);
+    let taken = endpoint_at(state, to_socket);
+    let current = taken
+        .as_ref()
+        .and_then(|one| endpoints.iter().position(|e| e == one))
+        .unwrap_or(0);
+    // The caption is the endpoint the link took — which is the whole point of
+    // there being an endpoint per link rather than per node.
+    let caption = taken
+        .or_else(|| endpoints.first().cloned())
+        .unwrap_or_default();
+
+    // ★★ R1681 — the chrome SCALES with the canvas, and every box is derived
+    // from the type size rather than sized beside it. Both halves have a round
+    // behind them. R1653: a part of the diagram held at fixed pixels keeps them
+    // while the cards shrink, and at low zoom it covers a card the pointer can
+    // then never reach — measured here as a `delete` seat swallowing the whole
+    // of one card at the zoomed-out sweep. R1656: a box sized by a number
+    // somebody typed, beside a run sized by the shaper, is two derivations of
+    // one fact and the run wins.
+    let font = canvas_font(state, FONT_SMALL);
+    let line = line_box(font);
+    let pad = (font / 2).max(3);
+    let seat_h = line + pad;
+    // Three fifths of the type size per character: a conservative average
+    // advance for a proportional face, in the spirit of `line_box` — over-
+    // reserve a little rather than clip a run. A whole em per character, which
+    // this first said, made a sixteen-character address a seat wider than the
+    // card it belongs to.
+    let seat_w =
+        |text: &str| -> u32 { u32::try_from(text.len()).unwrap_or(8) * font * 3 / 5 + pad * 2 };
+    let gap = (font / 2).max(2);
+
+    let mut chips = Vec::new();
+    if endpoints.len() > 1 {
+        let total: u32 = endpoints
+            .iter()
+            .map(|e| seat_w(e) + gap)
+            .sum::<u32>()
+            .saturating_sub(gap);
+        let mut left = mid.0.saturating_sub(total / 2);
+        let top = mid.1.saturating_sub(seat_h * 2 + line + gap);
+        for one in &endpoints {
+            let width = seat_w(one);
+            chips.push((one.clone(), Rect::new(left, top, width, seat_h)));
+            left += width + gap;
+        }
+    }
+
+    let label_w = seat_w(&caption).max(seat_w("delete"));
+    let label = Rect::new(
+        mid.0.saturating_sub(label_w / 2),
+        mid.1.saturating_sub(seat_h + line / 2),
+        label_w,
+        seat_h,
+    );
+    let act = Rect::new(
+        mid.0.saturating_sub(seat_w("delete") / 2),
+        mid.1 + line / 2,
+        seat_w("delete"),
+        seat_h,
+    );
+
+    // ★★ R1681 — and then the whole column moves until it covers no card, and
+    // is kept inside what the canvas is showing.
+    //
+    // Neither half is a nicety. This screen holds an invariant that a press
+    // ANYWHERE on a card reaches that card (R1655), and a floating affordance
+    // is the one thing that can break it — measured, at the zoomed-out sweep
+    // the `delete` seat covered nine sampled points of one card, its centre and
+    // its accept pin among them. That overlap is structural rather than a bad
+    // constant: a card shrinks with the zoom while this column does not,
+    // because its parts are derived from a type size with a legibility floor
+    // under it. And a column nudged out of the viewport would trade one
+    // unreachable affordance for another, which is what the first draft of this
+    // did — measured, both endpoint seats left the visible world entirely.
+    let mut parts: Vec<Rect> = chips
+        .iter()
+        .map(|(_, seat)| *seat)
+        .chain([label, act])
+        .collect();
+    let shift = placement(state, &parts, line.max(2));
+    for part in &mut parts {
+        *part = Rect::new(
+            part.x.saturating_add_signed(shift.0),
+            part.y.saturating_add_signed(shift.1),
+            part.w,
+            part.h,
+        );
+    }
+    let act = parts.pop().unwrap_or(act);
+    let label = parts.pop().unwrap_or(label);
+
+    Some(LinkChrome {
+        font,
+        label,
+        caption,
+        chips: chips
+            .into_iter()
+            .zip(parts)
+            .map(|((one, _), seat)| (one, seat))
+            .collect(),
+        current,
+        act,
+        adopt,
+    })
+}
+
+/// What the picked link carries: its caption, its endpoint seats and its one
+/// act (R1681).
+///
+/// ★ The text of each seat is that seat's CHILD, not its neighbour. A floating
+/// annotation is drawn over the diagram on purpose, so it is its own layer, and
+/// saying that structurally is what keeps "no two runs of one widget overlap"
+/// true without an exception list beside the rule.
+fn link_affordances(chrome: &LinkChrome, ink: Ink) -> Vec<Scene> {
+    // ★ R1656 — every run's box is the LINE BOX the shaper produces at this
+    // type size, not a number the author guessed. One helper, so the three
+    // seats cannot be sized three ways.
+    let inner = |seat: Rect| -> Rect {
+        let pad = (chrome.font / 2).max(3);
+        Rect::new(
+            pad,
+            (seat.h.saturating_sub(line_box(chrome.font))) / 2,
+            seat.w.saturating_sub(pad * 2),
+            line_box(chrome.font),
+        )
+    };
+    let mut out = vec![panel(
+        "lab.link.label",
+        chrome.label,
+        ink.accent_soft,
+        Some(ink.accent_line),
+        vec![tagged_label(
+            "lab.link.label.text",
+            chrome.caption.clone(),
+            inner(chrome.label),
+            chrome.font,
+            ink.accent,
+        )],
+    )];
+    for (n, (endpoint, seat)) in chrome.chips.iter().enumerate() {
+        let picked = n == chrome.current;
+        out.push(panel(
+            &format!("lab.link.endpoint.{n}"),
+            *seat,
+            ink.surface,
+            Some(if picked { ink.accent } else { ink.outline }),
+            vec![tagged_label(
+                &format!("lab.link.endpoint.{n}.text"),
+                endpoint.clone(),
+                inner(*seat),
+                chrome.font,
+                if picked { ink.accent } else { ink.text_2 },
+            )],
+        ));
+    }
+    let (word, edge) = if chrome.adopt {
+        ("adopt", ink.warn)
+    } else {
+        ("delete", ink.err)
+    };
+    out.push(panel(
+        "lab.link.act",
+        chrome.act,
+        ink.surface,
+        Some(edge),
+        vec![tagged_label(
+            "lab.link.act.text",
+            word.to_owned(),
+            inner(chrome.act),
+            chrome.font,
+            edge,
+        )],
+    ));
+    out
+}
+
+/// Where the picked link's column goes, as an offset from the wire's middle
+/// (R1681).
+///
+/// Two rules, in order: it must be inside what the canvas is showing, and it
+/// should cover no card. The first is a hard requirement — an affordance
+/// off-screen is not one — so the search takes the smallest lift that satisfies
+/// both, and if none does, the smallest that at least keeps the column visible.
+/// Answers `(0, 0)` when the reference's own placement already works, which is
+/// the common case.
+fn placement(state: &LabState, parts: &[Rect], step: u32) -> (i32, i32) {
+    let cards: Vec<Rect> = state
+        .cards()
+        .into_iter()
+        .filter_map(|node| card_rect(state, node))
+        .collect();
+    let canvas = canvas_rect();
+    let (ox, oy) = world_offset(state, state.pan.get());
+    let shown = Rect::new(
+        u32::try_from(ox).unwrap_or(0),
+        u32::try_from(oy).unwrap_or(0),
+        canvas.w,
+        canvas.h,
+    );
+    let moved = |part: &Rect, by: (i32, i32)| -> Rect {
+        Rect::new(
+            part.x.saturating_add_signed(by.0),
+            part.y.saturating_add_signed(by.1),
+            part.w,
+            part.h,
+        )
+    };
+    let inside = |by: (i32, i32)| {
+        parts.iter().all(|part| {
+            let r = moved(part, by);
+            r.x >= shown.x
+                && r.y >= shown.y
+                && r.x + r.w <= shown.x + shown.w
+                && r.y + r.h <= shown.y + shown.h
+        })
+    };
+    let clear = |by: (i32, i32)| {
+        !parts
+            .iter()
+            .any(|part| cards.iter().any(|card| overlaps(moved(part, by), *card)))
+    };
+
+    // The horizontal nudge is a clamp, not a search: a column wider than the
+    // gap it sits in has one place to be, against whichever edge crowds it.
+    let left = parts.iter().map(|p| p.x).min().unwrap_or(shown.x);
+    let right = parts.iter().map(|p| p.x + p.w).max().unwrap_or(shown.x);
+    let dx = if left < shown.x {
+        i32::try_from(shown.x - left).unwrap_or(0)
+    } else if right > shown.x + shown.w {
+        -i32::try_from(right - (shown.x + shown.w)).unwrap_or(0)
+    } else {
+        0
+    };
+
+    let step = i32::try_from(step).unwrap_or(2).max(2);
+    let mut visible = None;
+    for up in 0..64i32 {
+        for by in [(dx, -up * step), (dx, up * step)] {
+            if !inside(by) {
+                continue;
+            }
+            if clear(by) {
+                return by;
+            }
+            if visible.is_none() {
+                visible = Some(by);
+            }
+        }
+    }
+    visible.unwrap_or((dx, 0))
+}
+
+/// Whether two rectangles share any pixel.
+const fn overlaps(a: Rect, b: Rect) -> bool {
+    a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+}
+
+/// The wires — drawn and reported — and the affordances the picked one carries.
 fn canvas_wires(state: &LabState, ink: Ink) -> Vec<Scene> {
     let mut children: Vec<Scene> = Vec::new();
     let selected_link = state.selected_link.get();
+    // A link being re-aimed is drawn following the cursor instead of where it
+    // still is, so the person sees where it is going rather than where it was.
+    let moving = match state.drag.get() {
+        Some(Drag::Rewire { link, .. }) => Some(link),
+        _ => None,
+    };
     {
         let doc = state.doc.borrow();
         if let Some(tree) = doc.tree(ROOT) {
             for link in tree.links() {
+                if moving == Some(link.id) {
+                    continue;
+                }
                 let (Some(a), Some(b)) = (
                     card_rect(state, link.from.node),
                     card_rect(state, link.to.node),
                 ) else {
                     continue;
                 };
-                let chosen = selected_link == Some(link.id);
+                let chosen = selected_link == Some(LinkPick::Authored(link.id));
                 let from = centre(pin_rect(state, a, true));
                 let to = centre(pin_rect(state, b, false));
                 children.push(wire(
@@ -2871,58 +3343,64 @@ fn canvas_wires(state: &LabState, ink: Ink) -> Vec<Scene> {
                     if chosen { ink.accent } else { ink.accent_line },
                     if chosen { 2 } else { 1 },
                 ));
-                if chosen {
-                    let endpoint = state
-                        .forms
-                        .borrow()
-                        .get(&link.to.node)
-                        .and_then(|f| f.field("listen.endpoints").map(|v| v.value().to_owned()))
-                        .unwrap_or_default();
-                    let mid = (u32::midpoint(from.0, to.0), u32::midpoint(from.1, to.1));
-                    // ★ The text is the label's CHILD, not its neighbour. A
-                    // floating annotation is drawn over the diagram on purpose,
-                    // so it is its own layer, and saying that structurally is
-                    // what keeps "no two runs of one widget overlap" true
-                    // without an exception list beside the rule.
-                    children.push(panel(
-                        "lab.link.label",
-                        // ★ R1656 — tall enough for the LINE BOX the shaper
-                        // produces, not for the number the author guessed. At
-                        // 20 the run's ink reached 21 and `scene/containment`
-                        // said so on the first run.
-                        Rect::new(mid.0.saturating_sub(70), mid.1.saturating_sub(26), 150, 24),
-                        ink.accent_soft,
-                        Some(ink.accent_line),
-                        vec![tagged_label(
-                            "lab.link.label.text",
-                            endpoint,
-                            Rect::new(7, 5, 136, 15),
-                            10,
-                            ink.accent,
-                        )],
-                    ));
-                }
             }
+        }
+        // ★★ R1681 — what a source reported, in the warning colour, thinner:
+        // it is not in the graph and it must not read as though it were. The
+        // reference draws the same distinction with a dash pattern, which this
+        // wire primitive does not carry; the colour is the part that survives
+        // to a screenshot either way.
+        for seen in doc.observations(ROOT) {
+            let (Some(a), Some(b)) = (
+                card_rect(state, seen.from.node),
+                card_rect(state, seen.to.node),
+            ) else {
+                continue;
+            };
+            let chosen = selected_link == Some(LinkPick::Observed(seen.from, seen.to));
+            children.push(wire(
+                &format!(
+                    "lab.observed.{}.{}",
+                    state.name_of(seen.from.node),
+                    state.name_of(seen.to.node)
+                ),
+                centre(pin_rect(state, a, true)),
+                centre(pin_rect(state, b, false)),
+                ink.warn,
+                if chosen { 3 } else { 2 },
+            ));
         }
     }
 
-    // A link being authored follows the cursor, so a drag shows what it will
-    // make before it makes it — the reference commits on release.
-    if let Some(Drag::Wire { from }) = state.drag.get() {
-        if let Some(card) = card_rect(state, from) {
-            let cursor = state.cursor.get();
-            let (cx, cy) = window_to_content(state, cursor.0, cursor.1);
-            children.push(wire(
-                "lab.link.preview",
-                centre(pin_rect(state, card, true)),
-                (
-                    u32::try_from(cx).unwrap_or(0),
-                    u32::try_from(cy).unwrap_or(0),
-                ),
-                ink.accent,
-                2,
-            ));
-        }
+    if let Some(chrome) = link_chrome(state) {
+        children.extend(link_affordances(&chrome, ink));
+    }
+
+    // A link in flight follows the cursor, so a drag shows what it will do
+    // before it does it — the reference commits on release. ★ R1681 — ONE
+    // block for both drags: authoring and re-aiming draw the same preview from
+    // the same pin, and the only difference is whether a wire already exists at
+    // the far end. Two copies of it is how the second one would come to be
+    // drawn from somewhere else.
+    let in_flight = match state.drag.get() {
+        Some(Drag::Wire { from } | Drag::Rewire { from, .. }) => Some(from),
+        _ => None,
+    };
+    if let Some(from) = in_flight
+        && let Some(card) = card_rect(state, from)
+    {
+        let cursor = state.cursor.get();
+        let (cx, cy) = window_to_content(state, cursor.0, cursor.1);
+        children.push(wire(
+            "lab.link.preview",
+            centre(pin_rect(state, card, true)),
+            (
+                u32::try_from(cx).unwrap_or(0),
+                u32::try_from(cy).unwrap_or(0),
+            ),
+            ink.accent,
+            2,
+        ));
     }
 
     children
@@ -3394,6 +3872,87 @@ impl LabOracle {
             other => Err(InvokeError::rejected(format!("{other:?} is not text"))),
         }
     }
+
+    /// The drawn link a caller named, refusing one that is not there (R1681).
+    ///
+    /// One parser, so `select_link`, `delete_link` and `relink` cannot disagree
+    /// about what a link is called on the wire.
+    ///
+    /// ★ Two spellings, and the second is the one that matters: a link id is
+    /// **minted in seeding order**, so an argument written as `3` is a caller
+    /// asserting something about the order this screen happened to author its
+    /// opening graph in. `P-01>R-01` names the same link by what it *is*. The
+    /// pair form resolves against drawn links first and reported ones second,
+    /// which is the order the canvas's own hit test uses.
+    fn link_id(state: &LabState, raw: &str) -> Result<LinkId, InvokeError> {
+        if let Some((from, to)) = raw.trim().split_once('>') {
+            let (Some(a), Some(b)) = (state.node_of(from.trim()), state.node_of(to.trim())) else {
+                return Err(InvokeError::rejected(format!(
+                    "{:?} or {:?} is not a node on the canvas",
+                    from.trim(),
+                    to.trim()
+                )));
+            };
+            return state
+                .doc
+                .borrow()
+                .tree(ROOT)
+                .and_then(|t| {
+                    t.links()
+                        .iter()
+                        .find(|l| l.from.node == a && l.to.node == b)
+                        .map(|l| l.id)
+                })
+                .ok_or_else(|| {
+                    InvokeError::rejected(format!(
+                        "no link is drawn from {} to {}",
+                        from.trim(),
+                        to.trim()
+                    ))
+                });
+        }
+        let id: u32 = raw
+            .trim()
+            .parse()
+            .map_err(|_| InvokeError::rejected(format!("{raw:?} is not a link id")))?;
+        state
+            .doc
+            .borrow()
+            .tree(ROOT)
+            .and_then(|t| t.link(LinkId(id)).map(|_| LinkId(id)))
+            .ok_or_else(|| InvokeError::rejected(format!("no link {id} is drawn")))
+    }
+
+    /// A link on either layer, in the spelling `selected_link` reads back.
+    fn link_pick(state: &LabState, raw: &str) -> Result<LinkPick, InvokeError> {
+        if let Ok(drawn) = Self::link_id(state, raw) {
+            return Ok(LinkPick::Authored(drawn));
+        }
+        let Some((from, to)) = raw.split_once('>') else {
+            return Self::link_id(state, raw).map(LinkPick::Authored);
+        };
+        let (Some(a), Some(b)) = (state.node_of(from.trim()), state.node_of(to.trim())) else {
+            return Err(InvokeError::rejected(format!(
+                "{:?} or {:?} is not a node on the canvas",
+                from.trim(),
+                to.trim()
+            )));
+        };
+        state
+            .doc
+            .borrow()
+            .observations(ROOT)
+            .into_iter()
+            .find(|o| o.from.node == a && o.to.node == b)
+            .map(|o| LinkPick::Observed(o.from, o.to))
+            .ok_or_else(|| {
+                InvokeError::rejected(format!(
+                    "nothing was reported from {} to {}",
+                    from.trim(),
+                    to.trim()
+                ))
+            })
+    }
 }
 
 const FIELDS: &[SchemaField] = &{
@@ -3468,6 +4027,35 @@ const FIELDS: &[SchemaField] = &{
                 ]
             },
         ),
+        // ★★ R1681 — the other half of a link's life. Four verbs and not one
+        // with a mode, because they take different arguments and answer
+        // different refusals: what a caller has to say to delete a link and
+        // what it has to say to re-aim one are not the same sentence.
+        SchemaField::action("delete_link", "string"),
+        SchemaField::action_with(
+            "relink",
+            "string",
+            ArgForm::Delimited(','),
+            const {
+                &[
+                    SchemaArg::key("link", "string", "links"),
+                    SchemaArg::key("to", "string", "nodes"),
+                ]
+            },
+        ),
+        SchemaField::action("set_endpoint", "string"),
+        SchemaField::action_with(
+            "adopt",
+            "string",
+            ArgForm::Delimited(','),
+            const {
+                &[
+                    SchemaArg::key("from", "string", "nodes"),
+                    SchemaArg::key("to", "string", "nodes"),
+                ]
+            },
+        ),
+        SchemaField::new("observed", "string"),
         SchemaField::action_with(
             "point",
             "string",
@@ -3500,11 +4088,22 @@ impl ExternalIntrospect for LabOracle {
             "spec" => text(spec_json().to_string()),
             "graph" => text(spec::GRAPH_NAME.to_owned()),
             "selected" => text(state.selected.get().map(|n| state.name_of(n)).unwrap_or_default()),
+            // ★ R1681 — a drawn link answers its id and a reported one answers
+            // the pair it runs between, which is the only name it has. The two
+            // spellings are told apart by the `>`, and `select_link` admits
+            // both, so what this reads back is what that takes.
             "selected_link" => text(
                 state
                     .selected_link
                     .get()
-                    .map(|l| l.0.to_string())
+                    .map(|pick| match pick {
+                        LinkPick::Authored(id) => id.0.to_string(),
+                        LinkPick::Observed(from, to) => format!(
+                            "{}>{}",
+                            state.name_of(from.node),
+                            state.name_of(to.node)
+                        ),
+                    })
                     .unwrap_or_default(),
             ),
             "zoom" => Ok(IntrospectValue::Int(i64::from(state.zoom.get()))),
@@ -3594,6 +4193,39 @@ impl ExternalIntrospect for LabOracle {
                                     "id": l.id.0,
                                     "from": state.name_of(l.from.node),
                                     "to": state.name_of(l.to.node),
+                                    // ★ R1681 — WHICH endpoint of the target
+                                    // this link dialled. Published because it
+                                    // is what the endpoint seats move and an
+                                    // operation whose result cannot be read is
+                                    // indistinguishable from one that did
+                                    // nothing.
+                                    "endpoint": endpoint_at(state, l.to).unwrap_or_default(),
+                                })
+                            })
+                            .collect(),
+                    )
+                    .to_string(),
+                )
+            }
+            // ★★ R1681 — the other layer: what a source reported. Its own slot
+            // rather than a flag on `links`, because it is not in the graph and
+            // a reader that had to filter a mixed list would be one `if` away
+            // from treating a claim about the world as a drawing.
+            "observed" => {
+                let doc = state.doc.borrow();
+                text(
+                    serde_json::Value::Array(
+                        doc.observations(ROOT)
+                            .into_iter()
+                            .map(|seen| {
+                                serde_json::json!({
+                                    "from": state.name_of(seen.from.node),
+                                    "to": state.name_of(seen.to.node),
+                                    "endpoint": endpoint_of(&doc, seen.to).unwrap_or_default(),
+                                    "layer": doc
+                                        .link_layer(ROOT, seen.from, seen.to)
+                                        .map(LinkLayer::name)
+                                        .unwrap_or_default(),
                                 })
                             })
                             .collect(),
@@ -3727,22 +4359,15 @@ impl ExternalIntrospect for LabOracle {
                 state.say(format!("selected {}", name.trim()));
                 Ok(IntrospectValue::Text(name.trim().to_owned()))
             }
+            // ★ R1681 — either layer, told apart by the `>`. A reported link
+            // has no id to name it by, so the pair is the name; refusing to let
+            // one be picked at all would have made the adopt affordance
+            // unreachable to everything but a pointer.
             "select_link" => {
                 let raw = Self::text(&args)?;
-                let id: u32 = raw
-                    .trim()
-                    .parse()
-                    .map_err(|_| InvokeError::rejected(format!("{raw:?} is not a link id")))?;
-                let known = state
-                    .doc
-                    .borrow()
-                    .tree(ROOT)
-                    .is_some_and(|t| t.link(LinkId(id)).is_some());
-                if !known {
-                    return Err(InvokeError::rejected(format!("no link {id} is drawn")));
-                }
-                state.selected_link.set(Some(LinkId(id)));
-                Ok(IntrospectValue::Int(i64::from(id)))
+                let pick = Self::link_pick(&state, raw.trim())?;
+                state.selected_link.set(Some(pick));
+                Ok(IntrospectValue::Text(raw.trim().to_owned()))
             }
             "set_field" => {
                 let raw = Self::text(&args)?;
@@ -3875,6 +4500,60 @@ impl ExternalIntrospect for LabOracle {
                 };
                 connect(&state, a, b).map(IntrospectValue::Text)
             }
+            // ★★ R1681 — a link's life after it is drawn.
+            "delete_link" => {
+                let id = Self::link_id(&state, &Self::text(&args)?)?;
+                delete_link(&state, id).map(IntrospectValue::Text)
+            }
+            "relink" => {
+                let raw = Self::text(&args)?;
+                let (link, to) = raw
+                    .split_once(',')
+                    .ok_or_else(|| InvokeError::rejected(format!("{raw:?} is not <link>,<to>")))?;
+                let id = Self::link_id(&state, link)?;
+                let node = state.node_of(to.trim()).ok_or_else(|| {
+                    InvokeError::rejected(format!("{:?} is not a node on the canvas", to.trim()))
+                })?;
+                relink_to(&state, id, node).map(IntrospectValue::Text)
+            }
+            // A number, because the seats a person can press are a numbered row
+            // and an agent addressing them by locator would be addressing a
+            // different thing from the one on screen.
+            "set_endpoint" => {
+                let raw = Self::text(&args)?;
+                let n: usize = raw.trim().parse().map_err(|_| {
+                    InvokeError::rejected(format!("{raw:?} is not an endpoint number"))
+                })?;
+                choose_endpoint(&state, n).map(IntrospectValue::Text)
+            }
+            "adopt" => {
+                let raw = Self::text(&args)?;
+                let (from, to) = raw
+                    .split_once(',')
+                    .ok_or_else(|| InvokeError::rejected(format!("{raw:?} is not <from>,<to>")))?;
+                let (Some(a), Some(b)) = (state.node_of(from.trim()), state.node_of(to.trim()))
+                else {
+                    return Err(InvokeError::rejected(format!(
+                        "{:?} or {:?} is not a node on the canvas",
+                        from.trim(),
+                        to.trim()
+                    )));
+                };
+                let seen = state
+                    .doc
+                    .borrow()
+                    .observations(ROOT)
+                    .into_iter()
+                    .find(|o| o.from.node == a && o.to.node == b)
+                    .ok_or_else(|| {
+                        InvokeError::rejected(format!(
+                            "nothing was reported from {} to {}",
+                            from.trim(),
+                            to.trim()
+                        ))
+                    })?;
+                adopt_link(&state, seen.from, seen.to).map(IntrospectValue::Text)
+            }
             "point" => {
                 let raw = Self::text(&args)?;
                 let (x, y) = raw
@@ -3942,6 +4621,11 @@ fn spec_json() -> serde_json::Value {
         // half is the shape this project keeps paying for.
         "panes": spec::PANES.iter().map(|p| serde_json::json!({
             "tag": p.tag, "title": p.title, "width": p.width, "body": p.body,
+        })).collect::<Vec<_>>(),
+        // ★ R1681 — published so the demo's family pin is derived from the
+        // specification rather than written down, the same way `links` is.
+        "observed": spec::OBSERVED.iter().map(|(from, to)| serde_json::json!({
+            "from": from, "to": to,
         })).collect::<Vec<_>>(),
         "rail": spec::RAIL.iter().map(|(name, reserved_for)| serde_json::json!({
             "name": name,
@@ -4028,46 +4712,178 @@ fn sync_node(state: &Rc<LabState>, node: NodeId) {
     }
 }
 
-/// The accept port on `to` that no link has landed on yet, growing the run by
-/// one when they are all taken.
+/// The locators a node listens on, in the order its form lists them.
 ///
-/// A dataflow input holds one wire; a listening endpoint is dialled by as many
-/// peers as reach it, so the accept pin is a variadic **run** and this is the
-/// arithmetic that hides the run from the person authoring the topology. They
-/// drag to the pin; which slot they land in is not a decision anybody wants to
-/// make.
-fn free_accept_port(state: &Rc<LabState>, to: NodeId) -> Option<u32> {
-    let taken: Vec<u32> = {
-        let doc = state.doc.borrow();
-        let tree = doc.tree(ROOT)?;
-        tree.links()
-            .iter()
-            .filter(|l| l.to.node == to)
-            .map(|l| l.to.port)
-            .collect()
+/// ★★ R1681 — the population behind every endpoint decision on this screen.
+/// A node listening in two places can be dialled in two ways, and *which one a
+/// link took* is a property of the link, not of the node: it is the first thing
+/// the reference says about its own equivalent, and it is why an endpoint can
+/// be re-chosen on a wire that is already drawn.
+fn endpoints_in(forms: &BTreeMap<NodeId, ConfigForm>, node: NodeId) -> Vec<String> {
+    forms
+        .get(&node)
+        .and_then(|form| form.field("listen.endpoints").map(|f| f.value().to_owned()))
+        .map(|value| {
+            FieldType::elements(&value)
+                .map(str::to_owned)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default()
+}
+
+fn endpoints_of(state: &LabState, node: NodeId) -> Vec<String> {
+    endpoints_in(&state.forms.borrow(), node)
+}
+
+/// Which endpoint the link landing on `socket` dialled.
+///
+/// The accept run carries one item per link that lands on the node, and the
+/// item's **label is the endpoint**. That is the whole of the endpoint model:
+/// one fact, in the place the model already keeps per-slot facts, so nothing
+/// maintains a parallel table of which wire took which address.
+fn endpoint_of(doc: &Document<LabNode>, socket: Socket) -> Option<String> {
+    doc.items(ROOT, socket.node, Side::Input)?
+        .get(socket.port as usize)
+        .and_then(|item| item.label.clone())
+}
+
+fn endpoint_at(state: &LabState, socket: Socket) -> Option<String> {
+    endpoint_of(&state.doc.borrow(), socket)
+}
+
+/// Make an accept slot on `to` that dials `endpoint`, and answer its port.
+///
+/// Always a fresh slot: an accept endpoint is a listening socket and is dialled
+/// by as many peers as reach it, while the model's value input takes one
+/// producer, so the run is how the many-ness is expressed and one item per
+/// arriving link is what keeps the two consistent. The item is **typed** by the
+/// endpoint's own transport, which is what makes a dial that cannot speak it a
+/// refusal the model states rather than a defect the gate notices later.
+/// `endpoint` is `None` for a node that can be dialled and has **nowhere to
+/// listen** — a real state on this screen, and one the launch gate already
+/// names rather than one the canvas should refuse to draw. The slot is then
+/// unlabelled, which is exactly true: the link dials no address.
+fn open_slot_in(doc: &mut Document<LabNode>, to: NodeId, endpoint: Option<&str>) -> Option<u32> {
+    let arity = u32::try_from(doc.signature(ROOT, to)?.inputs.len()).unwrap_or(0);
+    let item = match endpoint {
+        Some(one) => Item::plain()
+            .named(one)
+            .typed(0, Transport::of_locator(one).unwrap_or(Transport::Tcp)),
+        None => Item::plain(),
     };
-    let arity = {
-        let doc = state.doc.borrow();
-        u32::try_from(doc.signature(ROOT, to)?.inputs.len()).unwrap_or(0)
-    };
-    if arity == 0 {
-        return None;
+    doc.insert_item(ROOT, to, Side::Input, arity, item).ok()?;
+    Some(arity)
+}
+
+fn open_slot(state: &LabState, to: NodeId, endpoint: Option<&str>) -> Option<u32> {
+    open_slot_in(&mut state.doc.borrow_mut(), to, endpoint)
+}
+
+/// The endpoint a new link from `from` would dial on `to`, or why it cannot be
+/// made (R1681).
+///
+/// Three answers and not two: an endpoint, **no endpoint at all** for a node
+/// that listens nowhere (which is drawable and is what the launch gate is for),
+/// and a refusal when this dialler has already taken every address the target
+/// offers — which is the reference's rule and is about the *pair*, since two
+/// different peers may of course dial the same address.
+fn landing_endpoint(
+    doc: &Document<LabNode>,
+    forms: &BTreeMap<NodeId, ConfigForm>,
+    from: NodeId,
+    to: NodeId,
+) -> Result<Option<String>, ()> {
+    if endpoints_in(forms, to).is_empty() {
+        return Ok(None);
     }
-    if let Some(free) = (0..arity).find(|p| !taken.contains(p)) {
-        return Some(free);
+    free_endpoints_in(doc, forms, from, to)
+        .into_iter()
+        .next()
+        .map_or(Err(()), |one| Ok(Some(one)))
+}
+
+/// Drop the accept slot at `port`, now that nothing lands on it.
+///
+/// The run would otherwise only ever grow: every link that arrives opens a
+/// slot, so every link that leaves has to close one. `remove_item` re-points
+/// the links past it, which is the reason this is one crate call and not an
+/// index fixup here.
+fn close_slot(state: &LabState, node: NodeId, port: u32) {
+    let still_used = state
+        .doc
+        .borrow()
+        .tree(ROOT)
+        .is_some_and(|t| t.links().iter().any(|l| l.to == Socket::new(node, port)))
+        || state
+            .doc
+            .borrow()
+            .observations(ROOT)
+            .iter()
+            .any(|o| o.to == Socket::new(node, port));
+    if still_used {
+        return;
     }
     state
         .doc
         .borrow_mut()
-        .insert_item(ROOT, to, Side::Input, arity, Item::plain())
-        .ok()?;
-    Some(arity)
+        .remove_item(ROOT, node, Side::Input, port)
+        .ok();
+}
+
+/// Which endpoints of `to` this dialler has not already taken.
+///
+/// The reference's rule, and it is about the **pair**: a second wire between
+/// the same two nodes has to dial a different address, because that is what a
+/// second transport connection is, while two *different* peers may of course
+/// dial the same one.
+fn free_endpoints_in(
+    doc: &Document<LabNode>,
+    forms: &BTreeMap<NodeId, ConfigForm>,
+    from: NodeId,
+    to: NodeId,
+) -> Vec<String> {
+    // Reported links hold an endpoint too: the world took it, so a drawing
+    // that claimed the same one would be describing a connection that is not
+    // the one out there.
+    let landed = doc
+        .tree(ROOT)
+        .map(|t| {
+            t.links()
+                .iter()
+                .filter(|l| l.from.node == from && l.to.node == to)
+                .map(|l| l.to)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let reported = doc
+        .observations(ROOT)
+        .into_iter()
+        .filter(|o| o.from.node == from && o.to.node == to)
+        .map(|o| o.to);
+    let used: Vec<String> = landed
+        .into_iter()
+        .chain(reported)
+        .filter_map(|socket| endpoint_of(doc, socket))
+        .collect();
+    endpoints_in(forms, to)
+        .into_iter()
+        .filter(|one| !used.contains(one))
+        .collect()
 }
 
 /// Author a link, letting the crate refuse it.
 fn connect(state: &Rc<LabState>, from: NodeId, to: NodeId) -> Result<String, InvokeError> {
-    let Some(port) = free_accept_port(state, to) else {
-        let name = state.name_of(to);
+    let name = state.name_of(to);
+    let Ok(endpoint) = landing_endpoint(&state.doc.borrow(), &state.forms.borrow(), from, to)
+    else {
+        let said = format!(
+            "{} already dials every endpoint of {name}",
+            state.name_of(from)
+        );
+        state.say(said.clone());
+        return Err(InvokeError::rejected(said));
+    };
+    let Some(port) = open_slot(state, to, endpoint.as_deref()) else {
         state.say(format!("{name} has no accept pin"));
         return Err(InvokeError::rejected(format!(
             "{name} does not listen, so nothing can dial it"
@@ -4079,12 +4895,177 @@ fn connect(state: &Rc<LabState>, from: NodeId, to: NodeId) -> Result<String, Inv
         .connect(ROOT, Socket::new(from, 0), Socket::new(to, port));
     match made {
         Ok(made) => {
-            state.selected_link.set(Some(made.link));
+            state.selected_link.set(Some(LinkPick::Authored(made.link)));
             let word = format!("{} -> {}", state.name_of(from), state.name_of(to));
-            state.say(format!("linked {word}"));
+            match &endpoint {
+                Some(one) => state.say(format!("linked {word} on {one}")),
+                None => state.say(format!("linked {word}")),
+            }
             Ok(word)
         }
         Err(why) => {
+            // The slot was opened for a link that did not arrive.
+            close_slot(state, to, port);
+            let sentence = format!("{why:?}");
+            state.say(format!("refused: {sentence}"));
+            Err(InvokeError::rejected(sentence))
+        }
+    }
+}
+
+/// Remove a link somebody drew, and close the slot it was landing on (R1681).
+fn delete_link(state: &Rc<LabState>, link: LinkId) -> Result<String, InvokeError> {
+    let gone = state.doc.borrow_mut().disconnect(ROOT, link);
+    match gone {
+        Ok(gone) => {
+            close_slot(state, gone.to.node, gone.to.port);
+            if state.selected_link.get() == Some(LinkPick::Authored(link)) {
+                state.selected_link.set(None);
+            }
+            let word = format!(
+                "{} -> {}",
+                state.name_of(gone.from.node),
+                state.name_of(gone.to.node)
+            );
+            state.say(format!("unlinked {word}"));
+            Ok(word)
+        }
+        Err(why) => {
+            let sentence = format!("{why:?}");
+            state.say(format!("refused: {sentence}"));
+            Err(InvokeError::rejected(sentence))
+        }
+    }
+}
+
+/// Move a drawn link's consuming end onto `to`, dialling its first free
+/// endpoint (R1681).
+///
+/// The link keeps its identity throughout — see `Document::relink`. What that
+/// buys here is visible: the selection does not have to be repaired afterwards,
+/// because the thing that was selected is the thing that moved.
+fn relink_to(state: &Rc<LabState>, link: LinkId, to: NodeId) -> Result<String, InvokeError> {
+    let held = state
+        .doc
+        .borrow()
+        .tree(ROOT)
+        .and_then(|t| t.link(link).copied())
+        .ok_or_else(|| InvokeError::rejected(format!("no link {} is drawn", link.0)))?;
+    let name = state.name_of(to);
+    let Ok(endpoint) = landing_endpoint(
+        &state.doc.borrow(),
+        &state.forms.borrow(),
+        held.from.node,
+        to,
+    ) else {
+        let said = format!(
+            "{} already dials every endpoint of {name}",
+            state.name_of(held.from.node)
+        );
+        state.say(said.clone());
+        return Err(InvokeError::rejected(said));
+    };
+    move_end(state, link, to, endpoint.as_deref()).map(|_| {
+        let word = format!("{} -> {name}", state.name_of(held.from.node));
+        state.say(format!("moved {word}"));
+        word
+    })
+}
+
+/// Take a reported link into the drawing (R1681).
+///
+/// `Document::adopt` runs the **authoring** rules on it, so a link the world
+/// has and this model cannot express is *named* rather than quietly dropped.
+/// That refusal is the finding the whole two-layer idea exists to produce, and
+/// it is why this is not "copy the observation into the links list".
+fn adopt_link(state: &Rc<LabState>, from: Socket, to: Socket) -> Result<String, InvokeError> {
+    let taken = state.doc.borrow_mut().adopt(ROOT, from, to);
+    match taken {
+        Ok(made) => {
+            state.selected_link.set(Some(LinkPick::Authored(made.link)));
+            let word = format!("{} -> {}", state.name_of(from.node), state.name_of(to.node));
+            state.say(format!("adopted {word}"));
+            Ok(word)
+        }
+        Err(why) => {
+            let sentence = format!("{why:?}");
+            state.say(format!("refused: {sentence}"));
+            Err(InvokeError::rejected(sentence))
+        }
+    }
+}
+
+/// Put the picked link on the target's `n`th listening endpoint (R1681).
+///
+/// The link decides which endpoint it dials — not the node — which is why this
+/// moves the link's end rather than editing anything about the target. The
+/// reference sets an index on the wire and checks nothing; here the endpoint's
+/// own transport is the accept slot's type, so dialling one this link cannot
+/// speak is refused by the model, with both transports named.
+fn choose_endpoint(state: &Rc<LabState>, n: usize) -> Result<String, InvokeError> {
+    let picked = state
+        .selected_link
+        .get()
+        .and_then(LinkPick::authored)
+        .ok_or_else(|| InvokeError::rejected("no drawn link is picked"))?;
+    let to = state
+        .doc
+        .borrow()
+        .tree(ROOT)
+        .and_then(|t| t.link(picked).map(|l| l.to.node))
+        .ok_or_else(|| InvokeError::rejected("the picked link is not drawn"))?;
+    let endpoints = endpoints_of(state, to);
+    let endpoint = endpoints.get(n).cloned().ok_or_else(|| {
+        InvokeError::rejected(format!(
+            "{} listens on {} endpoint(s), so there is no {n}",
+            state.name_of(to),
+            endpoints.len()
+        ))
+    })?;
+    move_end(state, picked, to, Some(&endpoint)).map(|_| {
+        state.say(format!("on {endpoint}"));
+        endpoint
+    })
+}
+
+/// The one arithmetic behind re-aiming a link and re-choosing its endpoint: a
+/// slot is opened for where it is going, the crate moves the end, and whichever
+/// slot is now empty is closed (R1681).
+///
+/// One function because the two operations differ only in whether the node on
+/// the far end changes, and two copies of the open/move/close dance would be
+/// two places for the run's bookkeeping to drift.
+fn move_end(
+    state: &Rc<LabState>,
+    link: LinkId,
+    to: NodeId,
+    endpoint: Option<&str>,
+) -> Result<Relinked, InvokeError> {
+    let was = state
+        .doc
+        .borrow()
+        .tree(ROOT)
+        .and_then(|t| t.link(link).map(|l| l.to))
+        .ok_or_else(|| InvokeError::rejected(format!("no link {} is drawn", link.0)))?;
+    let Some(port) = open_slot(state, to, endpoint) else {
+        return Err(InvokeError::rejected(format!(
+            "{} has no accept pin",
+            state.name_of(to)
+        )));
+    };
+    let done = state
+        .doc
+        .borrow_mut()
+        .relink(ROOT, link, Side::Input, Socket::new(to, port));
+    match done {
+        Ok(done) => {
+            // The old slot last: closing it re-points what is past it, and the
+            // link has already left it.
+            close_slot(state, was.node, was.port);
+            Ok(done)
+        }
+        Err(why) => {
+            close_slot(state, to, port);
             let sentence = format!("{why:?}");
             state.say(format!("refused: {sentence}"));
             Err(InvokeError::rejected(sentence))
@@ -4155,7 +5136,9 @@ fn move_cursor(state: &Rc<LabState>, px: u32, py: u32) {
                 slot.y = cy;
             }
         }
-        Drag::Wire { .. } => {}
+        // Both follow the cursor and neither changes the document until
+        // release: what the canvas draws mid-drag comes from `cursor`.
+        Drag::Wire { .. } | Drag::Rewire { .. } => {}
     }
 }
 
@@ -4180,6 +5163,24 @@ fn press(state: &Rc<LabState>) {
         }
         Hit::Pin { node, dial: true } => {
             state.drag.set(Some(Drag::Wire { from: *node }));
+        }
+        // ★★ R1681 — pressing an accept pin that already holds a wire PICKS IT
+        // UP, which is the reference's rule and every node editor's. A dial pin
+        // is fan-out and always starts a new wire; an accept pin holds what
+        // arrived, so grabbing it means "move this one".
+        Hit::Pin { node, dial: false } => {
+            let at = window_to_content(state, px, py);
+            if let Some(link) = link_into_pin(state, *node, at) {
+                let source = state
+                    .doc
+                    .borrow()
+                    .tree(ROOT)
+                    .and_then(|t| t.link(link).map(|l| l.from.node));
+                if let Some(from) = source {
+                    state.selected_link.set(Some(LinkPick::Authored(link)));
+                    state.drag.set(Some(Drag::Rewire { link, from }));
+                }
+            }
         }
         Hit::Frame(frame) => {
             state.drag.set(Some(Drag::Frame {
@@ -4229,6 +5230,53 @@ fn apply_frame(state: &Rc<LabState>, node: NodeId) {
     }
 }
 
+/// What a drag does when it is let go, over whatever it was let go on.
+///
+/// Its own function because there are now four kinds and each commits
+/// differently — and because the two that involve a wire are the ones a reader
+/// has to be able to compare side by side.
+fn finish_drag(state: &Rc<LabState>, drag: Drag, now: &Hit) {
+    match drag {
+        // A wire commits onto whatever accept pin it was let go over.
+        Drag::Wire { from } => {
+            if let Hit::Pin { node, dial: false } | Hit::Node(node) = *now {
+                if node != from {
+                    connect(state, from, node).ok();
+                }
+            } else {
+                state.say("a link needs an accept pin");
+            }
+        }
+        // ★★ R1681 — a picked-up link commits the same way, except that it
+        // MOVES rather than being made. Released over nothing it is let go,
+        // which is the rule every node editor has and the reference states in
+        // as many words: dropping a wire on empty canvas disconnects it.
+        Drag::Rewire { link, .. } => match *now {
+            Hit::Pin { node, dial: false } | Hit::Node(node) => {
+                let landed = state
+                    .doc
+                    .borrow()
+                    .tree(ROOT)
+                    .and_then(|t| t.link(link).map(|l| l.to.node));
+                if landed == Some(node) {
+                    // Picked up and put back down where it was. The reference
+                    // has to restore it; here there is nothing to restore,
+                    // because a move that has not happened has taken nothing
+                    // out.
+                    state.say("link unchanged");
+                } else {
+                    relink_to(state, link, node).ok();
+                }
+            }
+            _ => {
+                delete_link(state, link).ok();
+            }
+        },
+        Drag::Node { node, .. } => apply_frame(state, node),
+        Drag::Pan { .. } | Drag::Frame { .. } => {}
+    }
+}
+
 fn release(state: &Rc<LabState>) {
     let (px, py) = state.cursor.get();
     let now = Hit::at(state, px, py);
@@ -4236,22 +5284,8 @@ fn release(state: &Rc<LabState>) {
     let drag = state.drag.get();
     state.drag.set(None);
 
-    // A wire commits on release, onto whatever accept pin it was let go over.
-    if let Some(Drag::Wire { from }) = drag {
-        if let Hit::Pin { node, dial: false } | Hit::Node(node) = now {
-            if node != from {
-                connect(state, from, node).ok();
-            }
-            return;
-        }
-        state.say("a link needs an accept pin");
-        return;
-    }
-    if let Some(Drag::Node { node, .. }) = drag {
-        apply_frame(state, node);
-        return;
-    }
-    if matches!(drag, Some(Drag::Pan { .. } | Drag::Frame { .. })) {
+    if let Some(drag) = drag {
+        finish_drag(state, drag, &now);
         return;
     }
 
@@ -4307,7 +5341,24 @@ fn release(state: &Rc<LabState>) {
             );
             state.say(said);
         }
-        Hit::Link(id) => state.selected_link.set(Some(id)),
+        Hit::Link(id) => state.selected_link.set(Some(LinkPick::Authored(id))),
+        Hit::Observed(from, to) => state.selected_link.set(Some(LinkPick::Observed(from, to))),
+        // ★★ R1681 — one seat, two meanings, chosen by which layer the picked
+        // link is in. A drawn one can be removed; a reported one is a fact
+        // about the world and the only thing to do with it is put it in the
+        // drawing.
+        Hit::LinkAct => match state.selected_link.get() {
+            Some(LinkPick::Authored(id)) => {
+                delete_link(state, id).ok();
+            }
+            Some(LinkPick::Observed(from, to)) => {
+                adopt_link(state, from, to).ok();
+            }
+            None => {}
+        },
+        Hit::Endpoint(n) => {
+            choose_endpoint(state, n).ok();
+        }
         Hit::AddField(key) => {
             if let Some(node) = state.selected.get() {
                 let mut forms = state.forms.borrow_mut();

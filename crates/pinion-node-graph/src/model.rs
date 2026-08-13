@@ -1969,6 +1969,45 @@ impl<K: NodeKind> Document<K> {
         from: Socket,
         to: Socket,
     ) -> Result<Connected, ConnectError<K::Type>> {
+        let crowded = self.vet(tree, from, to)?;
+        // The tree exists: `vet` resolved a signature through it twice.
+        let Some(host) = self.trees.get_mut(tree.0 as usize) else {
+            return Err(ConnectError::NoSuchNode(from));
+        };
+        let id = LinkId(host.next_link);
+        host.next_link += 1;
+        let displaced = self.place(
+            tree,
+            Link {
+                id,
+                from,
+                to,
+                muted: false,
+            },
+            crowded,
+            None,
+        );
+        Ok(Connected {
+            link: id,
+            displaced,
+        })
+    }
+
+    /// Whether these two sockets may be wired, and — when they may — which end
+    /// is the one whose limit a new link would exceed.
+    ///
+    /// ★ R1681 — extracted so that [`connect`](Self::connect) and
+    /// [`relink`](Self::relink) ask the question once. The four rules below are
+    /// properties of the graph, not of the gesture that reached them, so a
+    /// second copy for the second verb would be a second answer free to drift
+    /// from this one — and the drift would be silent, because both verbs would
+    /// still be producing links.
+    pub(crate) fn vet(
+        &self,
+        tree: TreeId,
+        from: Socket,
+        to: Socket,
+    ) -> Result<Option<Side>, ConnectError<K::Type>> {
         let out_ports = self
             .signature(tree, from.node)
             .ok_or(ConnectError::NoSuchNode(from))?
@@ -2052,38 +2091,64 @@ impl<K: NodeKind> Document<K> {
         // R1599 — which end has to give way is the port's own limit, and the
         // two flows put it on opposite ends: a value INPUT takes one producer,
         // a control OUTPUT takes one successor.
-        let crowded = if sink.multiplicity(Side::Input) == Multiplicity::One {
+        Ok(if sink.multiplicity(Side::Input) == Multiplicity::One {
             Some(Side::Input)
         } else if source.multiplicity(Side::Output) == Multiplicity::One {
             Some(Side::Output)
         } else {
             None
-        };
+        })
+    }
 
-        // The tree exists: `signature` above resolved through it twice.
-        let Some(host) = self.trees.get_mut(tree.0 as usize) else {
-            return Err(ConnectError::NoSuchNode(from));
-        };
+    /// Take the link at `at` out of the tree's order, answering it.
+    ///
+    /// ★ R1681 — the counterpart of [`place`](Self::place), for a caller that
+    /// has already found the position and is going to put something back
+    /// there. [`disconnect`](Self::disconnect) is the public verb and resolves
+    /// its own index.
+    pub(crate) fn lift(&mut self, tree: TreeId, at: usize) -> Option<Link> {
+        let host = self.trees.get_mut(tree.0 as usize)?;
+        (at < host.links.len()).then(|| host.links.remove(at))
+    }
+
+    /// Put a vetted `link` into the tree, displacing whatever the crowded end
+    /// already held, and answer what was displaced.
+    ///
+    /// ★ R1681 — the other half of the extraction [`vet`](Self::vet) begins.
+    /// Taking a whole [`Link`] rather than minting one is the point: a link
+    /// whose end moves keeps its **identity** and its mute, and the only way
+    /// for that to be true is for the placement not to invent either.
+    ///
+    /// `at` is where in the tree's order to put it — `None` to append, which is
+    /// what a new link wants; a rewire passes its old position, because a link
+    /// that jumped to the end of the order every time an endpoint moved would
+    /// re-order what a renderer draws over a change that is not about order.
+    pub(crate) fn place(
+        &mut self,
+        tree: TreeId,
+        link: Link,
+        crowded: Option<Side>,
+        at: Option<usize>,
+    ) -> Option<Link> {
+        let host = self.trees.get_mut(tree.0 as usize)?;
         let displaced = match crowded {
-            Some(Side::Input) => host.links.iter().find(|l| l.to == to).copied(),
-            Some(Side::Output) => host.links.iter().find(|l| l.from == from).copied(),
+            Some(Side::Input) => host.links.iter().find(|l| l.to == link.to).copied(),
+            Some(Side::Output) => host.links.iter().find(|l| l.from == link.from).copied(),
             None => None,
         };
+        let mut at = at.unwrap_or(host.links.len());
         if let Some(displaced) = displaced {
+            // Removing it shifts everything after it down, so a slot beyond it
+            // has to come down too or the link lands one place too late.
+            if let Some(gone) = host.links.iter().position(|l| l.id == displaced.id)
+                && gone < at
+            {
+                at -= 1;
+            }
             host.links.retain(|l| l.id != displaced.id);
         }
-        let id = LinkId(host.next_link);
-        host.next_link += 1;
-        host.links.push(Link {
-            id,
-            from,
-            to,
-            muted: false,
-        });
-        Ok(Connected {
-            link: id,
-            displaced,
-        })
+        host.links.insert(at.min(host.links.len()), link);
+        displaced
     }
 
     /// Remove a link, answering it.

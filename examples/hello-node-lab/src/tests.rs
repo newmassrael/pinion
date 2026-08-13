@@ -552,3 +552,77 @@ fn r1669_a_reserved_seat_names_a_requirement() {
         "the seat this screen IS cannot be a reserved one",
     );
 }
+
+// ─────────────────────────────────────────────────────────────────
+// R1681 — a link's life
+// ─────────────────────────────────────────────────────────────────
+
+/// R1681 — the endpoint a link dialled is a property OF THE LINK, and a target
+/// that listens twice offers a seat per address.
+///
+/// The one claim the whole endpoint axis rests on: growing the target's listen
+/// list has to make a choice appear on a wire that was already drawn, without
+/// anything being re-authored.
+#[test]
+fn r1681_a_target_that_listens_twice_offers_a_seat_per_address() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = std::rc::Rc::new(state());
+        let target = state
+            .node_of(spec::SELECTED_NODE)
+            .expect("the opening node");
+        assert_eq!(
+            super::endpoints_of(&state, target).len(),
+            1,
+            "the screen opens with the target listening in one place"
+        );
+        assert!(
+            super::link_chrome(&state).is_some_and(|c| c.chips.is_empty()),
+            "so the picked link offers no choice — a choice between one address \
+             is not a choice, and the reference draws the row only when there \
+             is more than one"
+        );
+
+        // Grow the list the way the inspector's `+` row does.
+        super::add_element(&state, "listen.endpoints");
+        let endpoints = super::endpoints_of(&state, target);
+        assert_eq!(
+            endpoints.len(),
+            2,
+            "the target now listens in two places: {endpoints:?}"
+        );
+        let chrome = super::link_chrome(&state).expect("a link is picked");
+        assert_eq!(
+            chrome.chips.len(),
+            2,
+            "and the wire that was already drawn now offers a seat per address"
+        );
+        assert_eq!(
+            chrome
+                .chips
+                .iter()
+                .map(|(one, _)| one.clone())
+                .collect::<Vec<_>>(),
+            endpoints,
+            "each seat is one of the target's own addresses, in its order"
+        );
+        assert_eq!(chrome.current, 0, "the link took the first");
+
+        // ★ And every seat is somewhere a person can actually reach: the
+        // column is nudged clear of the cards it would otherwise cover, and a
+        // nudge that pushed it out of the viewport would trade one unreachable
+        // affordance for another.
+        let canvas = canvas_rect();
+        for (endpoint, seat) in &chrome.chips {
+            let at = content_to_window(&state, i64::from(seat.x), i64::from(seat.y));
+            assert!(
+                at.is_some_and(|(x, y)| x >= canvas.x
+                    && y >= canvas.y
+                    && x + seat.w <= canvas.x + canvas.w
+                    && y + seat.h <= canvas.y + canvas.h),
+                "the seat for {endpoint} is at {seat:?} -> window {at:?}, which \
+                 is not inside the canvas {canvas:?}"
+            );
+        }
+    });
+}

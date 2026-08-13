@@ -294,7 +294,13 @@ def body() -> None:
             "lab.toolbar": 10,
             "lab.gate": 7,
             "lab.hint": 2,
-            "lab.link": len(spec["links"]) + 2,
+            # ★ R1681 — the picked link now carries its own affordances: the
+            # endpoint caption (a panel and its run) and the act seat (ditto).
+            # Still derived, still not a constant.
+            "lab.link": len(spec["links"]) + 4,
+            # And what a source reported is its own family, because it is its
+            # own layer.
+            "lab.observed": len(spec["observed"]),
             # ★ R1664 — 8, not 7: R1662 gave the inspector a scrolling body,
             # which is a member. The pin is what NOTICED (this is the check
             # working), and the number moves with a reason rather than by
@@ -640,6 +646,124 @@ def body() -> None:
             "O: ★ a press in the app bar's corner moves nothing",
         )
         print("[O] a real router press reaches the canvas and the toolbar")
+
+        # ── (P) ★★★★★ R1681 — the rest of a link's life ─────────────────────
+        #
+        # The screen could make a link and could do nothing else to one. Every
+        # check below drives the POINTER as well as the wire, because this
+        # screen's whole defect history is "the wire does it and the pointer
+        # does not".
+        def links_now() -> list:
+            return json.loads(q(tf, "links"))
+
+        def link_between(a: str, b: str):
+            return next((l for l in links_now() if l["from"] == a and l["to"] == b), None)
+
+        # P1. An endpoint belongs to the LINK, and is published.
+        held = link_between("P-01", "R-01")
+        assert held is not None, links_now()
+        assert held["endpoint"], (
+            f"★ the link says which of the target's addresses it dialled: {held}"
+        )
+        opening_endpoint = held["endpoint"]
+
+        # P2. Growing the target's listen list makes a CHOICE appear on a wire
+        #     that was already drawn — nothing is re-authored. The seats are one
+        #     per address, always, so this holds whatever earlier sections left
+        #     the list at.
+        click(tf, at(tf, "lab.node.R-01"))
+        inv(tf, "select_link", f"{held['id']}")
+
+        def seats() -> list:
+            return sorted(t for t in tags(paint(tf)) if t.startswith("lab.link.endpoint.")
+                          and not t.endswith(".text"))
+
+        def addresses() -> list:
+            row = next(f for f in json.loads(q(tf, "form")) if f["key"] == "listen.endpoints")
+            return [p.strip() for p in row["value"].split(",") if p.strip()]
+
+        before_seats, before_addresses = len(seats()), len(addresses())
+        assert_eq(before_seats, before_addresses if before_addresses > 1 else 0,
+                  "★ one seat per address, and none at all when there is one "
+                  "address — a choice between one thing is not a choice")
+        click(tf, at(tf, "lab.form.item.listen.endpoints.add"))
+        assert_eq(len(addresses()), before_addresses + 1, "the list grew by one")
+        assert_eq(len(seats()), before_addresses + 1,
+                  "★ and the wire that was ALREADY DRAWN grew a seat, with "
+                  "nothing re-authored")
+
+        # P3. Pressing the other seat MOVES the link's end — and the link keeps
+        #     its identity, which is the whole reason the crate has one verb for
+        #     this rather than a disconnect and a connect.
+        click(tf, at(tf, "lab.link.endpoint.1"))
+        moved = link_between("P-01", "R-01")
+        assert moved is not None and moved["id"] == held["id"], (
+            f"★ the link is the SAME link: {held} -> {moved}"
+        )
+        assert moved["endpoint"] != opening_endpoint, (
+            f"★ and it dials the other address now: {moved}"
+        )
+        assert_eq(q(tf, "selected_link"), str(held["id"]),
+                  "so the selection survived the move, having nothing to repair")
+
+        # P4. Re-aiming at another node, by dragging the accept pin it lands on.
+        #     Pressing an accept pin PICKS UP what arrived there.
+        before = len(links_now())
+        inv(tf, "point", at(tf, "lab.pin.R-01.accept"))
+        inv(tf, "send", "PointerDown")
+        inv(tf, "point", at(tf, "lab.pin.P-03.accept"))
+        inv(tf, "send", "PointerUp")
+        after = links_now()
+        assert_eq(len(after), before, "a re-aimed link is moved, not added")
+        again = next((l for l in after if l["id"] == held["id"]), None)
+        assert again is not None and again["to"] == "P-03", (
+            f"★ the same link now lands on another node: {again}"
+        )
+
+        # P5. Dropping a picked-up link on empty canvas lets it go, which is the
+        #     rule every node editor has.
+        before = len(links_now())
+        inv(tf, "point", at(tf, "lab.pin.P-03.accept"))
+        inv(tf, "send", "PointerDown")
+        inv(tf, "point", "300,860")
+        inv(tf, "send", "PointerUp")
+        assert_eq(len(links_now()), before - 1,
+                  "★ released over nothing, a picked-up link is disconnected")
+
+        # P6. Delete, by the seat the picked link carries.
+        target = link_between("S-01", "R-01")
+        assert target is not None, links_now()
+        inv(tf, "select_link", f"{target['id']}")
+        assert "lab.link.act" in tags(paint(tf)), "the picked link carries one act"
+        click(tf, at(tf, "lab.link.act"))
+        assert link_between("S-01", "R-01") is None, (
+            f"★ the act seat deleted it: {links_now()}"
+        )
+        assert_eq(q(tf, "selected_link"), "", "and nothing is picked afterwards")
+
+        # P7. ★★ The other layer. A reported link is NOT in the graph, its act
+        #     seat says the opposite word, and adopting runs the authoring rules.
+        reported = json.loads(q(tf, "observed"))
+        assert reported, "the screen opens with something reported"
+        seen = reported[0]
+        assert_eq(seen["layer"], "drift",
+                  "★ nothing drawn accounts for it — that is what makes it drift")
+        assert link_between(seen["from"], seen["to"]) is None, (
+            "and it is not among the drawn links at all"
+        )
+        inv(tf, "select_link", f"{seen['from']}>{seen['to']}")
+        assert_eq(q(tf, "selected_link"), f"{seen['from']}>{seen['to']}",
+                  "a reported link is named by the pair it runs between")
+        before = len(links_now())
+        click(tf, at(tf, "lab.link.act"))
+        assert_eq(len(links_now()), before + 1, "★ adopting DRAWS it")
+        drawn = link_between(seen["from"], seen["to"])
+        assert drawn is not None, links_now()
+        assert_eq(json.loads(q(tf, "observed"))[0]["layer"], "matched",
+                  "★ and the two layers now agree about it, which is derived "
+                  "rather than a flag anybody set")
+        print("[P] a link can be re-aimed, re-addressed, let go, deleted and "
+              "adopted — and it keeps its identity through every one")
 
 
 if __name__ == "__main__":

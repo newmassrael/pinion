@@ -36,6 +36,12 @@
 //!   declared once, **as the conversion itself**, which is what makes "this
 //!   wire is legal" and "this is what arrives along it" unable to disagree.
 //!   the DCC keeps those two apart, and keeps a third copy for muted nodes.
+//! * **An end that moves** — [`Document::relink`] re-aims one end of a link
+//!   that is already there, keeping its [`LinkId`], its mute and its place in
+//!   the order, refusing atomically, and naming the refusal. Not
+//!   disconnect-then-connect, which mints a new id, destroys the link when the
+//!   destination refuses it, and lets a link block its own move; see that
+//!   module for the measurement against the reference's own relocation verb.
 //! * **Groups** — [`Document::group`] collapses a selection into a re-usable
 //!   definition plus one instance, with the interface **derived** from the
 //!   links that cross the boundary. [`Document::instantiate`] places another
@@ -204,6 +210,7 @@ mod model;
 mod numbering;
 mod observed;
 mod partition;
+mod relink;
 mod run;
 mod select;
 mod swap;
@@ -242,6 +249,7 @@ pub use observed::{
     Standing,
 };
 pub use partition::{PortChange, RepartitionError, Repartitioned, Sharing};
+pub use relink::{RelinkError, Relinked};
 pub use run::{Run, RunError, Step, Stop};
 pub use select::{Grow, Grown, Reach, SelectError};
 pub use swap::{Carried, Swapped};

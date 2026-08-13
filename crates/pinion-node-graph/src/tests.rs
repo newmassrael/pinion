@@ -15,9 +15,9 @@ use crate::{
     GroupError, Grow, Halt, InsertError, Instance, InterfaceSide, Item, ItemError, Layered,
     LinkLayer, Machine, Multiplicity, NestError, Node, NodeBody, NodeId, NodeKind, NodeSite,
     ObserveError, Occurrence, Organic, Orphaned, ParentError, PathError, Port, PortRef, PortSite,
-    PortValueError, ROOT, Reach, RepartitionError, Route, RunError, SelectError, Session, Severed,
-    Sharing, Side, Socket, Stack, Standing, Stop, Straighten, Stride, Tick, Timeline, TreeId,
-    UngroupError, Violation, WatchError, Watches, crossing,
+    PortValueError, ROOT, Reach, RelinkError, RepartitionError, Route, RunError, SelectError,
+    Session, Severed, Sharing, Side, Socket, Stack, Standing, Stop, Straighten, Stride, Tick,
+    Timeline, TreeId, UngroupError, Violation, WatchError, Watches, crossing,
 };
 
 /// The test taxonomy: two socket types, so type disagreement is reachable.
@@ -11705,4 +11705,339 @@ fn r1645_the_reported_layer_is_a_value() {
     assert_eq!(Discovery::WIRE_NAMES, ["off", "on"]);
     assert_eq!(LinkLayer::WIRE_NAMES, ["matched", "missing", "drift"]);
     assert_eq!(LinkLayer::from_wire("solid"), None);
+}
+
+// ---------------------------------------------------------------- relinking
+
+/// R1681 — the property the verb exists for: an end moves and the link is
+/// still the same link.
+///
+/// The counterfactual is in the same test, because the claim is comparative:
+/// the naive pair reaches the same shape and loses the identity on the way.
+#[test]
+fn r1681_a_moved_end_keeps_the_links_identity_and_the_naive_pair_does_not() {
+    let mut fixture = fixture();
+    let held = fixture.document.tree(ROOT).unwrap().links()[0].id;
+    assert_eq!(
+        fixture.document.tree(ROOT).unwrap().link(held).unwrap().to,
+        Socket::new(fixture.add, 0)
+    );
+
+    // `two -> add.0` becomes `two -> sink.0`. One end moved.
+    let done = fixture
+        .document
+        .relink(ROOT, held, Side::Input, Socket::new(fixture.sink, 0))
+        .unwrap();
+    assert_eq!(done.link, held, "the id is the one it had");
+    assert_eq!(done.end, Side::Input);
+    assert_eq!(done.was, Socket::new(fixture.add, 0));
+    assert_eq!(done.now, Socket::new(fixture.sink, 0));
+    assert!(done.moved());
+    let after = fixture.document.tree(ROOT).unwrap().link(held).unwrap();
+    assert_eq!(after.from, Socket::new(fixture.two, 0));
+    assert_eq!(after.to, Socket::new(fixture.sink, 0));
+
+    // The same shape by hand, on a fresh copy. The document ends up equivalent
+    // and the NAME does not survive, which is what everything holding it — a
+    // selection, a breakpoint, an undo entry — would find out the hard way.
+    let mut naive = self::fixture();
+    let was = naive.document.tree(ROOT).unwrap().links()[0].id;
+    naive.document.disconnect(ROOT, was).unwrap();
+    let minted = naive
+        .document
+        .connect(ROOT, Socket::new(naive.two, 0), Socket::new(naive.sink, 0))
+        .unwrap()
+        .link;
+    assert_ne!(minted, was, "the pair mints a new id");
+    assert!(
+        naive.document.tree(ROOT).unwrap().link(was).is_none(),
+        "and the old one now names nothing"
+    );
+}
+
+/// R1681 — a refusal leaves the document exactly as it was, and says why.
+///
+/// Both halves matter and they are different failures: a move that half
+/// happened, and a move that failed silently.
+#[test]
+fn r1681_a_refused_move_changes_nothing_and_names_the_reason() {
+    let mut fixture = fixture();
+    let word = fixture
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Word("hi".into())), 0, 160)
+        .unwrap();
+    let shout = fixture
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Shout), 200, 160)
+        .unwrap();
+    let text = fixture
+        .document
+        .connect(ROOT, Socket::new(word, 0), Socket::new(shout, 0))
+        .unwrap()
+        .link;
+    let before = fixture.document.tree(ROOT).unwrap().links().to_vec();
+
+    // Text cannot cross into a number port.
+    let why = fixture
+        .document
+        .relink(ROOT, text, Side::Input, Socket::new(fixture.sink, 0))
+        .unwrap_err();
+    match why {
+        RelinkError::Refused(ConnectError::TypeMismatch {
+            from_type, to_type, ..
+        }) => {
+            assert_eq!((from_type, to_type), (Ty::Text, Ty::Number));
+        }
+        other => panic!("the reason is a type mismatch, not {other:?}"),
+    }
+    assert_eq!(
+        fixture.document.tree(ROOT).unwrap().links(),
+        before,
+        "every link, in order, with its id and its mute"
+    );
+
+    // A cycle refusal carries the path that would close, where the floor's
+    // relocation verb carries one bit.
+    let out = fixture.document.tree(ROOT).unwrap().links()[2].id;
+    let why = fixture
+        .document
+        .relink(ROOT, out, Side::Input, Socket::new(fixture.two, 0))
+        .unwrap_err();
+    match why {
+        RelinkError::Refused(ConnectError::NoSuchPort { arity, .. }) => {
+            assert_eq!(arity, 0, "a constant has no inputs to land on");
+        }
+        other => panic!("expected the port refusal, not {other:?}"),
+    }
+    assert_eq!(fixture.document.tree(ROOT).unwrap().links(), before);
+
+    // And a genuine cycle, named by its path. `add -> gate` already runs, so
+    // feeding `add` from `gate` would close one.
+    let gate = fixture
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Gate), 400, 240)
+        .unwrap();
+    fixture
+        .document
+        .connect(ROOT, Socket::new(fixture.add, 0), Socket::new(gate, 1))
+        .unwrap();
+    let wired = fixture.document.tree(ROOT).unwrap().links().to_vec();
+
+    let feedback = fixture.document.tree(ROOT).unwrap().links()[0].id;
+    let why = fixture
+        .document
+        .relink(ROOT, feedback, Side::Output, Socket::new(gate, 0))
+        .unwrap_err();
+    match why {
+        RelinkError::Refused(ConnectError::WouldCycle { path }) => {
+            assert!(
+                path.contains(&fixture.add) && path.contains(&gate),
+                "the path names the nodes, not just a failure: {path:?}"
+            );
+        }
+        other => panic!("expected a cycle, not {other:?}"),
+    }
+    assert_eq!(fixture.document.tree(ROOT).unwrap().links(), wired);
+}
+
+/// R1681 — the subtle one: a link must not be the reason its own move is
+/// refused.
+///
+/// `add.0` takes one link and `two -> add.0` is it. Re-aiming that link's
+/// PRODUCING end leaves it on `add.0`, so a check that reads a graph still
+/// containing the link finds the port crowded by the very link being moved and
+/// displaces it: the same link both kept and replaced.
+#[test]
+fn r1681_a_link_does_not_displace_itself_when_its_other_end_moves() {
+    let mut fixture = fixture();
+    let held = fixture.document.tree(ROOT).unwrap().links()[0].id;
+    let four = fixture
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(4)), 0, 240)
+        .unwrap();
+
+    let done = fixture
+        .document
+        .relink(ROOT, held, Side::Output, Socket::new(four, 0))
+        .unwrap();
+    assert_eq!(
+        done.displaced, None,
+        "it landed where it already was; there was nothing else there"
+    );
+    assert_eq!(done.link, held);
+    let after = fixture.document.tree(ROOT).unwrap();
+    assert_eq!(
+        after.links().len(),
+        3,
+        "no link was lost and none was added"
+    );
+    assert_eq!(after.link(held).unwrap().from, Socket::new(four, 0));
+    assert_eq!(after.link(held).unwrap().to, Socket::new(fixture.add, 0));
+    assert_eq!(
+        fixture.document.evaluate(ROOT, fixture.add),
+        vec![Some(Val::Number(7))],
+        "and the graph means what the new wiring says"
+    );
+}
+
+/// R1681 — a link that lands on an occupied one-link port displaces what was
+/// there, and the displaced link is reported so the move is undoable.
+#[test]
+fn r1681_a_moved_end_reports_what_it_displaced() {
+    let mut fixture = fixture();
+    let first = fixture.document.tree(ROOT).unwrap().links()[0].id;
+    let second = fixture.document.tree(ROOT).unwrap().links()[1].id;
+
+    // `three -> add.1` is re-aimed at `add.0`, which `two -> add.0` holds.
+    let done = fixture
+        .document
+        .relink(ROOT, second, Side::Input, Socket::new(fixture.add, 0))
+        .unwrap();
+    assert_eq!(done.displaced.map(|l| l.id), Some(first));
+    let after = fixture.document.tree(ROOT).unwrap();
+    assert!(after.link(first).is_none(), "the displaced one is gone");
+    assert_eq!(after.link(second).unwrap().to, Socket::new(fixture.add, 0));
+    assert_eq!(after.links().len(), 2);
+}
+
+/// R1681 — an end moved to where it already is succeeds, moves nothing, and
+/// says so.
+///
+/// The gesture this answers is real: the reference picks a wire up off a pin
+/// and, if it is released without travelling, puts it back. That is a state
+/// the caller asked for and got, not a refusal.
+#[test]
+fn r1681_moving_an_end_to_where_it_already_is_is_a_success_that_moved_nothing() {
+    let mut fixture = fixture();
+    let held = fixture.document.tree(ROOT).unwrap().links()[0].id;
+    let before = fixture.document.tree(ROOT).unwrap().links().to_vec();
+
+    let done = fixture
+        .document
+        .relink(ROOT, held, Side::Input, Socket::new(fixture.add, 0))
+        .unwrap();
+    assert!(!done.moved(), "nothing went anywhere");
+    assert_eq!(done.was, done.now);
+    assert_eq!(done.displaced, None, "it did not displace itself");
+    assert_eq!(
+        fixture.document.tree(ROOT).unwrap().links(),
+        before,
+        "and the tree is untouched, order included"
+    );
+}
+
+/// R1681 — the mute and the position in the order survive, because a move is
+/// about an endpoint and nothing else.
+#[test]
+fn r1681_a_move_carries_the_mute_and_leaves_the_order_alone() {
+    let mut fixture = fixture();
+    let middle = fixture.document.tree(ROOT).unwrap().links()[1].id;
+    fixture.document.set_link_muted(ROOT, middle, true).unwrap();
+    let order: Vec<_> = fixture
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .links()
+        .iter()
+        .map(|l| l.id)
+        .collect();
+
+    let four = fixture
+        .document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(4)), 0, 240)
+        .unwrap();
+    fixture
+        .document
+        .relink(ROOT, middle, Side::Output, Socket::new(four, 0))
+        .unwrap();
+
+    let after = fixture.document.tree(ROOT).unwrap();
+    assert!(after.link(middle).unwrap().muted, "still muted");
+    assert_eq!(
+        after.links().iter().map(|l| l.id).collect::<Vec<_>>(),
+        order,
+        "and still in the same place in the order"
+    );
+}
+
+/// R1681 — moving an end between two ports of the SAME node, which is what a
+/// target listening in more than one place needs.
+///
+/// The reference prototype keeps a separate index on each wire for this and a
+/// separate verb to set it, with no check that the new endpoint will take the
+/// link. Here it is the one verb over a different socket, so the type relation
+/// is asked exactly as it is for any other wire.
+#[test]
+fn r1681_an_end_moves_between_two_ports_of_one_node() {
+    let mut document = Document::new("root");
+    let one = document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(1)), 0, 0)
+        .unwrap();
+    let choose = document
+        .add_node(ROOT, NodeBody::Kind(Op::Choose), 200, 0)
+        .unwrap();
+    let held = document
+        .connect(ROOT, Socket::new(one, 0), Socket::new(choose, 0))
+        .unwrap()
+        .link;
+
+    let done = document
+        .relink(ROOT, held, Side::Input, Socket::new(choose, 1))
+        .unwrap();
+    assert_eq!(done.link, held, "the same link, on the node's other port");
+    assert!(done.moved());
+    assert_eq!(
+        document.tree(ROOT).unwrap().link(held).unwrap().to,
+        Socket::new(choose, 1)
+    );
+
+    // Past the run's arity there is no port, and the refusal says how many
+    // there are rather than only refusing.
+    let arity = document.signature(ROOT, choose).unwrap().inputs.len();
+    let why = document
+        .relink(
+            ROOT,
+            held,
+            Side::Input,
+            Socket::new(choose, u32::try_from(arity).unwrap()),
+        )
+        .unwrap_err();
+    match why {
+        RelinkError::Refused(ConnectError::NoSuchPort { arity: said, .. }) => {
+            assert_eq!(said as usize, arity);
+        }
+        other => panic!("expected the port refusal, not {other:?}"),
+    }
+    assert_eq!(
+        document.tree(ROOT).unwrap().link(held).unwrap().to,
+        Socket::new(choose, 1),
+        "and it stayed where it was"
+    );
+}
+
+/// R1681 — the two ways there is nothing to move.
+#[test]
+fn r1681_a_move_of_a_link_that_is_not_there_names_which_is_missing() {
+    let mut fixture = fixture();
+    let held = fixture.document.tree(ROOT).unwrap().links()[0].id;
+    let absent = TreeId(97);
+    assert_eq!(
+        fixture
+            .document
+            .relink(absent, held, Side::Input, Socket::new(fixture.sink, 0))
+            .unwrap_err(),
+        RelinkError::NoSuchTree(absent)
+    );
+
+    fixture.document.disconnect(ROOT, held).unwrap();
+    assert_eq!(
+        fixture
+            .document
+            .relink(ROOT, held, Side::Input, Socket::new(fixture.sink, 0))
+            .unwrap_err(),
+        RelinkError::NoSuchLink {
+            tree: ROOT,
+            link: held
+        }
+    );
 }

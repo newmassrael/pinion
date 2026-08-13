@@ -317,6 +317,18 @@ pub const LINKS: &[(&str, &str)] = &[
 /// selected link alone: eight labels on seven wires is not a diagram.
 pub const SELECTED_LINK: (&str, &str) = ("P-01", "R-01");
 
+/// ★★ R1681 — links a source **reported** that nobody drew, source first.
+///
+/// The reference opens with exactly one, between the two peers that have
+/// automatic discovery switched on, and it is drawn in the warning colour with
+/// a dashed stroke. It is not in the graph: it is a claim about the world, and
+/// the only thing that can be done to it is take it into the drawing.
+///
+/// One rather than none because an affordance with nothing to act on is an
+/// affordance no test and no person can reach, and half of what this screen was
+/// missing on the link axis hid behind exactly that.
+pub const OBSERVED: &[(&str, &str)] = &[("P-01", "P-02")];
+
 /// One row of the inspector, for the node the screen opens with selected.
 pub struct FieldSpec {
     /// The configuration path, verbatim — this is the key, not a label.
@@ -643,31 +655,44 @@ pub const OPERATIONS: &[OperationSpec] = &[
         witness: "links",
         needs: None,
     },
+    // ★★ R1681 — a link's life after it is drawn. All four were absent, and
+    // they were absent together: the screen could make a link and could do
+    // nothing else to one.
+    // ★ The argument names the link by its ENDS and not by an id, because an id
+    // is minted in seeding order and a table asserting `3` would be asserting
+    // something about the order this screen happens to author its opening graph
+    // in — which is exactly the sort of coupling that survives until somebody
+    // adds a link to the specification.
     OperationSpec {
         name: "delete a link",
-        verb: None,
-        gesture: false,
+        verb: Some(("delete_link", "Q-01>R-01")),
+        gesture: true,
         witness: "links",
         needs: None,
     },
     OperationSpec {
         name: "rewire a link",
-        verb: None,
-        gesture: false,
+        verb: Some(("relink", "Q-01>R-01,P-03")),
+        gesture: true,
         witness: "links",
         needs: None,
     },
+    // ★ `needs` an edit, and that is the tool's own shape rather than a
+    // convenience: an endpoint is a CHOICE, and there is no choice while the
+    // target listens in one place. The reference draws the row of seats only
+    // when there is more than one, so growing the list is how a person reaches
+    // this — which is exactly what "edit a field" does here.
     OperationSpec {
         name: "select a link endpoint",
-        verb: None,
-        gesture: false,
-        witness: "selected_link",
-        needs: None,
+        verb: Some(("set_endpoint", "1")),
+        gesture: true,
+        witness: "links",
+        needs: Some("edit a field"),
     },
     OperationSpec {
         name: "adopt an observed link",
-        verb: None,
-        gesture: false,
+        verb: Some(("adopt", "P-01,P-02")),
+        gesture: true,
         witness: "links",
         needs: None,
     },

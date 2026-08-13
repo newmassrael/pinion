@@ -1716,6 +1716,37 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
     ("author a link", |state, shot| {
         drag_between(state, shot, "lab.pin.S-01.dial", "lab.pin.P-02.accept");
     }),
+    // ★★ R1681 — a link's life. The act seat is painted on the PICKED link, so
+    // each of these picks one with the pointer first: pressing the wire is how
+    // a person selects it, and a driver that set the selection directly would
+    // be proving the button works against a state no mouse can produce.
+    ("delete a link", |state, shot| {
+        press_wire(state, shot, "Q-01", "R-01");
+        press_tag(state, &painted(state), "lab.link.act");
+    }),
+    ("rewire a link", |state, shot| {
+        // Off the accept pin it lands on, onto another node's. Pressing an
+        // accept pin PICKS UP the wire that arrived there — the reference's
+        // rule and every node editor's — so this is one drag, not a delete
+        // followed by a draw.
+        let _ = shot;
+        drag_between(
+            state,
+            &painted(state),
+            "lab.pin.R-01.accept",
+            "lab.pin.P-03.accept",
+        );
+    }),
+    ("select a link endpoint", |state, shot| {
+        // The precondition grew the selected node's listen list, so the seats
+        // are painted; the second one is the endpoint the link did not take.
+        let _ = shot;
+        press_tag(state, &painted(state), "lab.link.endpoint.1");
+    }),
+    ("adopt an observed link", |state, shot| {
+        press_wire(state, shot, "P-01", "P-02");
+        press_tag(state, &painted(state), "lab.link.act");
+    }),
     ("pan", |state, _| {
         let canvas = canvas_rect();
         let from = (canvas.x + canvas.w / 2, canvas.y + canvas.h / 2);
@@ -1748,6 +1779,31 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
         press_tag(state, shot, "lab.reset.view");
     }),
 ];
+
+/// Press the middle of the wire running between two nodes (R1681).
+///
+/// ★ A wire is a PATH, and a path's painted rectangle is its bounding box —
+/// most of the canvas, with its centre nowhere near the stroke. So the aim is
+/// still read out of the paint, but from the two things that do have
+/// rectangles: the pins the wire runs between. Their midpoint is the point the
+/// screen's own chord resolver answers with this link, which is what "a person
+/// can press this wire" means.
+fn press_wire(state: &std::rc::Rc<LabState>, shot: &Painted, from: &str, to: &str) {
+    let seat = |tag: String| -> (u32, u32) {
+        centre(
+            *shot
+                .tags
+                .get(&tag)
+                .unwrap_or_else(|| panic!("{tag} is painted, so the wire has an end there")),
+        )
+    };
+    let a = seat(format!("lab.pin.{from}.dial"));
+    let b = seat(format!("lab.pin.{to}.accept"));
+    let at = (u32::midpoint(a.0, b.0), u32::midpoint(a.1, b.1));
+    super::move_cursor(state, at.0, at.1);
+    super::press(state);
+    super::release(state);
+}
 
 /// Press and release at the centre of a painted tag.
 fn press_tag(state: &std::rc::Rc<LabState>, shot: &Painted, tag: &str) {
@@ -2006,7 +2062,7 @@ fn r1677_every_declared_way_of_causing_an_operation_causes_it() {
 /// keys there are without exporting them, and the launch script does not exist
 /// — so a prose judgement had been carrying them as half-present. The gate
 /// disagreeing with the reading that motivated it is the gate doing its job.
-const ABSENT_OPERATIONS: usize = 13;
+const ABSENT_OPERATIONS: usize = 9;
 
 /// ★★★ R1679 — **the affordance is painted exactly when pressing it would do
 /// something**, judged by DOING it rather than by asking the predicate.
