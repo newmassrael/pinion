@@ -867,6 +867,16 @@ impl ResetScope {
                     .forms
                     .borrow_mut()
                     .retain(|id, _| !strays.contains(id));
+                // ★ R1679 close-audit — and its placement with it. Every other
+                // per-card map is cleaned here; `opened_at` was added this
+                // session and missed, which would leave a placement behind for
+                // a card that no longer exists. Harmless today because the
+                // model does not reuse an identifier, and exactly the kind of
+                // "harmless today" that stops being so without a diff.
+                state
+                    .opened_at
+                    .borrow_mut()
+                    .retain(|id, _| !strays.contains(id));
                 if state.selected.get().is_some_and(|n| strays.contains(&n)) {
                     state.selected.set(state.node_of(spec::SELECTED_NODE));
                 }
