@@ -32,6 +32,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
+    abs_rects_of,
     assert_eq,
     call,
     run_demo,
@@ -143,16 +144,54 @@ def run(tf: RpcSubprocess) -> None:
     by_tag = {r["tag"]: r for r in text_runs(tf) if r.get("tag")}
     ids = [t for t in by_tag if t.startswith("lab.node.") and t.endswith(".id")]
     assert len(ids) >= 6, f"the graph paints its cards: {ids}"
+
+    # ★★ R1682.1 — the picked link's own chrome is a summoned OVERLAY, and an
+    # overlay covering part of what is under it is what it is for. Measured on
+    # the behaviour reference: its endpoint seats are a flex row laid on the
+    # wire's midpoint with no avoidance of anything, so this is agreement with
+    # it rather than a concession. The screen's in-process card sweeps have
+    # taken the same exception since R1681.3; this one did not, and phase 3
+    # above is what makes the difference visible — it grows the picked link's
+    # target to seven addresses, so the seat row spans far enough to cover a
+    # card two columns away.
+    #
+    # Derived from the PAINT, never restated: the seats carry their own tags, so
+    # "is this aim point under the chrome" has one source and cannot drift from
+    # where the chrome actually is.
+    chrome = [
+        rect
+        for tag, rect in abs_rects_of(tf.snapshot(source="paint")).items()
+        if tag.startswith("lab.link.")
+    ]
+
+    def under_chrome(px, py):
+        return any(
+            x <= px < x + w and y <= py < y + h for (x, y, w, h) in chrome
+        )
+
     reached = 0
+    covered = 0
     for tag in sorted(ids):
         node = tag[len("lab.node."):-len(".id")]
         other = "Q-01" if node != "Q-01" else "T-01"
         tf.invoke(f"{EXT}/select", other)
         r = by_tag[tag]
-        tf.click(at=(r["x"] + r["w"] // 2, r["y"] + r["h"] // 2))
+        at = (r["x"] + r["w"] // 2, r["y"] + r["h"] // 2)
+        if under_chrome(*at):
+            covered += 1
+            continue
+        tf.click(at=at)
         assert_eq(tf.query(f"{EXT}/selected"), node,
                   f"{node} answers a press where it is painted, on a grown window")
         reached += 1
+    # The exception is BOUNDED and the bound is asserted: an overlay that
+    # covered most of the graph would pass a check that merely skipped what it
+    # covers, which is the way this sort of excuse goes wrong.
+    assert covered <= 1, (
+        f"the picked link's chrome covers {covered} of {len(ids)} cards' "
+        f"identity lines — an overlay is allowed to cover something, not most "
+        f"of the canvas"
+    )
     assert reached >= 6, reached
 
     # ── 8. the containment answer survives the resize: a screen that reflowed

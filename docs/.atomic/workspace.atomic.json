@@ -37724,6 +37724,86 @@
         "diff."
       ]
     },
+    "R1682.1": {
+      "decision_summary": "A red already on main, paid off as its own round: one check did not know an\nexception the screen's other checks have taken since the round before it.\n\n`r1656_a_mark_says_the_box_it_left` fails on the tip commit — pressing where\n`T-01`'s identity line is painted, on a grown window, answers `Q-01`. Checked\nby stashing this session's work and running it again rather than assumed either\nway, because \"still failing\" is not \"failing for the same reason\" and this\nsession has already been caught by that once.\n\n★★ WHAT IT ACTUALLY MEETS, MEASURED RATHER THAN REASONED ABOUT. Driving the\nscreen to the demo's own phase-3 state and asking `point` at that pixel answers\n`link:endpoint:0`. Phase 3 grows the picked link's TARGET to seven listen\naddresses, so the picked link's endpoint seats — one per address, laid in a row\non the wire — span far enough to cover a card two columns away. The press lands\non the overlay, the selection does not move, and the assertion reads it as the\ncard being unreachable.\n\n★★ AND THE OVERLAY IS RIGHT TO BE THERE. R1681.3 narrowed the chrome's\nplacement to \"inside what the canvas is showing\" and made the card sweeps take\nan exception for whatever it covers, on the stated grounds that a summoned\noverlay covering part of a card is what the reference does. That judgement is\nnow CHECKED rather than trusted: the behaviour reference lays its endpoint seats\nas a flex row positioned on the wire's midpoint, `z-index` above the graph, with\nno avoidance of anything at all. So this is agreement with the reference, and\nthe seats being a row rather than a stack is agreement too — the row simply gets\nwide when a target listens in seven places.\n\nSo the repair is in the check, and it is the same exception, taken the same way:\nthe seats carry their own tags, so \"is this aim point under the chrome\" is\nderived from the PAINT rather than restated beside it, and cannot drift from\nwhere the chrome actually is.\n\n★ THE EXCEPTION IS BOUNDED, AND THE BOUND IS THE PART WORTH HAVING. A check that\nmerely skips whatever an overlay covers passes just as happily when the overlay\ncovers the whole canvas — which is how this sort of excuse goes wrong. The\nnumber of identity lines the chrome covers is asserted (at most one of eight,\nmeasured exactly one), so an overlay that grew would fail here rather than\nquietly widening its own excuse.",
+      "changes_bullets": [
+        "`tools/demos/r1656_a_mark_says_the_box_it_left.py` — phase 7 takes the picked",
+        "link's chrome as an exception, derived from the paint:",
+        "* every `lab.link.*` rectangle is read out of the painted scene, and a card",
+        "whose identity line falls under one of them is skipped rather than pressed.",
+        "One source, so the exception cannot drift from where the chrome is.",
+        "* the exception is BOUNDED: the number of identity lines it covers is",
+        "asserted at most one of eight (measured exactly one). A check that only",
+        "skipped what an overlay covers would pass with the overlay over everything."
+      ],
+      "verification_bullets": [
+        "* `r1656_a_mark_says_the_box_it_left` — PASS. It failed on the tip commit and",
+        "fails identically with this session's work stashed, which is how the red was",
+        "attributed rather than assumed.",
+        "* the root cause was measured, not inferred: driving the screen to the demo's",
+        "own phase-3 state and asking `point` at the failing pixel answers",
+        "`link:endpoint:0`.",
+        "* the reference was extracted and read rather than recalled: its endpoint",
+        "seats are a flex row on the wire's midpoint with no avoidance, which is what",
+        "makes the overlay's behaviour agreement rather than a concession.",
+        "* counterfactual: tightening the bound to zero fails, and the message names",
+        "the measurement (one of eight). So the bound is live rather than decorative.",
+        "* `r1651` and `r1682` on the same screen re-run green.",
+        "No source changed, so no crate gate moved. This is a check learning something",
+        "the screen already knew."
+      ],
+      "impact_refs": [
+        "5.20",
+        "5.32"
+      ],
+      "carry_forward_bullets": [
+        "None.",
+        "★ Stated, not carried: the endpoint seat row gets wider with every address the",
+        "picked link's target listens on, and nothing bounds that width. Today it covers",
+        "one card's identity line out of eight at the grown size, and the demo asserts",
+        "that number, so growth is a red rather than a discovery. The reference has the",
+        "same property and bounds it nowhere either."
+      ],
+      "publishable_decision_summary": "A red already on main, paid off as its own round: one check did not know an\nexception the screen's other checks have taken since the round before it.\n\n`r1656_a_mark_says_the_box_it_left` fails on the tip commit — pressing where\n`T-01`'s identity line is painted, on a grown window, answers `Q-01`. Checked\nby stashing this session's work and running it again rather than assumed either\nway, because \"still failing\" is not \"failing for the same reason\" and this\nsession has already been caught by that once.\n\n★★ WHAT IT ACTUALLY MEETS, MEASURED RATHER THAN REASONED ABOUT. Driving the\nscreen to the demo's own phase-3 state and asking `point` at that pixel answers\n`link:endpoint:0`. Phase 3 grows the picked link's TARGET to seven listen\naddresses, so the picked link's endpoint seats — one per address, laid in a row\non the wire — span far enough to cover a card two columns away. The press lands\non the overlay, the selection does not move, and the assertion reads it as the\ncard being unreachable.\n\n★★ AND THE OVERLAY IS RIGHT TO BE THERE. R1681.3 narrowed the chrome's\nplacement to \"inside what the canvas is showing\" and made the card sweeps take\nan exception for whatever it covers, on the stated grounds that a summoned\noverlay covering part of a card is what the reference does. That judgement is\nnow CHECKED rather than trusted: the behaviour reference lays its endpoint seats\nas a flex row positioned on the wire's midpoint, `z-index` above the graph, with\nno avoidance of anything at all. So this is agreement with the reference, and\nthe seats being a row rather than a stack is agreement too — the row simply gets\nwide when a target listens in seven places.\n\nSo the repair is in the check, and it is the same exception, taken the same way:\nthe seats carry their own tags, so \"is this aim point under the chrome\" is\nderived from the PAINT rather than restated beside it, and cannot drift from\nwhere the chrome actually is.\n\n★ THE EXCEPTION IS BOUNDED, AND THE BOUND IS THE PART WORTH HAVING. A check that\nmerely skips whatever an overlay covers passes just as happily when the overlay\ncovers the whole canvas — which is how this sort of excuse goes wrong. The\nnumber of identity lines the chrome covers is asserted (at most one of eight,\nmeasured exactly one), so an overlay that grew would fail here rather than\nquietly widening its own excuse.",
+      "publishable_changes_bullets": [
+        "`tools/demos/r1656_a_mark_says_the_box_it_left.py` — phase 7 takes the picked",
+        "link's chrome as an exception, derived from the paint:",
+        "* every `lab.link.*` rectangle is read out of the painted scene, and a card",
+        "whose identity line falls under one of them is skipped rather than pressed.",
+        "One source, so the exception cannot drift from where the chrome is.",
+        "* the exception is BOUNDED: the number of identity lines it covers is",
+        "asserted at most one of eight (measured exactly one). A check that only",
+        "skipped what an overlay covers would pass with the overlay over everything."
+      ],
+      "publishable_verification_bullets": [
+        "* `r1656_a_mark_says_the_box_it_left` — PASS. It failed on the tip commit and",
+        "fails identically with this session's work stashed, which is how the red was",
+        "attributed rather than assumed.",
+        "* the root cause was measured, not inferred: driving the screen to the demo's",
+        "own phase-3 state and asking `point` at the failing pixel answers",
+        "`link:endpoint:0`.",
+        "* the reference was extracted and read rather than recalled: its endpoint",
+        "seats are a flex row on the wire's midpoint with no avoidance, which is what",
+        "makes the overlay's behaviour agreement rather than a concession.",
+        "* counterfactual: tightening the bound to zero fails, and the message names",
+        "the measurement (one of eight). So the bound is live rather than decorative.",
+        "* `r1651` and `r1682` on the same screen re-run green.",
+        "No source changed, so no crate gate moved. This is a check learning something",
+        "the screen already knew."
+      ],
+      "publishable_impact_refs": [
+        "5.20",
+        "5.32"
+      ],
+      "publishable_carry_forward_bullets": [
+        "None.",
+        "★ Stated, not carried: the endpoint seat row gets wider with every address the",
+        "picked link's target listens on, and nothing bounds that width. Today it covers",
+        "one card's identity line out of eight at the grown size, and the demo asserts",
+        "that number, so growth is a red rather than a discovery. The reference has the",
+        "same property and bounds it nowhere either."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
