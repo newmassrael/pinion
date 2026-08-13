@@ -626,3 +626,115 @@ fn r1681_a_target_that_listens_twice_offers_a_seat_per_address() {
         }
     });
 }
+
+/// R1681 — the accept run holds exactly one slot per thing landing on it, over
+/// every operation that opens or closes one.
+///
+/// ★ The bookkeeping this round introduced, and the kind that goes wrong
+/// silently: every arriving link opens a slot, so every departing one has to
+/// close one, and a slot a REPORTED link holds must survive the drawn link
+/// beside it being deleted. A run that only grew would still draw correctly and
+/// would leak a port per edit, which nothing else here would notice.
+#[test]
+fn r1681_the_accept_run_holds_one_slot_per_thing_that_lands_on_it() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = std::rc::Rc::new(state());
+        // A node with `at_least(1)` keeps one empty slot, so the invariant is
+        // "as many slots as things land on it, and no more" — with that floor.
+        //
+        // BOTH directions. A run that only grew leaks a port per edit; a run
+        // that closed a slot something still lands on re-points a link or a
+        // report onto somebody else's address, which is worse and which a
+        // count of the surplus alone cannot see — `saturating_sub` reads a
+        // shortfall as zero, and that is the shape the first draft of this
+        // test was blind to.
+        let census = || {
+            state
+                .cards()
+                .into_iter()
+                .filter_map(|node| {
+                    let doc = state.doc.borrow();
+                    let arity = doc
+                        .signature(super::ROOT, node)
+                        .map_or(0, |s| s.inputs.len());
+                    let landed = doc.tree(super::ROOT).map_or(0, |t| {
+                        t.links().iter().filter(|l| l.to.node == node).count()
+                    });
+                    let reported = doc
+                        .observations(super::ROOT)
+                        .iter()
+                        .filter(|o| o.to.node == node)
+                        .count();
+                    let want = landed + reported;
+                    drop(doc);
+                    // The floor is the crate's `at_least(1)`, and it applies to
+                    // the roles that declare an accept run at all — a role that
+                    // never listens has no run and no floor.
+                    let floor = usize::from(state.role_of(node).is_some_and(Role::accepts));
+                    (arity != want.max(floor)).then(|| (state.name_of(node), arity, want))
+                })
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(census(), Vec::new(), "the opening graph leaks no slot");
+
+        let router = state.node_of("R-01").expect("on the canvas");
+        let store = state.node_of("S-01").expect("on the canvas");
+        let peer = state.node_of("P-03").expect("on the canvas");
+        let link = state
+            .doc
+            .borrow()
+            .tree(super::ROOT)
+            .and_then(|t| {
+                t.links()
+                    .iter()
+                    .find(|l| l.from.node == store && l.to.node == router)
+                    .map(|l| l.id)
+            })
+            .expect("the store dials the router");
+
+        super::relink_to(&state, link, peer).expect("the peer listens");
+        assert_eq!(census(), Vec::new(), "a move closes the slot it left");
+
+        super::delete_link(&state, link).expect("it is drawn");
+        assert_eq!(
+            census(),
+            Vec::new(),
+            "and a delete closes the one it was on"
+        );
+
+        // ★ The case a naive close gets wrong: adopting puts a drawn link on
+        // the very slot a reported one holds, and deleting that link must NOT
+        // take the slot away from the report that is still there.
+        let seen = *state
+            .doc
+            .borrow()
+            .observations(super::ROOT)
+            .first()
+            .expect("the screen opens with something reported");
+        // Captured BEFORE, because the point is that it is unchanged after —
+        // reading it again afterwards and comparing it with itself is an
+        // assertion that cannot fail, which is what the first draft did.
+        let reported_on = super::endpoint_at(&state, seen.to).expect("reported on an address");
+        super::adopt_link(&state, seen.from, seen.to).expect("the model can hold it");
+        let adopted = state
+            .doc
+            .borrow()
+            .tree(super::ROOT)
+            .and_then(|t| t.links().iter().find(|l| l.to == seen.to).map(|l| l.id))
+            .expect("the adopted link");
+        super::delete_link(&state, adopted).expect("it is drawn");
+        assert!(
+            state.doc.borrow().observations(super::ROOT).contains(&seen),
+            "the report is still there"
+        );
+        assert_eq!(
+            super::endpoint_at(&state, seen.to).as_deref(),
+            Some(reported_on.as_str()),
+            "★ and its slot still names the address it was reported on — a \
+             close that only counted DRAWN links takes the slot away, and then \
+             the report points at whatever moved down into its place"
+        );
+        assert_eq!(census(), Vec::new());
+    });
+}

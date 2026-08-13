@@ -4772,7 +4772,35 @@ fn open_slot_in(doc: &mut Document<LabNode>, to: NodeId, endpoint: Option<&str>)
         None => Item::plain(),
     };
     doc.insert_item(ROOT, to, Side::Input, arity, item).ok()?;
-    Some(arity)
+    let mut port = arity;
+    // ★ The run declares `at_least(1)`, so a node that has never been dialled
+    // still carries one slot — and appending beside it would leave every
+    // accepting node with a dead port forever. Measured: the opening graph had
+    // one per accepting node, found by a census that counts BOTH directions.
+    // Dropped here rather than never created, because the floor is the crate's
+    // and this is the first moment a real slot exists to replace it.
+    if let Some(dead) = spare_slot(doc, to, port) {
+        if doc.remove_item(ROOT, to, Side::Input, dead).is_ok() && dead < port {
+            port -= 1;
+        }
+    }
+    Some(port)
+}
+
+/// A slot before `keep` that names no address and holds nothing (R1681).
+fn spare_slot(doc: &Document<LabNode>, node: NodeId, keep: u32) -> Option<u32> {
+    let items = doc.items(ROOT, node, Side::Input)?;
+    (0..keep).find(|port| {
+        let empty = items
+            .get(*port as usize)
+            .is_none_or(|item| item.label.is_none());
+        let socket = Socket::new(node, *port);
+        empty
+            && !doc
+                .tree(ROOT)
+                .is_some_and(|t| t.links().iter().any(|l| l.to == socket))
+            && !doc.observations(ROOT).iter().any(|o| o.to == socket)
+    })
 }
 
 fn open_slot(state: &LabState, to: NodeId, endpoint: Option<&str>) -> Option<u32> {
