@@ -731,6 +731,59 @@ fn r1656_the_containment_check_reports_a_scene_built_to_break_it() {
     );
 }
 
+/// ★★ R1681.2 — a reported link is drawn in a RHYTHM a drawn one is not.
+///
+/// The claim R1681 got backwards, which is why this exists. It recorded that
+/// this screen's wire primitive "carries no dash pattern" and reached for
+/// colour alone — but `Stroke` has carried `dash` since R1575, and the sibling
+/// screen that draws these same two layers already spells a reported link
+/// `Dash::DOTTED`. A limit invented in place of a substrate reached for, and
+/// nothing on this screen could tell the difference. This is what tells.
+///
+/// Colour alone is not enough for the same reason the sibling gives: the two
+/// layers mean different things, and a reader who cannot distinguish a claim
+/// about the world from a decision somebody made is reading the wrong diagram.
+#[test]
+fn r1681_a_reported_link_is_drawn_in_a_rhythm_a_drawn_one_is_not() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let (_, scene) = painted_at(&state, (WIN_W, WIN_H));
+        let mut rhythms: Vec<(String, bool)> = Vec::new();
+        scene.for_each_node(&mut |visit| {
+            if let Scene::Path(path) = visit.node {
+                let Some(tag) = path.tag.as_deref() else {
+                    return;
+                };
+                if tag.starts_with("lab.link.") || tag.starts_with("lab.observed.") {
+                    let dashed = path.style.stroke.and_then(|s| s.dash).is_some();
+                    rhythms.push((tag.to_owned(), dashed));
+                }
+            }
+        });
+        let drawn: Vec<&(String, bool)> = rhythms
+            .iter()
+            .filter(|(tag, _)| tag.starts_with("lab.link."))
+            .collect();
+        let reported: Vec<&(String, bool)> = rhythms
+            .iter()
+            .filter(|(tag, _)| tag.starts_with("lab.observed."))
+            .collect();
+        assert!(
+            !drawn.is_empty() && !reported.is_empty(),
+            "both layers are on the opening screen: {rhythms:?}"
+        );
+        assert!(
+            drawn.iter().all(|(_, dashed)| !dashed),
+            "a link somebody DREW is solid: {drawn:?}"
+        );
+        assert!(
+            reported.iter().all(|(_, dashed)| *dashed),
+            "★ and one a source only REPORTED is not: {reported:?}"
+        );
+    });
+}
+
 /// ★ R1656 — a card's text is part of the diagram, so it shrinks with it.
 ///
 /// Written because a counterfactual that stopped the canvas font scaling was

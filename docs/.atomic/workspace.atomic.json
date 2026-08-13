@@ -37244,6 +37244,80 @@
         "EXTERNAL, unchanged: the vello and Mnemosyne items already recorded."
       ]
     },
+    "R1681.2": {
+      "decision_summary": "A reported link is drawn in a rhythm a drawn one is not — and the round before\nthis one invented the limit that stopped it.\n\n★★★ THE CORRECTION IS THE ENTRY. R1681's carry recorded, as a stated limit\nrather than a debt: \"a reported link is drawn in the warning colour rather than\ndashed: the wire primitive carries no dash pattern.\" **That is false.** `Stroke`\nhas carried `dash: Option<Dash>` since R1575, `Dash::DOTTED` and `Dash::DASHED`\nare named rhythms on it, and the SIBLING screen that draws these same two layers\n— the one R1575 was written for — already spells a reported link `Dash::DOTTED`\nand a drawn-but-unreported one `Dash::DASHED`.\n\nSo this is not a capability the framework lacks. It is a capability the screen\ndid not reach for, written down as though the framework were the one at fault.\nThat direction of error is the worse one: a debt says \"somebody should do this\",\nand a stated limit says \"nobody can\", and only the second one stops the next\nreader from looking.\n\n★ HOW IT SURVIVED, WHICH IS THE PART WORTH KEEPING. Nothing on this screen could\ntell. The wires are painted, the colour differs, every gate is green, and no\ncheck anywhere asked whether the two layers are distinguishable by anything\nother than a colour — which is exactly the shape of the \"declared and not done\"\ngroup this screen keeps producing. The claim was made in prose and prose is not\na gate.\n\nWhat tells now is a check over the painted scene: every `lab.link.*` stroke is\nsolid, every `lab.observed.*` stroke carries a rhythm. Its counterfactual — the\nreported link drawn solid again — fails it, which is what makes it a measurement\nrather than a restatement.\n\n★ AND THE REASON COLOUR ALONE IS NOT ENOUGH is the sibling's own: the two layers\nmean different things, and a reader who cannot tell a claim about the world from\na decision somebody made is reading the wrong diagram. Colour carries a\nseverity; the rhythm carries the layer.",
+      "changes_bullets": [
+        "`hello-node-lab`: `dashed_wire` — the same wire under a dash rhythm, with",
+        "`wire` as the solid case. A reported link is drawn `Dash::DOTTED`, which is",
+        "the rhythm the sibling screen already uses for the same layer.",
+        "`hello-node-lab`: `r1681_a_reported_link_is_drawn_in_a_rhythm_a_drawn_one_is_not`",
+        "— over the painted scene, both directions: every drawn link solid, every",
+        "reported one dashed."
+      ],
+      "verification_bullets": [
+        "`cargo test -p hello-node-lab` — 40 pass (39 + the new rhythm check).",
+        "`cargo clippy -p hello-node-lab --all-targets --features pinion-runtime/vello`",
+        "— clean.",
+        "`r1651_the_node_lab_matches_the_reference.py` — 22 sections, run for real.",
+        "COUNTERFACTUAL — 1 written, 1 caught. The reported link drawn solid again, which",
+        "is the state R1681 shipped: the new check fails on it by name",
+        "(\"★ and one a source only REPORTED is not: [(\"lab.observed.P-01.P-02\", false)]\").",
+        "Run against the whole suite; nothing else sees it, which is the finding — that",
+        "is why the wrong claim survived a round."
+      ],
+      "impact_refs": [
+        "5.20",
+        "5.11"
+      ],
+      "carry_forward_bullets": [
+        "R1681's carry held ONE FALSE STATEMENT and it is corrected here rather than left",
+        "in a frozen entry to be read as true: \"the wire primitive carries no dash",
+        "pattern\" — it has since R1575. Nothing else in that carry is affected.",
+        "The class that produced it is registered rather than claimed closed:",
+        "[[debt-a-stated-limit-is-not-checked-by-anything]] — a round may write down a",
+        "capability the framework \"does not have\", and unlike a debt nothing ever",
+        "re-reads it. Nobody has counted how many such statements this project's carry",
+        "sections hold, and that count is the entry action rather than a claim made here.",
+        "Otherwise unchanged from R1681: the `hello-node-editor` reconnect question is",
+        "still unmeasured, and the listen-with-no-address agreement is still unchecked."
+      ],
+      "publishable_decision_summary": "A reported link is drawn in a rhythm a drawn one is not — and the round before\nthis one invented the limit that stopped it.\n\n★★★ THE CORRECTION IS THE ENTRY. R1681's carry recorded, as a stated limit\nrather than a debt: \"a reported link is drawn in the warning colour rather than\ndashed: the wire primitive carries no dash pattern.\" **That is false.** `Stroke`\nhas carried `dash: Option<Dash>` since R1575, `Dash::DOTTED` and `Dash::DASHED`\nare named rhythms on it, and the SIBLING screen that draws these same two layers\n— the one R1575 was written for — already spells a reported link `Dash::DOTTED`\nand a drawn-but-unreported one `Dash::DASHED`.\n\nSo this is not a capability the framework lacks. It is a capability the screen\ndid not reach for, written down as though the framework were the one at fault.\nThat direction of error is the worse one: a debt says \"somebody should do this\",\nand a stated limit says \"nobody can\", and only the second one stops the next\nreader from looking.\n\n★ HOW IT SURVIVED, WHICH IS THE PART WORTH KEEPING. Nothing on this screen could\ntell. The wires are painted, the colour differs, every gate is green, and no\ncheck anywhere asked whether the two layers are distinguishable by anything\nother than a colour — which is exactly the shape of the \"declared and not done\"\ngroup this screen keeps producing. The claim was made in prose and prose is not\na gate.\n\nWhat tells now is a check over the painted scene: every `lab.link.*` stroke is\nsolid, every `lab.observed.*` stroke carries a rhythm. Its counterfactual — the\nreported link drawn solid again — fails it, which is what makes it a measurement\nrather than a restatement.\n\n★ AND THE REASON COLOUR ALONE IS NOT ENOUGH is the sibling's own: the two layers\nmean different things, and a reader who cannot tell a claim about the world from\na decision somebody made is reading the wrong diagram. Colour carries a\nseverity; the rhythm carries the layer.",
+      "publishable_changes_bullets": [
+        "`hello-node-lab`: `dashed_wire` — the same wire under a dash rhythm, with",
+        "`wire` as the solid case. A reported link is drawn `Dash::DOTTED`, which is",
+        "the rhythm the sibling screen already uses for the same layer.",
+        "`hello-node-lab`: `r1681_a_reported_link_is_drawn_in_a_rhythm_a_drawn_one_is_not`",
+        "— over the painted scene, both directions: every drawn link solid, every",
+        "reported one dashed."
+      ],
+      "publishable_verification_bullets": [
+        "`cargo test -p hello-node-lab` — 40 pass (39 + the new rhythm check).",
+        "`cargo clippy -p hello-node-lab --all-targets --features pinion-runtime/vello`",
+        "— clean.",
+        "`r1651_the_node_lab_matches_the_reference.py` — 22 sections, run for real.",
+        "COUNTERFACTUAL — 1 written, 1 caught. The reported link drawn solid again, which",
+        "is the state R1681 shipped: the new check fails on it by name",
+        "(\"★ and one a source only REPORTED is not: [(\"lab.observed.P-01.P-02\", false)]\").",
+        "Run against the whole suite; nothing else sees it, which is the finding — that",
+        "is why the wrong claim survived a round."
+      ],
+      "publishable_impact_refs": [
+        "5.20",
+        "5.11"
+      ],
+      "publishable_carry_forward_bullets": [
+        "R1681's carry held ONE FALSE STATEMENT and it is corrected here rather than left",
+        "in a frozen entry to be read as true: \"the wire primitive carries no dash",
+        "pattern\" — it has since R1575. Nothing else in that carry is affected.",
+        "The class that produced it is registered rather than claimed closed:",
+        "[[debt-a-stated-limit-is-not-checked-by-anything]] — a round may write down a",
+        "capability the framework \"does not have\", and unlike a debt nothing ever",
+        "re-reads it. Nobody has counted how many such statements this project's carry",
+        "sections hold, and that count is the entry action rather than a claim made here.",
+        "Otherwise unchanged from R1681: the `hello-node-editor` reconnect question is",
+        "still unmeasured, and the listen-with-no-address agreement is still unchecked."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

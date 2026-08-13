@@ -70,7 +70,7 @@ use pinion_core::scene::{
     ContainerNode, PathCommand, PathNode, PathPoint, Rect, ScrollAxis, ScrollNode, TextNode,
 };
 use pinion_core::style::{
-    Border, BoxStyle, Color, LayoutStyle, PathStyle, Size, Stroke, TextOverflow, TextStyle,
+    Border, BoxStyle, Color, Dash, LayoutStyle, PathStyle, Size, Stroke, TextOverflow, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widgets::config_form::{
@@ -2356,6 +2356,25 @@ fn box_at(tag: &str, rect: Rect, fill: Color, border: Option<Color>, radius: u32
 /// cubic, so a link leaves a dial pin going right and arrives at an accept pin
 /// coming from the left whatever the vertical distance.
 fn wire(tag: &str, from: (u32, u32), to: (u32, u32), colour: Color, width: u32) -> Scene {
+    dashed_wire(tag, from, to, colour, width, None)
+}
+
+/// The same wire under a dash rhythm (R1681.2).
+///
+/// ★★ The rhythm is the framework's, not a second one: `Stroke` has carried
+/// `dash` since R1575 and the sibling screen that draws the same two layers
+/// already spells a reported link `Dash::DOTTED`. This screen drew its reported
+/// links in the warning colour alone and R1681 wrote down "the wire primitive
+/// carries no dash pattern" — which was false, and false in the direction that
+/// invents a limit instead of reaching for what is there.
+fn dashed_wire(
+    tag: &str,
+    from: (u32, u32),
+    to: (u32, u32),
+    colour: Color,
+    width: u32,
+    dash: Option<Dash>,
+) -> Scene {
     let fx = f32::from(u16::try_from(from.0).unwrap_or(u16::MAX));
     let fy = f32::from(u16::try_from(from.1).unwrap_or(u16::MAX));
     let tx = f32::from(u16::try_from(to.0).unwrap_or(u16::MAX));
@@ -2378,7 +2397,10 @@ fn wire(tag: &str, from: (u32, u32), to: (u32, u32), colour: Color, width: u32) 
                     end: PathPoint::new(tx, ty),
                 },
             ],
-            PathStyle::stroked(Stroke::new(colour, width)),
+            PathStyle::stroked(match dash {
+                Some(rhythm) => Stroke::new(colour, width).with_dash(rhythm),
+                None => Stroke::new(colour, width),
+            }),
         )
         .with_tag(tag.to_owned())
         // ★ R1655 — a wire's BOUNDING BOX is most of the canvas, and a tagged
@@ -3345,11 +3367,12 @@ fn canvas_wires(state: &LabState, ink: Ink) -> Vec<Scene> {
                 ));
             }
         }
-        // ★★ R1681 — what a source reported, in the warning colour, thinner:
-        // it is not in the graph and it must not read as though it were. The
-        // reference draws the same distinction with a dash pattern, which this
-        // wire primitive does not carry; the colour is the part that survives
-        // to a screenshot either way.
+        // ★★ R1681 — what a source reported: the warning colour AND the dash
+        // rhythm, because it is not in the graph and must not read as though it
+        // were. ★ R1681.2 — the rhythm is `Dash::DOTTED`, which is what the
+        // sibling screen drawing these same two layers already uses for a
+        // reported link; R1681 said this primitive had no dash and reached for
+        // colour alone, which was false.
         for seen in doc.observations(ROOT) {
             let (Some(a), Some(b)) = (
                 card_rect(state, seen.from.node),
@@ -3358,7 +3381,7 @@ fn canvas_wires(state: &LabState, ink: Ink) -> Vec<Scene> {
                 continue;
             };
             let chosen = selected_link == Some(LinkPick::Observed(seen.from, seen.to));
-            children.push(wire(
+            children.push(dashed_wire(
                 &format!(
                     "lab.observed.{}.{}",
                     state.name_of(seen.from.node),
@@ -3368,6 +3391,7 @@ fn canvas_wires(state: &LabState, ink: Ink) -> Vec<Scene> {
                 centre(pin_rect(state, b, false)),
                 ink.warn,
                 if chosen { 3 } else { 2 },
+                Some(Dash::DOTTED),
             ));
         }
     }
