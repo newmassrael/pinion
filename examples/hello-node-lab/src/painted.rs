@@ -1897,6 +1897,17 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
         // a driver that clamps causes nothing and would have read as a defect.
         press_tag(state, shot, "lab.form.item.listen.endpoints.add");
     }),
+    // ★★★ R1684 — the launch gate, closed the way a PERSON closes it. The
+    // stepper cannot: it clamps at the field's ceiling, which is right, and is
+    // why this row read `gesture: false` while the value that closes the gate
+    // is one past that ceiling. Pressing the middle of the row's control — left
+    // of the stepper, where the value's text is — opens the one field over it,
+    // and what is typed is stored as typed and reported on its row.
+    ("validate", |state, shot| {
+        press_tag(state, shot, "lab.form.control.transport.link.tx.batch_size");
+        type_into(state, "70000");
+        press_tag(state, &painted(state), "lab.inspector.rename");
+    }),
     ("author a link", |state, shot| {
         drag_between(state, shot, "lab.pin.S-01.dial", "lab.pin.P-02.accept");
     }),
@@ -2455,6 +2466,648 @@ fn r1679_a_reset_affordance_is_painted_exactly_when_it_would_do_something() {
             wrong.is_empty(),
             "{} of {checked} reset affordance(s) disagree with what pressing \
              them would do:\n  {}",
+            wrong.len(),
+            wrong.join("\n  ")
+        );
+    });
+}
+
+/// ★★★ R1684 — **pressing the middle of a control does something**, for every
+/// control the settings form paints, in every swept state.
+///
+/// This is the check that was missing when a person reported "the text box does
+/// nothing". The sweep already asked, at
+/// `r1651_every_control_the_screen_paints_is_hit_at_the_centre_it_paints_in`,
+/// whether a press RESOLVES to the control it landed on — and it did: the hit
+/// test answered `field:<key>`, the wire agreed, and the release handler ended
+/// in `_ => {}`. Resolution is not action. The question this asks is the next
+/// one and the only one a person can feel: **and then what changed?**
+///
+/// Three details, each of which the round it came from paid for:
+///
+/// * The aim is the rectangle the PAINT gave the control, never
+///   [`crate::inspector_geometry`] — R1653's three rounds of defects all hid
+///   behind a test that asked the geometry helper where a control was.
+/// * The screen is rebuilt for every control, because one press changes what
+///   the next one would do — a stepper moves a value the row below derives from
+///   and an editor opened over one row covers another.
+/// * "Something changed" is read through the screen's own wire over BOTH the
+///   form and the field, because a press on a text row's control is supposed to
+///   open the editor and a press on a switch is supposed to flip it. Asking
+///   only about the form would call the first one dead.
+///
+/// The population is every `lab.form.control.*` tag in the painted scene, so a
+/// row this test does not know about cannot escape it.
+#[test]
+fn r1684_the_centre_of_every_control_answers_a_press() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let mut dead = Vec::new();
+        let mut checked = 0;
+
+        for (when, mutate) in STATES {
+            super::reset_lab_state();
+            let survey = use_lab_state();
+            mutate(&survey);
+            let controls: Vec<String> = painted(&survey)
+                .tags
+                .keys()
+                .filter_map(|tag| tag.strip_prefix("lab.form.control.").map(str::to_owned))
+                .collect();
+            assert!(
+                !controls.is_empty(),
+                "{when}: the settings form paints no control at all"
+            );
+
+            for key in controls {
+                super::reset_lab_state();
+                let state = use_lab_state();
+                mutate(&state);
+                // Re-read the rectangle on this screen rather than trusting the
+                // survey's: the two are built the same way, and asserting they
+                // agree is not this test's job.
+                let shot = painted(&state);
+                let Some(rect) = shot.tags.get(&format!("lab.form.control.{key}")).copied() else {
+                    dead.push(format!(
+                        "{when}: {key} was painted on the survey and not on its own screen"
+                    ));
+                    continue;
+                };
+                let at = centre(rect);
+                let before = (witness(&state, "form"), witness(&state, "editing"));
+                super::move_cursor(&state, at.0, at.1);
+                super::press(&state);
+                super::release(&state);
+                let after = (witness(&state, "form"), witness(&state, "editing"));
+                checked += 1;
+                if before == after {
+                    dead.push(format!(
+                        "{when}: pressing the middle of {key}'s control ({rect:?}, \
+                         which the screen resolves to {:?}) changed nothing",
+                        Hit::at(&state, at.0, at.1).word(&state)
+                    ));
+                }
+            }
+        }
+
+        assert!(
+            dead.is_empty(),
+            "{} of {checked} control(s) do nothing when pressed in the middle — \
+             the shape of the defect a person reported as \"the text box does \
+             not do anything\":\n  {}",
+            dead.len(),
+            dead.join("\n  ")
+        );
+    });
+}
+
+/// ★★★ R1684 — **the field is painted on the thing it is editing, holding what
+/// that thing holds, and applying puts it there.**
+///
+/// The gate above says a press changes something. This says it changes the
+/// RIGHT something, and it exists because the three ways this can go wrong are
+/// all silent: a field painted at the head of the pane while the press landed
+/// halfway down it looks like a screen that ignored the press; a field seeded
+/// from the wrong row looks like a value that changed by itself; a commit that
+/// writes the row instead of the element quietly eats the neighbours.
+///
+/// Every rectangle is read out of the painted scene — the field's own container
+/// tag and the form painter's — so this compares two paints rather than a
+/// helper with itself.
+#[test]
+fn r1684_the_field_stands_on_the_row_it_edits() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let mut wrong = Vec::new();
+        let mut opened = 0;
+
+        for (when, mutate) in STATES {
+            super::reset_lab_state();
+            let survey = use_lab_state();
+            mutate(&survey);
+            let seats: Vec<(String, String)> = painted(&survey)
+                .tags
+                .keys()
+                .filter_map(|tag| {
+                    // A row's own control, and — for a list — each element's
+                    // row, which is a target in its own right.
+                    tag.strip_prefix("lab.form.control.")
+                        .map(|key| (key.to_owned(), tag.clone()))
+                })
+                .chain(painted(&survey).tags.keys().filter_map(|tag| {
+                    let part = tag.strip_prefix("lab.form.item.")?;
+                    let (key, n) = part.rsplit_once('.')?;
+                    n.parse::<usize>().ok()?;
+                    Some((key.to_owned(), tag.clone()))
+                }))
+                .collect();
+
+            for (key, tag) in seats {
+                super::reset_lab_state();
+                let state = use_lab_state();
+                mutate(&state);
+                let shot = painted(&state);
+                let Some(aim) = shot.tags.get(&tag).copied() else {
+                    continue;
+                };
+                let at = centre(aim);
+                super::move_cursor(&state, at.0, at.1);
+                super::press(&state);
+                super::release(&state);
+                let Some(target) = state.editing.get() else {
+                    // A switch flips instead of opening, which the gate above
+                    // has already established changes something.
+                    continue;
+                };
+                opened += 1;
+
+                // 1. Where it is: over the seat the field SAYS it opened on,
+                //    which is not always the tag that was aimed at — the
+                //    centre of a list's control is one of its element rows, and
+                //    the field standing on that element is the right answer.
+                //    Derived from the target rather than from the aim, so a
+                //    field that opened on the wrong thing cannot pass by being
+                //    painted where the press was.
+                let after = painted(&state);
+                let want_tag = seat_tag(&target.wire());
+                let box_rect = after.tags.get(super::EDIT_TAG).copied();
+                let seat = after.tags.get(&want_tag).copied();
+                // ★★★ And the seat it opened on is the one that was UNDER THE
+                // CURSOR. Without this the check is self-comparing: it asks
+                // where the field is and derives where it should be from the
+                // field's own answer, so a press on element three that opened
+                // element zero passes — measured, by a counterfactual that did
+                // exactly that and was not caught.
+                if seat.is_some_and(|seat| {
+                    !(at.0 >= seat.x
+                        && at.0 < seat.x + seat.w
+                        && at.1 >= seat.y
+                        && at.1 < seat.y + seat.h)
+                }) {
+                    wrong.push(format!(
+                        "{when}: pressing {tag} at {at:?} opened {want_tag}, \
+                         which is at {seat:?} — that is not what was under the \
+                         cursor"
+                    ));
+                }
+                match (box_rect, seat) {
+                    (Some(field), Some(seat)) => {
+                        // Pinned to the seat's top-left and its width; a field
+                        // is one line tall, so a seat taller than a line (a
+                        // whole list) is allowed to be taller than the box.
+                        if (field.x, field.y, field.w) != (seat.x, seat.y, seat.w)
+                            || field.h > seat.h
+                        {
+                            wrong.push(format!(
+                                "{when}: pressing {tag} opened the field on \
+                                 {want_tag} at {field:?} and that seat is at \
+                                 {seat:?} — a person types where they pressed"
+                            ));
+                        }
+                    }
+                    (field, seat) => wrong.push(format!(
+                        "{when}: pressing {tag} opened the field on {want_tag}; \
+                         the field is at {field:?} and the seat at {seat:?}"
+                    )),
+                }
+
+                // 2 and 3: what the box holds when it opens, and what applying
+                // it does — including that an element's neighbours do not move.
+                wrong.extend(
+                    seed_and_commit_faults(&state, &target.wire(), &key)
+                        .into_iter()
+                        .map(|fault| format!("{when}: over {tag}, {fault}")),
+                );
+            }
+        }
+
+        assert!(opened > 0, "no row on this screen opened the field at all");
+        assert!(
+            wrong.is_empty(),
+            "{} fault(s) over {opened} opened field(s):\n  {}",
+            wrong.len(),
+            wrong.join("\n  ")
+        );
+    });
+}
+
+/// ★★★ R1684 — **leaving the field applies what is in it**, whether the next
+/// press is another row or another card.
+///
+/// Found by LOOKING at the running screen rather than by any check here: a
+/// value typed into one row and abandoned by pressing the next row vanished
+/// without a word. The house style is commit-on-blur — R1683 mounted the
+/// blur-committing external for exactly this — and it cannot fire, because
+/// that external never sees a press. So the screen does it, and this is what
+/// says so.
+#[test]
+fn r1684_leaving_the_field_applies_what_is_in_it() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+        let press_centre = |tag: &str| press_centre_of(&state, tag);
+        let row_value = |key: &str| {
+            super::selected_form(&state)
+                .and_then(|form| form.field(key).map(|f| f.value().to_owned()))
+                .unwrap_or_default()
+        };
+        press_centre("lab.form.control.id");
+        state.buffer.set_text("typed-and-left".to_owned());
+        press_centre("lab.form.control.transport.link.tx.batch_size");
+        assert_eq!(
+            row_value("id"),
+            "typed-and-left",
+            "★ pressing another row APPLIED what was in the box — the house \
+             style is commit-on-blur, and the field's own external never sees \
+             the press that would trigger it"
+        );
+        assert_eq!(
+            state.editing.get().map(|what| what.wire()).as_deref(),
+            Some("value:transport.link.tx.batch_size"),
+            "and the field moved to the row that was pressed"
+        );
+
+        // ★★★ A REFUSED commit refuses the move. Without this the switch would
+        // destroy the very thing the refusal was about — the person typed a
+        // name that is already taken, and pressing anywhere else would throw it
+        // away rather than let them fix it.
+        super::reset_lab_state();
+        let state = use_lab_state();
+        press_centre_of(&state, "lab.inspector.rename");
+        assert_eq!(
+            state.editing.get().map(|what| what.wire()).as_deref(),
+            Some("name"),
+            "the seat opened the box on the card's name"
+        );
+        state.buffer.set_text("S-01".to_owned());
+        press_centre_of(&state, "lab.form.control.id");
+        assert_eq!(
+            state.editing.get().map(|what| what.wire()).as_deref(),
+            Some("name"),
+            "★ the box did not move — a name another card holds was refused"
+        );
+        assert_eq!(
+            state.buffer.text(),
+            "S-01",
+            "and it still holds what was typed, to be edited rather than retyped"
+        );
+        assert!(
+            state.toast.get().contains("already"),
+            "the refusal reached the toast: {:?}",
+            state.toast.get()
+        );
+    });
+}
+
+/// ★★★ R1684 — **picking another card shuts the field.**
+///
+/// Written because the counterfactual that removed this passed the whole
+/// suite: the field is placed over the INSPECTED card's row, so a selection
+/// that moved without shutting it would leave a box standing on a form that is
+/// no longer underneath it — and the commit would still land on the card the
+/// box was opened over, correctly, which is what makes the wrongness quiet.
+#[test]
+fn r1684_picking_another_card_shuts_the_field() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+        let shot = painted(&state);
+        let row = *shot
+            .tags
+            .get("lab.form.control.id")
+            .expect("the opening card has a text row");
+        let (px, py) = centre(row);
+        super::move_cursor(&state, px, py);
+        super::press(&state);
+        super::release(&state);
+        assert!(
+            state.editing.get().is_some(),
+            "the row opened the field, or this asserts nothing"
+        );
+        let elsewhere = *painted(&state)
+            .tags
+            .get("lab.node.S-01")
+            .expect("another card is on the canvas");
+        let (px, py) = centre(elsewhere);
+        super::move_cursor(&state, px, py);
+        super::press(&state);
+        super::release(&state);
+        assert_eq!(
+            state.selected.get(),
+            state.node_of("S-01"),
+            "the press picked the other card"
+        );
+        assert!(
+            state.editing.get().is_none(),
+            "★ and the field shut with it — it was standing over a row of a \
+             form that is not on the screen any more"
+        );
+    });
+}
+
+/// ★★★ R1684 — **the caret a click lands on is the caret the field paints**,
+/// round-tripped byte by byte.
+///
+/// The click-to-caret hook resolves a point to a byte by RE-SHAPING the text,
+/// so it and the painter have to agree about the shaping — same font size, same
+/// padding, same width. They do because both go through `edit_field_style`, and
+/// this is what makes that load-bearing rather than tidy: a hit test shaped at a
+/// different size answers a byte a character or two away from the glyph under
+/// the cursor, which feels like a field that ignores where you clicked.
+///
+/// Font-independent by construction: it does not assert *which* byte an x
+/// resolves to — that depends on the host's fonts — but that the forward map
+/// (byte to caret rectangle, which is what the screen draws) and the backward
+/// map (point to byte, which is what a press uses) are inverses. Two different
+/// stylings cannot both be, whatever fonts are installed.
+#[test]
+fn r1684_a_click_resolves_to_the_byte_whose_caret_is_under_it() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+        // A row with something long enough in it that the bytes are spread
+        // across the box rather than piled at its left edge.
+        super::set_and_sync(&state, "listen.endpoints", "tcp/0.0.0.0:7447");
+        let shot = painted(&state);
+        let at = centre(
+            *shot
+                .tags
+                .get("lab.form.control.listen.endpoints")
+                .expect("the row is painted"),
+        );
+        super::move_cursor(&state, at.0, at.1);
+        super::press(&state);
+        super::release(&state);
+        assert!(state.editing.get().is_some(), "the press opened the field");
+
+        let scene = painted_at(&state, (WIN_W, WIN_H)).1;
+        let rect =
+            pinion_shell::rect_for_tag(&scene, super::EDIT_TAG).expect("the open field is painted");
+        let theme = pinion_core::theme::use_theme(super::THEME_TAG).theme_animated();
+        let style = super::edit_field_style(rect);
+        let text = state.buffer.text();
+        assert!(text.len() > 4, "the buffer holds the row's value: {text:?}");
+
+        let mut wrong = Vec::new();
+        for byte in 0..=text.len() {
+            if !text.is_char_boundary(byte) {
+                continue;
+            }
+            let caret = pinion_widget_paint::text_field::ime_caret_rect_for(
+                super::EDIT_TAG,
+                TextFieldState::Focused,
+                u32::try_from(byte).unwrap_or(0),
+                rect,
+                &theme,
+                &style,
+            );
+            // Aim just right of the caret's own stem, inside the glyph that
+            // follows it, and ask the press path which byte that is.
+            #[allow(clippy::cast_precision_loss, reason = "small viewport coords")]
+            let (x, y) = (caret.x + caret.width / 2.0, caret.y + caret.height / 2.0);
+            let back =
+                super::field_byte_at(TextFieldState::Focused, &scene, Some(super::EDIT_TAG), x, y);
+            if back != Some(byte) {
+                wrong.push(format!(
+                    "byte {byte} is painted with its caret at ({x}, {y}) and a \
+                     press there resolves to {back:?}"
+                ));
+            }
+        }
+        assert!(
+            wrong.is_empty(),
+            "{} of {} byte(s) do not round-trip between the caret the field \
+             PAINTS and the byte a press RESOLVES — the two are shaped \
+             differently:\n  {}",
+            wrong.len(),
+            text.len() + 1,
+            wrong.join("\n  ")
+        );
+    });
+}
+
+/// ★★ R1684 — **the wire opens the field on a row it read back, and refuses
+/// every spelling that names nothing.**
+///
+/// The target grammar (`value:<key>`, `value:<key>[<n>]`) is what an agent
+/// reads out of `editing.target` and hands back to `edit`, so the two spellings
+/// have to be one. And each refusal is a separate arm — a key the form does not
+/// hold, an element the row does not have, an index that is not a number, a
+/// bracket that never shuts — because a grammar that accepted any of them would
+/// open a box over nothing and answer as though it had worked.
+///
+/// Local rather than only in the demo: a wire refusal needs no window, and the
+/// counterfactual that removed the element check was caught by nothing here.
+#[test]
+fn r1684_the_wire_opens_the_row_it_names_and_refuses_the_rest() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+        let mut oracle = super::LabOracle::new();
+        oracle.attach(std::rc::Rc::clone(&state));
+        let mut edit = |what: &str| oracle.invoke("edit", IntrospectValue::Text(what.to_owned()));
+
+        assert!(edit("value:listen.endpoints").is_ok(), "a row it holds");
+        assert_eq!(
+            state.editing.get().map(|what| what.wire()).as_deref(),
+            Some("value:listen.endpoints"),
+            "★ and it reads back in the spelling it was asked for"
+        );
+        assert!(
+            edit("value:listen.endpoints[0]").is_ok(),
+            "an element it holds"
+        );
+        assert_eq!(
+            state.editing.get().map(|what| what.wire()).as_deref(),
+            Some("value:listen.endpoints[0]"),
+        );
+
+        for (spelled, expected) in [
+            ("value:not.a.row", "is not a row"),
+            ("value:listen.endpoints[99]", "has no element"),
+            ("value:listen.endpoints[x]", "not an element number"),
+            ("value:listen.endpoints[0", "never shuts it"),
+            ("neither", "is not a thing this screen edits"),
+        ] {
+            let refusal = edit(spelled).expect_err(&format!("{spelled:?} names nothing"));
+            let said = format!("{refusal:?}");
+            assert!(
+                said.contains(expected),
+                "{spelled:?} was refused as {said} and should say {expected:?}"
+            );
+        }
+    });
+}
+
+/// Press the middle of a painted tag, aiming from the paint on the frame the
+/// press is made on.
+fn press_centre_of(state: &std::rc::Rc<LabState>, tag: &str) {
+    let rect = *painted(state)
+        .tags
+        .get(tag)
+        .unwrap_or_else(|| panic!("{tag} is painted, so a person can aim at it"));
+    let (px, py) = centre(rect);
+    super::move_cursor(state, px, py);
+    super::press(state);
+    super::release(state);
+}
+
+/// Which element of a list row a wire target names, or `None` for the row's own
+/// value.
+fn element_of(target: &str) -> Option<usize> {
+    target
+        .rsplit_once('[')?
+        .1
+        .trim_end_matches(']')
+        .parse()
+        .ok()
+}
+
+/// What the open field HOLDS and what applying it DOES, as a list of faults
+/// (R1684).
+///
+/// Split out of the sweep because the two questions are about the value rather
+/// than about the geometry, and because the sweep that asks them for every row
+/// in every state is otherwise one function doing three things.
+///
+/// Applies a probe value rather than the one already there: a commit that
+/// wrote nothing would be indistinguishable from a commit that wrote the same
+/// thing back.
+fn seed_and_commit_faults(state: &std::rc::Rc<LabState>, target: &str, key: &str) -> Vec<String> {
+    use pinion_core::widgets::config_form::FieldType;
+    const PROBE: &str = "tcp/0.0.0.0:7999";
+
+    let value = |state: &std::rc::Rc<LabState>| -> String {
+        super::selected_form(state)
+            .and_then(|form| form.field(key).map(|f| f.value().to_owned()))
+            .unwrap_or_default()
+    };
+    let mut faults = Vec::new();
+    let held = value(state);
+    let element = element_of(target);
+    let want = match element {
+        Some(n) => FieldType::elements(&held)
+            .nth(n)
+            .map(str::to_owned)
+            .unwrap_or_default(),
+        None => held.clone(),
+    };
+    if state.buffer.text() != want {
+        faults.push(format!(
+            "the box holds {:?} and the thing it is editing holds {want:?}",
+            state.buffer.text()
+        ));
+    }
+
+    let before: Vec<String> = FieldType::elements(&held).map(str::to_owned).collect();
+    state.buffer.set_text(PROBE.to_owned());
+    super::commit_edit(state).ok();
+    let now = value(state);
+    let landed: Vec<String> = FieldType::elements(&now).map(str::to_owned).collect();
+    match element {
+        Some(n) => {
+            if landed.get(n).map(String::as_str) != Some(PROBE) {
+                faults.push(format!(
+                    "applying did not put the text in element {n}: {landed:?}"
+                ));
+            }
+            let others = |list: &[String]| -> Vec<String> {
+                list.iter()
+                    .enumerate()
+                    .filter(|(at, _)| *at != n)
+                    .map(|(_, e)| e.clone())
+                    .collect()
+            };
+            if others(&landed) != others(&before) {
+                faults.push(format!(
+                    "applying moved its NEIGHBOURS: {:?} became {:?}",
+                    others(&before),
+                    others(&landed)
+                ));
+            }
+        }
+        None => {
+            if now != PROBE {
+                faults.push(format!("applying left {key} holding {now:?}"));
+            }
+        }
+    }
+    faults
+}
+
+/// The tag of the seat a field target names, in the form painter's vocabulary.
+///
+/// The inverse of the target grammar the wire reads back — `value:<key>` is a
+/// row's control and `value:<key>[<n>]` is one of a list's element rows — so a
+/// check can ask the paint where the thing being edited is without knowing how
+/// the screen lays a form out.
+fn seat_tag(target: &str) -> String {
+    let named = target.strip_prefix("value:").unwrap_or(target);
+    match named.split_once('[') {
+        Some((key, rest)) => format!("lab.form.item.{key}.{}", rest.trim_end_matches(']')),
+        None => format!("lab.form.control.{named}"),
+    }
+}
+
+/// ★★★ R1684 — **a control answers at its EDGES, not only in the middle.**
+///
+/// Written because of what unifying the inspector's two translations exposed:
+/// the form's window geometry had been short by the panel's frame — one pixel,
+/// up and left — since the pane learned to scroll, and nothing could see it.
+/// Nothing could see it because every check aims at a centre, and a centre
+/// absorbs any error smaller than half the control.
+///
+/// So this aims at the corners. A press one pixel inside a painted control must
+/// still be answered by the row that control belongs to; with the paint and the
+/// hit test derived from different arithmetic, the corner is the first place
+/// they disagree.
+#[test]
+fn r1684_a_control_answers_at_its_edges_not_only_its_middle() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let mut wrong = Vec::new();
+        let mut probed = 0;
+
+        for (when, mutate) in STATES {
+            super::reset_lab_state();
+            let state = use_lab_state();
+            mutate(&state);
+            let shot = painted(&state);
+            for (tag, rect) in &shot.tags {
+                let Some(key) = tag.strip_prefix("lab.form.control.") else {
+                    continue;
+                };
+                if rect.w == 0 || rect.h == 0 {
+                    continue;
+                }
+                for (corner, (px, py)) in [
+                    ("top left", (rect.x, rect.y)),
+                    ("top right", (rect.x + rect.w - 1, rect.y)),
+                    ("bottom left", (rect.x, rect.y + rect.h - 1)),
+                    ("bottom right", (rect.x + rect.w - 1, rect.y + rect.h - 1)),
+                ] {
+                    probed += 1;
+                    let word = Hit::at(&state, px, py).word(&state);
+                    if !word.contains(key) {
+                        wrong.push(format!(
+                            "{when}: the {corner} of {key}'s control ({rect:?}) is \
+                             answered as {word:?}"
+                        ));
+                    }
+                }
+            }
+        }
+
+        assert!(probed > 0, "no control was probed");
+        assert!(
+            wrong.is_empty(),
+            "{} of {probed} control corner(s) are answered by something else — \
+             the shape a paint/hit-test drift takes before it is big enough to \
+             see:\n  {}",
             wrong.len(),
             wrong.join("\n  ")
         );

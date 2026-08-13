@@ -799,15 +799,17 @@ pub const OPERATIONS: &[OperationSpec] = &[
         witness: "discovery",
         needs: None,
     },
-    // ★★ `gesture: false` is MEASURED. The verdict is derived from the form,
-    // so causing it means making a value cross a bound — and no affordance on
-    // this screen can: the integer stepper clamps at the field's ceiling (which
-    // is correct), and the text rows have no pointer path at all. An agent can
-    // close the gate and a person cannot.
+    // ★★★ R1684 — the gesture arrived, and it arrived as a consequence rather
+    // than as a feature. The verdict is derived from the form, so causing it
+    // means making a value cross a bound; the integer stepper clamps at the
+    // field's ceiling, correctly, and until this round the text rows had no
+    // pointer path at all — so an agent could close the launch gate and a
+    // person could not. Giving the form's rows the one text field to be typed
+    // into answers this row without anything here being aimed at it.
     OperationSpec {
         name: "validate",
         verb: Some(("set_field", "transport.link.tx.batch_size=70000")),
-        gesture: false,
+        gesture: true,
         witness: "verdict",
         needs: None,
     },

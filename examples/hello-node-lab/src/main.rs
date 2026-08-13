@@ -395,30 +395,77 @@ impl LinkPick {
 /// node editor's arrangement and the reason it is worth copying: a second field
 /// is a second focus owner, a second keymap and a second commit path, and the
 /// three sites here want exactly the same behaviour over different values.
-#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 enum Editing {
     /// The selected card's name.
     Name(NodeId),
     /// A configuration path being typed into the selected card's form, which
     /// the catalogue does not offer.
     Key(NodeId),
+    /// ★★★ R1684 — the VALUE on one row of that form, named by the
+    /// configuration path the row is about.
+    ///
+    /// The third target of the one field and the one that made the target
+    /// worth having: a form has as many rows as the document has keys, so a
+    /// box per row would be a box per key. The field moves to the row instead
+    /// — see [`edit_box`].
+    Value {
+        /// Whose form.
+        node: NodeId,
+        /// Which row, by the configuration path it is about.
+        key: String,
+        /// ★★ Which ELEMENT of a list row, or `None` for the row's whole
+        /// value.
+        ///
+        /// A list is painted as a row per element and a row that adds one, and
+        /// the affordance that adds one puts a *placeholder* there — so
+        /// without this the screen could grow a list and never say what went
+        /// in it. The reference has no per-element row at all (it types the
+        /// whole list as one separated string, which is still what `None`
+        /// does here), so this is the half that is better rather than the half
+        /// that is the same.
+        element: Option<usize>,
+    },
 }
 
 impl Editing {
     /// The word the wire reads this back as.
-    const fn wire(self) -> &'static str {
+    ///
+    /// ★ A `String` since R1684, because the third target has to say WHICH row:
+    /// `value` alone would read back the same for every row of the form, and a
+    /// slot that cannot distinguish the thing being edited is a slot an agent
+    /// cannot drive from.
+    fn wire(&self) -> String {
         match self {
-            Self::Name(_) => "name",
-            Self::Key(_) => "key",
+            Self::Name(_) => "name".to_owned(),
+            Self::Key(_) => "key".to_owned(),
+            Self::Value {
+                key, element: None, ..
+            } => format!("value:{key}"),
+            Self::Value {
+                key,
+                element: Some(n),
+                ..
+            } => format!("value:{key}[{n}]"),
         }
     }
 
-    /// What the keystroke gate lets through. Both targets are free text — a
-    /// node's name and a configuration path — so this is `Text` for now and is
-    /// a `match` rather than a constant because the next target may not be.
-    const fn kind(self) -> CellKind {
+    /// What the keystroke gate lets through.
+    ///
+    /// ★★ `Text` for every target INCLUDING an integer row, and that is a
+    /// decision rather than an oversight. The form's own three defect kinds are
+    /// its report — a value out of range, a value of the wrong type, a value
+    /// missing — and a keymap that refused the letters would make
+    /// [`ConfigDefect::WrongType`] unreachable by any person, leaving a defect
+    /// arm only an agent could produce. The reference does the same and says
+    /// why beside its own parser: swallowing a bad keystroke tells the person
+    /// nothing, while holding it and failing validation tells them exactly
+    /// what is wrong.
+    ///
+    /// [`ConfigDefect::WrongType`]: pinion_core::widgets::config_form::ConfigDefect::WrongType
+    const fn kind(&self) -> CellKind {
         match self {
-            Self::Name(_) | Self::Key(_) => CellKind::Text,
+            Self::Name(_) | Self::Key(_) | Self::Value { .. } => CellKind::Text,
         }
     }
 }
@@ -1873,6 +1920,19 @@ const fn centre(rect: Rect) -> (u32, u32) {
     (rect.x + rect.w / 2, rect.y + rect.h / 2)
 }
 
+/// The same question as [`contains`] for a point the shell states in logical
+/// pixels rather than whole ones (R1684).
+fn contains_point(rect: Rect, px: f32, py: f32) -> bool {
+    let (x, y, w, h) = (
+        f64::from(rect.x),
+        f64::from(rect.y),
+        f64::from(rect.w),
+        f64::from(rect.h),
+    );
+    let (px, py) = (f64::from(px), f64::from(py));
+    px >= x && px < x + w && py >= y && py < y + h
+}
+
 // ── Hit testing ─────────────────────────────────────────────────────────────
 
 /// What is under the cursor.
@@ -1939,25 +1999,46 @@ impl Hit {
                         return Self::NodeAct(act);
                     }
                 }
-                // ★ R1683 — the rename seat. The FIELD beside it is a real
-                // external and owns its own hit target, so it is deliberately
-                // not an arm here: a press inside it reaches the field's own
-                // router, which is what puts the caret where the pointer is.
+                // ★ R1683 — the rename seat, and the box beside it.
+                //
+                // ★★★ **R1684 corrects what R1683 recorded here.** That round
+                // wrote that a press inside the open box "reaches the field's
+                // own router, which is what puts the caret where the pointer
+                // is", because the field is a real external and an external
+                // owns its rectangle. Measured this round: it does not. Every
+                // press on this screen is routed to the ONE root external that
+                // does the screen's own hit test (R1655), and the field's
+                // external is a focus owner and a keystroke sink — it never
+                // sees a pointer. The behaviour R1683 described was right only
+                // by accident: the box arm below is guarded on the field being
+                // SHUT, so while it is open a press there falls through to
+                // nothing, which looks the same as standing aside and is not.
+                //
+                // What actually puts the caret under the pointer is
+                // `NodeLabView::position_caret_for_point`, which R1684 had to
+                // write because nothing was doing it.
                 let (box_rect, apply, key) = rename_row();
                 if contains(in_body(state, apply), px, py) {
                     return Self::Rename;
                 }
-                // ★ R1683 — the shut box is the field's own seat. It looks like
-                // somewhere to type, so pressing it has to open the thing it
-                // looks like; while the field IS open the real external is
-                // painted there and owns the press, which is what puts the
-                // caret where the pointer landed.
+                // The shut box is the field's own seat: it looks like somewhere
+                // to type, so pressing it opens the thing it looks like. While
+                // the field is open the press belongs to the field.
                 if state.editing.get().is_none() && contains(in_body(state, box_rect), px, py) {
                     return Self::Rename;
                 }
                 if contains(in_body(state, key), px, py) {
                     return Self::AddKey;
                 }
+            }
+            // ★★★ R1684 — the field, when it is standing on a form row, owns
+            // its own rectangle: the screen stands aside so the caret hook can
+            // put the caret where the pointer landed. Answering `Field` again here
+            // would re-open the box and throw away what has been typed.
+            if matches!(state.editing.get(), Some(Editing::Value { .. }))
+                && contains(in_body(state, edit_box(state)), px, py)
+            {
+                return Self::Nothing;
             }
             let geometry = inspector_geometry(state);
             for row in &geometry.rows {
@@ -2403,6 +2484,15 @@ fn hint_rect() -> Rect {
 
 fn selected_form(state: &LabState) -> Option<ConfigForm> {
     let node = state.selected.get()?;
+    selected_form_of(state, node)
+}
+
+/// One named card's form, whichever card is selected (R1684).
+///
+/// The edit paths name the card they are about rather than reading the
+/// selection, so a commit cannot land on a different card than the one the
+/// field was opened over.
+fn selected_form_of(state: &LabState, node: NodeId) -> Option<ConfigForm> {
     state.forms.borrow().get(&node).cloned()
 }
 
@@ -2513,19 +2603,30 @@ fn node_act_seat(state: &LabState, act: NodeAct) -> Rect {
 /// (R1662). [`PANEL_FRAME`] is part of it: the body is drawn inside the panel's
 /// border.
 fn in_body(state: &LabState, local: Rect) -> Rect {
+    let (dx, dy) = body_origin(state);
+    let shift = |v: u32, by: i32| -> u32 {
+        u32::try_from((i64::from(v) + i64::from(by)).max(0)).unwrap_or(0)
+    };
+    Rect::new(shift(local.x, dx), shift(local.y, dy), local.w, local.h)
+}
+
+/// ★★★ R1684 — where the inspector's scrolling body sits, **signed**, and the
+/// single definition [`in_body`] and [`inspector_geometry`] both stand on.
+///
+/// Signed because the two consumers disagree about what to do when the scroll
+/// carries a rectangle off the top, and both are right: a single affordance is
+/// clamped to the pane (it is still the nearest thing to a press at the edge),
+/// while a form row is DROPPED (`FormGeometry::translated`), because reporting
+/// it at the edge would have a screen reader announce a row the reader has
+/// scrolled away. Folding the clamp into the shared term would force one answer
+/// on both.
+fn body_origin(state: &LabState) -> (i32, i32) {
     let pane = inspector_rect();
     let (ox, oy) = state.inspector_scroll.offset();
-    let shift = |v: u32, base: u32, by: i32| -> u32 {
-        u32::try_from(
-            (i64::from(v) + i64::from(base) + i64::from(PANEL_FRAME) - i64::from(by)).max(0),
-        )
-        .unwrap_or(0)
-    };
-    Rect::new(
-        shift(local.x, pane.x, ox),
-        shift(local.y, pane.y, oy),
-        local.w,
-        local.h,
+    let frame = i32::try_from(PANEL_FRAME).unwrap_or(0);
+    (
+        i32::try_from(pane.x).unwrap_or(i32::MAX) + frame - ox,
+        i32::try_from(pane.y).unwrap_or(i32::MAX) + frame - oy,
     )
 }
 
@@ -2560,6 +2661,39 @@ fn seat_w(word: &str) -> u32 {
 /// How far down the inspector's body the text field's row sits.
 const EDIT_ROW_Y: u32 = 134;
 
+/// ★★★ R1684 — **where the one field is, which is wherever it is editing.**
+///
+/// The name and the key are typed in the box under the node's-life row; a
+/// VALUE is typed **on the row it belongs to**, so the box appears over that
+/// row's control and the person types where they pressed.
+///
+/// This is the whole reason the field was built with a target at R1683. A form
+/// has as many rows as the document has keys, and giving each one a live box
+/// would mean a focus owner, a keymap and a commit path per key — the reference
+/// gets away with it because the browser owns all three. Here there is one
+/// field and it MOVES, which costs one function and keeps the count at one.
+///
+/// Stated in the inspector body's own frame, like every other rectangle in that
+/// pane, so it rides the scroll rather than being shifted by hand.
+fn edit_box(state: &LabState) -> Rect {
+    let shut = rename_row().0;
+    let Some(Editing::Value { key, element, .. }) = state.editing.get() else {
+        return shut;
+    };
+    let geometry = inspector_geometry_local(state);
+    let Some(row) = geometry.rows.iter().find(|row| row.key == key) else {
+        return shut;
+    };
+    match element {
+        None => row.control,
+        // ★ The ELEMENT's own rectangle, from the parts the painter published
+        // — never re-derived here. A list's rows are laid out by the form
+        // painter and a second arithmetic for where the third one is would be
+        // the R1651.1 defect in a new place.
+        Some(n) => row.part(&format!("item.{key}.{n}")).unwrap_or(row.control),
+    }
+}
+
 /// The node's-life row: how far down the inspector it sits, how tall its seats
 /// are, and the gap between them.
 const NODE_ACT_Y: u32 = 112;
@@ -2590,13 +2724,26 @@ fn inspector_geometry_local(state: &LabState) -> FormGeometry {
 /// [`FormGeometry::translated`] owns. Computing it a second time here is how
 /// the paint and the gesture come to disagree, and a row the scroll has carried
 /// off the top is dropped rather than reported at the edge.
+/// ★★★ R1684 — the translation is [`in_body`]'s, not a second copy of it.
+///
+/// **Measured while giving the text field a form row to stand on, and it was
+/// wrong by [`PANEL_FRAME`].** This function wrote `pane.origin - offset` while
+/// every other rectangle in the pane goes through `in_body`, which is
+/// `pane.origin + PANEL_FRAME - offset` — the body is drawn INSIDE the panel's
+/// outline, and `scroll_pane` is handed [`panel_content`] precisely so it is.
+/// So the form's rows were reported one pixel up and one pixel left of where
+/// they are painted, to the hit test and to assistive technology both.
+///
+/// One pixel, and it survived because nothing could see it: a press aimed at
+/// the centre of a 200-wide control lands in the right row whether or not the
+/// rectangle is a pixel out, which is the same reason R1682 found the identical
+/// term missing from the node's-life seats and needed a 90-wide seat to say so.
+/// The repair is not to add the term here — it is to stop having two
+/// translations, which is what [[debt-paint-and-gesture-read-two-facts]] is
+/// about.
 fn inspector_geometry(state: &LabState) -> FormGeometry {
-    let rect = inspector_rect();
-    let (ox, oy) = state.inspector_scroll.offset();
-    inspector_geometry_local(state).translated(
-        i32::try_from(rect.x).unwrap_or(i32::MAX) - ox,
-        i32::try_from(rect.y).unwrap_or(i32::MAX) - oy,
-    )
+    let (dx, dy) = body_origin(state);
+    inspector_geometry_local(state).translated(dx, dy)
 }
 
 // ── Paint helpers ───────────────────────────────────────────────────────────
@@ -4071,8 +4218,8 @@ fn inspector(state: &LabState, field: (TextFieldState, u32), theme: &Theme, ink:
         );
     };
     children.extend(inspector_identity(state, node, ink));
-    children.extend(inspector_edit(state, field, theme, ink));
-    inspector_pane(state, theme, ink, children)
+    children.extend(inspector_edit(state, ink));
+    inspector_pane(state, field, theme, ink, children)
 }
 
 /// Who the inspected node is: its identifier, its role and frame, and how many
@@ -4161,34 +4308,15 @@ fn inspector_identity(state: &LabState, node: NodeId, ink: Ink) -> Vec<Scene> {
 /// and the IME composition path without writing any of them — and gets them the
 /// same way the sibling node editor does, which is the fourth call site of the
 /// lifted edit keymap rather than a fifth implementation of one.
-fn inspector_edit(
-    state: &LabState,
-    field: (TextFieldState, u32),
-    theme: &Theme,
-    ink: Ink,
-) -> Vec<Scene> {
+fn inspector_edit(state: &LabState, ink: Ink) -> Vec<Scene> {
     let (box_rect, seat, key_seat) = rename_row();
     let editing = state.editing.get();
     let mut parts = Vec::new();
-    if editing.is_some() {
-        let style = tf_paint::TextFieldStyle {
-            field_w: box_rect.w,
-            field_h: box_rect.h,
-            field_pad: 5,
-            font_size_px: FONT_SMALL + 1,
-            ..tf_paint::TextFieldStyle::m3_filled()
-        };
-        parts.push(Scene::Container(
-            ContainerNode::new(vec![tf_paint::view_field(
-                EDIT_TAG, field.0, field.1, theme, &style, "name",
-            )])
-            .with_layout(
-                LayoutStyle::new()
-                    .with_absolute_position(box_rect.x, box_rect.y)
-                    .with_size(Size::px(box_rect.w, box_rect.h)),
-            ),
-        ));
-    } else {
+    // ★ R1684 — the shut box is drawn whenever the field is not standing on
+    // it, which now includes the case where the field is open on a FORM ROW
+    // somewhere below. Painting nothing there would leave a hole in the head of
+    // the inspector while a person types further down the pane.
+    if !matches!(editing, Some(Editing::Name(_) | Editing::Key(_))) {
         parts.push(box_at(
             "lab.inspector.name",
             box_rect,
@@ -4247,13 +4375,104 @@ fn inspector_edit(
     parts
 }
 
+/// ★★★ R1684 — the live field itself, painted **last** so it stands over
+/// whatever it is editing.
+///
+/// Split out of [`inspector_edit`] for one reason, and it is a reason R1681.3
+/// wrote down next door: paint order and hit order are different questions. The
+/// field's rectangle can now be a form row's control, and the form is painted by
+/// the framework after the head of the inspector — so a field composed with the
+/// head would be drawn UNDER the row it is standing on and a person would type
+/// into something they cannot see.
+///
+/// Answers `None` while the field is shut, so the caller pushes nothing rather
+/// than an empty container: an empty container is still a node the layout walks
+/// and a tag census counts.
+fn inspector_field(state: &LabState, field: (TextFieldState, u32), theme: &Theme) -> Option<Scene> {
+    let what = state.editing.get()?;
+    let rect = edit_box(state);
+    let style = edit_field_style(rect);
+    // The label is what the box is FOR, so it says the target rather than a
+    // constant: a screen reader on a field standing over a form row would
+    // otherwise announce every row of the form as "name".
+    let name = what.wire();
+    Some(Scene::Container(
+        ContainerNode::new(vec![tf_paint::view_field(
+            EDIT_TAG, field.0, field.1, theme, &style, &name,
+        )])
+        .with_layout(
+            LayoutStyle::new()
+                .with_absolute_position(rect.x, rect.y)
+                .with_size(Size::px(rect.w, rect.h)),
+        ),
+    ))
+}
+
+/// Which byte of the open field a window point is on, or `None` when the field
+/// is shut, unfocused, or the point is outside it (R1684).
+///
+/// The one hit-test funnel the press hook and the drag hook share: two of them
+/// would let a drag select to a different byte than the press caret landed on,
+/// which is the reason the sibling text-field bindings have exactly one too.
+/// The rectangle comes from the painted scene, so it is the box a person sees.
+fn field_byte_at(
+    interaction: TextFieldState,
+    scene: &Scene,
+    focused: Option<&str>,
+    x: f32,
+    y: f32,
+) -> Option<usize> {
+    if focused != Some(EDIT_TAG) {
+        return None;
+    }
+    let rect = pinion_shell::rect_for_tag(scene, EDIT_TAG)?;
+    // Compared in the pointer's own units rather than by casting it to the
+    // rectangle's: a cast would round a point just outside the left edge INTO
+    // the box, and a press half a pixel above it out of one it is in.
+    if !contains_point(rect, x, y) {
+        return None;
+    }
+    Some(tf_paint::byte_for_field_point(
+        EDIT_TAG,
+        interaction,
+        x,
+        y,
+        rect,
+        &use_theme(THEME_TAG).theme_animated(),
+        &edit_field_style(rect),
+    ))
+}
+
+/// How the one field is drawn at a given rectangle.
+///
+/// ★★ R1684 — a function because the PAINT and the click-to-caret hit test
+/// must resolve against the same shaping: `byte_for_field_point` re-shapes the
+/// `(text, style, width)` the painter used and asks parley which glyph a point
+/// landed on, so a second style here would put the caret on a different letter
+/// from the one under the cursor.
+fn edit_field_style(rect: Rect) -> tf_paint::TextFieldStyle {
+    tf_paint::TextFieldStyle {
+        field_w: rect.w,
+        field_h: rect.h,
+        field_pad: 5,
+        font_size_px: FONT_SMALL + 1,
+        ..tf_paint::TextFieldStyle::m3_filled()
+    }
+}
+
 /// The pane the identity block and the framework-painted form sit in.
 ///
 /// The two are **siblings**, not nested: the form's geometry is in window
 /// coordinates, so putting it inside a pane that is itself absolutely placed
 /// would offset it twice — the R1648 defect, and the reason the painter carries
 /// its origin.
-fn inspector_pane(state: &LabState, theme: &Theme, ink: Ink, mut children: Vec<Scene>) -> Scene {
+fn inspector_pane(
+    state: &LabState,
+    field: (TextFieldState, u32),
+    theme: &Theme,
+    ink: Ink,
+    mut children: Vec<Scene>,
+) -> Scene {
     let rect = inspector_rect();
     // The form. Everything below this line is the framework's painter — the
     // rows, the type badges, the applies badges, the defects on their rows and
@@ -4309,6 +4528,9 @@ fn inspector_pane(state: &LabState, theme: &Theme, ink: Ink, mut children: Vec<S
     // enough — measured at R1652.1, a six-element list puts two chips and the
     // note below the window ([[debt-the-node-lab-panes-do-not-scroll]]).
     children.push(painted);
+    // ★★ R1684 — the field goes ON TOP of the form, because it now stands over
+    // a form row.
+    children.extend(inspector_field(state, field, theme));
     panel(
         "lab.inspector",
         rect,
@@ -4452,6 +4674,36 @@ impl LabOracle {
         state
             .node_of(name)
             .ok_or_else(|| InvokeError::rejected(format!("no node is called {name:?}")))
+    }
+
+    /// ★★ R1684 — a form row, and optionally one element of it, in the
+    /// spelling `editing.target` reads back: `<key>` or `<key>[<n>]`.
+    ///
+    /// One parser for the wire's grammar, and it is the READ-BACK spelling
+    /// rather than a second one — an agent that reads `value:listen.endpoints[2]`
+    /// out of the field's own slot can hand exactly that back to `edit` and
+    /// reach the same row. Written twice they drift, and the drift is
+    /// invisible until somebody automates a loop over the form.
+    ///
+    /// # Errors
+    ///
+    /// A bracket that never closes, or an index that is not a number. Both are
+    /// refused rather than read as part of the key: a key silently containing a
+    /// `[` would make the refusal say "no such row" about a row that is there.
+    fn row_target(spelled: &str) -> Result<(String, Option<usize>), InvokeError> {
+        let Some((key, rest)) = spelled.split_once('[') else {
+            return Ok((spelled.to_owned(), None));
+        };
+        let number = rest.strip_suffix(']').ok_or_else(|| {
+            InvokeError::rejected(format!(
+                "{spelled:?} opens an element index and never shuts it"
+            ))
+        })?;
+        let at = number
+            .trim()
+            .parse::<usize>()
+            .map_err(|_| InvokeError::rejected(format!("{number:?} is not an element number")))?;
+        Ok((key.to_owned(), Some(at)))
     }
 
     /// A link on either layer, in the spelling `selected_link` reads back.
@@ -4917,7 +5169,7 @@ impl ExternalIntrospect for LabOracle {
             // facts and a driver checking its own typing needs the second.
             "editing" => text(
                 serde_json::json!({
-                    "target": state.editing.get().map(Editing::wire),
+                    "target": state.editing.get().as_ref().map(Editing::wire),
                     "text": state.buffer.text(),
                 })
                 .to_string(),
@@ -4967,7 +5219,7 @@ impl ExternalIntrospect for LabOracle {
                 let node = state.node_of(name.trim()).ok_or_else(|| {
                     InvokeError::rejected(format!("no node is called {:?}", name.trim()))
                 })?;
-                state.selected.set(Some(node));
+                select_card(&state, Some(node));
                 state.say(format!("selected {}", name.trim()));
                 Ok(IntrospectValue::Text(name.trim().to_owned()))
             }
@@ -5001,13 +5253,39 @@ impl ExternalIntrospect for LabOracle {
                 let target = match what.trim() {
                     "name" => Editing::Name(node),
                     "key" => Editing::Key(node),
+                    // ★ R1684 — the third target names a ROW, so the word is a
+                    // grammar rather than a constant: `value:<key>` for the
+                    // row's own value and `value:<key>[<n>]` for one element of
+                    // a list row. A path the form does not hold, or an element
+                    // the row does not have, is refused here rather than
+                    // opening a box over nothing — the wire's `edit` says which
+                    // row it opened, and a row that is not there has no
+                    // rectangle to say it about.
                     other => {
-                        return Err(InvokeError::rejected(format!(
-                            "{other:?} is not a thing this screen edits"
-                        )));
+                        let spelled = other.strip_prefix("value:").ok_or_else(|| {
+                            InvokeError::rejected(format!(
+                                "{other:?} is not a thing this screen edits"
+                            ))
+                        })?;
+                        let (key, element) = Self::row_target(spelled.trim())?;
+                        let held = selected_form_of(&state, node)
+                            .and_then(|form| form.field(&key).map(|f| f.value().to_owned()))
+                            .ok_or_else(|| {
+                                InvokeError::rejected(format!(
+                                    "{key:?} is not a row of this card's settings"
+                                ))
+                            })?;
+                        if let Some(n) = element {
+                            if FieldType::elements(&held).nth(n).is_none() {
+                                return Err(InvokeError::rejected(format!(
+                                    "{key:?} has no element {n}"
+                                )));
+                            }
+                        }
+                        Editing::Value { node, key, element }
                     }
                 };
-                Ok(IntrospectValue::Text(begin_edit(&state, target)))
+                begin_edit(&state, target).map(IntrospectValue::Text)
             }
             "type" => {
                 let text = Self::text(&args)?;
@@ -5058,17 +5336,7 @@ impl ExternalIntrospect for LabOracle {
                     .selected
                     .get()
                     .ok_or_else(|| InvokeError::rejected("no node is selected"))?;
-                let mut forms = state.forms.borrow_mut();
-                let form = forms
-                    .get_mut(&node)
-                    .ok_or_else(|| InvokeError::rejected("the selected node has no form"))?;
-                form.set(key.trim(), value.trim())
-                    .map_err(|why| InvokeError::rejected(why.to_string()))?;
-                let held = form.field(key.trim()).map(|f| f.value().to_owned());
-                drop(forms);
-                sync_node(&state, node);
-                state.say(format!("{} = {}", key.trim(), value.trim()));
-                Ok(IntrospectValue::Text(held.unwrap_or_default()))
+                set_value(&state, node, key.trim(), value.trim()).map(IntrospectValue::Text)
             }
             "add_field" => {
                 let key = Self::text(&args)?;
@@ -5680,7 +5948,7 @@ fn delete_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError
     state.forms.borrow_mut().remove(&node);
     state.opened_at.borrow_mut().remove(&node);
     if state.selected.get() == Some(node) {
-        state.selected.set(state.cards().first().copied());
+        select_card(state, state.cards().first().copied());
     }
     // A picked link that ran through this card is a name for something that is
     // no longer there.
@@ -5707,20 +5975,51 @@ fn delete_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError
 /// Answers the seed rather than a `Result`: there is nothing here to refuse
 /// once the buffer is the screen's own, which is what taking it at
 /// construction bought.
-fn begin_edit(state: &Rc<LabState>, what: Editing) -> String {
+fn begin_edit(state: &Rc<LabState>, what: Editing) -> Result<String, InvokeError> {
+    // ★★★ R1684 — **opening it somewhere else applies what is in it.**
+    //
+    // Found by looking at the running screen: a value typed into one row and
+    // then abandoned by pressing another row vanished without a word. The
+    // house style is already commit-on-blur — R1683 mounted
+    // `blur_committing_field_extra` for exactly this — but that external
+    // never sees the pointer, because every press on this screen goes to its
+    // one root external (measured this round). So the screen does it.
+    //
+    // A REFUSED commit refuses the move: the field stays where it is, holding
+    // the text, and the toast says why. Switching anyway would destroy the
+    // thing the refusal was about. Escape is still how a person abandons.
+    if state.editing.get().is_some_and(|open| open != what) {
+        commit_edit(state)?;
+    }
     let buffer = &state.buffer;
-    let seed = match what {
-        Editing::Name(node) => state.name_of(node),
+    let seed = match &what {
+        Editing::Name(node) => state.name_of(*node),
         Editing::Key(_) => String::new(),
+        // ★ R1684 — the row's CURRENT text, in the form's own spelling, so a
+        // list arrives as the separated string the form reads back and a
+        // person edits what they were looking at. The form is the one thing
+        // that knows how a shape is written down; deriving the seed here would
+        // be a second spelling of every shape — and an element is split out
+        // with the form's own splitter for exactly that reason.
+        Editing::Value { node, key, element } => selected_form_of(state, *node)
+            .and_then(|form| {
+                let held = form.field(key)?.value().to_owned();
+                Some(match element {
+                    None => held,
+                    Some(n) => FieldType::elements(&held).nth(*n)?.to_owned(),
+                })
+            })
+            .unwrap_or_default(),
     };
     buffer.set_text(seed.clone());
     // Selected whole, so the first keystroke replaces rather than appends —
     // which is what a box that opens already holding a value has to do.
     buffer.set_selection(0, seed.len());
+    let said = what.wire();
     state.editing.set(Some(what));
     pinion_core::focus_request::request(EDIT_TAG);
-    state.say(format!("editing the {}", what.wire()));
-    seed
+    state.say(format!("editing the {said}"));
+    Ok(seed)
 }
 
 /// What a press on one of the field's two seats does (R1683).
@@ -5733,17 +6032,13 @@ fn edit_seat(state: &Rc<LabState>, which: &Hit) {
     let Some(node) = state.selected.get() else {
         return;
     };
-    match which {
-        Hit::AddKey => {
-            begin_edit(state, Editing::Key(node));
-        }
-        _ if state.editing.get().is_some() => {
-            commit_edit(state).ok();
-        }
-        _ => {
-            begin_edit(state, Editing::Name(node));
-        }
-    }
+    // A refusal has already reached the toast, which is where a person reads
+    // it — the same arrangement the node's-life seats have.
+    let _ = match which {
+        Hit::AddKey => begin_edit(state, Editing::Key(node)),
+        _ if state.editing.get().is_some() => commit_edit(state),
+        _ => begin_edit(state, Editing::Name(node)),
+    };
 }
 
 /// Take what the field holds and do the thing it was opened for (R1683).
@@ -5760,11 +6055,51 @@ fn commit_edit(state: &Rc<LabState>) -> Result<String, InvokeError> {
     let done = match what {
         Editing::Name(node) => rename_card(state, node, text.trim()),
         Editing::Key(node) => add_key(state, node, text.trim()),
+        // ★ R1684 — the same function the wire's `set_field` calls, with the
+        // text as typed. What gets trimmed is the wire's ARGUMENT — the
+        // `<key>=<value>` grammar needs it — and not the value, which is the
+        // shape's business: the integer shape trims for itself and the text
+        // shape must not, or a value with a space in it could never be typed.
+        Editing::Value {
+            node,
+            key,
+            element: None,
+        } => set_value(state, node, &key, &text),
+        Editing::Value {
+            node,
+            key,
+            element: Some(n),
+        } => set_element(state, node, &key, n, &text),
     };
     if done.is_ok() {
         end_edit(state);
     }
     done
+}
+
+/// Pick a card, and shut the field if that changes which card is inspected
+/// (R1684).
+///
+/// ★★ One function for every site that moves the selection — the `select`
+/// action, a press on a card, the card the palette just added, and the card a
+/// deletion falls back to — because the field is opened OVER the inspected
+/// card's row and a selection that moved without shutting it would leave a box
+/// standing on a form that is no longer underneath it. The target names its own
+/// card, so a stale commit would land correctly and the person would still have
+/// typed into the wrong-looking place.
+fn select_card(state: &Rc<LabState>, node: Option<NodeId>) {
+    if state.selected.get() == node {
+        return;
+    }
+    state.selected.set(node);
+    if state.editing.get().is_some() {
+        // ★ Applied, then shut — the same rule as opening the field somewhere
+        // else, with the one difference the situation forces: a refusal cannot
+        // keep the box open, because the card it was opened over is not the
+        // inspected card any more. The refusal has already reached the toast.
+        commit_edit(state).ok();
+        end_edit(state);
+    }
 }
 
 /// Shut the field, leaving whatever it was editing alone.
@@ -5813,6 +6148,72 @@ fn add_key(state: &Rc<LabState>, node: NodeId, key: &str) -> Result<String, Invo
     sync_node(state, node);
     state.say(format!("added {key}"));
     Ok(key.to_owned())
+}
+
+/// Put a value on one row of a card's settings form (R1684).
+///
+/// ★★ **One function for the wire's `set_field` and for the box a person types
+/// into**, which is the same discipline the rename has: a value typed and a
+/// value handed over cannot be accepted differently, cannot be refused
+/// differently, and cannot leave the card's pins derived from different text.
+///
+/// ★ The value is stored **as given**, defects and all. `ConfigForm::set` does
+/// not validate, and that is the design the reference states beside its own
+/// parser: a value that will not encode is held and reported on its row by the
+/// launch gate, because silently reverting a person's typing tells them nothing
+/// about why it went away. Only an unknown path is refused, which is the one
+/// case where the request names something that is not there.
+fn set_value(
+    state: &Rc<LabState>,
+    node: NodeId,
+    key: &str,
+    value: &str,
+) -> Result<String, InvokeError> {
+    let mut forms = state.forms.borrow_mut();
+    let form = forms
+        .get_mut(&node)
+        .ok_or_else(|| InvokeError::rejected("the card has no form"))?;
+    form.set(key, value)
+        .map_err(|why| InvokeError::rejected(why.to_string()))?;
+    let held = form.field(key).map(|f| f.value().to_owned());
+    drop(forms);
+    // The pins are DERIVED from the form, so a value that changes an endpoint
+    // has to reach the canvas in the same act that changed it.
+    sync_node(state, node);
+    state.say(format!("{key} = {value}"));
+    Ok(held.unwrap_or_default())
+}
+
+/// Put one ELEMENT of a list row back, leaving its neighbours alone (R1684).
+///
+/// ★★ Text emptied removes the element, which is not a special case here: it
+/// is what [`FieldType::elements`] already means, since the splitter the form
+/// and the painter share drops the empty parts. So "clear it and apply" is how
+/// a list loses a row, and the screen needs no delete affordance to answer for
+/// the one the add affordance can create.
+///
+/// # Errors
+///
+/// A row this card does not have, or an element index the row does not hold —
+/// which is a request naming something that is not there rather than a value
+/// that is wrong, so it is refused instead of stored.
+fn set_element(
+    state: &Rc<LabState>,
+    node: NodeId,
+    key: &str,
+    at: usize,
+    text: &str,
+) -> Result<String, InvokeError> {
+    let held = selected_form_of(state, node)
+        .and_then(|form| form.field(key).map(|f| f.value().to_owned()))
+        .ok_or_else(|| InvokeError::rejected(format!("{key:?} is not a row of this card")))?;
+    let mut elements: Vec<String> = FieldType::elements(&held).map(str::to_owned).collect();
+    let slot = elements
+        .get_mut(at)
+        .ok_or_else(|| InvokeError::rejected(format!("{key:?} has no element {at}")))?;
+    text.trim().clone_into(slot);
+    elements.retain(|element| !element.is_empty());
+    set_value(state, node, key, &elements.join(FieldType::SEPARATOR))
 }
 
 /// Give a card a different name, keeping it the same card (R1682).
@@ -6098,7 +6499,7 @@ fn press(state: &Rc<LabState>) {
     let hit = Hit::at(state, px, py);
     match &hit {
         Hit::Node(node) => {
-            state.selected.set(Some(*node));
+            select_card(state, Some(*node));
             let (cx, cy) = state
                 .doc
                 .borrow()
@@ -6335,6 +6736,15 @@ fn release(state: &Rc<LabState>) {
                 drop(forms);
             }
         }
+        // ★★★ R1684 — the arm this screen NAMED and then dropped.
+        //
+        // The hit test has resolved a press to `field:<key>` since R1651 and
+        // the wire answered that word, so an agent and a person both read the
+        // press as handled — and the match below ended in `_ => {}`. A person
+        // reported it as "the text box does nothing", which is exactly what it
+        // was: a declared arm with no implementation is worse than no arm,
+        // because the declaration stops anyone looking.
+        Hit::Field(key) => press_row(state, &key),
         Hit::Part { key, part } => act_on_part(state, &key, &part),
         Hit::Rail(name) => state.say(format!("{name} is not this screen")),
         _ => {}
@@ -6346,6 +6756,79 @@ fn count_leaves(value: &serde_json::Value) -> usize {
         serde_json::Value::Object(map) => map.values().map(count_leaves).sum(),
         _ => 1,
     }
+}
+
+/// ★★★ R1684 — what a press on a form row's control does, decided by the
+/// row's SHAPE.
+///
+/// "The type decides the control" is the reference's own rule, written beside
+/// its inspector, and this is that rule at the pointer:
+///
+/// | shape | what a press on the control does | why |
+/// |---|---|---|
+/// | true/false | flips it | the reference makes the WHOLE control the target, not just the knob; ours had the knob only, so half of a switch's control was dead |
+/// | everything else | opens the field over the row | the reference gives text, whole numbers and lists an input box, and a value is a value |
+///
+/// ★★★ **Every shape but the switch can be TYPED, including the two that have
+/// pickers, and that is the round's own measurement rather than the
+/// reference's design.** The reference paints a chip per option and leaves the
+/// rest of the control inert; the gate that asks whether the middle of a
+/// control does anything found exactly that, on `control.permissions`, in
+/// every swept state. A bordered box with dead space inside it is a control
+/// that lies. So the chips stay as the SHORTCUT and the row underneath them
+/// can be typed — which also gives a person the only path to
+/// [`ConfigDefect::OutOfRange`] on an option row, a defect that until now only
+/// an agent could produce.
+///
+/// ★★ The whole-number row is the one that matters most, and not for typing's
+/// sake: its stepper CLAMPS at the field's ceiling, correctly, so before this
+/// there was no way for a person to put a value out of range — and the launch
+/// gate's whole purpose is to catch a value out of range. An agent could close
+/// that gate and a person could not.
+///
+/// [`ConfigDefect::OutOfRange`]: pinion_core::widgets::config_form::ConfigDefect::OutOfRange
+fn press_row(state: &Rc<LabState>, key: &str) {
+    let Some(node) = state.selected.get() else {
+        return;
+    };
+    let Some(shape) = selected_form_of(state, node)
+        .and_then(|form| form.field(key).map(|field| field.shape().clone()))
+    else {
+        return;
+    };
+    if shape == FieldType::Boolean {
+        flip_boolean(state, key);
+        return;
+    }
+    let _ = begin_edit(
+        state,
+        Editing::Value {
+            node,
+            key: key.to_owned(),
+            element: None,
+        },
+    );
+}
+
+/// Open the field on one element of a list row (R1684).
+///
+/// ★★ The half the add affordance had been missing. `add_element` puts a
+/// PLACEHOLDER in the list — it has to put something, since an empty element is
+/// not an element — so a screen that could add one and never say what it was
+/// left a person with an invented address they could not change. Pressing the
+/// element is how they change it.
+fn press_element(state: &Rc<LabState>, key: &str, at: usize) {
+    let Some(node) = state.selected.get() else {
+        return;
+    };
+    let _ = begin_edit(
+        state,
+        Editing::Value {
+            node,
+            key: key.to_owned(),
+            element: Some(at),
+        },
+    );
 }
 
 /// Act on an affordance inside a control.
@@ -6362,11 +6845,20 @@ fn act_on_part(state: &Rc<LabState>, key: &str, part: &str) {
         }
         "toggle" => flip_boolean(state, key),
         "step" => step_number(state, key, part.rsplit('.').next() == Some("up")),
-        "item" => {
-            if part.rsplit('.').next() == Some("add") {
-                add_element(state, key);
+        // ★★★ R1684 — a list's rows: `add` grows it, and a NUMBERED one opens
+        // the field on that element. The numbered case fell through to nothing
+        // until this round, which is the same defect as the dropped `Field`
+        // arm one level up and was found by the same gate: the part resolved,
+        // the wire named it, and the press died here.
+        "item" => match part.rsplit('.').next() {
+            Some("add") => add_element(state, key),
+            Some(number) => {
+                if let Ok(at) = number.parse::<usize>() {
+                    press_element(state, key, at);
+                }
             }
-        }
+            None => {}
+        },
         _ => {}
     }
 }
@@ -6429,13 +6921,12 @@ fn set_and_sync(state: &Rc<LabState>, key: &str, value: impl Into<String>) {
     let Some(node) = state.selected.get() else {
         return;
     };
-    {
-        let mut forms = state.forms.borrow_mut();
-        if let Some(form) = forms.get_mut(&node) {
-            form.set(key, value).ok();
-        }
-    }
-    sync_node(state, node);
+    // ★ R1684 — through [`set_value`], which is now the ONE way a value gets
+    // onto a row. Before this round there were two: this, for the affordances
+    // inside a control, and an arm of the wire that repeated it. A stepper and
+    // an agent setting the same field went through different code, and only one
+    // of them said what it had done.
+    set_value(state, node, key, &value.into()).ok();
 }
 
 /// Turn one option of a choice or flags field on or off.
@@ -6560,7 +7051,7 @@ fn add_node(state: &Rc<LabState>, role: Role) {
             opened_as: None,
         },
     );
-    state.selected.set(Some(id));
+    select_card(state, Some(id));
     state.say(format!("added {name}"));
 }
 
@@ -6734,7 +7225,11 @@ impl WidgetCore for NodeLabView {
             return false;
         }
         let state = use_lab_state();
-        let kind = state.editing.get().map_or(CellKind::Text, Editing::kind);
+        let kind = state
+            .editing
+            .get()
+            .as_ref()
+            .map_or(CellKind::Text, Editing::kind);
         edit_field_keymap(
             scene,
             EDIT_TAG,
@@ -6798,6 +7293,72 @@ impl WidgetA11y for NodeLabView {
 
 impl WidgetView for NodeLabView {
     type Renderer = HelloNodeLabRenderer;
+
+    /// ★★★ R1684 — **a press inside the open box puts the caret where the
+    /// pointer landed**, through the framework's own hit test.
+    ///
+    /// R1683 wrote that this happened already, because the field is a real
+    /// external and an external owns its rectangle. **Measured this round, and
+    /// it was not true**: every press on this screen is routed to the ONE root
+    /// external that does the screen's own hit test — that is R1655's
+    /// invariant, and the field's external is a focus owner and a keystroke
+    /// sink, not a second pointer target. Removing the arm that makes the
+    /// screen stand aside inside the open box turned a typed `a9` back into
+    /// the row's stored `a1`, which is the measurement; and nothing in process
+    /// could have asked, because there is no external there to compete with.
+    ///
+    /// So the screen forwards deliberately, and without these two hooks the
+    /// box could be typed into and never clicked into — no caret placement, no
+    /// selection sweep, on the only text entry the screen has.
+    ///
+    /// `hit_tag` is this screen's own root everywhere, so the question the
+    /// sibling text-field bindings settle with a tag comparison is settled
+    /// here by the geometry the paint published — the same rectangle
+    /// [`Hit::at`] stands aside for, so the two cannot disagree about where
+    /// the box is.
+    fn position_caret_for_point(
+        state: &(TextFieldState, u32),
+        scene: &Scene,
+        focused: Option<&str>,
+        _hit_tag: Option<&str>,
+        x: f32,
+        y: f32,
+        extend: bool,
+    ) -> Option<usize> {
+        let byte = field_byte_at(state.0, scene, focused, x, y)?;
+        let edit = use_text_edit_state(EDIT_TAG);
+        if extend {
+            let anchor = edit.selection_anchor().unwrap_or_else(|| edit.caret());
+            edit.set_selection(anchor, byte);
+            Some(anchor)
+        } else {
+            edit.set_caret(byte);
+            Some(byte)
+        }
+    }
+
+    /// A drag inside the box sweeps a selection, from the byte the press
+    /// pinned (R1684).
+    ///
+    /// The other half of the same hit test: without it a press positions the
+    /// caret and a drag from it selects nothing, which is a box that behaves
+    /// like a text field until somebody tries to select a word in it.
+    fn select_drag_to_point(
+        state: &(TextFieldState, u32),
+        scene: &Scene,
+        focused: Option<&str>,
+        anchor: usize,
+        x: f32,
+        y: f32,
+    ) -> bool {
+        let Some(byte) = field_byte_at(state.0, scene, focused, x, y) else {
+            return false;
+        };
+        let edit = use_text_edit_state(EDIT_TAG);
+        let before = (edit.caret(), edit.selection_anchor());
+        edit.set_selection(anchor, byte);
+        before != (edit.caret(), edit.selection_anchor())
+    }
 
     /// The window OPENS at the design size — the one the specification's
     /// rectangles were measured against — and can be dragged to any size from
