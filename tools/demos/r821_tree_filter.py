@@ -56,7 +56,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     WORKSPACE_ROOT,
-    abs_rects_of,
+    unclipped_rects_of,
     assert_eq,
     read_png_rgba8,
     run_demo,
@@ -92,7 +92,7 @@ def set_filter(tf, value):
 def present_rows(snap) -> list[str]:
     """Rendered tree-row ids (from the `sgtree#<id>` windowed strips)."""
     out: list[str] = []
-    for tag in abs_rects_of(snap):
+    for tag in unclipped_rects_of(snap):
         if tag.startswith(f"{TREE_TAG}#"):
             out.append(tag[len(f"{TREE_TAG}#"):])
     return out
@@ -101,7 +101,7 @@ def present_rows(snap) -> list[str]:
 def body() -> None:
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
         snap = tf.snapshot(source="paint", viewport=WIN)
-        rects = abs_rects_of(snap)
+        rects = unclipped_rects_of(snap)
 
         # ── (A) boot: unfiltered, full 92-row view, windowed ────────
         assert ROOT_TAG in rects, "focusable tree root present at boot"
@@ -211,7 +211,7 @@ def body() -> None:
 def _boot_snapshot_and_rects():
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
         snap = tf.snapshot(source="paint", viewport=WIN)
-        return snap, abs_rects_of(snap)
+        return snap, unclipped_rects_of(snap)
 
 
 def capture_screenshot() -> Path:

@@ -52,7 +52,7 @@ from rpc_verify import (  # noqa: E402
     RpcError,
     RpcSubprocess,
     WORKSPACE_ROOT,
-    abs_rects_of,
+    unclipped_rects_of,
     assert_eq,
     find_by_tag,
     run_demo,
@@ -115,7 +115,7 @@ def hscroll_max_x(tf) -> int:
 
 
 def snap_rects(tf):
-    return abs_rects_of(tf.snapshot(source="paint", viewport=WIN))
+    return unclipped_rects_of(tf.snapshot(source="paint", viewport=WIN))
 
 
 def drag_grabber(tf, col: int, dx: int) -> None:

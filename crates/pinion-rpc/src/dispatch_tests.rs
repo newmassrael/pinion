@@ -5740,6 +5740,90 @@ fn r1653_scene_bbox_says_null_for_a_node_scrolled_out_of_view() {
     );
 }
 
+/// ★★ R1676 — the wire projection of the enumeration, and the two things
+/// about it a caller depends on: it reads the PAINT tree without being asked
+/// to, and a mark it cannot reach is a row rather than a gap.
+///
+/// The default basis is the load-bearing half. A view-fn binding's state scene
+/// has not been through the layout pass, so a caller that got `state` here
+/// would enumerate a tree of zero rects and read it as a screen where every
+/// mark sits at the origin. That default is only exercised when nobody passes
+/// `from`, which is every real caller and — before this test — no test.
+#[test]
+fn r1676_scene_tag_rects_enumerates_the_painted_tree() {
+    use pinion_core::scene::{BoxNode, ContainerNode, Rect, ScrollNode};
+    let colour = pinion_core::style::Color::default();
+    let inner = Scene::Container(ContainerNode::new(vec![
+        Scene::Box(BoxNode::filled(Rect::new(5, 10, 20, 10), colour).with_tag("seen")),
+        Scene::Box(BoxNode::filled(Rect::new(5, 900, 20, 10), colour).with_tag("hidden")),
+    ]));
+    let paint = Scene::Container(ContainerNode::new(vec![Scene::Scroll(ScrollNode::new(
+        Rect::new(0, 0, 100, 50),
+        inner,
+    ))]));
+    // The state tree carries the SAME tags and different geometry, so a
+    // handler reading the wrong one still answers and answers wrongly — which
+    // is the only shape of this mistake that a test can be fooled by.
+    let mut state = Scene::Container(ContainerNode::new(vec![
+        Scene::Box(BoxNode::filled(Rect::new(7, 3, 1, 1), colour).with_tag("seen")),
+        Scene::Box(BoxNode::filled(Rect::new(7, 3, 1, 1), colour).with_tag("hidden")),
+    ]));
+
+    let req = r#"{"jsonrpc":"2.0","method":"scene/tag_rects","id":1}"#;
+    let resp = parse_response(&dispatch_with_paint(&mut state, &paint, req).unwrap());
+    let rows = resp
+        .result
+        .expect("answered")
+        .get("tags")
+        .expect("tags")
+        .as_array()
+        .expect("array")
+        .clone();
+    let row = |tag: &str| {
+        rows.iter()
+            .find(|r| r.get("tag") == Some(&Value::String(tag.to_owned())))
+            .unwrap_or_else(|| panic!("{tag} is enumerated"))
+            .clone()
+    };
+
+    let seen = row("seen");
+    let window = seen
+        .get("window")
+        .expect("window")
+        .as_object()
+        .expect("rect");
+    assert_eq!(
+        window.get("h"),
+        Some(&Value::Number(10.into())),
+        "★ the paint tree answered — the state tree's copy of this tag is 1x1"
+    );
+    assert_eq!(window.get("y"), Some(&Value::Number(10.into())));
+    assert_eq!(
+        row("hidden").get("window"),
+        Some(&Value::Null),
+        "★ a mark scrolled out of sight is a ROW with no window, not an \
+         absence — 'no such mark' is a different report with a different repair"
+    );
+
+    // Named `from` still works, and disagreeing with the default is what
+    // proves the default was a choice rather than the only branch there is.
+    let asked = r#"{"jsonrpc":"2.0","method":"scene/tag_rects","params":{"from":"state"},"id":2}"#;
+    let resp = parse_response(&dispatch_with_paint(&mut state, &paint, asked).unwrap());
+    let rows = resp.result.expect("answered")["tags"]
+        .as_array()
+        .expect("array")
+        .clone();
+    let seen = rows
+        .iter()
+        .find(|r| r.get("tag") == Some(&Value::String("seen".to_owned())))
+        .expect("state tree carries it too");
+    assert_eq!(
+        seen["window"]["h"],
+        Value::Number(1.into()),
+        "the state tree's own rect, which is what asking for it means"
+    );
+}
+
 #[test]
 fn r1653_scene_bbox_refuses_two_locators_and_an_unknown_tag() {
     let mut scene = box_scene(0, 0, 10, 10);

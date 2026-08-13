@@ -52,15 +52,22 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
-    abs_rects_of,
     assert_eq,
     find_by_tag,
     indexed_tags,
     run_demo,
+    unclipped_rects_of,
     texts_of,
     wait_snap,
     wait_until,
 )
+
+# ★ R1676 — the EMISSION reader, deliberately, and not `abs_rects_of`. This
+# demo's claim is about what the view BUILT: that it asks the model for exactly
+# the nodes it emits. A node the renderer then clips away is still one the view
+# built, so the visible-rect reader answers a different question and reports the
+# virtualization as tighter than it is (measured: 77 emitted cells read as 45).
+# `abs_rects_of` is "where can a person press"; this is "what did the view do".
 
 EXAMPLE = "hello-virtual-columns"
 WIN = (560, 420)
@@ -143,7 +150,7 @@ def body() -> None:
 
         def assert_identity(snap, label: str) -> tuple[int, list[int]]:
             """`asked` == painted header cells. The round's whole claim."""
-            rects = abs_rects_of(snap)
+            rects = unclipped_rects_of(snap)
             a, p = asked_sections(snap), painted_sections(rects)
             assert p, f"{label}: the window holds header cells"
             assert_eq(a, len(p), f"{label}: asked {a} sections, painted {len(p)}")
@@ -159,7 +166,7 @@ def body() -> None:
 
         # ── (A) boot: the readout and the identity ──────────────────
         snap = snap_now()
-        rects = abs_rects_of(snap)
+        rects = unclipped_rects_of(snap)
         assert TABLE_TAG in rects, "grid root present at boot"
         assert HSTATUS_RE.match(readout(snap, HEADER_STATUS_TAG)) is not None, \
             f"the header readout parses: {readout(snap, HEADER_STATUS_TAG)!r}"
@@ -200,7 +207,7 @@ def body() -> None:
         assert far_cols[0] > boot_cols[-1], \
             f"the boot section set has left the tree: {boot_cols} -> {far_cols}"
         assert_labels(snap, far_cols, "h-scrolled")
-        rects2 = abs_rects_of(snap)
+        rects2 = unclipped_rects_of(snap)
         for c in boot_cols:
             assert f"{TABLE_TAG}_ch{c}" not in rects2, \
                 f"boot section {c} is absent from the tree, not merely off-screen"
@@ -233,7 +240,7 @@ def body() -> None:
         assert_eq(v_asked, boot_asked,
                   "scrolling ROWS does not change which sections exist")
         assert_eq(v_cols, boot_cols, "the same sections, by index")
-        rows = indexed_tags(abs_rects_of(snap), f"{TABLE_TAG}_row")
+        rows = indexed_tags(unclipped_rects_of(snap), f"{TABLE_TAG}_row")
         assert rows and rows[0] > 0, "the row window did move"
         assert asked_cells(snap) > 0, "and cells are still being asked for"
         # The header band is frozen against the vertical scroll, so its labels

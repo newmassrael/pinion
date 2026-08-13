@@ -82,7 +82,7 @@ CENSUS = [
 # is exactly the `BoxFacet` census (R1514), so this set is what "carries a
 # BoxStyle" looks like to a client.
 BOX_STYLED = {"Box", "Container"}
-BOX_FACETS = ["border", "corner_radius", "fill", "gradient", "shadows"]
+BOX_FACETS = ["border", "chrome", "corner_radius", "fill", "gradient", "shadows"]
 
 # Which binding is read for which mirror. `hello-image`'s state scene is a
 # single `External`: the same census governs both mirrors, and only the state

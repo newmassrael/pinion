@@ -295,6 +295,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc, MethodWindow)] = &[
     ("scene/snapshot", MethodOcc::Read, MethodWindow::Path),
     ("scene/subscribe", MethodOcc::Read, MethodWindow::Scope),
     ("scene/subscriptions", MethodOcc::Read, MethodWindow::Scope),
+    ("scene/tag_rects", MethodOcc::Read, MethodWindow::Scope),
     (
         "scene/text_backgrounds",
         MethodOcc::Read,

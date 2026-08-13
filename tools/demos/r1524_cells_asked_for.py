@@ -51,15 +51,22 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
-    abs_rects_of,
     assert_eq,
     find_by_tag,
     indexed_tags,
     run_demo,
+    unclipped_rects_of,
     texts_of,
     wait_snap,
     wait_until,
 )
+
+# ★ R1676 — the EMISSION reader, deliberately, and not `abs_rects_of`. This
+# demo's claim is about what the view BUILT: that it asks the model for exactly
+# the nodes it emits. A node the renderer then clips away is still one the view
+# built, so the visible-rect reader answers a different question and reports the
+# virtualization as tighter than it is (measured: 77 emitted cells read as 45).
+# `abs_rects_of` is "where can a person press"; this is "what did the view do".
 
 EXAMPLE = "hello-virtual-columns"
 WIN = (560, 420)
@@ -134,7 +141,7 @@ def body() -> None:
 
         def assert_identity(snap, label: str) -> tuple[int, int]:
             """`asked` == painted data cells. The round's whole claim."""
-            rects = abs_rects_of(snap)
+            rects = unclipped_rects_of(snap)
             a, p = asked(snap), painted_cells(rects)
             assert p > 0, f"{label}: the window holds cells"
             assert_eq(a, p, f"{label}: asked {a} cells, painted {p}")
@@ -142,7 +149,7 @@ def body() -> None:
 
         # ── (A) boot: the readout and the identity ──────────────────
         snap = snap_now()
-        rects = abs_rects_of(snap)
+        rects = unclipped_rects_of(snap)
         assert TABLE_TAG in rects, "grid root present at boot"
         m = STATUS_RE.match(status_text(snap))
         assert m is not None, f"the readout parses: {status_text(snap)!r}"
@@ -190,7 +197,7 @@ def body() -> None:
             tf, lambda s: offset_x(s) == D, viewport=WIN,
             desc="horizontal scroll advanced offset_x",
         )
-        rects2 = abs_rects_of(snap)
+        rects2 = unclipped_rects_of(snap)
         far_cols = row_cols(rects2, 0)
         assert far_cols, "the scrolled window holds cells"
         assert far_cols[0] > boot_cols[-1], \
@@ -205,7 +212,7 @@ def body() -> None:
             tf, lambda s: offset_x(s) > D, viewport=WIN,
             desc="horizontal scroll clamped past the midpoint",
         )
-        end_cols = row_cols(abs_rects_of(snap), 0)
+        end_cols = row_cols(unclipped_rects_of(snap), 0)
         assert (NCOLS - 1) in end_cols, "the last column is in the tree at the clamp"
         assert 0 not in end_cols, "and the first has left it"
         assert_identity(snap, "h-clamped")
@@ -221,7 +228,7 @@ def body() -> None:
             tf, lambda s: offset_y(s) == 4_000, viewport=WIN,
             desc="vertical scroll advanced offset_y",
         )
-        rects3 = abs_rects_of(snap)
+        rects3 = unclipped_rects_of(snap)
         far_rows = rendered_rows(rects3)
         assert far_rows, "the scrolled row window holds rows"
         assert far_rows[0] > boot_rows[-1], \
@@ -252,7 +259,7 @@ def body() -> None:
 
         snap = wait_until(widened, desc="the grid re-measures its wider viewport")
         wide_asked, _ = assert_identity(snap, "widened")
-        wide_cols = row_cols(abs_rects_of(snap), 0)
+        wide_cols = row_cols(unclipped_rects_of(snap), 0)
         assert len(wide_cols) > len(boot_cols), \
             f"a wider viewport exposes more columns: {len(boot_cols)} -> {len(wide_cols)}"
         assert wide_asked > boot_asked, \
@@ -264,7 +271,7 @@ def body() -> None:
 
         def shortened():
             s = snap_now(short)
-            return s if len(rendered_rows(abs_rects_of(s))) < len(boot_rows) else None
+            return s if len(rendered_rows(unclipped_rects_of(s))) < len(boot_rows) else None
 
         snap = wait_until(shortened, desc="the grid re-measures its shorter viewport")
         short_asked, _ = assert_identity(snap, "shortened")

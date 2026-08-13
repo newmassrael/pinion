@@ -27,7 +27,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
-    abs_rects_of,
+    unclipped_rects_of,
     assert_eq,
     run_demo,
     wait_until,
@@ -80,7 +80,7 @@ def body() -> None:
             assert_eq(q("row_count"), expected, f"row_count must be {expected}")
 
         # ── (A) boot: full structure via query while only a window paints ──
-        assert ROOT_TAG in abs_rects_of(snap()), "focusable virtual tree root present"
+        assert ROOT_TAG in unclipped_rects_of(snap()), "focusable virtual tree root present"
         assert_eq(q("row_count"), BOOT_ROWS, "full 496-row flattening reported")
         assert_eq(q("cursor"), "s0", "cursor parked on the first section")
         assert_eq(q("cursor_index"), 0, "s0 is flat row 0")

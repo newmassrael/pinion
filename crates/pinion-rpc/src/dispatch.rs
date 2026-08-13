@@ -3097,6 +3097,22 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                         HandlerKind::Read,
                     )
                 }
+                "scene/tag_rects" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let producer = paint_producer.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_tag_rects(
+                            scene,
+                            producer,
+                            last_paint_scene,
+                            request.params.as_ref(),
+                        ),
+                        HandlerKind::Read,
+                    )
+                }
                 "scene/resize" => {
                     #[allow(
                         clippy::option_as_ref_deref,
@@ -8364,6 +8380,52 @@ where
         Ok(outcome) => Ok(bbox_outcome_to_json(&outcome)),
         Err(err) => Err(bbox_error_to_rpc(err)),
     }
+}
+
+/// `scene/tag_rects` — R1676 §5.32 §5.20 §2 #7: every §5.20 intent tag the
+/// scene carries, and where a pointer reaches each one, in a single answer.
+///
+/// [`scene/bbox`](handle_scene_bbox) asks about a tag the caller already knows.
+/// This asks what there is to know — the enumeration a process with no pointer
+/// needs before it can aim, and which the toolkit this is judged against has in
+/// neither direction (see [`crate::locate::tag_rects_of`] for the measurement).
+///
+/// Reads the **paint** scene by default, for [`handle_scene_marks`]'s reason: a
+/// view-fn binding's state scene has not been through the layout pass, so every
+/// node in it answers the zero rect and this method would enumerate a tree of
+/// nothing. `from` exists so a caller can say which scene it means rather than
+/// discover the default by experiment.
+fn handle_scene_tag_rects<F>(
+    scene: &Scene,
+    paint_producer: Option<&mut F>,
+    last_paint_scene: Option<&Scene>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError>
+where
+    F: FnMut(u32, u32) -> Scene + ?Sized,
+{
+    // No locator to require, so an omitted `params` is a complete request
+    // rather than a malformed one — the basis resolver reads defaults from an
+    // empty object exactly as it would from an absent key.
+    let empty = Value::Object(serde_json::Map::new());
+    let params = params.unwrap_or(&empty);
+    let basis = resolve_scene_basis(scene, paint_producer, last_paint_scene, params, "paint")?;
+    let rows: Vec<Value> = crate::locate::tag_rects_of(basis.scene())
+        .iter()
+        .map(|(tag, outcome)| {
+            let mut map = serde_json::Map::new();
+            map.insert("tag".into(), Value::String(tag.clone()));
+            map.insert("bbox".into(), bbox_to_json(&outcome.bbox));
+            map.insert(
+                "window".into(),
+                outcome.window.as_ref().map_or(Value::Null, bbox_to_json),
+            );
+            Value::Object(map)
+        })
+        .collect();
+    let mut map = serde_json::Map::new();
+    map.insert("tags".into(), Value::Array(rows));
+    Ok(Value::Object(map))
 }
 
 /// The `scene/bbox` answer: the node's own rectangle, and where it is painted.

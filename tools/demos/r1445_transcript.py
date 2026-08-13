@@ -42,6 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
+    unclipped_rects_of,
     assert_eq,
     find_by_tag,
     run_demo,
@@ -195,7 +196,14 @@ def assert_pinned_to_tail(tf, snap, label: str) -> None:
 
 
 def assert_below_the_fold(snap, label: str) -> None:
-    rects = abs_rects_of(snap)
+    # ★ R1676 — the PLACEMENT reader, and this function is why the two readers
+    # are two: its whole claim is that the newest entry is painted where the
+    # viewport does not show it. `abs_rects_of` answers what is on screen and
+    # therefore does not carry a mark that is entirely off it — asking it here
+    # is asking for the rectangle of the thing whose absence is the point.
+    # `assert_pinned_to_tail` above keeps the visible reader for the mirror
+    # reason: "pinned" is a claim that the entry CAN be seen.
+    rects = unclipped_rects_of(snap)
     _, scroll_y, _, scroll_h = rects[SCROLL_TAG]
     last = f"{ENTRY_TAG}#{entry_count(snap) - 1}"
     entry_y = rects[last][1]

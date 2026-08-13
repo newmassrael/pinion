@@ -43,7 +43,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     WORKSPACE_ROOT,
-    abs_rects_of,
+    unclipped_rects_of,
     assert_eq,
     find_by_tag,
     read_png_rgba8,
@@ -125,7 +125,7 @@ def body() -> None:
 
         # ── (A) structure at boot ───────────────────────────────────
         snap = snap_now()
-        rects = abs_rects_of(snap)
+        rects = unclipped_rects_of(snap)
         assert TABLE_TAG in rects, "grid root present at boot"
         assert FROZEN_HEADER_TAG in rects, "frozen header band present at boot"
         assert SCROLL_HEADER_TAG in rects, "scrolling header band present at boot"
@@ -172,7 +172,7 @@ def body() -> None:
             desc="horizontal scroll advanced offset_x",
         )
         assert_eq(offset_y(snap), 0, "vertical offset unchanged by horizontal scroll")
-        rects2 = abs_rects_of(snap)
+        rects2 = unclipped_rects_of(snap)
 
         # Frozen columns DID NOT MOVE.
         assert_eq(x_of(rects2, cell_tag(0, 0)), fz_c00_x_boot,
@@ -201,7 +201,7 @@ def body() -> None:
             tf, lambda s: offset_x(s) > D, viewport=WIN,
             desc="scroll-to-max advanced past D",
         )
-        rects3 = abs_rects_of(snap)
+        rects3 = unclipped_rects_of(snap)
         assert "gfz#0_7" in rects3, "right-edge column body cell rendered at max scroll"
         assert_eq(x_of(rects3, "gfz_ch7"), x_of(rects3, cell_tag(0, 7)),
                   "header col 7 x-aligned with body cell (0,7) at max scroll")
@@ -216,7 +216,7 @@ def body() -> None:
             tf, lambda s: offset_x(s) == 0, viewport=WIN,
             desc="horizontal scrolled back to 0",
         )
-        rects_reset = abs_rects_of(snap)
+        rects_reset = unclipped_rects_of(snap)
         assert_eq(x_of(rects_reset, "gfz_ch2"), sc_ch2_x,
                   "scrolling header col 2 back at boot x after reset")
 
@@ -232,7 +232,7 @@ def body() -> None:
             desc="vertical scroll advanced offset_y",
         )
         assert_eq(offset_x(snap), 0, "horizontal offset unaffected by vertical scroll")
-        rects4 = abs_rects_of(snap)
+        rects4 = unclipped_rects_of(snap)
         # A row visible in both panes keeps EQUAL y (vertical lockstep).
         rid = 8  # well within the window after a 4-row scroll
         assert f"gfz_frow{rid}" in rects4, f"frozen pane shows row {rid} after v-scroll"
@@ -251,12 +251,12 @@ def body() -> None:
         tf.scroll(V_SCROLL_TAG, to=(0, 4000))
         snap = wait_snap(
             tf,
-            lambda s: "gfz_frow0" not in abs_rects_of(s)
-            and "gfz_row0" not in abs_rects_of(s),
+            lambda s: "gfz_frow0" not in unclipped_rects_of(s)
+            and "gfz_row0" not in unclipped_rects_of(s),
             viewport=WIN,
             desc="top row scrolled out of BOTH panes",
         )
-        rects5 = abs_rects_of(snap)
+        rects5 = unclipped_rects_of(snap)
         assert FROZEN_HEADER_TAG in rects5, "frozen header still present after v-scroll (pinned)"
         assert SCROLL_HEADER_TAG in rects5, "scrolling header still present after v-scroll (pinned)"
 
@@ -288,7 +288,7 @@ def body() -> None:
 def _boot_snapshot_and_rects():
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
         snap = tf.snapshot(source="paint", viewport=WIN)
-        return snap, abs_rects_of(snap)
+        return snap, unclipped_rects_of(snap)
 
 
 def capture_screenshot() -> Path:

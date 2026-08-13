@@ -29,7 +29,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
-    abs_rects_of,
+    unclipped_rects_of,
     assert_eq,
     find_by_tag,
     indexed_tags,
@@ -114,7 +114,7 @@ def body() -> None:
         min_w = tf.query(col_path("min_width"))
         assert isinstance(min_w, int) and min_w > 0, f"min_width is a positive int, got {min_w}"
 
-        rects = abs_rects_of(snap_now())
+        rects = unclipped_rects_of(snap_now())
         # Every RENDERED column renders at the seeded uniform width at boot.
         # (R1523: at 130px per column only part of the 8 fit the 520px window,
         # so the rest are windowed out of the tree — their widths are asserted
@@ -140,7 +140,7 @@ def body() -> None:
 
         # The rendered grid tracks the model: col-0 widens, col-1 shifts right.
         def col0_widened():
-            r = abs_rects_of(snap_now())
+            r = unclipped_rects_of(snap_now())
             return r if cell_w(r, "ghs#0_0") == 300 else None
 
         rects2 = wait_until(col0_widened, desc="col-0 cell repaints at width 300")
@@ -170,7 +170,7 @@ def body() -> None:
         assert_eq(tf.query(col_path("cols")), NCOLS, "restore kept the column count")
 
         def col0_restored():
-            r = abs_rects_of(snap_now())
+            r = unclipped_rects_of(snap_now())
             return r if cell_w(r, "ghs#0_0") == 100 else None
 
         rects3 = wait_until(col0_restored, desc="grid repaints after widths restore")

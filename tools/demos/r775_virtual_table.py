@@ -42,7 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     WORKSPACE_ROOT,
-    abs_rects_of,
+    unclipped_rects_of,
     assert_eq,
     find_by_tag,
     read_png_rgba8,
@@ -77,7 +77,7 @@ def visible_window(offset: int, vp_h: int, n: int, pitch: int, overscan: int):
 
 def present_rows(snap) -> set[int]:
     out: set[int] = set()
-    for tag in abs_rects_of(snap):
+    for tag in unclipped_rects_of(snap):
         # data-row strips are `vtbl_row<id>`; the header is `vtbl_hrow`.
         if tag.startswith("vtbl_row"):
             out.add(int(tag[len("vtbl_row"):]))
@@ -116,7 +116,7 @@ def body() -> None:
 
         # ── (A) structure + windowed body at boot ───────────────────
         snap = snap_now()
-        rects = abs_rects_of(snap)
+        rects = unclipped_rects_of(snap)
         assert TABLE_TAG in rects, "grid root present at boot"
         assert HEADER_TAG in rects, "frozen header row present at boot"
         assert SCROLL_TAG in rects, "body scroll node present at boot"
@@ -161,7 +161,7 @@ def body() -> None:
             count_g = len(rows_g)
             assert count_g > prev_count, f"taller => more rows: {count_g} > {prev_count}"
             assert count_g < 40, f"still a window: {count_g}"
-            assert HEADER_TAG in abs_rects_of(snap_g), "header still present after resize"
+            assert HEADER_TAG in unclipped_rects_of(snap_g), "header still present after resize"
             assert 0 in rows_g, "row 0 still at the top of the grown body"
             prev_vp, prev_count = vp_g, count_g
 
@@ -174,7 +174,7 @@ def body() -> None:
             desc="wheel advanced the body offset",
         )
         off1 = scroll_offset(snap)
-        rects1 = abs_rects_of(snap)
+        rects1 = unclipped_rects_of(snap)
         assert HEADER_TAG in rects1, "header stays present after wheel (frozen)"
         rows1 = present_rows(snap)
         assert 0 not in rows1, "top data row scrolled out after wheel"
@@ -200,7 +200,7 @@ def body() -> None:
         )
         rows3 = present_rows(snap)
         assert 9999 in rows3, "the last row is reachable at the bottom"
-        assert HEADER_TAG in abs_rects_of(snap), "header still frozen at the bottom"
+        assert HEADER_TAG in unclipped_rects_of(snap), "header still frozen at the bottom"
 
         tf.scroll(SCROLL_TAG, to=(0, 0))
         wait_until(
@@ -227,7 +227,7 @@ def body() -> None:
 def _boot_snapshot_and_rects():
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
         snap = tf.snapshot(source="paint", viewport=WIN)
-        return snap, abs_rects_of(snap)
+        return snap, unclipped_rects_of(snap)
 
 
 def capture_screenshot() -> Path:

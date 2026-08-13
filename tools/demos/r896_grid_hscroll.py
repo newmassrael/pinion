@@ -34,7 +34,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
-    abs_rects_of,
+    unclipped_rects_of,
     assert_eq,
     find_by_tag,
     run_demo,
@@ -76,7 +76,7 @@ def hviewport_x(snap) -> int:
 
 
 def x_visible(rect, vp_x, vp_w) -> bool:
-    """`abs_rects_of` reports window-absolute geometry WITHOUT clipping, so a
+    """`unclipped_rects_of` reports window-absolute geometry WITHOUT clipping, so a
     column is on-screen iff its x-span overlaps the horizontal viewport."""
     x, _, w, _ = rect
     return x < vp_x + vp_w and x + w > vp_x
@@ -91,7 +91,7 @@ def body() -> None:
     with RpcSubprocess("hello-data-grid", boot_grace=1.5) as tf:
         # ── (A) structure + overflow at boot ────────────────────────
         snap = tf.snapshot(source="paint", viewport=WIN)
-        rects = abs_rects_of(snap)
+        rects = unclipped_rects_of(snap)
         assert GRID in rects, "grid root present at boot"
         assert HEADER in rects, "dg_header band present at boot"
         assert_eq(hscroll_node(snap).get("axis"), "horizontal",
@@ -123,7 +123,7 @@ def body() -> None:
         snap = wait_snap(tf, lambda s: offset_x(s) == D, viewport=WIN,
                          desc="horizontal scroll advanced offset_x to 80")
         assert_eq(offset_x(snap), D, "offset_x reads back exactly the requested 80")
-        rects2 = abs_rects_of(snap)
+        rects2 = unclipped_rects_of(snap)
         h_h1 = col_x(rects2, "data_grid#h1")
         c_01 = col_x(rects2, "data_grid#0_1")
         assert_eq(h_h1, c_01, "Type header still x-aligned with body cell (0,1) after scroll")
@@ -138,7 +138,7 @@ def body() -> None:
         snap = wait_snap(tf, lambda s: offset_x(s) == TOTAL_W - hviewport_w(s), viewport=WIN,
                          desc="offset_x clamps to total_w - viewport_w")
         assert_eq(offset_x(snap), max_x, "scroll-to-max clamps to total_w - viewport_w")
-        rects3 = abs_rects_of(snap)
+        rects3 = unclipped_rects_of(snap)
         assert x_visible(rects3["data_grid#h4"], hviewport_x(snap), hviewport_w(snap)), \
             "Active column revealed at max scroll"
         assert not x_visible(rects3["data_grid#h0"], hviewport_x(snap), hviewport_w(snap)), \

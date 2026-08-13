@@ -25,7 +25,7 @@ scrolled text rows.
       offset equals the field offset, and returns to 0 together;
   (E) an empty buffer still shows line "1".
 
-The gutter geometry is read from the PAINT snapshot (`abs_rects_of` re-derives
+The gutter geometry is read from the PAINT snapshot (`unclipped_rects_of` re-derives
 the scroll-translated window-absolute rects), so every alignment claim is
 grounded in the rendered frame, not inferred ([[introspection-from-paint-not-screen]]).
 
@@ -45,7 +45,7 @@ from typing import Any, Optional
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
-    abs_rects_of,
+    unclipped_rects_of,
     assert_eq,
     find_by_tag,
     run_demo,
@@ -77,7 +77,7 @@ def _logical_count(text: str) -> int:
 
 
 def _gutter_tags(snap: Any) -> dict[str, tuple[int, int, int, int]]:
-    return {t: r for t, r in abs_rects_of(snap).items() if t.startswith(FIELD + "#gl")}
+    return {t: r for t, r in unclipped_rects_of(snap).items() if t.startswith(FIELD + "#gl")}
 
 
 def _num_content(snap: Any, n: int) -> Optional[str]:
@@ -127,7 +127,7 @@ def body() -> None:
         assert_eq(_num_content(snap, 3), "3", "third number reads '3'")
         assert find_by_tag(snap, gnum(4)) is None, "no fourth number for three lines"
 
-        rects = abs_rects_of(snap)
+        rects = unclipped_rects_of(snap)
         gutter_box = rects[GUT]
         field_box = rects[FIELD]
         # The gutter sits to the LEFT of the field, butted against it.

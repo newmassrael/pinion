@@ -50,7 +50,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     WORKSPACE_ROOT,
-    abs_rects_of,
+    unclipped_rects_of,
     assert_eq,
     find_by_tag,
     read_png_rgba8,
@@ -101,7 +101,7 @@ def visible_window(offset: int, vp_h: int, n: int, pitch: int, overscan: int) ->
 
 def present_ids(snap) -> set[str]:
     out: set[str] = set()
-    for tag in abs_rects_of(snap):
+    for tag in unclipped_rects_of(snap):
         if tag.startswith(f"{TREE_TAG}#"):
             out.add(tag.split("#", 1)[1])
     return out
@@ -165,7 +165,7 @@ def body() -> None:
             lambda: (lambda s: s if present_ids(s) else None)(snap_now()),
             desc="boot window renders after AutoSizer warmup",
         )
-        rects = abs_rects_of(snap)
+        rects = unclipped_rects_of(snap)
         assert SCROLL_TAG in rects, "scroll container present at boot"
         assert_eq(scroll_offset(snap), 0, "boot offset is 0")
 
@@ -283,12 +283,12 @@ def body() -> None:
 def _boot_snapshot_and_rects():
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
         snap = wait_until(
-            lambda: (lambda s: s if any(t.startswith(f"{TREE_TAG}#") for t in abs_rects_of(s)) else None)(
+            lambda: (lambda s: s if any(t.startswith(f"{TREE_TAG}#") for t in unclipped_rects_of(s)) else None)(
                 tf.snapshot(source="paint", viewport=WIN)
             ),
             desc="boot window renders for the pixel pass",
         )
-        return snap, abs_rects_of(snap)
+        return snap, unclipped_rects_of(snap)
 
 
 def capture_screenshot() -> Path:

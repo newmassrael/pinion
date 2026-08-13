@@ -51,13 +51,20 @@ from rpc_verify import (  # noqa: E402
 # agree with itself would pass just as happily if every box on the wire lost
 # the same key. An independent restatement is the only shape that can fail when
 # the projection and the type drift apart together.
-CENSUS = ["border", "corner_radius", "fill", "gradient", "shadows"]
+CENSUS = ["border", "chrome", "corner_radius", "fill", "gradient", "shadows"]
 
 # Which binding declares which facet. Chosen because the union is the census —
 # see the module docstring.
 BINDINGS = {
     "hello-gradient": ["fill", "corner_radius", "gradient"],
     "hello-card": ["fill", "corner_radius", "border", "shadows"],
+    # ★ R1676 — the third binding exists because (G) demanded it. R1674 added
+    # `chrome` to the census and to the wire, and neither of the two bindings
+    # above declares one, so the key reached the wire carrying nothing anybody
+    # could witness — the exact state (G) was written to catch `gradient` in.
+    # A group box is where a band of a box reserved for the box's own chrome is
+    # actually declared in production: its caption sits in one.
+    "hello-group-box": ["fill", "border", "chrome"],
 }
 
 BOX_NODES = ("Box", "Container")
@@ -70,7 +77,7 @@ def is_declared(facet: str, style: dict) -> bool:
     value = style.get(facet)
     if facet in ("border", "gradient"):
         return value is not None
-    if facet == "shadows":
+    if facet in ("shadows", "chrome"):
         return bool(value)
     if facet == "corner_radius":
         return value != 0

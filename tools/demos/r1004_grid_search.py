@@ -151,7 +151,19 @@ def body() -> None:
         # Wrap-around: jumping back to the first match returns to the top.
         assert_eq(tf.invoke(f"/{SEARCH_TAG}/external/jump", 0), deltas[0], "jump 0 -> first match")
         win0 = present_rows(tf.snapshot(source="paint", viewport=WIN))
-        assert deltas[0] in win0 and min(win0) == 0, "first match revealed at the top"
+        # ★ R1676 — the topmost VISIBLE row is the match, which is what
+        # "revealed at the top" means. This used to read `min(win0) == 0`, a
+        # claim about the overdraw band rather than about what a reader can
+        # see: `present_rows` reported rows the viewport cut away entirely, and
+        # source row 0 was among them (measured: after this jump, rows 0-2 are
+        # painted at y=-20, 16 and 52 above a viewport that starts at 88). The
+        # assertion passed on rows nobody could read while the sentence beside
+        # it claimed otherwise; the rectangle reader now answers what is on
+        # screen, so the assertion can say the thing it always meant.
+        assert deltas[0] in win0 and min(win0) == deltas[0], (
+            f"first match revealed at the top — topmost visible row is "
+            f"{min(win0)}, the match is {deltas[0]}"
+        )
         # prev from the first match wraps to the last.
         assert_eq(tf.invoke(f"/{SEARCH_TAG}/external/prev", None), deltas[-1], "prev wraps to last match")
         assert_eq(tf.invoke(f"/{SEARCH_TAG}/external/next", None), deltas[0], "next wraps to first match")

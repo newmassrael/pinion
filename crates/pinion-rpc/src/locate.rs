@@ -224,6 +224,73 @@ pub fn bbox_of_tag(scene: &Scene, tag: &str) -> Option<BboxOutcome> {
     found
 }
 
+/// R1676 §5.32 §5.20 §2 #7 — [`bbox_of_tag`] for **every** tag in one pass:
+/// each §5.20 intent tag the scene carries, and where a pointer reaches it.
+///
+/// # Why an enumeration, and not N calls to [`bbox_of_tag`]
+///
+/// Because a process with no pointer has to ask a *different* question than a
+/// person does. A person sees the screen and then aims; an agent has to learn
+/// what is aimable, and asking one tag at a time requires already knowing the
+/// tag — which is the same gap `rpc/methods` was built to close one layer up.
+///
+/// The floor was measured on the mature retained-mode toolkit at 6.11
+/// (offscreen, an item view horizontally scrolled to its maximum):
+///
+/// * A per-item rect is reported **unclipped** — the leading column answered
+///   `x=-232 w=99` against a `0..368` viewport, an intersection of nothing.
+///   Visibility is a second call the caller performs itself.
+/// * That toolkit's own point→item lookup then **agrees with the unclipped
+///   rect**: asked for the item at the centre of a rect lying entirely left of
+///   the viewport, it names the cell rather than refusing. So the two-step is
+///   not merely inconvenient, it has an affirmative wrong answer in it.
+/// * Its visible-region call, which does answer honestly (empty once the
+///   target scrolls out), is a *widget* member — and an item-view cell is not
+///   a widget, so for the case above it does not exist at all.
+/// * There is no enumeration in either direction: a caller wanting every
+///   addressable element walks the widget tree itself, and for a model-backed
+///   view walks the model.
+///
+/// Here `window` is the same fact [`NodeVisit::absolute_rect`] answers, so
+/// reported and visible cannot come apart, it is answered for every mark
+/// rather than only for the ones that happen to be widgets, and the whole tree
+/// costs one round trip.
+///
+/// # The `None` window is carried, not dropped
+///
+/// A tag whose node is painted but wholly clipped away is **present** with
+/// `window: None`. Dropping it would make "this screen has no such mark" and
+/// "this mark is scrolled out of sight" the same answer, and they take
+/// different repairs — the first is a defect in the view, the second is a
+/// scroll away from being fixed. [`crate::scroll_reach`] is the method that
+/// tells those two apart; this one must not erase the distinction before it
+/// gets there.
+///
+/// First tag wins, pre-order, the rule the whole tag surface shares — the same
+/// rule [`bbox_of_tag`] and [`Scene::absolute_rects_by_tag`] apply, and it is
+/// applied here by the same walk rather than by a second copy of it.
+///
+/// [`NodeVisit::absolute_rect`]: pinion_core::scene::NodeVisit::absolute_rect
+#[must_use]
+pub fn tag_rects_of(scene: &Scene) -> Vec<(String, BboxOutcome)> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut out: Vec<(String, BboxOutcome)> = Vec::new();
+    scene.for_each_node(&mut |visit| {
+        let Some(tag) = visit.node.tag() else { return };
+        if !seen.insert(tag.to_owned()) {
+            return;
+        }
+        out.push((
+            tag.to_owned(),
+            BboxOutcome {
+                bbox: visit.node.rect(),
+                window: visit.absolute_rect(),
+            },
+        ));
+    });
+    out
+}
+
 /// What [`bbox_of`] answers: a node's own rectangle, and where it is painted.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BboxOutcome {
@@ -622,6 +689,100 @@ mod tests {
         let out = bbox_of(&scene, "/plain").expect("addressed");
         assert_eq!(out.bbox, Rect::new(50, 60, 30, 10));
         assert_eq!(out.window, Some(out.bbox));
+    }
+
+    /// ★★ R1676 — the enumeration answers the same thing the single lookup
+    /// does, for every tag, including the ones the single lookup would have to
+    /// be asked about by name to learn they exist.
+    ///
+    /// Four cases in one scene because they are four different ways the two
+    /// could come apart: a mark fully in view, a mark the viewport CUTS, a mark
+    /// scrolled wholly out, and a tag used twice. The last is the one a fixture
+    /// without duplicates cannot see, and it is where the tree's own two
+    /// implementations disagreed before R1653 pinned them together.
+    ///
+    /// The load-bearing assertion is that the scrolled-out mark is PRESENT with
+    /// no window rather than absent: "there is no such mark" and "it is out of
+    /// sight" take different repairs, and an enumeration that drops the second
+    /// hands the caller the first.
+    #[test]
+    fn r1676_the_enumeration_answers_what_the_single_lookup_answers() {
+        let content = container_at(
+            0,
+            0,
+            400,
+            400,
+            vec![
+                tagged_box_at(10, 30, 40, 20, "whole"),
+                tagged_box_at(80, 30, 40, 20, "cut"),
+                tagged_box_at(10, 300, 40, 20, "gone"),
+                tagged_box_at(10, 340, 40, 20, "twice"),
+                tagged_box_at(10, 60, 40, 20, "twice"),
+            ],
+        );
+        let mut scroll = pinion_core::scene::ScrollNode::new(Rect::new(100, 50, 100, 100), content);
+        scroll.offset_y = 10;
+        let scene = container_at(0, 0, 500, 500, vec![Scene::Scroll(scroll)]);
+
+        let rows = tag_rects_of(&scene);
+        let by_tag: std::collections::HashMap<&str, &BboxOutcome> =
+            rows.iter().map(|(t, o)| (t.as_str(), o)).collect();
+
+        assert_eq!(
+            by_tag["whole"].window,
+            Some(Rect::new(110, 70, 40, 20)),
+            "a mark inside the viewport reports where it is painted"
+        );
+        assert_eq!(
+            by_tag["cut"].window,
+            Some(Rect::new(180, 70, 20, 20)),
+            "★ a mark the viewport CUTS reports the part a pointer can reach, \
+             not the 40px the author asked for — the half the reference \
+             toolkit leaves to the caller"
+        );
+        assert_eq!(
+            by_tag["cut"].bbox,
+            Rect::new(80, 30, 40, 20),
+            "and its own rectangle is still the whole of it, so nothing is lost \
+             by folding the clip into the other field"
+        );
+        assert!(
+            by_tag.contains_key("gone"),
+            "★ a mark scrolled out of sight is REPORTED — dropping it would \
+             answer 'no such mark', which is a different defect with a \
+             different repair",
+        );
+        assert_eq!(
+            by_tag["gone"].window, None,
+            "and it says nothing is reachable"
+        );
+        assert_eq!(
+            by_tag["twice"].window, None,
+            "★ FIRST tag wins: the earlier `twice` is the scrolled-out one, and \
+             a walk that let a later duplicate fill the slot would answer a \
+             different node from the single lookup",
+        );
+
+        // Neither is allowed to be a second copy of the other.
+        for (tag, outcome) in &rows {
+            assert_eq!(
+                Some(*outcome),
+                bbox_of_tag(&scene, tag),
+                "the enumeration and the single lookup disagree about {tag:?}",
+            );
+            assert_eq!(
+                outcome.window,
+                scene.rect_for_tag_absolute(tag),
+                "and neither agrees with the resolver a click routes by, for {tag:?}",
+            );
+        }
+
+        // The counter-assertion: this is an enumeration, so it must have found
+        // the tags WITHOUT being told them. A helper that answered only what it
+        // was asked about would pass everything above and enumerate nothing.
+        let mut names: Vec<&str> = rows.iter().map(|(t, _)| t.as_str()).collect();
+        names.sort_unstable();
+        assert_eq!(names, ["cut", "gone", "twice", "whole"]);
     }
 
     #[test]

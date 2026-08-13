@@ -52,7 +52,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     WORKSPACE_ROOT,
-    abs_rects_of,
+    unclipped_rects_of,
     assert_eq,
     find_by_tag,
     read_png_rgba8,
@@ -96,7 +96,7 @@ def visible_window(offset: int, vp_h: int, n: int, pitch: int, overscan: int):
 
 def present_rows(snap) -> set[int]:
     out: set[int] = set()
-    for tag in abs_rects_of(snap):
+    for tag in unclipped_rects_of(snap):
         if tag.startswith("flexlist#"):
             out.add(int(tag.split("#", 1)[1]))
     return out
@@ -142,7 +142,7 @@ def body() -> None:
 
         # ── (A) AutoSizer measurement at the boot window ────────────
         snap = snap_now()
-        rects = abs_rects_of(snap)
+        rects = unclipped_rects_of(snap)
         assert LIST_TAG in rects, "list container present at boot"
         assert SCROLL_TAG in rects, "scroll container present at boot"
         assert_eq(scroll_offset(snap), 0, "boot offset is 0")
@@ -260,7 +260,7 @@ def body() -> None:
 def _boot_snapshot_and_rects():
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
         snap = tf.snapshot(source="paint", viewport=WIN)
-        return snap, abs_rects_of(snap)
+        return snap, unclipped_rects_of(snap)
 
 
 def capture_screenshot() -> Path:

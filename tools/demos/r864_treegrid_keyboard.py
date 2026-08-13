@@ -42,7 +42,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     WORKSPACE_ROOT,
-    abs_rects_of,
+    unclipped_rects_of,
     assert_eq,
     read_png_rgba8,
     run_demo,
@@ -140,7 +140,7 @@ def body() -> None:
             lambda: (lambda s: s if present_name_ids(s) else None)(snap_now()),
             desc="boot window renders",
         )
-        assert ROOT_TAG in abs_rects_of(snap), "focusable treegrid root present"
+        assert ROOT_TAG in unclipped_rects_of(snap), "focusable treegrid root present"
         assert_eq(offset_y(snap), 0, "boot vertical offset 0")
         assert_eq(cursor(), "f0", "boot cursor on the first row (aria-activedescendant)")
         assert_eq(row_count(), BOOT_ROWS, "introspection row_count = boot visible rows")
@@ -183,7 +183,7 @@ def body() -> None:
         # The cursor row materialized in BOTH panes (cross-pane lockstep).
         present = present_name_ids(snap)
         assert cur in present, "cursor name cell materialized in the window"
-        rects = abs_rects_of(snap)
+        rects = unclipped_rects_of(snap)
         assert data_strip(cur) in rects, "cursor metadata strip materialized too (both panes)"
         # The cursor index stays inside the re-derived window.
         idx = cursor_index()
@@ -195,7 +195,7 @@ def body() -> None:
         press("Home")  # cursor back to f0, window to the top
         wait_query(tf, CURSOR, "f0", desc="Home -> cursor f0")
         snap = snap_now()
-        rects = abs_rects_of(snap)
+        rects = unclipped_rects_of(snap)
         img = read_png_rgba8(capture_screenshot())
         assert (img.width, img.height) == WIN, f"screenshot {img.width}x{img.height} != {WIN}"
 

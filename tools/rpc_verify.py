@@ -902,6 +902,36 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             env.pop("PINION_HIDDEN_WINDOW", None)
         elif "PINION_HIDDEN_WINDOW" not in env:
             env["PINION_HIDDEN_WINDOW"] = "1"
+        # ★★ R1676 — the software rasteriser renders with ONE tile thread, so a
+        # picture is a function of the scene and not of how the scheduler
+        # interleaved the tiles.
+        #
+        # This is the same argument as the pinned font DB below, one layer down:
+        # a pixel assertion is a claim about paint, and it was being made
+        # through a rasteriser that answers differently for reasons paint has no
+        # part in. R1664 measured the disagreement and made the assertions
+        # tolerate it, which is the right move for noise you cannot remove.
+        # R1676 measured whether it can be removed — ten captures of one
+        # unchanged screen under software Vulkan, 45 pairs:
+        #
+        #   default          3 of 45 pairs byte-identical, worst 1
+        #   LP_NUM_THREADS=1 45 of 45 pairs byte-identical, worst 0
+        #
+        # So it is thread interleaving, and it goes away. That matters twice.
+        # It removes a FLAKE the tolerance could not: the floor is measured from
+        # the control pair, and a control pair agreeing by luck — 3 times in 45
+        # — reports 0 and then fails a tested pair that noised by 1. And it
+        # restores the assertion's STRENGTH: with a tolerance of 1 a stale
+        # fragment differing by one least-significant bit is invisible, and with
+        # a deterministic rasteriser it is not.
+        #
+        # Ignored by every other driver, so this costs nothing where it does not
+        # apply, and measured at no cost where it does (2.53s vs 2.57s for the
+        # same demo). It is set HERE rather than in the CI job because a repro
+        # on this machine has to have the property CI has — a local run that is
+        # deterministic for a different reason than CI's is the green-local /
+        # red-CI shape [[zero-flake-policy]] exists to forbid.
+        env.setdefault("LP_NUM_THREADS", "1")
         # R1660 — every measurement in this tree shapes against ONE pinned face,
         # so a budget measured here means the same thing on CI. See
         # `pinned_fontconfig` for the defect and for why this replaces the font
@@ -1026,6 +1056,7 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         self._gate_containment()
         self._gate_stated_reasons()
         self._gate_scroll_reach()
+        self._gate_tag_rects_agree()
         return self
 
     def _gate_pointer_reach(self) -> None:
@@ -1459,6 +1490,63 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
                 f"{out.get('scrollable', 0)} one scroll away, of "
                 f"{out.get('marks', 0)} marks, budget {allowed}"
             )
+
+    def _gate_tag_rects_agree(self) -> None:
+        """★★ R1676 — the harness and the framework answer the same geometry.
+
+        `abs_rects_of` deliberately re-derives where every tagged mark is
+        painted rather than asking, and that independence is load-bearing: it
+        is what makes a focus-ring assertion a comparison instead of a
+        tautology (R705.1). What was missing is the other half of independence
+        — nothing ever checked that the second implementation AGREED with the
+        first.
+
+        It did not, in two ways at once, for as long as both existed. The
+        mirror folded each `Scroll`'s offset and not its clip, so a mark the
+        viewport cuts was reported at its full width and a mark scrolled out of
+        sight was reported at a rectangle off-screen; and it let a LATER
+        duplicate tag overwrite an earlier one where the framework keeps the
+        first. Both are invisible to every assertion a demo makes afterwards,
+        because a demo asks this map where to press and then presses there: the
+        press lands on nothing, the widget never arms, and the failure surfaces
+        as a value that did not change — sixty lines later, naming neither the
+        press nor the geometry. Three demos were red for exactly that.
+
+        Full coverage in one round trip, so this is not a sample: the wire
+        enumerates EVERY tag, and the two maps are compared whole.
+
+        A binary too old to answer the method is driven without the gate, the
+        same tolerance the boot baseline gives.
+        """
+        try:
+            resp = self.request("scene/tag_rects")
+        except RpcError as exc:
+            if exc.code in (-32601, -32602):
+                return  # stale binary, or no painted frame to enumerate
+            raise
+        assert resp is not None
+        wire: dict[str, tuple[int, int, int, int]] = {}
+        for row in resp.result.get("tags", []):
+            win = row.get("window")
+            if win is not None:
+                wire[row["tag"]] = (win["x"], win["y"], win["w"], win["h"])
+        mine = abs_rects_of(self.snapshot(source="paint"))
+        if mine == wire:
+            return
+        rows = []
+        for tag in sorted(set(mine) | set(wire))[:200]:
+            if mine.get(tag) != wire.get(tag):
+                rows.append(f"{tag}: harness {mine.get(tag)} vs framework {wire.get(tag)}")
+        raise AssertionError(
+            f"{self.example}: {len(rows)} tag(s) where this harness and the "
+            f"framework disagree about where a mark is painted — "
+            f"{'; '.join(rows[:6])}. The framework is the authority: its answer "
+            f"is the one `Scene::rect_for_tag_absolute` routes a press by, so a "
+            f"demo pressing the harness's rectangle presses somewhere the app "
+            f"never looks. `None` on the framework side means the mark is "
+            f"painted but wholly clipped away, and the harness must then not "
+            f"report it at all."
+        )
 
     def __exit__(self, exc_type, exc, tb) -> None:
         leak = self.shutdown()
@@ -3775,6 +3863,25 @@ def assert_same_picture(
     taken in the same process on the same rasteriser. On a deterministic one its
     tolerance is **0**, and this assertion is then exactly the byte-identity it
     replaces — which is what it reduces to on this project's GPU hosts.
+
+    # ★★ R1676 — a measured 0 is not evidence of determinism
+
+    The two directions are not symmetric, and reading them as if they were is
+    what put `r1527` red on CI while it passed here. **Seeing a difference
+    proves the rasteriser is non-deterministic. Seeing agreement proves
+    nothing** — it is one sample of a stochastic process, and this one agrees
+    by luck about 7% of the time (measured: 3 of 45 pairs under the software
+    Vulkan the sweep ran on). A control pair that agrees reports a floor of 0,
+    and the tested pair then fails for the noise the floor was supposed to
+    absorb. Widening the sample only lowers that rate, and a lowered flake rate
+    is not what [[zero-flake-policy]] asks for.
+
+    So the CAUSE is removed instead: `RpcSubprocess` pins the software
+    rasteriser to one tile thread (see `_enter_inner`), where all 45 pairs are
+    byte-identical. This helper stays, because a host it does not control can
+    still be non-deterministic and the demo should say so rather than flake —
+    but on the hosts this project runs, the tolerance it measures is now 0
+    because the rasteriser is deterministic, not because the sample was lucky.
     """
     assert len(control) >= 2, (
         f"{what}: the tolerance is measured, so it needs at least two captures "
@@ -3883,43 +3990,158 @@ def assert_router_press_moves(
     return after
 
 
-def abs_rects_of(snap: Any) -> dict[str, tuple[int, int, int, int]]:
-    """Map every tagged node to its **window-absolute** rect `(x, y, w, h)`.
+def _clipped_into(
+    x: int, y: int, w: int, h: int, clip: Optional[tuple[int, int, int, int]]
+) -> Optional[tuple[int, int, int, int]]:
+    """Mirror of `pinion_core::scene::translate_rect_into_clip`, arm for arm.
 
-    Independently re-implements the scroll-offset translation that
-    `pinion_core::scene::Scene::rect_for_tag_absolute` does in Rust: a
-    node inside a `Scroll` carries a scroll-LOCAL rect, and the renderer
-    paints it at `viewport_pos + (local - scroll_offset)`. Accumulating
-    `(viewport.x - offset_x, viewport.y - offset_y)` per Scroll boundary
-    yields the on-screen position. This is the GROUNDING that makes a
-    focus-ring assertion non-tautological: the ring rect (a top-level
-    overlay, already window-absolute) is checked against a *separately
-    computed* absolute position, so a ring drawn at a scroll-local rect
-    is caught (R705.1, [[introspection-from-paint-not-screen]]).
+    Kept a separate function for the reason the Rust one is: the fold is the
+    part that is easy to write *almost* right, and a copy of it inlined at each
+    call site is a copy free to drift from the others.
     """
-    out: dict[str, tuple[int, int, int, int]] = {}
+    left, top = x, y
+    right, bottom = left + w, top + h
+    if clip is not None:
+        cx, cy, cw, ch = clip
+        left, top = max(left, cx), max(top, cy)
+        right, bottom = min(right, cx + cw), min(bottom, cy + ch)
+    if right <= left or bottom <= top:
+        return None
+    out_x, out_y = max(left, 0), max(top, 0)
+    return (out_x, out_y, right - out_x, bottom - out_y)
 
-    def walk(node: Any, xoff: int, yoff: int) -> None:
+
+def unclipped_rects_of(snap: Any) -> dict[str, tuple[int, int, int, int]]:
+    """Map every tagged node to **where it would be if nothing clipped it**.
+
+    ★★ R1676 — the OTHER question, and it needed its own name because for a
+    long time it did not have one.
+
+    `abs_rects_of` answers "where can a pointer reach this", and a mark a
+    viewport cuts away is absent from it. That is the right answer for the
+    caller aiming a press, and the WRONG one for a caller asking what the view
+    emitted: a virtualized grid's claim is that it builds exactly the cells it
+    paints, and a cell built and then clipped is still a cell it built. Asking
+    the visible map that question reports the virtualization as tighter than it
+    is — measured, four demos changed their answer when the clip was folded in.
+
+    The framework names both halves and always has:
+    [`NodeVisit::offset`] is documented as "where it would be … even when the
+    leaf is scrolled out of view", and `absolute_rect()` as "where it can be
+    seen". This is the first, `abs_rects_of` is the second, and both come out of
+    one walk so they cannot disagree about the offsets they share.
+
+    Reach for this one when the question is about what the VIEW did — which
+    rows it built, which columns it asked the model for, how far a pane's
+    content extends past its own edge. Reach for `abs_rects_of` when the
+    question is about what a PERSON can do.
+    """
+    return _walk_tag_rects(snap, clipped=False)
+
+
+def abs_rects_of(snap: Any) -> dict[str, tuple[int, int, int, int]]:
+    """Map every tagged node to the **part of it a pointer can reach**, `(x, y, w, h)`.
+
+    Independently re-implements what `pinion_core::scene::Scene::absolute_rects_by_tag`
+    does in Rust: a node inside a `Scroll` carries a scroll-LOCAL rect, the
+    renderer paints it at `viewport_pos + (local - scroll_offset)`, and every
+    enclosing viewport then CUTS it. Accumulating `(viewport.x - offset_x,
+    viewport.y - offset_y)` per Scroll boundary yields the on-screen position;
+    intersecting with the accumulated viewport stack yields the part that is on
+    screen. This is the GROUNDING that makes a focus-ring assertion
+    non-tautological: the ring rect (a top-level overlay, already
+    window-absolute) is checked against a *separately computed* absolute
+    position, so a ring drawn at a scroll-local rect is caught (R705.1,
+    [[introspection-from-paint-not-screen]]).
+
+    ★★ R1676 — THE CLIP IS HALF THE ANSWER, and this mirror used to fold only
+    the offset. `NodeVisit::absolute_rect`'s doc argues at length that reported
+    and visible have to be ONE fact, because a caller that forgets the second
+    call "asserts against a rectangle nothing was drawn in" — and this was that
+    caller. Every demo picks press points from this map, so the map handed out
+    coordinates outside the viewport and the presses went nowhere. Measured on
+    `hello-data-grid`: a cell reported at `x=-31 w=100` inside a viewport
+    starting at `x=21`, its centre two pixels to the LEFT of anything, the press
+    silently dropped, and the release landing on a DIFFERENT cell. Three demos
+    were red for it.
+
+    The floor makes the same split — measured, offscreen, on the mature
+    retained-mode toolkit at 6.11: its per-item rect for a horizontally scrolled
+    view answers `x=-232 w=99` against a `0..368` viewport, and its own
+    point→item lookup then names that cell for a point no pointer can occupy.
+    Its honest visible-region call is a *widget* member, and an item-view cell
+    is not a widget. Here there is one fact and it is this one.
+
+    A tag whose node is painted but wholly clipped away is ABSENT from the map,
+    which is `absolute_rects_by_tag`'s rule and is why `in rects` is the
+    question "can this be reached" rather than "does this exist". Ask
+    `scene/tag_rects` when the difference matters: it carries those tags with a
+    null window.
+
+    First tag wins, pre-order — the rule the whole tag surface shares. Writing
+    it as a plain assignment made this mirror answer a *later* duplicate while
+    the Rust answered the first, which is the second way the two had come apart.
+    """
+    return _walk_tag_rects(snap, clipped=True)
+
+
+def _walk_tag_rects(snap: Any, *, clipped: bool) -> dict[str, tuple[int, int, int, int]]:
+    """One walk behind both readers, so they cannot disagree about the offsets
+    they share — only about the clip, which is the whole difference between the
+    two questions."""
+    out: dict[str, Optional[tuple[int, int, int, int]]] = {}
+
+    def keep(tag: str, rect: Optional[tuple[int, int, int, int]]) -> None:
+        # `setdefault`, not `[]=`: a first match that is clipped away has to
+        # occupy its slot as `None`, or a later duplicate fills it and this
+        # answers a different node from the one the framework resolves.
+        out.setdefault(tag, rect)
+
+    def place(
+        x: int, y: int, w: int, h: int, clip: Optional[tuple[int, int, int, int]]
+    ) -> Optional[tuple[int, int, int, int]]:
+        # The unclipped reader returns the sum verbatim — negative coordinates
+        # and all. Clamping them to the window would be a THIRD answer, neither
+        # "where it can be reached" nor "where the view put it", and a caller
+        # comparing a placement against a layout would silently get a rectangle
+        # the layout never produced.
+        if not clipped:
+            return (x, y, w, h)
+        return _clipped_into(x, y, w, h, clip)
+
+    def walk(
+        node: Any, xoff: int, yoff: int, clip: Optional[tuple[int, int, int, int]]
+    ) -> None:
         if not isinstance(node, dict):
             return
         tag = node.get("tag")
         if node.get("type") == "Scroll":
             vp = node.get("viewport") or {}
+            vx, vy = vp.get("x", 0), vp.get("y", 0)
+            vw, vh = vp.get("w", 0), vp.get("h", 0)
+            seat = _clipped_into(vx + xoff, vy + yoff, vw, vh, clip)
             if tag:
-                out[tag] = (vp.get("x", 0) + xoff, vp.get("y", 0) + yoff,
-                            vp.get("w", 0), vp.get("h", 0))
-            nx = xoff + vp.get("x", 0) - node.get("offset_x", 0)
-            ny = yoff + vp.get("y", 0) - node.get("offset_y", 0)
-            walk(node.get("content"), nx, ny)
+                keep(tag, place(vx + xoff, vy + yoff, vw, vh, clip))
+            # An empty seat is carried down as an empty clip rather than as
+            # "no clip": the children are still walked (a walk that omits nodes
+            # is the failure this exists to end) and each reports unreachable,
+            # which is the honest answer. Same arm as `Scene::walk_from`.
+            walk(
+                node.get("content"),
+                xoff + vx - node.get("offset_x", 0),
+                yoff + vy - node.get("offset_y", 0),
+                seat or (0, 0, 0, 0),
+            )
             return
         rect = node.get("rect")
         if tag and isinstance(rect, dict):
-            out[tag] = (rect["x"] + xoff, rect["y"] + yoff, rect["w"], rect["h"])
+            keep(tag, place(rect["x"] + xoff, rect["y"] + yoff,
+                            rect["w"], rect["h"], clip))
         for child in (node.get("children") or []):
-            walk(child, xoff, yoff)
+            walk(child, xoff, yoff, clip)
 
-    walk(snap, 0, 0)
-    return out
+    walk(snap, 0, 0, None)
+    return {tag: rect for tag, rect in out.items() if rect is not None}
 
 
 def assert_focus_ring_concentric(snap: Any, offset: int = 2) -> Optional[str]:

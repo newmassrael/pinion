@@ -49,7 +49,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     FOCUS_RING_TAG,
     RpcSubprocess,
-    abs_rects_of,
+    unclipped_rects_of,
     assert_eq,
     assert_focus_ring_concentric,
     isolated_storage_dir,
@@ -91,7 +91,7 @@ def _check_title(app: RpcSubprocess, bar_focus: int) -> None:
     of that title, with the boundary clamp applied per axis."""
     tag, want_title, want_ring = TITLES[bar_focus]
     snap = app.snapshot(source="paint", viewport=VIEWPORT)
-    rects = abs_rects_of(snap)
+    rects = unclipped_rects_of(snap)
 
     # The title paints exactly where we expect (guards against a layout drift
     # silently changing what "flush at the edge" means).
@@ -260,7 +260,7 @@ def body() -> None:
             app.key(path=BAR, name="ArrowLeft")  # t2 -> wrap to t0 (File)
             app.key(path=BAR, name="ArrowDown")  # open File, active item 0
             snap = app.snapshot(source="paint", viewport=VIEWPORT)
-            rects = abs_rects_of(snap)
+            rects = unclipped_rects_of(snap)
             item = rects.get("menu#i0")
             assert item is not None, "open File: active item 0 paints"
             assert item[1] >= OFFSET, "dropdown item is clear of the top edge"

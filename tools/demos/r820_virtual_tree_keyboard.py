@@ -45,7 +45,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     WORKSPACE_ROOT,
-    abs_rects_of,
+    unclipped_rects_of,
     assert_eq,
     find_by_tag,
     read_png_rgba8,
@@ -182,7 +182,7 @@ def body() -> None:
             lambda: (lambda s: s if present_ids(s) else None)(snap_now()),
             desc="boot window renders",
         )
-        assert ROOT_TAG in abs_rects_of(snap), "focusable tree root present"
+        assert ROOT_TAG in unclipped_rects_of(snap), "focusable tree root present"
         assert_eq(scroll_offset(snap), 0, "boot offset 0")
         # The tree is a single tab stop, so the cursor boots on the first row
         # (WAI-ARIA aria-activedescendant defined from frame one).
@@ -333,7 +333,7 @@ def _focused_snapshot_and_rects():
             lambda: (lambda s: s if cursor_id(s) == "s0" else None)(tf.snapshot(source="paint", viewport=WIN)),
             desc="boot cursor on s0 for the pixel pass",
         )
-        return snap, abs_rects_of(snap)
+        return snap, unclipped_rects_of(snap)
 
 
 def capture_screenshot() -> Path:

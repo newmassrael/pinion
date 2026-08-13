@@ -36,7 +36,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
-    abs_rects_of,
+    unclipped_rects_of,
     assert_eq,
     find_by_tag,
     run_demo,
@@ -108,7 +108,7 @@ def visible_window(offset: int, n: int) -> set[int]:
 def present_rows(snap) -> set[int]:
     return {
         int(tag.split("#", 1)[1])
-        for tag in abs_rects_of(snap)
+        for tag in unclipped_rects_of(snap)
         if tag.startswith(f"{LIST_TAG}#")
     }
 

@@ -43,7 +43,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     WORKSPACE_ROOT,
-    abs_rects_of,
+    unclipped_rects_of,
     assert_eq,
     find_by_tag,
     read_png_rgba8,
@@ -118,7 +118,7 @@ def body() -> None:
 
         # ── (A) structure at boot ───────────────────────────────────
         snap = snap_now()
-        rects = abs_rects_of(snap)
+        rects = unclipped_rects_of(snap)
         assert "tgrid_root" in rects, "outliner root anchor present at boot"
         assert FROZEN_HEADER_TAG in rects, "frozen tree header band present"
         assert SCROLL_HEADER_TAG in rects, "scrolling metadata header band present"
@@ -197,7 +197,7 @@ def body() -> None:
         snap = wait_snap(tf, lambda s: offset_x(s) == D, viewport=WIN,
                          desc="horizontal scroll advanced offset_x")
         assert_eq(offset_y(snap), 0, "vertical offset unchanged by horizontal scroll")
-        rects2 = abs_rects_of(snap)
+        rects2 = unclipped_rects_of(snap)
         # Frozen name column DID NOT MOVE.
         assert_eq(x_of(rects2, name_cell("f0")), f0_name_x_boot,
                   "FROZEN name cell x unchanged after horizontal scroll")
@@ -224,7 +224,7 @@ def body() -> None:
                          desc="scroll-to-max advanced past D")
         max_x = offset_x(snap)
         assert max_x > D, f"scroll-to-max advanced past D ({max_x} > {D})"
-        rects_max = abs_rects_of(snap)
+        rects_max = unclipped_rects_of(snap)
         assert_eq(x_of(rects_max, name_cell("f0")), f0_name_x_boot,
                   "FROZEN name cell STILL at boot x at max horizontal scroll")
         assert_eq(x_of(rects_max, data_strip("f0")), f0_strip_x_boot - max_x,
@@ -234,7 +234,7 @@ def body() -> None:
         tf.scroll(H_SCROLL_TAG, to=(0, 0))
         snap = wait_snap(tf, lambda s: offset_x(s) == 0, viewport=WIN,
                          desc="horizontal scrolled back to 0")
-        rects_reset = abs_rects_of(snap)
+        rects_reset = unclipped_rects_of(snap)
         assert_eq(x_of(rects_reset, data_strip("f0")), f0_strip_x_boot,
                   "metadata strip back at boot x after reset")
 
@@ -246,7 +246,7 @@ def body() -> None:
         snap = wait_snap(tf, lambda s: offset_y(s) == ROW_PITCH * 4, viewport=WIN,
                          desc="vertical scroll advanced offset_y")
         assert_eq(offset_x(snap), 0, "horizontal offset unaffected by vertical scroll")
-        rects4 = abs_rects_of(snap)
+        rects4 = unclipped_rects_of(snap)
         # A row visible in both panes keeps EQUAL y across name cell + strip.
         rid = "f0-o6"  # well within the window after a 4-row scroll
         assert name_cell(rid) in rects4, f"name cell for {rid} present after v-scroll"
@@ -272,7 +272,7 @@ def body() -> None:
         assert_eq(tf.query(f"/{STATE_TAG}/external/expanded_at.0"), False,
                   "introspection reports f0 collapsed after the click")
         snap = snap_now()
-        rects5 = abs_rects_of(snap)
+        rects5 = unclipped_rects_of(snap)
         assert name_cell("f0") in rects5, "f0 itself still rendered when collapsed"
         assert name_cell("f0-o0") not in rects5, "collapsed folder f0's first child vanishes"
         assert name_cell("f0-o5") not in rects5, "collapsed folder f0's later child vanishes"
@@ -290,7 +290,7 @@ def body() -> None:
         assert_eq(tf.query(f"/{STATE_TAG}/external/expanded_at.0"), True,
                   "introspection reports f0 expanded again")
         snap = snap_now()
-        rects6 = abs_rects_of(snap)
+        rects6 = unclipped_rects_of(snap)
         assert name_cell("f0-o0") in rects6, "f0's children restored after re-expand"
 
     # ── Phase 2 — live pixels (boot frame) ──────────────────────────
@@ -313,7 +313,7 @@ def body() -> None:
 def _boot_snapshot_and_rects():
     with RpcSubprocess(EXAMPLE, boot_grace=1.5) as tf:
         snap = tf.snapshot(source="paint", viewport=WIN)
-        return snap, abs_rects_of(snap)
+        return snap, unclipped_rects_of(snap)
 
 
 def capture_screenshot() -> Path:

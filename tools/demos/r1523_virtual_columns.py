@@ -49,15 +49,22 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
-    abs_rects_of,
     access_node_by_tag,
     assert_eq,
     find_by_tag,
     indexed_tags,
     run_demo,
+    unclipped_rects_of,
     wait_snap,
     wait_until,
 )
+
+# ★ R1676 — the EMISSION reader, deliberately, and not `abs_rects_of`. This
+# demo's claim is about what the view BUILT: that it asks the model for exactly
+# the nodes it emits. A node the renderer then clips away is still one the view
+# built, so the visible-rect reader answers a different question and reports the
+# virtualization as tighter than it is (measured: 77 emitted cells read as 45).
+# `abs_rects_of` is "where can a person press"; this is "what did the view do".
 
 EXAMPLE = "hello-virtual-columns"
 WIN = (560, 420)
@@ -153,7 +160,7 @@ def body() -> None:
 
         # ── (A) boot structure + the surviving extent ────────────────
         snap = snap_now()
-        rects = abs_rects_of(snap)
+        rects = unclipped_rects_of(snap)
         assert TABLE_TAG in rects, "grid root present at boot"
         assert HEADER_TAG in rects, "frozen header row present at boot"
         assert_eq(hscroll_node(snap).get("axis"), "horizontal",
@@ -219,7 +226,7 @@ def body() -> None:
             desc="horizontal scroll advanced offset_x",
         )
         assert_eq(offset_y(snap), 0, "vertical offset unchanged by horizontal scroll")
-        rects2 = abs_rects_of(snap)
+        rects2 = unclipped_rects_of(snap)
         far = row_cols(rects2, 0)
         assert_eq(far, oracle_window(D, vp_w),
                   "the scrolled column window matches the oracle")
@@ -237,7 +244,7 @@ def body() -> None:
             tf, lambda s: offset_x(s) == TOTAL_W - vp_w, viewport=WIN,
             desc="offset_x clamps to total_w - viewport_w",
         )
-        rects3 = abs_rects_of(snap)
+        rects3 = unclipped_rects_of(snap)
         end = row_cols(rects3, 0)
         assert (NCOLS - 1) in end, "the last column is in the tree at max scroll"
         assert 0 not in end, "and the first column has left it"
@@ -285,7 +292,7 @@ def body() -> None:
             return s if w > vp_w else None
 
         snap = wait_until(widened, desc="the grid re-measures its wider viewport")
-        rects4 = abs_rects_of(snap)
+        rects4 = unclipped_rects_of(snap)
         _, vp_w2 = hviewport(snap)
         grown = row_cols(rects4, 0)
         assert len(grown) > len(cols), \

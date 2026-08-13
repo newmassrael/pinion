@@ -258,6 +258,15 @@ jobs:
       # R897.1 — same disk rationale as lint-and-test: strip test-binary debug
       # line-tables so the link stays within the runner disk budget.
       CARGO_PROFILE_TEST_DEBUG: "0"
+      # ★ R1676 — one tile thread, so a picture is a function of the scene and
+      # not of how the scheduler interleaved the tiles. Measured under this
+      # runner's software Vulkan: ten captures of one unchanged screen give 3 of
+      # 45 pairs byte-identical by default and 45 of 45 with this set. The demo
+      # sweep gets the same property from `RpcSubprocess`, which sets it around
+      # every binary it launches; these pixel guards are `cargo test` and never
+      # go through that harness, so they take it here. Ignored by every driver
+      # but the software one.
+      LP_NUM_THREADS: "1"
     steps:
       - uses: actions/checkout@v5
         with:
