@@ -77,7 +77,9 @@ use pinion_core::widgets::config_form::{
     Applies, ConfigDefect, ConfigField, ConfigForm, FieldType, Verdict,
 };
 use pinion_core::widgets::scroll::{AutoScroll, ScrollState};
-use pinion_core::{Frame, Scene, WidgetCore};
+use pinion_core::widgets::text_edit::{TextEditState, use_text_edit_state};
+use pinion_core::widgets::text_field::TextFieldState;
+use pinion_core::{CellKind, Frame, Modifiers, Scene, WidgetCore, edit_field_keymap};
 use pinion_node_graph::{
     Document, Item, LinkId, LinkLayer, Node, NodeBody, NodeId, ROOT, Relinked, Side, Socket,
 };
@@ -87,6 +89,7 @@ use pinion_widget_paint::config_form::{
     view_config_form,
 };
 use pinion_widget_paint::pane::{PanePointer, scroll_pane};
+use pinion_widget_paint::text_field as tf_paint;
 
 use graph::{LabNode, Role, Transport};
 
@@ -385,6 +388,45 @@ impl LinkPick {
     }
 }
 
+/// ★★★ R1683 — what the screen's ONE text field is editing, or `None` while it
+/// is closed.
+///
+/// One field with a target rather than a field per site, which is the sibling
+/// node editor's arrangement and the reason it is worth copying: a second field
+/// is a second focus owner, a second keymap and a second commit path, and the
+/// three sites here want exactly the same behaviour over different values.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
+enum Editing {
+    /// The selected card's name.
+    Name(NodeId),
+    /// A configuration path being typed into the selected card's form, which
+    /// the catalogue does not offer.
+    Key(NodeId),
+}
+
+impl Editing {
+    /// The word the wire reads this back as.
+    const fn wire(self) -> &'static str {
+        match self {
+            Self::Name(_) => "name",
+            Self::Key(_) => "key",
+        }
+    }
+
+    /// What the keystroke gate lets through. Both targets are free text — a
+    /// node's name and a configuration path — so this is `Text` for now and is
+    /// a `match` rather than a constant because the next target may not be.
+    const fn kind(self) -> CellKind {
+        match self {
+            Self::Name(_) | Self::Key(_) => CellKind::Text,
+        }
+    }
+}
+
+/// The tag the shared field is painted under, which is also what owns focus
+/// while it is open.
+const EDIT_TAG: &str = "lab.edit";
+
 /// Everything the screen is.
 struct LabState {
     doc: Tracked<Document<LabNode>>,
@@ -418,6 +460,29 @@ struct LabState {
     drag: Signal<Option<Drag>>,
     pressed: RefCell<Option<Hit>>,
     toast: Signal<String>,
+    /// ★★ R1683 — what the shared field is editing, or `None` while it is shut.
+    editing: Signal<Option<Editing>>,
+    /// The buffer that field holds.
+    ///
+    /// ★★★ **The hook's own object, taken once when the screen is built — not
+    /// a second one.** `use_text_edit_state` resolves through the shell's root
+    /// owner, which lives as long as the application, so the painter and this
+    /// hold ONE buffer; but it PANICS outside an owner scope, and this screen's
+    /// pointer handlers and its wire both run outside one (the same fact R1662
+    /// met with the scroll offsets). So the reference is taken where an owner
+    /// is guaranteed — here, since this type is only ever constructed from
+    /// inside one — and kept for the paths that have none.
+    ///
+    /// ★ Taken at construction rather than at the first paint, and the gate is
+    /// what forced it: an agent that opened the editor before the screen had
+    /// painted got "there is no field", which is a state no session reaches and
+    /// a refusal nobody should have to think about.
+    ///
+    /// That the two are one object is asserted rather than assumed —
+    /// `r1683_the_screen_and_the_painter_hold_one_buffer` compares them with
+    /// `Rc::ptr_eq` after a paint, which is what would fail if the owner were
+    /// ever per-frame.
+    buffer: Rc<TextEditState>,
     /// R1662 — the two side panes' scroll offsets, held here rather than
     /// reached for with `use_scroll_state` because the paint and the hit test
     /// both need them and only the paint runs inside an `Owner` scope. One
@@ -568,6 +633,8 @@ impl LabState {
             drag: Signal::new(None),
             pressed: RefCell::new(None),
             toast: Signal::new(String::new()),
+            editing: Signal::new(None),
+            buffer: use_text_edit_state(EDIT_TAG),
             palette_scroll: Rc::new(ScrollState::with_tag(PALETTE_SCROLL)),
             inspector_scroll: Rc::new(ScrollState::with_tag(INSPECTOR_SCROLL)),
         }
@@ -1842,6 +1909,10 @@ enum Hit {
     Frame(NodeId),
     /// ★★ R1682 — one of the selected card's own three acts.
     NodeAct(NodeAct),
+    /// ★★ R1683 — the seat that opens the one text field on the card's name.
+    Rename,
+    /// The seat that opens it on a configuration path instead.
+    AddKey,
     Field(String),
     AddField(String),
     /// An affordance inside a control: an option, a stepper, a checkbox, a list
@@ -1867,6 +1938,25 @@ impl Hit {
                     if contains(node_act_seat(state, act), px, py) {
                         return Self::NodeAct(act);
                     }
+                }
+                // ★ R1683 — the rename seat. The FIELD beside it is a real
+                // external and owns its own hit target, so it is deliberately
+                // not an arm here: a press inside it reaches the field's own
+                // router, which is what puts the caret where the pointer is.
+                let (box_rect, apply, key) = rename_row();
+                if contains(in_body(state, apply), px, py) {
+                    return Self::Rename;
+                }
+                // ★ R1683 — the shut box is the field's own seat. It looks like
+                // somewhere to type, so pressing it has to open the thing it
+                // looks like; while the field IS open the real external is
+                // painted there and owns the press, which is what puts the
+                // caret where the pointer landed.
+                if state.editing.get().is_none() && contains(in_body(state, box_rect), px, py) {
+                    return Self::Rename;
+                }
+                if contains(in_body(state, key), px, py) {
+                    return Self::AddKey;
                 }
             }
             let geometry = inspector_geometry(state);
@@ -2048,6 +2138,8 @@ impl Hit {
             // R1682 — named by the act rather than by the card, because the
             // card is whatever is selected and the wire reads that separately.
             Self::NodeAct(act) => format!("card:{}", act.wire()),
+            Self::Rename => "card:rename".into(),
+            Self::AddKey => "card:addkey".into(),
             Self::Field(key) => format!("field:{key}"),
             Self::AddField(key) => format!("add:{key}"),
             Self::Part { part, .. } => part.clone(),
@@ -2329,8 +2421,9 @@ fn form_style() -> FormStyle {
 /// Where the inspector's identity block ends and its form begins.
 ///
 /// R1682 moved it down by one row: the node's-life seats sit between the degree
-/// box and the form.
-const INSP_HEAD_H: u32 = 150;
+/// box and the form. R1683 moved it down by another: the one text field and the
+/// seat that opens it sit under those.
+const INSP_HEAD_H: u32 = 160;
 
 /// ★★ R1682 — what a person can do to the selected card itself.
 ///
@@ -2410,9 +2503,18 @@ impl NodeAct {
 /// left and one pixel up of where the layout put it, which a 90-wide seat
 /// absorbs and a narrow one would not.
 fn node_act_seat(state: &LabState, act: NodeAct) -> Rect {
+    in_body(state, act.local_seat())
+}
+
+/// A rectangle stated in the inspector body's own frame, in WINDOW coordinates.
+///
+/// The one transform every affordance in that pane goes through, so a second
+/// one cannot be written in window coordinates and drift once the pane scrolls
+/// (R1662). [`PANEL_FRAME`] is part of it: the body is drawn inside the panel's
+/// border.
+fn in_body(state: &LabState, local: Rect) -> Rect {
     let pane = inspector_rect();
     let (ox, oy) = state.inspector_scroll.offset();
-    let local = act.local_seat();
     let shift = |v: u32, base: u32, by: i32| -> u32 {
         u32::try_from(
             (i64::from(v) + i64::from(base) + i64::from(PANEL_FRAME) - i64::from(by)).max(0),
@@ -2427,11 +2529,48 @@ fn node_act_seat(state: &LabState, act: NodeAct) -> Rect {
     )
 }
 
+/// ★★ R1683 — where the one text field sits in the inspector's body, and the
+/// seat that opens it on the card's name.
+///
+/// Under the node's-life row, because it IS a node's-life operation — the one
+/// that needs a value typed. The reference puts its name box in the same place
+/// for the same reason.
+fn rename_row() -> (Rect, Rect, Rect) {
+    let width = INSP_W - PAD * 2;
+    let apply = seat_w("rename");
+    let key = seat_w("+ key");
+    let box_w = width.saturating_sub(apply + key + NODE_ACT_GAP * 2);
+    (
+        Rect::new(PAD, EDIT_ROW_Y, box_w, NODE_ACT_H),
+        Rect::new(PAD + box_w + NODE_ACT_GAP, EDIT_ROW_Y, apply, NODE_ACT_H),
+        Rect::new(
+            PAD + box_w + apply + NODE_ACT_GAP * 2,
+            EDIT_ROW_Y,
+            key,
+            NODE_ACT_H,
+        ),
+    )
+}
+
+/// How wide a seat holding this word is, at the inspector's small face.
+fn seat_w(word: &str) -> u32 {
+    u32::try_from(word.len()).unwrap_or(6) * FONT_SMALL * 7 / 10 + 16
+}
+
+/// How far down the inspector's body the text field's row sits.
+const EDIT_ROW_Y: u32 = 134;
+
 /// The node's-life row: how far down the inspector it sits, how tall its seats
 /// are, and the gap between them.
-const NODE_ACT_Y: u32 = 116;
+const NODE_ACT_Y: u32 = 112;
 /// How tall a node's-life seat is.
-const NODE_ACT_H: u32 = 24;
+///
+/// ★ R1683 trimmed it from 24 to 20, and the reason is a measurement rather
+/// than taste: the head grew twice this session, and at 24 the settings form's
+/// add-a-key chips fell below the pane's fold on the opening screen. The pane
+/// scrolls, so nothing was unreachable — but a person should not have to
+/// scroll to reach an affordance the screen opens with.
+const NODE_ACT_H: u32 = 20;
 /// The gap between two node's-life seats.
 const NODE_ACT_GAP: u32 = 6;
 
@@ -3901,7 +4040,7 @@ fn canvas(state: &LabState, ink: Ink) -> Scene {
     )
 }
 
-fn inspector(state: &LabState, theme: &Theme, ink: Ink) -> Scene {
+fn inspector(state: &LabState, field: (TextFieldState, u32), theme: &Theme, ink: Ink) -> Scene {
     let rect = inspector_rect();
     let mut children = vec![label(
         spec::PANES[3].title,
@@ -3932,6 +4071,7 @@ fn inspector(state: &LabState, theme: &Theme, ink: Ink) -> Scene {
         );
     };
     children.extend(inspector_identity(state, node, ink));
+    children.extend(inspector_edit(state, field, theme, ink));
     inspector_pane(state, theme, ink, children)
 }
 
@@ -4011,6 +4151,99 @@ fn inspector_identity(state: &LabState, node: NodeId, ink: Ink) -> Vec<Scene> {
             text,
         ));
     }
+    parts
+}
+
+/// ★★★ R1683 — the one text field, and the seat that opens it on the name.
+///
+/// The field is the framework's own (`TextEditState` + the text-field painter),
+/// so this screen gets the caret, the selection, the clipboard, the undo stack
+/// and the IME composition path without writing any of them — and gets them the
+/// same way the sibling node editor does, which is the fourth call site of the
+/// lifted edit keymap rather than a fifth implementation of one.
+fn inspector_edit(
+    state: &LabState,
+    field: (TextFieldState, u32),
+    theme: &Theme,
+    ink: Ink,
+) -> Vec<Scene> {
+    let (box_rect, seat, key_seat) = rename_row();
+    let editing = state.editing.get();
+    let mut parts = Vec::new();
+    if editing.is_some() {
+        let style = tf_paint::TextFieldStyle {
+            field_w: box_rect.w,
+            field_h: box_rect.h,
+            field_pad: 5,
+            font_size_px: FONT_SMALL + 1,
+            ..tf_paint::TextFieldStyle::m3_filled()
+        };
+        parts.push(Scene::Container(
+            ContainerNode::new(vec![tf_paint::view_field(
+                EDIT_TAG, field.0, field.1, theme, &style, "name",
+            )])
+            .with_layout(
+                LayoutStyle::new()
+                    .with_absolute_position(box_rect.x, box_rect.y)
+                    .with_size(Size::px(box_rect.w, box_rect.h)),
+            ),
+        ));
+    } else {
+        parts.push(box_at(
+            "lab.inspector.name",
+            box_rect,
+            ink.raised,
+            Some(ink.outline),
+            6,
+        ));
+        parts.push(label(
+            "type a name or a key",
+            Rect::new(
+                box_rect.x + 8,
+                box_rect.y + 6,
+                box_rect.w.saturating_sub(12),
+                13,
+            ),
+            FONT_SMALL,
+            ink.text_3,
+        ));
+    }
+    let word = if editing.is_some() { "apply" } else { "rename" };
+    parts.push(box_at(
+        "lab.inspector.rename",
+        seat,
+        ink.accent_soft,
+        Some(ink.accent_line),
+        6,
+    ));
+    parts.push(label(
+        word,
+        Rect::new(seat.x + 8, seat.y + 6, seat.w.saturating_sub(12), 13),
+        FONT_SMALL,
+        ink.accent,
+    ));
+    // The second target. A seat of its own rather than a mode on the first,
+    // because "rename this card" and "give it a configuration path it does not
+    // have" are different requests and a person should not have to know that
+    // one button means both.
+    parts.push(box_at(
+        "lab.inspector.addkey",
+        key_seat,
+        ink.raised,
+        Some(ink.outline),
+        6,
+    ));
+    parts.push(label(
+        "+ key",
+        Rect::new(
+            key_seat.x + 8,
+            key_seat.y + 6,
+            key_seat.w.saturating_sub(12),
+            13,
+        ),
+        FONT_SMALL,
+        ink.text_2,
+    ));
     parts
 }
 
@@ -4094,7 +4327,7 @@ fn inspector_pane(state: &LabState, theme: &Theme, ink: Ink, mut children: Vec<S
     )
 }
 
-fn view(_state: (), _frame: Frame) -> Scene {
+fn view(field: (TextFieldState, u32), _frame: Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let state = use_lab_state();
     let ink = ink(&theme);
@@ -4107,7 +4340,7 @@ fn view(_state: (), _frame: Frame) -> Scene {
             palette(&state, ink),
             toolbar(&state, ink),
             canvas(&state, ink),
-            inspector(&state, &theme, ink),
+            inspector(&state, field, &theme, ink),
         ])
         .with_tag(VIEW_TAG)
         .with_style(BoxStyle::filled(ink.bg))
@@ -4277,6 +4510,8 @@ const FIELDS: &[SchemaField] = &{
         SchemaField::new("layout", "string"),
         // R1682 — the node's-life switches, per card.
         SchemaField::new("cards", "string"),
+        // R1683 — what the one text field is doing, and what it holds.
+        SchemaField::new("editing", "string"),
         SchemaField::new("frames", "string"),
         SchemaField::new("changed", "string"),
         SchemaField::new("roles", "string"),
@@ -4345,6 +4580,18 @@ const FIELDS: &[SchemaField] = &{
         ),
         SchemaField::action("collapse", "string"),
         SchemaField::action("disable", "string"),
+        // ★★ R1683 — the one text field's own verbs. `edit` declares the two
+        // things this screen types into, so an agent reads the vocabulary
+        // rather than discovering it by rejection.
+        SchemaField::action_with(
+            "edit",
+            "string",
+            ArgForm::Scalar,
+            const { &[SchemaArg::one_of("target", "string", &["name", "key"])] },
+        ),
+        SchemaField::action("type", "string"),
+        SchemaField::action("apply", "string"),
+        SchemaField::action("add_key", "string"),
         // ★★ R1681 — the other half of a link's life. Four verbs and not one
         // with a mode, because they take different arguments and answer
         // different refusals: what a caller has to say to delete a link and
@@ -4665,6 +4912,16 @@ impl ExternalIntrospect for LabOracle {
                 )
                 .to_string(),
             ),
+            // ★ R1683 — what the one field is doing, and what it holds. Both,
+            // because "the editor is open" and "it says this" are different
+            // facts and a driver checking its own typing needs the second.
+            "editing" => text(
+                serde_json::json!({
+                    "target": state.editing.get().map(Editing::wire),
+                    "text": state.buffer.text(),
+                })
+                .to_string(),
+            ),
             "roles" => text(
                 Role::ALL
                     .into_iter()
@@ -4729,6 +4986,48 @@ impl ExternalIntrospect for LabOracle {
                 })?;
                 let node = Self::card(&state, which.trim())?;
                 rename_card(&state, node, to.trim()).map(IntrospectValue::Text)
+            }
+            // ★★ R1683 — the field's own three verbs. `edit` opens it on a
+            // target, `type` puts text in it, `apply` does the thing. Three and
+            // not one, because an agent that could only "rename with this
+            // string" could never exercise the path a PERSON takes — which is
+            // exactly the column every defect on this screen has lived in.
+            "edit" => {
+                let what = Self::text(&args)?;
+                let node = state
+                    .selected
+                    .get()
+                    .ok_or_else(|| InvokeError::rejected("no node is selected"))?;
+                let target = match what.trim() {
+                    "name" => Editing::Name(node),
+                    "key" => Editing::Key(node),
+                    other => {
+                        return Err(InvokeError::rejected(format!(
+                            "{other:?} is not a thing this screen edits"
+                        )));
+                    }
+                };
+                Ok(IntrospectValue::Text(begin_edit(&state, target)))
+            }
+            "type" => {
+                let text = Self::text(&args)?;
+                if state.editing.get().is_none() {
+                    return Err(InvokeError::rejected("nothing is being edited"));
+                }
+                state.buffer.set_text(text.clone());
+                Ok(IntrospectValue::Text(text))
+            }
+            "apply" => commit_edit(&state).map(IntrospectValue::Text),
+            // ★ The one-shot, beside the box's three — the same arrangement
+            // `rename` has. An agent that knows the key it wants says so; the
+            // box is for a person who is finding out.
+            "add_key" => {
+                let key = Self::text(&args)?;
+                let node = state
+                    .selected
+                    .get()
+                    .ok_or_else(|| InvokeError::rejected("no node is selected"))?;
+                add_key(&state, node, key.trim()).map(IntrospectValue::Text)
             }
             "collapse" => {
                 let name = Self::text(&args)?;
@@ -5397,6 +5696,125 @@ fn delete_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError
     Ok(name)
 }
 
+// ── The one text field ──────────────────────────────────────────────────────
+
+/// Open the shared field on `what`, seeded with the value it is about (R1683).
+///
+/// Seeded rather than blank, which is the reference's own choice for the name
+/// box and the right one: a rename usually adjusts a name rather than replacing
+/// it, and a person who wanted to replace it selects all. The key box opens
+/// empty because there is no key yet.
+/// Answers the seed rather than a `Result`: there is nothing here to refuse
+/// once the buffer is the screen's own, which is what taking it at
+/// construction bought.
+fn begin_edit(state: &Rc<LabState>, what: Editing) -> String {
+    let buffer = &state.buffer;
+    let seed = match what {
+        Editing::Name(node) => state.name_of(node),
+        Editing::Key(_) => String::new(),
+    };
+    buffer.set_text(seed.clone());
+    // Selected whole, so the first keystroke replaces rather than appends —
+    // which is what a box that opens already holding a value has to do.
+    buffer.set_selection(0, seed.len());
+    state.editing.set(Some(what));
+    pinion_core::focus_request::request(EDIT_TAG);
+    state.say(format!("editing the {}", what.wire()));
+    seed
+}
+
+/// What a press on one of the field's two seats does (R1683).
+///
+/// ★ One seat with two jobs and one with one, which is what makes the field's
+/// state readable from the buttons: the name seat opens the box when it is shut
+/// and applies what is in it when it is open, and the key seat always opens on
+/// a path. The reference's own box works the same way.
+fn edit_seat(state: &Rc<LabState>, which: &Hit) {
+    let Some(node) = state.selected.get() else {
+        return;
+    };
+    match which {
+        Hit::AddKey => {
+            begin_edit(state, Editing::Key(node));
+        }
+        _ if state.editing.get().is_some() => {
+            commit_edit(state).ok();
+        }
+        _ => {
+            begin_edit(state, Editing::Name(node));
+        }
+    }
+}
+
+/// Take what the field holds and do the thing it was opened for (R1683).
+///
+/// ★ The commit is the SAME verb the wire's own action calls, so a name typed
+/// into the box and a name handed to `rename` cannot be refused differently.
+/// A refusal leaves the field open with the text still in it, because a person
+/// whose name was rejected wants to edit it, not to type it again.
+fn commit_edit(state: &Rc<LabState>) -> Result<String, InvokeError> {
+    let Some(what) = state.editing.get() else {
+        return Err(InvokeError::rejected("nothing is being edited"));
+    };
+    let text = state.buffer.text();
+    let done = match what {
+        Editing::Name(node) => rename_card(state, node, text.trim()),
+        Editing::Key(node) => add_key(state, node, text.trim()),
+    };
+    if done.is_ok() {
+        end_edit(state);
+    }
+    done
+}
+
+/// Shut the field, leaving whatever it was editing alone.
+fn end_edit(state: &Rc<LabState>) {
+    state.editing.set(None);
+    state.buffer.set_text(String::new());
+    pinion_core::focus_request::request(VIEW_TAG);
+}
+
+/// Add a configuration path the catalogue does not offer (R1683).
+///
+/// ★★ The half of "add a field" the chips cannot do. The catalogue is a list of
+/// the paths worth reaching for, not the boundary of what a configuration has —
+/// the reference says exactly that beside its own key box — so any path the
+/// form will accept can be typed. An already-held key is refused rather than
+/// silently duplicated.
+fn add_key(state: &Rc<LabState>, node: NodeId, key: &str) -> Result<String, InvokeError> {
+    if key.is_empty() {
+        return Err(InvokeError::rejected(
+            "a key with nothing in it is not a key",
+        ));
+    }
+    let mut forms = state.forms.borrow_mut();
+    let form = forms
+        .get_mut(&node)
+        .ok_or_else(|| InvokeError::rejected("the card has no form"))?;
+    // ★★ What a typed path IS — its type, its shape, whether it reaches a
+    // running node — is this application's knowledge, not the widget's. A path
+    // the catalogue already describes keeps that description; anything else
+    // arrives as text that applies on restart, which is the safe reading of a
+    // key nobody has classified.
+    let described = spec::ADDABLE
+        .iter()
+        .find(|offered| **offered == key)
+        .map_or_else(
+            || ConfigField::new(key.to_owned(), "text", Applies::Restart, ""),
+            |known| offered(known),
+        );
+    let outcome = form.add_typed(described);
+    drop(forms);
+    if let Err(why) = outcome {
+        let said = why.to_string();
+        state.say(said.clone());
+        return Err(InvokeError::rejected(said));
+    }
+    sync_node(state, node);
+    state.say(format!("added {key}"));
+    Ok(key.to_owned())
+}
+
 /// Give a card a different name, keeping it the same card (R1682).
 ///
 /// One verb for both callers — the rename action and the node reset putting a
@@ -5853,6 +6271,10 @@ fn release(state: &Rc<LabState>) {
                 };
             }
         }
+        // ★★ R1683 — one seat, two jobs, which is what makes the field's state
+        // readable from the button: shut, it opens on the name; open, it
+        // applies what was typed. The reference's box works the same way.
+        Hit::Rename | Hit::AddKey => edit_seat(state, &now),
         Hit::Zoom(up) => {
             let zoom = state.zoom.get();
             state.zoom.set(if up {
@@ -6254,7 +6676,11 @@ impl External for LabOracle {
 struct NodeLabView;
 
 impl WidgetCore for NodeLabView {
-    type State = ();
+    /// ★★ R1683 — the shared field's posture and caret, which the shell reads
+    /// out of the painted scene and hands back to the view. The same contract
+    /// the sibling node editor uses, so the field's own external stays the
+    /// authority on what it holds and the view never guesses.
+    type State = (TextFieldState, u32);
     type Event = ();
 
     fn create_external() -> Box<dyn External> {
@@ -6263,14 +6689,63 @@ impl WidgetCore for NodeLabView {
         Box::new(oracle)
     }
 
+    /// ★★★ R1683 — the field's own external, mounted beside this screen's.
+    ///
+    /// `view_field` paints a container; the thing that HOLDS the text, owns
+    /// focus, takes a keystroke and answers what it is doing is a separate
+    /// external addressed by the same tag. Measured while wiring this: without
+    /// it the field painted, the screen's `editing` slot said it was open, and
+    /// every keystroke was refused — because the keymap forwards to an external
+    /// that was not there. `blur_committing_field_extra` is the lifted
+    /// commit-on-blur one the sibling node editor mounts, so a click away from
+    /// the box does what a click away from a box does.
+    fn create_extra_externals() -> Vec<pinion_core::widget_core::ExtraExternal> {
+        vec![pinion_core::widgets::text_field::blur_committing_field_extra(EDIT_TAG)]
+    }
+
     fn tag() -> &'static str {
         VIEW_TAG
     }
 
-    fn read_state(_scene: &Scene) {}
+    fn read_state(scene: &Scene) -> (TextFieldState, u32) {
+        tf_paint::read_text_field_state(scene, EDIT_TAG)
+    }
 
-    fn view(state: (), frame: &Frame) -> Scene {
+    fn view(state: (TextFieldState, u32), frame: &Frame) -> Scene {
         view(state, *frame)
+    }
+
+    /// ★★★ R1683 — the keystroke path, and it is the framework's keymap rather
+    /// than another copy of one.
+    ///
+    /// `edit_field_keymap` is the lifted SSOT the data grid, the property grid
+    /// and the sibling node editor already share; this is its FOURTH call site.
+    /// Enter commits through the same verb the wire calls, Escape closes and
+    /// leaves the value alone, and a named key this screen wants while the
+    /// field is shut (Space to run, +/- to zoom) is deliberately NOT reached
+    /// while it is open — a person typing a name must be able to type a space.
+    fn apply_key(
+        scene: &mut Scene,
+        focused: Option<&str>,
+        key: &str,
+        modifiers: Modifiers,
+    ) -> bool {
+        if focused != Some(EDIT_TAG) {
+            return false;
+        }
+        let state = use_lab_state();
+        let kind = state.editing.get().map_or(CellKind::Text, Editing::kind);
+        edit_field_keymap(
+            scene,
+            EDIT_TAG,
+            key,
+            modifiers,
+            kind,
+            || {
+                commit_edit(&state).ok();
+            },
+            || end_edit(&state),
+        )
     }
 
     fn event_name(_event: ()) -> &'static str {
@@ -6287,7 +6762,7 @@ impl WidgetA11y for NodeLabView {
     /// come from the form painter** — so a control cannot be on screen without
     /// a name, and what its badges say is carried in a status region rather
     /// than lost.
-    fn access_node(_state: &(), _focused: Option<&str>) -> Vec<AccessNode> {
+    fn access_node(_state: &(TextFieldState, u32), _focused: Option<&str>) -> Vec<AccessNode> {
         let state = use_lab_state();
         let verdict = state.verdict();
         let mut nodes = vec![

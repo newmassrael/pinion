@@ -61,6 +61,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use pinion_core::external::{ExternalIntrospect, IntrospectValue};
 use pinion_core::reactive::Owner;
 use pinion_core::scene::Rect;
+use pinion_core::widgets::text_edit::use_text_edit_state;
+use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::{Frame, Scene};
 
 use super::{
@@ -262,7 +264,7 @@ fn painted_at(state: &std::rc::Rc<LabState>, size: (u32, u32)) -> (Painted, Scen
     pinion_core::reactive::VIEWPORT_SIZE
         .resolve(&owner)
         .set(size);
-    let mut scene = super::view((), Frame::default());
+    let mut scene = super::view((TextFieldState::Idle, 0), Frame::default());
     let mut cache = pinion_runtime::LayoutCache::new();
     pinion_runtime::compute_layout(&mut scene, &mut cache, size.0, size.1);
     let shot = Painted::of(&scene, size);
@@ -432,6 +434,10 @@ fn must_answer(tag: &str) -> Option<String> {
         "lab.inspector.collapse" => Some("card:collapse".into()),
         "lab.inspector.disable" => Some("card:disable".into()),
         "lab.inspector.delete" => Some("card:delete_node".into()),
+        // R1683 — the one field's two seats. The field itself is an external
+        // with its own hit target and is deliberately not demanded here.
+        "lab.inspector.rename" => Some("card:rename".into()),
+        "lab.inspector.addkey" => Some("card:addkey".into()),
         "lab.link.act" => Some("link:act".into()),
         "lab.toolbar.zoom.in" => Some("zoom:in".into()),
         "lab.toolbar.zoom.out" => Some("zoom:out".into()),
@@ -1415,7 +1421,7 @@ fn r1655_every_tag_but_the_root_is_pointer_transparent() {
         let mut tagged = 0;
         for (when, mutate) in STATES {
             mutate(&state);
-            let mut scene = super::view((), Frame::default());
+            let mut scene = super::view((TextFieldState::Idle, 0), Frame::default());
             let mut cache = pinion_runtime::LayoutCache::new();
             pinion_runtime::compute_layout(&mut scene, &mut cache, WIN_W, WIN_H);
             let mut walk = vec![(&scene, true)];
@@ -1481,7 +1487,7 @@ fn r1654_every_painted_run_declares_what_happens_when_it_does_not_fit() {
     let owner = Owner::new();
     owner.run(|| {
         let state = use_lab_state();
-        let mut scene = super::view((), Frame::default());
+        let mut scene = super::view((TextFieldState::Idle, 0), Frame::default());
         let mut cache = pinion_runtime::LayoutCache::new();
         pinion_runtime::compute_layout(&mut scene, &mut cache, WIN_W, WIN_H);
         let _ = &state;
@@ -1861,6 +1867,26 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
         press_tag(state, shot, "lab.node.P-03");
         press_tag(state, &painted(state), "lab.inspector.disable");
     }),
+    // ★★★ R1683 — the two the one text field answers. Each opens it with the
+    // pointer, types through the framework's own buffer and applies with the
+    // same seat, which is the path a PERSON takes; the wire's `edit`/`type`/
+    // `apply` trio drives the same three steps.
+    ("rename a node", |state, shot| {
+        press_tag(state, shot, "lab.node.P-03");
+        press_tag(state, &painted(state), "lab.inspector.rename");
+        type_into(state, "edge-01");
+        press_tag(state, &painted(state), "lab.inspector.rename");
+    }),
+    ("add a field by typing its key", |state, shot| {
+        let _ = shot;
+        press_tag(state, &painted(state), "lab.inspector.addkey");
+        type_into(state, "transport.unicast.lowlatency");
+        press_tag(state, &painted(state), "lab.inspector.rename");
+        assert!(
+            state.editing.get().is_none(),
+            "the apply shut the field, or the operation did not finish"
+        );
+    }),
     ("add a field from the catalogue", |state, shot| {
         press_tag(state, shot, "lab.form.add.timestamping");
     }),
@@ -1982,6 +2008,27 @@ fn drag_tag(state: &std::rc::Rc<LabState>, shot: &Painted, tag: &str, by: (i32, 
         .get(tag)
         .unwrap_or_else(|| panic!("{tag} is painted, so a person can aim at it"));
     drag_from(state, centre(rect), by);
+}
+
+/// ★★★ R1683 — put text in the open field, and the LIMIT of what this can
+/// drive, stated rather than glossed.
+///
+/// A character reaches the buffer through `edit_field_keymap`, which forwards
+/// to the field's own **external** — and that external is mounted by the SHELL
+/// (`WidgetCore::create_extra_externals`), which this harness does not run: it
+/// builds a scene by calling the view directly. Measured while wiring this,
+/// because the first draft asserted the keystroke path here and got a refusal
+/// with the field painted and `editing` open.
+///
+/// So the split is honest rather than convenient. What is this SCREEN's is
+/// driven here with the pointer — the seat opens the field, the seat applies
+/// it, the value lands — and the keystroke path is the framework's, driven end
+/// to end in `r1683_a_name_is_typed.py` where a real shell has mounted the
+/// external. A driver that claimed the keystroke here would be claiming
+/// coverage of a path it cannot reach, which is the shape R1682's own passing
+/// counterfactual had.
+fn type_into(state: &std::rc::Rc<LabState>, text: &str) {
+    state.buffer.set_text(text.to_owned());
 }
 
 /// Press at one painted tag's centre and release at another's.
@@ -2267,6 +2314,39 @@ fn r1682_a_node_life_seat_is_pressable_where_it_is_painted() {
     });
 }
 
+/// ★★★ R1683 — the screen and the painter hold ONE buffer, on a later frame.
+///
+/// This is the question the debt that opened this round said to answer with a
+/// test before designing anything. `use_text_edit_state` resolves through
+/// `Owner::current().cache(tag, ..)`; the screen takes its reference when it is
+/// built and the painter takes one on every frame, and those are the same
+/// object only while the owner outlives the frame. If it were ever per-frame
+/// the two would diverge silently — the field would paint one buffer and every
+/// commit would read another — so it is asserted rather than assumed.
+#[test]
+fn r1683_the_screen_and_the_painter_hold_one_buffer() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+        state.buffer.set_text("typed".to_owned());
+
+        for pass in 0..3 {
+            painted(&state);
+            assert!(
+                std::rc::Rc::ptr_eq(&state.buffer, &use_text_edit_state(super::EDIT_TAG)),
+                "★ pass {pass}: the screen's buffer and the painter's are the \
+                 same object"
+            );
+            assert_eq!(
+                state.buffer.text(),
+                "typed",
+                "and painting does not reset what it holds"
+            );
+        }
+    });
+}
+
 /// How many of the reference's operations this screen cannot do at all.
 ///
 /// A measurement, not a target — see the gate above for why it is a ratchet.
@@ -2291,7 +2371,12 @@ fn r1682_a_node_life_seat_is_pressable_where_it_is_painted() {
 /// entry anywhere. That is one axis and not one omission — the same absence
 /// answers for the form's text rows and for "add a field by typing its key" —
 /// so it is registered as an axis rather than bolted on here for one caller.
-const ABSENT_OPERATIONS: usize = 5;
+/// ★★★ R1683 took it from five to four, and what moved was an AXIS: this screen
+/// had no text entry anywhere, so every operation needing a value typed was
+/// pointer-unreachable together. One field — the framework's own — with a
+/// target answers the rename's gesture and the key row at once, and gives the
+/// form's text rows somewhere to go next.
+const ABSENT_OPERATIONS: usize = 4;
 
 /// ★★★ R1679 — **the affordance is painted exactly when pressing it would do
 /// something**, judged by DOING it rather than by asking the predicate.

@@ -770,6 +770,38 @@ impl ConfigForm {
         Ok(())
     }
 
+    /// Put a row the form was never offering into it (R1683).
+    ///
+    /// ★★ **The catalogue is a list of the keys worth reaching for, not the
+    /// boundary of what a configuration has.** [`Self::add`] moves a key out of
+    /// the offered set, which is exactly right for a chip a person pressed and
+    /// exactly wrong for a path they TYPED — a settings form that can only hold
+    /// what somebody thought to offer cannot claim to edit a configuration. The
+    /// reference tool this shape comes from says so beside its own key box and
+    /// derives a descriptor for any path its schema knows.
+    ///
+    /// The caller supplies the whole [`ConfigField`], because what a typed path
+    /// is — its type, its shape, whether it applies hot — is knowledge this
+    /// widget does not have and the application does.
+    ///
+    /// # Errors
+    ///
+    /// [`FormError::AlreadyHeld`] when a row of that key is already in the
+    /// form. Refused rather than upserted: "add" and "replace what is there"
+    /// are different requests, and a person typing a key they already have has
+    /// made a mistake worth being told about.
+    pub fn add_typed(&mut self, field: ConfigField) -> Result<(), FormError> {
+        let key = field.key().to_owned();
+        if self.fields.iter().any(|f| f.key() == key) {
+            return Err(FormError::AlreadyHeld(key));
+        }
+        // A key the catalogue WAS offering stops being offered, so the chip
+        // does not survive the row it created.
+        self.addable.retain(|f| f.key() != key);
+        self.upsert(field);
+        Ok(())
+    }
+
     /// Take a key back out, returning it to the offered set.
     ///
     /// # Errors
@@ -1128,6 +1160,8 @@ pub enum FormError {
     NoSuchField(String),
     /// A key the node's kind does not offer.
     NotAddable(String),
+    /// A key the form already holds a row for (R1683).
+    AlreadyHeld(String),
 }
 
 impl std::fmt::Display for FormError {
@@ -1135,6 +1169,7 @@ impl std::fmt::Display for FormError {
         match self {
             Self::NoSuchField(key) => write!(f, "this node has no field {key}"),
             Self::NotAddable(key) => write!(f, "{key} is not a key this node kind offers"),
+            Self::AlreadyHeld(key) => write!(f, "this node already holds {key}"),
         }
     }
 }

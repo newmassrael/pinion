@@ -559,17 +559,15 @@ pub const OPERATIONS: &[OperationSpec] = &[
         witness: "nodes",
         needs: None,
     },
-    // ★★ `gesture: false` is MEASURED, and it is one axis rather than one
-    // omission: a rename needs a name TYPED, and this screen has no text entry
-    // anywhere — not here, not on the form's text rows, not on the "add a field
-    // by typing its key" row two clusters down. The same absence answers for
-    // all three, which is why it is registered as an axis instead of being
-    // bolted on here for one caller
-    // ([[debt-screen-a-has-no-text-entry-so-no-typed-operation-has-a-gesture]]).
+    // ★★★ R1683 — a gesture at last, and what it took was the axis rather than
+    // a box: this screen had no text entry ANYWHERE, so every operation needing
+    // a value typed was pointer-unreachable together. One field, the
+    // framework's own, with a target — so the same field answers this row and
+    // the "add a field by typing its key" row below it.
     OperationSpec {
         name: "rename a node",
         verb: Some(("rename", "P-03,edge-01")),
-        gesture: false,
+        gesture: true,
         witness: "nodes",
         needs: None,
     },
@@ -643,10 +641,18 @@ pub const OPERATIONS: &[OperationSpec] = &[
         witness: "form",
         needs: None,
     },
+    // ★★ R1683 — the second consumer of the one field, and the reason it was
+    // built as a field with a TARGET rather than a rename box. The catalogue is
+    // a list of the paths worth reaching for, not the boundary of what a
+    // configuration has — which the reference says beside its own key box.
+    // ★ The witness is the FORM, not the editor: what this operation leaves
+    // behind is a row, and the editor it went through is shut again by the
+    // time it has. A row witnessing the editor would pass only for as long as
+    // the operation was unfinished.
     OperationSpec {
         name: "add a field by typing its key",
-        verb: None,
-        gesture: false,
+        verb: Some(("add_key", "transport.unicast.lowlatency")),
+        gesture: true,
         witness: "form",
         needs: None,
     },

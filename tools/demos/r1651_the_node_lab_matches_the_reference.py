@@ -310,7 +310,12 @@ def body() -> None:
             # switch off, delete). Each is demanded back by `must_answer` in the
             # screen's own press census, so the number growing here is matched
             # by three more affordances that have to answer a press.
-            "lab.inspector": 11,
+            # ★★ R1683 — 14, not 11: the one text field's row is a box (the
+            # placeholder, which is also its seat when shut) and two seats —
+            # "rename" and "+ key", the field's two targets. Three more
+            # affordances, and all three are demanded back by `must_answer` in
+            # the screen's own press census.
+            "lab.inspector": 14,
             "lab.palette.discovery": 3,
         }
         undeclared = [

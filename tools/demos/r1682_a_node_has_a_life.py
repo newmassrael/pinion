@@ -104,13 +104,10 @@ def body() -> None:
         ops = {op["name"]: op for op in spec["operations"]}
         for name in ("delete a node", "rename a node", "collapse a node", "disable a node"):
             assert_eq(ops[name]["absent"], False, f"{name!r} is answered now")
-        assert_eq(
-            ops["rename a node"]["gesture"],
-            False,
-            "★ and the one a pointer cannot reach says so — a rename needs a "
-            "name typed, and this screen has no text entry anywhere",
-        )
-        for name in ("delete a node", "collapse a node", "disable a node"):
+        # R1683 — the rename had no gesture when this demo was written, because
+        # the screen had no text entry at all. It has one now, so the row this
+        # demo asserted as the exception is an exception no longer.
+        for name in ("delete a node", "collapse a node", "disable a node", "rename a node"):
             assert_eq(ops[name]["gesture"], True, f"{name!r} has a way in for a person")
 
         # ── (C) collapse is a LOOK ──────────────────────────────────
