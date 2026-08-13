@@ -241,8 +241,8 @@ pub use machine::{Committed, ForceError, Machine, Tick};
 pub use model::{
     ConnectError, Connected, Control, Conversion, Document, DroppedLink, EditError, Flow, Instance,
     Interface, InterfaceSide, KindPort, Link, LinkId, Multiplicity, Node, NodeBody, NodeId,
-    NodeKind, Port, PortRef, PortValueError, ROOT, Removed, Side, Signature, Socket, Tree, TreeId,
-    crossing,
+    NodeKind, Port, PortRef, PortValueError, ROOT, Relabelled, Removed, Side, Signature, Socket,
+    Tree, TreeId, crossing,
 };
 pub use observed::{
     AdoptError, Discovery, Judgement, Layers, LinkLayer, Observation, ObserveError, Reachability,

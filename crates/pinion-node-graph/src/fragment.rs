@@ -1020,6 +1020,7 @@ fn copy_selection_into<K: NodeKind>(
                 y: node.y - origin.1,
                 label: node.label.clone(),
                 bypassed: node.bypassed,
+                disabled: node.disabled,
                 appearance: node.appearance.clone(),
                 parent,
                 // R1594 — a port reference indexes the node's OWN signature,
@@ -1073,6 +1074,7 @@ fn copy_tree_body<K: NodeKind>(
                 y: node.y,
                 label: node.label.clone(),
                 bypassed: node.bypassed,
+                disabled: node.disabled,
                 appearance: node.appearance.clone(),
                 // A whole tree travels, ids and all, so its own forest arrives
                 // intact and needs no remapping.

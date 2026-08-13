@@ -544,16 +544,31 @@ pub const OPERATIONS: &[OperationSpec] = &[
         witness: "nodes",
         needs: None,
     },
+    // ★★ R1682 — the node's own life, the cluster that was absent together in
+    // the same way a link's was before R1681: this screen could make a node and
+    // could do nothing else to one.
+    //
+    // ★ The argument names the node the way the canvas labels it, and the
+    // deletion targets `P-03` because it is the one card the opening graph
+    // gives no inbound link — a row that deleted a hub would be asserting
+    // something about how much else goes with it.
     OperationSpec {
         name: "delete a node",
-        verb: None,
-        gesture: false,
+        verb: Some(("delete_node", "P-03")),
+        gesture: true,
         witness: "nodes",
         needs: None,
     },
+    // ★★ `gesture: false` is MEASURED, and it is one axis rather than one
+    // omission: a rename needs a name TYPED, and this screen has no text entry
+    // anywhere — not here, not on the form's text rows, not on the "add a field
+    // by typing its key" row two clusters down. The same absence answers for
+    // all three, which is why it is registered as an axis instead of being
+    // bolted on here for one caller
+    // ([[debt-screen-a-has-no-text-entry-so-no-typed-operation-has-a-gesture]]).
     OperationSpec {
         name: "rename a node",
-        verb: None,
+        verb: Some(("rename", "P-03,edge-01")),
         gesture: false,
         witness: "nodes",
         needs: None,
@@ -579,18 +594,30 @@ pub const OPERATIONS: &[OperationSpec] = &[
         witness: "layout",
         needs: Some("move a node"),
     },
+    // ★ Both witness `cards` rather than `layout` or `nodes`: neither changes
+    // where a card sits or what it is called, and a row witnessing a slot its
+    // operation does not move would be a row that can never pass. What they
+    // move is the pair of switches a card carries, and that is the slot the
+    // wire grew to hold them.
+    //
+    // ★★ They are TOGGLES, and the answer is the resulting state. The
+    // affordance is one button whose label flips, so a verb that took the state
+    // to set would be a second shape for the same gesture; a caller wanting a
+    // particular state reads what it answered. The four verbs of a link's life
+    // took arguments because they take *different* arguments — here there is
+    // one argument and one act.
     OperationSpec {
         name: "collapse a node",
-        verb: None,
-        gesture: false,
-        witness: "layout",
+        verb: Some(("collapse", "P-03")),
+        gesture: true,
+        witness: "cards",
         needs: None,
     },
     OperationSpec {
         name: "disable a node",
-        verb: None,
-        gesture: false,
-        witness: "nodes",
+        verb: Some(("disable", "P-03")),
+        gesture: true,
+        witness: "cards",
         needs: None,
     },
     // ── a frame's life ───────────────────────────────────────────

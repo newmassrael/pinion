@@ -1049,6 +1049,32 @@ pub struct Node<K: NodeKind> {
     /// evaluator may read.
     #[serde(default)]
     pub bypassed: bool,
+    /// Whether the node is **switched off**: it does not run, and nothing comes
+    /// out of it (R1682).
+    ///
+    /// ★★ **Not the same request as [`bypassed`](Node::bypassed), and the
+    /// difference is what reaches the nodes downstream.** A bypassed node is
+    /// asked not to *compute* and its inputs travel straight through it, so the
+    /// graph below carries on unaffected; a disabled one is asked not to *be
+    /// there*, so its outputs are empty and everything that depended on it
+    /// reads nothing. An editor needs both — "route around this" and "switch
+    /// this off" are different intentions — and a model with only the first
+    /// makes the second unsayable, which is how it ends up in application state
+    /// where no derivation can see it.
+    ///
+    /// A second fact about the graph's *meaning*, so it is a field beside
+    /// `bypassed` rather than a bit in [`Appearance`], which is looks only.
+    ///
+    /// **It does not cascade through containment.** The reference toolkit's
+    /// `setEnabled` does, because its tree is the interaction tree and a child
+    /// of a disabled widget cannot be reached either. A frame in a graph is a
+    /// grouping on a canvas, and the relation along which "this is not running"
+    /// actually travels is the FLOW — which is derived rather than authored:
+    /// a node fed only by disabled ones reads `None` without anybody having
+    /// marked it. Copying the containment cascade here would author a fact the
+    /// flow already answers, and the two would be free to disagree.
+    #[serde(default)]
+    pub disabled: bool,
     /// What the node looks like — never what it means.
     ///
     /// It lives in the document for the same reason `x` and `y` do: it must
@@ -1207,6 +1233,7 @@ impl<K: NodeKind> Node<K> {
             y: _,
             label,
             bypassed,
+            disabled,
             appearance,
             parent: _,
             values,
@@ -1214,6 +1241,12 @@ impl<K: NodeKind> Node<K> {
         } = source;
         self.label.clone_from(label);
         self.bypassed = *bypassed;
+        // R1682 added `disabled`, and the answer for it is **yes**, for the
+        // same reason as `bypassed`: a copy of a node somebody switched off
+        // that arrived switched back on would run something nobody asked to
+        // run. Being switched off travels with the node, exactly like being
+        // bypassed does.
+        self.disabled = *disabled;
         self.appearance.clone_from(appearance);
         self.values.clone_from(values);
         // R1632 added `items`, and the answer for it is **yes**, for the same
@@ -1680,6 +1713,7 @@ impl<K: NodeKind> Document<K> {
                 y,
                 label: None,
                 bypassed: false,
+                disabled: false,
                 appearance: Appearance::default(),
                 parent: None,
                 values: BTreeMap::new(),
@@ -1718,6 +1752,123 @@ impl<K: NodeKind> Document<K> {
         Ok(Removed {
             links: self.unwire_node(tree, node),
             adopted,
+        })
+    }
+
+    /// Every node in `tree` that has **authored** the name `label`.
+    ///
+    /// The relation, of which [`Self::node_labelled`] is the function. A caller
+    /// with the vector can tell the two ways a lookup fails apart — nothing
+    /// answers to the name (empty) from more than one does (longer than one) —
+    /// and those are different problems with different fixes.
+    ///
+    /// Authored names only: a node with no [`label`](Node::label) is *described*
+    /// by its body's name rather than called it, and two unnamed nodes of a kind
+    /// describing themselves the same way is not an ambiguity anybody authored.
+    #[must_use]
+    pub fn nodes_labelled(&self, tree: TreeId, label: &str) -> Vec<NodeId> {
+        self.tree(tree)
+            .into_iter()
+            .flat_map(|host| host.nodes.values())
+            .filter(|node| node.label.as_deref() == Some(label))
+            .map(|node| node.id)
+            .collect()
+    }
+
+    /// The one node in `tree` called `label`, or `None`.
+    ///
+    /// ★★ **`None` rather than a guess when more than one answers to it.**
+    /// Measured on the reference toolkit 6.11.1: two siblings may hold one name
+    /// and its by-name lookup then returns one of them with nothing said, so a
+    /// caller cannot distinguish "the thing I asked for" from "one of the
+    /// several things that answer to what I asked for". [`Self::relabel`]
+    /// refuses to *create* that state; a direct write to the public
+    /// [`label`](Node::label) field still can, and this is what happens then.
+    /// [`Self::nodes_labelled`] says which case it was.
+    #[must_use]
+    pub fn node_labelled(&self, tree: TreeId, label: &str) -> Option<NodeId> {
+        let holders = self.nodes_labelled(tree, label);
+        match holders.as_slice() {
+            [only] => Some(*only),
+            _ => None,
+        }
+    }
+
+    /// Give `node` an authored name, or take its authored name away with
+    /// `None`, answering what it was called before (R1682).
+    ///
+    /// ★★★ **A rename is not a re-creation.** The node keeps its
+    /// [`NodeId`], so its links, its position, its containment, its authored
+    /// port values, its breakpoints and every table a caller keys by identity
+    /// are untouched — the rename moves one string. The reference *prototype*
+    /// this screen is built against cannot do that: its author-a-node has no
+    /// rename, so it copies the node under the new name and covers the old one
+    /// with a deletion, and then has to hand-move ten separate side tables to
+    /// compensate. That is the same distinction [`Self::relink`] draws for a
+    /// link's endpoint, in the other place identity leaks out of an editor.
+    ///
+    /// ★★ **A name that does not identify is refused.** Measured on the
+    /// reference toolkit 6.11.1: naming a second sibling what the first is
+    /// already called is accepted silently, both then hold it, and the
+    /// by-name lookup answers an arbitrary one of the two. Here that is
+    /// [`EditError::LabelTaken`], which names the node already holding it —
+    /// so the invariant *authored names are unique within a tree, and
+    /// therefore address exactly one node* is one this crate maintains rather
+    /// than one every caller re-checks.
+    ///
+    /// Whitespace is trimmed before either check, because a name that differs
+    /// from another only by a trailing space is exactly the ambiguity the
+    /// refusal exists to prevent, and a name that is *only* whitespace is
+    /// [`EditError::LabelEmpty`] rather than a silent clear.
+    ///
+    /// # Errors
+    ///
+    /// [`EditError::NoSuchTree`], [`EditError::NoSuchNode`],
+    /// [`EditError::LabelTaken`], [`EditError::LabelEmpty`].
+    pub fn relabel(
+        &mut self,
+        tree: TreeId,
+        node: NodeId,
+        label: Option<&str>,
+    ) -> Result<Relabelled, EditError> {
+        let wanted = match label {
+            None => None,
+            Some(raw) => {
+                let trimmed = raw.trim();
+                if trimmed.is_empty() {
+                    return Err(EditError::LabelEmpty { tree, node });
+                }
+                Some(trimmed.to_owned())
+            }
+        };
+        if self.tree(tree).is_none() {
+            return Err(EditError::NoSuchTree(tree));
+        }
+        if self.tree(tree).and_then(|host| host.node(node)).is_none() {
+            return Err(EditError::NoSuchNode { tree, node });
+        }
+        if let Some(name) = wanted.as_deref()
+            && let Some(held_by) = self
+                .nodes_labelled(tree, name)
+                .into_iter()
+                .find(|other| *other != node)
+        {
+            return Err(EditError::LabelTaken {
+                tree,
+                label: name.to_owned(),
+                held_by,
+            });
+        }
+        let slot = self
+            .trees
+            .get_mut(tree.0 as usize)
+            .and_then(|host| host.nodes.get_mut(&node))
+            .ok_or(EditError::NoSuchNode { tree, node })?;
+        let was = std::mem::replace(&mut slot.label, wanted.clone());
+        Ok(Relabelled {
+            changed: was != wanted,
+            was,
+            now: wanted,
         })
     }
 
@@ -2220,6 +2371,33 @@ impl<K: NodeKind> Document<K> {
             .get_mut(&node)
             .ok_or(EditError::NoSuchNode { tree, node })?;
         Ok(std::mem::replace(&mut target.bypassed, bypassed))
+    }
+
+    /// Switch `node` off, or back on, answering what it was before (R1682).
+    ///
+    /// See [`Node::disabled`] for what this means and how it differs from
+    /// [`Self::set_bypassed`]. Unlike bypassing, this can never make a cycle
+    /// live — a disabled node produces nothing, so it cuts the flow rather than
+    /// completing it — which is why there is no refusal here and one there.
+    ///
+    /// # Errors
+    ///
+    /// [`EditError::NoSuchTree`] or [`EditError::NoSuchNode`].
+    pub fn set_disabled(
+        &mut self,
+        tree: TreeId,
+        node: NodeId,
+        disabled: bool,
+    ) -> Result<bool, EditError> {
+        let host = self
+            .trees
+            .get_mut(tree.0 as usize)
+            .ok_or(EditError::NoSuchTree(tree))?;
+        let target = host
+            .nodes
+            .get_mut(&node)
+            .ok_or(EditError::NoSuchNode { tree, node })?;
+        Ok(std::mem::replace(&mut target.disabled, disabled))
     }
 
     /// Mute `link`, or unmute it, answering what it was before.
@@ -2834,6 +3012,32 @@ pub struct Removed {
     pub adopted: Vec<NodeId>,
 }
 
+/// What a successful [`Document::relabel`] did (R1682).
+///
+/// ★★ **The old name is the payload.** Measured on the reference toolkit
+/// 6.11.1, its rename notification carries exactly one argument and that
+/// argument is the *new* name — so a listener holding a table keyed by the old
+/// one is told that something changed and not what to un-key. Every such table
+/// is then rebuilt by scanning, or kept by hand, or silently wrong. Answering
+/// [`was`](Relabelled::was) costs nothing here because the edit already had it
+/// in hand.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Relabelled {
+    /// The authored name before this edit, or `None` when the node had none
+    /// and was being called what its body is called.
+    pub was: Option<String>,
+    /// The authored name now, or `None` when the edit cleared it.
+    pub now: Option<String>,
+    /// Whether anything actually moved.
+    ///
+    /// `false` for a rename to the name the node already answers to. The
+    /// reference filters that case out of its notification too (measured: a
+    /// second set to the same string fires nothing), and the reason is the same
+    /// — a listener that rebuilt its world on every no-op would be doing work
+    /// no edit asked for.
+    pub changed: bool,
+}
+
 /// What a successful [`Document::connect`] did.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Connected {
@@ -2972,6 +3176,34 @@ pub enum EditError {
         /// feeds back round to the delay itself.
         path: Vec<NodeId>,
     },
+    /// Another node in the tree has already authored that name (R1682).
+    ///
+    /// The refusal the reference toolkit does not have. Measured on 6.11.1
+    /// offscreen: naming a second sibling what the first is called is accepted,
+    /// both hold it, and the by-name lookup then answers one of the two and
+    /// says nothing about the other. A name that does not identify is a name a
+    /// caller cannot address anything by, which is the whole reason
+    /// [`Document::relabel`] is a verb rather than a field write.
+    LabelTaken {
+        /// The tree that was searched.
+        tree: TreeId,
+        /// The name asked for.
+        label: String,
+        /// The node that already answers to it.
+        held_by: NodeId,
+    },
+    /// A name was asked for that has nothing in it (R1682).
+    ///
+    /// Separate from clearing the name, which is [`Document::relabel`] with
+    /// `None` and means "call it what its body is called". A node whose
+    /// authored name is blank displays nothing at all, and silently reading
+    /// that as "clear it" would be the edit deciding what the caller meant.
+    LabelEmpty {
+        /// The tree it is in.
+        tree: TreeId,
+        /// The node that would have been left showing nothing.
+        node: NodeId,
+    },
 }
 
 impl fmt::Display for EditError {
@@ -3009,6 +3241,20 @@ impl fmt::Display for EditError {
                     .map(ToString::to_string)
                     .collect::<Vec<_>>()
                     .join(" -> ")
+            ),
+            Self::LabelTaken {
+                tree,
+                label,
+                held_by,
+            } => write!(
+                f,
+                "node {} in tree {} is already called {label:?}",
+                held_by.0, tree.0
+            ),
+            Self::LabelEmpty { tree, node } => write!(
+                f,
+                "node {} in tree {} would be left showing no name at all",
+                node.0, tree.0
             ),
         }
     }

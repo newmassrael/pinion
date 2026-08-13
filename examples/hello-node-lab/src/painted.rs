@@ -423,6 +423,15 @@ fn must_answer(tag: &str) -> Option<String> {
         return Some(format!("link:endpoint:{rest}"));
     }
     match tag {
+        // ★★ R1682 — the node's-life seats. Declared for the reason R1681.3
+        // wrote one line up: an affordance that is painted and not demanded
+        // back is one this whole module can pass over while nobody can press
+        // it. These sit in the inspector's scrolling body, so the demand is
+        // also what checks that the seat and its press agree once the pane has
+        // moved.
+        "lab.inspector.collapse" => Some("card:collapse".into()),
+        "lab.inspector.disable" => Some("card:disable".into()),
+        "lab.inspector.delete" => Some("card:delete_node".into()),
         "lab.link.act" => Some("link:act".into()),
         "lab.toolbar.zoom.in" => Some("zoom:in".into()),
         "lab.toolbar.zoom.out" => Some("zoom:out".into()),
@@ -1836,6 +1845,22 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
     ("move a frame and its members", |state, shot| {
         drag_tag(state, shot, "lab.frame.host-b.name", (30, 0));
     }),
+    // ★★ R1682 — the node's own life. Each picks the card with the pointer
+    // first, because the seats act on the SELECTED card and a driver that set
+    // the selection directly would be proving the buttons work against a state
+    // no mouse can produce — the rule R1681 wrote next door for the link seats.
+    ("delete a node", |state, shot| {
+        press_tag(state, shot, "lab.node.P-03");
+        press_tag(state, &painted(state), "lab.inspector.delete");
+    }),
+    ("collapse a node", |state, shot| {
+        press_tag(state, shot, "lab.node.P-03");
+        press_tag(state, &painted(state), "lab.inspector.collapse");
+    }),
+    ("disable a node", |state, shot| {
+        press_tag(state, shot, "lab.node.P-03");
+        press_tag(state, &painted(state), "lab.inspector.disable");
+    }),
     ("add a field from the catalogue", |state, shot| {
         press_tag(state, shot, "lab.form.add.timestamping");
     }),
@@ -2179,6 +2204,69 @@ fn r1677_every_declared_way_of_causing_an_operation_causes_it() {
     });
 }
 
+/// ★★ R1682 — a node's-life seat answers a press aimed where it is PAINTED,
+/// with the pane scrolled.
+///
+/// The inspector's body scrolls, so a seat whose window rectangle forgot the
+/// offset would be right only at zero — R1662's defect in a new place. The
+/// rectangle here comes from the layout pass, and the question goes to the hit
+/// test, so the two derivations have to meet.
+///
+/// ★★★ **It is in this module for a reason worth writing down.** The first
+/// draft of this check lived next door in `tests.rs`, where the only way to get
+/// a rectangle was to call `node_act_seat` — the function under test — and aim
+/// the press at its centre. A counterfactual that removed the scroll offset
+/// from that function passed the whole suite, because both sides of the
+/// assertion moved together. An assertion that compares a function with itself
+/// reads exactly like coverage. R1681.1 wrote the same sentence one round ago.
+#[test]
+fn r1682_a_node_life_seat_is_pressable_where_it_is_painted() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+        let seats = ["collapse", "disable", "delete"];
+        // The FLOOR size, so the inspector's body genuinely overflows and the
+        // offset the layout keeps is one it could reach. Forcing `set_max`
+        // instead does not survive: `scroll_pane` measures its own content on
+        // every pass and clamps an offset the content cannot justify, so the
+        // paint used the offset, the state was put back to zero, and the two
+        // rectangles disagreed for a reason that was the fixture's and not the
+        // screen's. Measured while writing this.
+        let floor = (super::MIN_W, super::MIN_H);
+        let mut scrolled = 0;
+
+        for want in [0, 40] {
+            painted_at(&state, floor);
+            let room = state.inspector_scroll.max().1;
+            let to = want.min(room);
+            state.inspector_scroll.scroll_to(0, to);
+            let (shot, _) = painted_at(&state, floor);
+            let live = state.inspector_scroll.offset().1;
+            scrolled = scrolled.max(live);
+            for seat in seats {
+                let tag = format!("lab.inspector.{seat}");
+                let rect = *shot
+                    .tags
+                    .get(&tag)
+                    .unwrap_or_else(|| panic!("{tag} is painted at offset {live}"));
+                let (px, py) = centre(rect);
+                assert_eq!(
+                    super::Hit::at(&state, px, py).word(&state),
+                    must_answer(&tag).expect("declared"),
+                    "★ pressing {tag} at the centre of where the LAYOUT put it \
+                     ({rect:?}), with the pane at offset {live}"
+                );
+            }
+        }
+        assert!(
+            scrolled > 0,
+            "★ the pane never actually moved, so this only ever checked the \
+             unscrolled case — which is the case a missing offset term passes"
+        );
+    });
+}
+
 /// How many of the reference's operations this screen cannot do at all.
 ///
 /// A measurement, not a target — see the gate above for why it is a ratchet.
@@ -2195,7 +2283,15 @@ fn r1677_every_declared_way_of_causing_an_operation_causes_it() {
 /// keys there are without exporting them, and the launch script does not exist
 /// — so a prose judgement had been carrying them as half-present. The gate
 /// disagreeing with the reading that motivated it is the gate doing its job.
-const ABSENT_OPERATIONS: usize = 9;
+///
+/// ★★ R1682 took it from nine to five: a node's own life — delete, rename,
+/// collapse, disable — was absent as a cluster, exactly as a link's second half
+/// was before R1681. Three of the four gained both columns; the rename gained
+/// only its verb, because it needs a name TYPED and this screen has no text
+/// entry anywhere. That is one axis and not one omission — the same absence
+/// answers for the form's text rows and for "add a field by typing its key" —
+/// so it is registered as an axis rather than bolted on here for one caller.
+const ABSENT_OPERATIONS: usize = 5;
 
 /// ★★★ R1679 — **the affordance is painted exactly when pressing it would do
 /// something**, judged by DOING it rather than by asking the predicate.

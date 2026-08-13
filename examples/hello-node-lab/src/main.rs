@@ -79,7 +79,7 @@ use pinion_core::widgets::config_form::{
 use pinion_core::widgets::scroll::{AutoScroll, ScrollState};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_node_graph::{
-    Document, Item, LinkId, LinkLayer, NodeBody, NodeId, ROOT, Relinked, Side, Socket,
+    Document, Item, LinkId, LinkLayer, Node, NodeBody, NodeId, ROOT, Relinked, Side, Socket,
 };
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use pinion_widget_paint::config_form::{
@@ -388,9 +388,6 @@ impl LinkPick {
 /// Everything the screen is.
 struct LabState {
     doc: Tracked<Document<LabNode>>,
-    /// Which node each identifier is, so the wire can address a node the way
-    /// the screen labels it rather than by an internal number.
-    ids: RefCell<BTreeMap<String, NodeId>>,
     forms: Tracked<BTreeMap<NodeId, ConfigForm>>,
     frames: RefCell<BTreeMap<NodeId, String>>,
     /// ★★ R1679 — where each card came into being: its canvas position and the
@@ -547,13 +544,17 @@ impl LabState {
                     Placement {
                         at: (i32::try_from(x).unwrap_or(0), i32::try_from(y).unwrap_or(0)),
                         host: Some(want.frame.to_owned()),
+                        opened_as: Some(want.id),
                     },
                 ))
             })
             .collect();
+        // ★ R1682 — `ids` above is a BUILD-TIME convenience and is dropped
+        // here. It used to be kept as a field, which made it a second record of
+        // what a card is called; the document holds the one record now, and a
+        // map that dies at the end of this function cannot drift from anything.
         Self {
             doc: Tracked::new(doc),
-            ids: RefCell::new(ids),
             forms: Tracked::new(forms),
             frames: RefCell::new(frames),
             opened_at: RefCell::new(opened_at),
@@ -576,16 +577,26 @@ impl LabState {
         self.toast.set(what.into());
     }
 
+    /// The node the canvas labels `id`, or `None`.
+    ///
+    /// ★★ R1682 — the DOCUMENT's answer. This screen kept its own
+    /// `BTreeMap<String, NodeId>` beside the document's own
+    /// [`Node::label`](pinion_node_graph::Node::label) until the rename arrived
+    /// and made the duplication load-bearing: two records of one fact, and a
+    /// rename that updated either one alone would leave the canvas and the wire
+    /// calling the same card two different things. The model owns names now —
+    /// it is the thing that can *refuse* a name already taken — so there is one
+    /// record and no way to update half of it.
     fn node_of(&self, id: &str) -> Option<NodeId> {
-        self.ids.borrow().get(id).copied()
+        self.doc.borrow().node_labelled(ROOT, id)
     }
 
     fn name_of(&self, node: NodeId) -> String {
-        self.ids
+        self.doc
             .borrow()
-            .iter()
-            .find(|(_, v)| **v == node)
-            .map_or_else(|| format!("#{}", node.0), |(k, _)| k.clone())
+            .tree(ROOT)
+            .and_then(|tree| tree.node(node))
+            .map_or_else(|| format!("#{}", node.0), Node::display_name)
     }
 
     fn role_of(&self, node: NodeId) -> Option<Role> {
@@ -843,13 +854,21 @@ impl ResetScope {
     /// Whether the screen differs from what it opened as, in this scope.
     fn changed(self, state: &LabState) -> bool {
         match self {
+            // ★★ R1682 — by IDENTITY, not by re-deriving the opening set from
+            // what the cards are currently called. A card is a stray when
+            // nothing recorded it opening; an opening card differs when it no
+            // longer shows the name it opened as. Comparing the name list
+            // against the specification answered both questions with one
+            // string comparison, and a rename makes those two questions give
+            // opposite answers about the same card.
             Self::Nodes => {
-                let now: Vec<String> = state.cards().iter().map(|n| state.name_of(*n)).collect();
-                now.len() != spec::NODES.len()
-                    || now
-                        .iter()
-                        .zip(spec::NODES)
-                        .any(|(name, want)| name != want.id)
+                let cards = state.cards();
+                let opened = state.opened_at.borrow();
+                cards.len() != spec::NODES.len()
+                    || cards.iter().any(|node| {
+                        opened.get(node).and_then(|born| born.opened_as)
+                            != Some(state.name_of(*node)).as_deref()
+                    })
             }
             // ★ R1679 — over EVERY card, against where each came into being.
             // The population was `spec::NODES`, which cannot see a card the
@@ -887,40 +906,7 @@ impl ResetScope {
     /// Put this scope back to what the screen opened with.
     fn apply(self, state: &Rc<LabState>) {
         match self {
-            Self::Nodes => {
-                let keep: Vec<&str> = spec::NODES.iter().map(|n| n.id).collect();
-                let strays: Vec<NodeId> = state
-                    .cards()
-                    .into_iter()
-                    .filter(|n| !keep.contains(&state.name_of(*n).as_str()))
-                    .collect();
-                {
-                    let mut doc = state.doc.borrow_mut();
-                    for node in &strays {
-                        doc.remove_node(ROOT, *node).ok();
-                    }
-                }
-                let mut ids = state.ids.borrow_mut();
-                ids.retain(|_, id| !strays.contains(id));
-                drop(ids);
-                state
-                    .forms
-                    .borrow_mut()
-                    .retain(|id, _| !strays.contains(id));
-                // ★ R1679 close-audit — and its placement with it. Every other
-                // per-card map is cleaned here; `opened_at` was added this
-                // session and missed, which would leave a placement behind for
-                // a card that no longer exists. Harmless today because the
-                // model does not reuse an identifier, and exactly the kind of
-                // "harmless today" that stops being so without a diff.
-                state
-                    .opened_at
-                    .borrow_mut()
-                    .retain(|id, _| !strays.contains(id));
-                if state.selected.get().is_some_and(|n| strays.contains(&n)) {
-                    state.selected.set(state.node_of(spec::SELECTED_NODE));
-                }
-            }
+            Self::Nodes => put_node_set_back(state),
             Self::Layout => put_cards_back(state),
             Self::Fields => {
                 let nodes: Vec<NodeId> = state.forms.borrow().keys().copied().collect();
@@ -1013,6 +999,70 @@ impl ResetScope {
     }
 }
 
+/// Put the card SET back: the palette's additions go, and every opening card
+/// answers to the name it opened as.
+///
+/// ★★ R1682 — the two halves are one operation and the second is what renaming
+/// forced. A stray is a card with **no opening record**; a renamed opening card
+/// is not one. Selecting strays by "its name is not in the specification" — the
+/// only question there was to ask before names could change — deleted the very
+/// card whose name this scope exists to put back.
+fn put_node_set_back(state: &Rc<LabState>) {
+    let strays: Vec<NodeId> = state
+        .cards()
+        .into_iter()
+        .filter(|n| {
+            state
+                .opened_at
+                .borrow()
+                .get(n)
+                .and_then(|born| born.opened_as)
+                .is_none()
+        })
+        .collect();
+    // Which names have to go back, decided BEFORE the strays are removed: a
+    // name freed by a deletion is one a rename may have taken.
+    let restore: Vec<(NodeId, &'static str)> = state
+        .cards()
+        .into_iter()
+        .filter(|n| !strays.contains(n))
+        .filter_map(|n| {
+            let born = state.opened_at.borrow().get(&n)?.opened_as?;
+            (state.name_of(n) != born).then_some((n, born))
+        })
+        .collect();
+    {
+        let mut doc = state.doc.borrow_mut();
+        for node in &strays {
+            doc.remove_node(ROOT, *node).ok();
+        }
+    }
+    state
+        .forms
+        .borrow_mut()
+        .retain(|id, _| !strays.contains(id));
+    // ★ R1679 close-audit — and its placement with it. Every other per-card map
+    // is cleaned here; `opened_at` was added that session and missed, which
+    // would leave a placement behind for a card that no longer exists.
+    // Harmless today because the model does not reuse an identifier, and
+    // exactly the kind of "harmless today" that stops being so without a diff.
+    state
+        .opened_at
+        .borrow_mut()
+        .retain(|id, _| !strays.contains(id));
+    for (node, name) in restore {
+        // Through the same verb the rename action uses, so "put the name back"
+        // and "change the name" cannot be two rules about what a name is. It
+        // cannot be refused here: the name is the one this card opened with,
+        // and whatever had taken it was either renamed away or is a stray now
+        // gone.
+        rename_card(state, node, name).ok();
+    }
+    if state.selected.get().is_some_and(|n| strays.contains(&n)) {
+        state.selected.set(state.node_of(spec::SELECTED_NODE));
+    }
+}
+
 /// Put every card back where it came into being, on the host it started on.
 ///
 /// One function because the two halves are one operation — see [`Placement`].
@@ -1050,6 +1100,24 @@ fn put_cards_back(state: &Rc<LabState>) {
 struct Placement {
     at: (i32, i32),
     host: Option<String>,
+    /// ★★ R1682 — the name in [`spec::NODES`] this card came into being as, or
+    /// `None` for one the palette added.
+    ///
+    /// A third field on the same record rather than a second map keyed the same
+    /// way, for the R1679 reason this record exists at all: it is written ONCE,
+    /// where the card is created, so the two kinds of card answer the same
+    /// question the same way. It is a *different* scope's business — the node
+    /// reset puts names back, the layout reset puts the pair above back — and
+    /// [`placed_as_opened`] deliberately does not look at it.
+    ///
+    /// **Renaming is what forced it.** Before it, the node reset told an
+    /// opening card from an added one by comparing its NAME against the
+    /// specification, which is exactly the thing a rename changes: a renamed
+    /// opening card read as a stray, and the reset that was supposed to put its
+    /// name back would have deleted the node instead. The same lesson R1679
+    /// wrote for the link reset — put back by identity, never by re-deriving
+    /// from what a thing is currently called.
+    opened_as: Option<&'static str>,
 }
 
 /// Whether this card sits where it came into being, on the host it started on.
@@ -1064,12 +1132,7 @@ fn placed_as_opened(state: &LabState, node: NodeId) -> Option<bool> {
     let host = slot
         .parent
         .and_then(|f| state.frames.borrow().get(&f).cloned());
-    Some(
-        Placement {
-            at: (slot.x, slot.y),
-            host,
-        } == opened,
-    )
+    Some((slot.x, slot.y) == opened.at && host == opened.host)
 }
 
 /// The scopes with something to put back, in census order — the panel's
@@ -1382,14 +1445,38 @@ fn scaled(state: &LabState, v: u32) -> u32 {
     v * state.zoom.get() / 100
 }
 
+/// The specification row this card came into being as, or `None` for one the
+/// palette added.
+///
+/// ★★ R1682 — by the name the card OPENED with, never by what it is called
+/// now. Two derivations keyed off the current name — the card's digest rows and
+/// its width — and a rename silently changed both: a renamed card stopped
+/// matching any specification row, so it fell through to the palette-added
+/// path, redrew its digest from the first three form fields and snapped to the
+/// default width. Nothing was broken enough to fail, which is how it would have
+/// stayed.
+fn declared_card(state: &LabState, node: NodeId) -> Option<&'static spec::NodeSpec> {
+    let opened_as = state.opened_at.borrow().get(&node)?.opened_as?;
+    spec::NODES.iter().find(|n| n.id == opened_as)
+}
+
+/// Whether this card is drawn small.
+fn card_collapsed(state: &LabState, node: NodeId) -> bool {
+    state
+        .doc
+        .borrow()
+        .tree(ROOT)
+        .and_then(|tree| tree.node(node))
+        .is_some_and(|slot| slot.appearance.collapsed)
+}
+
 /// The digest lines a node's card shows.
 ///
 /// The declared ones for a node the specification opens with, and otherwise the
 /// first three rows of the node's own form — so a node added from the palette
 /// is a card like any other rather than an empty box.
 fn card_rows(state: &LabState, node: NodeId) -> Vec<(String, String)> {
-    let name = state.name_of(node);
-    if let Some(declared) = spec::NODES.iter().find(|n| n.id == name) {
+    if let Some(declared) = declared_card(state, node) {
         // ★ R1651.1 — the KEYS are the specification's (they are a per-role
         // digest, and which fields are worth showing is a design decision), but
         // the VALUES are re-read from the form whenever the form has that path.
@@ -1438,13 +1525,21 @@ const fn digest_path(key: &str) -> Option<&'static str> {
     }
 }
 
+/// How wide a collapsed card is drawn, in canvas units.
+///
+/// Narrower than any card the specification declares, so collapsing is visible
+/// at a glance rather than only by counting rows. The reference collapses to a
+/// fixed width for the same reason, and everything that follows the card — its
+/// pins, the wires into them, the frame that bounds it — is derived from this
+/// width and follows without being told.
+const CARD_COLLAPSED_W: u32 = 92;
+
 /// The width a node's card is drawn at, in canvas units.
 fn card_width(state: &LabState, node: NodeId) -> u32 {
-    let name = state.name_of(node);
-    spec::NODES
-        .iter()
-        .find(|n| n.id == name)
-        .map_or(146, |declared| declared.rect.2)
+    if card_collapsed(state, node) {
+        return CARD_COLLAPSED_W;
+    }
+    declared_card(state, node).map_or(146, |declared| declared.rect.2)
 }
 
 /// Every rectangle a node's card is made of, derived once.
@@ -1531,7 +1626,13 @@ fn card_shape(state: &LabState, node: NodeId) -> Option<CardShape> {
     // 34 of 2,556 points on a card reaching a different one at the minimum zoom.
     // Every node editor this is judged against collapses a node's contents on
     // the way out for the same reason.
-    let detailed = scaled(state, FONT_TINY) >= 6;
+    //
+    // ★★ R1682 — a COLLAPSE is the same request, made deliberately instead of
+    // derived from the zoom, so it lands in the same place. A second path that
+    // hid rows its own way would be a second answer to "what is on this card",
+    // and the height — which IS the content — would be free to disagree with
+    // it.
+    let detailed = !card_collapsed(state, node) && scaled(state, FONT_TINY) >= 6;
     let rows: Vec<(Rect, Rect)> = card_rows(state, node)
         .iter()
         .take(if detailed { usize::MAX } else { 0 })
@@ -1739,6 +1840,8 @@ enum Hit {
     Endpoint(usize),
     /// A host frame's tab strip — its handle.
     Frame(NodeId),
+    /// ★★ R1682 — one of the selected card's own three acts.
+    NodeAct(NodeAct),
     Field(String),
     AddField(String),
     /// An affordance inside a control: an option, a stepper, a checkbox, a list
@@ -1755,6 +1858,17 @@ impl Hit {
     fn at(state: &LabState, px: u32, py: u32) -> Self {
         // The inspector, front to back: its own geometry is the form painter's.
         if contains(inspector_rect(), px, py) {
+            // ★ R1682 — the node's-life seats first: they sit above the form in
+            // the same scrolling body, and the form's own rows begin below
+            // them, so the two cannot overlap — but asking in painted order is
+            // what keeps that true if either moves.
+            if state.selected.get().is_some() {
+                for act in NodeAct::ALL {
+                    if contains(node_act_seat(state, act), px, py) {
+                        return Self::NodeAct(act);
+                    }
+                }
+            }
             let geometry = inspector_geometry(state);
             for row in &geometry.rows {
                 // Every affordance inside a control, from the geometry the
@@ -1931,6 +2045,9 @@ impl Hit {
                 "frame:{}",
                 state.frames.borrow().get(id).cloned().unwrap_or_default()
             ),
+            // R1682 — named by the act rather than by the card, because the
+            // card is whatever is selected and the wire reads that separately.
+            Self::NodeAct(act) => format!("card:{}", act.wire()),
             Self::Field(key) => format!("field:{key}"),
             Self::AddField(key) => format!("add:{key}"),
             Self::Part { part, .. } => part.clone(),
@@ -2210,7 +2327,113 @@ fn form_style() -> FormStyle {
 }
 
 /// Where the inspector's identity block ends and its form begins.
-const INSP_HEAD_H: u32 = 118;
+///
+/// R1682 moved it down by one row: the node's-life seats sit between the degree
+/// box and the form.
+const INSP_HEAD_H: u32 = 150;
+
+/// ★★ R1682 — what a person can do to the selected card itself.
+///
+/// The reference puts exactly these in its inspector beside the node's
+/// identity, which is the right place for the same reason it gives: they are
+/// the only affordances that act on the *card* rather than on one of its
+/// fields, and a canvas gesture for them would collide with placing and wiring,
+/// the two things a press on a card already means.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum NodeAct {
+    /// Draw it small, or full size again.
+    Collapse,
+    /// Switch it off, or back on.
+    Disable,
+    /// Take it off the canvas.
+    Delete,
+}
+
+impl NodeAct {
+    /// The census. Consumers iterate this rather than re-listing the arms.
+    const ALL: [Self; 3] = [Self::Collapse, Self::Disable, Self::Delete];
+
+    /// The word a press on this seat answers with, and the action that does the
+    /// same thing — one name, so the two channels cannot drift.
+    const fn wire(self) -> &'static str {
+        match self {
+            Self::Collapse => "collapse",
+            Self::Disable => "disable",
+            Self::Delete => "delete_node",
+        }
+    }
+
+    /// The tag the seat is painted under, which is also what a driver presses.
+    const fn tag(self) -> &'static str {
+        match self {
+            Self::Collapse => "lab.inspector.collapse",
+            Self::Disable => "lab.inspector.disable",
+            Self::Delete => "lab.inspector.delete",
+        }
+    }
+
+    /// What the seat says, given what the card is doing now.
+    ///
+    /// The two toggles name the act they would perform rather than the state
+    /// the card is in — the reference's own choice, and the one that makes a
+    /// button readable without first working out which way round it is.
+    fn word(self, collapsed: bool, disabled: bool) -> &'static str {
+        match self {
+            Self::Collapse if collapsed => "expand",
+            Self::Collapse => "collapse",
+            Self::Disable if disabled => "switch on",
+            Self::Disable => "switch off",
+            Self::Delete => "delete",
+        }
+    }
+
+    /// Where the seat sits in the frame the inspector's body is drawn in — the
+    /// same frame the identity labels above it and the form below it use, so
+    /// the whole pane scrolls as one thing.
+    fn local_seat(self) -> Rect {
+        let n = Self::ALL.iter().position(|a| *a == self).unwrap_or(0);
+        let width = (INSP_W - PAD * 2 - NODE_ACT_GAP * 2) / 3;
+        let step = u32::try_from(n).unwrap_or(0) * (width + NODE_ACT_GAP);
+        Rect::new(PAD + step, NODE_ACT_Y, width, NODE_ACT_H)
+    }
+}
+
+/// A node's-life seat in WINDOW coordinates — where a pointer meets it.
+///
+/// Derived from the painted rectangle by the pane's placement and its scroll
+/// offset. A second set of rectangles written in window coordinates is how the
+/// paint and the gesture come to disagree once the pane is scrolled (R1662).
+///
+/// ★ [`PANEL_FRAME`] is part of the transform and was missing from the first
+/// draft: the seats are painted inside the panel's border, so the body's origin
+/// is the panel's origin plus its frame. Measured — the seat answered one pixel
+/// left and one pixel up of where the layout put it, which a 90-wide seat
+/// absorbs and a narrow one would not.
+fn node_act_seat(state: &LabState, act: NodeAct) -> Rect {
+    let pane = inspector_rect();
+    let (ox, oy) = state.inspector_scroll.offset();
+    let local = act.local_seat();
+    let shift = |v: u32, base: u32, by: i32| -> u32 {
+        u32::try_from(
+            (i64::from(v) + i64::from(base) + i64::from(PANEL_FRAME) - i64::from(by)).max(0),
+        )
+        .unwrap_or(0)
+    };
+    Rect::new(
+        shift(local.x, pane.x, ox),
+        shift(local.y, pane.y, oy),
+        local.w,
+        local.h,
+    )
+}
+
+/// The node's-life row: how far down the inspector it sits, how tall its seats
+/// are, and the gap between them.
+const NODE_ACT_Y: u32 = 116;
+/// How tall a node's-life seat is.
+const NODE_ACT_H: u32 = 24;
+/// The gap between two node's-life seats.
+const NODE_ACT_GAP: u32 = 6;
 
 /// The form's geometry in the frame the PAINTER draws it in: inside the
 /// inspector's scrolling body, so it rides the scroll instead of being shifted
@@ -3726,7 +3949,7 @@ fn inspector_identity(state: &LabState, node: NodeId, ink: Ink) -> Vec<Scene> {
         .and_then(|n| n.parent)
         .and_then(|p| state.frames.borrow().get(&p).cloned())
         .unwrap_or_else(|| "unframed".to_owned());
-    vec![
+    let mut parts = vec![
         tagged_label(
             "lab.inspector.id",
             name,
@@ -3755,7 +3978,40 @@ fn inspector_identity(state: &LabState, node: NodeId, ink: Ink) -> Vec<Scene> {
             FONT_SMALL,
             ink.accent,
         ),
-    ]
+    ];
+    // ★★ R1682 — the node's-life row. Painted for a selected card only, which
+    // is the same condition the hit test asks: an act on "the selected card"
+    // with no card selected is a button that cannot mean anything.
+    let (collapsed, disabled) = state
+        .doc
+        .borrow()
+        .tree(ROOT)
+        .and_then(|tree| tree.node(node))
+        .map_or((false, false), |slot| {
+            (slot.appearance.collapsed, slot.disabled)
+        });
+    for act in NodeAct::ALL {
+        let seat = act.local_seat();
+        // Delete is the one that cannot be undone, so it is the one drawn in
+        // the warning ink — the reference does the same, and a row of three
+        // identical buttons where the third destroys work is a row that
+        // invites the wrong press.
+        let (fill, edge, text) = match act {
+            NodeAct::Delete => (ink.surface, ink.warn, ink.warn),
+            _ if act == NodeAct::Collapse && collapsed || act == NodeAct::Disable && disabled => {
+                (ink.accent_soft, ink.accent_line, ink.accent)
+            }
+            _ => (ink.raised, ink.outline, ink.text_2),
+        };
+        parts.push(box_at(act.tag(), seat, fill, Some(edge), 6));
+        parts.push(label(
+            act.word(collapsed, disabled),
+            Rect::new(seat.x + 8, seat.y + 6, seat.w.saturating_sub(12), 13),
+            FONT_SMALL,
+            text,
+        ));
+    }
+    parts
 }
 
 /// The pane the identity block and the framework-painted form sit in.
@@ -3953,6 +4209,18 @@ impl LabOracle {
             .ok_or_else(|| InvokeError::rejected(format!("no link {id} is drawn")))
     }
 
+    /// The card a caller named, refusing one that is not on the canvas
+    /// (R1682).
+    ///
+    /// One parser, so the four verbs of a node's life cannot disagree about
+    /// what a card is called or how a wrong name is refused — the same reason
+    /// [`Self::link_id`] exists next door.
+    fn card(state: &LabState, name: &str) -> Result<NodeId, InvokeError> {
+        state
+            .node_of(name)
+            .ok_or_else(|| InvokeError::rejected(format!("no node is called {name:?}")))
+    }
+
     /// A link on either layer, in the spelling `selected_link` reads back.
     fn link_pick(state: &LabState, raw: &str) -> Result<LinkPick, InvokeError> {
         if let Ok(drawn) = Self::link_id(state, raw) {
@@ -4007,6 +4275,8 @@ const FIELDS: &[SchemaField] = &{
         // `query` without a line here answers `UnknownIntrospectPath`, which is
         // what these two did on their first drive.
         SchemaField::new("layout", "string"),
+        // R1682 — the node's-life switches, per card.
+        SchemaField::new("cards", "string"),
         SchemaField::new("frames", "string"),
         SchemaField::new("changed", "string"),
         SchemaField::new("roles", "string"),
@@ -4057,6 +4327,24 @@ const FIELDS: &[SchemaField] = &{
                 ]
             },
         ),
+        // ★★ R1682 — a node's own life. Three take just the card's name and
+        // one takes the new name beside it, so only that one declares a
+        // grammar; `collapse` and `disable` are toggles and answer the state
+        // they left the card in.
+        SchemaField::action("delete_node", "string"),
+        SchemaField::action_with(
+            "rename",
+            "string",
+            ArgForm::Delimited(','),
+            const {
+                &[
+                    SchemaArg::key("node", "string", "nodes"),
+                    SchemaArg::open("name", "string"),
+                ]
+            },
+        ),
+        SchemaField::action("collapse", "string"),
+        SchemaField::action("disable", "string"),
         // ★★ R1681 — the other half of a link's life. Four verbs and not one
         // with a mode, because they take different arguments and answer
         // different refusals: what a caller has to say to delete a link and
@@ -4315,6 +4603,43 @@ impl ExternalIntrospect for LabOracle {
                 )
                 .to_string(),
             ),
+            // ★★ R1682 — the two switches a card carries: whether it is drawn
+            // small, and whether it runs at all.
+            //
+            // Read together because the affordance shows them together — they
+            // are the node's-life row, one press each — and published for the
+            // R1677 reason: neither moves a name or a position, so without a
+            // slot of their own an agent could collapse a card and have no way
+            // to observe that it had. A gesture whose effect cannot be read is
+            // one no test can tell from a gesture that did nothing.
+            //
+            // ★ They are two different KINDS of fact and the wire says so by
+            // keeping them apart rather than folding them into one "state"
+            // word: `collapsed` is a look, and the model keeps it with the
+            // node's appearance; `disabled` is what the graph MEANS, and the
+            // model keeps it beside the node's body. A reader that wanted only
+            // one of them would otherwise have to know which half of a blended
+            // answer to trust.
+            "cards" => text(
+                serde_json::Value::Object(
+                    state
+                        .cards()
+                        .into_iter()
+                        .filter_map(|node| {
+                            let doc = state.doc.borrow();
+                            let slot = doc.tree(ROOT)?.node(node)?;
+                            Some((
+                                slot.display_name(),
+                                serde_json::json!({
+                                    "collapsed": slot.appearance.collapsed,
+                                    "disabled": slot.disabled,
+                                }),
+                            ))
+                        })
+                        .collect(),
+                )
+                .to_string(),
+            ),
             // ★ R1677 — which host each card starts on. The membership a drop
             // changes, and the other half of the same silence: `apply_frame`
             // re-parents a node and the only witness was a toast sentence.
@@ -4388,6 +4713,32 @@ impl ExternalIntrospect for LabOracle {
                 state.selected.set(Some(node));
                 state.say(format!("selected {}", name.trim()));
                 Ok(IntrospectValue::Text(name.trim().to_owned()))
+            }
+            // ★★ R1682 — the node's own life. Four verbs over one argument,
+            // the card's name, which is the name the canvas shows and the wire
+            // reads back.
+            "delete_node" => {
+                let name = Self::text(&args)?;
+                let node = Self::card(&state, name.trim())?;
+                delete_card(&state, node).map(IntrospectValue::Text)
+            }
+            "rename" => {
+                let raw = Self::text(&args)?;
+                let (which, to) = raw.split_once(',').ok_or_else(|| {
+                    InvokeError::rejected(format!("{raw:?} is not <node>,<name>"))
+                })?;
+                let node = Self::card(&state, which.trim())?;
+                rename_card(&state, node, to.trim()).map(IntrospectValue::Text)
+            }
+            "collapse" => {
+                let name = Self::text(&args)?;
+                let node = Self::card(&state, name.trim())?;
+                collapse_card(&state, node).map(IntrospectValue::Text)
+            }
+            "disable" => {
+                let name = Self::text(&args)?;
+                let node = Self::card(&state, name.trim())?;
+                disable_card(&state, node).map(IntrospectValue::Text)
             }
             // ★ R1681 — either layer, told apart by the `>`. A reported link
             // has no id to name it by, so the pair is the name; refusing to let
@@ -4996,6 +5347,130 @@ fn delete_link(state: &Rc<LabState>, link: LinkId) -> Result<String, InvokeError
     }
 }
 
+// ── A node's life ───────────────────────────────────────────────────────────
+
+/// Take a card off the canvas, with everything that hung on it (R1682).
+///
+/// ★ **The last card cannot go.** The reference refuses the same way and for
+/// the same reason: a graph editor with an empty canvas has no selection, so
+/// the inspector, the gate panel and every affordance keyed to a selected node
+/// vanish at once — a state a person reaches by pressing delete one time too
+/// many and cannot leave.
+fn delete_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError> {
+    let name = state.name_of(node);
+    if state.cards().len() <= 1 {
+        let said = format!("{name} is the last card, so it stays");
+        state.say(said.clone());
+        return Err(InvokeError::rejected(said));
+    }
+    // The document answers what the removal took with it, which is the half of
+    // the edit that is not where the gesture happened.
+    let taken = state
+        .doc
+        .borrow_mut()
+        .remove_node(ROOT, node)
+        .map_err(|why| InvokeError::rejected(why.to_string()))?;
+    // Every accept run this card was dialling keeps a slot per link, so the
+    // links it took with it have to give their seats back — the same close the
+    // link deletion does, for the same reason (R1681.1).
+    for link in &taken.links {
+        if link.to.node != node {
+            close_slot(state, link.to.node, link.to.port);
+        }
+    }
+    state.forms.borrow_mut().remove(&node);
+    state.opened_at.borrow_mut().remove(&node);
+    if state.selected.get() == Some(node) {
+        state.selected.set(state.cards().first().copied());
+    }
+    // A picked link that ran through this card is a name for something that is
+    // no longer there.
+    let dangling = match state.selected_link.get() {
+        Some(LinkPick::Authored(id)) => taken.links.iter().any(|l| l.id == id),
+        Some(LinkPick::Observed(from, to)) => from.node == node || to.node == node,
+        None => false,
+    };
+    if dangling {
+        state.selected_link.set(None);
+    }
+    state.say(format!("deleted {name}, and {} link(s)", taken.links.len()));
+    Ok(name)
+}
+
+/// Give a card a different name, keeping it the same card (R1682).
+///
+/// One verb for both callers — the rename action and the node reset putting a
+/// name back — so "what a name is" has one definition. The refusal comes
+/// straight from the model, which is the thing that knows whether a name is
+/// already taken.
+fn rename_card(state: &Rc<LabState>, node: NodeId, to: &str) -> Result<String, InvokeError> {
+    let was = state.name_of(node);
+    let done = state
+        .doc
+        .borrow_mut()
+        .relabel(ROOT, node, Some(to))
+        .map_err(|why| {
+            let sentence = why.to_string();
+            state.say(format!("refused: {sentence}"));
+            InvokeError::rejected(sentence)
+        })?;
+    // ★ Nothing else to carry, and that is the measurement rather than an
+    // omission: every other per-card record on this screen — the form, the
+    // placement, the frame, the links — is keyed by the node's IDENTITY, which
+    // a rename does not touch. The reference prototype has to move ten side
+    // tables here because its rename remakes the node.
+    if done.changed {
+        state.say(format!("{was} -> {to}"));
+    }
+    Ok(to.to_owned())
+}
+
+/// Draw a card small, or full size again — a look, never a meaning (R1682).
+fn collapse_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError> {
+    let now = {
+        let mut doc = state.doc.borrow_mut();
+        let slot = doc
+            .tree_mut(ROOT)
+            .and_then(|tree| tree.node_mut(node))
+            .ok_or_else(|| InvokeError::rejected("no such card"))?;
+        slot.appearance.collapsed = !slot.appearance.collapsed;
+        slot.appearance.collapsed
+    };
+    let name = state.name_of(node);
+    state.say(format!(
+        "{name} {}",
+        if now { "collapsed" } else { "expanded" }
+    ));
+    Ok(now.to_string())
+}
+
+/// Switch a card off, or back on (R1682).
+///
+/// ★★ The model's [`Document::set_disabled`], not `set_bypassed`: this screen's
+/// nodes are processes, and switching one off means it does not run and nothing
+/// downstream hears from it. Bypassing would mean the opposite — traffic routed
+/// straight through — which is a request this tool never makes.
+fn disable_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError> {
+    let was = state
+        .doc
+        .borrow()
+        .tree(ROOT)
+        .and_then(|tree| tree.node(node))
+        .map(|slot| slot.disabled)
+        .ok_or_else(|| InvokeError::rejected("no such card"))?;
+    state
+        .doc
+        .borrow_mut()
+        .set_disabled(ROOT, node, !was)
+        .map_err(|why| InvokeError::rejected(why.to_string()))?;
+    let name = state.name_of(node);
+    state.say(format!(
+        "{name} {}",
+        if was { "switched on" } else { "switched off" }
+    ));
+    Ok((!was).to_string())
+}
+
 /// Move a drawn link's consuming end onto `to`, dialling its first free
 /// endpoint (R1681).
 ///
@@ -5366,6 +5841,18 @@ fn release(state: &Rc<LabState>) {
             scope.apply(state);
             state.say(format!("{} back to how it opened", scope.wire()));
         }
+        // ★★ R1682 — the node's-life seats, through the same three functions
+        // the wire calls. A refusal (the last card) has already said so on the
+        // toast, which is where a person reads it.
+        Hit::NodeAct(act) => {
+            if let Some(node) = state.selected.get() {
+                let _ = match act {
+                    NodeAct::Collapse => collapse_card(state, node),
+                    NodeAct::Disable => disable_card(state, node),
+                    NodeAct::Delete => delete_card(state, node),
+                };
+            }
+        }
         Hit::Zoom(up) => {
             let zoom = state.zoom.get();
             state.zoom.set(if up {
@@ -5634,7 +6121,6 @@ fn add_node(state: &Rc<LabState>, role: Role) {
     {
         slot.label = Some(name.clone());
     }
-    state.ids.borrow_mut().insert(name.clone(), id);
     state.forms.borrow_mut().insert(id, form_for(&name, role));
     // ★ R1679 — where this card came into being, which is the only thing a
     // layout reset can put it back to. A card the specification does not
@@ -5646,6 +6132,10 @@ fn add_node(state: &Rc<LabState>, role: Role) {
         Placement {
             at: (cx, cy),
             host: None,
+            // ★ R1682 — `None` is what makes this card a stray to the node
+            // reset. Not "the name it happens to have now", which a rename
+            // moves; "the name the specification gave it", which nothing does.
+            opened_as: None,
         },
     );
     state.selected.set(Some(id));

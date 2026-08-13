@@ -738,3 +738,293 @@ fn r1681_the_accept_run_holds_one_slot_per_thing_that_lands_on_it() {
         assert_eq!(census(), Vec::new());
     });
 }
+
+// ── R1682 — a node's own life ───────────────────────────────────────────────
+
+/// R1682 — ★★ a rename moves ONE string, and this is the list of things it
+/// therefore does not have to carry.
+///
+/// The reference prototype renames by copying the node under the new name and
+/// covering the old one with a deletion, so it has to hand-move ten side tables
+/// afterwards — its placement, its containment, its edits, its extra fields,
+/// its hidden fields, its collapse, its mute, its wire list, its selection.
+/// Here the card keeps its identity, and every one of those is keyed by that
+/// identity, so the assertion is that they are all still exactly where they
+/// were. If this screen ever grows a table keyed by a card's NAME, this test is
+/// what fails.
+#[test]
+fn r1682_a_rename_carries_nothing_because_nothing_is_keyed_by_a_name() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = std::rc::Rc::new(state());
+        let node = state.node_of("P-03").expect("the specification has it");
+        state.selected.set(Some(node));
+
+        let form_before = state.forms.borrow().get(&node).cloned();
+        let placed_before = state.opened_at.borrow().get(&node).cloned();
+        let degree_before = state.degree(node);
+        let links_before: Vec<u32> = state
+            .doc
+            .borrow()
+            .tree(super::ROOT)
+            .map_or_else(Vec::new, |t| t.links().iter().map(|l| l.id.0).collect());
+
+        super::rename_card(&state, node, "edge-01").expect("the name is free");
+
+        assert_eq!(
+            state.node_of("edge-01"),
+            Some(node),
+            "the same card answers to the new name"
+        );
+        assert_eq!(state.node_of("P-03"), None, "and not to the old one");
+        assert_eq!(state.name_of(node), "edge-01");
+        assert_eq!(
+            state.selected.get(),
+            Some(node),
+            "the selection is the thing that moved, so nothing had to repair it"
+        );
+        assert_eq!(state.forms.borrow().get(&node).cloned(), form_before);
+        assert_eq!(state.opened_at.borrow().get(&node).cloned(), placed_before);
+        assert_eq!(state.degree(node), degree_before);
+        assert_eq!(
+            state
+                .doc
+                .borrow()
+                .tree(super::ROOT)
+                .map_or_else(Vec::new, |t| t
+                    .links()
+                    .iter()
+                    .map(|l| l.id.0)
+                    .collect::<Vec<_>>()),
+            links_before,
+            "★ no link was re-minted — the whole point of renaming in place"
+        );
+    });
+}
+
+/// R1682 — a name another card already answers to is refused, by the MODEL,
+/// and the screen is left exactly as it was.
+#[test]
+fn r1682_a_name_already_on_the_canvas_is_refused_and_changes_nothing() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = std::rc::Rc::new(state());
+        let node = state.node_of("P-03").expect("the specification has it");
+        let taken = state.node_of("P-01").expect("and this one");
+
+        let why = super::rename_card(&state, node, "P-01").expect_err("P-01 is taken");
+        assert!(
+            format!("{why:?}").contains("already called"),
+            "the refusal says why, not just no: {why:?}"
+        );
+        assert_eq!(state.name_of(node), "P-03", "and nothing moved");
+        assert_eq!(state.node_of("P-01"), Some(taken));
+
+        // A blank name is a different refusal, and also leaves the card named.
+        super::rename_card(&state, node, "   ").expect_err("a blank name is not a name");
+        assert_eq!(state.name_of(node), "P-03");
+    });
+}
+
+/// R1682 — ★★★ the defect renaming forced, and the reason it is worth a test of
+/// its own.
+///
+/// The node reset told an opening card from a palette-added one by asking
+/// whether its NAME is in the specification — which is exactly the thing a
+/// rename changes. A renamed opening card read as a stray, so the reset that
+/// exists to put its name back would have DELETED it instead. Both halves are
+/// asserted: the card survives, and it is called what it opened as.
+#[test]
+fn r1682_the_node_reset_puts_a_renamed_card_back_rather_than_deleting_it() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = std::rc::Rc::new(state());
+        let node = state.node_of("P-03").expect("the specification has it");
+        super::rename_card(&state, node, "edge-01").expect("the name is free");
+
+        assert!(
+            super::ResetScope::Nodes.changed(&state),
+            "a renamed card is a changed node set, so the affordance is there"
+        );
+
+        super::ResetScope::Nodes.apply(&state);
+
+        assert_eq!(
+            state.cards().len(),
+            spec::NODES.len(),
+            "★ the card is still on the canvas — selecting strays by name \
+             deleted it"
+        );
+        assert_eq!(state.name_of(node), "P-03", "and it is called what it was");
+        assert_eq!(
+            state.node_of("P-03"),
+            Some(node),
+            "the SAME card, not a fresh one wearing the name"
+        );
+        assert!(
+            !super::ResetScope::Nodes.changed(&state),
+            "and the scope reports nothing left to put back"
+        );
+    });
+}
+
+/// R1682 — deleting a card takes its links with it and gives back the seats
+/// they were landing on.
+///
+/// The accept run keeps one slot per thing that lands on it (R1681.1), so a
+/// deletion that removed the links without closing their slots would leave a
+/// dead port on every node the deleted card dialled — the same defect from the
+/// other end.
+#[test]
+fn r1682_deleting_a_card_frees_the_seats_its_links_were_landing_on() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = std::rc::Rc::new(state());
+        // ★★ A card that DIALS, and the assertion below that it does. The
+        // first draft deleted `P-03`, which the opening graph only ever dials
+        // INTO — so the seats it had to give back were all its own, the
+        // closing branch was never reached, and the counterfactual that
+        // removed that branch passed. A fixture that cannot reach the code is
+        // a test that reads like coverage and is not.
+        let node = state.node_of("P-01").expect("the specification has it");
+        let outbound_onto_survivors = {
+            let doc = state.doc.borrow();
+            doc.tree(super::ROOT).map_or(0, |t| {
+                t.links()
+                    .iter()
+                    .filter(|l| l.from.node == node && l.to.node != node)
+                    .count()
+            })
+        };
+        assert!(
+            outbound_onto_survivors > 0,
+            "★ this card dials somebody who survives it, or the seat-closing \
+             branch is never reached and this test proves nothing"
+        );
+        // ★★ The SURPLUS, not the counts. A card that was dialled by the
+        // deleted one legitimately loses a landing AND the seat that held it —
+        // both counts move, and comparing them directly asserts that a correct
+        // deletion changed nothing, which is false. What must not move is how
+        // many seats a card holds that nothing lands on: the leak is a seat
+        // left behind, and it shows up here and nowhere in a count.
+        let spare = |state: &LabState| {
+            state
+                .cards()
+                .into_iter()
+                .filter(|n| *n != node)
+                .map(|n| {
+                    let doc = state.doc.borrow();
+                    let arity = doc.signature(super::ROOT, n).map_or(0, |s| s.inputs.len());
+                    let landed = doc
+                        .tree(super::ROOT)
+                        .map_or(0, |t| t.links().iter().filter(|l| l.to.node == n).count());
+                    (state.name_of(n), arity.saturating_sub(landed))
+                })
+                .collect::<Vec<_>>()
+        };
+        let before = spare(&state);
+        let touching = state.degree(node);
+
+        super::delete_card(&state, node).expect("it is not the last card");
+
+        assert_eq!(state.node_of("P-01"), None, "the card is gone");
+        assert!(
+            state.forms.borrow().get(&node).is_none(),
+            "and so is its form"
+        );
+        assert!(
+            state.opened_at.borrow().get(&node).is_none(),
+            "and its placement, which nothing else would ever clean up"
+        );
+        assert_ne!(
+            (touching.0 + touching.1),
+            0,
+            "the card this test deletes has links, or it proves nothing"
+        );
+        assert_eq!(
+            spare(&state),
+            before,
+            "★ no card is left holding a seat nothing lands on — the links went \
+             with the card and so did the ports that held them"
+        );
+    });
+}
+
+/// R1682 — the last card stays, and the refusal says so.
+///
+/// The reference refuses the same way. A canvas with no cards has no selection,
+/// so the inspector, the gate panel and every affordance keyed to a selected
+/// node vanish at once — a state a person reaches by pressing delete one time
+/// too many and cannot leave.
+#[test]
+fn r1682_the_last_card_cannot_be_deleted() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = std::rc::Rc::new(state());
+        let mut cards = state.cards();
+        let keep = cards.pop().expect("the opening graph has cards");
+        for node in cards {
+            super::delete_card(&state, node).expect("not the last one yet");
+        }
+        assert_eq!(state.cards(), vec![keep]);
+
+        super::delete_card(&state, keep).expect_err("★ the last one stays");
+        assert_eq!(state.cards(), vec![keep], "and it really is still there");
+        assert_eq!(
+            state.selected.get(),
+            Some(keep),
+            "so something is still selected and the inspector still has a \
+             subject"
+        );
+    });
+}
+
+/// R1682 — the two switches are two facts, and the wire keeps them apart.
+///
+/// Collapsing is a LOOK and switching off is what the graph MEANS, so a screen
+/// that folded them into one "state" word would make a reader guess which half
+/// to trust. Driven through the same two functions the seats and the wire both
+/// call.
+#[test]
+fn r1682_collapsing_a_card_and_switching_it_off_are_two_independent_facts() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = std::rc::Rc::new(state());
+        let node = state.node_of("P-03").expect("the specification has it");
+        let read = |state: &LabState| {
+            let doc = state.doc.borrow();
+            let slot = doc.tree(super::ROOT).and_then(|t| t.node(node)).unwrap();
+            (slot.appearance.collapsed, slot.disabled, slot.bypassed)
+        };
+        assert_eq!(read(&state), (false, false, false), "it opens plain");
+
+        super::collapse_card(&state, node).expect("the card is there");
+        assert_eq!(
+            read(&state),
+            (true, false, false),
+            "collapsing touches the look and nothing else"
+        );
+
+        super::disable_card(&state, node).expect("the card is there");
+        assert_eq!(
+            read(&state),
+            (true, true, false),
+            "★ and switching off is NOT bypass — a bypassed node passes its \
+             input through, which is the opposite of what this tool means"
+        );
+
+        // Both are toggles, and each puts back only its own fact.
+        super::collapse_card(&state, node).expect("the card is there");
+        assert_eq!(read(&state), (false, true, false));
+        super::disable_card(&state, node).expect("the card is there");
+        assert_eq!(read(&state), (false, false, false));
+    });
+}
+
+// ★ The scrolled-seat check lives in `painted.rs`, not here: it has to take
+// the rectangle from the PAINT and ask the hit test about it, and a version
+// written here would have had only `node_act_seat` to get a rectangle from —
+// which is the function under test. The first draft did exactly that, aimed
+// the press at the centre of what that function answered, and passed with the
+// scroll offset removed from it. See
+// `r1682_a_node_life_seat_is_pressable_where_it_is_painted`.

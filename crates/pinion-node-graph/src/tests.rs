@@ -15,9 +15,9 @@ use crate::{
     GroupError, Grow, Halt, InsertError, Instance, InterfaceSide, Item, ItemError, Layered,
     LinkLayer, Machine, Multiplicity, NestError, Node, NodeBody, NodeId, NodeKind, NodeSite,
     ObserveError, Occurrence, Organic, Orphaned, ParentError, PathError, Port, PortRef, PortSite,
-    PortValueError, ROOT, Reach, RelinkError, RepartitionError, Route, RunError, SelectError,
-    Session, Severed, Sharing, Side, Socket, Stack, Standing, Stop, Straighten, Stride, Tick,
-    Timeline, TreeId, UngroupError, Violation, WatchError, Watches, crossing,
+    PortValueError, ROOT, Reach, Relabelled, RelinkError, RepartitionError, Route, RunError,
+    SelectError, Session, Severed, Sharing, Side, Socket, Stack, Standing, Stop, Straighten,
+    Stride, Tick, Timeline, TreeId, UngroupError, Violation, WatchError, Watches, crossing,
 };
 
 /// The test taxonomy: two socket types, so type disagreement is reachable.
@@ -12039,5 +12039,429 @@ fn r1681_a_move_of_a_link_that_is_not_there_names_which_is_missing() {
             tree: ROOT,
             link: held
         }
+    );
+}
+
+// ------------------------------------------------------------- switching off
+
+/// R1682 — ★★ the whole reason this is not [`Document::set_bypassed`]: the two
+/// requests differ in what reaches the nodes DOWNSTREAM.
+///
+/// Driven through the evaluator rather than read off the flags, because the
+/// difference is a behaviour and not a field. `two -> add.0`, `three -> add.1`,
+/// `add -> sink.0`: bypassing `add` routes its first input onward, so the sink
+/// still sees a value; disabling it cuts the flow and the sink sees nothing.
+#[test]
+fn r1682_a_disabled_node_stops_the_flow_where_a_bypassed_one_passes_it_on() {
+    let mut fixture = fixture();
+    assert_eq!(
+        number(&fixture.document.evaluator().inputs(ROOT, fixture.sink)),
+        Some(5),
+        "2 + 3 arrives while everything runs"
+    );
+
+    fixture
+        .document
+        .set_bypassed(ROOT, fixture.add, true)
+        .unwrap();
+    assert_eq!(
+        number(&fixture.document.evaluator().inputs(ROOT, fixture.sink)),
+        Some(2),
+        "bypassed: it stops computing and its first input travels through"
+    );
+
+    fixture
+        .document
+        .set_bypassed(ROOT, fixture.add, false)
+        .unwrap();
+    let was = fixture
+        .document
+        .set_disabled(ROOT, fixture.add, true)
+        .unwrap();
+    assert!(
+        !was,
+        "and it answers what it was, so a toggle needs no read"
+    );
+    assert_eq!(
+        number(&fixture.document.evaluator().inputs(ROOT, fixture.sink)),
+        None,
+        "★ disabled: nothing comes out, so nothing downstream has a value — \
+         this is the assertion that makes it a second operation rather than a \
+         second name for the first"
+    );
+
+    // And it is reversible, exactly.
+    assert!(
+        fixture
+            .document
+            .set_disabled(ROOT, fixture.add, false)
+            .unwrap()
+    );
+    assert_eq!(
+        number(&fixture.document.evaluator().inputs(ROOT, fixture.sink)),
+        Some(5)
+    );
+}
+
+/// R1682 — a node switched off does not hand out its own authored value
+/// either.
+///
+/// The one path a disabled node could still have leaked through: every other
+/// exit from the evaluator falls back to what was authored on the output port
+/// when the body produced nothing, and a node that is not running must not
+/// reach that fallback. A source node is where this is visible, because its
+/// value is the *only* thing it has.
+#[test]
+fn r1682_a_disabled_source_produces_nothing_not_even_what_was_authored_on_it() {
+    let mut fixture = fixture();
+    fixture
+        .document
+        .set_port_value(ROOT, fixture.two, PortRef::output(0), Val::Number(41))
+        .unwrap();
+    assert_eq!(
+        number(&fixture.document.evaluate(ROOT, fixture.two)),
+        Some(2),
+        "the kind's own output wins while it runs"
+    );
+
+    fixture
+        .document
+        .set_disabled(ROOT, fixture.two, true)
+        .unwrap();
+    assert_eq!(
+        fixture.document.evaluate(ROOT, fixture.two),
+        vec![None],
+        "switched off means switched off, authored value included"
+    );
+    assert_eq!(
+        number(&fixture.document.evaluator().inputs(ROOT, fixture.sink)),
+        None,
+        "and the sink adds nothing to nothing"
+    );
+}
+
+/// R1682 — being switched off is a fact about the node, so it travels with it.
+///
+/// The same answer `bypassed` gives, and asserted for the same reason: a copy
+/// of a node somebody switched off that arrived running would run something
+/// nobody asked to run.
+#[test]
+fn r1682_switching_off_travels_with_the_node_and_is_not_a_look() {
+    let mut fixture = fixture();
+    fixture
+        .document
+        .set_disabled(ROOT, fixture.add, true)
+        .unwrap();
+    fixture
+        .document
+        .tree_mut(ROOT)
+        .unwrap()
+        .node_mut(fixture.add)
+        .unwrap()
+        .appearance
+        .collapsed = true;
+
+    let carried = fixture
+        .document
+        .extract(ROOT, &[fixture.add])
+        .expect("the node comes out as a fragment");
+    let inner = carried
+        .nodes()
+        .find(|n| matches!(n.body, NodeBody::Kind(Op::Add)))
+        .expect("the fragment holds it");
+    assert!(inner.disabled, "off travels");
+    assert!(inner.appearance.collapsed, "and so do its looks");
+
+    // The two are separate facts, which is why they are separate fields: a
+    // renderer reading `collapsed` learns nothing about whether it runs.
+    assert!(!inner.bypassed, "and neither of them is bypass");
+}
+
+/// R1682 — the two ways there is nothing to switch off.
+#[test]
+fn r1682_switching_off_something_that_is_not_there_names_which_is_missing() {
+    let mut fixture = fixture();
+    let absent = TreeId(97);
+    assert_eq!(
+        fixture.document.set_disabled(absent, fixture.add, true),
+        Err(EditError::NoSuchTree(absent))
+    );
+    let gone = fixture.add;
+    fixture.document.remove_node(ROOT, gone).unwrap();
+    assert_eq!(
+        fixture.document.set_disabled(ROOT, gone, true),
+        Err(EditError::NoSuchNode {
+            tree: ROOT,
+            node: gone
+        })
+    );
+}
+
+// ----------------------------------------------------------------- relabelling
+
+/// R1682 — the property the verb exists for: a node's NAME changes and
+/// everything keyed by its IDENTITY is untouched.
+///
+/// The comparison is with the behaviour prototype this crate's screen is built
+/// against, which has no rename and therefore copies the node under the new
+/// name and covers the old one with a deletion — after which it has to move ten
+/// separate side tables by hand to compensate. Here the whole edit is one
+/// string, and this test is the assertion that nothing else moved.
+#[test]
+fn r1682_a_renamed_node_keeps_its_identity_and_everything_hung_on_it() {
+    let mut fixture = fixture();
+    let held = fixture.add;
+    let before = fixture
+        .document
+        .tree(ROOT)
+        .unwrap()
+        .node(held)
+        .unwrap()
+        .clone();
+    let links_before = fixture.document.tree(ROOT).unwrap().links().to_vec();
+
+    let done = fixture.document.relabel(ROOT, held, Some("adder")).unwrap();
+    assert_eq!(
+        done,
+        Relabelled {
+            was: None,
+            now: Some("adder".to_owned()),
+            changed: true,
+        },
+        "and the OLD name is answered, which is what the reference toolkit's \
+         own rename notification drops"
+    );
+
+    let after = fixture.document.tree(ROOT).unwrap().node(held).unwrap();
+    assert_eq!(after.id, before.id, "the identity is the same identity");
+    assert_eq!(after.display_name(), "adder");
+    assert_eq!((after.x, after.y), (before.x, before.y));
+    assert_eq!(after.parent, before.parent);
+    assert_eq!(after.bypassed, before.bypassed);
+    assert_eq!(after.appearance, before.appearance);
+    assert_eq!(
+        fixture.document.tree(ROOT).unwrap().links(),
+        links_before.as_slice(),
+        "no link was re-minted, so nothing holding a link id was orphaned"
+    );
+
+    // And the node is now addressable by the name, which is the point of a
+    // name: the lookup is a function.
+    assert_eq!(fixture.document.node_labelled(ROOT, "adder"), Some(held));
+    assert_eq!(fixture.document.nodes_labelled(ROOT, "adder"), vec![held]);
+}
+
+/// R1682 — ★ the refusal the reference toolkit does not have.
+///
+/// Measured on 6.11.1 offscreen: naming a second sibling what the first is
+/// already called is accepted, `findChildren` then answers **two**, and the
+/// singular by-name lookup answers one of them with nothing said. The same
+/// holds in its item model — a duplicate display string is accepted and the
+/// by-name search answers two rows. So this test is the whole difference: the
+/// name is refused, the document is untouched, and the refusal says who holds
+/// it.
+#[test]
+fn r1682_a_name_another_node_answers_to_is_refused_and_names_the_holder() {
+    let mut fixture = fixture();
+    fixture
+        .document
+        .relabel(ROOT, fixture.two, Some("source"))
+        .unwrap();
+
+    let why = fixture
+        .document
+        .relabel(ROOT, fixture.three, Some("source"))
+        .unwrap_err();
+    assert_eq!(
+        why,
+        EditError::LabelTaken {
+            tree: ROOT,
+            label: "source".to_owned(),
+            held_by: fixture.two,
+        }
+    );
+    assert!(
+        why.to_string().contains("source"),
+        "the sentence names the name, not just the fact"
+    );
+
+    // The refusal is total: the other node was not half-renamed.
+    assert_eq!(
+        fixture
+            .document
+            .tree(ROOT)
+            .unwrap()
+            .node(fixture.three)
+            .unwrap()
+            .label,
+        None
+    );
+    // And therefore the lookup stayed a function.
+    assert_eq!(
+        fixture.document.node_labelled(ROOT, "source"),
+        Some(fixture.two)
+    );
+
+    // Trailing space is the same name, which is why it is trimmed BEFORE the
+    // check — a name that differs from another only by whitespace is exactly
+    // the ambiguity this refusal exists to prevent.
+    assert!(matches!(
+        fixture
+            .document
+            .relabel(ROOT, fixture.three, Some("  source ")),
+        Err(EditError::LabelTaken { .. })
+    ));
+}
+
+/// R1682 — a name with nothing in it is refused rather than read as "clear it".
+#[test]
+fn r1682_a_blank_name_is_refused_and_clearing_one_is_a_different_request() {
+    let mut fixture = fixture();
+    fixture
+        .document
+        .relabel(ROOT, fixture.add, Some("adder"))
+        .unwrap();
+
+    assert_eq!(
+        fixture.document.relabel(ROOT, fixture.add, Some("   ")),
+        Err(EditError::LabelEmpty {
+            tree: ROOT,
+            node: fixture.add
+        }),
+        "a node showing no name at all is not something anybody asked for"
+    );
+    assert_eq!(
+        fixture
+            .document
+            .tree(ROOT)
+            .unwrap()
+            .node(fixture.add)
+            .unwrap()
+            .display_name(),
+        "adder",
+        "and the refusal left the name it had"
+    );
+
+    // Clearing is `None`, and it puts the node back to being DESCRIBED by its
+    // body rather than called anything.
+    let done = fixture.document.relabel(ROOT, fixture.add, None).unwrap();
+    assert_eq!(done.was.as_deref(), Some("adder"));
+    assert_eq!(done.now, None);
+    assert!(done.changed);
+    assert_eq!(
+        fixture
+            .document
+            .tree(ROOT)
+            .unwrap()
+            .node(fixture.add)
+            .unwrap()
+            .display_name(),
+        "Add"
+    );
+    assert_eq!(
+        fixture.document.node_labelled(ROOT, "Add"),
+        None,
+        "a description is not a name: nothing ANSWERS to it"
+    );
+}
+
+/// R1682 — renaming a node to what it is already called moves nothing, and
+/// says so.
+///
+/// The reference toolkit filters the same case out of its notification
+/// (measured: a second set to the same string fires nothing), and a caller that
+/// rebuilt its tables on every no-op would be doing work no edit asked for.
+/// The difference is that here it is a *return value*, so the caller can act on
+/// it rather than infer it from a signal that did not arrive.
+#[test]
+fn r1682_renaming_a_node_to_its_own_name_is_a_success_that_changed_nothing() {
+    let mut fixture = fixture();
+    fixture
+        .document
+        .relabel(ROOT, fixture.add, Some("adder"))
+        .unwrap();
+
+    let again = fixture
+        .document
+        .relabel(ROOT, fixture.add, Some("adder"))
+        .unwrap();
+    assert_eq!(
+        again,
+        Relabelled {
+            was: Some("adder".to_owned()),
+            now: Some("adder".to_owned()),
+            changed: false,
+        },
+        "its own name is not a name another node holds, so it is not refused"
+    );
+
+    // Clearing a name that was never there is the other no-op.
+    let cleared = fixture.document.relabel(ROOT, fixture.two, None).unwrap();
+    assert!(!cleared.changed);
+    assert_eq!(cleared.was, None);
+}
+
+/// R1682 — ★★ what happens when the invariant is broken from OUTSIDE the verb.
+///
+/// [`Node::label`] is a public field, so a caller can still write a duplicate
+/// directly. The measured baseline answers an arbitrary one of the holders and
+/// says nothing; here the singular lookup declines to guess and the plural one
+/// says which case it was — "nothing answers to this" and "several do" are
+/// different problems and a caller that cannot tell them apart will fix the
+/// wrong one.
+#[test]
+fn r1682_an_ambiguous_name_is_not_guessed_at_and_the_two_failures_differ() {
+    let mut fixture = fixture();
+    fixture
+        .document
+        .relabel(ROOT, fixture.two, Some("source"))
+        .unwrap();
+    // Straight past the verb, which is the only way to reach this state.
+    fixture
+        .document
+        .tree_mut(ROOT)
+        .unwrap()
+        .node_mut(fixture.three)
+        .unwrap()
+        .label = Some("source".to_owned());
+
+    assert_eq!(
+        fixture.document.node_labelled(ROOT, "source"),
+        None,
+        "it does not pick one and pretend"
+    );
+    let holders = fixture.document.nodes_labelled(ROOT, "source");
+    assert_eq!(holders.len(), 2, "and it says how many answer to it");
+    assert!(holders.contains(&fixture.two) && holders.contains(&fixture.three));
+
+    assert!(
+        fixture.document.nodes_labelled(ROOT, "nobody").is_empty(),
+        "absent is empty, ambiguous is longer than one, and they are not \
+         the same answer"
+    );
+}
+
+/// R1682 — the two ways there is nothing to rename.
+#[test]
+fn r1682_renaming_something_that_is_not_there_names_which_is_missing() {
+    let mut fixture = fixture();
+    let absent = TreeId(97);
+    assert_eq!(
+        fixture.document.relabel(absent, fixture.add, Some("x")),
+        Err(EditError::NoSuchTree(absent))
+    );
+
+    let gone = fixture.add;
+    fixture.document.remove_node(ROOT, gone).unwrap();
+    assert_eq!(
+        fixture.document.relabel(ROOT, gone, Some("x")),
+        Err(EditError::NoSuchNode {
+            tree: ROOT,
+            node: gone
+        })
+    );
+    assert!(
+        fixture.document.nodes_labelled(ROOT, "x").is_empty(),
+        "and a refused rename left no name behind"
     );
 }

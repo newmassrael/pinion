@@ -461,7 +461,14 @@ const STORAGE_KEY: &str = "node_graph.state";
 // digest was taken over a sample carrying the OLD version number, so bumping
 // changes it. Bump first, then read the digest the gate prints on the SECOND
 // run. Recorded because the next person to add a field will hit it too.
-const PERSISTED_SCHEMA_VERSION: u32 = 10;
+//
+// R1682 -> 11: a `Node` gained `disabled` — switched off, which is a different
+// request from bypassed and therefore a second field beside it rather than
+// another meaning for the first. The same situation as 10 in every respect
+// that matters here: it carries `serde(default)`, so an old blob still LOADS
+// and reads its nodes as running, which is what they were. And the note above
+// was followed in two steps rather than literally.
+const PERSISTED_SCHEMA_VERSION: u32 = 11;
 
 /// R1599 — the append-only `(version, digest)` ledger the persistence gate
 /// reads. See `pinion_core::test_fixtures::assert_persisted_shape` for why it
@@ -471,8 +478,11 @@ const PERSISTED_SCHEMA_VERSION: u32 = 10;
 /// gate and no digest of them was ever taken, so there is none to record —
 /// writing one now would be inventing a measurement rather than reporting one.
 #[cfg(test)]
-const PERSISTED_SHAPE_HISTORY: &[(u32, u64)] =
-    &[(9, 0xcf24_4e33_beee_b4c5), (10, 0x9fed_b236_9417_723a)];
+const PERSISTED_SHAPE_HISTORY: &[(u32, u64)] = &[
+    (9, 0xcf24_4e33_beee_b4c5),
+    (10, 0x9fed_b236_9417_723a),
+    (11, 0x1c11_f72e_7c2e_d6c6),
+];
 
 /// R849 — where a newly added node first lands, and the per-add cascade step
 /// (in minted-id order) so repeated adds do not stack exactly.

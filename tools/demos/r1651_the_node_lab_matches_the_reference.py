@@ -305,7 +305,12 @@ def body() -> None:
             # which is a member. The pin is what NOTICED (this is the check
             # working), and the number moves with a reason rather than by
             # somebody widening it to make a red go away.
-            "lab.inspector": 8,
+            # ★★ R1682 — 11, not 8: the node's-life row is three seats, one per
+            # thing a person can do to the selected card itself (collapse,
+            # switch off, delete). Each is demanded back by `must_answer` in the
+            # screen's own press census, so the number growing here is matched
+            # by three more affordances that have to answer a press.
+            "lab.inspector": 11,
             "lab.palette.discovery": 3,
         }
         undeclared = [

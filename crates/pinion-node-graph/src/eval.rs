@@ -219,11 +219,23 @@ impl<K: NodeKind> Evaluator<'_, K> {
             .document
             .tree(descent.tree)
             .and_then(|t| t.node(node))
-            .map(|n| (n.body.clone(), n.bypassed));
-        let Some((body, bypassed)) = resolved else {
+            .map(|n| (n.body.clone(), n.bypassed, n.disabled));
+        let Some((body, bypassed, disabled)) = resolved else {
             self.visiting.remove(&key);
             return vec![None; arity];
         };
+        // ★★ R1682 — a DISABLED node is not there. Before the bypass arm and
+        // before the body, because the request is stronger than either: its
+        // inputs are not resolved (nothing runs, so nothing reads them), its
+        // outputs are empty, and — unlike every other path out of this function
+        // — the authored-value fallback below is skipped too. A node switched
+        // off that still handed out its own constant would be running.
+        if disabled {
+            self.visiting.remove(&key);
+            let empty = vec![None; arity];
+            self.memo.insert(key, empty.clone());
+            return empty;
+        }
         // R1586 — a bypassed node does not compute. Its inputs are still
         // resolved (something has to pass through), and the routing is derived
         // from its signature rather than authored. This arm comes before the
