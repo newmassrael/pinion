@@ -48,11 +48,23 @@
 //! A gate that fires on every correct painter is a gate nobody keeps.
 //!
 //! So the ink here comes from the same [`LayoutCache`] the layout pass shaped
-//! with — the arrangement `scene/containment` already uses on the wire. Host
-//! font differences then move the box and the ink **together**, which is what
-//! keeps this off [[zero-flake-policy]]'s books; what stays caught is the case
-//! where they cannot move together, a box pinned to a constant with a label
-//! that outgrows it.
+//! with — the arrangement `scene/containment` already uses on the wire. What
+//! stays caught is the case the stand-in cannot judge: a box pinned to a
+//! constant with a label that outgrows it.
+//!
+//! ★ **And the exposure that buys, stated rather than implied.** For a box
+//! sized from its own content, a host with wider faces moves the box and the
+//! ink together and this gate does not notice. For a box pinned to a
+//! **constant**, it moves only the ink — so such a painter can be green here
+//! and red on another machine, which is a [[zero-flake-policy]] liability and
+//! not a hypothetical one: measured across the fifteen gated painters, ten
+//! declare fixed-pixel boxes and no [`TextOverflow`] policy at all. A declared
+//! policy removes the exposure, because the stand-in and the shaper both clamp
+//! an eliding run to its own rectangle. Registered as
+//! [[debt-ten-painters-pin-a-box-and-state-no-overflow-policy]] rather than
+//! left as a property of whichever machine last ran this.
+//!
+//! [`TextOverflow`]: pinion_core::style::TextOverflow
 //!
 //! [`screen_ink`]: pinion_core::test_fixtures::screen_ink
 //! [`LayoutCache`]: pinion_text::LayoutCache
