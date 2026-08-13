@@ -663,13 +663,16 @@ pub const OPERATIONS: &[OperationSpec] = &[
         witness: "form",
         needs: None,
     },
-    // ★ The wire can remove a field and the screen offers no way to: an
-    // operation with a verb and no gesture is as much a gap as the reverse,
-    // and this column is the first thing to say it.
+    // ★★ R1686 closed the gap this row was written to publish: the wire could
+    // remove a field and the screen offered no way to, which is as much a gap
+    // as the reverse and is what this column exists to say out loud. The
+    // affordance is the reference's own — a seat at the trailing edge of every
+    // row's key line — and it is the FORM PAINTER's, so the property grid gets
+    // it in the same act.
     OperationSpec {
         name: "remove a field",
         verb: Some(("remove_field", "control.permissions")),
-        gesture: false,
+        gesture: true,
         witness: "form",
         needs: None,
     },

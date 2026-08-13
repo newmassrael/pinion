@@ -187,6 +187,12 @@ def body() -> None:
             for tag in (
                 f"lab.form.control.{field['key']}",
                 f"lab.form.applies.{field['key']}",
+                # ★★ R1686 — the seat that takes the row away. DEMANDED per
+                # row, not permitted per row: the reference draws it on every
+                # row it does not derive and every row here is authored, so a
+                # form that grew one row without a seat is a configuration a
+                # person can only add to.
+                f"lab.form.remove.{field['key']}",
             ):
                 if tag not in painted:
                     missing.append(tag)
@@ -251,6 +257,7 @@ def body() -> None:
             declared.add(f"lab.form.control.{field['key']}")
             declared.add(f"lab.form.applies.{field['key']}")
             declared.add(f"lab.form.defect.{field['key']}")
+            declared.add(f"lab.form.remove.{field['key']}")
             # Every affordance a shape can put inside its control. Declared per
             # family rather than per instance because how many a row has is a
             # function of its VALUE (a list grows), and the count pin below is

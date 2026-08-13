@@ -52,6 +52,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     assert_same_picture,
     find_by_tag,
+    resize_and_settle,
     terminate_process_tree,
     wait_until,
 )
@@ -999,6 +1000,147 @@ def test_no_demo_aims_a_press_with_the_placement_reader() -> None:
         "a press point is derived from the PLACEMENT reader, which reports "
         "rectangles no pointer can reach — use `abs_rects_of`, whose answer is "
         "the one the router resolves a press by: " + "; ".join(offenders),
+    )
+
+
+def test_resize_and_settle_waits_for_the_frame_that_is_the_new_size() -> None:
+    """★★★★★ R1686 — the helper answers the frame that IS the new window, not
+    the first one it is handed.
+
+    Written because a counterfactual of the gate below passed: making the helper
+    return the first snapshot left the whole harness suite green, and this file
+    exists precisely so a helper every demo leans on is not the untested part.
+    `wait_until` was tested here from R1580 and its most load-bearing caller was
+    not.
+
+    The fake answers the OLD size once and then the new one, which is the shape
+    of the race itself — a frame rendered before the resize landed. A helper
+    that took the first answer would return it, and the demo reading that
+    snapshot would assert about the previous window.
+    """
+    old, new = (420, 560), (420, 760)
+    served: list[tuple[int, int]] = []
+
+    class Renderer:
+        """Two frames: the one before the resize, then the one after."""
+
+        def request(self, method: str, params: dict) -> Response:
+            check(method == "scene/" + "resize", f"it drives the resize: {method}")
+            check(
+                (params["width"], params["height"]) == new,
+                f"with the size it was asked for: {params}",
+            )
+            return Response(id=1, result={})
+
+        def snapshot(self, *, source: str, viewport: tuple[int, int]) -> dict:
+            check(source == "paint", f"it reads the RENDERED frame: {source}")
+            size = old if not served else new
+            served.append(size)
+            return {"rect": {"x": 0, "y": 0, "w": size[0], "h": size[1]}}
+
+    shot = resize_and_settle(Renderer(), new, timeout=2.0)  # type: ignore[arg-type]
+    check(
+        (shot["rect"]["w"], shot["rect"]["h"]) == new,
+        f"resize_and_settle: answers the frame at the new size, got {shot['rect']}",
+    )
+    check(
+        len(served) >= 2,
+        f"and it waited rather than taking the first frame ({len(served)} read)",
+    )
+
+
+def test_no_demo_resizes_a_window_and_reads_without_waiting() -> None:
+    """★★★★★ R1686 — a resize is followed by a WAIT on the new size, never by a
+    tick.
+
+    `scene/snapshot from=paint` reads the last RENDERED frame — deliberately,
+    because introspection comes from the paint and not from a re-render nobody
+    saw ([[introspection-from-paint-not-screen]]). So a `scene/resize` followed
+    by a fixed `tick` is a bet that the render arrives inside that interval, and
+    every read taken after it — the snapshot, `scene/containment`,
+    `scene/scroll_reach` — answers about the PREVIOUS window when the bet loses.
+
+    Measured: R1685's demo read the opening body height (404) at the tall size
+    (604) once under load and passed three times idle. The class audit that
+    followed found the same shape in three more demos, one of which carried a
+    comment explaining the hazard and then took the bet anyway. That is the
+    signature of a rule that lives in prose: it is re-derived per demo and got
+    wrong three times out of four. `resize_and_settle` is the rule, and this is
+    what keeps it from being re-authored badly a fifth time.
+
+    # How it looks, and what two passed counterfactuals bought
+
+    The rule is **per function**: a function that sends the verb must also wait,
+    either through `resize_and_settle` or through its own `wait_until` on
+    something the resize changes.
+
+    Not "never send the verb", which was the second draft. It flagged thirteen
+    sites that are already right — and right in a STRONGER way than the helper:
+    they poll on a domain outcome (this chart grew, this table re-spanned)
+    rather than on the root rectangle, and forcing them through the helper would
+    have replaced a specific wait with a general one. A gate that turns correct
+    code into weaker code is not a gate.
+
+    Not "the file mentions a settling helper" either, which was the first draft:
+    putting the flaking shape back into a demo left it green, because the
+    now-unused import still mentioned the helper. A text scan cannot tell a call
+    from a leftover name, so this reads calls.
+
+    The per-function scope is stricter than this tree can currently tell apart:
+    widening the search to the whole file changes no verdict today, because
+    every demo that resizes also waits somewhere. It is kept because file scope
+    is the weaker CLAIM — one wait anywhere would excuse a resize that has none,
+    which is the flake, spelled — and because the day it starts to matter is the
+    day somebody adds the second resize to a file that already had one.
+
+    What it does not see: a resize in one nested function whose wait lives in a
+    sibling, and a verb sent through a variable. Both would be a demo going out
+    of its way, and the shape every demo writes is a literal at the call beside
+    the wait that observes it.
+    """
+    import ast
+
+    verb = "scene/" + "resize"
+    waiters = {"resize_and_settle", "wait_until", "wait_query"}
+    demos = sorted((Path(__file__).resolve().parent / "demos").glob("*.py"))
+    check(len(demos) > 100, f"the demo scan found {len(demos)} file(s)")
+
+    def called(node: ast.AST) -> str:
+        if not isinstance(node, ast.Call):
+            return ""
+        if isinstance(node.func, ast.Attribute):
+            return node.func.attr
+        return node.func.id if isinstance(node.func, ast.Name) else ""
+
+    drivers, offenders = 0, []
+    for path in demos:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for scope in ast.walk(tree):
+            if not isinstance(scope, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            sends, waits = [], False
+            for node in ast.walk(scope):
+                if called(node) in waiters:
+                    waits = True
+                if isinstance(node, ast.Call) and any(
+                    isinstance(arg, ast.Constant) and arg.value == verb
+                    for arg in node.args
+                ):
+                    sends.append(node.lineno)
+            if not sends:
+                continue
+            drivers += 1
+            if not waits:
+                offenders.append(f"{path.name}:{sends[0]} in {scope.name}()")
+
+    check(drivers >= 4, f"{drivers} function(s) drive a resize, so this is live")
+    check(
+        not offenders,
+        f"a function sends {verb} and never waits for the new size to be "
+        "painted — a resize followed by a tick is a bet on the render arriving, "
+        "and every read after it answers about the PREVIOUS window. Use "
+        "`resize_and_settle`, or poll with `wait_until` on whatever the resize "
+        "was meant to change: " + ", ".join(offenders),
     )
 
 

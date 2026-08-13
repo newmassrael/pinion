@@ -222,7 +222,25 @@ pub struct RowBox {
     /// is how R1651 shipped an option row whose second chip could not be
     /// pressed. R1652 generalises it to every shape for the same reason, before
     /// rather than after: a stepper and a checkbox are the same hazard.
+    ///
+    /// ★ R1686 — *inside the control* is load-bearing and not a turn of phrase.
+    /// The remove seat was drafted into this list and three readers were
+    /// already relying on the narrower meaning: the option painter turns every
+    /// entry into a chip, and the crate's containment gate asserts every entry
+    /// stands inside the control's content box. It has its own field instead.
     pub parts: Vec<(String, Rect)>,
+    /// ★★ R1686 — where the seat that **takes this row away** landed.
+    ///
+    /// Cut out of the header's trailing edge, which is where the reference tool
+    /// puts it and the only edge that is free under both wrap policies: under
+    /// [`RowWrap::Beside`] the row's own trailing edge is inside the control.
+    ///
+    /// Always present, because the form holds the row and
+    /// [`ConfigForm::remove`] therefore succeeds — the affordance is derived
+    /// from that and not from a flag a screen sets. A rule that made some rows
+    /// unremovable would turn this into an `Option`, and the type change is
+    /// what would make every consumer handle it.
+    pub remove: Rect,
 }
 
 impl RowBox {
@@ -310,6 +328,7 @@ impl FormGeometry {
                             .iter()
                             .filter_map(|(s, r)| Some((s.clone(), moved(*r)?)))
                             .collect(),
+                        remove: moved(row.remove)?,
                     })
                 })
                 .collect(),
@@ -505,6 +524,12 @@ fn lay_row(field: &ConfigField, at: (u32, u32), key_col: u32, style: &FormStyle)
         } else {
             control_h
         };
+        // ★★ R1686 — the seat that takes this row away, cut out of the header's
+        // trailing edge before the header is handed to the flex pass. Cut
+        // rather than overlaid: a badge laid out into the full width and a
+        // glyph painted on top of its last pixels is the R1656 class exactly,
+        // where every box is right and only their sum is wrong.
+        let (header, remove) = split_off_remove(header, key_line);
         RowBox {
             key: field.key().to_string(),
             row: Rect::new(x0, y, style.width, row_h),
@@ -512,8 +537,31 @@ fn lay_row(field: &ConfigField, at: (u32, u32), key_col: u32, style: &FormStyle)
             control,
             wrapped,
             parts: lay_parts(field, control, style),
+            remove,
         }
     }
+}
+
+/// Take the remove seat out of a header, and answer both halves.
+///
+/// The seat is a **square of the key's line box**, so it is exactly as tall as
+/// the text it sits beside and cannot be a number that goes stale when the
+/// key's size changes. It is vertically centred, because a header under
+/// [`RowWrap::Beside`] is as tall as the control rather than as tall as one
+/// line, and the flex pass centres the badges it holds for the same reason.
+fn split_off_remove(header: Rect, key_line: u32) -> (Rect, Rect) {
+    let seat = key_line.min(header.w);
+    let x = header.x + header.w - seat;
+    let y = header.y + (header.h.saturating_sub(key_line)) / 2;
+    (
+        Rect::new(
+            header.x,
+            header.y,
+            header.w.saturating_sub(seat + HEADER_GAP),
+            header.h,
+        ),
+        Rect::new(x, y, seat, key_line.min(header.h)),
+    )
 }
 
 /// Where a row's affordances land inside its control.
@@ -740,6 +788,7 @@ pub fn view_config_form(
             geometry.origin,
             theme,
         ));
+        children.push(view_remove_seat(tag_prefix, row, geometry.origin, theme));
         children.push(view_control(
             tag_prefix,
             field,
@@ -853,6 +902,40 @@ fn view_header(
             )),
         )
     }
+}
+
+/// The glyph the seat that takes a row away is drawn with.
+///
+/// U+00D7, the multiplication sign — a typographic character in Latin-1 rather
+/// than a letter or a symbol from a font this project would have to vendor.
+/// `x` would read as a value someone typed; the framework already paints
+/// [`pinion_core::text_elide::ELLIPSIS`] from a higher block than this one.
+const REMOVE_GLYPH: &str = "\u{00d7}";
+
+/// The seat that takes a row out of the form.
+///
+/// Painted at the rectangle [`RowBox::remove`] published, not at one computed
+/// here — the property this module has kept since R1651.1, and the reason it
+/// keeps it is that the two copies drift silently and the press lands nowhere.
+fn view_remove_seat(tag_prefix: &str, row: &RowBox, origin: (u32, u32), theme: &Theme) -> Scene {
+    Scene::Container(
+        ContainerNode::new(vec![Scene::Text(TextNode::styled(
+            REMOVE_GLYPH.to_owned(),
+            Rect::default(),
+            form_run_style()
+                .with_size_px(12)
+                .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+        ))])
+        .with_tag(format!("{tag_prefix}.remove.{}", row.key))
+        .with_layout(placed(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center)
+                .with_justify(JustifyContent::Center),
+            row.remove,
+            origin,
+        )),
+    )
 }
 
 /// A row's control: an option set shows every option with the chosen ones
@@ -1301,6 +1384,15 @@ pub fn row_access_nodes(
             Some(said.join("; ")),
             true,
         ));
+        // ★★ R1686 — the seat is a BUTTON to a screen reader, and its name says
+        // which row it takes away. A glyph with no accessible name announces as
+        // its own character, which for U+00D7 is "multiplication sign" — a
+        // reader would be told the row's arithmetic rather than its affordance.
+        nodes.push(
+            AccessNode::new(format!("{tag_prefix}.remove.{}", row.key), AriaRole::Button)
+                .with_name(format!("remove {}", field.key()))
+                .with_bounds(row.remove),
+        );
     }
     nodes
 }
@@ -1336,6 +1428,13 @@ mod tests {
         assert_eq!(b.control.y, a.control.y - 10);
         assert_eq!(b.control.w, a.control.w, "a shift is not a resize");
         assert_eq!(b.parts.len(), a.parts.len());
+        // R1686 — the remove seat is a rectangle like the others and moves like
+        // one. It is asserted by name because it is the one that is NOT in
+        // `parts`, and a field a translation forgets is a press that lands on
+        // the row above it.
+        assert_eq!(b.remove.x, a.remove.x + 300);
+        assert_eq!(b.remove.y, a.remove.y - 10);
+        assert_eq!((b.remove.w, b.remove.h), (a.remove.w, a.remove.h));
         assert_eq!(moved.chips.len(), local.chips.len());
         assert_eq!(moved.height, local.height, "height is not a coordinate");
     }
@@ -1442,6 +1541,166 @@ mod tests {
             );
         }
     }
+    /// ★★★★★ R1686 — **the same form lays out the same way whether or not the
+    /// caller stands in an owner scope.**
+    ///
+    /// This module's header claims [`form_geometry`] is "the single source both
+    /// [`view_config_form`] and a consumer's hit test read", and until this test
+    /// that claim was false in a way no gate could see: the widths come from
+    /// `measured_text_extent`, which answers `None` **outside an `Owner`
+    /// scope** and falls back to a per-character estimate. A shell paints
+    /// inside the scope and routes a pointer outside it, so the two passes
+    /// wrapped the chip row differently — and a chip's rect ended up under a
+    /// different chip's tag.
+    ///
+    /// Measured on the running analyser screen, which is how it was found: the
+    /// estimate makes `qos.priority` 99px and the shaper makes it 92px, so the
+    /// hit test fitted one fewer chip per row, and pressing the chip painted
+    /// for `control.permissions` added `plugins`. The seat this round built is
+    /// what made it reachable — every removal offers one more key, and one more
+    /// chip is what re-wraps the row.
+    ///
+    /// The repair is [`pinion_core::measured_text_extent`]'s, not this file's:
+    /// the scope that HAS the provider records it, and a reader outside any
+    /// scope measures with the same face. That is R1684.4's shape exactly, one
+    /// axis over ([[debt-a-widget-cannot-read-its-own-size-outside-a-scope]]).
+    #[test]
+    fn r1686_a_form_lays_out_the_same_inside_and_outside_an_owner_scope() {
+        use pinion_core::{Owner, TEXT_METRICS, TextExtent, TextMetrics};
+        use std::rc::Rc;
+
+        /// A face whose advance is nothing like the per-character estimate, so
+        /// "the seam was consulted" is distinguishable from "the fallback ran".
+        #[derive(Debug)]
+        struct Narrow;
+        impl TextMetrics for Narrow {
+            fn measure(
+                &self,
+                text: &str,
+                style: &pinion_core::style::TextStyle,
+                max_width: Option<u32>,
+            ) -> Option<TextExtent> {
+                let w = u32::try_from(text.chars().count()).unwrap_or(0) * 3;
+                Some(TextExtent::new(
+                    max_width.map_or(w, |m| w.min(m)),
+                    style.font_size_px,
+                ))
+            }
+        }
+
+        let style = FormStyle::default();
+        let owner = Owner::new();
+        TEXT_METRICS.provide(&owner, Rc::new(Narrow));
+        let inside = owner.run(|| form_geometry(&inspector(), (14, 40), &style));
+        let outside = form_geometry(&inspector(), (14, 40), &style);
+
+        assert_eq!(
+            inside.chips.len(),
+            outside.chips.len(),
+            "the same form offers the same keys either way"
+        );
+        assert_eq!(
+            inside.chips, outside.chips,
+            "★★★ a chip's rectangle is where it is painted, whoever asks. The \
+             paint runs inside the scope and a pointer arrives outside it, so \
+             a difference here IS a press that lands on the wrong key"
+        );
+        assert_eq!(
+            inside.rows.iter().map(|r| r.remove).collect::<Vec<_>>(),
+            outside.rows.iter().map(|r| r.remove).collect::<Vec<_>>(),
+            "★ and so is the seat that takes a row away"
+        );
+        assert_eq!(inside.height, outside.height, "and so is the whole form");
+    }
+
+    /// ★★ R1686 — the seat that takes a row away is inside its row, clear of
+    /// the header the badges are laid into, and clear of the control.
+    ///
+    /// Under **both** wrap policies, because they place the header differently:
+    /// wrapped it spans the pane and the control is below, beside it is the key
+    /// column and the control is to the right. A seat cut from the wrong edge
+    /// is invisible in one of the two and covers a control in the other.
+    #[test]
+    fn r1686_the_remove_seat_is_clear_of_the_header_and_the_control() {
+        for wrap in [RowWrap::WrapAll, RowWrap::Beside, RowWrap::WrapLong] {
+            let style = FormStyle::default().with_policy(wrap, FieldGrowth::AllGrow);
+            let geometry = form_geometry(&inspector(), (14, 40), &style);
+            assert!(!geometry.rows.is_empty());
+            for row in &geometry.rows {
+                let seat = row.remove;
+                assert!(seat.w > 0 && seat.h > 0, "{wrap:?} {} has no seat", row.key);
+                let inside = |a: pinion_core::scene::Rect, b: pinion_core::scene::Rect| {
+                    a.x >= b.x && a.y >= b.y && a.x + a.w <= b.x + b.w && a.y + a.h <= b.y + b.h
+                };
+                assert!(
+                    inside(seat, row.row),
+                    "{wrap:?} {}: seat {seat:?} left the row {:?}",
+                    row.key,
+                    row.row
+                );
+                let overlaps = |a: pinion_core::scene::Rect, b: pinion_core::scene::Rect| {
+                    a.x < b.x + b.w && b.x < a.x + a.w && a.y < b.y + b.h && b.y < a.y + a.h
+                };
+                assert!(
+                    !overlaps(seat, row.header),
+                    "{wrap:?} {}: seat {seat:?} is on the header {:?}, whose \
+                     badges are laid out by the flex pass and would be painted \
+                     under it",
+                    row.key,
+                    row.header
+                );
+                assert!(
+                    !overlaps(seat, row.control),
+                    "{wrap:?} {}: seat {seat:?} is on the control {:?}",
+                    row.key,
+                    row.control
+                );
+            }
+        }
+    }
+
+    /// ★★ R1686 — **the affordance does not lie**: every row the geometry lays
+    /// a seat for is a row [`ConfigForm::remove`] accepts.
+    ///
+    /// The seat is drawn unconditionally today because the form holds the row
+    /// and removing a held row therefore succeeds. That is a *derivation*, and
+    /// this is what keeps it one: a refusal added to `remove` without the
+    /// painter learning about it turns every seat into a press that does
+    /// nothing, which is the failure mode a boolean flag on the field would
+    /// have made silent.
+    #[test]
+    fn r1686_every_row_with_a_seat_is_a_row_the_form_will_remove() {
+        let mut form = inspector();
+        let geometry = form_geometry(&form, (14, 40), &FormStyle::default());
+        let keys: Vec<String> = geometry.rows.iter().map(|r| r.key.clone()).collect();
+        assert!(keys.len() > 1, "the fixture has rows to remove");
+        for key in keys {
+            assert_eq!(
+                form.remove(&key),
+                Ok(()),
+                "a seat was painted for {key} and the form refused it"
+            );
+        }
+    }
+
+    /// ★ R1686 — the seat is a named button in the tree, not a bare glyph.
+    #[test]
+    fn r1686_the_remove_seat_announces_which_row_it_takes_away() {
+        let form = inspector();
+        let geometry = form_geometry(&form, (14, 40), &FormStyle::default());
+        let nodes = row_access_nodes("f", &form, &geometry);
+        for row in &geometry.rows {
+            let tag = format!("f.remove.{}", row.key);
+            let node = nodes
+                .iter()
+                .find(|n| n.tag == tag)
+                .unwrap_or_else(|| panic!("no access node at {tag}"));
+            assert_eq!(node.role, pinion_a11y::AriaRole::Button);
+            assert_eq!(node.name.as_deref(), Some(&*format!("remove {}", row.key)));
+            assert_eq!(node.bounds, Some(row.remove), "and it says where it is");
+        }
+    }
+
     use pinion_core::widgets::config_form::{Applies, ConfigField, ConfigForm, FieldType};
 
     use pinion_core::Scene;
@@ -1614,7 +1873,10 @@ mod tests {
         let shown = inspector();
         let mut fields: Vec<ConfigField> = shown.fields().to_vec();
         fields[1] = fields[1].clone().with_hidden(true);
-        let hiding = ConfigForm::new(fields, shown.addable().to_vec());
+        let hiding = ConfigForm::new(
+            fields,
+            shown.addable().into_iter().cloned().collect::<Vec<_>>(),
+        );
 
         let a = form_geometry(&shown, (0, 0), &FormStyle::default());
         let b = form_geometry(&hiding, (0, 0), &FormStyle::default());

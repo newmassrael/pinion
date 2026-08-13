@@ -32,6 +32,7 @@
 
 use super::provider_slot::ProviderSlot;
 use crate::style::TextStyle;
+use std::cell::RefCell;
 use std::rc::Rc;
 
 /// R1453 §5.36 — the measured extent of a laid-out string: the toolkit's
@@ -116,8 +117,35 @@ pub static TEXT_METRICS: ProviderSlot<Rc<dyn TextMetrics>> =
     });
 
 /// R1453 §5.36 — measure `text` in `style` via the active owner scope's
-/// provider; `None` when called outside an `Owner` scope or when no shell
-/// seeded a real provider (headless).
+/// provider; `None` when no shell has seeded a real provider (headless).
+///
+/// ★★★★★ **R1686 — it answers outside an `Owner` scope too, with the provider
+/// that last measured something.** Before this round it answered `None` there,
+/// and the consequence was not a missing measurement but a *disagreement*: a
+/// caller falls back to its own per-character estimate, so any layout derived
+/// from measured text came out one way in the paint (which runs inside the
+/// scope) and another way in a pointer handler (which does not). Measured on
+/// the analyser's settings form, where the estimate makes `qos.priority` 99px
+/// and the shaper makes it 92px: the offered-key chips wrapped onto a different
+/// number of lines in the two passes, and pressing the chip painted for one
+/// configuration path added another. Both boxes were "right" and only their
+/// derivation disagreed — the [[debt-paint-and-gesture-read-two-facts]] class.
+///
+/// The record is written by the scope that HAS the provider, which is R1684.4's
+/// shape one axis over: the pass that already knows the fact writes it down,
+/// rather than every screen inventing a cache
+/// ([[debt-a-widget-cannot-read-its-own-size-outside-a-scope]]).
+///
+/// Headless is unchanged: with nothing ever seeded there is nothing to record,
+/// so the answer stays `None` and a caller's fallback stays deterministic.
+///
+/// **The stated limit**: the record is written by a measurement, so an
+/// out-of-scope call made before *any* string has been measured still answers
+/// `None`. That window is between the shell's boot and its first paint, and it
+/// is strictly narrower than the old behaviour rather than a new gap — the
+/// alternative, recording at seed time, would be a second writer to keep in
+/// step with this one, and a record that can drift from the provider is worse
+/// than one that arrives a frame late.
 ///
 /// `max_width` wraps the measurement at that width (the toolkit's
 /// `boundingRect(rect, flags, text)`); `None` measures the string on one line
@@ -141,8 +169,49 @@ pub fn measured_text_extent(
     style: &TextStyle,
     max_width: Option<u32>,
 ) -> Option<TextExtent> {
-    let owner = super::owner::Owner::current()?;
-    TEXT_METRICS.resolve(&owner).measure(text, style, max_width)
+    if let Some(owner) = super::owner::Owner::current() {
+        let provider = TEXT_METRICS.resolve(&owner);
+        let measured = provider.measure(text, style, max_width);
+        if measured.is_some() {
+            remember(&provider);
+        }
+        return measured;
+    }
+    LAST_MEASURING
+        .with(|held| held.borrow().clone())?
+        .measure(text, style, max_width)
+}
+
+thread_local! {
+    /// ★★ R1686 — the provider that last answered a measurement, so a caller
+    /// with no owner scope measures against the same face the paint did.
+    ///
+    /// See [`measured_text_extent`]'s doc for why this exists. Held as the
+    /// provider rather than as a cache of answers because the question is
+    /// open-ended — any string in any style — and a cache would have to be
+    /// invalidated by something that knows when a face changes, which is the
+    /// provider itself.
+    static LAST_MEASURING: RefCell<Option<Rc<dyn TextMetrics>>> =
+        const { RefCell::new(None) };
+}
+
+/// Record the provider that just measured something, if it is not the one
+/// already recorded.
+fn remember(provider: &Rc<dyn TextMetrics>) {
+    LAST_MEASURING.with(|held| {
+        let mut held = held.borrow_mut();
+        if held.as_ref().is_none_or(|was| !Rc::ptr_eq(was, provider)) {
+            *held = Some(Rc::clone(provider));
+        }
+    });
+}
+
+/// Forget the recorded provider — for a test that needs the headless answer
+/// after one that seeded a face, since the record outlives an [`Owner`].
+///
+/// [`Owner`]: super::owner::Owner
+pub fn forget_measuring_provider() {
+    LAST_MEASURING.with(|held| held.borrow_mut().take());
 }
 
 #[cfg(test)]

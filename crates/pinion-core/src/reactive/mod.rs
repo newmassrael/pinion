@@ -47,7 +47,8 @@ pub use resource_cache::ResourceCache;
 pub use signal::Signal;
 pub use simulation::{SimulationGuard, is_simulating};
 pub use text_metrics::{
-    NullTextMetrics, TEXT_METRICS, TextExtent, TextMetrics, measured_text_extent,
+    NullTextMetrics, TEXT_METRICS, TextExtent, TextMetrics, forget_measuring_provider,
+    measured_text_extent,
 };
 pub use tracked::{Tracked, TrackedMut};
 pub use viewport::{VIEWPORT_SIZE, use_viewport_size};

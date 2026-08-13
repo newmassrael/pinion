@@ -46,6 +46,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
     call,
+    resize_and_settle,
     run_demo,
 )
 
@@ -122,13 +123,15 @@ def run(tf: RpcSubprocess) -> None:
     # ── 5. shrink the window to the floor it declares. THIS is the state the
     #      round is about: the panes now hold more than they show, and every
     #      control has to remain reachable rather than merely painted.
-    call(tf, "scene/resize", {"width": FLOOR[0], "height": FLOOR[1]})
     # ★ A resize is not a repaint. These reads answer from the frame the WINDOW
     # last painted (that is the point — introspection from the paint, not from a
     # re-render nobody saw), so the frame has to land before the question is
     # meaningful. Without this the read answered with the old layout's
     # rectangles inside the new window and reported twelve marks lost.
-    tf.tick(0.05)
+    # ★★ R1686 — and the wait is on the OUTCOME now. This round found the same
+    # shape flaking in a sibling demo under load: a fixed tick is a bet on the
+    # render arriving, and it is the bet this comment already knew was there.
+    resize_and_settle(tf, FLOOR)
     small = reach(tf)
     assert_eq(small["window"]["w"], FLOOR[0], "the read follows the window")
     assert_eq(small["window"]["h"], FLOOR[1], "and its height")
@@ -211,8 +214,7 @@ def run(tf: RpcSubprocess) -> None:
     )
 
     # ── 10. back at the opening size, the screen is clean again ─────────────
-    call(tf, "scene/resize", {"width": WIN[0], "height": WIN[1]})
-    tf.tick(0.05)
+    resize_and_settle(tf, WIN)
     end = reach(tf)
     assert_eq(end["window"]["h"], WIN[1], "the read follows the window back")
     assert_eq(len([o for o in end["out_of_sight"] if o["reach"] == "lost"]), 0,

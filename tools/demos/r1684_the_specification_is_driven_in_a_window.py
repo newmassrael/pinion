@@ -176,6 +176,11 @@ GESTURES = {
         tf, "lab.inspector.addkey", "transport.unicast.lowlatency"
     ),
     "edit a field": lambda tf: press(tf, "lab.form.item.listen.endpoints.add"),
+    # ★★ R1686 — the seat at the trailing edge of a row's key line. This row
+    # read `gesture: false` from R1677 until now: the wire could take a row out
+    # and the screen offered no way to, which the table was written to make
+    # impossible to forget.
+    "remove a field": lambda tf: press(tf, "lab.form.remove.control.permissions"),
     # ★★★ R1684 — the launch gate, closed by a person. The stepper clamps at the
     # field's ceiling, correctly, so the only way past it is to type — which is
     # why this row read `gesture: false` until the form's rows learned to be

@@ -705,8 +705,21 @@ mod tests {
 
         // Headless: no provider, so the model applies and its wide advance
         // strides hard.
+        //
+        // ★ R1686 — asserted BEFORE anything seeds a face, and that ordering is
+        // now load-bearing rather than incidental. `measured_text_extent`
+        // answers outside an owner scope with whatever last measured, because
+        // a paint that runs inside the scope and a pointer handler that runs
+        // outside it were otherwise deriving two different layouts from "the
+        // same" function. "Headless" therefore means *nothing has ever
+        // measured*, which is what this line is.
         let modelled = axis_ticks(&scale, 6, &along);
         assert!(matches!(modelled.rule(), FitRule::Strided { .. }));
+        assert_eq!(
+            along.extent_px("abcd"),
+            4 * 12,
+            "with no face anywhere, the model answers"
+        );
 
         // Under a provider that says the labels are a third as wide, the same
         // axis keeps more of them.
@@ -721,17 +734,26 @@ mod tests {
             modelled.labelled().len()
         );
         assert!(measured.is_clear() && modelled.is_clear());
-        // ...and the fallback is still exactly the model, which is what makes
-        // a headless answer deterministic rather than absent.
-        assert_eq!(
-            along.extent_px("abcd"),
-            4 * 12,
-            "outside the owner, the model answers"
-        );
         assert_eq!(
             owner.run(|| along.extent_px("abcd")),
             4 * 4,
-            "and inside it, the provider does"
+            "inside the owner, the provider answers"
+        );
+        // ★★ R1686 — and outside it the SAME provider answers, which is the
+        // repair: a chart laid out in a view and hit-tested from a pointer
+        // handler must not measure its labels two ways.
+        assert_eq!(
+            along.extent_px("abcd"),
+            4 * 4,
+            "★ and outside it, so does the provider — the face a layout was \
+             derived from does not depend on who is asking"
+        );
+        pinion_core::forget_measuring_provider();
+        assert_eq!(
+            along.extent_px("abcd"),
+            4 * 12,
+            "and with the record cleared the model answers again, so the \
+             headless fallback is still there rather than replaced"
         );
     }
 

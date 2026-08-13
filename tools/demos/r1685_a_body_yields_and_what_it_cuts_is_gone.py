@@ -49,6 +49,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_eq,
     call,
+    resize_and_settle,
     run_demo,
 )
 
@@ -87,6 +88,21 @@ def body_height(size: tuple[int, int]) -> int:
     return size[1] - HEADER_H - ACTION_H - TABBAR_H
 
 
+def resized_to(tf: RpcSubprocess, size: tuple[int, int]) -> dict[str, dict]:
+    """The tagged containers of the frame that landed after a resize.
+
+    ★★★★★ R1686 — this was `resize` then one `tick(0.05)`, and that is a sleep
+    wearing a tick's clothes: `scene/snapshot from=paint` reads the last
+    RENDERED frame, so a resize that has not repainted yet answers with the
+    previous window's rectangles. It reported the opening body height (404) at
+    the tall size (604) once under load and passed three times idle — a flake,
+    which this project does not carry at any rate ([[zero-flake-policy]]).
+    The wait itself is `rpc_verify.resize_and_settle`, lifted there in the same
+    round because four demos had written it and three had written it wrong.
+    """
+    return containers(resize_and_settle(tf, size), {})
+
+
 def run(tf: RpcSubprocess) -> None:
     # ── A. the declaration rides on the wire ─────────────────────────────────
     tagged = paint(tf, WIN)
@@ -106,9 +122,7 @@ def run(tf: RpcSubprocess) -> None:
 
     # ── B. the layout half: the chrome holds, the body yields ────────────────
     for size in (WIN, TALL, SHORT):
-        call(tf, "scene/resize", {"width": size[0], "height": size[1]})
-        tf.tick(0.05)
-        at = paint(tf, size)
+        at = resized_to(tf, size)
         assert_eq(at["chrome.header"]["rect"]["h"], HEADER_H, f"header at {size}")
         assert_eq(at["chrome.action"]["rect"]["h"], ACTION_H, f"action at {size}")
         assert_eq(at["chrome.tabbar"]["rect"]["h"], TABBAR_H, f"tabbar at {size}")
@@ -124,8 +138,10 @@ def run(tf: RpcSubprocess) -> None:
         )
 
     # ── C. the paint half: what the body cut is reported as CUT ──────────────
-    call(tf, "scene/resize", {"width": WIN[0], "height": WIN[1]})
-    tf.tick(0.05)
+    # Settled, not ticked: `scene/containment` is derived from the painted
+    # scene, so it answers about the previous window until the resize has been
+    # rendered — the same race section B was flaking on.
+    resized_to(tf, WIN)
     contained = call(tf, "scene/containment")
     for key in ("escapes", "smeared", "clipped", "marks"):
         assert key in contained, f"scene/containment must report {key}"
@@ -150,8 +166,7 @@ def run(tf: RpcSubprocess) -> None:
     assert contained["clipped"] >= len(from_body), contained
 
     # More room, less cut: the report follows the window rather than a constant.
-    call(tf, "scene/resize", {"width": TALL[0], "height": TALL[1]})
-    tf.tick(0.05)
+    resized_to(tf, TALL)
     roomier = call(tf, "scene/containment")
     assert roomier["clipped"] <= contained["clipped"], (
         f"a taller window cuts no more than a shorter one: {roomier['clipped']} "
@@ -159,8 +174,7 @@ def run(tf: RpcSubprocess) -> None:
     )
 
     # ── D. reachability: a hidden box has no range, so the cut is LOST ───────
-    call(tf, "scene/resize", {"width": WIN[0], "height": WIN[1]})
-    tf.tick(0.05)
+    resized_to(tf, WIN)
     reach = call(tf, "scene/scroll_reach")
     for key in ("window", "marks", "scrollable", "lost", "out_of_sight"):
         assert key in reach, f"scene/scroll_reach must report {key}"

@@ -666,7 +666,33 @@ impl ConfigField {
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ConfigForm {
     fields: Vec<ConfigField>,
-    addable: Vec<ConfigField>,
+    /// ★★ R1686 — **the kind's catalogue**: every key this form is willing to
+    /// offer, held or not, invariant for the form's life.
+    ///
+    /// R1650 modelled the offered set as a mutable bucket that
+    /// [`remove`](Self::remove) pushed into, and that made the list a record of
+    /// this one node's history rather than a fact about its kind: a path typed
+    /// by hand through [`add_typed`](Self::add_typed) and then taken out came
+    /// back as a chip, so the form began offering, to every later reader, a key
+    /// somebody once mistyped. Measured on the reference tool this widget's
+    /// shape comes from: its offered list is derived, `catalogue(role)` minus
+    /// what is held, and a hand-typed key removed simply goes.
+    ///
+    /// The opening `fields` are in here too, because a row the form opened
+    /// holding is by definition a key this kind can have — that is what makes
+    /// taking one out reversible with the same gesture that adds one.
+    catalogue: Vec<ConfigField>,
+    /// R1686 — rows taken out, each already put back to its opening value.
+    ///
+    /// Not "the removed rows the screen might want back": the rows
+    /// [`revert`](Self::revert) has to be able to restore. A row is only ever
+    /// moved from `fields` to here, so `fields ∪ parked` covers every key in
+    /// `opened_with` and the revert cannot fail to find one.
+    ///
+    /// It is *not* what [`addable`](Self::addable) reads — a parked row whose
+    /// key the catalogue does not name is restorable and not offerable, which
+    /// is exactly the hand-typed path's case.
+    parked: Vec<ConfigField>,
     /// R1678 — the keys this form opened with, in the order it showed them.
     ///
     /// The membership half of "has this been changed", which
@@ -677,9 +703,8 @@ pub struct ConfigForm {
     ///
     /// A list of keys rather than a copy of the rows, because
     /// [`add`](Self::add) and [`remove`](Self::remove) only ever MOVE a field
-    /// between `fields` and `addable` — the union of the two is invariant, so
-    /// the keys are enough to put the membership back and the rows themselves
-    /// are never lost.
+    /// between `fields` and `parked` — the union of the two covers it, so the
+    /// keys are enough to put the membership back and no row is ever lost.
     opened_with: Vec<String>,
 }
 
@@ -689,21 +714,25 @@ impl ConfigForm {
     /// A key present in both is **kept only in `fields`**: a form that offered
     /// to add something it already has would let a user create a duplicate row,
     /// and two rows for one path is a configuration with no single value.
+    ///
+    /// R1686 — `addable` is the **curated** part of the catalogue and keeps its
+    /// order, which is the order the chips are laid out in; the opening rows
+    /// are appended after it, so a key only takes a place in that row once it
+    /// has been removed and the curated order is never disturbed by history.
     #[must_use]
     pub fn new(fields: Vec<ConfigField>, addable: Vec<ConfigField>) -> Self {
-        let mut form = Self {
-            fields: Vec::new(),
-            addable: Vec::new(),
-            opened_with: Vec::new(),
-        };
+        let mut form = Self::default();
         for field in fields {
             form.upsert(field);
         }
         for candidate in addable {
-            if form.field(candidate.key()).is_none()
-                && !form.addable.iter().any(|f| f.key() == candidate.key())
-            {
-                form.addable.push(candidate);
+            if !form.catalogue.iter().any(|f| f.key() == candidate.key()) {
+                form.catalogue.push(candidate);
+            }
+        }
+        for held in &form.fields {
+            if !form.catalogue.iter().any(|f| f.key() == held.key()) {
+                form.catalogue.push(held.clone());
             }
         }
         form.opened_with = form.fields.iter().map(|f| f.key().to_owned()).collect();
@@ -711,12 +740,38 @@ impl ConfigForm {
     }
 
     /// Put a field in, replacing any row at the same key.
+    ///
+    /// ★★ R1686 — **a row the form opened with goes back where it opened.** A
+    /// plain push made "take it out and put it back" move the row to the end,
+    /// which is not the identity it looks like: the order is what a reader
+    /// navigates a form by, and [`edited`](Self::edited) reads the key order as
+    /// one of the two ways a form can differ from how it opened — so a row that
+    /// came back in the wrong place left the form permanently reporting a
+    /// change nobody had made. The reference tool cannot have this bug because
+    /// it hides a row with an overlay and never touches the definition's order;
+    /// this type mutates in place, so the order has to be **derived** from the
+    /// opening key list instead.
+    ///
+    /// Rows added after the form opened are not in that list and follow, in the
+    /// order they were added.
     fn upsert(&mut self, field: ConfigField) {
         if let Some(at) = self.fields.iter().position(|f| f.key() == field.key()) {
             self.fields[at] = field;
-        } else {
-            self.fields.push(field);
+            return;
         }
+        let Some(rank) = self.opened_with.iter().position(|k| k == field.key()) else {
+            self.fields.push(field);
+            return;
+        };
+        let mut at = self.fields.len();
+        for (index, held) in self.fields.iter().enumerate() {
+            let held_rank = self.opened_with.iter().position(|k| k == held.key());
+            if held_rank.is_none_or(|held_rank| held_rank > rank) {
+                at = index;
+                break;
+            }
+        }
+        self.fields.insert(at, field);
     }
 
     /// The rows the form shows, in order.
@@ -726,9 +781,17 @@ impl ConfigForm {
     }
 
     /// The keys this node could still be given.
+    ///
+    /// ★★ R1686 — **derived** from the catalogue rather than stored, so it is a
+    /// fact about the kind and not a record of what this node has been through.
+    /// [`add`](Self::add) accepts exactly what this offers, which is the rule
+    /// that keeps a declaration a precondition of dispatch.
     #[must_use]
-    pub fn addable(&self) -> &[ConfigField] {
-        &self.addable
+    pub fn addable(&self) -> Vec<&ConfigField> {
+        self.catalogue
+            .iter()
+            .filter(|c| !self.fields.iter().any(|f| f.key() == c.key()))
+            .collect()
     }
 
     /// The row at that path.
@@ -756,16 +819,25 @@ impl ConfigForm {
 
     /// Move an offered key into the form.
     ///
+    /// R1686 — the row that comes back is the one that was taken out, if this
+    /// form took one out, and otherwise a fresh copy of the catalogue's. Both
+    /// hold their opening value, because [`remove`](Self::remove) puts a row
+    /// back to it on the way out: adding a key is adding a *field*, never
+    /// resurrecting a value nobody can see they still have.
+    ///
     /// # Errors
     ///
-    /// [`FormError::NotAddable`].
+    /// [`FormError::NotAddable`] — a key [`addable`](Self::addable) does not
+    /// offer, which includes a hand-typed path that has been removed.
     pub fn add(&mut self, key: &str) -> Result<(), FormError> {
-        let at = self
-            .addable
-            .iter()
-            .position(|f| f.key() == key)
-            .ok_or_else(|| FormError::NotAddable(key.to_string()))?;
-        let field = self.addable.remove(at);
+        let offered = self.catalogue.iter().find(|f| f.key() == key).cloned();
+        let (Some(offered), None) = (offered, self.field(key)) else {
+            return Err(FormError::NotAddable(key.to_string()));
+        };
+        let field = match self.parked.iter().position(|f| f.key() == key) {
+            Some(at) => self.parked.remove(at),
+            None => offered,
+        };
         self.upsert(field);
         Ok(())
     }
@@ -795,14 +867,27 @@ impl ConfigForm {
         if self.fields.iter().any(|f| f.key() == key) {
             return Err(FormError::AlreadyHeld(key));
         }
-        // A key the catalogue WAS offering stops being offered, so the chip
-        // does not survive the row it created.
-        self.addable.retain(|f| f.key() != key);
+        // A key the catalogue WAS offering stops being offered because the form
+        // now holds it — `addable` derives that, so there is nothing to do
+        // here. R1683 had to retain it out of a bucket by hand.
+        self.parked.retain(|f| f.key() != key);
         self.upsert(field);
         Ok(())
     }
 
-    /// Take a key back out, returning it to the offered set.
+    /// Take a key back out.
+    ///
+    /// ★★ R1686 — the row leaves **as it opened**, not as it was last typed
+    /// into. A removed row holding an edit is a ghost: it is off the screen,
+    /// nothing shows the value, and [`add`](Self::add) would resurrect a number
+    /// nobody could see they still had. The reference tool drops the edit in
+    /// the same act that takes the row away, and rebuilds it from its
+    /// definition when it comes back.
+    ///
+    /// Whether the key is **offered again** afterwards is not decided here: it
+    /// is decided by whether the catalogue names it, which
+    /// [`addable`](Self::addable) derives. A key the form opened holding, or one
+    /// it was offered, comes back as a chip; a path typed in by hand does not.
     ///
     /// # Errors
     ///
@@ -813,9 +898,10 @@ impl ConfigForm {
             .iter()
             .position(|f| f.key() == key)
             .ok_or_else(|| FormError::NoSuchField(key.to_string()))?;
-        let field = self.fields.remove(at);
-        self.addable.push(field);
-        self.addable.sort_by(|a, b| a.key().cmp(b.key()));
+        let mut field = self.fields.remove(at);
+        field.revert();
+        self.parked.retain(|f| f.key() != key);
+        self.parked.push(field);
         Ok(())
     }
 
@@ -839,10 +925,18 @@ impl ConfigForm {
     /// IS what the screen shows", and a form that settled its values while
     /// still reporting its added rows as changes would contradict that in the
     /// one place a person looks to check it.
+    ///
+    /// R1686 added the third half, and it is a consequence of the first two: a
+    /// settled form's opening state is what it now shows, so a row that is not
+    /// shown is not part of it and there is nothing for `parked` to keep. A
+    /// later [`add`](Self::add) of an offered key is then what it says — a
+    /// fresh field from the catalogue — rather than a row from before a launch
+    /// that no longer describes anything running.
     pub fn settle(&mut self) {
         for field in &mut self.fields {
             field.settle();
         }
+        self.parked.clear();
         self.opened_with = self.fields.iter().map(|f| f.key().to_owned()).collect();
     }
 
@@ -876,9 +970,14 @@ impl ConfigForm {
     ///
     /// The rows themselves are never rebuilt, only moved back: [`add`](Self::add)
     /// and [`remove`](Self::remove) shuttle a field between `fields` and
-    /// `addable`, so this partitions that union by the opening key list and
+    /// `parked`, so this partitions that union by the opening key list and
     /// restores the opening ORDER — which a set-based repair would lose, and
     /// the order is what a reader navigates the form by.
+    ///
+    /// ★ R1686 — which is why `parked` keeps a hand-typed row it will never
+    /// offer again. Restorable and offerable are different questions, and a
+    /// revert that answered the second one would drop a path the form opened
+    /// holding just because nothing was willing to suggest it.
     ///
     /// [`edited`](Self::edited) is false afterwards, always. That is asserted
     /// rather than assumed, because the two are one fact and a revert that left
@@ -886,20 +985,23 @@ impl ConfigForm {
     /// reappear.
     pub fn revert(&mut self) {
         let mut held: Vec<ConfigField> = std::mem::take(&mut self.fields);
-        held.append(&mut self.addable);
+        held.append(&mut self.parked);
         for field in &mut held {
             field.revert();
         }
-        // The opening order, then whatever is left offered — sorted, which is
-        // the order `remove` maintains for `addable`.
         for key in &self.opened_with {
             if let Some(at) = held.iter().position(|f| f.key() == key) {
                 let field = held.remove(at);
                 self.fields.push(field);
             }
         }
-        self.addable = held;
-        self.addable.sort_by(|a, b| a.key().cmp(b.key()));
+        // Whatever the opening list did not name was added after the form
+        // opened, so it is not part of the state being restored and nothing is
+        // waiting for it. A catalogue key among them is offered again by
+        // derivation; a hand-typed one is gone, which is what "put it back to
+        // how it opened" means for a row that was not there when it opened.
+        drop(held);
+        self.parked.clear();
     }
 
     /// Every way this form is wrong, row by row, in row order.
@@ -1384,6 +1486,94 @@ mod tests {
         );
         form.remove("timestamping").expect("held");
         assert_eq!(form.addable().len(), 2, "removing offers it again");
+    }
+
+    #[test]
+    fn r1686_a_hand_typed_path_taken_out_leaves_no_chip_behind() {
+        // ★★ The offered set is a fact about the node's KIND — the keys worth
+        // reaching for. A path somebody typed is a fact about this one node,
+        // and a form that started offering it because it once held it would be
+        // publishing one node's history as the kind's catalogue. Measured on
+        // the reference tool: its offered list is derived as
+        // `catalogue(role) - held`, so a hand-typed key removed simply goes.
+        let mut form = form();
+        form.add_typed(
+            ConfigField::new(
+                "transport.unicast.lowlatency",
+                "bool",
+                Applies::Restart,
+                "false",
+            )
+            .as_custom(),
+        )
+        .expect("not held");
+        form.remove("transport.unicast.lowlatency").expect("held");
+        assert!(
+            form.addable()
+                .iter()
+                .all(|f| f.key() != "transport.unicast.lowlatency"),
+            "a typed path is not a catalogue entry: offered {:?}",
+            form.addable()
+                .into_iter()
+                .map(ConfigField::key)
+                .collect::<Vec<_>>()
+        );
+    }
+
+    #[test]
+    fn r1686_a_row_taken_out_and_put_back_comes_back_as_it_opened() {
+        // ★★ Taking a row out drops what was typed into it. Otherwise the value
+        // is a GHOST: the row is off the screen, nothing shows the edit, and
+        // putting the key back resurrects a number nobody can see they still
+        // have. The reference drops the edit overlay in the same act that hides
+        // the row, and re-adding rebuilds the row from the definition.
+        let mut form = form();
+        form.set("id", "edited").expect("held");
+        assert!(form.edited());
+        form.remove("id").expect("held");
+        form.add("id").expect("offered again");
+        assert_eq!(
+            form.field("id").expect("back").value(),
+            "a1",
+            "the row came back holding what it opened with"
+        );
+        assert!(
+            !form.edited(),
+            "and a form at its opening rows and values reports no change"
+        );
+    }
+
+    #[test]
+    fn r1686_a_row_put_back_goes_where_it_opened_rather_than_last() {
+        // ★★ Found by the test above rather than reasoned: the value came back
+        // and the form still reported a change, because a plain push put the
+        // row at the END. The order is what a reader navigates a form by, and
+        // it is half of what `edited` compares — so a row that came back in the
+        // wrong place left the form permanently dirty with nothing on screen
+        // saying why.
+        let mut form = form();
+        let opening: Vec<String> = form.fields().iter().map(|f| f.key().to_owned()).collect();
+        form.remove("listen.endpoints").expect("the middle row");
+        form.add("listen.endpoints").expect("offered again");
+        assert_eq!(
+            form.fields()
+                .iter()
+                .map(ConfigField::key)
+                .collect::<Vec<_>>(),
+            opening.iter().map(String::as_str).collect::<Vec<_>>(),
+            "the middle row came back in the middle"
+        );
+
+        // A row added after the form opened has no opening place, so it goes
+        // last — and taking it out and putting it back keeps it there rather
+        // than promoting it past rows that were there first.
+        form.add("timestamping").expect("offered");
+        form.remove("timestamping").expect("held");
+        form.add("timestamping").expect("offered again");
+        assert_eq!(
+            form.fields().last().map(ConfigField::key),
+            Some("timestamping")
+        );
     }
 
     #[test]

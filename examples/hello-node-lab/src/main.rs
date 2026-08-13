@@ -2014,6 +2014,12 @@ enum Hit {
     AddKey,
     Field(String),
     AddField(String),
+    /// ★★ R1686 — the seat that takes a row out of the form.
+    ///
+    /// Its own arm rather than a [`Self::Part`], because the painter publishes
+    /// it in its own field for the same reason: `parts` means *inside the
+    /// control*, and this seat is cut out of the header.
+    RemoveField(String),
     /// An affordance inside a control: an option, a stepper, a checkbox, a list
     /// row. `part` is the painter's own tag suffix, so this arm covers every
     /// shape and a seventh needs no new arm here.
@@ -2081,6 +2087,15 @@ impl Hit {
             }
             let geometry = inspector_geometry(state);
             for row in &geometry.rows {
+                // ★★ R1686 — the seat that takes the row away, asked FIRST
+                // because it is cut out of the header and a header that
+                // answered first would swallow it. It is asked by name rather
+                // than through `parts`, which means "inside the control" and
+                // is relied on to by the option painter and the containment
+                // gate.
+                if contains(row.remove, px, py) {
+                    return Self::RemoveField(row.key.clone());
+                }
                 // Every affordance inside a control, from the geometry the
                 // painter published — never a second layout.
                 for (suffix, rect) in &row.parts {
@@ -2262,6 +2277,7 @@ impl Hit {
             Self::AddKey => "card:addkey".into(),
             Self::Field(key) => format!("field:{key}"),
             Self::AddField(key) => format!("add:{key}"),
+            Self::RemoveField(key) => format!("remove:{key}"),
             Self::Part { part, .. } => part.clone(),
             Self::Canvas => "canvas".into(),
         }
@@ -5403,15 +5419,10 @@ impl ExternalIntrospect for LabOracle {
                     .selected
                     .get()
                     .ok_or_else(|| InvokeError::rejected("no node is selected"))?;
-                let mut forms = state.forms.borrow_mut();
-                let form = forms
-                    .get_mut(&node)
-                    .ok_or_else(|| InvokeError::rejected("the selected node has no form"))?;
-                form.remove(key.trim())
-                    .map_err(|why| InvokeError::rejected(why.to_string()))?;
-                drop(forms);
-                sync_node(&state, node);
-                Ok(IntrospectValue::Text(key.trim().to_owned()))
+                // ★ R1686 — through [`remove_row`], which is now the one way a
+                // row leaves a form. This arm used to be the only caller and
+                // said nothing about what it had done.
+                remove_row(&state, node, key.trim()).map(IntrospectValue::Text)
             }
             // ★★ R1678 — one action with a scope argument, not five actions.
             // The scopes are a closed set the specification already names, and
@@ -6227,6 +6238,55 @@ fn set_value(
     Ok(held.unwrap_or_default())
 }
 
+/// Take a row out of the selected card's form (R1686).
+///
+/// ★★ **One function for the seat and for the wire**, which is the shape R1684
+/// established for `set_field` after finding two paths that did different
+/// things. Until this round the wire's arm was the only caller and it neither
+/// said what it had done nor knew about the field — both of which stop being
+/// optional the moment a person can press it.
+///
+/// What it has to do that the widget cannot:
+///
+/// * **Shut the field if it was open on this row.** A box standing over a row
+///   that is gone is the [`select_card`] hazard one level down, and the value
+///   in it is not applied — the reference drops the edit in the same act, and
+///   applying to a row about to vanish would be writing to nothing.
+/// * **Apply the field if it was open on a DIFFERENT row**, and let a refusal
+///   refuse the removal, which is [`begin_edit`]'s rule: pressing a seat
+///   elsewhere is leaving, and leaving applies.
+/// * **Re-derive the card**, because a card's pins come from its form and
+///   `listen.endpoints` is a row like any other.
+///
+/// # Errors
+///
+/// A card with no form, a key it does not hold, or a refused commit on the row
+/// the field was left open on.
+fn remove_row(state: &Rc<LabState>, node: NodeId, key: &str) -> Result<String, InvokeError> {
+    match state.editing.get() {
+        Some(Editing::Value {
+            node: over,
+            key: ref typed,
+            ..
+        }) if over == node && typed == key => end_edit(state),
+        Some(_) => {
+            commit_edit(state)?;
+            end_edit(state);
+        }
+        None => {}
+    }
+    let mut forms = state.forms.borrow_mut();
+    let form = forms
+        .get_mut(&node)
+        .ok_or_else(|| InvokeError::rejected("the card has no form"))?;
+    form.remove(key)
+        .map_err(|why| InvokeError::rejected(why.to_string()))?;
+    drop(forms);
+    sync_node(state, node);
+    state.say(format!("removed {key}"));
+    Ok(key.to_owned())
+}
+
 /// Put one ELEMENT of a list row back, leaving its neighbours alone (R1684).
 ///
 /// ★★ Text emptied removes the element, which is not a special case here: it
@@ -6770,6 +6830,23 @@ fn release(state: &Rc<LabState>) {
         Hit::Endpoint(n) => {
             choose_endpoint(state, n).ok();
         }
+        Hit::AddField(_) | Hit::Field(_) | Hit::RemoveField(_) | Hit::Part { .. } => {
+            act_on_form(state, now);
+        }
+        Hit::Rail(name) => state.say(format!("{name} is not this screen")),
+        _ => {}
+    }
+}
+
+/// What a press inside the settings form does — the four ways in, together.
+///
+/// ★ R1686 grouped them, and the grouping is the shape rather than a way to
+/// keep a function short: each of these four is a press on the inspector's
+/// FORM, they are the arms that need the selected card, and the two that were
+/// added since R1684 are both here. `release` reads as the screen's regions
+/// again with them folded away.
+fn act_on_form(state: &Rc<LabState>, hit: Hit) {
+    match hit {
         Hit::AddField(key) => {
             if let Some(node) = state.selected.get() {
                 let mut forms = state.forms.borrow_mut();
@@ -6783,13 +6860,19 @@ fn release(state: &Rc<LabState>) {
         //
         // The hit test has resolved a press to `field:<key>` since R1651 and
         // the wire answered that word, so an agent and a person both read the
-        // press as handled — and the match below ended in `_ => {}`. A person
+        // press as handled — and the match ended in `_ => {}`. A person
         // reported it as "the text box does nothing", which is exactly what it
         // was: a declared arm with no implementation is worse than no arm,
         // because the declaration stops anyone looking.
         Hit::Field(key) => press_row(state, &key),
+        // ★★ R1686 — the seat, through the one function the wire also calls.
+        // A refusal has already reached the toast through `say`.
+        Hit::RemoveField(key) => {
+            if let Some(node) = state.selected.get() {
+                remove_row(state, node, &key).ok();
+            }
+        }
         Hit::Part { key, part } => act_on_part(state, &key, &part),
-        Hit::Rail(name) => state.say(format!("{name} is not this screen")),
         _ => {}
     }
 }

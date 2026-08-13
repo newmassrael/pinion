@@ -79,7 +79,7 @@ fn r1651_the_selected_node_shows_the_fields_the_reference_shows() {
         );
         let offered: Vec<&str> = form
             .addable()
-            .iter()
+            .into_iter()
             .map(pinion_core::widgets::config_form::ConfigField::key)
             .collect();
         for key in spec::ADDABLE {

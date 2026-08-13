@@ -35,6 +35,7 @@ from rpc_verify import (  # noqa: E402
     abs_rects_of,
     assert_eq,
     call,
+    resize_and_settle,
     run_demo,
     walk_nodes,
 )
@@ -125,9 +126,10 @@ def run(tf: RpcSubprocess) -> None:
     assert_eq(at_open, "700,400",
               "at the opening size the app is told the cursor it was sent")
 
-    call(tf, "scene/resize", {"width": BIG[0], "height": BIG[1]})
-    tf.tick(0.016)
-    root = tf.snapshot(source="paint")["rect"]
+    # ★ R1686 — settled rather than ticked. A fixed tick after a resize races
+    # the render, and the assertion below would then be reading the OPENING
+    # window's root rect: a demo that is green only when the machine is quiet.
+    root = resize_and_settle(tf, BIG)["rect"]
     assert_eq((root["w"], root["h"]), BIG, "the window really grew")
 
     # The same window coordinate, after the growth. Before R1656 this arrived

@@ -373,6 +373,11 @@ fn declared_tags(state: &LabState) -> Vec<String> {
             }
             want.push(format!("lab.form.control.{}", field.key()));
             want.push(format!("lab.form.applies.{}", field.key()));
+            // ★★ R1686 — every row that is shown offers to be taken away, so
+            // the census demands one seat per shown row rather than one
+            // somewhere. The reference draws it on every row it does not
+            // derive, and every row here is authored.
+            want.push(format!("lab.form.remove.{}", field.key()));
         }
         for field in form.addable() {
             want.push(format!("lab.form.add.{}", field.key()));
@@ -396,6 +401,11 @@ fn must_answer(tag: &str) -> Option<String> {
         ("lab.palette.role.", "role"),
         ("lab.form.add.", "add"),
         ("lab.form.control.", "field"),
+        // ★ R1686 — `remove:<key>`, spelled like `add:` and `field:` rather
+        // than like the control's parts: it is a seat of the ROW, not an
+        // affordance inside the control, and the geometry publishes it apart
+        // from `parts` for the same reason.
+        ("lab.form.remove.", "remove"),
     ] {
         if let Some(rest) = tag.strip_prefix(prefix) {
             return Some(format!("{verb}:{rest}"));
@@ -1897,6 +1907,12 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
         // a driver that clamps causes nothing and would have read as a defect.
         press_tag(state, shot, "lab.form.item.listen.endpoints.add");
     }),
+    // ★★ R1686 — the seat at the trailing edge of a row's key line. This row
+    // carried `gesture: false` since R1677 as the table's own record that the
+    // wire could take a row out and nothing on the screen could.
+    ("remove a field", |state, shot| {
+        press_tag(state, shot, "lab.form.remove.control.permissions");
+    }),
     // ★★★ R1684 — the launch gate, closed the way a PERSON closes it. The
     // stepper cannot: it clamps at the field's ceiling, which is right, and is
     // why this row read `gesture: false` while the value that closes the gate
@@ -2535,9 +2551,7 @@ fn r1684_the_centre_of_every_control_answers_a_press() {
                 };
                 let at = centre(rect);
                 let before = (witness(&state, "form"), witness(&state, "editing"));
-                super::move_cursor(&state, at.0, at.1);
-                super::press(&state);
-                super::release(&state);
+                press_at(&state, at);
                 let after = (witness(&state, "form"), witness(&state, "editing"));
                 checked += 1;
                 if before == after {
@@ -2611,9 +2625,7 @@ fn r1684_the_field_stands_on_the_row_it_edits() {
                     continue;
                 };
                 let at = centre(aim);
-                super::move_cursor(&state, at.0, at.1);
-                super::press(&state);
-                super::release(&state);
+                press_at(&state, at);
                 let Some(target) = state.editing.get() else {
                     // A switch flips instead of opening, which the gate above
                     // has already established changes something.
@@ -2778,10 +2790,7 @@ fn r1684_picking_another_card_shuts_the_field() {
             .tags
             .get("lab.form.control.id")
             .expect("the opening card has a text row");
-        let (px, py) = centre(row);
-        super::move_cursor(&state, px, py);
-        super::press(&state);
-        super::release(&state);
+        press_at(&state, centre(row));
         assert!(
             state.editing.get().is_some(),
             "the row opened the field, or this asserts nothing"
@@ -2790,10 +2799,7 @@ fn r1684_picking_another_card_shuts_the_field() {
             .tags
             .get("lab.node.S-01")
             .expect("another card is on the canvas");
-        let (px, py) = centre(elsewhere);
-        super::move_cursor(&state, px, py);
-        super::press(&state);
-        super::release(&state);
+        press_at(&state, centre(elsewhere));
         assert_eq!(
             state.selected.get(),
             state.node_of("S-01"),
@@ -2805,6 +2811,89 @@ fn r1684_picking_another_card_shuts_the_field() {
              form that is not on the screen any more"
         );
     });
+}
+
+/// ★★★★★ R1686 — **taking a row away shuts the field that was standing on it**,
+/// and does not apply what was in it.
+///
+/// Written because the round's counterfactual PASSED: breaking the shut left
+/// every Rust gate green, and only the demo noticed. That is the recorded
+/// pattern — a passed counterfactual is a finding — and the gap was this
+/// screen's, not the harness's: `editing` is a plain signal and needs no
+/// external to observe, so there was no reason for the question to live only in
+/// a subprocess.
+///
+/// Both halves matter and they pull in opposite directions. R1684's rule is
+/// that leaving the field APPLIES what is in it, so a press somewhere else must
+/// not silently discard a value; but the one place that rule cannot hold is the
+/// row being taken away, because applying to a row about to vanish writes to
+/// nothing. The reference tool draws the same line — it drops the edit in the
+/// same act that hides the row.
+#[test]
+fn r1686_taking_a_row_away_shuts_the_field_standing_on_it() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+        let key = "id";
+        let opened_as = super::selected_form(&state)
+            .and_then(|form| form.field(key).map(|f| f.value().to_owned()))
+            .expect("the opening card has that row");
+
+        let row = *painted(&state)
+            .tags
+            .get(&format!("lab.form.control.{key}"))
+            .expect("the row is painted");
+        press_at(&state, centre(row));
+        assert!(
+            state.editing.get().is_some(),
+            "the row opened the field, or this asserts nothing"
+        );
+        state.buffer.set_text("something else".to_owned());
+
+        let seat = *painted(&state)
+            .tags
+            .get(&format!("lab.form.remove.{key}"))
+            .expect("and the row offers to be taken away");
+        press_at(&state, centre(seat));
+
+        assert!(
+            super::selected_form(&state).is_some_and(|form| form.field(key).is_none()),
+            "the seat took the row away"
+        );
+        assert!(
+            state.editing.get().is_none(),
+            "★★ and the field shut with it — a box standing over a row that is \
+             gone is a box aimed at nothing, and its target names that row"
+        );
+        // Put the row back and read what came with it: the half-typed text must
+        // NOT have been applied on the way out.
+        let mut forms = state.forms.borrow_mut();
+        if let Some(form) = forms.get_mut(&state.selected.get().expect("a card")) {
+            form.add(key).expect("the catalogue holds an opening row");
+        }
+        drop(forms);
+        assert_eq!(
+            super::selected_form(&state)
+                .and_then(|form| form.field(key).map(|f| f.value().to_owned())),
+            Some(opened_as),
+            "★ what was in the field was dropped, not written to the row on \
+             its way out"
+        );
+    });
+}
+
+/// Put the cursor at a point and click there — the three events a click is.
+///
+/// ★ R1686 — lifted, not invented: the round's own third-consumer grep found
+/// **six** copies of this triple with nothing between them, which is well past
+/// the threshold at which a mechanical repeat becomes a helper. A drag is not
+/// one of them and stays written out, because its move happens BETWEEN the
+/// press and the release and that ordering is the thing under test.
+fn press_at(state: &std::rc::Rc<super::LabState>, at: (u32, u32)) {
+    super::move_cursor(state, at.0, at.1);
+    super::press(state);
+    super::release(state);
 }
 
 /// ★★★ R1684 — **the caret a click lands on is the caret the field paints**,
@@ -2838,9 +2927,7 @@ fn r1684_a_click_resolves_to_the_byte_whose_caret_is_under_it() {
                 .get("lab.form.control.listen.endpoints")
                 .expect("the row is painted"),
         );
-        super::move_cursor(&state, at.0, at.1);
-        super::press(&state);
-        super::release(&state);
+        press_at(&state, at);
         assert!(state.editing.get().is_some(), "the press opened the field");
 
         let scene = painted_at(&state, (WIN_W, WIN_H)).1;

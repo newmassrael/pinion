@@ -60,6 +60,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     assert_router_press_moves,
     find_by_tag,
+    resize_and_settle,
     run_demo,
     texts_of,
     walk_nodes,
@@ -275,10 +276,13 @@ def body() -> None:
         # invoke path, which runs with no `Owner` scope and so could not read
         # the size at all. A person maximising the window is what found it, and
         # this is that person, written down.
+        # ★ R1686 — settled, not counted. Three ticks is a bigger bet than one
+        # and still a bet: this reads the paint back and asserts against the new
+        # window, so a render that has not arrived answers with the OLD
+        # rectangles and the assertion below fails for a reason that has nothing
+        # to do with what it is testing.
         big = (2494, 1531)
-        tf.request("scene/resize", {"width": big[0], "height": big[1]})
-        for _ in range(3):
-            tf.tick(0.016)
+        resize_and_settle(tf, big)
         grown = abs_rects_of(paint(tf))
         palette = grown["shell.palette"]
         assert palette[0] + palette[2] == big[0], (
@@ -299,9 +303,7 @@ def body() -> None:
             f"the gesture does not, which is what a person sees as 'nodes stop "
             f"clicking after a maximise'"
         )
-        tf.request("scene/resize", {"width": 1440, "height": 900})
-        for _ in range(3):
-            tf.tick(0.016)
+        resize_and_settle(tf, (1440, 900))
 
         # ── (C) ★ a header is a set, and the set is enforced ─────────────
         assert_eq(

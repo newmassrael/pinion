@@ -3303,6 +3303,49 @@ def wait_until(
         time.sleep(interval)
 
 
+def resize_and_settle(
+    tf: "RpcSubprocess",
+    size: "tuple[int, int]",
+    *,
+    timeout: float = 8.0,
+) -> Any:
+    """Drive a real window resize and answer the paint snapshot once the new
+    size has actually been RENDERED.
+
+    ★★★★★ R1686 — lifted because four demos had written it and three had
+    written it wrong. `scene/snapshot from=paint` reads the last rendered frame
+    (R705, and that is the point — introspection from the paint rather than
+    from a re-render nobody saw), so a resize followed by a fixed `tick` is a
+    sleep racing the render: the read answers with the PREVIOUS window's
+    rectangles, and every derived report — `scene/containment`,
+    `scene/scroll_reach` — answers about that window too.
+
+    Measured: R1685's demo read the opening body height at the tall size once
+    under load and passed three times idle. A demo that is green when the
+    machine is quiet is exactly what [[zero-flake-policy]] refuses, and one
+    that has already been written four times is the harness's job.
+
+    Waits on the ROOT's own width and height, because those are the two numbers
+    a resize is about — an outcome, not an elapsed interval.
+
+    Returns the settled `from=paint` snapshot, so a caller reads the frame it
+    waited for rather than taking another one that could be a frame later.
+    """
+    resp = tf.request("scene/resize", {"width": size[0], "height": size[1]})
+    assert resp is not None and resp.result is not None, (
+        f"scene/resize to {size} was accepted"
+    )
+
+    def settled() -> Any:
+        shot = tf.snapshot(source="paint", viewport=size)
+        rect = shot.get("rect", {}) if isinstance(shot, dict) else {}
+        return shot if (rect.get("w"), rect.get("h")) == size else None
+
+    return wait_until(
+        settled, timeout=timeout, desc=f"the window settles at {size} after resize"
+    )
+
+
 def wait_query(
     tf: "RpcSubprocess",
     path: str,

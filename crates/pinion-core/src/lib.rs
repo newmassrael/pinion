@@ -122,9 +122,9 @@ pub use reactive::{
     NullQuitSink, NullRepaintSink, NullTextMetrics, Owner, OwnerSnapshot, ProviderSlot, QUIT_SINK,
     QuitSink, REPAINT_SINK, RepaintSink, Resource, ResourceCache, ResourceState, Signal,
     SignalExternal, SimulationGuard, SlotScope, SnapshotRestoreError, SnapshotableSignal,
-    TEXT_METRICS, TextExtent, TextMetrics, VIEWPORT_SIZE, batch, is_simulating,
-    measured_monospace_cell, measured_text_extent, use_local_task_pump, use_pane_viewport_size,
-    use_quit_sink, use_repaint_sink, use_viewport_size,
+    TEXT_METRICS, TextExtent, TextMetrics, VIEWPORT_SIZE, batch, forget_measuring_provider,
+    is_simulating, measured_monospace_cell, measured_text_extent, use_local_task_pump,
+    use_pane_viewport_size, use_quit_sink, use_repaint_sink, use_viewport_size,
 };
 pub use renderer::WidgetRenderer;
 pub use revision::SceneRevision;
