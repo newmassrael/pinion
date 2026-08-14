@@ -1022,6 +1022,97 @@ pub enum Violation {
     },
 }
 
+/// ★ R1689 — every *refusal* in this crate has had a sentence since it was
+/// written; this — the verdict on a document that arrived from outside — did
+/// not, so a consumer reporting one reached for `{:?}` and put Rust syntax in
+/// front of a person. It is the type most likely to be shown to one, because
+/// the documents that break invariants are the ones that came from a file.
+impl fmt::Display for Violation {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let side = |side: Side| match side {
+            Side::Input => "input",
+            Side::Output => "output",
+        };
+        match self {
+            Self::DanglingLink { tree, link } => {
+                write!(
+                    f,
+                    "link {link} in tree {tree} names a socket that is not there"
+                )
+            }
+            Self::Overlinked {
+                tree,
+                socket,
+                side: which,
+            } => write!(
+                f,
+                "{} socket {socket} in tree {tree} holds more links than it may",
+                side(*which)
+            ),
+            Self::TypeMismatch { tree, link } => write!(
+                f,
+                "link {link} in tree {tree} joins two ports whose types cannot cross"
+            ),
+            Self::Cycle { tree, nodes } => write!(
+                f,
+                "tree {tree} has a dependency cycle through {}",
+                nodes
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+            Self::DanglingInstance {
+                tree,
+                node,
+                definition,
+            } => write!(
+                f,
+                "node {node} in tree {tree} instances definition {definition}, which is not in the document"
+            ),
+            Self::Recursion { definition } => {
+                write!(f, "definition {definition} contains itself")
+            }
+            Self::DuplicateInterfaceNode { tree, side: which } => write!(
+                f,
+                "tree {tree} has more than one node for its {} interface",
+                match which {
+                    InterfaceSide::Input => "input",
+                    InterfaceSide::Output => "output",
+                }
+            ),
+            Self::DanglingParent { tree, node, parent } => write!(
+                f,
+                "node {node} in tree {tree} says it is inside {parent}, which is not there"
+            ),
+            Self::ParentNotAFrame { tree, node, parent } => write!(
+                f,
+                "node {node} in tree {tree} says it is inside {parent}, which is not a frame"
+            ),
+            Self::ContainmentCycle { tree, node } => {
+                write!(f, "node {node} in tree {tree} contains itself")
+            }
+            Self::StrayPortValue { tree, node, port } => write!(
+                f,
+                "node {node} in tree {tree} has a value on port {port}, which it does not have"
+            ),
+            Self::MistypedPortValue { tree, node, port } => write!(
+                f,
+                "node {node} in tree {tree} has a value port {port} cannot hold"
+            ),
+            Self::TooManyItems {
+                tree,
+                node,
+                side: which,
+            } => write!(
+                f,
+                "node {node} in tree {tree} has more {} items than its kind allows",
+                side(*which)
+            ),
+        }
+    }
+}
+
 impl<K: NodeKind> Document<K> {
     /// Every way one node's authored values fail its signature (R1594 / R1597),
     /// ascending by port.

@@ -17,9 +17,12 @@ pinion-derive = { path = "../pinion-derive" }
 # serializable, so the model derives serde rather than leaving every consumer to
 # mirror it.
 serde = { workspace = true }
-
-[dev-dependencies]
-# The document's wire form is a claim, so a test round-trips it.
+# R1689 — `Archive` picks a concrete text form rather than leaving it open, and
+# picks JSON: the envelope is parsed in two independent steps (document, then
+# the application's companion) so one failing does not take the other, which a
+# format-agnostic `Serializer` cannot express. It is also the form §2 #7 asks
+# for — a saved graph an agent can read without the process that wrote it. No
+# `serde_json` type appears in the public API.
 serde_json = { workspace = true }
 
 [lints]

@@ -858,3 +858,122 @@ pub const OPERATIONS: &[OperationSpec] = &[
         needs: None,
     },
 ];
+
+/// Whether a save carries what an operation moved.
+///
+/// ★★★ R1689 — the reference has a meter for exactly this question and it is
+/// the fourth of the four self-censuses it publishes. Its shape is worth
+/// copying and its strength is not: it asks whether every piece of state is
+/// **classified** — carried, or explicitly volatile — and reports whatever is
+/// neither. That catches the failure it was written for (somebody adds a
+/// setting and forgets to list it, so it is silently dropped from every save)
+/// and it does not catch a key that is classified as carried and still does not
+/// come back.
+///
+/// So [`KEPT`] is that partition, and the gate over it asks the stronger
+/// question: it drives each operation, saves, puts the screen back, opens the
+/// save, and asserts the slot reads what it read **after** the operation for a
+/// [`Keeps::Saved`] row — and what it read **before** for a [`Keeps::Volatile`]
+/// one. A deliberate omission that is only written down is a claim; one that is
+/// checked in the same run as its opposite is a property.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Keeps {
+    /// A save carries it, and opening the save brings it back.
+    Saved,
+    /// A save deliberately does not carry it.
+    Volatile,
+}
+
+/// One introspection slot, and whether a save carries it.
+pub struct KeptSpec {
+    /// The slot, named the way [`OperationSpec::witness`] names it.
+    pub witness: &'static str,
+    /// Which half of the partition it is in.
+    pub keeps: Keeps,
+    /// Where it lives, or why it is left behind — the half a bare partition
+    /// cannot say, and the half a reader deciding where to put a new piece of
+    /// state actually needs.
+    pub why: &'static str,
+}
+
+/// Every slot an operation can move, partitioned.
+///
+/// The population is [`OPERATIONS`]' own `witness` column, and the gate asserts
+/// that in **both directions**: a slot an operation moves and nobody classified
+/// is a save with a hole in it, and a classification for a slot nothing moves is
+/// a rule about a fact that does not exist. Counting one way would let the first
+/// hide behind the second.
+pub const KEPT: &[KeptSpec] = &[
+    KeptSpec {
+        witness: "nodes",
+        keeps: Keeps::Saved,
+        why: "the cards are the document's",
+    },
+    KeptSpec {
+        witness: "layout",
+        keeps: Keeps::Saved,
+        why: "a card's position and its containing frame are both the document's",
+    },
+    KeptSpec {
+        witness: "cards",
+        keeps: Keeps::Saved,
+        why: "collapsed and switched-off are node state, so the document carries them",
+    },
+    KeptSpec {
+        witness: "frames",
+        keeps: Keeps::Saved,
+        why: "the containment is the document's and the host NAMES are the screen's",
+    },
+    KeptSpec {
+        witness: "form",
+        keeps: Keeps::Saved,
+        why: "each card's settings form, whole, in the screen's own companion",
+    },
+    KeptSpec {
+        witness: "links",
+        keeps: Keeps::Saved,
+        why: "the authored links are the document's",
+    },
+    KeptSpec {
+        witness: "verdict",
+        keeps: Keeps::Saved,
+        why: "derived from the forms, so it comes back with them rather than being stored",
+    },
+    KeptSpec {
+        witness: "discovery",
+        keeps: Keeps::Saved,
+        why: "the master switch decides what the graph MEANS, so a file without it is ambiguous",
+    },
+    KeptSpec {
+        witness: "selected",
+        keeps: Keeps::Saved,
+        why: "by NAME, because that is how every other part of this screen addresses a card",
+    },
+    // ★★ The view. The reference does NOT keep it — its own volatile list names
+    // the pan and the zoom — and this screen does, which is a deliberate
+    // divergence rather than an oversight. The reference is a page that is
+    // reloaded; this writes a file somebody opens later, and a document that
+    // comes back looking nothing like it was left is a document you have to
+    // find your place in again. It is registered as a divergence and is the
+    // owner's to rule on.
+    KeptSpec {
+        witness: "pan",
+        keeps: Keeps::Saved,
+        why: "where the canvas was pointed, as the archive's camera",
+    },
+    KeptSpec {
+        witness: "zoom",
+        keeps: Keeps::Saved,
+        why: "the other half of the camera; the two are one fact and travel together",
+    },
+    // ★★★ The one that is deliberately left behind, and the reason is what
+    // makes the partition mean something. An exported configuration is a thing
+    // somebody PRODUCED at a moment, from a graph that has since been edited;
+    // restoring it beside a changed graph would put an artifact on screen that
+    // no longer describes what is next to it.
+    KeptSpec {
+        witness: "produced",
+        keeps: Keeps::Volatile,
+        why: "an artifact belongs to the moment it was taken, not to the graph",
+    },
+];

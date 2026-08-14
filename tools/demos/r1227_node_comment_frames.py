@@ -129,7 +129,10 @@ def body() -> None:
         # it (the constant, a unit test, and this), and it goes stale on every
         # bump; what this section is actually about is that a frame ROUND-TRIPS,
         # so what it needs from the version is that one is present and stated.
-        version = re.search(r'"schema_version":(\d+)', blob)
+        # ★ R1689 — whitespace-tolerant: the archive is written INDENTED now
+        # (it is a file a person opens and an agent diffs), so a pattern that
+        # assumed compact JSON matched nothing.
+        version = re.search(r'"schema_version":\s*(\d+)', blob)
         assert version, f"the blob states its schema version: {blob[:120]}"
         assert int(version.group(1)) >= 8, (
             "and it is at least the version at which the blob became a Document"

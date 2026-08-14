@@ -52,6 +52,7 @@
 
 mod deploy;
 mod graph;
+mod persist;
 mod spec;
 
 use std::cell::RefCell;
@@ -85,6 +86,7 @@ use pinion_node_graph::{
     Camera, Document, Extent, Fit, Item, LinkId, LinkLayer, Margin, Node, NodeBody, NodeId, ROOT,
     Relinked, Side, Socket, ZoomRange,
 };
+use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use pinion_widget_paint::config_form::{
     FieldGrowth, FormGeometry, FormStyle, RowWrap, form_geometry, row_access_nodes,
@@ -92,6 +94,7 @@ use pinion_widget_paint::config_form::{
 };
 use pinion_widget_paint::pane::{PanePointer, scroll_pane};
 use pinion_widget_paint::text_field as tf_paint;
+use serde::{Deserialize, Serialize};
 
 use deploy::Produced;
 use graph::{LabNode, Role, Transport};
@@ -243,7 +246,29 @@ fn window_size() -> (u32, u32) {
 /// cancel: five pixels, against the fifty-four a new seat beside the old ones
 /// would have cost. [`MIN_W`] is derived from this, so it moved with it, and
 /// [`WIN_W`] now follows [`MIN_W`] rather than being left behind by it.
-const TOOLBAR_RIGHT_CLUSTER: u32 = 431;
+///
+/// ★★★ R1689 — 431 → 609, and **the cost is stated rather than absorbed**. The
+/// file pill is three more seats in the toolbar's right cluster, which is what
+/// sets this screen's minimum width, so [`MIN_W`] goes 1447 → 1625 and a
+/// 1600-wide display no longer holds this screen. That is a real loss and it is
+/// written here rather than discovered: the reference puts these three buttons
+/// in exactly this place, and the alternative — hiding them somewhere the
+/// reference does not — would be a further deliberate divergence bought with
+/// pixels.
+///
+/// ★ The number is the gate's, not mine. The first draft said 594 — arithmetic
+/// done by hand over the seat widths — and
+/// `r1687_the_toolbars_declared_width_covers_what_it_paints` answered 609,
+/// having derived it from the rectangles. Two other gates failed alongside it
+/// for the same reason (a floor too small paints the left cluster into the
+/// right one), which is what a derived limit buys over a stated one.
+///
+/// What would take it back is an **overflow affordance** on the toolbar, which
+/// this tree does not have and which is a round of its own
+/// ([[debt-a-toolbar-has-no-overflow-affordance]]); until then a screen whose
+/// chrome outgrows its window clips, which is the choice [`MIN_W`] already
+/// documents.
+const TOOLBAR_RIGHT_CLUSTER: u32 = 609;
 
 /// ★ R1656 — the canvas pane's floor is DERIVED from what the chrome above it
 /// needs, not asserted at 240. The size axis found the difference on its first
@@ -620,6 +645,12 @@ struct LabState {
     /// one is an operation, and an operation whose slot already held the answer
     /// would have nothing to witness.
     produced: RefCell<Produced>,
+    /// ★★ R1689 — where a saved graph goes.
+    ///
+    /// Taken at construction for the reason the edit buffer above is: the hook
+    /// resolves through the shell's root owner and PANICS outside one, and this
+    /// screen's pointer handlers and its wire both run outside an owner scope.
+    storage: Rc<AppStorage>,
 }
 
 thread_local! {
@@ -698,6 +729,33 @@ fn pane_scroll<'s>(state: &'s LabState, body: &str) -> Option<&'s Rc<ScrollState
     }
 }
 
+/// Where a saved graph goes — the machine's data directory in a running
+/// application, and memory under a test.
+///
+/// ★★ R1689 — **stated once, here, rather than injected at each test's call
+/// site.** The node editor learned this in R852 and wrote it in a helper every
+/// one of its fixtures has to remember to use; this screen has forty tests and
+/// only two of them are about saving, so the one that forgot would silently
+/// write into the developer's real data directory and the next run would open
+/// with somebody else's graph.
+///
+/// The real backend is not left unproven by that: it is what the demo exercises,
+/// under an isolated directory, across two launches — which is also the only
+/// place the file half can be proven, since a unit test in one process cannot
+/// show that a graph survived the process.
+fn app_storage() -> Rc<AppStorage> {
+    #[cfg(test)]
+    let storage = pinion_core::reactive::Owner::current()
+        .expect("a lab state is only built inside an owner scope")
+        .cache(persist::STORAGE_CACHE_KEY, || {
+            AppStorage::new(Box::new(pinion_core::storage::InMemoryStorage::new()))
+        });
+    #[cfg(not(test))]
+    let storage =
+        pinion_platform_storage::use_app_storage(persist::STORAGE_CACHE_KEY, persist::STORAGE_APP);
+    storage
+}
+
 fn use_lab_state() -> Rc<LabState> {
     STATE.with(|slot| {
         let mut slot = slot.borrow_mut();
@@ -755,7 +813,7 @@ impl LabState {
                     Placement {
                         at: (i32::try_from(x).unwrap_or(0), i32::try_from(y).unwrap_or(0)),
                         host: Some(want.frame.to_owned()),
-                        opened_as: Some(want.id),
+                        opened_as: Some(want.id.to_owned()),
                     },
                 ))
             })
@@ -784,6 +842,7 @@ impl LabState {
             palette_scroll: Rc::new(ScrollState::with_tag(PALETTE_SCROLL)),
             inspector_scroll: Rc::new(ScrollState::with_tag(INSPECTOR_SCROLL)),
             produced: RefCell::new(Produced::default()),
+            storage: app_storage(),
         }
     }
 
@@ -1150,7 +1209,7 @@ impl ResetScope {
                 let opened = state.opened_at.borrow();
                 cards.len() != spec::NODES.len()
                     || cards.iter().any(|node| {
-                        opened.get(node).and_then(|born| born.opened_as)
+                        opened.get(node).and_then(|born| born.opened_as.as_deref())
                             != Some(state.name_of(*node)).as_deref()
                     })
             }
@@ -1300,18 +1359,18 @@ fn put_node_set_back(state: &Rc<LabState>) {
                 .opened_at
                 .borrow()
                 .get(n)
-                .and_then(|born| born.opened_as)
+                .and_then(|born| born.opened_as.as_deref())
                 .is_none()
         })
         .collect();
     // Which names have to go back, decided BEFORE the strays are removed: a
     // name freed by a deletion is one a rename may have taken.
-    let restore: Vec<(NodeId, &'static str)> = state
+    let restore: Vec<(NodeId, String)> = state
         .cards()
         .into_iter()
         .filter(|n| !strays.contains(n))
         .filter_map(|n| {
-            let born = state.opened_at.borrow().get(&n)?.opened_as?;
+            let born = state.opened_at.borrow().get(&n)?.opened_as.clone()?;
             (state.name_of(n) != born).then_some((n, born))
         })
         .collect();
@@ -1340,7 +1399,7 @@ fn put_node_set_back(state: &Rc<LabState>) {
         // cannot be refused here: the name is the one this card opened with,
         // and whatever had taken it was either renamed away or is a stray now
         // gone.
-        rename_card(state, node, name).ok();
+        rename_card(state, node, &name).ok();
     }
     if state.selected.get().is_some_and(|n| strays.contains(&n)) {
         state.selected.set(state.node_of(spec::SELECTED_NODE));
@@ -1380,7 +1439,7 @@ fn put_cards_back(state: &Rc<LabState>) {
 /// by one operation (the reference's layout reset clears position and host in
 /// one call and says so in its own message), and a caller holding two loose
 /// values can restore one of them.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct Placement {
     at: (i32, i32),
     host: Option<String>,
@@ -1401,7 +1460,15 @@ struct Placement {
     /// name back would have deleted the node instead. The same lesson R1679
     /// wrote for the link reset — put back by identity, never by re-deriving
     /// from what a thing is currently called.
-    opened_as: Option<&'static str>,
+    ///
+    /// ★ R1689 — owned rather than `&'static str`, because this record is
+    /// SAVED now and a borrowed name cannot come back from a file. The static
+    /// lifetime was carrying a second claim — "this is one of the
+    /// specification's" — which is a fact about the value and not about how
+    /// long it lives; [`declared_card`] asks the specification directly, which
+    /// is also what makes a saved name that the specification no longer has
+    /// answer "no opinion" instead of dangling.
+    opened_as: Option<String>,
 }
 
 /// Whether this card sits where it came into being, on the host it started on.
@@ -1765,7 +1832,7 @@ const UNZOOMED: u32 = 100;
 /// default width. Nothing was broken enough to fail, which is how it would have
 /// stayed.
 fn declared_card(state: &LabState, node: NodeId) -> Option<&'static spec::NodeSpec> {
-    let opened_as = state.opened_at.borrow().get(&node)?.opened_as?;
+    let opened_as = state.opened_at.borrow().get(&node)?.opened_as.clone()?;
     spec::NODES.iter().find(|n| n.id == opened_as)
 }
 
@@ -2240,6 +2307,17 @@ enum Hit {
     Config,
     /// The seat beside it that renders the same plan as a script.
     Script,
+    /// ★★ R1689 — the file pill's three, which the reference groups together.
+    ///
+    /// Three arms and not one with a scope argument — unlike [`Self::Reset`],
+    /// and the difference is real: the five reset scopes are one act over a
+    /// closed set of subjects, while writing a file, reading one and throwing
+    /// the whole thing away are three different acts that happen to be adjacent.
+    SaveGraph,
+    /// Read the saved graph back — or a graph handed over on the wire.
+    OpenGraph,
+    /// Discard everything, including what is on disk.
+    ClearGraph,
     Run,
     Node(NodeId),
     Pin {
@@ -2499,6 +2577,9 @@ impl Hit {
             Self::Reset(scope) => format!("reset:{}", scope.wire()),
             Self::Config => "config".into(),
             Self::Script => "script".into(),
+            Self::SaveGraph => "save".into(),
+            Self::OpenGraph => "open".into(),
+            Self::ClearGraph => "clear".into(),
             Self::Run => "run".into(),
             Self::Node(id) => format!("node:{}", state.name_of(*id)),
             Self::Pin { node, dial } => format!(
@@ -2759,9 +2840,69 @@ fn fit_w() -> u32 {
     seat_w("fit")
 }
 
-/// Where the pill's right edge sits, in from the toolbar's right edge.
+/// One of the three file seats the reference groups into a pill of its own.
+///
+/// ★★★ R1689 — **the reference's own grouping, in the reference's own place**:
+/// between the launch-script button and the run button, three small buttons
+/// sharing one background. It is a pill rather than three loose buttons for the
+/// same reason the zoom cluster is: they act on one subject — the file — and a
+/// person reads the group before reading the words.
+const FILE_SEATS: [(&str, Hit); 3] = [
+    ("save", Hit::SaveGraph),
+    ("open", Hit::OpenGraph),
+    ("clear", Hit::ClearGraph),
+];
+
+/// The clear space at the toolbar's right edge, and the run seat's width.
+const RUN_INSET: u32 = 14;
+const RUN_W: u32 = 106;
+/// A captioned action button's width — `config` and `script`.
+const ACTION_W: u32 = 66;
+
+/// ★★★★ R1689 — **every right-anchored seat's inset is DERIVED from the one to
+/// its right**, where three of them were written as the constants `120`, `196`
+/// and `268`.
+///
+/// Adding a seat in the middle of that is what made the difference matter: the
+/// three constants encoded the *gaps* between five seats, so inserting a sixth
+/// meant re-deriving all of them by hand and re-checking the arithmetic against
+/// a screenshot. R1687 already paid for this once on
+/// [`TOOLBAR_RIGHT_CLUSTER`] — a width stated in prose and re-derived by
+/// whoever came next — and this is the same fact one level down.
+fn file_pill_w() -> u32 {
+    FILE_SEATS.iter().map(|(word, _)| seat_w(word)).sum::<u32>() + PILL_GAP * 2
+}
+
+/// Where the file pill's right edge sits, in from the toolbar's right edge.
+fn file_pill_right() -> u32 {
+    RUN_INSET + RUN_W + CLUSTER_GAP
+}
+
+/// The seat of file button `n`, left to right inside the pill.
+fn file_rect(n: usize) -> Rect {
+    let bar = toolbar_rect();
+    let left = bar.x + bar.w - file_pill_right() - file_pill_w();
+    let before: u32 = FILE_SEATS
+        .iter()
+        .take(n)
+        .map(|(word, _)| seat_w(word) + PILL_GAP)
+        .sum();
+    Rect::new(
+        left + before,
+        bar.y + 11,
+        seat_w(FILE_SEATS.get(n).map_or("", |(word, _)| word)),
+        ZOOM_BTN,
+    )
+}
+
+/// Where the launch-script seat's right edge sits, in from the toolbar's right.
+fn script_right() -> u32 {
+    file_pill_right() + file_pill_w() + CLUSTER_GAP
+}
+
+/// Where the zoom pill's right edge sits, in from the toolbar's right edge.
 fn pill_right() -> u32 {
-    268 + CLUSTER_GAP
+    script_right() + ACTION_W + CLUSTER_GAP + ACTION_W + CLUSTER_GAP
 }
 
 fn zoom_rect(plus: bool) -> Rect {
@@ -2797,7 +2938,12 @@ fn fit_rect() -> Rect {
 
 fn config_rect() -> Rect {
     let bar = toolbar_rect();
-    Rect::new(bar.x + bar.w - 268, bar.y + 9, 66, 28)
+    Rect::new(
+        bar.x + bar.w - script_right() - ACTION_W - CLUSTER_GAP - ACTION_W,
+        bar.y + 9,
+        ACTION_W,
+        28,
+    )
 }
 
 /// ★★ R1687 — the second of the pair the reference puts side by side. Its
@@ -2805,12 +2951,17 @@ fn config_rect() -> Rect {
 /// so they belong beside each other and not one behind a menu.
 fn script_rect() -> Rect {
     let bar = toolbar_rect();
-    Rect::new(bar.x + bar.w - 196, bar.y + 9, 66, 28)
+    Rect::new(
+        bar.x + bar.w - script_right() - ACTION_W,
+        bar.y + 9,
+        ACTION_W,
+        28,
+    )
 }
 
 fn run_rect() -> Rect {
     let bar = toolbar_rect();
-    Rect::new(bar.x + bar.w - 120, bar.y + 9, 106, 28)
+    Rect::new(bar.x + bar.w - RUN_INSET - RUN_W, bar.y + 9, RUN_W, 28)
 }
 
 /// One seat of the canvas toolbar: where it is, what pressing it does, and what
@@ -2903,6 +3054,31 @@ fn toolbar_seats(state: &LabState) -> Vec<ToolbarSeat> {
             script_rect(),
             Hit::Script,
             "produce the launch script".to_owned(),
+        ),
+        // ★★ R1689 — the file pill. `open` announces whether there is anything
+        // to open, because that is the fact a person cannot see from the button
+        // and the one that decides whether pressing it does anything.
+        seat(
+            "lab.toolbar.save",
+            file_rect(0),
+            Hit::SaveGraph,
+            "save the graph".to_owned(),
+        ),
+        seat(
+            "lab.toolbar.open",
+            file_rect(1),
+            Hit::OpenGraph,
+            if persist::stored(state).is_empty() {
+                "open the saved graph, nothing saved yet".to_owned()
+            } else {
+                "open the saved graph".to_owned()
+            },
+        ),
+        seat(
+            "lab.toolbar.clear",
+            file_rect(2),
+            Hit::ClearGraph,
+            "clear back to the graph this screen opens with".to_owned(),
         ),
         seat(
             "lab.toolbar.run",
@@ -3010,12 +3186,35 @@ fn view_reset_rect() -> Rect {
 ///
 /// A caption that cannot leave its seat can only answer by eliding, which is
 /// what the gate reads.
+///
+/// ★★★★★ R1689 — **the height is the FONT's line box, centred, and the round
+/// obligation to look at the screen is what found that.** It was `seat.h - 12`,
+/// an inset guessed on both edges: on a 24-high seat that leaves 12 px for an
+/// 11 px face whose line box reserves 18, so the `p` of `open` was painted with
+/// its descender cut off at the button's border. The seats already on this
+/// toolbar at that height carry `-`, `+`, `84%` and `fit` — **not one of them
+/// has a descender** — which is why six rounds of gates never saw it.
+///
+/// It was short on the 28-high seats too, by two pixels, so `config` and
+/// `script` were being trimmed as well, just not enough to notice. A guessed
+/// inset is a guess about a font; [`line_box`] is what the font actually asks
+/// for, and centring what is left is what a caption in a button means.
+///
+/// ★ The gate that did not catch it is not wrong, it is aimed elsewhere:
+/// R1687's asks whether the run's RECT sits inside the seat and whether the
+/// text elided. Both were true. What overflowed is the INK inside that rect,
+/// which is a different question and a registered one
+/// ([[debt-an-overflow-policy-applies-to-the-runs-own-rect]]). What is checked
+/// here now is the reservation itself —
+/// `r1689_every_toolbar_caption_reserves_its_line` — because that is the half a
+/// view function can settle without a shaper.
 const fn seat_caption(seat: Rect) -> Rect {
+    let line = line_box(FONT_SMALL);
     Rect::new(
         seat.x + SEAT_INSET,
-        seat.y + 6,
+        seat.y + seat.h.saturating_sub(line) / 2,
         seat.w.saturating_sub(SEAT_INSET * 2),
-        seat.h.saturating_sub(12),
+        line,
     )
 }
 
@@ -4026,6 +4225,31 @@ fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
     ] {
         children.push(box_at(tag, seat, ink.raised, Some(ink.outline), 7));
         children.push(label(text, seat_caption(seat), FONT_SMALL, ink.text_2));
+    }
+
+    // ★★ R1689 — the file pill: three seats sharing one background, which is
+    // what makes them read as one subject. `clear` is the quieter weight
+    // because it is the destructive one and the reference gives it the same
+    // treatment — the emphasis a control carries is part of what it says.
+    for (n, (word, _)) in FILE_SEATS.iter().enumerate() {
+        let seat = local(file_rect(n));
+        children.push(box_at(
+            &format!("lab.toolbar.{word}"),
+            seat,
+            ink.raised,
+            Some(ink.outline),
+            6,
+        ));
+        children.push(label(
+            *word,
+            seat_caption(seat),
+            FONT_SMALL,
+            if *word == "clear" {
+                ink.text_3
+            } else {
+                ink.text_2
+            },
+        ));
     }
 
     let run = local(run_rect());
@@ -5439,6 +5663,20 @@ const FIELDS: &[SchemaField] = &{
         // this slot holds BOTH artifacts, so pressing `script` would have
         // changed a slot called `export`.
         SchemaField::new("produced", "string"),
+        // ★★★ R1689 — the two file reads, and they are two different questions.
+        // `archive` is what a save WOULD write, which is a function of the
+        // screen right now; `stored` is what is on disk, which is a function of
+        // whatever was saved last. A single slot would have made "has this been
+        // saved" unanswerable — the thing the reference's own meter exists to
+        // ask. Both are the whole archive text rather than a summary, which is
+        // §2 #7: the saved graph is a value an agent reads without the process
+        // that wrote it.
+        //
+        // ★ `archive`, not `graph`: `graph` is already this screen's read for
+        // the graph's NAME, and the server refuses a second declaration of one
+        // address. The compiler said so first — an unreachable arm.
+        SchemaField::new("archive", "string"),
+        SchemaField::new("stored", "string"),
         SchemaField::action("select", "string"),
         SchemaField::action("select_link", "string"),
         SchemaField::action_with(
@@ -5491,6 +5729,16 @@ const FIELDS: &[SchemaField] = &{
         // person would have learnt without a second read.
         SchemaField::action("export", "string"),
         SchemaField::action("script", "string"),
+        // ★★★ R1689 — the file. `save_graph` and `clear_graph` take no
+        // argument, and `open_graph` takes one that may be EMPTY: empty means
+        // "the saved one", any other text is a graph handed over directly.
+        // That is the reference's own shape (its box loads the saved copy when
+        // you leave it blank) and it is one act with one argument rather than
+        // two verbs for one thing — the second of which would be the one that
+        // drifts.
+        SchemaField::action("save_graph", "string"),
+        SchemaField::action("open_graph", "string"),
+        SchemaField::action("clear_graph", "string"),
         SchemaField::action_with(
             "connect",
             "string",
@@ -5679,6 +5927,9 @@ impl ExternalIntrospect for LabOracle {
             // ★★ R1687 — the artifacts, or nulls where they are not. See
             // `Produced::wire` for why a null and not a missing key.
             "produced" => text(state.produced.borrow().wire().to_string()),
+            // ★★ R1689 — what a save would write, and what one did.
+            "archive" => text(persist::graph_text(state)),
+            "stored" => text(persist::stored(state)),
             "nodes" => text(
                 state
                     .cards()
@@ -6106,6 +6357,23 @@ impl ExternalIntrospect for LabOracle {
             // artifact an agent gets and the one a person gets cannot differ.
             "export" => Ok(IntrospectValue::Text(export_configuration(&state))),
             "script" => Ok(IntrospectValue::Text(produce_script(&state))),
+            // ★★★ R1689 — the file, through the same three functions the pill
+            // presses. `open_graph` is the one that can fail, and it fails by
+            // NAME: the substrate's reading says which of four things stopped
+            // it, and that sentence is what an agent gets and what the toast
+            // shows, rather than the `false` this class of verb usually answers.
+            "save_graph" => Ok(IntrospectValue::Text(persist::save(&state))),
+            "open_graph" => {
+                let text = match &args {
+                    IntrospectValue::Text(text) => text.as_str(),
+                    IntrospectValue::Null => "",
+                    _ => return Err(InvokeError::TypeMismatch),
+                };
+                persist::open(&state, text)
+                    .map(IntrospectValue::Text)
+                    .map_err(InvokeError::rejected)
+            }
+            "clear_graph" => Ok(IntrospectValue::Text(persist::clear(&state))),
             "run" => {
                 let verdict = state.verdict();
                 let want = match args {
@@ -6321,6 +6589,21 @@ fn spec_json() -> serde_json::Value {
             "witness": op.witness,
             "needs": op.needs,
             "absent": op.verb.is_none() && !op.gesture,
+        })).collect::<Vec<_>>(),
+        // ★★★ R1689 — **what a save carries, and what it deliberately does
+        // not.** Published for the reason the reference publishes its own
+        // version of this: it is a claim about the tool that a reader — a
+        // person deciding whether to close the window, an agent deciding
+        // whether saving is enough — cannot get any other way. `keeps` is the
+        // partition and `why` is where the thing lives, which is the half a
+        // bare boolean cannot say.
+        "kept": spec::KEPT.iter().map(|k| serde_json::json!({
+            "witness": k.witness,
+            "keeps": match k.keeps {
+                spec::Keeps::Saved => "saved",
+                spec::Keeps::Volatile => "volatile",
+            },
+            "why": k.why,
         })).collect::<Vec<_>>(),
         "graph": spec::GRAPH_NAME,
         "zoom": spec::OPENING_ZOOM,
@@ -7475,6 +7758,19 @@ fn release(state: &Rc<LabState>) {
         }
         Hit::Script => {
             produce_script(state);
+        }
+        // ★★ R1689 — the file pill, through the same three functions the wire
+        // calls. `open` with no argument is "the saved one", which is what the
+        // button means and what the reference's own box does when it is left
+        // empty.
+        Hit::SaveGraph => {
+            persist::save(state);
+        }
+        Hit::OpenGraph => {
+            persist::open(state, "").ok();
+        }
+        Hit::ClearGraph => {
+            persist::clear(state);
         }
         Hit::Link(id) => state.selected_link.set(Some(LinkPick::Authored(id))),
         Hit::Observed(from, to) => state.selected_link.set(Some(LinkPick::Observed(from, to))),

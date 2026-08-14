@@ -12,12 +12,16 @@
 //! canvas's three pin appearances mean something rather than decorate.
 
 use pinion_node_graph::{Conversion, NodeKind, Port, Side, Variadic};
+use serde::{Deserialize, Serialize};
 
 /// A transport a link can be carried over.
 ///
 /// The socket type: two pins may be wired when they agree on it, which is why
 /// the reference colours an accept pin by protocol — the colour *is* the type.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+/// ★ R1689 — serialisable, with [`Role`] and [`LabNode`]: a document that can
+/// be saved is one whose taxonomy can be, and the taxonomy is the half the
+/// substrate declines to own.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
 pub enum Transport {
     /// Plain stream transport.
     Tcp,
@@ -61,7 +65,7 @@ impl Transport {
 /// the traffic itself. Which group a role is in is [`Role::group`], derived
 /// rather than stored beside the palette, so a role cannot be listed in one
 /// group and behave like the other.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Role {
     /// Listens and routes between everything that dials it.
     Router,
@@ -175,7 +179,7 @@ impl Role {
 /// One arm carrying a [`Role`] rather than eight kinds: every node in this tool
 /// is a process with the same two pins, and what differs is what it does with
 /// them. The reference's palette is the same shape.
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct LabNode {
     /// What this node is for.
     pub role: Role,

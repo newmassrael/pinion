@@ -2320,6 +2320,204 @@ fn r1677_every_declared_way_of_causing_an_operation_causes_it() {
     });
 }
 
+/// Run one of this screen's own actions, or say why it refused.
+fn act(state: &std::rc::Rc<LabState>, verb: &str, arg: &str) -> Result<String, String> {
+    let mut oracle = super::LabOracle::new();
+    oracle.attach(std::rc::Rc::clone(state));
+    oracle
+        .invoke(verb, IntrospectValue::Text(arg.to_owned()))
+        .map(|value| format!("{value:?}"))
+        .map_err(|why| format!("{why:?}"))
+}
+
+/// ★★★★★ R1689 — **what a save carries is declared, and what it carries comes
+/// back.**
+///
+/// The reference publishes four self-censuses and this is the fourth: a
+/// partition of its own state into carried and deliberately volatile, with
+/// whatever falls outside reported. `spec::OPERATIONS` mirrors the first of the
+/// four one-for-one and R1688 finished it; this is the one that had no mirror,
+/// and the cluster it belongs to — saving, opening, importing, clearing — is
+/// **not on the reference's own operation list at all**. A census taken over a
+/// declared list is complete against that list and blind to everything the list
+/// leaves out, which is R1688's finding one level up.
+///
+/// Three assertions, and the third is where this beats the meter it copies:
+///
+/// 1. **The partition covers exactly what the operations move**, in both
+///    directions. A slot an operation moves that nobody classified is a save
+///    with a hole in it; a classification for a slot nothing moves is a rule
+///    about a fact that does not exist. Counting one way lets the first hide.
+/// 2. **A carried slot comes back.** Drive the operation, take the archive,
+///    open it on a screen that has just started, and the slot must read what it
+///    read after the operation. The reference's meter asks only whether the key
+///    is *classified* — a key can be listed as carried and still not return.
+/// 3. **A volatile slot does NOT come back.** The same run asserts the other
+///    half, so "we deliberately do not keep this" is checked rather than
+///    asserted. Without it, classifying everything as volatile would pass.
+///
+/// ★★ And the discriminating set is checked too: an operation whose witness
+/// reads the same after it as on a screen that has just started proves nothing
+/// about a round trip, and five of the thirty are exactly that by nature (a
+/// reset puts its scope back to how it opened). So each row is still round
+/// tripped — a wrong one still fails — and the gate additionally requires every
+/// classified slot to have at least one operation that genuinely moves it away
+/// from the opening reading. Otherwise this whole check could pass while
+/// proving nothing, which is the failure R1681.1 and R1644.1 both wrote down.
+#[test]
+fn r1689_what_a_save_carries_is_declared_and_comes_back() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let moved: BTreeSet<&str> = spec::OPERATIONS.iter().map(|op| op.witness).collect();
+        let classified: BTreeSet<&str> = spec::KEPT.iter().map(|k| k.witness).collect();
+        assert_eq!(
+            moved, classified,
+            "★ every slot an operation moves is classified, and nothing else is"
+        );
+        assert_eq!(
+            classified.len(),
+            spec::KEPT.len(),
+            "each slot is classified once"
+        );
+
+        let mut broken = Vec::new();
+        let mut discriminating: BTreeSet<&str> = BTreeSet::new();
+
+        for op in spec::OPERATIONS {
+            let Some((_, drive)) = OPERATION_GESTURES.iter().find(|(n, _)| *n == op.name) else {
+                continue;
+            };
+            let keeps = spec::KEPT
+                .iter()
+                .find(|k| k.witness == op.witness)
+                .expect("the partition covers every witness, asserted above");
+
+            super::reset_lab_state();
+            let state = use_lab_state();
+            let opening = witness(&state, op.witness);
+            reach_precondition(op, &state);
+            let shot = painted(&state);
+            drive(&state, &shot);
+            let after = witness(&state, op.witness);
+            if after != opening {
+                discriminating.insert(op.witness);
+            }
+            act(&state, "save_graph", "")
+                .unwrap_or_else(|why| panic!("{:?}: the save refused: {why}", op.name));
+            assert!(
+                witness(&state, "stored").len() > 2,
+                "{:?}: the save wrote nothing to read back",
+                op.name
+            );
+
+            // ★★★★★ **The two halves have to be asked on DIFFERENT screens, and
+            // finding that out cost a counterfactual.** The first draft asked
+            // both on a screen that had just started, and for a volatile slot
+            // that cannot fail: the slot is at its opening value there because
+            // nothing ever set it, so "the load did not bring it back" is true
+            // whatever the load does. Deleting the line that clears the
+            // artifacts passed the whole gate. The volatile claim is about a
+            // screen that HAS the value — opening a graph must leave it at the
+            // opening reading rather than carrying a stale one — so it is asked
+            // where the value is.
+            act(&state, "open_graph", "").unwrap_or_else(|why| {
+                panic!(
+                    "{:?}: opening the save on the same screen refused: {why}",
+                    op.name
+                )
+            });
+            let same = witness(&state, op.witness);
+
+            super::reset_lab_state();
+            let fresh = use_lab_state();
+            act(&fresh, "open_graph", "")
+                .unwrap_or_else(|why| panic!("{:?}: opening the save refused: {why}", op.name));
+            let restored = witness(&fresh, op.witness);
+
+            match keeps.keeps {
+                spec::Keeps::Saved if restored != after => broken.push(format!(
+                    "{:?}: `{}` is declared SAVED ({}) and came back as {restored} \
+                     instead of {after}",
+                    op.name, op.witness, keeps.why
+                )),
+                spec::Keeps::Volatile if same != opening => broken.push(format!(
+                    "{:?}: `{}` is declared VOLATILE ({}) and a load left it at \
+                     {same} instead of the opening {opening}",
+                    op.name, op.witness, keeps.why
+                )),
+                _ => {}
+            }
+        }
+
+        assert!(
+            broken.is_empty(),
+            "{} slot(s) did not survive a save the way this screen declares:\n  {}",
+            broken.len(),
+            broken.join("\n  ")
+        );
+        assert_eq!(
+            discriminating, classified,
+            "★ every classified slot needs at least ONE operation that moves it \
+             away from the opening reading — a round trip whose two readings are \
+             equal to begin with cannot tell a save that works from one that \
+             does nothing"
+        );
+    });
+}
+
+/// ★★★ R1689 — **the reasons an archive refuses are four, and they are four
+/// different sentences on this screen too.**
+///
+/// The value of the substrate's reading is only real if the screen passes it
+/// on. A screen that caught every refusal and said "could not open" would have
+/// the `bool` back with extra steps.
+#[test]
+fn r1689_the_screen_says_which_of_four_things_stopped_a_load() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+        let good = super::persist::graph_text(&state);
+        assert!(
+            good.contains("\"revision\": 1") && good.contains("\"Router\""),
+            "the screen writes its own graph out, revision and taxonomy included"
+        );
+        let untouched = witness(&state, "nodes");
+
+        let mut whys = Vec::new();
+        for (what, text) in [
+            ("nothing saved", String::new()),
+            ("not a saved graph", "definitely not one".to_owned()),
+            (
+                "another revision",
+                good.replace("\"revision\": 1", "\"revision\": 77"),
+            ),
+            (
+                "a role this build does not have",
+                good.replace("\"Router\"", "\"Wormhole\""),
+            ),
+        ] {
+            let why = match act(&state, "open_graph", &text) {
+                Ok(said) => panic!("{what} was ACCEPTED: {said}"),
+                Err(why) => why,
+            };
+            whys.push((what, why));
+        }
+        assert_eq!(
+            witness(&state, "nodes"),
+            untouched,
+            "and every refusal left the graph alone"
+        );
+        let distinct: BTreeSet<&String> = whys.iter().map(|(_, why)| why).collect();
+        assert_eq!(
+            distinct.len(),
+            whys.len(),
+            "★ four refusals, four sentences — this is the `bool` this round \
+             replaced, seen from the screen: {whys:?}"
+        );
+    });
+}
+
 /// ★★ R1682 — a node's-life seat answers a press aimed where it is PAINTED,
 /// with the pane scrolled.
 ///

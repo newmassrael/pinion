@@ -309,7 +309,12 @@ def body() -> None:
             # because the seat this round removed (`home`, the separate view
             # reset) kept its tag — the read-out is that control now, so
             # `lab.reset.view` is the box and `lab.toolbar.zoom` its caption.
-            "lab.toolbar": 12,
+            # ★★ R1689 — 15, not 12: the file pill, which the reference groups
+            # between the launch-script button and the run button —
+            # `lab.toolbar.{save,open,clear}`. Three at once and none lost, so
+            # the pin moving by exactly three is what says the group landed
+            # whole rather than a seat arriving and another quietly going.
+            "lab.toolbar": 15,
             "lab.gate": 7,
             "lab.hint": 2,
             # ★ R1681 — the picked link now carries its own affordances: the

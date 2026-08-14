@@ -66,6 +66,8 @@
 //! consumer that stores a scroll *offset* instead (the opposite sign) converts
 //! at its own boundary; both of this tree's canvases do, in one place each.
 
+use serde::{Deserialize, Serialize};
+
 use crate::layout::Extent;
 use crate::model::{Document, Node, NodeKind, TreeId};
 
@@ -143,7 +145,13 @@ pub enum Margin {
 ///
 /// A value, not a handle — a camera is computed, compared and stored by the
 /// application, which owns the signal it lives in.
-#[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// ★ R1689 — serialisable, because where a canvas is pointed is part of what a
+/// person left behind and [`crate::Archive`] carries it. The two fields are the
+/// whole state; a reader that gets a zoom of zero or a `NaN` pan out of a file
+/// is told so ([`crate::Dropped::Camera`]) rather than left with a canvas that
+/// never draws again.
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
 pub struct Camera {
     /// Screen pixels per canvas unit.
     pub zoom: f64,

@@ -1705,6 +1705,44 @@ fn r1688_a_zoom_step_is_anchored_at_the_middle_of_the_canvas() {
     });
 }
 
+/// ★★★★★ R1689 — **every toolbar caption reserves the line its face needs.**
+///
+/// Found by looking at the screen, which is a round obligation and earned its
+/// place again here: `seat_caption` took a guessed inset off both edges, and on
+/// a 24-high seat that left 12 px for an 11 px face whose line box reserves 18.
+/// The `p` of `open` was painted with its descender cut off at the border. Every
+/// seat already at that height carries `-`, `+`, `84%` or `fit` — not one of
+/// them has a descender — so no gate had ever been given the chance.
+///
+/// This asks the RESERVATION, which is the half a view function can settle
+/// without a shaper. Whether the shaped ink then fits inside the run's own rect
+/// is a different question and a registered one.
+#[test]
+fn r1689_every_toolbar_caption_reserves_its_line() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = live();
+        let line = pinion_core::containment::line_box(super::FONT_SMALL);
+        let short: Vec<String> = super::toolbar_seats(&state)
+            .iter()
+            .map(|seat| (seat.tag, super::seat_caption(seat.rect), seat.rect))
+            .filter(|(_, caption, _)| caption.h < line)
+            .map(|(tag, caption, rect)| {
+                format!("{tag}: caption {}px tall in a {}px seat", caption.h, rect.h)
+            })
+            .collect();
+        assert!(
+            short.is_empty(),
+            "★ a caption box shorter than the face's line box paints its \
+             descenders into the border — found by LOOKING, on the seat that \
+             was the toolbar's first {line}px-face word with a `p` in it. \
+             {} seat(s) reserve less than {line}px:\n  {}",
+            short.len(),
+            short.join("\n  ")
+        );
+    });
+}
+
 /// ★★ R1688 — every seat of the toolbar answers a press aimed at it, and every
 /// one of them is named, **from the one roster all three read**.
 ///

@@ -52,9 +52,19 @@ from rpc_verify import (  # noqa: E402
 )
 
 EXT = "/external"
-#: The size this demo judges at. Above the screen's declared floor, which is
-#: READ from the screen below rather than written here — see `FLOOR`.
-WIN = (1500, 900)
+#: The size this demo judges at: the screen's own floor plus a margin.
+#:
+#: ★★★ R1689 — DERIVED, and this is the second time the same class bit this
+#: file. R1687 read `FLOOR` from the screen because a copied floor goes stale
+#: the moment a button is added to the toolbar — and left `WIN` written down as
+#: `1500`, which is the same fact ("a size above the floor") in the same file.
+#: R1689 added three buttons, the floor passed 1500, and the guard below fired
+#: on a demo that was not wrong about anything. A constant that has to stay in a
+#: RELATION with a moving number is not a constant.
+WIN: tuple[int, int] = (0, 0)  # derived from the floor at start-up
+#: How far above the floor this demo judges — the relation, which is what was
+#: actually meant. 58 px is what the pair had when this demo was written.
+ABOVE_FLOOR = 58
 #: `MIN_W` x `MIN_H` as the screen derives them: the rail, the palette, the
 #: toolbar's two clusters and the inspector across; the two bars plus what the
 #: canvas chrome needs down. Below this the screen DECLARES it cannot paint, and
@@ -77,9 +87,10 @@ def reach(tf):
 
 def run(tf: RpcSubprocess) -> None:
     # ★★★ R1687 — the floor comes from the screen. See `FLOOR`.
-    global FLOOR
+    global FLOOR, WIN
     declared = json.loads(tf.query(f"{EXT}/spec"))["floor"]
     FLOOR = (declared[0], declared[1])
+    WIN = (FLOOR[0] + ABOVE_FLOOR, max(900, FLOOR[1] + ABOVE_FLOOR))
     assert FLOOR[0] < WIN[0] and FLOOR[1] < WIN[1], (
         f"this demo judges at {WIN} and the screen's floor is {FLOOR} — a "
         "window below the floor is clamped, and every read below would be "

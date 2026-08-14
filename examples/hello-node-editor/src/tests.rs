@@ -3613,15 +3613,27 @@ fn r852_serialized_query_is_json_with_schema_version_and_model() {
     Owner::new().run(|| {
         let coord = coordinator();
         let json = coord.serialized_json();
-        let g: SerializedGraph = serde_json::from_str(&json).expect("valid JSON");
-        assert_eq!(g.schema_version, PERSISTED_SCHEMA_VERSION);
-        assert_eq!(kind_nodes(&g.graph).count(), 4, "the seed nodes serialize");
-        assert_eq!(edges(&g.graph).len(), 3, "the seed edges serialize");
+        let opening = Archive::<MaterialOp, EditorState>::read(&json);
+        assert!(opening.opens(), "the editor writes what it can read");
+        assert_eq!(opening.dropped(), []);
+        let g = opening.take().expect("it opens");
+        assert_eq!(
+            g.companion(),
+            Some(&EditorState {
+                schema_version: PERSISTED_SCHEMA_VERSION
+            })
+        );
+        assert_eq!(
+            kind_nodes(g.document()).count(),
+            4,
+            "the seed nodes serialize"
+        );
+        assert_eq!(edges(g.document()).len(), 3, "the seed edges serialize");
         // R1596 — the id counters ride INSIDE the document (a tree mints its
         // own), so a snapshot cannot carry one that disagrees with the ids it
         // holds. The editor kept three beside the lists and gated a load on each
         // leading its own ids; that whole class of blob is now unrepresentable.
-        let mut resumed = g.graph.clone();
+        let mut resumed = g.document().clone();
         assert_eq!(
             resumed
                 .add_node(TREE, NodeBody::Kind(MaterialOp::Add), 0, 0)
@@ -3694,23 +3706,67 @@ fn r852_load_with_nothing_stored_is_a_noop() {
     });
 }
 
+/// ★★★ R1689 — the same three refusals, and now they are **three different
+/// sentences**. That is the whole point of the archive: `false` told a caller
+/// that something went wrong and nothing about which thing, so a person with a
+/// file from last year and a person with a truncated download got the same
+/// answer and neither could act on it.
 #[test]
 fn r852_set_graph_rejects_malformed_and_version_mismatch() {
     Owner::new().run(|| {
         let coord = coordinator();
-        assert!(
-            !coord.load_json("not json at all"),
-            "malformed JSON rejected"
+        let mut whys = Vec::new();
+
+        whys.push(
+            coord
+                .open_json("not json at all")
+                .expect_err("malformed JSON rejected"),
         );
         assert_eq!(coord.node_count(), 4, "graph unchanged on malformed");
-        // Valid JSON, wrong schema version.
-        let bad = serde_json::to_string(&SerializedGraph {
-            schema_version: PERSISTED_SCHEMA_VERSION + 1,
-            graph: Graph::new("material"),
-        })
-        .unwrap();
-        assert!(!coord.load_json(&bad), "version mismatch rejected");
+
+        whys.push(coord.open_json("").expect_err("an empty file is rejected"));
+
+        // A file from an older build of THIS editor: the archive envelope is
+        // current and the editor's own taxonomy version is not.
+        let stale = Archive::<MaterialOp, EditorState>::of(Graph::new("material"))
+            .with_companion(EditorState {
+                schema_version: PERSISTED_SCHEMA_VERSION - 1,
+            })
+            .write()
+            .expect("written");
+        whys.push(
+            coord
+                .open_json(&stale)
+                .expect_err("version mismatch rejected"),
+        );
         assert_eq!(coord.node_count(), 4, "graph unchanged on version mismatch");
+
+        // A file whose ARCHIVE revision is not this one.
+        let other = stale.replace("\"revision\": 1", "\"revision\": 99");
+        whys.push(
+            coord
+                .open_json(&other)
+                .expect_err("a foreign archive revision is rejected"),
+        );
+
+        let distinct: std::collections::BTreeSet<&String> = whys.iter().collect();
+        assert_eq!(
+            distinct.len(),
+            whys.len(),
+            "four refusals, four sentences: {whys:?}"
+        );
+        assert!(
+            whys[2].contains(&(PERSISTED_SCHEMA_VERSION - 1).to_string())
+                && whys[2].contains(&PERSISTED_SCHEMA_VERSION.to_string()),
+            "and the stale-file sentence names BOTH versions: {}",
+            whys[2]
+        );
+        assert!(
+            whys[3].contains("99"),
+            "as does the foreign-revision one: {}",
+            whys[3]
+        );
+        assert_eq!(coord.node_count(), 4, "and nothing loaded");
     });
 }
 
@@ -3792,7 +3848,9 @@ fn r852_save_load_set_graph_over_rpc_invoke() {
             4,
             "set_graph restored the boot snapshot"
         );
-        // A malformed set_graph is Rejected.
+        // A malformed set_graph is Rejected — and R1689 makes the refusal say
+        // WHICH of the things that can be wrong was wrong, over the wire, so an
+        // agent can act on it instead of retrying the same payload.
         {
             let node = scene
                 .find_external_with_tag_mut(GRAPH_TAG)
@@ -3800,7 +3858,7 @@ fn r852_save_load_set_graph_over_rpc_invoke() {
             let intro = node.handle.introspect_mut().expect("introspect");
             assert_refused_saying(
                 &intro.invoke("set_graph", IntrospectValue::Text("garbage".to_owned())),
-                "not a graph this editor can load",
+                "this is not a saved graph",
             );
         }
     });
@@ -6113,8 +6171,12 @@ fn r1227_frame_persists_and_paints_behind() {
         // stale the moment the shape changed; the gate that now forces the bump
         // is `r1599_the_persisted_shape_cannot_change_without_the_version`.
         assert!(
-            json.contains(&format!("\"schema_version\":{PERSISTED_SCHEMA_VERSION}")),
+            json.contains(&format!("\"schema_version\": {PERSISTED_SCHEMA_VERSION}")),
             "the blob carries the schema version it was written at"
+        );
+        assert!(
+            json.contains(&format!("\"revision\": {}", pinion_node_graph::REVISION)),
+            "and R1689 — the archive FORMAT's own revision, which is a different fact"
         );
         assert!(json.contains("Comment 1"), "the frame is in the blob");
         coord.document.set(Graph::new("material"));
@@ -9179,13 +9241,20 @@ fn r1599_the_persisted_shape_cannot_change_without_the_version() {
         "the sample carries at least one interface port, which is what R1599 \
          reshaped -- without this the digest could not see the change"
     );
+    // ★ R1689 — the digest is taken over **the text that is actually written**,
+    // not over a proxy struct serialized by a different call. Until this round
+    // the gate hashed a `SerializedGraph` while the file was produced by
+    // `serialized_json`, so a change to how the blob is composed — exactly what
+    // this round did — could have moved the file without moving the digest.
     pinion_core::test_fixtures::assert_persisted_shape(
-        "hello-node-editor SerializedGraph",
+        "hello-node-editor archive",
         PERSISTED_SCHEMA_VERSION,
-        &SerializedGraph {
-            schema_version: PERSISTED_SCHEMA_VERSION,
-            graph,
-        },
+        &Archive::of(graph)
+            .with_companion(EditorState {
+                schema_version: PERSISTED_SCHEMA_VERSION,
+            })
+            .write()
+            .expect("the sample is representable"),
         PERSISTED_SHAPE_HISTORY,
     );
 }

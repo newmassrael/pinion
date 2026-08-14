@@ -26,6 +26,9 @@ pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
 # The graph itself: `Document` holds the nodes, the frames and the links, and
 # `connect` is what refuses a wire the model cannot hold.
 pinion-node-graph = { path = "../../crates/pinion-node-graph", version = "0.0.1" }
+# R1689 §3 §5.15 — the bytes a saved graph is written to: a real per-OS data
+# directory when the platform offers one, the in-memory fallback otherwise.
+pinion-platform-storage = { path = "../../crates/pinion-platform-storage", version = "0.0.1" }
 vello = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

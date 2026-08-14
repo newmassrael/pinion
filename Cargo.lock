@@ -3440,6 +3440,7 @@ dependencies = [
  "pinion-forge",
  "pinion-gpu",
  "pinion-node-graph",
+ "pinion-platform-storage",
  "pinion-runtime",
  "pinion-shell",
  "pinion-widget-paint",

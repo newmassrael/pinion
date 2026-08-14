@@ -128,6 +128,15 @@
 //!   makes the clear space declare whether it is canvas units or screen pixels
 //!   — two different scales for one graph, and the reference toolkit's
 //!   `fitInView` offers neither by name.
+//! * **A document that can be put away** — [`Archive`] writes the graph, the
+//!   camera and the selection as text, and [`Archive::read`] answers an
+//!   [`Opening`]: a plan computed **before** anything is installed, naming
+//!   which of four things stopped it ([`Unreadable`]), what the document's own
+//!   [`validate`](Document::validate) says about it, and what would not
+//!   survive ([`Dropped`]). The reference toolkit's `restoreState` runs the
+//!   same check pass privately and answers `bool`; the application's own
+//!   extras are parsed independently of the graph, so a screen whose saved
+//!   state moved on still gets its graph back and is told what was left.
 //!
 //! There is no renderer here, no reactive runtime and no window: this is pure
 //! data, so a node system's rules are testable without one.
@@ -203,6 +212,7 @@
 //! ```
 
 mod appearance;
+mod archive;
 mod arrange;
 mod bypass;
 mod debug;
@@ -227,6 +237,7 @@ mod tests;
 mod view;
 
 pub use appearance::{Appearance, VisiblePorts};
+pub use archive::{Archive, Dropped, Opening, REVISION, Unreadable, Unwritable};
 pub use arrange::{
     Align, ArrangePass, ArrangeTail, Axis, Distribute, Edge, Stack, Straighten, Straightened,
 };

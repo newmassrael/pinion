@@ -23,6 +23,7 @@ Run from the workspace root:
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -81,7 +82,11 @@ def body() -> None:
         tf.intervene("/external/node.0.title", "Albedo")
         assert_eq(q(tf, "node.0.title"), "Albedo", "the model rename landed")
         valid = q(tf, "serialized")
-        renamed = valid.replace('"label":"Albedo"', '"label":"Ochre"')
+        # ★ R1689 — the archive is written INDENTED, so the edit is made on the
+        # PARSED value's text rather than on an assumed spelling of it. A string
+        # replacement that silently matches nothing turns every assertion below
+        # into a test of the unmodified blob.
+        renamed = re.sub(r'"label":\s*"Albedo"', '"label": "Ochre"', valid)
         assert renamed != valid, "the rename edit changed the blob"
         assert_eq(set_graph(tf, renamed), True, "a valid modification is accepted")
         assert_eq(q(tf, "node.0.title"), "Ochre", "the rename applied")
@@ -102,7 +107,11 @@ def body() -> None:
         # ── (D) what a peer CAN still send is rejected, and named ────
         # A link naming a node that is not there. The blob is a `Document`, so
         # the links live under the tree beside the nodes.
-        dangling = renamed.replace('"to":{"node":2,"port":0}', '"to":{"node":99,"port":0}')
+        dangling = re.sub(
+            r'"to":\s*\{\s*"node":\s*2,\s*"port":\s*0\s*\}',
+            '"to": { "node": 99, "port": 0 }',
+            renamed,
+        )
         assert dangling != renamed, "the dangling-endpoint edit changed the blob"
         reject(tf, dangling, "a link naming a node that is not there")
         assert_eq(q(tf, "node_count"), 4, "no nodes were installed from the bad blob")
@@ -110,7 +119,7 @@ def body() -> None:
 
         # A node claiming a parent that is not there (R1589's forest), which the
         # editor's own checker never had at all.
-        orphan = renamed.replace('"parent":null', '"parent":99', 1)
+        orphan = re.sub(r'"parent":\s*null', '"parent": 99', renamed, count=1)
         assert orphan != renamed, "the parent edit changed the blob"
         reject(tf, orphan, "a node inside a frame that is not there")
         assert_eq(q(tf, "node_count"), 4, "graph unchanged")

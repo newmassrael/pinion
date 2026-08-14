@@ -9,16 +9,16 @@ use pinion_graph::Sugiyama;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AdoptError, Align, Appearance, Axis, BreakError, Breakpoints, Bringup, Camera, Carried,
-    Command, ConnectError, Control, Conversion, Crossings, Definitions, Direction, Discovery,
-    Distribute, Document, DuplicateError, Edge, EditError, EditPath, Extent, ExtractError, Fit,
-    ForceError, Fragment, GroupError, Grow, Halt, InsertError, Instance, InterfaceSide, Item,
-    ItemError, Layered, LinkLayer, Machine, Margin, Multiplicity, NestError, Node, NodeBody,
-    NodeId, NodeKind, NodeSite, ObserveError, Occurrence, Organic, Orphaned, ParentError,
-    PathError, Port, PortRef, PortSite, PortValueError, ROOT, Reach, Relabelled, RelinkError,
-    RepartitionError, Route, RunError, SelectError, Session, Severed, Sharing, Side, Socket, Stack,
-    Standing, Stop, Straighten, Stride, Tick, Timeline, TreeId, UngroupError, Violation,
-    WatchError, Watches, ZoomRange, crossing,
+    AdoptError, Align, Appearance, Archive, Axis, BreakError, Breakpoints, Bringup, Camera,
+    Carried, Command, ConnectError, Control, Conversion, Crossings, Definitions, Direction,
+    Discovery, Distribute, Document, Dropped, DuplicateError, Edge, EditError, EditPath, Extent,
+    ExtractError, Fit, ForceError, Fragment, GroupError, Grow, Halt, InsertError, Instance,
+    InterfaceSide, Item, ItemError, Layered, LinkId, LinkLayer, Machine, Margin, Multiplicity,
+    NestError, Node, NodeBody, NodeId, NodeKind, NodeSite, ObserveError, Occurrence, Organic,
+    Orphaned, ParentError, PathError, Port, PortRef, PortSite, PortValueError, ROOT, Reach,
+    Relabelled, RelinkError, RepartitionError, Route, RunError, SelectError, Session, Severed,
+    Sharing, Side, Socket, Stack, Standing, Stop, Straighten, Stride, Tick, Timeline, TreeId,
+    UngroupError, Unreadable, Violation, WatchError, Watches, ZoomRange, crossing,
 };
 
 /// The test taxonomy: two socket types, so type disagreement is reachable.
@@ -13069,4 +13069,335 @@ fn r1688_framing_a_framed_graph_answers_the_same_camera() {
     let once = fit.boxes(spread(), (400, 300)).expect("boxes");
     let twice = fit.boxes(spread(), (400, 300)).expect("boxes");
     assert_eq!(once, twice);
+}
+
+// ----------------------------------------------------------------- archiving
+
+/// What a screen might keep beside its graph.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct Extras {
+    theme: String,
+    discovery: bool,
+}
+
+/// The same slot, with an incompatible shape — a build that moved on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct LaterExtras {
+    theme: u32,
+}
+
+fn saved() -> Archive<Op, Extras> {
+    let f = fixture();
+    Archive::of(f.document)
+        .with_camera(Camera::new(1.5, (-40.0, 12.0)))
+        .with_selection([f.add, f.sink])
+        .with_companion(Extras {
+            theme: "dark".to_owned(),
+            discovery: true,
+        })
+}
+
+#[test]
+fn r1689_a_written_archive_reads_back_as_what_was_saved() {
+    let archive = saved();
+    let text = archive.write().expect("the fixture is representable");
+    let opening = Archive::<Op, Extras>::read(&text);
+    assert_eq!(opening.refusal(), None);
+    assert_eq!(opening.violations(), []);
+    assert_eq!(opening.dropped(), []);
+    assert_eq!(opening.reason(), None);
+    assert!(opening.opens());
+    let back = opening.take().expect("it opens");
+    assert_eq!(back, archive);
+}
+
+/// ★★ The write is a file a person diffs and an agent reads, so the same
+/// archive has to produce the same bytes. A map iterated in hash order would
+/// make every save a spurious change.
+#[test]
+fn r1689_writing_the_same_graph_twice_writes_the_same_bytes() {
+    let archive = saved();
+    assert_eq!(archive.write(), archive.write());
+    assert!(
+        archive
+            .write()
+            .expect("written")
+            .contains("\n  \"document\""),
+        "and it is indented, because the reference's equivalent is an opaque blob"
+    );
+}
+
+/// ★★★ **The four things the reference answers with one word.**
+///
+/// The census runs in both directions: every arm of [`Unreadable`] is reached
+/// by a text, and the four sentences are distinct — a refusal vocabulary whose
+/// members read alike is the `bool` again with more steps.
+#[test]
+fn r1689_a_refusal_says_which_of_four_things_stopped_it() {
+    let good = saved().write().expect("written");
+
+    let empty = Archive::<Op, Extras>::read("   \n ");
+    assert_eq!(empty.refusal(), Some(&Unreadable::Empty));
+
+    let malformed = Archive::<Op, Extras>::read("{\"revision\": ");
+    assert!(matches!(
+        malformed.refusal(),
+        Some(Unreadable::Malformed { .. })
+    ));
+
+    let older = good.replace("\"revision\": 1", "\"revision\": 0");
+    assert_eq!(
+        Archive::<Op, Extras>::read(&older).refusal(),
+        Some(&Unreadable::Revision {
+            found: 0,
+            wanted: pinion_node_graph_revision(),
+        })
+    );
+
+    // A taxonomy that moved on: the file names a kind this build does not have.
+    let alien = good.replace("\"Add\"", "\"Multiply\"");
+    assert!(
+        matches!(
+            Archive::<Op, Extras>::read(&alien).refusal(),
+            Some(Unreadable::Document { .. })
+        ),
+        "the envelope parsed and the graph inside it did not"
+    );
+
+    let sentences: BTreeSet<String> = [
+        empty,
+        malformed,
+        Archive::<Op, Extras>::read(&older),
+        Archive::<Op, Extras>::read(&alien),
+    ]
+    .iter()
+    .map(|opening| opening.reason().expect("each is refused"))
+    .collect();
+    assert_eq!(sentences.len(), 4, "four refusals, four sentences");
+    for opening in [
+        Archive::<Op, Extras>::read("   "),
+        Archive::<Op, Extras>::read(&older),
+    ] {
+        assert!(opening.clone().take().is_none());
+        assert!(
+            opening.take_despite_violations().is_none(),
+            "there is no document to have, not even for a repair tool"
+        );
+    }
+}
+
+/// The revision this build reads, without naming the constant twice.
+fn pinion_node_graph_revision() -> u32 {
+    crate::REVISION
+}
+
+/// ★★★ **A stale selection is named, where the reference makes it a
+/// placeholder and logs it behind a category that is off.** The graph opens.
+#[test]
+fn r1689_a_selection_naming_a_node_that_is_gone_is_reported_not_ignored() {
+    let text = saved().write().expect("written");
+    let stale = text.replace("\"selection\": [", "\"selection\": [4242,\n    ");
+    let opening = Archive::<Op, Extras>::read(&stale);
+    assert!(opening.opens(), "a stale selection does not spoil a graph");
+    assert_eq!(opening.dropped(), [Dropped::Selection(NodeId(4242))]);
+    assert!(
+        opening.dropped()[0].to_string().contains("4242"),
+        "and the sentence names it: {}",
+        opening.dropped()[0]
+    );
+    let back = opening.take().expect("it opens");
+    assert_eq!(
+        back.selection().len(),
+        2,
+        "the two that are there survived, in order"
+    );
+    assert!(!back.selection().contains(&NodeId(4242)));
+}
+
+/// ★★ A camera is two floats and a file can hold the values that make a canvas
+/// never draw again. Both halves are checked, because a `NaN` pan is as fatal
+/// as a zero zoom and only one of them looks wrong.
+#[test]
+fn r1689_a_camera_that_would_blank_the_canvas_is_dropped_and_named() {
+    let text = saved().write().expect("written");
+    for (broken, zoom) in [
+        (text.replace("\"zoom\": 1.5", "\"zoom\": 0.0"), 0.0),
+        (text.replace("\"zoom\": 1.5", "\"zoom\": -2.0"), -2.0),
+    ] {
+        let opening = Archive::<Op, Extras>::read(&broken);
+        assert!(opening.opens(), "the graph is not the camera");
+        assert_eq!(
+            opening.dropped(),
+            [Dropped::Camera {
+                zoom,
+                pan: (-40.0, 12.0)
+            }]
+        );
+        assert_eq!(opening.take().expect("opens").camera(), None);
+    }
+    // A pan that is not a number reaches the same arm — `null` is what
+    // `serde_json` writes for a NaN, so this is the shape a file really holds.
+    let nan_pan = text.replace("-40.0", "1e999");
+    let opening = Archive::<Op, Extras>::read(&nan_pan);
+    assert!(
+        matches!(opening.dropped(), [Dropped::Camera { .. }]) || opening.refusal().is_some(),
+        "an unrepresentable pan is refused or dropped, never installed"
+    );
+}
+
+/// ★★★★★ **The graph opens when the application's own extras do not.**
+///
+/// The reference's restore is one stream read front to back: a field it cannot
+/// take ends the read, and the caller gets `false` for the whole window. Here
+/// the document and the companion are two parses over one envelope, so a
+/// screen whose saved state changed shape still gets its graph — and is told
+/// what was left behind rather than finding out from an empty panel.
+#[test]
+fn r1689_the_graph_opens_when_the_screens_own_state_does_not() {
+    let text = saved().write().expect("written");
+    let opening = Archive::<Op, LaterExtras>::read(&text);
+    assert!(
+        opening.opens(),
+        "the document is this crate's and it is fine"
+    );
+    assert_eq!(opening.reason(), None);
+    assert!(matches!(opening.dropped(), [Dropped::Companion { .. }]));
+    let back = opening.take().expect("it opens");
+    assert_eq!(back.companion(), None);
+    assert_eq!(
+        back.document()
+            .tree(ROOT)
+            .expect("the root tree")
+            .nodes()
+            .count(),
+        4,
+        "every node came back"
+    );
+    assert_eq!(back.selection().len(), 2, "and so did the selection");
+}
+
+/// A companion is optional both ways: an archive written without one reads
+/// back without one, and that is not a drop.
+#[test]
+fn r1689_an_archive_may_carry_only_the_graph() {
+    let text = Archive::<Op, Extras>::of(fixture().document)
+        .write()
+        .expect("written");
+    let opening = Archive::<Op, Extras>::read(&text);
+    assert!(opening.opens());
+    assert_eq!(
+        opening.dropped(),
+        [],
+        "nothing was saved, so nothing was lost"
+    );
+    let back = opening.take().expect("opens");
+    assert_eq!(back.camera(), None);
+    assert_eq!(back.selection(), []);
+    assert_eq!(back.companion(), None);
+}
+
+/// ★★★ **A graph that breaks its own invariants is refused for the reason it
+/// breaks them** — the check the two screens each hand-rolled, and one of them
+/// hand-rolled with four rules where [`Document::validate`] has thirteen.
+#[test]
+fn r1689_a_broken_graph_is_refused_by_naming_what_is_broken() {
+    let f = fixture();
+    let text = Archive::<Op, Extras>::of(f.document)
+        .write()
+        .expect("written");
+    // A link into a socket that is not there: the file says port 9.
+    let broken = text.replacen("\"port\": 0", "\"port\": 9", 1);
+    let opening = Archive::<Op, Extras>::read(&broken);
+    assert_eq!(opening.refusal(), None, "the text is a document");
+    assert!(!opening.opens(), "and the document is not sound");
+    assert!(!opening.violations().is_empty());
+    let reason = opening.reason().expect("not sound");
+    assert!(
+        reason.contains("not sound") && reason.contains("socket"),
+        "the sentence names the violation, not just its count: {reason}"
+    );
+    assert!(opening.clone().take().is_none());
+    assert!(
+        opening.take_despite_violations().is_some(),
+        "a repair tool can still have it, and has to say so to get it"
+    );
+}
+
+/// ★ R1689 — every [`Violation`] has a sentence, and no two read alike.
+///
+/// The verdict on a document from outside is the type most likely to be put in
+/// front of a person, and until this round it was the one error-shaped type
+/// with no `Display` — so a consumer reporting one printed Rust syntax.
+#[test]
+fn r1689_every_violation_says_what_it_is() {
+    let all = [
+        Violation::DanglingLink {
+            tree: ROOT,
+            link: LinkId(1),
+        },
+        Violation::Overlinked {
+            tree: ROOT,
+            socket: Socket::new(NodeId(1), 0),
+            side: Side::Input,
+        },
+        Violation::TypeMismatch {
+            tree: ROOT,
+            link: LinkId(2),
+        },
+        Violation::Cycle {
+            tree: ROOT,
+            nodes: vec![NodeId(1), NodeId(2)],
+        },
+        Violation::DanglingInstance {
+            tree: ROOT,
+            node: NodeId(3),
+            definition: TreeId(7),
+        },
+        Violation::Recursion {
+            definition: TreeId(7),
+        },
+        Violation::DuplicateInterfaceNode {
+            tree: ROOT,
+            side: InterfaceSide::Input,
+        },
+        Violation::DanglingParent {
+            tree: ROOT,
+            node: NodeId(4),
+            parent: NodeId(9),
+        },
+        Violation::ParentNotAFrame {
+            tree: ROOT,
+            node: NodeId(4),
+            parent: NodeId(5),
+        },
+        Violation::ContainmentCycle {
+            tree: ROOT,
+            node: NodeId(6),
+        },
+        Violation::StrayPortValue {
+            tree: ROOT,
+            node: NodeId(7),
+            port: PortRef::input(2),
+        },
+        Violation::MistypedPortValue {
+            tree: ROOT,
+            node: NodeId(8),
+            port: PortRef::output(1),
+        },
+        Violation::TooManyItems {
+            tree: ROOT,
+            node: NodeId(9),
+            side: Side::Output,
+        },
+    ];
+    let sentences: BTreeSet<String> = all.iter().map(ToString::to_string).collect();
+    assert_eq!(
+        sentences.len(),
+        all.len(),
+        "one sentence per violation, all different"
+    );
+    assert!(
+        sentences.iter().all(|s| !s.contains('{') && s.len() > 20),
+        "and none of them is a debug rendering"
+    );
 }

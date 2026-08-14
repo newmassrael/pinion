@@ -165,7 +165,8 @@
 //!   `Ctrl+Shift+Z` (`Ctrl+Y`) and the AI-first [`UndoStackExternal`] drive it.
 //! - **Persistence** (R852, R857): the graph saves / loads through the §3 §5.15
 //!   [`Storage`] substrate — `save` / `load` write and restore a
-//!   [`SerializedGraph`] JSON blob (nodes + edges + the monotonic id counters)
+//!   [`pinion_node_graph::Archive`] (R1689; the document, and this editor's own
+//!   schema version beside it as the archive's companion)
 //!   via [`pinion_platform_storage::use_app_storage`] (a `FileStorage` when the
 //!   platform offers a data dir, the in-memory fallback otherwise — R857 lifted
 //!   this runtime-selection hook out of the per-example copies, so the binding
@@ -173,10 +174,12 @@
 //!   `query serialized` / `invoke set_graph` read-write pair, and `Ctrl+S` /
 //!   `Ctrl+O` drive save / open. Loading a graph clears the undo history (the
 //!   opened document is a fresh baseline — the undo stack model). R1258 — an
-//!   `set_graph` blob is **structurally validated** ([`graph_invariants_hold`])
-//!   before it is installed, so an untrusted AI-first write of a malformed graph
-//!   (ill-typed edge / wrong-arity op / duplicate id / mistyped default) is
-//!   rejected LOUD (the graph unchanged) rather than silently mis-evaluated.
+//!   `set_graph` blob is **structurally validated** — by
+//!   [`pinion_node_graph::Opening::violations`] since R1689 — before it is
+//!   installed, so an untrusted AI-first write of a malformed graph (ill-typed
+//!   edge / wrong-arity op / duplicate id / mistyped default) is rejected LOUD
+//!   (the graph unchanged) rather than silently mis-evaluated, and the refusal
+//!   now says WHICH of the things that can be wrong was wrong.
 //! - ~~`add_node` over RPC~~ — landed R849 (the palette sidebar + the
 //!   `add_node` invoke verb; this bullet was stale until the R878 audit).
 //! - **Crate extraction**: the model + pure bezier geometry are example-local;
@@ -294,9 +297,9 @@ use pinion_core::widgets::text_field::{TextFieldState, blur_committing_field_ext
 use pinion_core::{Color, Command, DragLatch, Frame, Modifiers, Scene, SelectionChord, WidgetCore};
 use pinion_graph::Sugiyama;
 use pinion_node_graph::{
-    Camera, Conversion, Document, Extent, Fit, Layered, Link as Edge, LinkId as EdgeId, Margin,
-    Node, NodeBody, NodeId, NodeKind, Organic, Port, PortRef, ROOT, Rewired, Side, Signature,
-    Socket, Tree, TreeId, ZoomRange,
+    Archive, Camera, Conversion, Document, Extent, Fit, Layered, Link as Edge, LinkId as EdgeId,
+    Margin, Node, NodeBody, NodeId, NodeKind, Organic, Port, PortRef, ROOT, Rewired, Side,
+    Signature, Socket, Tree, TreeId, ZoomRange,
 };
 use pinion_platform_storage::{AppStorage, use_app_storage};
 use pinion_shell::{WidgetView, vello_renderer_impl};
@@ -414,7 +417,7 @@ const STORAGE_CACHE_KEY: &str = "node_graph.storage";
 /// R852 — the single [`Storage`] key the whole graph snapshot is written under
 /// (one blob, so `FileStorage`'s tempfile + rename covers the whole save).
 const STORAGE_KEY: &str = "node_graph.state";
-/// R852 — bump on an incompatible [`SerializedGraph`] layout change; a load of a
+/// R852 — bump on an incompatible [`EditorState`] layout change; a load of a
 /// mismatched version starts fresh (silent fall-through, the todomvc precedent).
 // R898 -> 2: typed ports changed the `GraphNode` serialised shape
 // (`inputs`/`outputs` counts -> `input_ports`/`output_ports` typed lists).
@@ -469,7 +472,15 @@ const STORAGE_KEY: &str = "node_graph.state";
 // that matters here: it carries `serde(default)`, so an old blob still LOADS
 // and reads its nodes as running, which is what they were. And the note above
 // was followed in two steps rather than literally.
-const PERSISTED_SCHEMA_VERSION: u32 = 11;
+//
+// R1689 -> 12: the blob is a `pinion_node_graph::Archive` now. The envelope,
+// the format's own revision and the soundness check belong to the substrate;
+// what stays here is this list, because eleven of the twelve entries above are
+// changes to the EDITOR'S TAXONOMY and the substrate cannot know about those.
+// Every key moved (`{schema_version, graph}` -> `{revision, document,
+// companion}`), so an old blob is refused — and refused by NAME now: it comes
+// back as "this is not a saved graph", where before it was `false`.
+const PERSISTED_SCHEMA_VERSION: u32 = 12;
 
 /// R1599 — the append-only `(version, digest)` ledger the persistence gate
 /// reads. See `pinion_core::test_fixtures::assert_persisted_shape` for why it
@@ -483,6 +494,7 @@ const PERSISTED_SHAPE_HISTORY: &[(u32, u64)] = &[
     (9, 0xcf24_4e33_beee_b4c5),
     (10, 0x9fed_b236_9417_723a),
     (11, 0x1c11_f72e_7c2e_d6c6),
+    (12, 0xc793_c323_d2ba_3cac),
 ];
 
 /// R849 — where a newly added node first lands, and the per-add cascade step
@@ -1327,8 +1339,13 @@ fn layout_inner_straightness(graph: &Graph) -> (usize, usize) {
 /// container that is not a frame, a containment cycle and a dangling group
 /// instance.
 ///
-/// Kept as a named predicate because `set_graph` is a *gate*: a blob that
-/// arrives over the wire is rejected whole rather than half-loaded.
+/// ★ R1689 — **test-only now**, because the gate moved to where the blob is
+/// read: `Archive::read` runs `validate` as part of the plan it hands back, and
+/// reports the violations by name rather than as a `false`. The predicate stays
+/// because the tests that established these invariants ask the question
+/// directly, and a test asking it is not the same as production hand-rolling
+/// it — which is the shape this round was removing.
+#[cfg(test)]
 fn graph_invariants_hold(graph: &Graph) -> bool {
     graph.validate().is_empty()
 }
@@ -1644,17 +1661,23 @@ fn add_palette_node(graph: &mut Graph, kind: usize, x: i32, y: i32) -> Option<No
     Some(id)
 }
 
-/// R852 / R1596 — the persistable graph snapshot: the schema version and the
-/// [`Document`], whose serde carries the nodes, the wires, the frames, the
-/// authored port values and the id counters together.
+/// R1689 — what this editor keeps beside its graph in an [`Archive`].
 ///
-/// The editor's own snapshot carried six parallel fields (nodes, edges, frames
-/// and three id counters) that had to be re-checked against each other on load;
-/// a document is one value, and `Document::validate` is the check.
-#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
-struct SerializedGraph {
+/// The envelope, the revision of the *file format*, and the check that the
+/// document is sound are the substrate's now. What is left here is the one
+/// thing the substrate cannot know: whether this editor's own **taxonomy** has
+/// changed shape under a saved file. Eleven of the twelve bumps below are
+/// exactly that, and they are silent failures rather than parse errors —
+/// `serde(default)` fields make an old blob load and read wrong — so the
+/// version has to be carried and checked by whoever knows what changed.
+///
+/// A companion is parsed independently of the graph, so an editor state this
+/// build cannot read is *reported* rather than fatal; this editor then refuses
+/// the load itself, which is a different decision from the crate's and is the
+/// point of the split.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct EditorState {
     schema_version: u32,
-    graph: Graph,
 }
 
 // ─── geometry (window coordinates; canvas == window) ───────────────
@@ -3440,18 +3463,17 @@ impl NodeGraphExternal {
         });
     }
 
-    /// R852 — snapshot the persistable graph (nodes + edges + the monotonic id
-    /// counters; the selection is transient and omitted).
-    fn snapshot(&self) -> SerializedGraph {
-        SerializedGraph {
+    /// R852 / R1689 — snapshot the persistable graph (nodes + edges + the
+    /// monotonic id counters; the selection is transient and omitted).
+    fn snapshot(&self) -> Archive<MaterialOp, EditorState> {
+        Archive::of(self.graph()).with_companion(EditorState {
             schema_version: PERSISTED_SCHEMA_VERSION,
-            graph: self.graph(),
-        }
+        })
     }
 
     /// R852 — the graph as a JSON string (the AI-first `query serialized` read).
     fn serialized_json(&self) -> String {
-        serde_json::to_string(&self.snapshot()).unwrap_or_default()
+        self.snapshot().write().unwrap_or_default()
     }
 
     /// R852 — replace the whole graph from a snapshot: swap nodes / edges,
@@ -3460,8 +3482,8 @@ impl NodeGraphExternal {
     /// baseline (the undo stack "open clears the stack" model). The single
     /// restore path behind `set_graph` / `load`, so every entry point clears undo
     /// identically.
-    fn apply_snapshot(&self, g: SerializedGraph) {
-        self.document.set(g.graph);
+    fn apply_snapshot(&self, graph: Graph) {
+        self.document.set(graph);
         self.selection.set(Selection::None);
         self.preview.set(None);
         self.undo.clear();
@@ -3488,27 +3510,53 @@ impl NodeGraphExternal {
     /// its own ids; a tree mints from its own counter, so that whole class of
     /// blob is unrepresentable rather than rejected.
     fn load_json(&self, json: &str) -> bool {
-        let Ok(g) = serde_json::from_str::<SerializedGraph>(json) else {
-            return false;
-        };
-        if g.schema_version != PERSISTED_SCHEMA_VERSION {
-            return false;
+        self.open_json(json).is_ok()
+    }
+
+    /// R1689 — the same read, **with the reason** when it does not happen.
+    ///
+    /// Four refusals used to come out of here as one `false`: the text was not
+    /// JSON, the version did not match, the graph broke an invariant, or there
+    /// was nothing stored. Neither a person nor an agent could tell a stale
+    /// file from a corrupt one — the reference toolkit's `restoreState` has the
+    /// same shape and is what this was modelled on.
+    ///
+    /// [`Archive::read`](pinion_node_graph::Archive::read) now answers all of
+    /// that before anything is installed, and the fifth case is this editor's
+    /// own: a document whose *shape* still parses but was written by an older
+    /// taxonomy, which only [`EditorState`] can catch.
+    ///
+    /// # Errors
+    ///
+    /// The sentence to put in front of whoever asked, with the graph unchanged.
+    fn open_json(&self, json: &str) -> Result<(), String> {
+        let opening = Archive::<MaterialOp, EditorState>::read(json);
+        if let Some(reason) = opening.reason() {
+            return Err(reason);
         }
-        if !graph_invariants_hold(&g.graph) {
-            return false;
+        let archive = opening.take().ok_or_else(|| "unreadable".to_owned())?;
+        match archive.companion() {
+            Some(state) if state.schema_version == PERSISTED_SCHEMA_VERSION => {}
+            Some(state) => {
+                return Err(format!(
+                    "saved by editor schema {}, this reads {PERSISTED_SCHEMA_VERSION}",
+                    state.schema_version
+                ));
+            }
+            None => return Err("the saved editor state could not be read".to_owned()),
         }
-        self.apply_snapshot(g);
-        true
+        self.apply_snapshot(archive.into_parts().0);
+        Ok(())
     }
 
     /// R852 — persist the current graph to [`STORAGE_KEY`] (the `Ctrl+S` / RPC
     /// `save` path). The single blob keeps `FileStorage`'s tempfile + rename
     /// covering the whole transaction. Returns whether the snapshot serialized.
     fn save(&self) -> bool {
-        let Ok(bytes) = serde_json::to_vec(&self.snapshot()) else {
+        let Ok(text) = self.snapshot().write() else {
             return false;
         };
-        self.storage.save(STORAGE_KEY, &bytes);
+        self.storage.save(STORAGE_KEY, text.as_bytes());
         true
     }
 
@@ -6834,15 +6882,14 @@ impl ExternalIntrospect for NodeGraphExternal {
             // R852 — replace the graph from a JSON snapshot (the write-twin of
             // `query serialized`); malformed JSON or a version mismatch is
             // Rejected and leaves the graph unchanged.
+            // ★ R1689 — the refusal carries the REASON. It used to be one
+            // fixed sentence covering four different failures, which is the
+            // `bool` this round went after, one layer up.
             "set_graph" => match args {
-                IntrospectValue::Text(s) => self
-                    .load_json(&s)
-                    .then_some(IntrospectValue::Bool(true))
-                    .ok_or_else(|| {
-                        InvokeError::rejected(
-                            "set_graph: the payload is not a graph this editor can load",
-                        )
-                    }),
+                IntrospectValue::Text(s) => match self.open_json(&s) {
+                    Ok(()) => Ok(IntrospectValue::Bool(true)),
+                    Err(why) => Err(InvokeError::rejected(format!("set_graph: {why}"))),
+                },
                 _ => Err(InvokeError::TypeMismatch),
             },
             // R852 — persist to / restore from the Storage backend. `load`
