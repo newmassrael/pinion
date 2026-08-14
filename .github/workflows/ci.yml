@@ -58,8 +58,16 @@ jobs:
         # checkout that does not build the examples still compiles without them.
         run: |
           sudo apt-get update
+          # R1688 — libxml2-dev + libclang-dev: `sce-build` build-depends on the
+          # `libxml` crate, whose build script probes `pkg-config libxml-2.0`
+          # (panicking when absent) and then runs bindgen, which loads libclang.
+          # Every example build-depends on `pinion-forge`, which build-depends on
+          # `sce-build`, so both are on the path of any `--workspace` build. The
+          # runner image happens to ship them, which is exactly why this was
+          # missing everywhere for so long — declared now so a change to that
+          # image is a failure with a name rather than a mystery.
           sudo apt-get install -y pkg-config libfontconfig1-dev libxkbcommon-dev \
-            libasound2-dev
+            libasound2-dev libxml2-dev libclang-dev
       - uses: Swatinem/rust-cache@v2
       - name: clippy (-D pedantic via workspace.lints)
         run: cargo clippy --workspace --all-targets --features pinion-runtime/vello
@@ -133,12 +141,16 @@ jobs:
           # libxkbcommon-x11-0: winit's xkbcommon-dl dlopens
           # libxkbcommon-x11.so.0 at X11-backend boot; the -dev package
           # alone does not pull the x11 runtime library in.
+          # R1688 — libxml2-dev + libclang-dev: the SCE build's `libxml`
+          # build-dependency probes pkg-config and runs bindgen. See the
+          # lint-and-test job for the full note.
           sudo apt-get install -y \
             pkg-config libfontconfig1-dev libxkbcommon-dev \
             libxkbcommon-x11-0 libwayland-dev \
             xvfb mesa-vulkan-drivers vulkan-tools libvulkan1 \
             ffmpeg x11-utils gcc libxtst-dev libx11-dev python3 \
             libasound2-dev libasound2-plugins alsa-utils \
+            libxml2-dev libclang-dev \
             pulseaudio pulseaudio-utils
           # R1333 — Pillow (python3-pil) is DELIBERATELY NOT installed yet. The 6
           # live-pixel / native-drag demos (r706 r707 r786 r794 r787 r806) `import
@@ -291,8 +303,13 @@ jobs:
         # winit-bearing pinion-shell build.
         run: |
           sudo apt-get update
+          # R1688 — this job builds `-p pinion-shell`, and MEASURED
+          # (`cargo tree -p pinion-shell -e build,normal`) that reaches
+          # `sce-build` -> `libxml`, so it needs the pkg-config file and
+          # libclang too. See the lint-and-test job for the full note.
           sudo apt-get install -y \
             pkg-config libfontconfig1-dev libxkbcommon-dev \
+            libxml2-dev libclang-dev \
             fonts-dejavu-core mesa-vulkan-drivers vulkan-tools libvulkan1
       - name: Run headless GPU pixel tests (#[ignore]d, lavapipe adapter)
         # R1029 §6.3 — the R99x grid + glyph pixel guards are #[ignore]d out of

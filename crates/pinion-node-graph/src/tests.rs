@@ -9,16 +9,16 @@ use pinion_graph::Sugiyama;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AdoptError, Align, Appearance, Axis, BreakError, Breakpoints, Bringup, Carried, Command,
-    ConnectError, Control, Conversion, Crossings, Definitions, Direction, Discovery, Distribute,
-    Document, DuplicateError, Edge, EditError, EditPath, Extent, ExtractError, ForceError,
-    Fragment, GroupError, Grow, Halt, InsertError, Instance, InterfaceSide, Item, ItemError,
-    Layered, LinkLayer, Machine, Multiplicity, NestError, Node, NodeBody, NodeId, NodeKind,
-    NodeSite, ObserveError, Occurrence, Organic, Orphaned, ParentError, PathError, Port, PortRef,
-    PortSite, PortValueError, ROOT, Reach, Relabelled, RelinkError, RepartitionError, Route,
-    RunError, SelectError, Session, Severed, Sharing, Side, Socket, Stack, Standing, Stop,
-    Straighten, Stride, Tick, Timeline, TreeId, UngroupError, Violation, WatchError, Watches,
-    crossing,
+    AdoptError, Align, Appearance, Axis, BreakError, Breakpoints, Bringup, Camera, Carried,
+    Command, ConnectError, Control, Conversion, Crossings, Definitions, Direction, Discovery,
+    Distribute, Document, DuplicateError, Edge, EditError, EditPath, Extent, ExtractError, Fit,
+    ForceError, Fragment, GroupError, Grow, Halt, InsertError, Instance, InterfaceSide, Item,
+    ItemError, Layered, LinkLayer, Machine, Margin, Multiplicity, NestError, Node, NodeBody,
+    NodeId, NodeKind, NodeSite, ObserveError, Occurrence, Organic, Orphaned, ParentError,
+    PathError, Port, PortRef, PortSite, PortValueError, ROOT, Reach, Relabelled, RelinkError,
+    RepartitionError, Route, RunError, SelectError, Session, Severed, Sharing, Side, Socket, Stack,
+    Standing, Stop, Straighten, Stride, Tick, Timeline, TreeId, UngroupError, Violation,
+    WatchError, Watches, ZoomRange, crossing,
 };
 
 /// The test taxonomy: two socket types, so type disagreement is reachable.
@@ -12700,4 +12700,373 @@ fn r1687_the_bringup_vocabulary_is_a_closed_set_of_four() {
             assert!(Bringup::ALL.contains(&Bringup::of(dialled, dials)));
         }
     }
+}
+
+// ── R1688: where the canvas is pointed ──────────────────────────────────────
+
+/// The zoom range every fit test below is judged against, so a test that moves
+/// the range says so.
+fn zooms() -> ZoomRange {
+    ZoomRange::new(0.25, 4.0).expect("0.25..=4 is a range")
+}
+
+/// Three boxes spread over a canvas, deliberately **not** symmetric about the
+/// origin and **not** the same size: a fit that folded the two axes together,
+/// or that read a width where it meant a height, lands somewhere plausible on a
+/// square fixture and nowhere near on this one.
+///
+/// ★ [[debt-a-fixture-is-exactly-big-enough-to-pass]] — its third occurrence was
+/// one round ago, and the answer there was to build the fixture so the WRONG
+/// answer is expressible. Here the wrong answers are: the union box read off
+/// positions alone (which would end at 700, not 860), a bounding box that
+/// forgot the negative corner, and an axis swap.
+fn spread() -> Vec<((i32, i32), Extent)> {
+    vec![
+        ((-100, -40), Extent::new(160, 60)),
+        ((300, 200), Extent::new(120, 300)),
+        ((700, 40), Extent::new(160, 60)),
+    ]
+}
+
+/// The box `spread` occupies: `(left, top, right, bottom)`.
+const SPREAD: (i32, i32, i32, i32) = (-100, -40, 860, 500);
+
+/// ★★★ R1688 — **a fit puts the whole graph on the screen**, judged by
+/// projecting every corner rather than by re-deriving the arithmetic.
+///
+/// The assertion is the property a person sees, not the formula: an
+/// implementation that centres correctly and scales wrongly, or scales
+/// correctly and centres wrongly, fails here. Checking `camera.zoom` against a
+/// recomputed ratio would have been the tautology R1682 wrote down — a test
+/// comparing a function with itself.
+#[test]
+fn r1688_a_fit_puts_every_corner_of_the_graph_on_the_screen() {
+    let viewport = (400u32, 300u32);
+    let framed = Fit {
+        zoom: zooms(),
+        margin: Margin::Canvas(60),
+    }
+    .boxes(spread(), viewport)
+    .expect("three boxes and a viewport");
+
+    assert_eq!(framed.bounds, SPREAD, "the graph's own box, unpadded");
+    assert!(framed.complete, "0.25..=4 is wide enough for this graph");
+    for ((x, y), extent) in spread() {
+        for corner in [
+            (f64::from(x), f64::from(y)),
+            (f64::from(x + extent.width), f64::from(y + extent.height)),
+        ] {
+            let (sx, sy) = framed.camera.project(corner);
+            assert!(
+                (0.0..=f64::from(viewport.0)).contains(&sx)
+                    && (0.0..=f64::from(viewport.1)).contains(&sy),
+                "{corner:?} lands at ({sx}, {sy}), outside the {viewport:?} viewport"
+            );
+        }
+    }
+    // And it is CENTRED: the clear space left over is the same on both sides of
+    // each axis. A fit that pinned the graph to a corner would still satisfy
+    // every containment above.
+    let left = framed.camera.project((f64::from(SPREAD.0), 0.0)).0;
+    let right = f64::from(viewport.0) - framed.camera.project((f64::from(SPREAD.2), 0.0)).0;
+    assert!(
+        (left - right).abs() < 1e-9,
+        "the gutters are {left} and {right}"
+    );
+}
+
+/// ★★★ R1688 — **the two margins are different scales**, which is the whole
+/// reason [`Margin`] names its units.
+///
+/// Measured rather than asserted by formula: the screen margin leaves exactly
+/// its own number of pixels clear, at any zoom; the canvas margin leaves that
+/// number *times the zoom*, so on a graph that has to shrink it is a thinner
+/// gutter. A `Margin` whose arms did the same thing passes nothing here.
+#[test]
+fn r1688_a_canvas_margin_and_a_screen_margin_are_not_the_same_fit() {
+    let viewport = (400u32, 300u32);
+    let of = |margin| {
+        Fit {
+            zoom: zooms(),
+            margin,
+        }
+        .boxes(spread(), viewport)
+        .expect("three boxes")
+    };
+    let canvas = of(Margin::Canvas(60));
+    let screen = of(Margin::Screen(60));
+    assert!(
+        canvas.camera.zoom > screen.camera.zoom,
+        "60 canvas units shrink with the graph and 60 pixels do not, so the \
+         screen gutter costs more scale: {} vs {}",
+        canvas.camera.zoom,
+        screen.camera.zoom
+    );
+
+    // ★ Spelled through the crate path because this module already has a
+    // fixture called `Framed` — which is exactly why the public type is called
+    // `Fitted`; see its own note.
+    let gutter = |fitted: &crate::Fitted| fitted.camera.project((f64::from(SPREAD.0), 0.0)).0;
+    assert!(
+        (gutter(&screen) - 60.0).abs() < 1e-9,
+        "a screen margin is 60 PIXELS, and it is {}",
+        gutter(&screen)
+    );
+    assert!(
+        (gutter(&canvas) - 60.0 * canvas.camera.zoom).abs() < 1e-9,
+        "a canvas margin is 60 UNITS, which is {} pixels here, and it is {}",
+        60.0 * canvas.camera.zoom,
+        gutter(&canvas)
+    );
+}
+
+/// ★★★★ R1688 — **a fit that could not fit says so.**
+///
+/// The one case the reference cannot report and the one case a person notices:
+/// the graph is wider than the zoom floor can shrink it to, so the button does
+/// what it can and the answer has to admit it. Both directions are checked —
+/// the same graph inside a range that reaches far enough reports `true` — so a
+/// field wired to a constant fails whichever constant it is.
+#[test]
+fn r1688_a_graph_the_range_cannot_hold_is_framed_and_reported_incomplete() {
+    let viewport = (400u32, 300u32);
+    let huge = vec![((0, 0), Extent::new(10_000, 40))];
+    let tight = Fit {
+        zoom: ZoomRange::new(0.5, 2.0).expect("a range"),
+        margin: Margin::Canvas(0),
+    }
+    .boxes(huge.clone(), viewport)
+    .expect("one box");
+    assert!(!tight.complete);
+    assert!(
+        (tight.camera.zoom - 0.5).abs() < 1e-9,
+        "it goes as far as the range allows: {}",
+        tight.camera.zoom
+    );
+    // Still centred on what it could not show, which is what makes pressing it
+    // twice idempotent instead of drifting.
+    let centre = tight.camera.project((5_000.0, 0.0)).0;
+    assert!(
+        (centre - 200.0).abs() < 1e-9,
+        "the graph's middle is at {centre}, not the viewport's"
+    );
+
+    let roomy = Fit {
+        zoom: ZoomRange::new(0.01, 2.0).expect("a range"),
+        margin: Margin::Canvas(0),
+    }
+    .boxes(huge, viewport)
+    .expect("one box");
+    assert!(roomy.complete, "the same graph, a range that reaches");
+}
+
+/// ★★ R1688 — the two projections invert each other, over points that are not
+/// the origin and not the centre.
+#[test]
+fn r1688_the_camera_and_its_inverse_are_one_affine() {
+    let camera = Camera::new(0.375, (-41.5, 227.25));
+    for point in [(0.0, 0.0), (-320.0, 44.0), (1_913.0, -2_047.0)] {
+        let (x, y) = camera.unproject(camera.project(point));
+        assert!(
+            (x - point.0).abs() < 1e-9 && (y - point.1).abs() < 1e-9,
+            "{point:?} round-tripped to ({x}, {y})"
+        );
+    }
+}
+
+/// ★★★ R1688 — **an anchored zoom keeps the canvas point under the anchor
+/// still**, which is the property the arithmetic exists for.
+///
+/// The anchor is deliberately off-centre and the camera starts panned, because
+/// a camera at the origin makes "keep the pan" and "re-pin the anchor" give the
+/// same answer — the fixture that would let a do-nothing implementation pass.
+/// The second assertion is that the pan DID move, so this cannot be satisfied
+/// by refusing to zoom.
+#[test]
+fn r1688_an_anchored_zoom_holds_the_point_under_the_anchor() {
+    let range = zooms();
+    let before = Camera::new(0.8, (137.0, -64.0));
+    let anchor = (311.0, 92.0);
+    let held = before.unproject(anchor);
+    let after = before.zoomed_at(before.zoom * 1.6, anchor, &range);
+
+    let now = after.unproject(anchor);
+    assert!(
+        (now.0 - held.0).abs() < 1e-9 && (now.1 - held.1).abs() < 1e-9,
+        "the canvas point under the anchor moved from {held:?} to {now:?}"
+    );
+    assert!(after.pan != before.pan, "and the view did move");
+    assert!((after.zoom - 1.28).abs() < 1e-9, "{}", after.zoom);
+    // The range governs it, so a wheel spun past the floor stops there rather
+    // than inverting the canvas.
+    let floored = before.zoomed_at(0.0001, anchor, &range);
+    assert!((floored.zoom - range.min()).abs() < 1e-9);
+}
+
+/// ★★★ R1688 — revealing moves **as little as it takes**, and nothing at all
+/// when the box is already there.
+///
+/// Four cases, because each is a different branch and three of them are the
+/// ones a naive "centre it" would get wrong: already visible (must not move),
+/// off the leading edge, off the trailing edge, and larger than the viewport.
+#[test]
+fn r1688_revealing_a_box_moves_as_little_as_it_takes() {
+    let viewport = (400u32, 300u32);
+    let camera = Camera::new(1.0, (0.0, 0.0));
+
+    let visible = camera.reveal((10, 10, 200, 200), viewport);
+    assert_eq!(
+        visible.pan, camera.pan,
+        "a box already on screen is not a reason to move the view"
+    );
+
+    let behind = camera.reveal((-150, 10, -50, 60), viewport);
+    assert!(
+        (behind.pan.0 - 150.0).abs() < 1e-9 && (behind.pan.1 - camera.pan.1).abs() < 1e-9,
+        "its leading edge lands at 0 and the other axis holds: {:?}",
+        behind.pan
+    );
+
+    let ahead = camera.reveal((500, 10, 600, 60), viewport);
+    assert!(
+        (ahead.pan.0 + 200.0).abs() < 1e-9,
+        "its trailing edge lands at the viewport's, no further: {:?}",
+        ahead.pan
+    );
+
+    let enormous = camera.reveal((100, 10, 2_000, 60), viewport);
+    assert!(
+        (enormous.pan.0 + 100.0).abs() < 1e-9,
+        "nothing shows all of it, so it shows the start: {:?}",
+        enormous.pan
+    );
+    assert!(
+        (enormous.zoom - camera.zoom).abs() < f64::EPSILON,
+        "revealing is a pan — a reveal that zoomed would undo a scale the \
+         person chose"
+    );
+}
+
+/// ★★ R1688 — a fit has nothing to answer when there is nothing to frame, and
+/// says so rather than inventing a camera.
+#[test]
+fn r1688_a_fit_over_nothing_has_no_camera() {
+    let fit = Fit {
+        zoom: zooms(),
+        margin: Margin::Canvas(60),
+    };
+    assert!(fit.boxes(Vec::new(), (400, 300)).is_none());
+    assert!(
+        fit.boxes(spread(), (0, 300)).is_none(),
+        "a viewport with no area is the same absence"
+    );
+    // A single zero-sized node is NOT that absence: it has a position, so it
+    // can be centred, and dividing by its size is this module's job to avoid.
+    let dot = fit
+        .boxes(vec![((90, 40), Extent::new(0, 0))], (400, 300))
+        .expect("a point is something to look at");
+    assert_eq!(dot.bounds, (90, 40, 90, 40), "a point has a box of no size");
+    // ★ Centred on the ONE-unit box the arithmetic substitutes, not on the
+    // point: the substitution is what keeps the division total, and it moves
+    // the point half a unit off centre. Asserting the point itself passed at a
+    // tolerance of one pixel and failed at the zoom this fixture produces —
+    // which is the fixture telling the truth about what the code does.
+    let (sx, sy) = dot.camera.project((90.5, 40.5));
+    assert!(
+        (sx - 200.0).abs() < 1e-9 && (sy - 150.0).abs() < 1e-9,
+        "({sx}, {sy})"
+    );
+}
+
+/// ★★ R1688 — the range refuses what is not a range, so no consumer downstream
+/// has to re-ask.
+#[test]
+fn r1688_a_zoom_range_is_validated_where_it_is_built() {
+    assert!(ZoomRange::new(2.0, 1.0).is_none(), "backwards");
+    assert!(
+        ZoomRange::new(0.0, 1.0).is_none(),
+        "a zoom of zero shows nothing"
+    );
+    assert!(
+        ZoomRange::new(-1.0, 1.0).is_none(),
+        "and a negative one mirrors"
+    );
+    assert!(ZoomRange::new(f64::NAN, 1.0).is_none());
+    assert!(ZoomRange::new(0.5, f64::INFINITY).is_none());
+    let range = ZoomRange::new(0.5, 0.5).expect("a single scale is a range");
+    assert!((range.clamp(9.0) - 0.5).abs() < 1e-9);
+    assert!(
+        (range.clamp(f64::NAN) - range.min()).abs() < 1e-9,
+        "a NaN is answered, not propagated into a camera"
+    );
+}
+
+/// ★★★ R1688 — `run` frames exactly the nodes the caller answers for, and the
+/// `None` is how a caller keeps a frame region or a hidden node out of the fit.
+///
+/// The excluded node is placed FAR outside the others, so an implementation
+/// that ignored the callback's `None` produces a visibly different box rather
+/// than a rounding difference.
+#[test]
+fn r1688_a_fit_over_a_document_frames_what_the_caller_answers_for() {
+    let mut document = Document::new("root");
+    let near = document
+        .add_node(ROOT, NodeBody::Kind(Op::Add), 0, 0)
+        .unwrap();
+    let also = document
+        .add_node(ROOT, NodeBody::Kind(Op::Add), 200, 100)
+        .unwrap();
+    let far = document
+        .add_node(ROOT, NodeBody::Kind(Op::Add), 9_000, 9_000)
+        .unwrap();
+
+    let fit = Fit {
+        zoom: zooms(),
+        margin: Margin::Canvas(0),
+    };
+    let some = fit
+        .run(&document, ROOT, (400, 300), |node| {
+            (node.id != far).then(|| Extent::new(100, 50))
+        })
+        .expect("two nodes");
+    assert_eq!(
+        some.bounds,
+        (0, 0, 300, 150),
+        "the far node is not in the box"
+    );
+    let all = fit
+        .run(&document, ROOT, (400, 300), |_| Some(Extent::new(100, 50)))
+        .expect("three nodes");
+    assert_eq!(all.bounds, (0, 0, 9_100, 9_050));
+    assert!(!all.complete, "and that one does not fit");
+
+    assert!(
+        fit.run(&document, ROOT, (400, 300), |_| None).is_none(),
+        "a document whose every node is excluded frames nothing"
+    );
+    assert!(
+        fit.run(&document, TreeId(97), (400, 300), |_| Some(Extent::new(
+            1, 1
+        )))
+        .is_none()
+    );
+    let _ = (near, also);
+}
+
+/// ★★★ R1688 — **a fit is idempotent**: framing an already-framed graph answers
+/// the same camera.
+///
+/// Not a nicety. The affordance is a button a person presses twice, and a fit
+/// whose pan drifted by the margin each time is the defect the reference is
+/// documented to have (its own advice is to call it twice, which is the same
+/// bug seen from the other side).
+#[test]
+fn r1688_framing_a_framed_graph_answers_the_same_camera() {
+    let fit = Fit {
+        zoom: zooms(),
+        margin: Margin::Canvas(60),
+    };
+    let once = fit.boxes(spread(), (400, 300)).expect("boxes");
+    let twice = fit.boxes(spread(), (400, 300)).expect("boxes");
+    assert_eq!(once, twice);
 }

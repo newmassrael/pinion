@@ -218,6 +218,12 @@ GESTURES = {
     # side by side. They were the last pair absent on BOTH channels.
     "export the configuration": lambda tf: press(tf, "lab.toolbar.config"),
     "produce the launch script": lambda tf: press(tf, "lab.toolbar.script"),
+    # ★★★ R1688 — the last two rows of the table, and with them the absence
+    # count reaches zero. The fit is the zoom pill's trailing seat, where the
+    # reference puts it; the jump is the LAUNCH CHIP, which had been on screen
+    # saying the verdict and answering no press at all.
+    "fit the graph to the view": lambda tf: press(tf, "lab.toolbar.fit"),
+    "go to the first problem": lambda tf: press(tf, "lab.toolbar.gate"),
 }
 
 

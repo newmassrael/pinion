@@ -170,11 +170,21 @@ mnemosyne.toml          workspace config (schema, locale, validators, ledgers)
 ## Working contract
 
 - Build: `cargo check --workspace`, `cargo test --workspace`
-- System deps (Linux): `libfontconfig1-dev libxkbcommon-dev libasound2-dev` — ALSA
-  headers are needed because `examples/hello-audio-device` enables
-  `pinion-audio/cpal-backend` (it opens a real output device; R1310). Depending on
-  `pinion-audio` *without* that feature needs no ALSA. The device demo additionally
-  wants a silent card: `sudo modprobe snd-dummy`
+- System deps (Linux): `libfontconfig1-dev libxkbcommon-dev libasound2-dev
+  libxml2-dev libclang-dev` — ALSA headers are needed because
+  `examples/hello-audio-device` enables `pinion-audio/cpal-backend` (it opens a
+  real output device; R1310). Depending on `pinion-audio` *without* that feature
+  needs no ALSA. The device demo additionally wants a silent card:
+  `sudo modprobe snd-dummy`.
+  **`libxml2-dev` + `libclang-dev` are for the SCE build (R1688)**: `sce-build`
+  build-depends on the `libxml` crate, whose `build.rs` probes
+  `pkg-config libxml-2.0` (and **panics** when it is absent) and then runs
+  bindgen, which loads libclang. `pinion-forge` build-depends on `sce-build` and
+  every example build-depends on `pinion-forge`, so this is on the path of any
+  `--workspace` build. Reported by a consumer, and it had been invisible here for
+  the reason such things always are: every machine this tree has been built on —
+  this one, the build hosts, and GitHub's runner image — already had both for
+  other reasons, so only a CLEAN machine ever saw it.
 - Lints (workspace-wide): `unsafe_code = "forbid"`, `clippy::pedantic = "warn"`
 - All new Rust code lives in `crates/`; no top-level Rust files
 - `view-fn` is **sync** (purity invariant per §6.3 — required for dry_run guarantee)

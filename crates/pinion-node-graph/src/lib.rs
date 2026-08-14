@@ -121,6 +121,13 @@
 //!   *names* the wires it had to cut, where the reference's returns `void`.
 //! * **A standing check** — [`Document::validate`], for documents that arrive
 //!   from a file or a peer and have promised nothing.
+//! * **Where the canvas is pointed** — [`Camera`] is the one affine
+//!   (`screen = world · zoom + pan`) with its own inverse, [`Fit`] frames the
+//!   graph into a viewport and **says whether it fitted** ([`Fitted::complete`])
+//!   rather than reporting success while showing a corner, and [`Margin`]
+//!   makes the clear space declare whether it is canvas units or screen pixels
+//!   — two different scales for one graph, and the reference toolkit's
+//!   `fitInView` offers neither by name.
 //!
 //! There is no renderer here, no reactive runtime and no window: this is pure
 //! data, so a node system's rules are testable without one.
@@ -217,6 +224,7 @@ mod select;
 mod swap;
 #[cfg(test)]
 mod tests;
+mod view;
 
 pub use appearance::{Appearance, VisiblePorts};
 pub use arrange::{
@@ -255,6 +263,7 @@ pub use relink::{RelinkError, Relinked};
 pub use run::{Run, RunError, Step, Stop};
 pub use select::{Grow, Grown, Reach, SelectError};
 pub use swap::{Carried, Swapped};
+pub use view::{Camera, Fit, Fitted, Margin, ZoomRange};
 
 /// Re-exported so a consumer can name the boundary derivation this crate's
 /// group operations are built on without adding a second dependency.

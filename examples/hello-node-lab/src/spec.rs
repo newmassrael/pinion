@@ -757,11 +757,23 @@ pub const OPERATIONS: &[OperationSpec] = &[
         witness: "zoom",
         needs: None,
     },
+    // ★★★ R1688 — the arithmetic is the SUBSTRATE's
+    // ([`pinion_node_graph::Fit`]) and not this screen's: the other node canvas
+    // in this tree already framed its graph by hand, and a second copy of a fold
+    // and an affine is how two editors come to disagree about what "everything"
+    // means.
+    //
+    // ★ The witness is `zoom` and not `pan`, and both move: a fit that only
+    // panned would be a fit that did not fit. `zoom` is the half that cannot be
+    // reached by dragging, so it is the one that says the operation ran.
     OperationSpec {
         name: "fit the graph to the view",
-        verb: None,
-        gesture: false,
+        verb: Some(("fit", "")),
+        gesture: true,
         witness: "zoom",
+        // ★ Nothing: the opening graph does not fit the opening zoom, which is
+        // a fact about this screen's own specification and is asserted where
+        // that is checkable rather than encoded as a fake dependency here.
         needs: None,
     },
     // ★ The one reset whose affordance is UNCONDITIONAL — see
@@ -826,10 +838,22 @@ pub const OPERATIONS: &[OperationSpec] = &[
         witness: "verdict",
         needs: None,
     },
+    // ★★★ R1688 — and the affordance is the LAUNCH CHIP, which was already on
+    // screen saying the verdict and doing nothing. That is the reference's own
+    // design rather than a saving: the chip is the one thing that says a graph
+    // will not start, so it is where a person looks and therefore where they
+    // press. It also means this row cost the toolbar no width — which mattered,
+    // because the toolbar is what sets this screen's minimum window size.
+    //
+    // ★ The witness is `selected`, and it moves on the screen as it opens
+    // because the card the first finding is on is not the card the screen opens
+    // with. A row whose witness could not move would be a row that can never
+    // pass; that this one moves without a `needs` is a property of the opening
+    // graph, asserted in the tests rather than assumed here.
     OperationSpec {
         name: "go to the first problem",
-        verb: None,
-        gesture: false,
+        verb: Some(("go_to_problem", "")),
+        gesture: true,
         witness: "selected",
         needs: None,
     },

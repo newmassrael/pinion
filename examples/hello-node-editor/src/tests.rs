@@ -4449,6 +4449,84 @@ fn r877_frame_all_fits_the_node_bbox() {
     });
 }
 
+/// ★★★★ R1688 — **`frame_all` keeps a SCREEN margin**, and this is the check
+/// that says which of the two kinds it is.
+///
+/// Written because a counterfactual passed. R1688 moved this fit onto
+/// `pinion_node_graph::Fit`, whose [`Margin`] declares whether the clear space
+/// is canvas units or screen pixels — the distinction exists because this
+/// editor wants one and the node-lab's behaviour canon wants the other. Swapping
+/// the arm here left every test in this file green and the R877 demo green too:
+/// the fit above only asserts a zoom BAND, and the two kinds differ by half a
+/// percent on the boot graph.
+///
+/// So the margin is pinned as what it means: on whichever axis binds, the gap
+/// between the node bounding box and the canvas edge is `FRAME_MARGIN`
+/// **pixels**, at whatever zoom came out. A canvas margin would leave
+/// `FRAME_MARGIN * zoom` instead — 2.7 px more here, which is why one pixel of
+/// tolerance is enough to tell them apart and why the tolerance is not larger.
+#[test]
+fn r1688_frame_all_keeps_a_margin_in_screen_pixels() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let coord = coordinator();
+        coord.set_zoom_centered(4.0);
+        assert!(coord.frame_all());
+        let zoom = coord.zoom.get();
+        let (ox, oy) = coord.scroll.offset();
+        let graph = coord.graph();
+        let (min_x, min_y, max_x, max_y) =
+            node_bounds(kind_nodes(&graph).map(|(n, _)| n)).expect("a non-empty graph");
+        // The four gutters, in screen pixels.
+        let left = wpx(min_x, zoom) - ox;
+        let top = wpx(min_y, zoom) - oy;
+        let right = i32::try_from(WIN_W).unwrap_or(0) - (wpx(max_x, zoom) - ox);
+        let bottom = i32::try_from(WIN_H).unwrap_or(0) - (wpx(max_y, zoom) - oy);
+        let tightest = left.min(top).min(right).min(bottom);
+        // ★ EXACTLY, not within a pixel. Measured: a canvas margin leaves
+        // `FRAME_MARGIN * zoom` = 25 px here against the screen margin's 24, so
+        // a tolerance of one pixel lets the wrong arm through — which is what
+        // the first draft of this assertion did, and the counterfactual it was
+        // written for walked straight past it. There is no noise to absorb: the
+        // arithmetic is deterministic integers, so a change that moves this by
+        // a pixel SHOULD be re-measured by whoever makes it.
+        assert_eq!(
+            tightest,
+            FRAME_MARGIN,
+            "the binding axis leaves {tightest} px and FRAME_MARGIN is \
+             {FRAME_MARGIN}: gutters l={left} t={top} r={right} b={bottom} at \
+             zoom {zoom}. A CANVAS margin would leave {} instead",
+            f64::from(FRAME_MARGIN) * zoom
+        );
+        assert!(
+            (left - right).abs() <= 1,
+            "and it is centred across: l={left} r={right}"
+        );
+        // ★★★ **Vertically it is NOT centred, and the reason is this editor's
+        // own scroll model rather than the fit.** Measured while writing this:
+        // the fit asks for a pan of about -35 px, `apply_viewport` writes it
+        // through `ScrollState::scroll_to`, and a scroll offset floors at zero —
+        // so a graph whose fitted position sits above the world origin is
+        // pushed down against that floor and lands 26 px high (t=74 b=126).
+        //
+        // Stated as an assertion rather than as a comment, because a limit
+        // written in prose is one nobody reads again
+        // ([[debt-a-stated-limit-is-not-checked-by-anything]]). The graph is
+        // fully visible either way — `r877_frame_all_fits_the_node_bbox` is what
+        // holds that — and if the scroll ever learns to go negative, THIS is
+        // what will say so.
+        assert_eq!(
+            oy, 0,
+            "the vertical pan is against the scroll floor, which is why the \
+             gutters differ: t={top} b={bottom}"
+        );
+        assert!(
+            top >= FRAME_MARGIN && bottom >= FRAME_MARGIN,
+            "and the margin still holds on both sides: t={top} b={bottom}"
+        );
+    });
+}
+
 #[test]
 fn r877_frame_all_on_an_empty_graph_is_a_noop() {
     Owner::new().run(|| {

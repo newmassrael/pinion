@@ -304,7 +304,12 @@ def body() -> None:
             # selected card's key count; this round made the pair what the
             # reference has — one derivation rendered as a document and as a
             # script. The pin is what noticed, which is the check working.
-            "lab.toolbar": 11,
+            # ★★ R1688 — 12, not 11: the zoom pill gained `lab.toolbar.fit`, the
+            # reference's own trailing seat. It gained one member and LOST none,
+            # because the seat this round removed (`home`, the separate view
+            # reset) kept its tag — the read-out is that control now, so
+            # `lab.reset.view` is the box and `lab.toolbar.zoom` its caption.
+            "lab.toolbar": 12,
             "lab.gate": 7,
             "lab.hint": 2,
             # ★ R1681 — the picked link now carries its own affordances: the

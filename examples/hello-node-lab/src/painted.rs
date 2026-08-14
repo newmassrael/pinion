@@ -318,6 +318,8 @@ fn declared_tags(state: &LabState) -> Vec<String> {
         "lab.toolbar.meta".into(),
         "lab.toolbar.gate".into(),
         "lab.toolbar.zoom".into(),
+        // ★ R1688 — the fit seat, demanded like every other toolbar control.
+        "lab.toolbar.fit".into(),
         "lab.toolbar.run".into(),
         "lab.gate".into(),
         "lab.gate.verdict".into(),
@@ -355,6 +357,15 @@ fn declared_tags(state: &LabState) -> Vec<String> {
     want.push("lab.reset.view".to_owned());
     for scope in super::changed_scopes(state) {
         want.push(format!("lab.reset.{}", scope.wire()));
+    }
+    // ★★★ R1688 — the toast, demanded exactly when the screen has said
+    // something. Conditional for the same reason the four gated resets are: a
+    // message region that was always there would be an empty box on the canvas,
+    // and the reference paints its own only while there is something in it.
+    if !state.toast.get().trim().is_empty() {
+        want.push("lab.toast".to_owned());
+        want.push("lab.toast.dot".to_owned());
+        want.push("lab.toast.text".to_owned());
     }
     // The cards are the ones the model holds, not the ones the specification
     // opened with — R1651's real-mouse defect was a canvas that drew the
@@ -451,6 +462,14 @@ fn must_answer(tag: &str) -> Option<String> {
         "lab.link.act" => Some("link:act".into()),
         "lab.toolbar.zoom.in" => Some("zoom:in".into()),
         "lab.toolbar.zoom.out" => Some("zoom:out".into()),
+        // ★★ R1688 — the read-out is the view reset now, so it is a control and
+        // is demanded back like one. It had no entry here while it was a seat
+        // captioned `home`, which is the hole R1681.3 wrote down: an affordance
+        // that is painted and not demanded is one this whole module passes over
+        // while nobody can press it.
+        "lab.reset.view" => Some("reset:view".into()),
+        "lab.toolbar.fit" => Some("fit".into()),
+        "lab.toolbar.gate" => Some("problem".into()),
         "lab.toolbar.config" => Some("config".into()),
         "lab.toolbar.script" => Some("script".into()),
         "lab.toolbar.run" => Some("run".into()),
@@ -2000,6 +2019,18 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
     ("produce the launch script", |state, shot| {
         press_tag(state, shot, "lab.toolbar.script");
     }),
+    // ★★ R1688 — the view's last two. The fit is the pill's trailing seat; the
+    // jump is the LAUNCH CHIP, which was on screen saying the verdict and doing
+    // nothing until this round. Neither declares a `needs`: the opening graph
+    // does not fit the opening zoom, and the first finding is not on the card
+    // the screen opens with — both of which are properties of this screen's own
+    // specification, asserted in `tests.rs` rather than assumed here.
+    ("fit the graph to the view", |state, shot| {
+        press_tag(state, shot, "lab.toolbar.fit");
+    }),
+    ("go to the first problem", |state, shot| {
+        press_tag(state, shot, "lab.toolbar.gate");
+    }),
 ];
 
 /// Press the middle of the wire running between two nodes (R1681).
@@ -2414,7 +2445,20 @@ fn r1683_the_screen_and_the_painter_hold_one_buffer() {
 /// pointer-unreachable together. One field — the framework's own — with a
 /// target answers the rename's gesture and the key row at once, and gives the
 /// form's text rows somewhere to go next.
-const ABSENT_OPERATIONS: usize = 2;
+///
+/// ★★★★★ **R1688 takes it to zero, which is the first time this number has
+/// been able to be a claim about the whole table rather than a countdown.** The
+/// last two were the view's: framing the graph, and going to the first thing
+/// wrong with it. Neither was hard and both had been absent for eleven rounds,
+/// which is the argument for the column existing — a census of what is ON the
+/// screen is blind by construction to what the screen cannot DO, and these two
+/// paint nothing when they are missing.
+///
+/// ★★ Zero is not the end of the axis. The population is the reference's own
+/// declaration of what a graph editor must do, and that declaration is one
+/// tool's; the gate that matters from here is the one above this line, which
+/// asks that every declared way of causing an operation actually causes it.
+const ABSENT_OPERATIONS: usize = 0;
 
 /// ★★★ R1679 — **the affordance is painted exactly when pressing it would do
 /// something**, judged by DOING it rather than by asking the predicate.

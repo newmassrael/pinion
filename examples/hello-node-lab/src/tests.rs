@@ -1260,28 +1260,43 @@ fn r1687_the_toolbars_declared_width_covers_what_it_paints() {
             "at the floor the toolbar pane is exactly the two clusters"
         );
         let right = i64::from(bar.x) + i64::from(bar.w);
-        let seats: [(&str, super::Rect); 7] = [
-            ("view reset", super::view_reset_rect()),
-            ("zoom out", super::zoom_rect(false)),
-            ("zoom in", super::zoom_rect(true)),
-            ("config", super::config_rect()),
-            ("script", super::script_rect()),
-            ("run", super::run_rect()),
-            ("toolbar", bar),
-        ];
+        // ★★★★ R1688 — **from the roster, not from a list written here.** R1687
+        // wrote seven rectangles into this test, this round added an eighth
+        // seat, and the gate went on measuring seven — green, and blind to
+        // exactly the change it exists for. `toolbar_seats` is what the painter,
+        // the hit test and the accessibility tree read, so a seat that is not in
+        // it is not on the screen either.
+        let state = super::use_lab_state();
+        let seats = super::toolbar_seats(&state);
+        assert!(
+            seats.len() >= 8,
+            "the toolbar's roster: {:?}",
+            seats.iter().map(|s| s.tag).collect::<Vec<_>>()
+        );
         let mut furthest = 0i64;
-        for (name, seat) in seats {
-            if name == "toolbar" {
-                continue;
+        // ★ The left cluster is measured the same way now. Its seats are
+        // anchored to the pane's LEFT edge, so they are the ones that do not
+        // reach in from the right — which is how the two halves are told apart
+        // here without either being named.
+        let mut left_reach = 0i64;
+        for seat in &seats {
+            let from_left = i64::from(seat.rect.x) + i64::from(seat.rect.w) - i64::from(bar.x);
+            let reach = right - i64::from(seat.rect.x);
+            if from_left <= i64::from(TOOLBAR_LEFT_CLUSTER) {
+                left_reach = left_reach.max(from_left);
+            } else {
+                furthest = furthest.max(reach);
             }
-            let reach = right - i64::from(seat.x);
-            assert!(
-                reach > 0,
-                "{name} is not anchored to the right edge — this check would \
-                 stop meaning anything"
-            );
-            furthest = furthest.max(reach);
         }
+        assert!(
+            left_reach > 0 && furthest > 0,
+            "both halves have seats, or one of these two checks is vacuous"
+        );
+        assert!(
+            left_reach <= i64::from(TOOLBAR_LEFT_CLUSTER),
+            "the left cluster reaches {left_reach} px in and \
+             TOOLBAR_LEFT_CLUSTER declares {TOOLBAR_LEFT_CLUSTER}"
+        );
         assert!(
             furthest <= i64::from(super::TOOLBAR_RIGHT_CLUSTER),
             "the right-anchored cluster reaches {furthest} px in and \
@@ -1298,19 +1313,16 @@ fn r1687_the_toolbars_declared_width_covers_what_it_paints() {
             super::TOOLBAR_RIGHT_CLUSTER
         );
 
-        // ★★ The LEFT half is the same unchecked claim, and leaving it out
-        // would be putting the gate where this round's defect was. Measured at
-        // the same time: it reaches 418 px in and declares 420. The two
-        // together ARE the window's minimum width — the toolbar is what
-        // dictates it, not the canvas — so a seat added to either half moves
-        // the smallest window this screen can be shown in, and that should
-        // never again be something a round discovers afterwards.
+        // ★★ The two halves together ARE the window's minimum width — the
+        // toolbar is what dictates it, not the canvas — so a seat added to
+        // either half moves the smallest window this screen can be shown in,
+        // and that should never be something a round discovers afterwards.
         assert!(
-            furthest + i64::from(TOOLBAR_LEFT_CLUSTER) <= i64::from(bar.w),
+            furthest + left_reach <= i64::from(bar.w),
             "the two clusters need {} px and the toolbar pane is {} — they \
              would overlap, which is the launch-gate chip painted under the \
              view reset",
-            furthest + i64::from(TOOLBAR_LEFT_CLUSTER),
+            furthest + left_reach,
             bar.w
         );
         assert_eq!(
@@ -1321,6 +1333,32 @@ fn r1687_the_toolbars_declared_width_covers_what_it_paints() {
              laptop no longer shows this screen unclipped) and has to be a \
              decision somebody makes rather than arithmetic nobody sees"
         );
+        // ★★★★★ R1688 — **and the pair the shell is HANDED is consistent.**
+        // R1687 raised `MIN_W` past `WIN_W` and nothing said so:
+        // `initial_size_strategy` asked for a window narrower than the minimum
+        // it gave in the same call, and every headless probe laid this screen
+        // out at a width the screen says it does not support. It survived on two
+        // pixels of slack in the left cluster.
+        //
+        // ★ Asserted on what that function ANSWERS rather than on the two
+        // constants: `WIN_W >= MIN_W` is now true by construction, so a test of
+        // it folds to `assert!(true)` — clippy said so, which is the lesson
+        // R1644.1 wrote down (an assertion that cannot fail reads like
+        // coverage). This one can fail: the strategy could be given a literal
+        // again.
+        let pinion_shell::SizeStrategy::OpenResizable { size, min } =
+            <super::NodeLabView as pinion_shell::WidgetView>::initial_size_strategy()
+        else {
+            panic!("this screen opens resizable, with a floor");
+        };
+        let min = min.expect("and the floor is declared");
+        assert!(
+            size.0 >= min.0 && size.1 >= min.1,
+            "the window is asked to open at {size:?} with a minimum of {min:?} — \
+             a window cannot open smaller than its own minimum, so one of the \
+             two is a claim nothing can honour"
+        );
+        assert_eq!(min, (MIN_W, super::MIN_H));
     });
 }
 
@@ -1331,3 +1369,391 @@ fn r1687_the_toolbars_declared_width_covers_what_it_paints() {
 // the press at the centre of what that function answered, and passed with the
 // scroll offset removed from it. See
 // `r1682_a_node_life_seat_is_pressable_where_it_is_painted`.
+
+// ── R1688: where the canvas is pointed ──────────────────────────────────────
+
+/// A live screen with the reactive hooks resolved, which the view operations
+/// need: they read the canvas rectangle, which reads the window size.
+fn live() -> std::rc::Rc<LabState> {
+    super::reset_lab_state();
+    super::use_lab_state()
+}
+
+/// ★★★ R1688 — **a fit puts every card and every frame inside the canvas**,
+/// judged by asking where they are painted afterwards rather than by
+/// re-deriving the fit's own arithmetic.
+///
+/// The rectangles come from the painter (`card_rect`, `frame_rect_of`, in world
+/// coordinates) and the viewport comes from the layout, so the two sides of this
+/// assertion are different derivations — the property R1682 and R1681.1 both
+/// wrote down after an assertion that compared a function with itself.
+#[test]
+fn r1688_a_fit_brings_the_whole_graph_inside_the_canvas() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = live();
+        // ★ The assumption the specification's `needs: None` rests on, asserted
+        // rather than assumed: the opening graph does not already fit, so the
+        // witness for this operation genuinely moves on the screen as it opens.
+        let opened_at = state.zoom.get();
+        assert_eq!(opened_at, spec::OPENING_ZOOM);
+
+        // ★★★★★ **What the fit is OVER, asserted directly — because the
+        // counterfactual that took the host frames out of it PASSED.**
+        //
+        // The outcome check below could not see that: a frame reaches only
+        // `FRAME_PAD + FRAME_TAB` = 32 units past its members and the fit pads
+        // by `FIT_PAD` = 60, so the padding covers the difference and
+        // everything lands on screen either way. True today, and a silent
+        // dependency on one constant being larger than two others — the moment
+        // the padding is trimmed, a fit over the cards alone starts cutting the
+        // frames and nothing would have said so.
+        //
+        // So the choice is stated where it can fail: the box `drawn_boxes`
+        // answers is STRICTLY larger than the cards' own, on every side.
+        let over = super::drawn_boxes(&state);
+        let bounds = |boxes: &[((i32, i32), pinion_node_graph::Extent)]| {
+            boxes.iter().fold(
+                (i32::MAX, i32::MAX, i32::MIN, i32::MIN),
+                |(l, t, r, b), ((x, y), e)| {
+                    (
+                        l.min(*x),
+                        t.min(*y),
+                        r.max(x + e.width),
+                        b.max(y + e.height),
+                    )
+                },
+            )
+        };
+        let cards: Vec<_> = over.iter().take(state.cards().len()).copied().collect();
+        let (cl, ct, cr, cb) = bounds(&cards);
+        let (al, at, ar, ab) = bounds(&over);
+        assert_eq!(
+            over.len(),
+            state.cards().len() + super::frames_of(&state).len(),
+            "one box per card and one per host frame"
+        );
+        assert!(
+            al < cl && at < ct && ar > cr && ab > cb,
+            "the frames extend the fitted box on every side: cards \
+             {cl},{ct}..{cr},{cb} against everything {al},{at}..{ar},{ab}"
+        );
+
+        let said = super::fit_view(&state);
+        assert_ne!(
+            state.zoom.get(),
+            opened_at,
+            "the opening zoom is not the fitting zoom: {said}"
+        );
+        assert!(said.starts_with("the whole graph"), "{said}");
+
+        let canvas = canvas_rect();
+        let (ox, oy) = super::world_offset(&state, state.pan.get());
+        let mut checked = 0;
+        let mut boxes: Vec<(String, super::Rect)> = Vec::new();
+        for node in state.cards() {
+            boxes.push((
+                state.name_of(node),
+                card_rect(&state, node).expect("a card"),
+            ));
+        }
+        for (frame, name) in super::frames_of(&state) {
+            boxes.push((name, super::frame_rect_of(&state, frame)));
+        }
+        assert!(boxes.len() >= spec::NODES.len() + spec::FRAMES.len());
+        for (name, rect) in boxes {
+            // World coordinates to the window, which is what a person sees.
+            let left = i64::from(rect.x) - i64::from(ox) + i64::from(canvas.x);
+            let top = i64::from(rect.y) - i64::from(oy) + i64::from(canvas.y);
+            let right = left + i64::from(rect.w);
+            let bottom = top + i64::from(rect.h);
+            assert!(
+                left >= i64::from(canvas.x)
+                    && top >= i64::from(canvas.y)
+                    && right <= i64::from(canvas.x + canvas.w)
+                    && bottom <= i64::from(canvas.y + canvas.h),
+                "{name} is painted {left},{top}..{right},{bottom} and the canvas \
+                 is {canvas:?} — a fit that leaves part of the graph off screen \
+                 is the one thing this operation must not do"
+            );
+            checked += 1;
+            let _ = (right, bottom);
+        }
+        assert!(checked >= 10, "{checked} boxes were judged");
+
+        // ★★★ And it is CENTRED. Containment alone would pass for a fit that
+        // pinned the graph to a corner, and it would also pass for one that
+        // rounded the scale to a whole percent and kept the pan computed at the
+        // unrounded one — which is the R1684.4 error shape (a derivation
+        // rounded on one axis and not the other, worse the further from the
+        // origin). The gutters left and right have to match.
+        let mut left = i64::MAX;
+        let mut right = i64::MIN;
+        for node in state.cards() {
+            let rect = card_rect(&state, node).expect("a card");
+            left = left.min(i64::from(rect.x));
+            right = right.max(i64::from(rect.x) + i64::from(rect.w));
+        }
+        for (frame, _) in super::frames_of(&state) {
+            let rect = super::frame_rect_of(&state, frame);
+            left = left.min(i64::from(rect.x));
+            right = right.max(i64::from(rect.x) + i64::from(rect.w));
+        }
+        let before = left - i64::from(ox);
+        let after = i64::from(canvas.w) - (right - i64::from(ox));
+        assert!(
+            (before - after).abs() <= 2,
+            "the graph sits {before} px from the left of the canvas and \
+             {after} px from the right"
+        );
+    });
+}
+
+/// ★★★ R1688 — **a fit is idempotent**, which is the property the reference is
+/// documented not to have (its own advice is to call its fit twice).
+///
+/// Pressing it a second time must answer the same camera. The measurement that
+/// makes this non-trivial is the one above it: the fit is computed from the
+/// cards' sizes in canvas units, and those are asked at a stated scale rather
+/// than measured off the screen and divided back out — so the answer does not
+/// depend on where the view happened to be.
+#[test]
+fn r1688_fitting_a_fitted_graph_does_not_move_it() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = live();
+        super::fit_view(&state);
+        let settled = (state.zoom.get(), state.pan.get());
+        super::fit_view(&state);
+        assert_eq!((state.zoom.get(), state.pan.get()), settled);
+
+        // And it does not depend on where you were looking when you asked: from
+        // a different zoom and a panned view, the same camera.
+        super::zoom_to(&state, super::ZOOM_MIN);
+        state.pan.set((-317, 208));
+        super::fit_view(&state);
+        assert_eq!(
+            (state.zoom.get(), state.pan.get()),
+            settled,
+            "★ frame-the-graph is a function of the GRAPH. Measuring the cards \
+             on screen and dividing the zoom back out would make it a function \
+             of the view as well, and pressing it from two places would answer \
+             two cameras"
+        );
+    });
+}
+
+/// ★★★★ R1688 — **a graph the zoom range cannot hold says so**, and the
+/// sentence is the one the reference has no way to produce.
+///
+/// Driven by moving a card far enough out that the floor cannot shrink the
+/// graph into the pane, which is a state a person can reach by dragging.
+#[test]
+fn r1688_a_graph_too_large_to_frame_is_reported_rather_than_pretended() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = live();
+        // ★ At the FLOOR window, which is a size the product genuinely has —
+        // R1687 wrote down that a gate measuring a state the application cannot
+        // reach is a gate that gets widened to shut it up. A canvas 260 tall and
+        // a card dragged 1,200 units down is a graph the 25% floor cannot hold.
+        let owner = Owner::current().expect("this test runs inside a scope");
+        pinion_core::reactive::VIEWPORT_SIZE
+            .resolve(&owner)
+            .set((MIN_W, super::MIN_H));
+        let far = state.node_of("P-03").expect("on the canvas");
+        {
+            let mut doc = state.doc.borrow_mut();
+            if let Some(tree) = doc.tree_mut(super::ROOT)
+                && let Some(node) = tree.node_mut(far)
+            {
+                node.x = 600;
+                node.y = 1_200;
+            }
+        }
+        let said = super::fit_view(&state);
+        assert!(
+            said.starts_with("as much as") && said.contains("wider than the view"),
+            "{said}"
+        );
+        assert_eq!(
+            state.zoom.get(),
+            super::ZOOM_MIN,
+            "it goes as far out as the range allows and stops there"
+        );
+    });
+}
+
+/// ★★★ R1688 — **the jump goes to the card the first finding is on**, and the
+/// finding it names is the one the gate panel shows first.
+///
+/// Both halves matter. Selecting *a* card with a problem would pass a check that
+/// only asked whether the selection moved; what makes this the reference's
+/// operation is that it is the FIRST one, in the order a reader meets them.
+#[test]
+fn r1688_the_jump_lands_on_the_card_the_first_finding_is_on() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = live();
+        // ★ The assumption the specification's `needs: None` rests on: the
+        // opening screen HAS a finding, and it is not on the card the screen
+        // opens with — so the witness moves without anything being caused
+        // first.
+        let problems = state.problems();
+        assert!(!problems.is_empty(), "the opening graph has findings");
+        let first = problems.first().expect("checked");
+        let target = first.node.expect("the finding names a card");
+        assert_ne!(
+            Some(target),
+            state.selected.get(),
+            "and it is not the card the screen opens on"
+        );
+
+        let said = super::go_to_problem(&state);
+        assert_eq!(state.selected.get(), Some(target));
+        assert_eq!(said, first.sentence);
+        assert_eq!(
+            state.toast.get(),
+            first.sentence,
+            "and the person is told which finding they were taken to"
+        );
+        // ★★ The panel and the jump are ONE walk. A second derivation of "what
+        // is wrong first" is the thing `problems` exists to prevent, and this
+        // is what would notice it coming back.
+        assert_eq!(
+            state.gate_lines().first().map(|(_, line)| line.clone()),
+            Some(first.sentence.clone())
+        );
+    });
+}
+
+/// ★★★ R1688 — **the jump brings the card into view when it is off screen, and
+/// leaves the view alone when it is not.**
+///
+/// Past the reference, which only moves the selection: a graph panned away from
+/// the card being named leaves the person told about something they cannot see.
+/// Minimal, so it does not throw away a view somebody chose on purpose.
+#[test]
+fn r1688_the_jump_reveals_the_card_only_when_it_has_to() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = live();
+        super::fit_view(&state);
+        let framed = state.pan.get();
+        super::go_to_problem(&state);
+        assert_eq!(
+            state.pan.get(),
+            framed,
+            "everything is on screen after a fit, so a jump moves nothing"
+        );
+
+        // Now pan the card off the left edge and ask again.
+        state.pan.set((framed.0 - 1_400, framed.1));
+        super::select_card(&state, None);
+        super::go_to_problem(&state);
+        assert_ne!(state.pan.get(), (framed.0 - 1_400, framed.1));
+        let target = state
+            .problems()
+            .first()
+            .and_then(|p| p.node)
+            .expect("a finding on a card");
+        let rect = card_rect(&state, target).expect("painted");
+        let canvas = canvas_rect();
+        let (ox, oy) = super::world_offset(&state, state.pan.get());
+        let left = i64::from(rect.x) - i64::from(ox) + i64::from(canvas.x);
+        let top = i64::from(rect.y) - i64::from(oy) + i64::from(canvas.y);
+        assert!(
+            left >= i64::from(canvas.x)
+                && left + i64::from(rect.w) <= i64::from(canvas.x + canvas.w)
+                && top >= i64::from(canvas.y)
+                && top + i64::from(rect.h) <= i64::from(canvas.y + canvas.h),
+            "the card is at {left},{top} and the canvas is {canvas:?}"
+        );
+    });
+}
+
+/// ★★★ R1688 — **a zoom step keeps the middle of the view still**, which is the
+/// reference's own behaviour and was not this screen's.
+///
+/// Before this round the zoom changed the scale and left the pan, which anchors
+/// at the canvas ORIGIN: zooming out from a graph you had panned to walked it
+/// off the top-left corner. The check is on the canvas point under the middle
+/// pixel, read through the screen's own conversion, so a stepper that anchored
+/// anywhere else fails.
+#[test]
+fn r1688_a_zoom_step_is_anchored_at_the_middle_of_the_canvas() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = live();
+        // Panned, because at pan zero the two anchors agree and the fixture
+        // could not tell a centre anchor from an origin one.
+        state.pan.set((-220, 140));
+        let canvas = canvas_rect();
+        let middle = (canvas.x + canvas.w / 2, canvas.y + canvas.h / 2);
+        let before = super::to_canvas(&state, middle.0, middle.1);
+        for up in [true, false, true, true] {
+            super::zoom_to(&state, super::zoom_stepped(&state, up));
+            let after = super::to_canvas(&state, middle.0, middle.1);
+            assert!(
+                (after.0 - before.0).abs() <= 2 && (after.1 - before.1).abs() <= 2,
+                "the canvas point under the middle moved from {before:?} to \
+                 {after:?} at {}%",
+                state.zoom.get()
+            );
+        }
+        assert_ne!(state.pan.get(), (-220, 140), "and the pan did move");
+    });
+}
+
+/// ★★ R1688 — every seat of the toolbar answers a press aimed at it, and every
+/// one of them is named, **from the one roster all three read**.
+///
+/// The reachability sweep in `painted.rs` asks this of the painted scene; this
+/// asks it of the roster itself, so a seat that is in the roster and not painted
+/// fails there and a seat that is painted and not in the roster has no name
+/// here. The two directions are what make the roster a roster.
+#[test]
+fn r1688_the_toolbar_roster_is_pressable_and_named() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = live();
+        let seats = super::toolbar_seats(&state);
+        assert!(seats.len() >= 8);
+        for seat in &seats {
+            assert!(!seat.name.trim().is_empty(), "{} has no name", seat.tag);
+            // Every corner, not the centre: a rectangle one pixel out is
+            // invisible to a centre probe on a seat this size (R1684).
+            for (px, py) in [
+                (seat.rect.x, seat.rect.y),
+                (seat.rect.x + seat.rect.w - 1, seat.rect.y),
+                (seat.rect.x, seat.rect.y + seat.rect.h - 1),
+                (seat.rect.x + seat.rect.w - 1, seat.rect.y + seat.rect.h - 1),
+            ] {
+                assert_eq!(
+                    Hit::at(&state, px, py),
+                    seat.hit,
+                    "{} does not answer at ({px}, {py}) — its seat is {:?}",
+                    seat.tag,
+                    seat.rect
+                );
+            }
+        }
+        // And they do not overlap, which is what makes the order above a
+        // reading order rather than a priority.
+        for (n, a) in seats.iter().enumerate() {
+            for b in &seats[n + 1..] {
+                assert!(
+                    !(a.rect.x < b.rect.x + b.rect.w
+                        && b.rect.x < a.rect.x + a.rect.w
+                        && a.rect.y < b.rect.y + b.rect.h
+                        && b.rect.y < a.rect.y + a.rect.h),
+                    "{} and {} overlap: {:?} {:?}",
+                    a.tag,
+                    b.tag,
+                    a.rect,
+                    b.rect
+                );
+            }
+        }
+    });
+}

@@ -15,20 +15,31 @@ exclude = ["/target"]
 # `cargo` builds it; `python3` drives every demo (`tools/rpc_verify.py`).
 needs = ["cargo", "python3"]
 
-# The three the workspace README names, plus a virtual display.
+# What the workspace links or generates against, plus a virtual display.
 #
 # ALSA headers are needed because `examples/hello-audio-device` enables
 # `pinion-audio/cpal-backend` and opens a real output device.
 #
-# Xvfb is here because a demo is not a unit test: `RpcSubprocess` runs the real
-# winit + wgpu pipeline even under `PINION_HIDDEN_WINDOW=1`, so a hidden window
-# is still a window and still needs a display to connect to. The unit suite
-# does not — that split is what decides which commands below are safe to run on
-# a headless machine.
+# ★★★ R1688 — `libxml2-dev` and `libclang-dev` were MISSING, reported by a
+# consumer building on a clean machine. `sce-build` build-depends on the
+# `libxml` crate; its `build.rs` probes `pkg-config libxml-2.0` and PANICS when
+# that is absent, then runs bindgen, which loads libclang. `pinion-forge`
+# build-depends on `sce-build`, and every example build-depends on
+# `pinion-forge` — so both are on the path of `cargo test --workspace --no-run`,
+# which is this file's own `build` command.
+#
+# They were invisible for the reason a missing declaration usually is: every
+# machine this tree had been built on already had them for other reasons (this
+# one has `libclang1-19` via a clang install, and GitHub's runner image ships
+# both), so the requirement only shows on a machine that has neither. A
+# declaration that is only ever read on machines that already satisfy it is not
+# a declaration, it is a coincidence.
 packages = [
     "libfontconfig1-dev",
     "libxkbcommon-dev",
     "libasound2-dev",
+    "libxml2-dev",
+    "libclang-dev",
     "xvfb",
 ]
 

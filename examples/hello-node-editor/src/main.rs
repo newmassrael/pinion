@@ -294,8 +294,9 @@ use pinion_core::widgets::text_field::{TextFieldState, blur_committing_field_ext
 use pinion_core::{Color, Command, DragLatch, Frame, Modifiers, Scene, SelectionChord, WidgetCore};
 use pinion_graph::Sugiyama;
 use pinion_node_graph::{
-    Conversion, Document, Extent, Layered, Link as Edge, LinkId as EdgeId, Node, NodeBody, NodeId,
-    NodeKind, Organic, Port, PortRef, ROOT, Rewired, Side, Signature, Socket, Tree, TreeId,
+    Camera, Conversion, Document, Extent, Fit, Layered, Link as Edge, LinkId as EdgeId, Margin,
+    Node, NodeBody, NodeId, NodeKind, Organic, Port, PortRef, ROOT, Rewired, Side, Signature,
+    Socket, Tree, TreeId, ZoomRange,
 };
 use pinion_platform_storage::{AppStorage, use_app_storage};
 use pinion_shell::{WidgetView, vello_renderer_impl};
@@ -2774,47 +2775,69 @@ fn set_pos_clamped(
     result
 }
 
-/// R1183 — the graph-space point under a canvas **pixel** `(cx, cy)`: add the
-/// pan offset (world px) then divide by zoom (`canvas = world − offset`,
-/// `world = graph · zoom`). The single inverse-projection every canvas→graph
-/// consumer routes through — [`cursor_graph_at`] (fraction form), the
-/// coordinator's [`NodeGraphExternal::cursor_graph`] / `viewport.{x,y}` query,
-/// the auto-pan tick, and the cursor-anchored zoom
-/// ([`NodeGraphExternal::set_zoom_anchored`]) — so a basis change touches one
-/// site. Its forward twin — the pan offset that places a graph point under a
-/// canvas px — is [`graph_anchor_offset`] (R1191 closed this follow-up).
-fn canvas_to_graph(scroll: &ScrollState, zoom: f64, cx: f64, cy: f64) -> (f64, f64) {
+/// R1688 — the viewport as the substrate's own value.
+///
+/// This canvas stores the pan as a scroll **offset** and
+/// [`pinion_node_graph::Camera`] states it as where the origin lands, which is
+/// the same number with the opposite sign. The conversion is here, once, so the
+/// three functions below and the two viewport writers all speak the crate's
+/// affine and none of them re-derives it.
+fn camera_of(scroll: &ScrollState, zoom: f64) -> Camera {
     let (ox, oy) = scroll.offset();
-    ((f64::from(ox) + cx) / zoom, (f64::from(oy) + cy) / zoom)
+    Camera::new(zoom, (-f64::from(ox), -f64::from(oy)))
 }
 
-/// R1191 — the forward twin of [`canvas_to_graph`]: the pan **offset** (world
-/// px) that places graph point `(gx, gy)` under canvas px `(cx, cy)`. Solves the
-/// same affine (`canvas = graph·zoom − offset`) for the offset instead of the
-/// graph point, so the cursor-anchored zoom
-/// ([`NodeGraphExternal::set_zoom_anchored`]), [`NodeGraphExternal::frame_all`],
-/// and the `viewport.{x,y}` RPC pan write share ONE forward-projection site —
-/// closing the asymmetry the R1183 [`canvas_to_graph`] rustdoc flagged as a
-/// pre-existing follow-up. This is a DIFFERENT projection from [`wpx`] (the
-/// rounded graph→world-px scaler used for node / edge / port paint positions AND
-/// the world extent): `wpx` maps graph→world-px, this maps graph→pan-offset;
-/// they share only the `·zoom` scaling, and `wpx` stays offset-free because the
-/// scroll container applies the pan offset separately.
+/// The scroll offset a camera's pan is, for [`NodeGraphExternal::apply_viewport`].
+fn offset_of(camera: Camera) -> (f64, f64) {
+    (-camera.pan.0, -camera.pan.1)
+}
+
+/// R1688 — the zoom bounds as a validated value, so [`ZoomRange::clamp`] and the
+/// substrate's fit and anchored zoom all read ONE declaration of the range
+/// rather than two constants re-typed at each call.
+fn zoom_range() -> ZoomRange {
+    ZoomRange::new(ZOOM_MIN, ZOOM_MAX).expect("ZOOM_MIN..=ZOOM_MAX are two ordered positive scales")
+}
+
+/// R1183 — the graph-space point under a canvas **pixel** `(cx, cy)`: the
+/// substrate's inverse projection, over this canvas's [`camera_of`]. The single
+/// inverse-projection every canvas→graph consumer routes through —
+/// [`cursor_graph_at`] (fraction form), the coordinator's
+/// [`NodeGraphExternal::cursor_graph`] / `viewport.{x,y}` query, the auto-pan
+/// tick, and the cursor-anchored zoom
+/// ([`NodeGraphExternal::set_zoom_anchored`]) — so a basis change touches one
+/// site.
+///
+/// ★ R1688 — the arithmetic moved into `pinion-node-graph`, because two node
+/// canvases in this tree had written the same affine and its inverse by hand.
+/// The forward twin is [`graph_to_canvas`]; [`Camera`] holds both and cannot
+/// have one of them drift.
+fn canvas_to_graph(scroll: &ScrollState, zoom: f64, cx: f64, cy: f64) -> (f64, f64) {
+    camera_of(scroll, zoom).unproject((cx, cy))
+}
+
+/// R1191 — the pan **offset** (world px) that places graph point `(gx, gy)`
+/// under canvas px `(cx, cy)`: the `viewport.{x,y}` RPC pan write's one site.
+///
+/// ★ R1688 — expressed as the substrate's anchored zoom AT THE CURRENT SCALE,
+/// which is what it always was: "put this graph point under this pixel" and
+/// "keep this graph point under this pixel while the scale changes" are the same
+/// solve, and writing them twice is how the pair drifts. The two other callers
+/// (the cursor-anchored zoom and the fit) now ask [`Camera`] and [`Fit`]
+/// directly.
 fn graph_anchor_offset(gx: f64, gy: f64, zoom: f64, cx: f64, cy: f64) -> (f64, f64) {
-    (gx * zoom - cx, gy * zoom - cy)
+    offset_of(Camera::pinned(zoom, (gx, gy), (cx, cy)))
 }
 
 /// R1220 — the canvas **pixel** a graph point `(gx, gy)` paints at: the exact
-/// inverse of [`canvas_to_graph`] (`canvas = graph·zoom − offset`), so a
+/// inverse of [`canvas_to_graph`], through the same [`Camera`], so a
 /// screen-space overlay OUTSIDE the world scroll (the pin-drop menu, placed like
 /// the title / status chrome) can sit over the graph point it targets. Distinct
-/// from [`graph_anchor_offset`] (which solves the same affine for the *pan
-/// offset* an anchored zoom writes) and from [`wpx`] (the offset-free graph→world
-/// scaler the scrolled node paint uses): this one folds the current pan offset in,
-/// because the overlay is not inside the scroll that would apply it.
+/// from [`wpx`] (the offset-free graph→world scaler the scrolled node paint
+/// uses): this one folds the current pan offset in, because the overlay is not
+/// inside the scroll that would apply it.
 fn graph_to_canvas(scroll: &ScrollState, zoom: f64, gx: f64, gy: f64) -> (f64, f64) {
-    let (ox, oy) = scroll.offset();
-    (gx * zoom - f64::from(ox), gy * zoom - f64::from(oy))
+    camera_of(scroll, zoom).project((gx, gy))
 }
 
 /// R877 / R1182 — the graph-space point under a canvas cursor **fraction**
@@ -3292,16 +3315,17 @@ impl NodeGraphExternal {
     /// no-op).
     fn set_zoom_anchored(&self, target: f64, sx: f64, sy: f64) -> bool {
         let old = self.zoom.get();
-        let zoom = target.clamp(ZOOM_MIN, ZOOM_MAX);
-        if (zoom - old).abs() < f64::EPSILON {
+        // ★ R1688 — one call to the substrate, which unprojects the anchor at
+        // the old scale and re-pins it at the new one. It was two calls here
+        // and the same two in the other node canvas in this tree; a pair of
+        // projections that can drift apart is what makes a graph slide out
+        // from under the cursor a pixel per notch.
+        let after = camera_of(&self.scroll, old).zoomed_at(target, (sx, sy), &zoom_range());
+        if (after.zoom - old).abs() < f64::EPSILON {
             return false;
         }
-        // R1183 — the graph point under the anchor px, via the inverse SSOT
-        // (was an inline copy of `canvas_to_graph`'s affine). R1191 — the offset
-        // that re-pins it under the anchor at the new zoom, via the forward SSOT.
-        let (gx, gy) = canvas_to_graph(&self.scroll, old, sx, sy);
-        let (ox, oy) = graph_anchor_offset(gx, gy, zoom, sx, sy);
-        self.apply_viewport(zoom, ox, oy);
+        let (ox, oy) = offset_of(after);
+        self.apply_viewport(after.zoom, ox, oy);
         true
     }
 
@@ -3335,33 +3359,24 @@ impl NodeGraphExternal {
     /// graph (nothing to frame, viewport unchanged).
     fn frame_all(&self) -> bool {
         let graph = self.graph();
-        // R948 — the union bbox over all nodes (the [`node_bounds`] SSOT, also
-        // the selection-bbox source for `align_selected`).
-        let Some((min_x, min_y, max_x, max_y)) = node_bounds(kind_nodes(&graph).map(|(n, _)| n))
-        else {
+        // ★★ R1688 — the substrate's fit, not a fourth copy of the fold and the
+        // centring. [`FRAME_MARGIN`] is a SCREEN margin — a gutter that is the
+        // same width at every zoom, which is the DCC "frame selection" idiom —
+        // and saying so is the half a bare number could not: the behaviour
+        // canon the node-lab reproduces pads in canvas units instead, and the
+        // two produce different scales for the same graph.
+        let Some(fitted) = (Fit {
+            zoom: zoom_range(),
+            margin: Margin::Screen(FRAME_MARGIN),
+        })
+        .boxes(
+            kind_nodes(&graph).map(|(n, _)| ((n.x, n.y), Extent::new(n.width(), n.height()))),
+            (WIN_W, WIN_H),
+        ) else {
             return false;
         };
-        let bw = f64::from((max_x - min_x).max(1));
-        let bh = f64::from((max_y - min_y).max(1));
-        let fit_w = f64::from(i32::try_from(WIN_W).unwrap_or(0) - 2 * FRAME_MARGIN) / bw;
-        let fit_h = f64::from(i32::try_from(WIN_H).unwrap_or(0) - 2 * FRAME_MARGIN) / bh;
-        let zoom = fit_w.min(fit_h).clamp(ZOOM_MIN, ZOOM_MAX);
-        // The bbox centre in GRAPH space (a tuple, so it reads distinctly from
-        // the forward projection's canvas-px anchor args below).
-        let centre = (
-            f64::from(min_x + max_x) / 2.0,
-            f64::from(min_y + max_y) / 2.0,
-        );
-        // R1191 — the offset that pins the bbox graph centre at the canvas
-        // centre, via the forward-projection SSOT.
-        let (ox, oy) = graph_anchor_offset(
-            centre.0,
-            centre.1,
-            zoom,
-            f64::from(WIN_W) / 2.0,
-            f64::from(WIN_H) / 2.0,
-        );
-        self.apply_viewport(zoom, ox, oy);
+        let (ox, oy) = offset_of(fitted.camera);
+        self.apply_viewport(fitted.camera.zoom, ox, oy);
         true
     }
 

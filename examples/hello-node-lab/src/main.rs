@@ -82,7 +82,8 @@ use pinion_core::widgets::text_edit::{TextEditState, use_text_edit_state};
 use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::{CellKind, Frame, Modifiers, Scene, WidgetCore, edit_field_keymap};
 use pinion_node_graph::{
-    Document, Item, LinkId, LinkLayer, Node, NodeBody, NodeId, ROOT, Relinked, Side, Socket,
+    Camera, Document, Extent, Fit, Item, LinkId, LinkLayer, Margin, Node, NodeBody, NodeId, ROOT,
+    Relinked, Side, Socket, ZoomRange,
 };
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use pinion_widget_paint::config_form::{
@@ -101,8 +102,39 @@ vello_renderer_impl!(HelloNodeLabRenderer, HelloNodeLabRendererError);
 
 // ── Geometry ────────────────────────────────────────────────────────────────
 
-const WIN_W: u32 = 1440;
+/// The width the specification's rectangles were measured against.
+const DESIGN_W: u32 = 1440;
+/// The size the window opens at — **never below the floor it declares**.
+///
+/// ★★★ R1688 — R1687 raised [`MIN_W`] to 1442 and left this at 1440, so
+/// [`initial_size_strategy`](NodeLabView::initial_size_strategy) asked the shell
+/// to open a window two pixels narrower than the minimum it handed it in the
+/// same call, and every headless probe laid the screen out at a width the screen
+/// says it does not support. Nothing failed, because the toolbar's two clusters
+/// happened to have two pixels of slack left — which is precisely the kind of
+/// quiet that ends when somebody moves a seat.
+///
+/// The design width stays a stated number ([`DESIGN_W`]) and the floor stays a
+/// decision somebody makes; what is derived is only the invariant *between*
+/// them, which is not a judgement and should never again be one round's
+/// oversight. This round moves the floor again, and the design size follows it
+/// rather than being caught out by it.
+const WIN_W: u32 = if DESIGN_W > MIN_W { DESIGN_W } else { MIN_W };
 const WIN_H: u32 = 900;
+
+/// ★★ R1688 — the invariant, at COMPILE time, where it now cannot be false.
+///
+/// A runtime assertion for this would be `assert!(true)` — clippy says so, and
+/// it is right: [`WIN_W`] is derived, so the check folds away. That is the
+/// point, and it is also why the check belongs here rather than in a test that
+/// would read like coverage. What the tests assert instead is the pair actually
+/// handed to the shell (see
+/// `r1687_the_toolbars_declared_width_covers_what_it_paints`), which is a real
+/// value and is where R1687's inconsistency lived.
+const _: () = assert!(
+    WIN_W >= MIN_W && WIN_H >= MIN_H,
+    "the window cannot open smaller than the minimum it declares"
+);
 const VIEW_TAG: &str = "node_lab";
 /// R1662 — the input-router tags the two scrolling side panes answer to,
 /// **taken from the specification** rather than spelled a second time here. The
@@ -205,7 +237,13 @@ fn window_size() -> (u32, u32) {
 /// right-anchored seat reaches further in than this says. Adding the script
 /// button is what made the drift matter — but the gate is what makes it the
 /// last time.
-const TOOLBAR_RIGHT_CLUSTER: u32 = 426;
+///
+/// ★★ R1688 — 426 → 431, and the gate is what said 431. The zoom pill grew a
+/// fit seat and lost the separate `home` seat, so the two changes very nearly
+/// cancel: five pixels, against the fifty-four a new seat beside the old ones
+/// would have cost. [`MIN_W`] is derived from this, so it moved with it, and
+/// [`WIN_W`] now follows [`MIN_W`] rather than being left behind by it.
+const TOOLBAR_RIGHT_CLUSTER: u32 = 431;
 
 /// ★ R1656 — the canvas pane's floor is DERIVED from what the chrome above it
 /// needs, not asserted at 240. The size axis found the difference on its first
@@ -871,6 +909,46 @@ impl LabState {
         found
     }
 
+    /// ★★★ R1688 — **the gate's findings with the card each one is ON**, which
+    /// is the fact the panel had been throwing away.
+    ///
+    /// [`gate_lines`](Self::gate_lines) formatted a name into a sentence and
+    /// returned the sentence; the card's identity was in the string and nowhere
+    /// else. That was enough while the only consumer was a list of lines, and it
+    /// stopped being enough the moment a person could ask to be TAKEN to the
+    /// first one — a second walk over the same forms, re-deriving the same
+    /// order, is how two answers to "what is wrong first" come to exist.
+    ///
+    /// So the walk is here, once, and the panel is a rendering of it. Same order
+    /// as the cards, which is the reference's own (its jump takes issue zero of
+    /// its validation list, in node order, warnings and errors alike): a person
+    /// asking for "the first problem" means the first one they would read.
+    fn problems(&self) -> Vec<Problem> {
+        self.defects()
+            .into_iter()
+            .map(|(who, defect)| {
+                let sentence = match &defect {
+                    ConfigDefect::UnknownKey { key } if key.ends_with("listen.endpoints") => {
+                        format!("{who} · nothing is listening, so no node can dial it")
+                    }
+                    ConfigDefect::UnknownKey { key } if key.ends_with("discovery.multicast") => {
+                        format!("{who} · discovery is on, so links may appear that nobody authored")
+                    }
+                    other => format!("{who} · {}", other.sentence()),
+                };
+                Problem {
+                    // A card whose name no longer resolves is not skipped: the
+                    // problem is real and a `None` says the screen cannot take
+                    // anyone to it, which is the honest answer and one the jump
+                    // reports rather than swallowing.
+                    node: self.node_of(&who),
+                    blocks: defect.blocks(),
+                    sentence,
+                }
+            })
+            .collect()
+    }
+
     fn verdict(&self) -> Verdict {
         let defects: Vec<ConfigDefect> = self.defects().into_iter().map(|(_, d)| d).collect();
         Verdict::over(&defects)
@@ -878,21 +956,13 @@ impl LabState {
 
     /// The sentence the gate shows for a defect — the framework's when the
     /// framework raised it, this application's when it did.
+    ///
+    /// ★ R1688 — a rendering of [`problems`](Self::problems), not a second walk.
     fn gate_lines(&self) -> Vec<(bool, String)> {
-        let mut lines = Vec::new();
-        for (who, defect) in self.defects() {
-            let sentence = match &defect {
-                ConfigDefect::UnknownKey { key } if key.ends_with("listen.endpoints") => {
-                    format!("{who} · nothing is listening, so no node can dial it")
-                }
-                ConfigDefect::UnknownKey { key } if key.ends_with("discovery.multicast") => {
-                    format!("{who} · discovery is on, so links may appear that nobody authored")
-                }
-                other => format!("{who} · {}", other.sentence()),
-            };
-            lines.push((defect.blocks(), sentence));
-        }
-        lines
+        self.problems()
+            .into_iter()
+            .map(|problem| (problem.blocks, problem.sentence))
+            .collect()
     }
 
     fn link_count(&self) -> usize {
@@ -909,6 +979,22 @@ impl LabState {
         let outbound = tree.links().iter().filter(|l| l.from.node == node).count();
         (inbound, outbound)
     }
+}
+
+/// ★★★ R1688 — one thing wrong with the graph, and **which card it is on**.
+///
+/// The identity is the whole reason this type exists. The gate panel only ever
+/// needed a sentence and a severity, so that is all
+/// [`LabState::gate_lines`] answered — and "take me to the first problem" is
+/// unanswerable from a list of sentences without parsing the name back out of
+/// one, which is a second derivation of a fact the first walk had and dropped.
+struct Problem {
+    /// The card, or `None` when the finding names something no card answers to.
+    node: Option<NodeId>,
+    /// Whether it stops the launch, as opposed to merely being worth saying.
+    blocks: bool,
+    /// The sentence the gate panel shows, and the toast the jump says.
+    sentence: String,
 }
 
 /// Put every declared node on the canvas, in its declared frame, holding the
@@ -1518,9 +1604,16 @@ fn offered(key: &str) -> ConfigField {
 
 // ── Canvas transform ────────────────────────────────────────────────────────
 
-/// Canvas units to window pixels, under the current zoom and pan.
-fn to_content(state: &LabState, cx: i32, cy: i32) -> (u32, u32) {
-    let zoom = f64::from(state.zoom.get()) / 100.0;
+/// Canvas units to world-surface pixels, at a **stated** zoom.
+///
+/// ★ R1688 — the zoom is a parameter and not read off the screen, and the
+/// convenience wrapper that read it is gone rather than kept unused: every
+/// caller is now inside a derivation that has already had to say which scale it
+/// means (see [`scaled_by`]), so a version that answered "whatever the screen is
+/// at" would be the ambiguity this parameter exists to remove, sitting one call
+/// away.
+fn to_content_at(cx: i32, cy: i32, at: u32) -> (u32, u32) {
+    let zoom = f64::from(at) / 100.0;
     #[allow(
         clippy::cast_possible_truncation,
         clippy::cast_sign_loss,
@@ -1617,7 +1710,7 @@ const fn holds(rect: Rect, cx: i64, cy: i64) -> bool {
         && cy < (rect.y + rect.h) as i64
 }
 
-/// Window pixels back to canvas units — the exact inverse of [`to_content`]
+/// Window pixels back to canvas units — the exact inverse of [`to_content_at`]
 /// composed with [`world_offset`].
 ///
 /// Lifted at its third copy: the node drag, the press that starts one and the
@@ -1640,8 +1733,26 @@ fn to_canvas(state: &LabState, px: u32, py: u32) -> (i32, i32) {
 }
 
 fn scaled(state: &LabState, v: u32) -> u32 {
-    v * state.zoom.get() / 100
+    scaled_by(v, state.zoom.get())
 }
+
+/// The same scaling at a zoom that is **stated** rather than read off the
+/// screen.
+///
+/// ★★★ R1688 — the fit needs the cards' sizes in canvas units, and a card's box
+/// is derived from the zoom it is drawn at (the faces have a legibility floor
+/// and the rows collapse below it, both deliberately). Measuring what is on
+/// screen and dividing the zoom back out would make "frame the graph" a function
+/// of where you were already looking — press it from two different zooms and get
+/// two different answers, which is the drift the reference is documented to
+/// have. So the extent is asked at [`UNZOOMED`], once, and the fit is a function
+/// of the graph.
+const fn scaled_by(v: u32, zoom: u32) -> u32 {
+    v * zoom / 100
+}
+
+/// The scale the diagram's own units are stated at.
+const UNZOOMED: u32 = 100;
 
 /// The specification row this card came into being as, or `None` for one the
 /// palette added.
@@ -1784,21 +1895,38 @@ struct CardShape {
 /// of 0px is not a smaller label, it is an invisible one — the same reason
 /// R1653 scaled the pins.
 fn canvas_font(state: &LabState, px: u32) -> u32 {
-    scaled(state, px).max(6)
+    canvas_font_by(px, state.zoom.get())
+}
+
+/// The same, at a stated zoom — see [`scaled_by`].
+fn canvas_font_by(px: u32, zoom: u32) -> u32 {
+    scaled_by(px, zoom).max(6)
 }
 
 /// Derive a node's card: where every part goes, and therefore how big it is.
 fn card_shape(state: &LabState, node: NodeId) -> Option<CardShape> {
+    card_shape_at(state, node, state.zoom.get())
+}
+
+/// The same derivation at a **stated** zoom, which is what makes a card's size
+/// in canvas units askable (see [`scaled_by`]).
+#[allow(
+    clippy::too_many_lines,
+    reason = "one card is one derivation; splitting it would be the two-answers \
+              defect R1656 wrote this function to end"
+)]
+fn card_shape_at(state: &LabState, node: NodeId, zoom: u32) -> Option<CardShape> {
     let (nx, ny) = {
         let doc = state.doc.borrow();
         let held = doc.tree(ROOT)?.node(node)?;
         (held.x, held.y)
     };
-    let (x, y) = to_content(state, nx, ny);
-    let w = scaled(state, card_width(state, node));
-    let pad = scaled(state, 10).max(3);
-    let id_font = canvas_font(state, FONT_SMALL);
-    let row_font = canvas_font(state, FONT_TINY);
+    let scaled = |v: u32| scaled_by(v, zoom);
+    let (x, y) = to_content_at(nx, ny, zoom);
+    let w = scaled(card_width(state, node));
+    let pad = scaled(10).max(3);
+    let id_font = canvas_font_by(FONT_SMALL, zoom);
+    let row_font = canvas_font_by(FONT_TINY, zoom);
     let id_line = line_box(id_font);
     let row_line = line_box(row_font);
     // The header band is as tall as the identity line it holds, plus the gap
@@ -1811,8 +1939,8 @@ fn card_shape(state: &LabState, node: NodeId) -> Option<CardShape> {
     let id_top = 2;
     let hdr = id_top + id_line + 2;
     let row_pitch = row_line + 1;
-    let key_w = scaled(state, 40).max(8);
-    let gap = scaled(state, 2).max(1);
+    let key_w = scaled(40).max(8);
+    let gap = scaled(2).max(1);
     // ★ R1656 — LEVEL OF DETAIL: below the zoom at which a row's face would be
     // drawn at the legibility floor, the card shows its identity band alone.
     //
@@ -1830,7 +1958,7 @@ fn card_shape(state: &LabState, node: NodeId) -> Option<CardShape> {
     // hid rows its own way would be a second answer to "what is on this card",
     // and the height — which IS the content — would be free to disagree with
     // it.
-    let detailed = !card_collapsed(state, node) && scaled(state, FONT_TINY) >= 6;
+    let detailed = !card_collapsed(state, node) && scaled(FONT_TINY) >= 6;
     let rows: Vec<(Rect, Rect)> = card_rows(state, node)
         .iter()
         .take(if detailed { usize::MAX } else { 0 })
@@ -1856,8 +1984,8 @@ fn card_shape(state: &LabState, node: NodeId) -> Option<CardShape> {
         .map(|(_, value)| value.y + value.h)
         .max()
         .unwrap_or(hdr);
-    let badge_w = scaled(state, 38).max(10);
-    let badge_font = canvas_font(state, 8);
+    let badge_w = scaled(38).max(10);
+    let badge_font = canvas_font_by(8, zoom);
     let badge_line = line_box(badge_font);
     Some(CardShape {
         rect: Rect::new(x, y, w, content_bottom + 3),
@@ -1889,6 +2017,53 @@ fn card_shape(state: &LabState, node: NodeId) -> Option<CardShape> {
 /// The rectangle a node's card occupies, in window pixels.
 fn card_rect(state: &LabState, node: NodeId) -> Option<Rect> {
     card_shape(state, node).map(|shape| shape.rect)
+}
+
+/// ★★★ R1688 — a card's size in **canvas units**: how much of the diagram it
+/// takes up, with no zoom in it.
+///
+/// What a fit has to know, and what [`card_rect`] cannot answer: that one is in
+/// window pixels at whatever scale the screen happens to be at. See
+/// [`scaled_by`] for why dividing the zoom back out of it would have been the
+/// wrong answer rather than a rounding one.
+fn card_extent(state: &LabState, node: NodeId) -> Option<Extent> {
+    let shape = card_shape_at(state, node, UNZOOMED)?;
+    Some(Extent::new(
+        i32::try_from(shape.rect.w).unwrap_or(i32::MAX),
+        i32::try_from(shape.rect.h).unwrap_or(i32::MAX),
+    ))
+}
+
+/// ★★ R1688 — **everything the canvas draws**, positioned and sized in canvas
+/// units: the cards, and the host frames around them.
+///
+/// The frames are in it because they are drawn and a fit that left them out
+/// would cut their borders — the reference frames its node boxes alone and gets
+/// away with it because its frames are derived from their members and its
+/// padding is wider than the frame's own. Ours are derived the same way, so
+/// including them can only ever grow the box, never move it: it is the strictly
+/// safer half of a choice, and it means "fit" means what it says.
+fn drawn_boxes(state: &LabState) -> Vec<((i32, i32), Extent)> {
+    // ★ Everything at [`UNZOOMED`], where a world pixel IS a canvas unit — so
+    // the fit is a function of the graph and there is no division to lose a
+    // pixel in. The world origin is the only thing to take back off.
+    let whole = |v: u32| i32::try_from(v).unwrap_or(i32::MAX);
+    let unit = |rect: Rect| {
+        (
+            (whole(rect.x) - WORLD_ORIGIN, whole(rect.y) - WORLD_ORIGIN),
+            Extent::new(whole(rect.w), whole(rect.h)),
+        )
+    };
+    let mut boxes: Vec<((i32, i32), Extent)> = Vec::new();
+    for node in state.cards() {
+        if let Some(shape) = card_shape_at(state, node, UNZOOMED) {
+            boxes.push(unit(shape.rect));
+        }
+    }
+    for (frame, _) in frames_of(state) {
+        boxes.push(unit(frame_rect_at(state, frame, UNZOOMED)));
+    }
+    boxes
 }
 
 /// A pin's rectangle. `dial` is the outgoing pin on the right edge.
@@ -1955,10 +2130,22 @@ const FRAME_PAD: u32 = 14;
 /// A frame with no members keeps its own stored position and paints an empty
 /// box, because a group you cannot see is a group you cannot drop anything into.
 fn frame_rect_of(state: &LabState, frame: NodeId) -> Rect {
+    frame_rect_at(state, frame, state.zoom.get())
+}
+
+/// The same derivation at a **stated** zoom.
+///
+/// ★★★ R1688 — needed for the same reason [`card_shape_at`] is, and the fit's
+/// own test is what said so: the first draft asked for the frames at whatever
+/// zoom the screen was at and divided it back out, so framing the graph from two
+/// different views answered two cameras a pixel apart. A frame's box is derived
+/// from its members' *painted* rectangles and its padding is a scaled quantity,
+/// so it has no size of its own to ask for — the scale has to be stated.
+fn frame_rect_at(state: &LabState, frame: NodeId, zoom: u32) -> Rect {
     let members = members_of(state, frame);
     let boxes: Vec<Rect> = members
         .iter()
-        .filter_map(|n| card_rect(state, *n))
+        .filter_map(|n| card_shape_at(state, *n, zoom).map(|shape| shape.rect))
         .collect();
     if boxes.is_empty() {
         let (x, y) = state
@@ -1967,11 +2154,16 @@ fn frame_rect_of(state: &LabState, frame: NodeId) -> Rect {
             .tree(ROOT)
             .and_then(|t| t.node(frame).map(|n| (n.x, n.y)))
             .unwrap_or((0, 0));
-        let (cx, cy) = to_content(state, x, y);
-        return Rect::new(cx, cy, scaled(state, 150), scaled(state, 90).max(FRAME_TAB));
+        let (cx, cy) = to_content_at(x, y, zoom);
+        return Rect::new(
+            cx,
+            cy,
+            scaled_by(150, zoom),
+            scaled_by(90, zoom).max(FRAME_TAB),
+        );
     }
-    let pad = scaled(state, FRAME_PAD).max(4);
-    let tab = scaled(state, FRAME_TAB).max(10);
+    let pad = scaled_by(FRAME_PAD, zoom).max(4);
+    let tab = scaled_by(FRAME_TAB, zoom).max(10);
     let left = boxes.iter().map(|r| r.x).min().unwrap_or(0);
     let top = boxes.iter().map(|r| r.y).min().unwrap_or(0);
     let right = boxes.iter().map(|r| r.x + r.w).max().unwrap_or(0);
@@ -2031,6 +2223,15 @@ enum Hit {
     Role(Role),
     DiscoveryToggle,
     Zoom(bool),
+    /// ★★ R1688 — point the canvas at the whole graph.
+    Fit,
+    /// ★★ R1688 — the launch chip, which is the way to the first thing wrong.
+    ///
+    /// The verdict and the way to what caused it are one control on the
+    /// reference too, and that is the design rather than a saving: the chip is
+    /// the only thing on screen that says a graph will not start, so it is where
+    /// a person looks and therefore where they press.
+    Problem,
     /// R1678 — an affordance that puts one scope back to what it opened as.
     Reset(ResetScope),
     /// ★★ R1687 — the seat that takes the whole graph's configuration off the
@@ -2197,25 +2398,7 @@ impl Hit {
             return Self::Nothing;
         }
         if contains(toolbar_rect(), px, py) {
-            if contains(view_reset_rect(), px, py) {
-                return Self::Reset(ResetScope::View);
-            }
-            if contains(zoom_rect(false), px, py) {
-                return Self::Zoom(false);
-            }
-            if contains(zoom_rect(true), px, py) {
-                return Self::Zoom(true);
-            }
-            if contains(config_rect(), px, py) {
-                return Self::Config;
-            }
-            if contains(script_rect(), px, py) {
-                return Self::Script;
-            }
-            if contains(run_rect(), px, py) {
-                return Self::Run;
-            }
-            return Self::Nothing;
+            return Self::on_toolbar(state, px, py);
         }
         // ★ R1678 — the gate panel's reset row, BEFORE the canvas: the panel
         // floats over the canvas, so a press inside it that fell through to
@@ -2229,6 +2412,15 @@ impl Hit {
             return Self::on_canvas(state, px, py);
         }
         Self::Nothing
+    }
+
+    /// What a press inside the canvas toolbar reaches — **from the roster**, so
+    /// a seat cannot be pressable and unnamed, or named and unpressable.
+    fn on_toolbar(state: &LabState, px: u32, py: u32) -> Self {
+        toolbar_seats(state)
+            .into_iter()
+            .find(|seat| contains(seat.rect, px, py))
+            .map_or(Self::Nothing, |seat| seat.hit)
     }
 
     /// What a press inside the canvas viewport reaches.
@@ -2302,6 +2494,8 @@ impl Hit {
             Self::Role(role) => format!("role:{}", role.name()),
             Self::DiscoveryToggle => "discovery".into(),
             Self::Zoom(up) => format!("zoom:{}", if *up { "in" } else { "out" }),
+            Self::Fit => "fit".into(),
+            Self::Problem => "problem".into(),
             Self::Reset(scope) => format!("reset:{}", scope.wire()),
             Self::Config => "config".into(),
             Self::Script => "script".into(),
@@ -2494,14 +2688,110 @@ fn discovery_rect() -> Rect {
     )
 }
 
+/// The clearance the launch chip keeps between its frame and its word, above
+/// and below.
+const GATE_PAD: u32 = 1;
+
+/// The toolbar's LEFT cluster, window-absolute: the graph's name.
+///
+/// ★★★ R1688 — these three were written inline in the painter, in the
+/// toolbar's own frame, while every seat of the right cluster came from a
+/// function. That asymmetry is why [`TOOLBAR_LEFT_CLUSTER`] was still a number
+/// nothing could measure after R1687 derived its sibling: there was nothing to
+/// measure it *from*. It is the same class as
+/// [[debt-a-stated-limit-is-not-checked-by-anything]], sitting beside the round
+/// that closed the other half of it.
+///
+/// ★ Each box ends where the next begins — a text node's rectangle is the box
+/// the run is wrapped into, and two that overlap paint one string over another
+/// as soon as either grows.
+fn toolbar_title_rect() -> Rect {
+    let bar = toolbar_rect();
+    Rect::new(bar.x + PAD, bar.y + 15, 152, 16)
+}
+
+/// The node and link counts, beside the name.
+fn toolbar_meta_rect() -> Rect {
+    let bar = toolbar_rect();
+    Rect::new(bar.x + PAD + 160, bar.y + 17, 132, 13)
+}
+
+/// The launch-gate chip: the verdict, and — since R1688 — the way to the first
+/// thing wrong with it.
+fn gate_chip_rect() -> Rect {
+    let bar = toolbar_rect();
+    Rect::new(
+        bar.x + PAD + 300,
+        bar.y + 12,
+        104,
+        line_box(FONT_SMALL) + (PANEL_FRAME + GATE_PAD) * 2,
+    )
+}
+
+/// How far in from the toolbar's right edge each seat of the zoom pill ends.
+///
+/// ★★★ R1688 — **the pill is the reference's, in the reference's order**:
+/// `−` · the read-out · `+` · fit. The read-out is not a label beside the
+/// buttons, it is the control that puts the view back — which is what the
+/// reference makes it, and what this screen had spelled as a separate seat
+/// captioned `home` since R1678. Two facts in two places became one control
+/// that shows the scale and restores it.
+///
+/// Every width here is [`seat_w`] of the **widest word the seat can ever
+/// hold**, not of the word it holds now: a seat sized to `84%` would grow when
+/// the zoom reached three digits, and a control that changes width as you use it
+/// is a target that moves under the pointer.
+const PILL_GAP: u32 = 6;
+/// The clear space between the pill and the cluster of buttons beside it.
+const CLUSTER_GAP: u32 = 12;
+/// A zoom stepper's side.
+const ZOOM_BTN: u32 = 24;
+
+/// The zoom read-out's seat, which is also the view reset's — see [`PILL_GAP`].
+///
+/// Sized for `400%`, the widest reading [`ZOOM_MAX`] allows.
+fn view_read_w() -> u32 {
+    seat_w(&format!("{ZOOM_MAX}%"))
+}
+
+/// The fit seat's, sized for its own caption.
+fn fit_w() -> u32 {
+    seat_w("fit")
+}
+
+/// Where the pill's right edge sits, in from the toolbar's right edge.
+fn pill_right() -> u32 {
+    268 + CLUSTER_GAP
+}
+
 fn zoom_rect(plus: bool) -> Rect {
     let bar = toolbar_rect();
     let right = bar.x + bar.w;
+    // Right to left: fit, `+`, the read-out, `-`.
+    let inset = if plus {
+        pill_right() + fit_w() + PILL_GAP + ZOOM_BTN
+    } else {
+        pill_right()
+            + fit_w()
+            + PILL_GAP
+            + ZOOM_BTN
+            + PILL_GAP
+            + view_read_w()
+            + PILL_GAP
+            + ZOOM_BTN
+    };
+    Rect::new(right - inset, bar.y + 11, ZOOM_BTN, ZOOM_BTN)
+}
+
+/// ★★ R1688 — the seat that frames the whole graph, at the pill's trailing end,
+/// which is where the reference puts it.
+fn fit_rect() -> Rect {
+    let bar = toolbar_rect();
     Rect::new(
-        if plus { right - 304 } else { right - 372 },
+        bar.x + bar.w - pill_right() - fit_w(),
         bar.y + 11,
-        24,
-        24,
+        fit_w(),
+        ZOOM_BTN,
     )
 }
 
@@ -2521,6 +2811,112 @@ fn script_rect() -> Rect {
 fn run_rect() -> Rect {
     let bar = toolbar_rect();
     Rect::new(bar.x + bar.w - 120, bar.y + 9, 106, 28)
+}
+
+/// One seat of the canvas toolbar: where it is, what pressing it does, and what
+/// it announces as.
+struct ToolbarSeat {
+    /// The paint tag, which is also how a test aims at it.
+    tag: &'static str,
+    /// Where it is, window-absolute.
+    rect: Rect,
+    /// What a press on it reaches.
+    hit: Hit,
+    /// What it announces as — what the control *does right now*, not what it is
+    /// called in general.
+    name: String,
+}
+
+/// ★★★★ R1688 — **the toolbar's seats, once**: the hit test finds a press in
+/// this list, the accessibility tree names this list, and the width gate
+/// measures this list.
+///
+/// It exists because of the shape of the defect this round would otherwise have
+/// added. R1687 derived the right cluster's declared width from the rectangles
+/// — a real improvement over the prose it replaced — but it derived it from a
+/// list of seven rectangles written out *inside the test*. This round added an
+/// eighth seat, and that gate went on measuring seven and reporting the old
+/// answer: green, and blind to the very change it was written for. A gate that
+/// enumerates by hand is a gate that measures the screen as it was on the day
+/// it was written ([[debt-a-stated-limit-is-not-checked-by-anything]], third
+/// occurrence in three rounds).
+///
+/// ★ The order is the reader's, left to right, because that is also the order a
+/// press is resolved in and the two must not be two orders.
+fn toolbar_seats(state: &LabState) -> Vec<ToolbarSeat> {
+    let seat = |tag, rect, hit, name: String| ToolbarSeat {
+        tag,
+        rect,
+        hit,
+        name,
+    };
+    vec![
+        // ★★ The launch chip. Its name is the verdict AND what pressing it
+        // does: a reader told only "go to the first problem" has not been told
+        // whether there is one.
+        seat(
+            "lab.toolbar.gate",
+            gate_chip_rect(),
+            Hit::Problem,
+            match state.problems().len() {
+                0 => "gate passed, nothing to go to".to_owned(),
+                1 => "gate: 1 finding, go to it".to_owned(),
+                n => format!("gate: {n} findings, go to the first"),
+            },
+        ),
+        seat(
+            "lab.toolbar.zoom.out",
+            zoom_rect(false),
+            Hit::Zoom(false),
+            "zoom out".to_owned(),
+        ),
+        // ★★ The accessible name CONTAINS the visible one, because the read-out
+        // is this control's own caption: a button labelled `84%` whose name was
+        // only "reset the view" is the label-in-name failure, and this seat is
+        // exactly the case that rule is about.
+        seat(
+            "lab.reset.view",
+            view_reset_rect(),
+            Hit::Reset(ResetScope::View),
+            format!("zoom {}%, reset the view", state.zoom.get()),
+        ),
+        seat(
+            "lab.toolbar.zoom.in",
+            zoom_rect(true),
+            Hit::Zoom(true),
+            "zoom in".to_owned(),
+        ),
+        seat(
+            "lab.toolbar.fit",
+            fit_rect(),
+            Hit::Fit,
+            "fit the graph to the view".to_owned(),
+        ),
+        seat(
+            "lab.toolbar.config",
+            config_rect(),
+            Hit::Config,
+            "export the configuration".to_owned(),
+        ),
+        seat(
+            "lab.toolbar.script",
+            script_rect(),
+            Hit::Script,
+            "produce the launch script".to_owned(),
+        ),
+        seat(
+            "lab.toolbar.run",
+            run_rect(),
+            Hit::Run,
+            if state.running.get() {
+                "stop".to_owned()
+            } else if state.verdict().may_launch() {
+                "run".to_owned()
+            } else {
+                "run blocked".to_owned()
+            },
+        ),
+    ]
 }
 
 /// The launch gate panel, bottom right of the canvas.
@@ -2579,24 +2975,26 @@ fn reset_seats(state: &LabState) -> Vec<(ResetScope, Rect)> {
         .collect()
 }
 
-/// The view reset's seat in the toolbar's zoom cluster.
+/// The view reset's seat: **the zoom read-out itself**, between the two
+/// steppers.
 ///
-/// Unconditional, beside the zoom controls, which is where the reference keeps
-/// it — see [`ResetScope::gated`] for why this one is not on the panel.
-/// ★★★ R1687 — widened from 34, because its label was painted `ho…`.
+/// Unconditional, in the zoom cluster, which is where the reference keeps it —
+/// see [`ResetScope::gated`] for why this one is not on the panel.
 ///
-/// Found by looking at the screen, and then measured rather than eyeballed:
-/// `scene/text_painted` reports seven shortened runs on the opening screen and
-/// six of them are long sentences elided into a bounded strip, which is what
-/// that behaviour is for. This was the seventh — a four-letter button name cut
-/// to two letters and a dot, which is a control whose own name cannot be read.
+/// ★★★ R1688 — it was a seat of its own captioned `home`, which the reference
+/// does not have: there, the percentage *is* the button that puts the view back.
+/// Merging them is not tidying. It is one control for one subject — a reading of
+/// the scale and the way to undo it — where this screen had a number that could
+/// not be pressed sitting next to a word that did not say what it restored. It
+/// also costs the toolbar less width than the two did, which is the difference
+/// between adding the fit seat and not being able to.
 ///
-/// The seat is 14 px wider and sits 14 px further left, so the gap to the zoom
-/// pair is unchanged and only the cluster's total reach moves — which is
-/// declared in [`TOOLBAR_RIGHT_CLUSTER`] and checked.
+/// ★ R1687 had to widen the old seat from 34 to 48 because `home` was painted
+/// `ho…`. Nothing here is picked: the width is [`seat_w`] of the widest reading
+/// this screen can show, and the truncation gate is what settles it.
 fn view_reset_rect() -> Rect {
     let out = zoom_rect(false);
-    Rect::new(out.x - 54, out.y, 48, 24)
+    Rect::new(out.x + ZOOM_BTN + PILL_GAP, out.y, view_read_w(), ZOOM_BTN)
 }
 
 /// Where a toolbar seat's caption goes: the seat, inset.
@@ -2628,6 +3026,61 @@ const fn seat_caption(seat: Rect) -> Rect {
 /// looking at the screen, reappearing from the other direction. The gate is
 /// what settled the number.
 const SEAT_INSET: u32 = 6;
+
+/// Where the last thing this screen SAID is shown, or `None` when it has not
+/// said anything yet.
+///
+/// ★★★★★ R1688 — **found by looking at the screen, and it had been false for
+/// thirty-seven rounds.** Four comments in this file say a refusal "has already
+/// reached the toast, which is where a person reads it", and there was no
+/// toast: `say` writes a signal, the signal is published on the wire, and
+/// nothing painted it. Every gate was green because every gate reads the wire.
+/// So the last card refusing to be deleted, a name already taken, a value that
+/// cannot be expressed — each was a control that appeared to do nothing.
+///
+/// It is [[debt-a-stated-limit-is-not-checked-by-anything]] from the other
+/// direction: not a limit stated and unchecked, but a CAPABILITY stated and
+/// unbuilt, which no census can see because the thing it would count is absent.
+///
+/// # Two deliberate differences from the reference
+///
+/// * **It does not time out.** The reference clears its toast after 2.6
+///   seconds. A message that vanishes on a wall clock makes every check that
+///   reads it a race against a timer ([[zero-flake-policy]]), and it is also the
+///   complaint people have about toasts — you look up and it has gone. This one
+///   stands until the screen says something else, which is what a professional
+///   tool's status line does.
+/// * **It sits above the hint strip and left of the launch panel**, rather than
+///   centred on the window. Both of those are already there, and a message
+///   painted over either is a message competing with the two things this screen
+///   most needs to keep readable. The room it is centred in is what is left.
+fn toast_rect(state: &LabState) -> Option<Rect> {
+    let said = state.toast.get();
+    if said.trim().is_empty() {
+        return None;
+    }
+    let canvas = canvas_rect();
+    let hint = hint_rect();
+    let gate = gate_rect(state);
+    let h = line_box(FONT_SMALL) + (PANEL_FRAME + TOAST_PAD) * 2;
+    // The band left of the launch panel: its own left edge, less the gap.
+    let room = gate.x.saturating_sub(canvas.x + 24).max(TOAST_MIN_W);
+    let w = (seat_w(&said) + TOAST_DOT + TOAST_PAD * 2).min(room);
+    Some(Rect::new(
+        canvas.x + 12 + room.saturating_sub(w) / 2,
+        hint.y.saturating_sub(h + 10),
+        w,
+        h,
+    ))
+}
+
+/// The clearance the toast keeps between its frame and its content.
+const TOAST_PAD: u32 = 6;
+/// The dot the reference draws before the message, and the gap after it.
+const TOAST_DOT: u32 = 18;
+/// A toast is never narrower than this, however little room the canvas has —
+/// below it the message would be an ellipsis and nothing else.
+const TOAST_MIN_W: u32 = 120;
 
 fn hint_rect() -> Rect {
     let canvas = canvas_rect();
@@ -3416,15 +3869,12 @@ fn palette_determinism(state: &LabState, rect: Rect, ink: Ink) -> Vec<Scene> {
 }
 
 fn toolbar(state: &LabState, ink: Ink) -> Scene {
-    /// The clearance between one toolbar label's box and the next one's.
-    const GAP: u32 = 8;
-    /// The clearance the launch chip keeps between its frame and its word,
-    /// above and below.
-    const GATE_PAD: u32 = 1;
-    /// The same, left and right — wider, because a word set flush against a
-    /// vertical rule reads as touching it long before it overlaps.
+    /// The clearance a word keeps inside the launch chip, left and right —
+    /// wider than [`GATE_PAD`], because a word set flush against a vertical
+    /// rule reads as touching it long before it overlaps.
     const GATE_TEXT_PAD: u32 = 9;
     let bar = toolbar_rect();
+    let local = |r: Rect| Rect::new(r.x - bar.x, r.y - bar.y, r.w, r.h);
     let verdict = state.verdict();
     let nodes = state.cards().len();
     let links = state.link_count();
@@ -3444,19 +3894,20 @@ fn toolbar(state: &LabState, ink: Ink) -> Scene {
     // rectangle is not a hint, it is the box the run is wrapped into: two boxes
     // that overlap paint one string over another as soon as either string grows
     // to fill the space it was promised, and the strings here are a graph name
-    // and a count.
+    // and a count. ★ R1688 — from the same three functions the hit test and the
+    // width gate read, rather than written out here.
     let mut children = vec![
         tagged_label(
             "lab.toolbar.title",
             spec::GRAPH_NAME,
-            Rect::new(PAD, 15, 160 - GAP, 16),
+            local(toolbar_title_rect()),
             FONT_TITLE,
             ink.text,
         ),
         tagged_label(
             "lab.toolbar.meta",
             format!("{nodes} nodes · {links} links"),
-            Rect::new(PAD + 160, 17, 140 - GAP, 13),
+            local(toolbar_meta_rect()),
             FONT_SMALL,
             ink.text_3,
         ),
@@ -3472,7 +3923,7 @@ fn toolbar(state: &LabState, ink: Ink) -> Scene {
         // are arrived at does.
         {
             let line = line_box(FONT_SMALL);
-            let seat = Rect::new(PAD + 300, 12, 104, line + (PANEL_FRAME + GATE_PAD) * 2);
+            let seat = local(gate_chip_rect());
             let inner = panel_content(seat);
             panel(
                 "lab.toolbar.gate",
@@ -3525,11 +3976,21 @@ fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
             if plus { "+" } else { "-" },
             Rect::new(seat.x + 9, seat.y + 5, 12, 14),
             FONT_BODY,
-            ink.text,
+            // ★★ R1688 — the pill's three BUTTONS are one weight and the
+            // read-out is the emphasised one, which is the reference's own
+            // relation. Found by looking: the fit seat arrived at `text_3` (the
+            // weight the old `home` seat had) beside two steppers at `text`, so
+            // one pill showed three controls in two states and the new one read
+            // as disabled.
+            ink.text_2,
         ));
     }
-    // ★ R1678 — unconditional, beside the zoom controls, which is where the
-    // reference keeps the view reset. See `ResetScope::gated`.
+    // ★★★ R1688 — the read-out IS the view reset, which is what the reference
+    // makes it. Unconditional, in the zoom cluster; see `ResetScope::gated`.
+    // The percentage is this seat's own caption, so it is inside the control it
+    // names by construction rather than by a constant that has to be kept in
+    // step — R1687 had to move that constant by 4 px to stop the number being
+    // painted inside the `+` button beside it.
     let view_reset = local(view_reset_rect());
     children.push(box_at(
         "lab.reset.view",
@@ -3538,25 +3999,23 @@ fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
         Some(ink.outline),
         6,
     ));
-    children.push(label(
-        "home",
-        seat_caption(view_reset),
-        FONT_SMALL,
-        ink.text_3,
-    ));
-    // ★★ R1687 — 36 wide, not 40. The readout sits between the two zoom
-    // buttons, which are 68 apart, and starts 30 in — so at 40 it was painted
-    // 2 px INSIDE the `+` button. Caught by generalising the caption check from
-    // "is it cut" to "is it inside the control it names": a run overlapping a
-    // seat it does not belong to is the same class of defect and nothing was
-    // asking about it.
     children.push(tagged_label(
         "lab.toolbar.zoom",
         format!("{}%", state.zoom.get()),
-        Rect::new(local(zoom_rect(false)).x + 30, 17, 36, 13),
+        seat_caption(view_reset),
         FONT_SMALL,
         ink.text,
     ));
+    // ★★ R1688 — the pill's trailing seat: frame the whole graph.
+    let fit = local(fit_rect());
+    children.push(box_at(
+        "lab.toolbar.fit",
+        fit,
+        ink.raised,
+        Some(ink.outline),
+        6,
+    ));
+    children.push(label("fit", seat_caption(fit), FONT_SMALL, ink.text_2));
 
     // ★★ R1687 — the pair the reference puts side by side, because they are one
     // derivation rendered two ways. Painted from one loop so a change to either
@@ -4307,7 +4766,41 @@ fn canvas_overlays(state: &LabState, ink: Ink) -> Vec<Scene> {
         ink.text_3,
     ));
 
+    children.extend(canvas_toast(state, ink));
+
     children
+}
+
+/// ★★★★★ R1688 — **the last thing the screen said**, which nothing painted
+/// until this round. See [`toast_rect`]: four comments in this file already
+/// described a person reading it.
+fn canvas_toast(state: &LabState, ink: Ink) -> Option<Scene> {
+    let pane = canvas_rect();
+    let seat = toast_rect(state)?;
+    let seat = Rect::new(seat.x - pane.x, seat.y - pane.y, seat.w, seat.h);
+    let inner = panel_content(seat);
+    let dot = Rect::new(inner.x + TOAST_PAD, inner.y + TOAST_PAD + 3, 7, 7);
+    Some(panel(
+        "lab.toast",
+        seat,
+        ink.raised,
+        Some(ink.outline_2),
+        vec![
+            box_at("lab.toast.dot", dot, ink.accent, None, 4),
+            tagged_label(
+                "lab.toast.text",
+                state.toast.get(),
+                Rect::new(
+                    dot.x + TOAST_DOT,
+                    inner.y + TOAST_PAD,
+                    inner.w.saturating_sub(TOAST_DOT + TOAST_PAD * 2).max(1),
+                    line_box(FONT_SMALL),
+                ),
+                FONT_SMALL,
+                ink.text,
+            ),
+        ],
+    ))
 }
 
 /// The canvas pane: its layers, in the order a reader meets them — the surface,
@@ -4980,6 +5473,16 @@ const FIELDS: &[SchemaField] = &{
         // verb you happened to use. The determinism switch needs no action at
         // all — it is a boolean somebody sets, so it is a WRITE on its read.
         SchemaField::action("zoom_by", "string"),
+        // ★★ R1688 — the view's other two. Neither takes an argument: "frame the
+        // graph" is a function of the graph and "go to the first problem" of the
+        // verdict, and a verb that let a caller name a subset or an index would
+        // be inventing a scope the screen has no affordance for.
+        //
+        // ★ They answer the sentence the toast shows, like `export` and
+        // `script`, so an agent learns what a person would have learnt — which
+        // for `fit` includes whether the whole graph actually went in.
+        SchemaField::action("fit", "string"),
+        SchemaField::action("go_to_problem", "string"),
         SchemaField::action("run", "bool"),
         // ★★ R1687 — what leaves the screen. Neither takes an argument: the
         // plan is a function of the graph, and a verb that let a caller name a
@@ -5576,10 +6079,9 @@ impl ExternalIntrospect for LabOracle {
             }
             "zoom_by" => {
                 let word = Self::text(&args)?;
-                let now = state.zoom.get();
                 let next = match word.trim() {
-                    "in" => (now + ZOOM_STEP).min(ZOOM_MAX),
-                    "out" => now.saturating_sub(ZOOM_STEP).max(ZOOM_MIN),
+                    "in" => zoom_stepped(&state, true),
+                    "out" => zoom_stepped(&state, false),
                     other => other
                         .parse::<u32>()
                         .ok()
@@ -5590,9 +6092,16 @@ impl ExternalIntrospect for LabOracle {
                             ))
                         })?,
                 };
-                state.zoom.set(next);
-                Ok(IntrospectValue::Int(i64::from(next)))
+                // ★ R1688 — anchored at the middle of the canvas, through the
+                // same function the steppers press.
+                Ok(IntrospectValue::Int(i64::from(zoom_to(&state, next))))
             }
+            // ★★★ R1688 — the view's own two, through the same functions the
+            // seats press. `fit` answers the sentence a person reads, including
+            // the one the reference cannot say: that the graph is larger than
+            // the zoom range can shrink it to.
+            "fit" => Ok(IntrospectValue::Text(fit_view(&state))),
+            "go_to_problem" => Ok(IntrospectValue::Text(go_to_problem(&state))),
             // ★★ R1687 — through the same two functions the seats press, so the
             // artifact an agent gets and the one a person gets cannot differ.
             "export" => Ok(IntrospectValue::Text(export_configuration(&state))),
@@ -5825,6 +6334,15 @@ fn spec_json() -> serde_json::Value {
         // The same second-copy failure the operations table was published to
         // prevent, one level down.
         "floor": [MIN_W, MIN_H],
+        // ★★★ R1688 — and the size the window OPENS at, which is a different
+        // number and the one a demo taking a paint snapshot actually needs.
+        //
+        // R1687 published the floor and left the design size to be written out
+        // by whoever needed it; this round moved BOTH (the zoom pill grew the
+        // fit seat) and the second copy is exactly the thing that then does not
+        // move. It is never below the floor — see [`WIN_W`], where that stopped
+        // being something a round could get wrong.
+        "design": [WIN_W, WIN_H],
     })
 }
 
@@ -6922,13 +7440,16 @@ fn release(state: &Rc<LabState>) {
         // readable from the button: shut, it opens on the name; open, it
         // applies what was typed. The reference's box works the same way.
         Hit::Rename | Hit::AddKey => edit_seat(state, &now),
+        // ★ R1688 — through the same function the wire's `zoom_by` calls, so
+        // the stepper and the verb anchor the same way.
         Hit::Zoom(up) => {
-            let zoom = state.zoom.get();
-            state.zoom.set(if up {
-                (zoom + ZOOM_STEP).min(ZOOM_MAX)
-            } else {
-                zoom.saturating_sub(ZOOM_STEP).max(ZOOM_MIN)
-            });
+            zoom_to(state, zoom_stepped(state, up));
+        }
+        Hit::Fit => {
+            fit_view(state);
+        }
+        Hit::Problem => {
+            go_to_problem(state);
         }
         Hit::Run => {
             let verdict = state.verdict();
@@ -7052,6 +7573,197 @@ fn produce_script(state: &LabState) -> String {
     let script = deploy::as_script(&plan);
     let said = deploy::script_sentence(&plan);
     state.produced.borrow_mut().script = Some(script);
+    state.say(said.clone());
+    said
+}
+
+// ── Where the canvas is pointed ─────────────────────────────────────────────
+
+/// This screen's zoom bounds, as the substrate's validated range.
+///
+/// ★ One declaration read by the fit and by the anchored zoom, rather than
+/// [`ZOOM_MIN`] and [`ZOOM_MAX`] re-clamped at each call — which is how the two
+/// come to disagree about what "as far out as it goes" means.
+fn zoom_range() -> ZoomRange {
+    ZoomRange::new(f64::from(ZOOM_MIN) / 100.0, f64::from(ZOOM_MAX) / 100.0)
+        .expect("ZOOM_MIN..=ZOOM_MAX are two ordered positive scales")
+}
+
+/// Where the canvas is pointed right now, as the substrate states it.
+///
+/// This screen keeps the zoom as a whole percentage (it is shown as one, and a
+/// reading of `83.7%` is not a thing a person asked for) and the pan in whole
+/// pixels; the camera is the same two facts as the affine the substrate owns.
+fn camera_now(state: &LabState) -> Camera {
+    let (pan_x, pan_y) = state.pan.get();
+    Camera::new(
+        f64::from(state.zoom.get()) / 100.0,
+        (f64::from(pan_x), f64::from(pan_y)),
+    )
+}
+
+/// Point the canvas at a camera the substrate answered, at the whole percentage
+/// this screen stores its zoom in.
+///
+/// ★★ The percentage is the CALLER's, because the rounding is the caller's
+/// question and not one answer fits both: a fit must round **down** (a fit that
+/// rounded up no longer fits, by less than a percent, which is the worst kind of
+/// wrong to look at) while a stepper already has the whole number it asked for
+/// and must not be handed `28` for a `0.29` that a binary fraction spells
+/// `0.28999999999999998`. Deriving it here made exactly that mistake.
+///
+/// ★ Re-pinning at the zoom that was actually TAKEN, rather than keeping the
+/// camera's pan, is what keeps the middle of the view still: rounding the scale
+/// and not the offset leaves the graph off centre by half the rounding, and
+/// worse the further from the origin — the R1684.4 error shape in a new place.
+fn point_canvas_at(state: &LabState, percent: u32, camera: Camera) {
+    let percent = percent.clamp(ZOOM_MIN, ZOOM_MAX);
+    let canvas = canvas_rect();
+    let mid = (f64::from(canvas.w) / 2.0, f64::from(canvas.h) / 2.0);
+    let settled = Camera::pinned(f64::from(percent) / 100.0, camera.unproject(mid), mid);
+    // ★ NOT `clamp_to_world`: that bounds a NODE's position in canvas units,
+    // and a pan is a window-pixel offset with no such bound — the drag does not
+    // clamp it either, and clamping here would move the graph off the centre
+    // this function exists to put it on.
+    #[allow(
+        clippy::cast_possible_truncation,
+        reason = "a pan is a window pixel offset; it fits an i32"
+    )]
+    let whole = |v: f64| v.round() as i32;
+    state.zoom.set(percent);
+    state.pan.set((whole(settled.pan.0), whole(settled.pan.1)));
+}
+
+/// ★★ R1688 — a zoom step, **anchored at the middle of the canvas**.
+///
+/// The reference's own: its `+` and `−` zoom about the viewport centre. This
+/// screen changed the scale and left the pan, which anchors at the canvas
+/// ORIGIN — so zooming out from a graph you had panned to walked it off the
+/// top-left corner of the screen. One function for the two steppers and for the
+/// wire's `zoom_by`, so the seat and the verb cannot anchor differently.
+/// One step in or out from where the zoom is now, inside the range.
+fn zoom_stepped(state: &LabState, up: bool) -> u32 {
+    let zoom = state.zoom.get();
+    if up {
+        (zoom + ZOOM_STEP).min(ZOOM_MAX)
+    } else {
+        zoom.saturating_sub(ZOOM_STEP).max(ZOOM_MIN)
+    }
+}
+
+fn zoom_to(state: &LabState, percent: u32) -> u32 {
+    let canvas = canvas_rect();
+    let mid = (f64::from(canvas.w) / 2.0, f64::from(canvas.h) / 2.0);
+    let camera = camera_now(state).zoomed_at(f64::from(percent) / 100.0, mid, &zoom_range());
+    point_canvas_at(state, percent, camera);
+    state.zoom.get()
+}
+
+/// How much clear canvas the fit keeps around the graph, in canvas units.
+///
+/// The reference's own number, and its own frame of reference: it pads the
+/// bounding box in graph units rather than keeping a pixel gutter, so the
+/// clearance is part of the diagram and shrinks with it. [`Margin`] is what lets
+/// that be said instead of assumed — `hello-node-editor` frames with a **screen**
+/// margin, and the two are different scales for the same graph.
+const FIT_PAD: i32 = 60;
+
+/// ★★★ R1688 — **point the canvas at the whole graph**, and say whether that
+/// was possible.
+///
+/// The arithmetic is [`pinion_node_graph::Fit`]'s, not this screen's: two node
+/// canvases in this tree were about to hold two copies of it. What is this
+/// screen's is what counts as "the graph" ([`drawn_boxes`] — the cards *and* the
+/// host frames) and what the units are.
+fn fit_view(state: &LabState) -> String {
+    let canvas = canvas_rect();
+    let Some(fitted) = (Fit {
+        zoom: zoom_range(),
+        margin: Margin::Canvas(FIT_PAD),
+    })
+    .boxes(drawn_boxes(state), (canvas.w, canvas.h)) else {
+        // Unreachable while a card exists — and `delete_node` refuses the last
+        // one — so this is the honest answer to a state the screen does not
+        // have rather than a case it expects.
+        let said = "nothing to frame".to_owned();
+        state.say(said.clone());
+        return said;
+    };
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a zoom the range clamped into ZOOM_MIN..=ZOOM_MAX is a percentage"
+    )]
+    let percent = (fitted.camera.zoom * 100.0).floor() as u32;
+    point_canvas_at(state, percent, fitted.camera);
+    let said = if fitted.complete {
+        format!("the whole graph, at {}%", state.zoom.get())
+    } else {
+        // ★★ The sentence the reference cannot say. Its fit reports nothing, so
+        // a graph larger than the zoom floor can shrink looks like a fit that
+        // did not work — and the person presses the button again.
+        format!(
+            "as much as {}% shows — the graph is wider than the view can hold",
+            state.zoom.get()
+        )
+    };
+    state.say(said.clone());
+    said
+}
+
+/// How much clear canvas a jump keeps around the card it brings into view.
+///
+/// Smaller than [`FIT_PAD`]: a fit is a composition and wants air, a jump is an
+/// answer to "where is it" and wants the card *on screen* with enough room that
+/// it does not read as clipped.
+const REVEAL_PAD: i32 = 24;
+
+/// ★★★ R1688 — **go to the first thing wrong with the graph.**
+///
+/// Selecting it is what the reference does, and selecting it is what changes the
+/// inspector — so the operation is observable even when the card was already in
+/// view. Bringing it into view is this screen's own addition, and it is the
+/// substrate's minimal reveal rather than a re-centring: a person who has just
+/// panned somewhere deliberately should not have the view thrown away to show
+/// them something that was already on it.
+fn go_to_problem(state: &Rc<LabState>) -> String {
+    let problems = state.problems();
+    let Some(first) = problems.first() else {
+        let said = "nothing to go to — the gate is clear".to_owned();
+        state.say(said.clone());
+        return said;
+    };
+    let Some(node) = first.node else {
+        // The finding is real and no card answers to the name in it. Saying so
+        // is the whole of what can be done, and it is better than a jump that
+        // silently does nothing.
+        let said = format!("{} · no card answers to that name", first.sentence);
+        state.say(said.clone());
+        return said;
+    };
+    select_card(state, Some(node));
+    if let (Some((x, y)), Some(extent)) = (
+        state
+            .doc
+            .borrow()
+            .tree(ROOT)
+            .and_then(|tree| tree.node(node))
+            .map(|held| (held.x, held.y)),
+        card_extent(state, node),
+    ) {
+        let canvas = canvas_rect();
+        let camera = camera_now(state).reveal(
+            (
+                x - REVEAL_PAD,
+                y - REVEAL_PAD,
+                x + extent.width + REVEAL_PAD,
+                y + extent.height + REVEAL_PAD,
+            ),
+            (canvas.w, canvas.h),
+        );
+        point_canvas_at(state, state.zoom.get(), camera);
+    }
+    let said = first.sentence.clone();
     state.say(said.clone());
     said
 }
@@ -7618,27 +8330,13 @@ impl WidgetA11y for NodeLabView {
 /// *does* right now: "run" and "run blocked" are two different offers and a
 /// reader who is told only "run" has been told the button will start the graph.
 /// It is the same sentence the label paints, from the same two facts.
+///
+/// ★ R1688 — a rendering of [`toolbar_seats`], not a second list.
 fn toolbar_seat_names(state: &LabState) -> Vec<(&'static str, String)> {
-    vec![
-        ("lab.toolbar.zoom.out", "zoom out".to_string()),
-        ("lab.toolbar.zoom.in", "zoom in".to_string()),
-        ("lab.reset.view", "reset the view".to_string()),
-        ("lab.toolbar.config", "export the configuration".to_string()),
-        (
-            "lab.toolbar.script",
-            "produce the launch script".to_string(),
-        ),
-        (
-            "lab.toolbar.run",
-            if state.running.get() {
-                "stop".to_string()
-            } else if state.verdict().may_launch() {
-                "run".to_string()
-            } else {
-                "run blocked".to_string()
-            },
-        ),
-    ]
+    toolbar_seats(state)
+        .into_iter()
+        .map(|seat| (seat.tag, seat.name))
+        .collect()
 }
 
 impl WidgetView for NodeLabView {
