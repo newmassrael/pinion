@@ -112,6 +112,40 @@ def click(tf: RpcSubprocess, where: str) -> str:
     return inv(tf, "send", "PointerUp")
 
 
+def press_after_scrolling_to(tf: RpcSubprocess, tag: str) -> str:
+    """What a press answers once the pane holding `tag` has been scrolled to it.
+
+    ★ R1690 — the offset comes from the screen's own `scene/scroll_reach`, so
+    this drives a capability the screen publishes rather than a number this file
+    guessed. The pane is put back afterwards, because a sweep that left the
+    panes wherever it stopped would make every later step depend on the order
+    the tags happened to sort in.
+    """
+    out = call(tf, "scene/scroll_reach")
+    entry = next(
+        (o for o in out["out_of_sight"] if o.get("tag") == tag),
+        None,
+    )
+    assert entry is not None, (
+        f"{tag} has no window rectangle and the screen does not report it as "
+        f"off screen either — it is painted where nothing can reach it"
+    )
+    assert entry["reach"] == "scrollable", (
+        f"{tag} is painted where no scrolling brings it into view: {entry}"
+    )
+    pane = entry["viewport"]["name"]
+    # The offset the pane is at right now comes back in the same answer, so
+    # putting it back needs no second question and cannot race one.
+    was = (entry["viewport"]["at_x"], entry["viewport"]["at_y"])
+    tf.scroll(pane, to=(entry.get("to_x", 0), entry["to_y"]))
+    tf.tick(0.05)
+    try:
+        return inv(tf, "point", at(tf, tag))
+    finally:
+        tf.scroll(pane, to=was)
+        tf.tick(0.05)
+
+
 def body() -> None:
     with RpcSubprocess("hello-node-lab", boot_grace=1.5) as tf:
         counted = assert_declared_channels_are_true(tf)
@@ -338,7 +372,13 @@ def body() -> None:
             # "rename" and "+ key", the field's two targets. Three more
             # affordances, and all three are demanded back by `must_answer` in
             # the screen's own press census.
-            "lab.inspector": 14,
+            # ★★ R1690 — 16, not 14: the reach meter is a pill and the run
+            # inside it. Two more marks and NEITHER is demanded back by
+            # `must_answer`, which is the difference worth writing down — it is
+            # a read-out, not an affordance, so the press census legitimately
+            # passes over it and this pin is the only thing that would notice if
+            # it disappeared.
+            "lab.inspector": 16,
             "lab.palette.discovery": 3,
         }
         undeclared = [
@@ -504,8 +544,25 @@ def body() -> None:
             # here rather than as a smaller number nobody reads.
             assert len(probes) >= 55, f"{when}: only {len(probes)} control(s)"
             bad = []
+            # ★★★ R1690 — a control below the fold of a scrolling pane is
+            # aimed at AFTER scrolling to it, not skipped and not failed.
+            #
+            # This sweep read `scene/bbox`'s window rectangle and treated its
+            # absence as "painted where a pointer cannot reach", which was true
+            # only while every control happened to fit at the design size. It
+            # stopped being true the moment the inspector's head grew by a row:
+            # the third row of add-chips went under the fold and this reported
+            # a screen defect for a pane doing exactly what a scrolling pane is
+            # for. The framework already draws the distinction — `scene/
+            # scroll_reach` publishes the offset that brings a mark into view —
+            # so what was missing was this side asking.
+            below = []
             for tag, want in probes:
-                answered = inv(tf, "point", at(tf, tag))
+                seat = call(tf, "scene/bbox", {"tag": tag, "from": "paint"}).get("window")
+                if seat is None:
+                    below.append((tag, want))
+                    continue
+                answered = inv(tf, "point", centre(seat))
                 if answered != want and not same_row(want, answered):
                     # ★★ R1681.3 — the picked link's own chrome legitimately
                     # covers what it is drawn over. It is an affordance the
@@ -524,10 +581,25 @@ def body() -> None:
                     ) and not tag.startswith("lab.link."):
                         continue
                     bad.append((tag, want, answered))
+            # And the ones under the fold, at the offset the screen itself says
+            # brings them into view. Not a lenient path: a control that the
+            # screen publishes as reachable and that does not answer after
+            # scrolling there fails exactly like one on screen would.
+            for tag, want in below:
+                answered = press_after_scrolling_to(tf, tag)
+                if answered != want and not same_row(want, answered):
+                    bad.append((f"{tag} (after scrolling to it)", want, answered))
             assert not bad, (
                 f"{when}: {len(bad)} of {len(probes)} painted control(s) are drawn "
                 f"where a press does not reach them: {bad}"
             )
+            # No silent cap: how many needed a scroll is printed, because a
+            # number that quietly grew would mean the panes are filling up.
+            if below:
+                print(
+                    f"[H] {len(below)} of {len(probes)} control(s) were below a "
+                    f"fold and answered after scrolling to them"
+                )
             return len(probes)
         def same_row(want: str, got: str) -> bool:  # noqa: F811
             """Both answers are about the same form row."""

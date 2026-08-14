@@ -571,7 +571,7 @@ fn split_off_remove(header: Rect, key_line: u32) -> (Rect, Rect) {
 ///
 /// | shape | parts |
 /// |---|---|
-/// | [`FieldType::Text`] | none — the control *is* the box |
+/// | [`FieldType::Text`] / [`FieldType::Formatted`] | none — the control *is* the box |
 /// | [`FieldType::Integer`] | `step.<key>.down`, `step.<key>.up` |
 /// | [`FieldType::Boolean`] | `toggle.<key>` |
 /// | [`FieldType::Choice`] / [`FieldType::Flags`] | `option.<key>.<word>` each |
@@ -585,7 +585,9 @@ fn lay_parts(field: &ConfigField, control: Rect, style: &FormStyle) -> Vec<(Stri
     // it an escape from the moment it learned the distinction.
     let control = inset_by(control, control_frame(field.shape()));
     match field.shape() {
-        FieldType::Text => Vec::new(),
+        // A formatted string is a text box too: what differs is what it will
+        // accept, and that is not a part anybody can press.
+        FieldType::Text | FieldType::Formatted { .. } => Vec::new(),
         FieldType::Integer { .. } => {
             // A stepper pair at the trailing edge, so the value's text keeps
             // the left of the box and the two buttons never overlap it.
@@ -959,7 +961,14 @@ fn view_control(
                 number_control(tag_prefix, row, field, worst, origin, theme)
             }
             FieldType::List { .. } => list_control(tag_prefix, row, field, origin, theme),
-            FieldType::Text => text_control(tag_prefix, row, field, worst, origin, theme),
+            // ★ R1690 — the same box. A shape is what the value has to BE, and
+            // a control is how it is entered; those two coincide for every
+            // string, whether or not anything downstream parses it. Giving a
+            // formatted string its own control would put the difference in the
+            // wrong place, where a person has to learn it twice.
+            FieldType::Text | FieldType::Formatted { .. } => {
+                text_control(tag_prefix, row, field, worst, origin, theme)
+            }
         }
     }
 }
@@ -999,7 +1008,7 @@ const fn control_frame(shape: &FieldType) -> u32 {
     match shape {
         // The control container IS the box: it draws [`control_skin`], and
         // whatever it owns sits inside that stroke.
-        FieldType::Text | FieldType::Integer { .. } => CONTROL_FRAME,
+        FieldType::Text | FieldType::Formatted { .. } | FieldType::Integer { .. } => CONTROL_FRAME,
         // These paint into an unstyled container — a checkbox and its word, a
         // row of option pills, a column of self-skinned item boxes. There is no
         // outline of their own for a part to stand on.
@@ -1702,6 +1711,7 @@ mod tests {
     }
 
     use pinion_core::widgets::config_form::{Applies, ConfigField, ConfigForm, FieldType};
+    use pinion_core::widgets::text_format::{CharClass, CharSet, Span, TextFormat};
 
     use pinion_core::Scene;
 
@@ -2010,6 +2020,14 @@ mod tests {
                         of: Box::new(FieldType::Text),
                     },
                 ),
+                ConfigField::new("ident", "id", Applies::Hot, "ab").with_shape(
+                    FieldType::Formatted {
+                        of: TextFormat::Chars {
+                            allow: CharSet::of(&[CharClass::LowerHex]),
+                            len: Span::between(1, 4),
+                        },
+                    },
+                ),
             ],
             vec![],
         );
@@ -2044,11 +2062,29 @@ mod tests {
             "a list is one row per element, then the row that adds one: {tags:?}"
         );
 
-        // And the census direction: every shape the vocabulary declares is
-        // reached, so a seventh arm cannot arrive drawn as a text box.
-        assert_eq!(FieldType::ARMS, 6);
+        // ★★★ R1690 — the seventh arm, and it IS drawn as a text box. That is
+        // the outcome this assertion was written to make somebody argue for
+        // rather than fall into, and the argument is: a shape says what a value
+        // has to BE, a control says how it is entered, and for a string those
+        // two coincide whether or not something downstream parses it. Giving a
+        // formatted string a control of its own would teach a person a
+        // distinction twice — once in the box and once in the refusal — for a
+        // difference that only shows when the value is wrong.
+        //
+        // So what is asserted is the DECISION: no parts, like free text, and a
+        // count that still says how many shapes carry affordances.
+        assert!(
+            has("f.control.ident"),
+            "formatted: the control is the box too"
+        );
+        assert_eq!(
+            geometry.row("ident").expect("shown").parts.len(),
+            0,
+            "and it has no parts inside it either"
+        );
+        assert_eq!(FieldType::ARMS, 7);
         let with_parts = geometry.rows.iter().filter(|r| !r.parts.is_empty()).count();
-        assert_eq!(with_parts, 5, "five of six shapes carry affordances");
+        assert_eq!(with_parts, 5, "five of seven shapes carry affordances");
     }
 
     #[test]
@@ -2462,8 +2498,19 @@ mod tests {
                     of: Box::new(FieldType::Text),
                 },
             ),
+            ConfigField::new("a.formatted", "id", Applies::Hot, "ab").with_shape(
+                FieldType::Formatted {
+                    of: TextFormat::Chars {
+                        allow: CharSet::of(&[CharClass::LowerHex]),
+                        len: Span::between(1, 4),
+                    },
+                },
+            ),
         ];
-        let mut seen = [false; 6];
+        // ★ R1690 — the array is sized by the type's own arm count rather than
+        // a literal, so a new shape widens the census by construction instead
+        // of by somebody remembering to widen it.
+        let mut seen = [false; FieldType::ARMS];
         for field in &fields {
             seen[match field.shape() {
                 FieldType::Text => 0,
@@ -2472,6 +2519,7 @@ mod tests {
                 FieldType::Choice { .. } => 3,
                 FieldType::Flags { .. } => 4,
                 FieldType::List { .. } => 5,
+                FieldType::Formatted { .. } => 6,
             }] = true;
         }
         assert!(

@@ -108,6 +108,8 @@ use std::borrow::Cow;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use super::text_format::TextFormat;
+
 /// Whether changing a field reaches a running node.
 ///
 /// A property of the **key**, not of an instance: two forms over the same
@@ -181,6 +183,24 @@ impl Applies {
 pub enum FieldType {
     /// Any text. The document holds a string.
     Text,
+    /// **A string that has to parse.** The document holds a string, and a
+    /// string of the wrong shape is a defect at this boundary rather than a
+    /// start-up failure downstream.
+    ///
+    /// ★★★ R1690 — distinct from [`Self::Text`] because the difference is what
+    /// happens next: free text is accepted by whatever reads it, and this is
+    /// not. Every field of this kind was typed as free text before the arm
+    /// existed, which made the tool quietly more permissive than the thing it
+    /// configures — the value goes in, the form says nothing, and the target
+    /// refuses to start.
+    ///
+    /// The shape is declared as data so it can be judged before the value is
+    /// finished, said in a sentence, and read by an agent that wants to know
+    /// what a field will take. See [`TextFormat`].
+    Formatted {
+        /// The shape the text has to have.
+        of: TextFormat,
+    },
     /// A whole number the document holds as a number, bounded inclusively.
     ///
     /// Bounded rather than free because an unbounded integer field cannot
@@ -237,6 +257,18 @@ impl FieldType {
         };
         match self {
             Self::Text => Ok(Value::String(text.to_string())),
+            Self::Formatted { of } => {
+                // Both non-acceptable judgements are one defect here. The
+                // difference between them is about a caret — whether a value
+                // may stand while it is being typed — and this boundary is
+                // asked about a value that is being committed.
+                let judged = of.judge(text);
+                if judged.acceptable() {
+                    Ok(Value::String(text.to_string()))
+                } else {
+                    Err(wrong(judged.wanted()))
+                }
+            }
             Self::Integer { min, max } => {
                 let n: i64 = text.trim().parse().map_err(|_| wrong("a whole number"))?;
                 if n < *min || n > *max {
@@ -301,7 +333,9 @@ impl FieldType {
             got: value.to_string(),
         };
         match (self, value) {
-            (Self::Text | Self::Choice { .. }, Value::String(s)) => Ok(s.clone()),
+            (Self::Text | Self::Formatted { .. } | Self::Choice { .. }, Value::String(s)) => {
+                Ok(s.clone())
+            }
             (Self::Integer { .. }, Value::Number(n)) => Ok(n.to_string()),
             (Self::Boolean, Value::Bool(b)) => Ok(b.to_string()),
             (Self::Flags { .. } | Self::List { .. }, Value::Array(items)) => {
@@ -316,6 +350,7 @@ impl FieldType {
                 Ok(parts.join(Self::SEPARATOR))
             }
             (Self::Text, _) => Err(wrong("text")),
+            (Self::Formatted { of }, _) => Err(wrong(&of.wanted())),
             (Self::Integer { .. }, _) => Err(wrong("a whole number")),
             (Self::Boolean, _) => Err(wrong("true or false")),
             (Self::Choice { .. }, _) => Err(wrong("one word")),
@@ -1417,6 +1452,7 @@ impl std::error::Error for FormError {}
 mod tests {
     use serde_json::json;
 
+    use super::super::text_format::{CharClass, CharSet, Span, TextFormat};
     use super::{
         Applies, ConfigDefect, ConfigField, ConfigForm, DocumentError, FieldType, FormError,
         Unexpressible, Verdict,
@@ -1429,7 +1465,19 @@ mod tests {
     fn inspector() -> ConfigForm {
         ConfigForm::new(
             vec![
-                ConfigField::new("id", "text", Applies::Restart, "a1"),
+                // ★ R1690 — the identifier is this inspector's formatted
+                // string, and was free text until the arm for it existed. It
+                // is the field the arm was added FOR: the target reads it with
+                // a parser, so a value this form accepts and that parser does
+                // not is a node that will not come up.
+                ConfigField::new("id", "id", Applies::Restart, "a1").with_shape(
+                    FieldType::Formatted {
+                        of: TextFormat::Chars {
+                            allow: CharSet::of(&[CharClass::LowerHex]),
+                            len: Span::between(1, 32),
+                        },
+                    },
+                ),
                 ConfigField::new("listen.endpoints", "locator[]", Applies::Restart, "t/0.0:1")
                     .with_shape(FieldType::List {
                         of: Box::new(FieldType::Text),
@@ -1462,6 +1510,14 @@ mod tests {
                     .with_shape(FieldType::Choice {
                         of: vec!["peer_to_peer".into(), "client".into()],
                     }),
+                // ★★★ R1690 — a genuinely free string, and it took the
+                // formatted arm to expose that there had not been one. Every
+                // row above holds a value something downstream parses; this
+                // holds a note a person writes for another person, which is
+                // what free text is FOR. Before the arm existed the identifier
+                // sat in this class by default and hid the fact that the class
+                // was otherwise empty.
+                ConfigField::new("metadata.note", "text", Applies::Hot, ""),
             ],
         )
     }
@@ -1748,6 +1804,7 @@ mod tests {
                 FieldType::Choice { .. } => "choice",
                 FieldType::Flags { .. } => "flags",
                 FieldType::List { .. } => "list",
+                FieldType::Formatted { .. } => "formatted",
             });
         }
         reached.sort_unstable();

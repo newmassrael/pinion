@@ -53,6 +53,7 @@
 mod deploy;
 mod graph;
 mod persist;
+mod settings;
 mod spec;
 
 use std::cell::RefCell;
@@ -1572,22 +1573,26 @@ fn form_for(id: &str, role: Role) -> ConfigForm {
         _ if role.accepts() => "",
         _ => "",
     };
+    // ★★★★★ R1690 — **the shape comes from the option surface, not from
+    // here.** Every row below used to name its own, and one of them was wrong
+    // for the whole life of this screen: `id` is read by a parser and was
+    // offered as free text, so a node called `zz!` went in without a word and
+    // would not have come up. A shape written beside a row is a claim about
+    // what the target accepts, made in the one place that has no way to check
+    // it. `settings::shape_or_free` reads the declaration instead, and the
+    // reach meter's `mistyped` column is what fails if anybody goes back.
+    let shape = settings::shape_or_free;
     let mut fields = vec![
-        ConfigField::new("id", "text", Applies::Restart, opening_id(id)),
-        ConfigField::new("listen.endpoints", "locator[]", Applies::Restart, listen).with_shape(
-            FieldType::List {
-                of: Box::new(FieldType::Text),
-            },
-        ),
+        ConfigField::new("id", "id", Applies::Restart, opening_id(id)).with_shape(shape("id")),
+        ConfigField::new("listen.endpoints", "address[]", Applies::Restart, listen)
+            .with_shape(shape("listen.endpoints")),
         ConfigField::new(
             "connect.endpoints",
-            "locator[]",
+            "address[]",
             Applies::Hot,
             opening_connect(id),
         )
-        .with_shape(FieldType::List {
-            of: Box::new(FieldType::Text),
-        }),
+        .with_shape(shape("connect.endpoints")),
         ConfigField::new(
             "control.permissions",
             "perm",
@@ -1598,22 +1603,20 @@ fn form_for(id: &str, role: Role) -> ConfigForm {
                 "read"
             },
         )
-        .with_shape(FieldType::Flags {
-            of: vec!["read".into(), "write".into()],
-        }),
+        .with_shape(shape("control.permissions")),
         ConfigField::new(
             "transport.link.tx.batch_size",
             "int",
             Applies::Restart,
             "65535",
         )
-        .with_shape(FieldType::Integer { min: 0, max: 65535 }),
+        .with_shape(shape("transport.link.tx.batch_size")),
     ];
     // The two peers the reference draws with a warning dot have discovery on.
     if matches!(id, "P-01" | "P-02") {
         fields.push(
             ConfigField::new("discovery.multicast", "bool", Applies::Restart, "true")
-                .with_shape(FieldType::Boolean),
+                .with_shape(shape("discovery.multicast")),
         );
     }
     let addable = spec::ADDABLE
@@ -1624,16 +1627,60 @@ fn form_for(id: &str, role: Role) -> ConfigForm {
     ConfigForm::new(fields, addable)
 }
 
-fn opening_id(id: &str) -> &'static str {
+/// **How much of the option surface this tool's palette reaches.**
+///
+/// ★★★ R1690 — over EVERY role's catalogue, not the selected node's. The
+/// reference does the same, and the reason is what the meter is for: "can I
+/// configure the thing with this tool" is a question about the tool, and
+/// answering it from whichever card happens to be selected would make the
+/// number move when a person clicks about.
+///
+/// Nothing is cached. The figure has to fall on its own when a field is
+/// dropped, and a stored one falls when somebody remembers to update it.
+fn palette_reach() -> pinion_core::widgets::config_schema::Reach {
+    let forms: Vec<ConfigForm> = Role::ALL
+        .iter()
+        .map(|role| form_for(spec::SELECTED_NODE, *role))
+        .collect();
+    let catalogue: Vec<(&str, &FieldType)> = forms
+        .iter()
+        .flat_map(|form| form.fields().iter().chain(form.addable()))
+        .map(|field| (field.key(), field.shape()))
+        .collect();
+    settings::reach(&catalogue)
+}
+
+/// The identifier a node opens holding.
+///
+/// ★★★★★ R1690 — **three of these were values the target would refuse**, and
+/// nothing could say so while the row was free text. `t1`, `t2` and `q1` were
+/// written as role initials, and `t` and `q` are outside the hexadecimal
+/// alphabet the identifier is read with. They sat in the opening graph of every
+/// run of this screen; the launch gate is what found them, on the first drive
+/// after the shape came from the option surface.
+///
+/// The fallback was the worse half: every card the palette added opened holding
+/// the same `q1`, so the defect was not merely seeded — it was *produced*, once
+/// per added node. It is derived now, in the format's own alphabet, from the
+/// number the card's name already carries.
+fn opening_id(id: &str) -> String {
     match id {
-        "R-01" => "a1",
-        "P-01" => "b1",
-        "P-02" => "b2",
-        "P-03" => "b3",
-        "S-01" => "c1",
-        "T-01" => "t1",
-        "T-02" => "t2",
-        _ => "q1",
+        "R-01" => "a1".to_owned(),
+        "P-01" => "b1".to_owned(),
+        "P-02" => "b2".to_owned(),
+        "P-03" => "b3".to_owned(),
+        "S-01" => "c1".to_owned(),
+        "T-01" => "d1".to_owned(),
+        "T-02" => "d2".to_owned(),
+        "Q-01" => "e1".to_owned(),
+        added => {
+            let n: u32 = added
+                .rsplit('-')
+                .next()
+                .and_then(|tail| tail.parse().ok())
+                .unwrap_or(0);
+            format!("f{n:x}")
+        }
     }
 }
 
@@ -1646,27 +1693,23 @@ fn opening_connect(id: &str) -> &'static str {
 }
 
 /// A key the inspector offers to add, with the shape it will hold.
+///
+/// ★★★ R1690 — the shape is [`settings::shape_or_free`]'s, so this decides only
+/// what a chip is CALLED, when it takes effect and what it opens holding. Those
+/// three are properties of the palette; the shape is a property of the thing
+/// being configured, and a palette that decided it could offer a key the target
+/// would refuse.
 fn offered(key: &str) -> ConfigField {
-    match key {
-        "discovery.multicast" | "timestamping" | "compression" => {
-            ConfigField::new(key.to_owned(), "bool", Applies::Restart, "false")
-                .with_shape(FieldType::Boolean)
+    let (word, applies, opening) = match key {
+        "discovery.multicast" | "timestamping.enabled" | "compression.enabled" => {
+            ("bool", Applies::Restart, "false")
         }
-        "qos.priority" => ConfigField::new(key.to_owned(), "int", Applies::Hot, "5")
-            .with_shape(FieldType::Integer { min: 0, max: 7 }),
-        "routing.mode" => {
-            ConfigField::new(key.to_owned(), "mode", Applies::Restart, "peer_to_peer").with_shape(
-                FieldType::Choice {
-                    of: vec!["peer_to_peer".into(), "client".into(), "router".into()],
-                },
-            )
-        }
-        _ => ConfigField::new(key.to_owned(), "name[]", Applies::Restart, "").with_shape(
-            FieldType::List {
-                of: Box::new(FieldType::Text),
-            },
-        ),
-    }
+        "qos.priority" => ("int", Applies::Hot, "5"),
+        "routing.mode" => ("mode", Applies::Restart, "peer_to_peer"),
+        _ => ("name[]", Applies::Restart, ""),
+    };
+    ConfigField::new(key.to_owned(), word, applies, opening)
+        .with_shape(settings::shape_or_free(key))
 }
 
 // ── Canvas transform ────────────────────────────────────────────────────────
@@ -3104,15 +3147,56 @@ fn toolbar_seats(state: &LabState) -> Vec<ToolbarSeat> {
 /// affordances are conditional, not disabled).
 fn gate_rect(state: &LabState) -> Rect {
     let canvas = canvas_rect();
-    let lines = u32::try_from(state.gate_lines().len()).unwrap_or(0) + 1;
+    let (shown, hidden) = gate_shown(state);
+    let rows = u32::try_from(shown.len() + usize::from(hidden > 0)).unwrap_or(0);
     let resets = u32::from(!changed_scopes(state).is_empty()) * RESET_ROW_H;
-    let h = 34 + lines * 20 + resets;
+    let h = GATE_TOP_H + rows * GATE_LINE_H + resets;
     Rect::new(
         canvas.x + canvas.w - 262,
-        canvas.y + canvas.h - h - 12,
+        canvas.y + canvas.h - h - GATE_MARGIN,
         250,
         h,
     )
+}
+
+/// The panel's chrome and its verdict row, above the problem lines.
+const GATE_TOP_H: u32 = 54;
+/// One problem line.
+const GATE_LINE_H: u32 = 20;
+/// How far the panel floats from the canvas edge.
+const GATE_MARGIN: u32 = 12;
+
+/// **The problem lines the gate panel shows, and how many it has no room for.**
+///
+/// ★★★★★ R1690 — the panel's height was a function of how many problems the
+/// graph has, and that is unbounded: enough of them and the box was placed
+/// above the top of the canvas, where the pane-local conversion underflowed and
+/// the screen panicked. Found the first time the identifier's declared shape
+/// was enforced — three of the opening graph's own values turned out to be
+/// unparseable, and **three extra lines were enough to reach it**. So the
+/// affordance had been one bad graph away from a crash for its whole life, and
+/// what hid it was that nothing on this screen could produce many problems at
+/// once.
+///
+/// The panel says what it is not showing rather than stopping at the edge. A
+/// silent truncation would be the worse failure: the launch verdict is derived
+/// from **all** the problems, so a panel that showed four of seven would have a
+/// gate that reads closed for reasons the reader cannot see.
+fn gate_shown(state: &LabState) -> (Vec<(bool, String)>, usize) {
+    let canvas = canvas_rect();
+    let resets = u32::from(!changed_scopes(state).is_empty()) * RESET_ROW_H;
+    let room = canvas
+        .h
+        .saturating_sub(GATE_MARGIN * 2 + GATE_TOP_H + resets);
+    let fits = usize::try_from(room / GATE_LINE_H).unwrap_or(0);
+    let all = state.gate_lines();
+    if all.len() <= fits {
+        return (all, 0);
+    }
+    // One of the rows that fit is spent saying how many do not.
+    let keep = fits.saturating_sub(1);
+    let hidden = all.len() - keep;
+    (all.into_iter().take(keep).collect(), hidden)
 }
 
 /// The height the reset row adds to the gate panel: the buttons plus the gap
@@ -3318,12 +3402,26 @@ fn form_style() -> FormStyle {
         .with_policy(RowWrap::WrapAll, FieldGrowth::AllGrow)
 }
 
+/// How far down the inspector's body the reach meter's pill sits.
+///
+/// ★★★ R1690 — under the edit row and above the form, which is where the
+/// reference puts it: the pill is about the palette the chips below come from,
+/// so it reads as a heading for them rather than as another fact about the
+/// selected node.
+const REACH_ROW_Y: u32 = EDIT_ROW_Y + NODE_ACT_H + 8;
+
+/// How tall the reach meter's pill is.
+const REACH_H: u32 = 20;
+
 /// Where the inspector's identity block ends and its form begins.
 ///
 /// R1682 moved it down by one row: the node's-life seats sit between the degree
 /// box and the form. R1683 moved it down by another: the one text field and the
-/// seat that opens it sit under those.
-const INSP_HEAD_H: u32 = 160;
+/// seat that opens it sit under those. R1690 moved it down by a third, for the
+/// reach meter — and derives it from that row rather than restating a number,
+/// which is what the two moves before it did and what left this constant to be
+/// re-checked by hand each time.
+const INSP_HEAD_H: u32 = REACH_ROW_Y + REACH_H + 6;
 
 /// ★★ R1682 — what a person can do to the selected card itself.
 ///
@@ -4943,18 +5041,32 @@ fn canvas_overlays(state: &LabState, ink: Ink) -> Vec<Scene> {
             ink.err
         },
     ));
-    for (n, (blocks, sentence)) in state.gate_lines().iter().enumerate() {
+    let (shown, hidden) = gate_shown(state);
+    let line_at = |n: usize| {
+        Rect::new(
+            gate.x + 12,
+            gate.y + 48 + u32::try_from(n).unwrap_or(0) * GATE_LINE_H,
+            gate.w - 24,
+            13,
+        )
+    };
+    for (n, (blocks, sentence)) in shown.iter().enumerate() {
         children.push(tagged_label(
             &format!("lab.gate.line.{n}"),
             sentence.clone(),
-            Rect::new(
-                gate.x + 12,
-                gate.y + 48 + u32::try_from(n).unwrap_or(0) * 20,
-                gate.w - 24,
-                13,
-            ),
+            line_at(n),
             9,
             if *blocks { ink.err } else { ink.warn },
+        ));
+    }
+    // ★ R1690 — what the panel has no room for, counted rather than dropped.
+    if hidden > 0 {
+        children.push(tagged_label(
+            "lab.gate.more",
+            format!("+{hidden} more — the verdict counts all of them"),
+            line_at(shown.len()),
+            9,
+            ink.text_3,
         ));
     }
     // ★ R1678 — one button per scope that has something to put back, from the
@@ -5080,6 +5192,10 @@ fn inspector(state: &LabState, field: (TextFieldState, u32), theme: &Theme, ink:
             FONT_SMALL,
             ink.text_3,
         ));
+        // ★ R1690 — the meter stands with nothing selected too. It is a fact
+        // about the palette, and this is the pane state a reader sizing the
+        // tool up is most likely to be looking at.
+        children.extend(inspector_reach(ink));
         return panel(
             "lab.inspector",
             rect,
@@ -5096,7 +5212,48 @@ fn inspector(state: &LabState, field: (TextFieldState, u32), theme: &Theme, ink:
     };
     children.extend(inspector_identity(state, node, ink));
     children.extend(inspector_edit(state, ink));
+    children.extend(inspector_reach(ink));
     inspector_pane(state, field, theme, ink, children)
+}
+
+/// **The reach meter**: how much of the option surface this palette can author.
+///
+/// ★★★ R1690 — painted whether or not a card is selected, because it is a fact
+/// about the tool and not about a node. That is also why it survives the
+/// early return above: the pane with nothing selected is exactly where a reader
+/// is deciding whether this tool can configure their system.
+///
+/// # Why the warning ink means "wrong" and not "incomplete"
+///
+/// The reference colours its pill by whether any top-level section is
+/// unreached, which on its own surface means a regression — its palette covers
+/// all twenty. This surface is deliberately larger than the palette (a leaf
+/// nobody offers a chip for is typed in by hand, which is what that affordance
+/// is for), so the same rule would leave the pill permanently amber and stop
+/// meaning anything. [`Reach::sound`] is the same INTENT correctly mapped: a
+/// key offered at a shape the target refuses, or a key on no line of the
+/// surface at all, is a defect at any coverage.
+///
+/// [`Reach::sound`]: pinion_core::widgets::config_schema::Reach::sound
+fn inspector_reach(ink: Ink) -> Vec<Scene> {
+    let reach = palette_reach();
+    let seat = Rect::new(PAD, REACH_ROW_Y, INSP_W - PAD * 2, REACH_H);
+    let (fill, edge, text) = if reach.sound() {
+        (ink.surface, ink.outline, ink.text_3)
+    } else {
+        (ink.surface, ink.warn, ink.warn)
+    };
+    let caption = seat_caption(seat);
+    vec![
+        box_at("lab.inspector.reach", seat, fill, Some(edge), 6),
+        tagged_label(
+            "lab.inspector.reach.text",
+            format!("{} · {}", reach.label(), settings::strings().label()),
+            caption,
+            FONT_SMALL,
+            text,
+        ),
+    ]
 }
 
 /// Who the inspected node is: its identifier, its role and frame, and how many
@@ -5677,6 +5834,17 @@ const FIELDS: &[SchemaField] = &{
         // address. The compiler said so first — an unreachable arm.
         SchemaField::new("archive", "string"),
         SchemaField::new("stored", "string"),
+        // ★★★ R1690 — **how much of the option surface this palette reaches**,
+        // and how much of that surface's string half is pinned down. The
+        // reference publishes both beside its operation list and its save
+        // partition; these are the remaining two of its four self-censuses.
+        //
+        // Read slots rather than a painted number an agent has to parse back
+        // out of a label: the pill on screen is derived from this, so a test
+        // that compares the two is comparing a rendering with its source
+        // instead of two independent claims.
+        SchemaField::new("reach", "string"),
+        SchemaField::new("strings", "string"),
         SchemaField::action("select", "string"),
         SchemaField::action("select_link", "string"),
         SchemaField::action_with(
@@ -5930,6 +6098,39 @@ impl ExternalIntrospect for LabOracle {
             // ★★ R1689 — what a save would write, and what one did.
             "archive" => text(persist::graph_text(state)),
             "stored" => text(persist::stored(state)),
+            // ★★★ R1690 — the two meters, as the numbers rather than as the
+            // label. The label is a rendering of these; publishing the label
+            // would make an agent parse a sentence back into figures, and would
+            // make the screen and the wire two claims that can disagree.
+            "reach" => {
+                let reach = palette_reach();
+                text(serde_json::json!({
+                    "sections": format!("{}/{}", reach.root_hit(), reach.root_total),
+                    "leaves": format!("{}/{}", reach.leaf_hit(), reach.leaf_total),
+                    "sound": reach.sound(),
+                    "complete": reach.complete(),
+                    "roots_missing": reach.roots_missing,
+                    "leaves_missing": reach.leaves_missing,
+                    "mistyped": reach
+                        .mistyped
+                        .iter()
+                        .map(pinion_core::widgets::config_schema::Mistyped::sentence)
+                        .collect::<Vec<_>>(),
+                    "unknown": reach.unknown,
+                    "unauthorable": reach.unauthorable,
+                })
+                .to_string())
+            }
+            "strings" => {
+                let census = settings::strings();
+                text(serde_json::json!({
+                    "pinned": format!("{}/{}", census.pinned(), census.total()),
+                    "choices": census.choices,
+                    "formats": census.formats,
+                    "free": census.free,
+                })
+                .to_string())
+            }
             "nodes" => text(
                 state
                     .cards()

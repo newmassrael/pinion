@@ -193,7 +193,15 @@ def body() -> None:
             opening_nodes = q(tf, "nodes")
             tf.invoke(f"{EXT}/select", spec["selected_node"])
             tf.invoke(f"{EXT}/rename", f"{spec['selected_node']},keeper-01")
-            tf.invoke(f"{EXT}/add_field", "timestamping")
+            # ★ R1690 — the key comes off the published operation table, not
+            # out of this file: a catalogue key made more precise moved every
+            # hand-written copy of it out of date at once.
+            added_key = next(
+                op["verb"][1]
+                for op in spec["operations"]
+                if op["name"] == "add a field from the catalogue"
+            )
+            tf.invoke(f"{EXT}/add_field", added_key)
             edited_nodes = q(tf, "nodes")
             assert edited_nodes != opening_nodes, "the graph was edited before the save"
             said = tf.invoke(f"{EXT}/save_graph", "")
@@ -293,7 +301,7 @@ def body() -> None:
             )
             tf.invoke(f"{EXT}/select", "keeper-01")
             keys = {row["key"] for row in json.loads(q(tf, "form"))}
-            assert "timestamping" in keys, (
+            assert added_key in keys, (
                 f"★★ and so did the row added to its settings form: {sorted(keys)}"
             )
             assert q(tf, "verdict"), "the launch gate has an opinion about it"

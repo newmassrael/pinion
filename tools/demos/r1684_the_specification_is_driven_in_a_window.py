@@ -66,6 +66,19 @@ def q(tf, path: str) -> str:
     return tf.query(f"{EXT}/{path}")
 
 
+def catalogue_key(tf) -> str:
+    """The chip key the operation table drives "add a field" with.
+
+    Read off the screen's own published table rather than written down here, so
+    a catalogue key that is made more precise moves this with it.
+    """
+    spec = json.loads(q(tf, "spec"))
+    for op in spec["operations"]:
+        if op["name"] == "add a field from the catalogue":
+            return op["verb"][1]
+    raise AssertionError("the operation table declares how a field is added")
+
+
 def rects(tf) -> dict:
     return abs_rects_of(tf.snapshot(source="paint", viewport=VIEWPORT))
 
@@ -171,7 +184,13 @@ GESTURES = {
         tf, "lab.frame.host-b.name", (30, 0)
     ),
     # the form
-    "add a field from the catalogue": lambda tf: press(tf, "lab.form.add.timestamping"),
+    # ★★ R1690 — the chip is named by the operation table's own argument rather
+    # than written here. This line held a copy of the key, the option surface
+    # made that key precise, and the copy went stale: the same shape as R1688's
+    # hand-held seat list, one level out in the demo.
+    "add a field from the catalogue": lambda tf: press(
+        tf, "lab.form.add." + catalogue_key(tf)
+    ),
     "add a field by typing its key": lambda tf: type_into(
         tf, "lab.inspector.addkey", "transport.unicast.lowlatency"
     ),

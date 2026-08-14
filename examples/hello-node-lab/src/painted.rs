@@ -212,6 +212,15 @@ struct Painted {
     /// different facts and a check that wants "on screen" must still be able
     /// to ask for exactly that.
     reachable: BTreeMap<String, (String, (i32, i32))>,
+    /// ★ R1690 — what a run that carries a tag of its OWN says.
+    ///
+    /// Separate from [`Self::runs`] rather than folded into its owner column,
+    /// and the reason is that folding it would quietly disarm the containment
+    /// check: that check asks whether a run lies inside the box of the widget
+    /// that owns it, and a run whose owner was itself would satisfy it for
+    /// free. The owner column keeps meaning "the nearest tagged ancestor"; this
+    /// answers the different question of what a named run reads.
+    said: BTreeMap<String, String>,
 }
 
 impl Painted {
@@ -220,6 +229,7 @@ impl Painted {
         let mut tags = BTreeMap::new();
         let mut runs = Vec::new();
         let mut reachable = BTreeMap::new();
+        let mut said = BTreeMap::new();
         for out in pinion_core::reach::out_of_sight(scene, window, &mut stand_in_ink) {
             if let (Some(tag), pinion_core::reach::Reach::Scrollable { to }) = (out.tag, out.reach)
             {
@@ -241,6 +251,9 @@ impl Painted {
                     .rev()
                     .find_map(|a| a.tag())
                     .map(str::to_owned);
+                if let Some(own) = visit.node.tag() {
+                    said.insert(own.to_owned(), text.content.clone());
+                }
                 runs.push((text.content.clone(), rect, owner));
             }
         });
@@ -248,6 +261,7 @@ impl Painted {
             tags,
             runs,
             reachable,
+            said,
         }
     }
 }
@@ -325,6 +339,13 @@ fn declared_tags(state: &LabState) -> Vec<String> {
         "lab.gate.verdict".into(),
         "lab.hint".into(),
         "lab.hint.text".into(),
+        // ★★★ R1690 — the reach meter, demanded UNCONDITIONALLY. It is a fact
+        // about the palette rather than about the selection, so a screen with
+        // nothing selected still has to carry it — and the states below include
+        // exactly that one, which is what makes the placement checkable rather
+        // than asserted.
+        "lab.inspector.reach".into(),
+        "lab.inspector.reach.text".into(),
     ];
     for pane in spec::PANES {
         want.push(pane.tag.to_owned());
@@ -1918,7 +1939,12 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
         );
     }),
     ("add a field from the catalogue", |state, shot| {
-        press_tag(state, shot, "lab.form.add.timestamping");
+        // ★★ R1690 — the key is read off the operation table's own argument,
+        // not written here. This driver named a key that the option surface
+        // then made precise, and the two failed apart — the R1688 lesson, that
+        // a gate holding its own copy of a list measures the screen of the day
+        // it was written, in a place small enough to have looked harmless.
+        press_tag(state, shot, &format!("lab.form.add.{}", catalogue_key()));
     }),
     ("edit a field", |state, shot| {
         // Growing a list field by one element: an edit a person performs with
@@ -3556,6 +3582,304 @@ fn r1684_a_control_answers_at_its_edges_not_only_its_middle() {
             wrong.join("\n  ")
         );
     });
+}
+
+/// ★★★★★ R1690 — **the launch gate's panel is bounded by the canvas, and says
+/// what it has no room for.**
+///
+/// Its height was a function of how many problems the graph has, which is
+/// unbounded: enough of them placed the box above the top of the canvas, where
+/// the pane-local conversion underflowed and the screen panicked. It had been
+/// one bad graph away for the affordance's whole life, and what hid it is that
+/// nothing on this screen could produce many problems at once — until the
+/// identifier's declared shape was enforced and three of the opening graph's
+/// own values turned out to be unparseable. Three extra lines were enough.
+///
+/// Driven at the floor window size rather than the design size, because that is
+/// where the bound is reachable with a graph a test can build: a demo in a
+/// full-size window would need thirty-five problems to get there, and one that
+/// only checked the design size is what let this sit.
+///
+/// The **counted** half is the load-bearing one. A panel that stopped at the
+/// edge and dropped the rest would be worse than the crash: the launch verdict
+/// is derived from all of the problems, so a reader would see a gate closed for
+/// reasons the screen is not showing.
+#[test]
+fn r1690_the_gate_panel_is_bounded_by_the_canvas_and_counts_what_it_hides() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+        // Every card holding a value its own shape refuses, which is the
+        // cheapest way to make many problems at once.
+        for node in state.cards() {
+            state.selected.set(Some(node));
+            super::set_and_sync(&state, "id", "zz");
+        }
+        let problems = state.gate_lines().len();
+        assert!(problems >= 8, "the fixture has to make many: {problems}");
+
+        let floor = (super::MIN_W, super::MIN_H);
+        let (shot, _) = painted_and_scene(&state, floor);
+        let canvas = *shot.tags.get("lab.gate").expect("the panel is painted");
+        let pane = super::canvas_rect();
+        assert!(
+            canvas.y >= pane.y && canvas.y + canvas.h <= pane.y + pane.h,
+            "the panel stands inside the canvas with {problems} problem(s): \
+             {canvas:?} vs {pane:?}",
+        );
+
+        // What it could not show is counted rather than dropped.
+        let (shown, hidden) = super::gate_shown(&state);
+        assert_eq!(
+            shown.len() + hidden,
+            problems,
+            "every problem is either shown or counted",
+        );
+        assert!(
+            hidden > 0,
+            "★ the fixture has to REACH the bound, or this test is about a \
+             panel that happened to fit: {problems} problem(s), {} shown at \
+             {floor:?}",
+            shown.len(),
+        );
+        let said = shot
+            .said
+            .get("lab.gate.more")
+            .expect("the panel says how many it is not showing");
+        assert!(
+            said.contains(&hidden.to_string()),
+            "and says the number: {said:?}",
+        );
+
+        // ★ The counter-assertion, and the one that keeps this from passing on
+        // a screen that simply refuses to grow: with FEW problems the panel
+        // shows all of them and says nothing about hiding any.
+        super::reset_lab_state();
+        let state = use_lab_state();
+        let (few, none) = super::gate_shown(&state);
+        assert_eq!(none, 0, "the opening graph fits");
+        assert_eq!(few.len(), state.gate_lines().len());
+        assert!(
+            !painted(&state).tags.contains_key("lab.gate.more"),
+            "and the panel does not claim to be hiding anything",
+        );
+    });
+}
+
+/// The catalogue key the operation table drives "add a field" with.
+///
+/// One place, read by the wire driver and by the gesture driver both, so the
+/// two cannot come to disagree about which chip the operation is about.
+fn catalogue_key() -> &'static str {
+    spec::OPERATIONS
+        .iter()
+        .find(|op| op.name == "add a field from the catalogue")
+        .and_then(|op| op.verb)
+        .map(|(_, key)| key)
+        .expect("the operation table declares how a field is added")
+}
+
+/// What the run tagged `tag` reads on the painted screen.
+fn run_under(shot: &Painted, tag: &str) -> String {
+    shot.said
+        .get(tag)
+        .cloned()
+        .unwrap_or_else(|| panic!("{tag} is a painted run"))
+}
+
+/// ★★★★★ R1690 — **the reach meter, on the painted screen and on the wire.**
+///
+/// The reference tool publishes four self-censuses. Two of them this screen
+/// already mirrors — the operation table and the save partition — and these are
+/// the other two: how much of the option surface the palette can author, and
+/// how much of that surface's string half has a shape.
+///
+/// The gate is an integration one on purpose. A meter is trivially right in a
+/// unit test and wrong on screen in the two ways this file exists to catch: the
+/// number can be painted from a different computation than the one the wire
+/// answers, and the pill can be painted somewhere nobody can see. So this drives
+/// the real pipeline, reads the run's own text out of the laid-out scene, and
+/// holds it against the wire slot the same screen publishes.
+///
+/// # Where the teeth are
+///
+/// Green here would be worth little if the number could not move, so the
+/// assertions are chosen to be falsifiable rather than merely true:
+///
+/// * the painted label EQUALS the wire's two fractions — a rendering against
+///   its source, so a second computation behind the pill fails,
+/// * the surface is strictly larger than the palette, so the fractions are not
+///   `n/n` and a coverage regression has somewhere to fall to,
+/// * the meter is painted with **nothing selected**, which is the state a
+///   palette fact has to survive and the one a selection-derived meter dies in,
+/// * `sound` is true, which is this round's regression gate: it went false the
+///   moment the identifier was offered as free text, and the substrate's own
+///   test proves that column can fire.
+#[test]
+fn r1690_the_reach_meter_says_the_same_thing_on_screen_and_on_the_wire() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+
+        let wire = witness(&state, "reach");
+        let strings = witness(&state, "strings");
+        let painted_text = run_under(&painted(&state), "lab.inspector.reach.text");
+
+        // The two fractions the wire answers, in the spelling the pill shows.
+        let fields = json_field(&wire, "sections");
+        let leaves = json_field(&wire, "leaves");
+        let pinned = json_field(&strings, "pinned");
+        assert_eq!(
+            painted_text,
+            format!("sections {fields} · leaves {leaves} · strings {pinned}"),
+            "the pill is a rendering of the wire's numbers, not a second count",
+        );
+
+        // The surface is bigger than the palette, so the meter has room to
+        // report a loss. A `n/n` meter is a decoration.
+        let (hit, total) = split_fraction(&leaves);
+        assert!(
+            hit < total,
+            "leaves {leaves}: a surface the palette already covers whole cannot \
+             show a regression",
+        );
+        assert!(
+            hit > 0,
+            "leaves {leaves}: nor can one it does not reach at all"
+        );
+        let (roots_hit, roots_total) = split_fraction(&fields);
+        assert!(roots_hit < roots_total && roots_hit > 0, "fields {fields}");
+
+        // ★ The string half uses all three classes, read off the wire rather
+        // than off the table, so a screen that published a summary of a
+        // different census would fail here.
+        for class in ["choices", "formats", "free"] {
+            assert!(
+                strings.contains(&format!("\\\"{class}\\\":[\\\"")),
+                "the string census publishes a non-empty {class}: {strings}",
+            );
+        }
+
+        // ★★★ This round's regression gate, and it covers all three ways a
+        // palette can be unsound: a key offered at a shape the target refuses
+        // (what this screen did with its node identifier), a key the surface
+        // does not declare, and a key naming a SECTION — which three of this
+        // screen's own chips did, each composing a string where a subtree
+        // belongs, with every coverage count reading them as covered.
+        assert!(
+            wire.contains("\\\"sound\\\":true"),
+            "every chip names a leaf, at the shape the surface declares: {wire}",
+        );
+
+        // ★★ And it is painted with nothing selected, because it is a fact
+        // about the tool. A meter derived from the selection would vanish here.
+        state.selected.set(None);
+        let empty = painted(&state);
+        assert!(
+            empty.tags.contains_key("lab.inspector.reach"),
+            "the meter stands with no card selected",
+        );
+        assert_eq!(
+            run_under(&empty, "lab.inspector.reach.text"),
+            painted_text,
+            "and says the same thing, because nothing about it is the card's",
+        );
+    });
+}
+
+/// ★★★★★ R1690 — **the number falls on its own when the palette narrows.**
+///
+/// The property a coverage meter is worth having only if it has, and the one
+/// that cannot be checked by reading the code: the figure is recomputed from
+/// the catalogue every time it is asked, so dropping a chip lowers it with
+/// nobody editing anything.
+///
+/// Driven through the screen's own remove-a-field path rather than by building
+/// a narrower form, so what is being measured is the tool a person is using.
+/// The interesting half is the direction it does NOT move: taking a row off the
+/// screen leaves the reach alone, because the chip offers it back — reach is a
+/// property of the palette, and a meter that fell when somebody tidied their
+/// inspector would be reporting the session.
+#[test]
+fn r1690_reach_follows_the_palette_and_not_the_screen() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+        let before = run_under(&painted(&state), "lab.inspector.reach.text");
+
+        // Take a row out through the affordance a person presses.
+        press_centre_of(&state, "lab.form.remove.transport.link.tx.batch_size");
+        assert!(
+            super::selected_form(&state)
+                .is_some_and(|form| form.field("transport.link.tx.batch_size").is_none()),
+            "the row really left the screen",
+        );
+        assert_eq!(
+            run_under(&painted(&state), "lab.inspector.reach.text"),
+            before,
+            "★ and the reach did not move: the chip offers the key back, so the \
+             tool can still author it",
+        );
+
+        // The other direction, with the same fixture the meter reads: a
+        // catalogue that never held the key reports one leaf and one section
+        // fewer, with nothing recording a score anywhere.
+        let full = super::palette_reach();
+        let narrowed = {
+            let forms: Vec<_> = Role::ALL
+                .iter()
+                .map(|role| super::form_for(spec::SELECTED_NODE, *role))
+                .collect();
+            let catalogue: Vec<_> = forms
+                .iter()
+                .flat_map(|form| form.fields().iter().chain(form.addable()))
+                .filter(|field| field.key() != "qos.priority")
+                .map(|field| (field.key(), field.shape()))
+                .collect();
+            crate::settings::reach(&catalogue)
+        };
+        assert_eq!(narrowed.leaf_hit(), full.leaf_hit() - 1);
+        assert_eq!(
+            narrowed.root_hit(),
+            full.root_hit() - 1,
+            "and the section it was the only leaf of goes too",
+        );
+        assert!(
+            narrowed.leaves_missing.iter().any(|p| p == "qos.priority"),
+            "the report names it: {:?}",
+            narrowed.leaves_missing,
+        );
+    });
+}
+
+/// The value of a string field of a `Text(..)`-wrapped JSON slot.
+///
+/// The witness spelling is `Text("{...}")` with the quotes escaped, which is
+/// what an agent reading the wire sees; parsing it back out here rather than
+/// reaching into the state keeps this gate on the same path an agent is on.
+fn json_field(witness: &str, key: &str) -> String {
+    let needle = format!("\\\"{key}\\\":\\\"");
+    let start = witness
+        .find(&needle)
+        .unwrap_or_else(|| panic!("{witness} carries {key}"))
+        + needle.len();
+    let rest = &witness[start..];
+    let end = rest.find('\\').unwrap_or(rest.len());
+    rest[..end].to_owned()
+}
+
+/// `"3/7"` as `(3, 7)`.
+fn split_fraction(text: &str) -> (u32, u32) {
+    let (hit, total) = text
+        .split_once('/')
+        .unwrap_or_else(|| panic!("{text} is a fraction"));
+    (
+        hit.parse().expect("a count"),
+        total.parse().expect("a count"),
+    )
 }
 
 /// The slot that moves when a scope is put back — read off the operation table

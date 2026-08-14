@@ -351,21 +351,26 @@ pub const SELECTED_NODE: &str = "R-01";
 /// keys, and a form that did not say which is which turns a correct tool into
 /// an apparently broken one.
 pub const FIELDS: &[FieldSpec] = &[
+    // ★★ R1690 — the type words changed with the shapes. `id` said `text`
+    // while the target reads it with a parser, which is the defect the option
+    // surface exposed: the word a row is labelled with and the shape it is
+    // checked against were two independent claims, and this screen shipped
+    // three rounds where they disagreed.
     FieldSpec {
         key: "id",
-        ty: "text",
+        ty: "id",
         applies: "restart",
         value: "a1",
     },
     FieldSpec {
         key: "listen.endpoints",
-        ty: "locator[]",
+        ty: "address[]",
         applies: "restart",
         value: "tcp/0.0.0.0:7447",
     },
     FieldSpec {
         key: "connect.endpoints",
-        ty: "locator[]",
+        ty: "address[]",
         applies: "hot",
         value: "tcp/10.0.0.21:7449",
     },
@@ -384,13 +389,24 @@ pub const FIELDS: &[FieldSpec] = &[
 ];
 
 /// The keys the inspector offers to add, as the reference's chips.
+///
+/// ★★★ R1690 — **three of these named a section**, and the option surface is
+/// what said so. A form row holds one value, so a chip keyed at a section
+/// composes a string where the configuration wants a subtree: `timestamping`
+/// and `compression` each have two leaves under them and `plugins` has two, and
+/// all three offered the section itself. Adding any of them produced a document
+/// the target would refuse, and no count could see it — the key IS on the
+/// surface, so a reach figure read it as covered.
+///
+/// They name the leaf they meant now, and `Reach::unauthorable` is the gate
+/// that fails if one goes back.
 pub const ADDABLE: &[&str] = &[
     "discovery.multicast",
-    "timestamping",
-    "compression",
+    "timestamping.enabled",
+    "compression.enabled",
     "qos.priority",
     "routing.mode",
-    "plugins",
+    "plugins.names",
 ];
 
 /// The graph's name and the zoom the screen opens at.
@@ -636,7 +652,7 @@ pub const OPERATIONS: &[OperationSpec] = &[
     // ── the form ─────────────────────────────────────────────────
     OperationSpec {
         name: "add a field from the catalogue",
-        verb: Some(("add_field", "timestamping")),
+        verb: Some(("add_field", "timestamping.enabled")),
         gesture: true,
         witness: "form",
         needs: None,
