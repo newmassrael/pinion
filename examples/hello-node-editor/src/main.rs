@@ -2143,20 +2143,39 @@ impl Tickable for AutoPan {
             return;
         };
         let dt = f64::from(dt);
-        // Scroll the viewport toward the rim (the `ScrollState` clamps to the
-        // world extent — an axis already at the world edge simply stops, and
-        // `active` has already reported at-rest once *both* axes are pinned).
-        self.scroll.scroll_by(
-            round_i32(px * AUTOPAN_SPEED * dt),
-            round_i32(py * AUTOPAN_SPEED * dt),
-        );
-        // Keep the dragged nodes pinned under the (still) cursor against the new
-        // viewport — the same re-derivation `pointer_move` runs on cursor
-        // motion, here driven by the viewport moving under a stationary cursor.
-        let (gx, gy) = cursor_graph_at(&self.scroll, self.zoom.get(), x_rel, y_rel);
-        if let Some(start) = self.node_drag.borrow().as_ref() {
-            follow_members(&self.document, &start.members, gx, gy);
-        }
+        // ★★★★★ R1688.1 — **ONE reactive batch**, so no paint can observe the
+        // world having scrolled while the dragged node has not yet followed it.
+        //
+        // These are two writes to two signals, and a frame landing between them
+        // paints a node that has slipped by exactly one tick's pan. Found by
+        // repairing the flake in `r1182_node_edge_autopan.py`: at ~800 px/s that
+        // slip is 4-11 px, it appeared in about one run in six, and it was
+        // reported as a "1:1 ride" failure — which is precisely what it is.
+        //
+        // The rest of this editor already knows the rule:
+        // `apply_viewport` batches for the same reason and says so
+        // ([[signal-batch-atomic-multi-axis-update]]). This tick was the one
+        // multi-signal viewport write that did not, and the demo tolerance in
+        // front of it had been absorbing the difference since R1182.
+        batch(|| {
+            // Scroll the viewport toward the rim (the `ScrollState` clamps to
+            // the world extent — an axis already at the world edge simply
+            // stops, and `active` has already reported at-rest once *both* axes
+            // are pinned).
+            self.scroll.scroll_by(
+                round_i32(px * AUTOPAN_SPEED * dt),
+                round_i32(py * AUTOPAN_SPEED * dt),
+            );
+            // Keep the dragged nodes pinned under the (still) cursor against the
+            // new viewport — the same re-derivation `pointer_move` runs on
+            // cursor motion, here driven by the viewport moving under a
+            // stationary cursor.
+            let (gx, gy) = cursor_graph_at(&self.scroll, self.zoom.get(), x_rel, y_rel);
+            if let Some(start) = self.node_drag.borrow().as_ref() {
+                // CF-18: the node stops following the viewport
+                follow_members(&self.document, &start.members, gx, gy);
+            }
+        });
     }
 
     fn is_at_rest(&self, _epsilon: f32) -> bool {
