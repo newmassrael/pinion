@@ -452,6 +452,7 @@ fn must_answer(tag: &str) -> Option<String> {
         "lab.toolbar.zoom.in" => Some("zoom:in".into()),
         "lab.toolbar.zoom.out" => Some("zoom:out".into()),
         "lab.toolbar.config" => Some("config".into()),
+        "lab.toolbar.script" => Some("script".into()),
         "lab.toolbar.run" => Some("run".into()),
         "lab.palette.discovery" => Some("discovery".into()),
         _ => None,
@@ -1989,6 +1990,16 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
     ("reset the view", |state, shot| {
         press_tag(state, shot, "lab.reset.view");
     }),
+    // ★★ R1687 — what leaves the screen, from the two seats the reference puts
+    // side by side. Both are unconditional: a graph always has a plan, even an
+    // empty one, and an affordance that came and went would make "can I export
+    // this" a thing a person has to discover by looking.
+    ("export the configuration", |state, shot| {
+        press_tag(state, shot, "lab.toolbar.config");
+    }),
+    ("produce the launch script", |state, shot| {
+        press_tag(state, shot, "lab.toolbar.script");
+    }),
 ];
 
 /// Press the middle of the wire running between two nodes (R1681).
@@ -2403,7 +2414,7 @@ fn r1683_the_screen_and_the_painter_hold_one_buffer() {
 /// pointer-unreachable together. One field — the framework's own — with a
 /// target answers the rename's gesture and the key row at once, and gives the
 /// form's text rows somewhere to go next.
-const ABSENT_OPERATIONS: usize = 4;
+const ABSENT_OPERATIONS: usize = 2;
 
 /// ★★★ R1679 — **the affordance is painted exactly when pressing it would do
 /// something**, judged by DOING it rather than by asking the predicate.

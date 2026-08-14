@@ -1044,27 +1044,100 @@ impl ConfigForm {
     /// `a` and `a.b` cannot both be values in one document, and silently
     /// dropping either is how a configuration loses a setting nobody deleted.
     pub fn document(&self) -> Result<Value, DocumentError> {
-        let blocking: Vec<ConfigDefect> = self
-            .defects()
-            .into_iter()
-            .filter(ConfigDefect::blocks)
+        // ★ Derived from `compose`, which is the total form of the same walk.
+        // Two functions that both nested the rows would be two answers to one
+        // question, and the pair a caller most needs to trust — "is this
+        // shippable" and "what did not fit" — is exactly the pair that must not
+        // be able to disagree. The narrowing happens here and nowhere else.
+        let composed = self.compose();
+        let defects: Vec<ConfigDefect> = composed
+            .unexpressed
+            .iter()
+            .filter_map(|row| match &row.why {
+                Unexpressible::Defective(defect) => Some(defect.clone()),
+                Unexpressible::Collides { .. } => None,
+            })
             .collect();
-        if !blocking.is_empty() {
-            return Err(DocumentError::Defective(blocking));
+        if !defects.is_empty() {
+            return Err(DocumentError::Defective(defects));
         }
+        // A value defect is reported ahead of a collision, which is the order
+        // this returned them in before it was derived: a wrong value is about
+        // one row and a collision is about two, so the reader wants the smaller
+        // news first.
+        if let Some((key, at)) = composed.unexpressed.iter().find_map(|row| match &row.why {
+            Unexpressible::Collides { at } => Some((row.key.clone(), at.clone())),
+            Unexpressible::Defective(_) => None,
+        }) {
+            return Err(DocumentError::PathCollision { key, at });
+        }
+        Ok(composed.document)
+    }
+
+    /// The document these rows describe **together with the rows that could not
+    /// go into it** — the total form of [`Self::document`].
+    ///
+    /// # ★★★ R1687 — the read half was already total and this half was not
+    ///
+    /// [`Self::adopt`] answers a document with [`Adopted`], whose own
+    /// documentation says it out loud: *every leaf is either placed on a row or
+    /// **named** in [`Adopted::unplaceable`]; nothing is dropped quietly.* The
+    /// reason given there is that a configuration written by a newer target is
+    /// the normal case.
+    ///
+    /// The way back had no such form. [`Self::document`] answers a whole
+    /// document or none at all, so a caller whose job is to **ship** the
+    /// configuration and **report** what did not fit had nothing to call: one
+    /// unparseable row and it is handed an error instead of the other forty
+    /// rows, which are fine and are what somebody asked for. The asymmetry was
+    /// invisible while the only caller was a launch gate, because a gate only
+    /// ever wanted the yes-or-no.
+    ///
+    /// So the two directions now say the same thing in the same shape, and
+    /// [`Self::document`] is the narrowing of this rather than a second walk.
+    ///
+    /// **It never fails.** A row that cannot be carried is news about that row,
+    /// not about the document — which is the whole point, and is why the return
+    /// type has no `Result` to unwrap past.
+    #[must_use]
+    pub fn compose(&self) -> Composed {
         let mut root = Map::new();
+        let mut unexpressed: Vec<Unexpressed> = Vec::new();
         for field in &self.fields {
-            let encoded = field
-                .encoded()
-                .map_err(|d| DocumentError::Defective(vec![d]))?;
-            Self::place(&mut root, field.key(), encoded)?;
+            let mut refuse = |why| {
+                unexpressed.push(Unexpressed {
+                    key: field.key().to_string(),
+                    shown: field.value().to_string(),
+                    why,
+                });
+            };
+            let encoded = match field.encoded() {
+                Ok(value) => value,
+                Err(defect) => {
+                    refuse(Unexpressible::Defective(defect));
+                    continue;
+                }
+            };
+            if let Err(at) = Self::place(&mut root, field.key(), encoded) {
+                refuse(Unexpressible::Collides { at });
+            }
         }
-        Ok(Value::Object(root))
+        Composed {
+            document: Value::Object(root),
+            unexpressed,
+        }
     }
 
     /// Put `value` at the dotted `key` inside `root`, creating the objects on
     /// the way.
-    fn place(root: &mut Map<String, Value>, key: &str, value: Value) -> Result<(), DocumentError> {
+    ///
+    /// # Errors
+    ///
+    /// The prefix already holding a value, which is the only way this can fail.
+    /// It answers the prefix rather than a [`DocumentError`] so that the two
+    /// callers can each say it in their own words — and so that neither has an
+    /// arm for a variant this cannot produce.
+    fn place(root: &mut Map<String, Value>, key: &str, value: Value) -> Result<(), String> {
         let mut here = root;
         let mut walked: Vec<&str> = Vec::new();
         let mut segments = key.split('.').peekable();
@@ -1072,10 +1145,7 @@ impl ConfigForm {
             walked.push(segment);
             if segments.peek().is_none() {
                 if here.contains_key(segment) {
-                    return Err(DocumentError::PathCollision {
-                        key: key.to_string(),
-                        at: walked.join("."),
-                    });
+                    return Err(walked.join("."));
                 }
                 here.insert(segment.to_string(), value);
                 return Ok(());
@@ -1083,12 +1153,7 @@ impl ConfigForm {
             let next = here
                 .entry(segment.to_string())
                 .or_insert_with(|| Value::Object(Map::new()));
-            here = next
-                .as_object_mut()
-                .ok_or_else(|| DocumentError::PathCollision {
-                    key: key.to_string(),
-                    at: walked.join("."),
-                })?;
+            here = next.as_object_mut().ok_or_else(|| walked.join("."))?;
         }
         Ok(())
     }
@@ -1163,6 +1228,76 @@ impl Adopted {
     #[must_use]
     pub fn complete(&self) -> bool {
         self.unplaceable.is_empty() && self.refused.is_empty()
+    }
+}
+
+/// A document and everything the form holds that could not go into it.
+///
+/// The mirror image of [`Adopted`], and deliberately the same shape: reading a
+/// document names what it could not place, so writing one names what it could
+/// not carry. See [`ConfigForm::compose`] for why the pair had to be made
+/// symmetric.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Composed {
+    /// Every row that could be expressed, nested from its dotted path.
+    pub document: Value,
+    /// Every row that could not, in the order the form holds them.
+    pub unexpressed: Vec<Unexpressed>,
+}
+
+impl Composed {
+    /// Whether every row this form holds reached the document.
+    ///
+    /// Named to match [`Adopted::complete`] because it is the same question
+    /// asked in the other direction.
+    #[must_use]
+    pub fn complete(&self) -> bool {
+        self.unexpressed.is_empty()
+    }
+}
+
+/// One row a document cannot carry, and why.
+///
+/// It carries the value **as the row shows it** rather than a parsed one —
+/// there is no parsed one, which is generally the reason it is here. A reader
+/// of a report has to be able to find the row on the screen, and what is on the
+/// screen is this text.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Unexpressed {
+    /// The configuration path the row is addressed by.
+    pub key: String,
+    /// The value verbatim, as the row shows it.
+    pub shown: String,
+    /// Why it could not be carried.
+    pub why: Unexpressible,
+}
+
+/// Why a row could not go into a document.
+///
+/// Two arms and not one, because they are about different numbers of rows: a
+/// defect is a fact about this row alone, and a collision is a fact about this
+/// row **and another one** — so a report that flattened them would lose the
+/// only part of a collision a person can act on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Unexpressible {
+    /// The value cannot be turned into one a document can hold.
+    Defective(ConfigDefect),
+    /// A prefix of this row's path already holds a value, so the path would
+    /// have to be a value and an object at once.
+    Collides {
+        /// The prefix already taken.
+        at: String,
+    },
+}
+
+impl Unexpressible {
+    /// The one line a person reads beside the row.
+    #[must_use]
+    pub fn sentence(&self) -> String {
+        match self {
+            Self::Defective(defect) => defect.sentence(),
+            Self::Collides { at } => format!("{at} already holds a value"),
+        }
     }
 }
 
@@ -1284,7 +1419,7 @@ mod tests {
 
     use super::{
         Applies, ConfigDefect, ConfigField, ConfigForm, DocumentError, FieldType, FormError,
-        Verdict,
+        Unexpressible, Verdict,
     };
 
     /// The five rows the reference tool's node inspector shows, with the shapes
@@ -1864,6 +1999,182 @@ mod tests {
                 at: "transport".to_string(),
             }
         );
+    }
+
+    /// ★★★ R1687 — **the write half is total now, like the read half always
+    /// was.**
+    ///
+    /// A form holding one unparseable row still describes forty good ones, and
+    /// before this the only way to ask for them was `document`, which answers
+    /// nothing at all. This is the shape [`Adopted`] has had all along in the
+    /// other direction.
+    #[test]
+    fn r1687_a_form_composes_what_it_can_and_names_what_it_cannot() {
+        let mut form = inspector();
+        form.set("transport.link.tx.batch_size", "70000")
+            .expect("held");
+
+        let composed = form.compose();
+        assert!(!composed.complete(), "one row cannot be carried");
+        assert_eq!(composed.unexpressed.len(), 1);
+        let row = &composed.unexpressed[0];
+        assert_eq!(row.key, "transport.link.tx.batch_size");
+        assert_eq!(row.shown, "70000", "the value AS THE ROW SHOWS IT");
+        assert_eq!(
+            row.why,
+            Unexpressible::Defective(ConfigDefect::OutOfRange {
+                key: "transport.link.tx.batch_size".to_string(),
+                allowed: "0..=65535".to_string(),
+            })
+        );
+        assert!(
+            row.why.sentence().contains("outside"),
+            "{}",
+            row.why.sentence()
+        );
+
+        // ★ The other six rows are still there — which is the whole reason this
+        // exists. `document` would have handed back an error and nothing else.
+        let carried = composed.document.as_object().expect("an object");
+        assert!(carried.contains_key("id"), "{carried:?}");
+        assert!(carried.contains_key("listen"), "{carried:?}");
+        assert!(
+            composed.document.pointer("/transport/link/tx").is_none(),
+            "and the refused row left NOTHING behind: {carried:?}"
+        );
+    }
+
+    /// ★★★★★ R1687 — **the two halves cannot disagree**, because one is the
+    /// other narrowed.
+    ///
+    /// This is the assertion that makes deriving `document` from `compose`
+    /// worth anything: over a spread of forms — clean, warned, wrong-typed,
+    /// out-of-range, colliding — the answer to "is this shippable" is exactly
+    /// "did every row reach the document". A `compose` that quietly swallowed a
+    /// row would pass its own test above and fail here.
+    ///
+    /// ★ The warned form is the interesting one: an unknown key is a defect and
+    /// is still **carried**, so a `compose` that treated every defect as
+    /// unexpressed would make `document` start refusing a form it has always
+    /// accepted.
+    ///
+    /// ★★★★★ **The biconditional alone is not enough, and a counterfactual is
+    /// what said so.** `document` is DERIVED from `compose`, so a `compose`
+    /// that silently swallowed a defective row moves both sides together: the
+    /// row vanishes, `unexpressed` is empty, `complete()` is true, `document`
+    /// answers `Ok`, and the two agree — on the wrong thing. The check read
+    /// like coverage and was measuring a function against itself, which is the
+    /// class R1681.1, R1682 and R1684.1 each met in a different place.
+    ///
+    /// So the third assertion below is the load-bearing one: the unexpressed
+    /// rows are compared against [`ConfigForm::defects`], which reaches the
+    /// fields by its own path and knows nothing about the walk. A row that
+    /// falls out of the document without being named now has somewhere to fail.
+    #[test]
+    fn r1687_a_form_ships_exactly_when_every_row_reached_the_document() {
+        let wrong = {
+            let mut form = inspector();
+            // A repeat in a SET — `Flags` refuses it as a wrong type rather
+            // than as a range, so the two blocking arms are both covered here.
+            form.set("control.permissions", "read, read").expect("held");
+            form
+        };
+        let out_of_range = {
+            let mut form = inspector();
+            form.set("transport.link.tx.batch_size", "70000")
+                .expect("held");
+            form
+        };
+        let warned = ConfigForm::new(
+            vec![ConfigField::new("plugins.name", "text", Applies::Restart, "stats").as_custom()],
+            vec![],
+        );
+        let colliding = ConfigForm::new(
+            vec![
+                ConfigField::new("transport", "text", Applies::Restart, "auto"),
+                ConfigField::new("transport.mtu", "int", Applies::Restart, "1500")
+                    .with_shape(FieldType::Integer { min: 1, max: 9000 }),
+            ],
+            vec![],
+        );
+
+        for (name, form) in [
+            ("clean", inspector()),
+            ("warned", warned),
+            ("wrong-typed", wrong),
+            ("out-of-range", out_of_range),
+            ("colliding", colliding),
+        ] {
+            let composed = form.compose();
+            let shipped = form.document();
+            assert_eq!(
+                shipped.is_ok(),
+                composed.complete(),
+                "{name}: document() and compose() disagree — {shipped:?} against {:?}",
+                composed.unexpressed
+            );
+            if let Ok(document) = shipped {
+                assert_eq!(
+                    document, composed.document,
+                    "{name}: and when it ships, it ships the SAME document"
+                );
+            }
+
+            // ★★★★★ The independent path. `defects()` walks the fields itself
+            // and has nothing to do with the composing walk, so a `compose`
+            // that drops a row without naming it fails HERE even though both
+            // sides of the biconditional above moved together.
+            let mut blocking: Vec<String> = form
+                .defects()
+                .iter()
+                .filter(|defect| defect.blocks())
+                .map(|defect| defect.key().to_string())
+                .collect();
+            let mut named: Vec<String> = composed
+                .unexpressed
+                .iter()
+                .filter(|row| matches!(row.why, Unexpressible::Defective(_)))
+                .map(|row| row.key.clone())
+                .collect();
+            blocking.sort_unstable();
+            named.sort_unstable();
+            assert_eq!(
+                named, blocking,
+                "{name}: every row that blocks a launch is a row the document \
+                 could not carry, and every row the document could not carry \
+                 for a VALUE reason blocks — these are two derivations of one \
+                 fact and nothing may fall between them"
+            );
+        }
+    }
+
+    /// ★★ R1687 — a collision names the row that could not be placed **and the
+    /// prefix that took its path**, which is the half a person can act on.
+    ///
+    /// Two rows are involved and only one of them is at fault-by-position, so a
+    /// report naming just the key would leave a reader hunting for the other.
+    #[test]
+    fn r1687_a_collision_names_the_prefix_that_took_the_path() {
+        let form = ConfigForm::new(
+            vec![
+                ConfigField::new("transport", "text", Applies::Restart, "auto"),
+                ConfigField::new("transport.mtu", "int", Applies::Restart, "1500")
+                    .with_shape(FieldType::Integer { min: 1, max: 9000 }),
+            ],
+            vec![],
+        );
+        let composed = form.compose();
+        assert_eq!(composed.unexpressed.len(), 1);
+        assert_eq!(composed.unexpressed[0].key, "transport.mtu");
+        assert_eq!(
+            composed.unexpressed[0].why,
+            Unexpressible::Collides {
+                at: "transport".to_string()
+            }
+        );
+        // The row that got there first is carried, so the document is not empty
+        // — a caller shipping this gets the setting that could be expressed.
+        assert_eq!(composed.document, json!({ "transport": "auto" }));
     }
 
     #[test]

@@ -10,8 +10,8 @@ use pinion_core::reactive::Owner;
 use pinion_core::widgets::config_form::Applies;
 
 use super::{
-    Hit, LabState, canvas_rect, card_rect, content_to_window, form_for, inspector_rect, pin_rect,
-    spec,
+    Hit, INSP_W, LabState, MIN_W, PALETTE_W, RAIL_W, TOOLBAR_LEFT_CLUSTER, TOOLBAR_RIGHT_CLUSTER,
+    canvas_rect, card_rect, content_to_window, deploy, form_for, inspector_rect, pin_rect, spec,
 };
 use crate::graph::Role;
 
@@ -1018,6 +1018,309 @@ fn r1682_collapsing_a_card_and_switching_it_off_are_two_independent_facts() {
         assert_eq!(read(&state), (false, true, false));
         super::disable_card(&state, node).expect("the card is there");
         assert_eq!(read(&state), (false, false, false));
+    });
+}
+
+/// ★★ R1687 — **the two artifacts are one derivation**, and the test is what
+/// says so: every node the document names appears in the script, in the same
+/// order, and neither knows anything the other does not.
+///
+/// This is the claim that would rot first if the two renderings were written
+/// separately, which is why the reference groups them and why doing one alone
+/// was not an option.
+#[test]
+fn r1687_the_document_and_the_script_are_the_same_plan() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = state();
+        let plan = state.plan();
+        assert!(!plan.nodes.is_empty(), "the opening graph has cards");
+
+        let document = deploy::as_document(&plan);
+        let script = deploy::as_script(&plan);
+
+        let ordered: Vec<&str> = plan.nodes.iter().map(|e| e.name.as_str()).collect();
+        let in_document: Vec<String> = document["order"]
+            .as_array()
+            .expect("an order")
+            .iter()
+            .map(|row| row["node"].as_str().expect("a name").to_string())
+            .collect();
+        assert_eq!(
+            in_document, ordered,
+            "the document renders the plan's order"
+        );
+
+        // The script writes one configuration file per node, and the order the
+        // heredocs appear in is the order the plan is in.
+        let heredocs: Vec<&str> = script
+            .lines()
+            .filter_map(|line| line.strip_prefix("cat > \"$OUT/"))
+            .filter_map(|rest| rest.split(".json").next())
+            .collect();
+        assert_eq!(heredocs, ordered, "and so does the script");
+
+        // Every host the plan spreads across gets a branch, and every node is
+        // started inside exactly one of them.
+        for host in plan.hosts() {
+            assert!(
+                script.contains(&format!("if [ \"$HOST\" = \"{host}\" ]; then")),
+                "the script has no branch for {host}:\n{script}"
+            );
+        }
+        for entry in &plan.nodes {
+            let start = format!("\"$BIN/{}\" -c \"$OUT/{}.json\"", entry.program, entry.name);
+            assert_eq!(
+                script.matches(start.as_str()).count(),
+                1,
+                "{} is started exactly once:\n{script}",
+                entry.name
+            );
+        }
+    });
+}
+
+/// ★★★ R1687 — **a card switched off leaves both artifacts at once**, because
+/// the order they are both rendered from is the model's.
+///
+/// The screen has no opinion here and that is the point: neither rendering
+/// filters anything, so there is no way for one to drop the node and the other
+/// to keep it.
+#[test]
+fn r1687_a_disabled_card_is_in_neither_artifact() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = std::rc::Rc::new(state());
+        let node = state.node_of("P-03").expect("the card is there");
+        let before = state.plan();
+        assert!(
+            before.nodes.iter().any(|e| e.name == "P-03"),
+            "it starts in the plan"
+        );
+
+        super::disable_card(&state, node).expect("the card is there");
+        let after = state.plan();
+        assert!(
+            !after.nodes.iter().any(|e| e.name == "P-03"),
+            "a card that produces nothing is not started"
+        );
+        assert_eq!(
+            after.nodes.len() + 1,
+            before.nodes.len(),
+            "and nothing else moved"
+        );
+        let script = deploy::as_script(&after);
+        assert!(
+            !script.contains("P-03"),
+            "the script does not write a configuration for it either:\n{script}"
+        );
+    });
+}
+
+/// ★★★★ R1687 — **a row that cannot be expressed is reported, not dropped**,
+/// and it reaches both the artifact and the sentence a person reads.
+///
+/// This is the whole reason `ConfigForm::compose` exists. Before it, a form
+/// holding one unparseable value answered `document()` with an error and the
+/// export had nothing to ship — so the choice was to ship nothing or to ship
+/// silently. The third option is the one the reference takes and the one a
+/// person can act on: ship what fits, and say what did not.
+#[test]
+fn r1687_a_value_that_cannot_be_expressed_is_carried_as_news() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = std::rc::Rc::new(state());
+        let node = state
+            .node_of(spec::SELECTED_NODE)
+            .expect("the card is there");
+        {
+            let mut forms = state.forms.borrow_mut();
+            let form = forms.get_mut(&node).expect("the card has a form");
+            form.set("transport.link.tx.batch_size", "70000")
+                .expect("the row is there");
+        }
+
+        let plan = state.plan();
+        let unexpressed = plan.unexpressed();
+        assert_eq!(unexpressed.len(), 1, "one row, named");
+        assert_eq!(unexpressed[0].0, spec::SELECTED_NODE);
+        assert_eq!(unexpressed[0].1.key, "transport.link.tx.batch_size");
+
+        // ★ The rest of that node's configuration still ships. A refusal that
+        // took the other rows with it would make one bad value cost the file.
+        let entry = plan
+            .nodes
+            .iter()
+            .find(|e| e.name == spec::SELECTED_NODE)
+            .expect("still in the plan");
+        assert!(
+            entry.config.as_object().is_some_and(|o| !o.is_empty()),
+            "the node still has a configuration: {}",
+            entry.config
+        );
+        assert!(
+            entry
+                .config
+                .pointer("/transport/link/tx/batch_size")
+                .is_none(),
+            "and the refused row is not silently in it"
+        );
+
+        let document = deploy::as_document(&plan);
+        assert_eq!(
+            document["unexpressed"].as_array().map(Vec::len),
+            Some(1),
+            "the artifact carries it"
+        );
+        assert!(
+            deploy::as_script(&plan).contains("not in any file above"),
+            "and so does the script, as a comment somebody keeps"
+        );
+
+        // ★★ And the sentence says so, because the toast is what a person
+        // reads. A clean count over a graph that will not start is the report
+        // that would send somebody away with the wrong files.
+        let said = deploy::export_sentence(&plan, Some("something is wrong"));
+        assert!(said.contains("1 not expressed"), "{said}");
+        assert!(said.contains("something is wrong"), "{said}");
+    });
+}
+
+/// ★ R1687 — before either operation has run, the slot says so — and a null is
+/// an answer where a missing key would be a question.
+#[test]
+fn r1687_nothing_is_produced_until_somebody_asks_for_it() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = std::rc::Rc::new(state());
+        let wire = state.produced.borrow().wire();
+        assert!(wire["config"].is_null() && wire["script"].is_null());
+        assert!(
+            wire.as_object().is_some_and(|o| o.len() == 2),
+            "both halves are present as keys: {wire}"
+        );
+
+        super::export_configuration(&state);
+        let wire = state.produced.borrow().wire();
+        assert!(!wire["config"].is_null(), "the export landed");
+        // ★ The slot is named `produced` and not `export` — it holds BOTH
+        // artifacts, so a name taken from one of them would be wrong the moment
+        // the other one moved it.
+        assert!(
+            wire["script"].is_null(),
+            "★ and it did not produce the other one — two operations, two \
+             artifacts, or the witness for each would be the same fact"
+        );
+
+        super::produce_script(&state);
+        let wire = state.produced.borrow().wire();
+        assert!(!wire["script"].is_null());
+    });
+}
+
+/// ★★★★★ R1687 — **the toolbar's declared width is derived from what it
+/// paints**, instead of being a sentence beside the layout.
+///
+/// [`super::TOOLBAR_RIGHT_CLUSTER`] is what the window's minimum width reserves
+/// for the right-anchored seats. It said 300 from R1656 until this round, and
+/// it had been wrong since R1678 put the view-reset seat 340 px in from the
+/// right — nothing read the constant, so the layout outgrew it in silence and
+/// the number stayed a claim about a screen that no longer existed.
+///
+/// This is the class [[debt-a-stated-limit-is-not-checked-by-anything]]: a
+/// limit written in prose is re-derived by whoever needs it next, and the
+/// original is never read again. So the requirement is now *measured* — every
+/// right-anchored rectangle, asked how far in from the pane's right edge it
+/// reaches — and the constant has to cover the furthest.
+///
+/// ★ It also asserts the cluster does not eat its sibling, because that is the
+/// failure a reader would actually see: the two halves share the toolbar, and a
+/// right cluster that grew past its declaration would paint over the launch-gate
+/// chip rather than off the pane.
+#[test]
+fn r1687_the_toolbars_declared_width_covers_what_it_paints() {
+    let owner = Owner::new();
+    owner.run(|| {
+        // ★★ At the FLOOR, which is the only size this claim is about: the
+        // shell is given `MIN_W` as the window's minimum and enforces it, so
+        // the narrowest toolbar that can exist is the one `MIN_W` produces.
+        // The first draft judged at whatever the default was (1440) and fired,
+        // correctly reporting a 2 px overlap — at a width the application
+        // cannot be shown at. A gate measuring a state the product cannot reach
+        // is a gate that will be widened to shut it up.
+        super::reset_lab_state();
+        let owner = Owner::current().expect("this test runs inside a scope");
+        pinion_core::reactive::VIEWPORT_SIZE
+            .resolve(&owner)
+            .set((MIN_W, super::MIN_H));
+        let bar = super::toolbar_rect();
+        assert_eq!(
+            bar.w,
+            TOOLBAR_RIGHT_CLUSTER + TOOLBAR_LEFT_CLUSTER,
+            "at the floor the toolbar pane is exactly the two clusters"
+        );
+        let right = i64::from(bar.x) + i64::from(bar.w);
+        let seats: [(&str, super::Rect); 7] = [
+            ("view reset", super::view_reset_rect()),
+            ("zoom out", super::zoom_rect(false)),
+            ("zoom in", super::zoom_rect(true)),
+            ("config", super::config_rect()),
+            ("script", super::script_rect()),
+            ("run", super::run_rect()),
+            ("toolbar", bar),
+        ];
+        let mut furthest = 0i64;
+        for (name, seat) in seats {
+            if name == "toolbar" {
+                continue;
+            }
+            let reach = right - i64::from(seat.x);
+            assert!(
+                reach > 0,
+                "{name} is not anchored to the right edge — this check would \
+                 stop meaning anything"
+            );
+            furthest = furthest.max(reach);
+        }
+        assert!(
+            furthest <= i64::from(super::TOOLBAR_RIGHT_CLUSTER),
+            "the right-anchored cluster reaches {furthest} px in and \
+             TOOLBAR_RIGHT_CLUSTER declares {}. Raise the constant — the \
+             window's floor is derived from it, so a seat that outgrows it is \
+             painted off the pane at the minimum size.",
+            super::TOOLBAR_RIGHT_CLUSTER
+        );
+        assert!(
+            i64::from(super::TOOLBAR_RIGHT_CLUSTER) - furthest <= 24,
+            "and it declares {} for a cluster that needs {furthest} — a floor \
+             reserving space nothing uses makes the window bigger than the \
+             screen requires",
+            super::TOOLBAR_RIGHT_CLUSTER
+        );
+
+        // ★★ The LEFT half is the same unchecked claim, and leaving it out
+        // would be putting the gate where this round's defect was. Measured at
+        // the same time: it reaches 418 px in and declares 420. The two
+        // together ARE the window's minimum width — the toolbar is what
+        // dictates it, not the canvas — so a seat added to either half moves
+        // the smallest window this screen can be shown in, and that should
+        // never again be something a round discovers afterwards.
+        assert!(
+            furthest + i64::from(TOOLBAR_LEFT_CLUSTER) <= i64::from(bar.w),
+            "the two clusters need {} px and the toolbar pane is {} — they \
+             would overlap, which is the launch-gate chip painted under the \
+             view reset",
+            furthest + i64::from(TOOLBAR_LEFT_CLUSTER),
+            bar.w
+        );
+        assert_eq!(
+            MIN_W,
+            RAIL_W + PALETTE_W + TOOLBAR_RIGHT_CLUSTER + TOOLBAR_LEFT_CLUSTER + INSP_W,
+            "★ and the floor is DERIVED from them — R1687 grew it from 1316 to \
+             1442 by adding one button, which is a real cost (a 1366-wide \
+             laptop no longer shows this screen unclipped) and has to be a \
+             decision somebody makes rather than arithmetic nobody sees"
+        );
     });
 }
 

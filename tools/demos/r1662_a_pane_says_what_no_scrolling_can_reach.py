@@ -38,6 +38,7 @@ Run from the workspace root:
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -51,16 +52,23 @@ from rpc_verify import (  # noqa: E402
 )
 
 EXT = "/external"
-#: The size the screen opens at, and the floor it declares. The floor is where
-#: the side panes hold more than they show, which is the state this is about.
-WIN = (1440, 900)
+#: The size this demo judges at. Above the screen's declared floor, which is
+#: READ from the screen below rather than written here — see `FLOOR`.
+WIN = (1500, 900)
 #: `MIN_W` x `MIN_H` as the screen derives them: the rail, the palette, the
 #: toolbar's two clusters and the inspector across; the two bars plus what the
 #: canvas chrome needs down. Below this the screen DECLARES it cannot paint, and
 #: `scene/resize` will happily go there — the first draft of this demo used 1084
 #: and read back twelve lost marks that are simply a screen asked for a size it
 #: says it does not support.
-FLOOR = (1316, 360)
+#:
+#: ★★★ R1687 — READ from the screen, not written here. It was `(1316, 360)`, a
+#: second copy of a number the screen derives; R1687 moved the floor to 1442 by
+#: putting one more button in the toolbar and this copy stayed behind, so the
+#: demo failed against a fact about the screen instead of a defect. The
+#: specification publishes it now, for the same reason it publishes the
+#: operations table.
+FLOOR: tuple[int, int] = (0, 0)  # filled from the screen at start-up
 
 
 def reach(tf):
@@ -68,6 +76,21 @@ def reach(tf):
 
 
 def run(tf: RpcSubprocess) -> None:
+    # ★★★ R1687 — the floor comes from the screen. See `FLOOR`.
+    global FLOOR
+    declared = json.loads(tf.query(f"{EXT}/spec"))["floor"]
+    FLOOR = (declared[0], declared[1])
+    assert FLOOR[0] < WIN[0] and FLOOR[1] < WIN[1], (
+        f"this demo judges at {WIN} and the screen's floor is {FLOOR} — a "
+        "window below the floor is clamped, and every read below would be "
+        "about a size the screen says it does not support"
+    )
+    # ★ ASKED FOR, not assumed. The size the harness happens to open at was
+    # above the floor until R1687 raised it, so this demo read the boot window
+    # and called it `WIN`; when the floor passed it, the clamp made every read
+    # here about a size nobody had chosen.
+    resize_and_settle(tf, WIN)
+
     # ── 1. the read exists and describes what it judged against ──────────────
     out = reach(tf)
     for key in ("window", "marks", "scrollable", "lost", "out_of_sight"):

@@ -214,6 +214,10 @@ GESTURES = {
     "reset the fields": lambda tf: press(tf, "lab.reset.fields"),
     "reset the links": lambda tf: press(tf, "lab.reset.links"),
     "reset the view": lambda tf: press(tf, "lab.reset.view"),
+    # ★★ R1687 — what leaves the screen, from the two seats the reference puts
+    # side by side. They were the last pair absent on BOTH channels.
+    "export the configuration": lambda tf: press(tf, "lab.toolbar.config"),
+    "produce the launch script": lambda tf: press(tf, "lab.toolbar.script"),
 }
 
 

@@ -50,6 +50,7 @@
 //!
 //! See `tools/demos/r1651_the_node_lab_matches_the_reference.py`.
 
+mod deploy;
 mod graph;
 mod spec;
 
@@ -91,6 +92,7 @@ use pinion_widget_paint::config_form::{
 use pinion_widget_paint::pane::{PanePointer, scroll_pane};
 use pinion_widget_paint::text_field as tf_paint;
 
+use deploy::Produced;
 use graph::{LabNode, Role, Transport};
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
@@ -185,11 +187,25 @@ fn window_size() -> (u32, u32) {
 /// window clips instead — the same choice a fixed minimum size makes, stated
 /// here rather than left to arithmetic that would produce negative widths.
 /// ★ R1656 — the width the toolbar's RIGHT-anchored cluster needs. The zoom
-/// pair, the readout, the config button and the run button are all placed by
-/// subtracting a constant from the pane's right edge, so a pane narrower than
-/// this paints them off its own left side — and the floor below is what
-/// declares that width supported.
-const TOOLBAR_RIGHT_CLUSTER: u32 = 300;
+/// pair, the readout, the view reset, the two export buttons and the run button
+/// are all placed by subtracting a constant from the pane's right edge, so a
+/// pane narrower than this paints them off its own left side — and the floor
+/// below is what declares that width supported.
+///
+/// ★★★★★ R1687 — **it was 300 and it had been wrong since R1678**, which added
+/// the view-reset seat 340 px in from the right. Nothing read this constant:
+/// R1656 wrote it as a sentence about the layout and then wrote the layout
+/// somewhere else, so the two drifted the moment a seat was added and no gate
+/// asked. That is [[debt-a-stated-limit-is-not-checked-by-anything]] exactly —
+/// a limit stated in prose is re-derived by whoever is next and nobody looks
+/// back at it.
+///
+/// It is now checked: `r1687_the_toolbars_declared_width_covers_what_it_paints`
+/// derives the requirement from the rectangles themselves and fails if any
+/// right-anchored seat reaches further in than this says. Adding the script
+/// button is what made the drift matter — but the gate is what makes it the
+/// last time.
+const TOOLBAR_RIGHT_CLUSTER: u32 = 426;
 
 /// ★ R1656 — the canvas pane's floor is DERIVED from what the chrome above it
 /// needs, not asserted at 240. The size axis found the difference on its first
@@ -560,6 +576,12 @@ struct LabState {
     /// object, so the two cannot read two facts.
     palette_scroll: Rc<ScrollState>,
     inspector_scroll: Rc<ScrollState>,
+    /// ★★ R1687 — the two artifacts that leave this screen, once they have.
+    ///
+    /// See [`Produced`] for why they are latched rather than derived: producing
+    /// one is an operation, and an operation whose slot already held the answer
+    /// would have nothing to witness.
+    produced: RefCell<Produced>,
 }
 
 thread_local! {
@@ -723,7 +745,30 @@ impl LabState {
             buffer: use_text_edit_state(EDIT_TAG),
             palette_scroll: Rc::new(ScrollState::with_tag(PALETTE_SCROLL)),
             inspector_scroll: Rc::new(ScrollState::with_tag(INSPECTOR_SCROLL)),
+            produced: RefCell::new(Produced::default()),
         }
+    }
+
+    /// The deployment plan this graph describes right now.
+    ///
+    /// ★★ **One derivation, and both artifacts are rendered from it.** The
+    /// order is the model's ([`Document::launch_order`]), so a disabled card
+    /// drops out of both at once and neither rendering has an opinion about it.
+    fn plan(&self) -> deploy::Plan {
+        let order: Vec<(NodeId, String, pinion_node_graph::Bringup)> = self
+            .doc
+            .borrow()
+            .launch_order(ROOT)
+            .into_iter()
+            .map(|placed| (placed.node, placed.name, placed.standing))
+            .collect();
+        let frames = self.frames.borrow().clone();
+        deploy::plan(
+            &order,
+            |node| deploy::host_lookup(&frames, node),
+            |node| self.role_of(node),
+            |node| self.forms.borrow().get(&node).cloned(),
+        )
     }
 
     fn say(&self, what: impl Into<String>) {
@@ -1988,7 +2033,12 @@ enum Hit {
     Zoom(bool),
     /// R1678 — an affordance that puts one scope back to what it opened as.
     Reset(ResetScope),
+    /// ★★ R1687 — the seat that takes the whole graph's configuration off the
+    /// screen. It sat here answering the SELECTED card's key count, which is a
+    /// different question from a different scope and belonged to nothing.
     Config,
+    /// The seat beside it that renders the same plan as a script.
+    Script,
     Run,
     Node(NodeId),
     Pin {
@@ -2159,6 +2209,9 @@ impl Hit {
             if contains(config_rect(), px, py) {
                 return Self::Config;
             }
+            if contains(script_rect(), px, py) {
+                return Self::Script;
+            }
             if contains(run_rect(), px, py) {
                 return Self::Run;
             }
@@ -2251,6 +2304,7 @@ impl Hit {
             Self::Zoom(up) => format!("zoom:{}", if *up { "in" } else { "out" }),
             Self::Reset(scope) => format!("reset:{}", scope.wire()),
             Self::Config => "config".into(),
+            Self::Script => "script".into(),
             Self::Run => "run".into(),
             Self::Node(id) => format!("node:{}", state.name_of(*id)),
             Self::Pin { node, dial } => format!(
@@ -2444,7 +2498,7 @@ fn zoom_rect(plus: bool) -> Rect {
     let bar = toolbar_rect();
     let right = bar.x + bar.w;
     Rect::new(
-        if plus { right - 232 } else { right - 300 },
+        if plus { right - 304 } else { right - 372 },
         bar.y + 11,
         24,
         24,
@@ -2452,6 +2506,14 @@ fn zoom_rect(plus: bool) -> Rect {
 }
 
 fn config_rect() -> Rect {
+    let bar = toolbar_rect();
+    Rect::new(bar.x + bar.w - 268, bar.y + 9, 66, 28)
+}
+
+/// ★★ R1687 — the second of the pair the reference puts side by side. Its
+/// sibling renders the plan as a document and this one renders it as a script,
+/// so they belong beside each other and not one behind a menu.
+fn script_rect() -> Rect {
     let bar = toolbar_rect();
     Rect::new(bar.x + bar.w - 196, bar.y + 9, 66, 28)
 }
@@ -2521,10 +2583,51 @@ fn reset_seats(state: &LabState) -> Vec<(ResetScope, Rect)> {
 ///
 /// Unconditional, beside the zoom controls, which is where the reference keeps
 /// it — see [`ResetScope::gated`] for why this one is not on the panel.
+/// ★★★ R1687 — widened from 34, because its label was painted `ho…`.
+///
+/// Found by looking at the screen, and then measured rather than eyeballed:
+/// `scene/text_painted` reports seven shortened runs on the opening screen and
+/// six of them are long sentences elided into a bounded strip, which is what
+/// that behaviour is for. This was the seventh — a four-letter button name cut
+/// to two letters and a dot, which is a control whose own name cannot be read.
+///
+/// The seat is 14 px wider and sits 14 px further left, so the gap to the zoom
+/// pair is unchanged and only the cluster's total reach moves — which is
+/// declared in [`TOOLBAR_RIGHT_CLUSTER`] and checked.
 fn view_reset_rect() -> Rect {
     let out = zoom_rect(false);
-    Rect::new(out.x - 40, out.y, 34, 24)
+    Rect::new(out.x - 54, out.y, 48, 24)
 }
+
+/// Where a toolbar seat's caption goes: the seat, inset.
+///
+/// ★★★★★ R1687 — **derived, because a counterfactual walked through the hole
+/// it left.** The captions were authored as their own constants — `home` in a
+/// 40-wide box on a 34-wide seat, `config` in a 60-wide box on a 66-wide seat
+/// starting 12 in — so two of the three were painted PAST the button they name.
+/// Narrowing a seat to prove the truncation gate fired did not fire it: the
+/// caption kept its own width, so it neither elided nor sat inside the seat the
+/// gate was asking about, and the check went quiet on a worse defect than the
+/// one it was written for.
+///
+/// A caption that cannot leave its seat can only answer by eliding, which is
+/// what the gate reads.
+const fn seat_caption(seat: Rect) -> Rect {
+    Rect::new(
+        seat.x + SEAT_INSET,
+        seat.y + 6,
+        seat.w.saturating_sub(SEAT_INSET * 2),
+        seat.h.saturating_sub(12),
+    )
+}
+
+/// How far a toolbar caption sits inside its seat, on each side.
+///
+/// ★ Measured, not chosen: at 10 the view reset's 48-wide seat leaves a 28 px
+/// box and `home` elides to `ho…` — which is the defect this round found by
+/// looking at the screen, reappearing from the other direction. The gate is
+/// what settled the number.
+const SEAT_INSET: u32 = 6;
 
 fn hint_rect() -> Rect {
     let canvas = canvas_rect();
@@ -3437,32 +3540,34 @@ fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
     ));
     children.push(label(
         "home",
-        Rect::new(view_reset.x + 4, view_reset.y + 6, 28, 12),
+        seat_caption(view_reset),
         FONT_SMALL,
         ink.text_3,
     ));
+    // ★★ R1687 — 36 wide, not 40. The readout sits between the two zoom
+    // buttons, which are 68 apart, and starts 30 in — so at 40 it was painted
+    // 2 px INSIDE the `+` button. Caught by generalising the caption check from
+    // "is it cut" to "is it inside the control it names": a run overlapping a
+    // seat it does not belong to is the same class of defect and nothing was
+    // asking about it.
     children.push(tagged_label(
         "lab.toolbar.zoom",
         format!("{}%", state.zoom.get()),
-        Rect::new(local(zoom_rect(false)).x + 30, 17, 40, 13),
+        Rect::new(local(zoom_rect(false)).x + 30, 17, 36, 13),
         FONT_SMALL,
         ink.text,
     ));
 
-    let config = local(config_rect());
-    children.push(box_at(
-        "lab.toolbar.config",
-        config,
-        ink.raised,
-        Some(ink.outline),
-        7,
-    ));
-    children.push(label(
-        "config",
-        Rect::new(config.x + 12, config.y + 8, 60, 13),
-        FONT_SMALL,
-        ink.text_2,
-    ));
+    // ★★ R1687 — the pair the reference puts side by side, because they are one
+    // derivation rendered two ways. Painted from one loop so a change to either
+    // seat's look cannot land on only one of them.
+    for (tag, text, seat) in [
+        ("lab.toolbar.config", "config", local(config_rect())),
+        ("lab.toolbar.script", "script", local(script_rect())),
+    ] {
+        children.push(box_at(tag, seat, ink.raised, Some(ink.outline), 7));
+        children.push(label(text, seat_caption(seat), FONT_SMALL, ink.text_2));
+    }
 
     let run = local(run_rect());
     let run_ink = if !verdict.may_launch() {
@@ -3482,7 +3587,7 @@ fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
         } else {
             "run blocked".to_string()
         },
-        Rect::new(run.x + 12, run.y + 8, 90, 13),
+        seat_caption(run),
         FONT_SMALL,
         run_ink,
     ));
@@ -4827,6 +4932,20 @@ const FIELDS: &[SchemaField] = &{
         SchemaField::new("changed", "string"),
         SchemaField::new("roles", "string"),
         SchemaField::new("toast", "string"),
+        // ★★ R1687 — what this screen has PRODUCED, which is not what it could
+        // produce. `document` next to it answers the selected card's own
+        // configuration; this answers the whole graph's, once somebody has
+        // asked for it. Two questions, two names — the rule R1676 wrote down.
+        //
+        // ★★★ Named `produced` and not `export`, for two reasons the wire found
+        // before a reader would have. The first is mechanical: `export` is an
+        // ACTION below, and one address holding both channels makes "what does
+        // this answer" depend on which verb you happened to use — the rule
+        // written beside `zoom_by`, which the first draft of this line broke and
+        // the server rejected as `PathIsAReadSlot`. The second is the real one:
+        // this slot holds BOTH artifacts, so pressing `script` would have
+        // changed a slot called `export`.
+        SchemaField::new("produced", "string"),
         SchemaField::action("select", "string"),
         SchemaField::action("select_link", "string"),
         SchemaField::action_with(
@@ -4862,6 +4981,13 @@ const FIELDS: &[SchemaField] = &{
         // all — it is a boolean somebody sets, so it is a WRITE on its read.
         SchemaField::action("zoom_by", "string"),
         SchemaField::action("run", "bool"),
+        // ★★ R1687 — what leaves the screen. Neither takes an argument: the
+        // plan is a function of the graph, and a verb that let a caller name a
+        // subset would be inventing a scope the screen has no affordance for.
+        // They answer the sentence the toast shows, so a caller learns what a
+        // person would have learnt without a second read.
+        SchemaField::action("export", "string"),
+        SchemaField::action("script", "string"),
         SchemaField::action_with(
             "connect",
             "string",
@@ -5047,6 +5173,9 @@ impl ExternalIntrospect for LabOracle {
                     Err(why) => text(serde_json::json!({ "refused": why.to_string() }).to_string()),
                 }
             }
+            // ★★ R1687 — the artifacts, or nulls where they are not. See
+            // `Produced::wire` for why a null and not a missing key.
+            "produced" => text(state.produced.borrow().wire().to_string()),
             "nodes" => text(
                 state
                     .cards()
@@ -5464,6 +5593,10 @@ impl ExternalIntrospect for LabOracle {
                 state.zoom.set(next);
                 Ok(IntrospectValue::Int(i64::from(next)))
             }
+            // ★★ R1687 — through the same two functions the seats press, so the
+            // artifact an agent gets and the one a person gets cannot differ.
+            "export" => Ok(IntrospectValue::Text(export_configuration(&state))),
+            "script" => Ok(IntrospectValue::Text(produce_script(&state))),
             "run" => {
                 let verdict = state.verdict();
                 let want = match args {
@@ -5682,6 +5815,16 @@ fn spec_json() -> serde_json::Value {
         })).collect::<Vec<_>>(),
         "graph": spec::GRAPH_NAME,
         "zoom": spec::OPENING_ZOOM,
+        // ★★★ R1687 — the smallest window this screen says it can paint.
+        //
+        // Published because a demo needs it and two of them were carrying their
+        // own copy of the number. R1687 moved the floor (one button in the
+        // toolbar, and the toolbar is what dictates it) and the copies did not
+        // move with it — a demo asked for 1440, the shell clamped to 1442, and
+        // the demo failed on a fact about the screen rather than on a defect.
+        // The same second-copy failure the operations table was published to
+        // prevent, one level down.
+        "floor": [MIN_W, MIN_H],
     })
 }
 
@@ -6802,15 +6945,15 @@ fn release(state: &Rc<LabState>) {
                 state.say(verdict.sentence());
             }
         }
+        // ★★ R1687 — the two artifacts, through the same two functions the wire
+        // calls. Before this round the `config` seat reported the SELECTED
+        // card's key count: a different question, at a different scope, that
+        // nothing on the reference screen asks.
         Hit::Config => {
-            let said = selected_form(state).map_or_else(
-                || "no node is selected".to_owned(),
-                |form| match form.document() {
-                    Ok(document) => format!("{} keys", count_leaves(&document)),
-                    Err(why) => why.to_string(),
-                },
-            );
-            state.say(said);
+            export_configuration(state);
+        }
+        Hit::Script => {
+            produce_script(state);
         }
         Hit::Link(id) => state.selected_link.set(Some(LinkPick::Authored(id))),
         Hit::Observed(from, to) => state.selected_link.set(Some(LinkPick::Observed(from, to))),
@@ -6877,11 +7020,40 @@ fn act_on_form(state: &Rc<LabState>, hit: Hit) {
     }
 }
 
-fn count_leaves(value: &serde_json::Value) -> usize {
-    match value {
-        serde_json::Value::Object(map) => map.values().map(count_leaves).sum(),
-        _ => 1,
-    }
+/// ★★ R1687 — take the graph's configuration off the screen, and answer what
+/// was said about it.
+///
+/// One function for the pointer and the wire, which is the rule this screen has
+/// held since R1682: an affordance that did its own version of an operation is
+/// how the two channels come to disagree about what the operation *is*.
+///
+/// ★ The verdict rides along. The reference's own toast reports it, and the
+/// reason is that an exported configuration is a thing somebody is about to
+/// **use** — a person who reads only "12 node configurations" and walks away
+/// with a set of files that will not start has been told the wrong thing.
+fn export_configuration(state: &LabState) -> String {
+    let plan = state.plan();
+    let document = deploy::as_document(&plan);
+    let verdict = state.verdict();
+    let said = deploy::export_sentence(
+        &plan,
+        (!verdict.may_launch())
+            .then(|| verdict.sentence())
+            .as_deref(),
+    );
+    state.produced.borrow_mut().config = Some(document);
+    state.say(said.clone());
+    said
+}
+
+/// The same plan, rendered as the script that starts it.
+fn produce_script(state: &LabState) -> String {
+    let plan = state.plan();
+    let script = deploy::as_script(&plan);
+    let said = deploy::script_sentence(&plan);
+    state.produced.borrow_mut().script = Some(script);
+    state.say(said.clone());
+    said
 }
 
 /// ★★★ R1684 — what a press on a form row's control does, decided by the
@@ -7417,12 +7589,56 @@ impl WidgetA11y for NodeLabView {
                     ))),
             );
         }
+        // ★★★★ R1687 — **the toolbar was silent, all of it.** The graph, the
+        // cards and the form rows have announced themselves since R1651, and
+        // the strip holding the launch control had no node at all — so a screen
+        // reader could be told the gate's verdict (it is in the group's value,
+        // above) and not be told there was a button for it.
+        //
+        // Found by adding two seats to that strip and asking whether they were
+        // named. They were not, and neither was anything beside them. The list
+        // is therefore the WHOLE cluster and not the two this round put there:
+        // a gate placed where the last defect was finds only the last defect
+        // (R1684.2), and a seventh seat added later fails the demo's roster
+        // check rather than going quiet.
+        for (tag, name) in toolbar_seat_names(&state) {
+            nodes.push(AccessNode::new(tag, AriaRole::Button).with_name(name));
+        }
         if let Some(form) = selected_form(&state) {
             let geometry = inspector_geometry(&state);
             nodes.extend(row_access_nodes("lab.form", &form, &geometry));
         }
         nodes
     }
+}
+
+/// Every pressable seat of the canvas toolbar, and what it announces as.
+///
+/// ★ The run seat's name carries the gate, because that is what the control
+/// *does* right now: "run" and "run blocked" are two different offers and a
+/// reader who is told only "run" has been told the button will start the graph.
+/// It is the same sentence the label paints, from the same two facts.
+fn toolbar_seat_names(state: &LabState) -> Vec<(&'static str, String)> {
+    vec![
+        ("lab.toolbar.zoom.out", "zoom out".to_string()),
+        ("lab.toolbar.zoom.in", "zoom in".to_string()),
+        ("lab.reset.view", "reset the view".to_string()),
+        ("lab.toolbar.config", "export the configuration".to_string()),
+        (
+            "lab.toolbar.script",
+            "produce the launch script".to_string(),
+        ),
+        (
+            "lab.toolbar.run",
+            if state.running.get() {
+                "stop".to_string()
+            } else if state.verdict().may_launch() {
+                "run".to_string()
+            } else {
+                "run blocked".to_string()
+            },
+        ),
+    ]
 }
 
 impl WidgetView for NodeLabView {

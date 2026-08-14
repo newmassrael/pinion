@@ -9,15 +9,16 @@ use pinion_graph::Sugiyama;
 use serde::{Deserialize, Serialize};
 
 use crate::{
-    AdoptError, Align, Appearance, Axis, BreakError, Breakpoints, Carried, Command, ConnectError,
-    Control, Conversion, Crossings, Definitions, Direction, Discovery, Distribute, Document,
-    DuplicateError, Edge, EditError, EditPath, Extent, ExtractError, ForceError, Fragment,
-    GroupError, Grow, Halt, InsertError, Instance, InterfaceSide, Item, ItemError, Layered,
-    LinkLayer, Machine, Multiplicity, NestError, Node, NodeBody, NodeId, NodeKind, NodeSite,
-    ObserveError, Occurrence, Organic, Orphaned, ParentError, PathError, Port, PortRef, PortSite,
-    PortValueError, ROOT, Reach, Relabelled, RelinkError, RepartitionError, Route, RunError,
-    SelectError, Session, Severed, Sharing, Side, Socket, Stack, Standing, Stop, Straighten,
-    Stride, Tick, Timeline, TreeId, UngroupError, Violation, WatchError, Watches, crossing,
+    AdoptError, Align, Appearance, Axis, BreakError, Breakpoints, Bringup, Carried, Command,
+    ConnectError, Control, Conversion, Crossings, Definitions, Direction, Discovery, Distribute,
+    Document, DuplicateError, Edge, EditError, EditPath, Extent, ExtractError, ForceError,
+    Fragment, GroupError, Grow, Halt, InsertError, Instance, InterfaceSide, Item, ItemError,
+    Layered, LinkLayer, Machine, Multiplicity, NestError, Node, NodeBody, NodeId, NodeKind,
+    NodeSite, ObserveError, Occurrence, Organic, Orphaned, ParentError, PathError, Port, PortRef,
+    PortSite, PortValueError, ROOT, Reach, Relabelled, RelinkError, RepartitionError, Route,
+    RunError, SelectError, Session, Severed, Sharing, Side, Socket, Stack, Standing, Stop,
+    Straighten, Stride, Tick, Timeline, TreeId, UngroupError, Violation, WatchError, Watches,
+    crossing,
 };
 
 /// The test taxonomy: two socket types, so type disagreement is reachable.
@@ -12464,4 +12465,239 @@ fn r1682_renaming_something_that_is_not_there_names_which_is_missing() {
         fixture.document.nodes_labelled(ROOT, "x").is_empty(),
         "and a refused rename left no name behind"
     );
+}
+
+/// ★★ R1687 — the bring-up order comes from the LINK DIRECTION, and every node
+/// of the tree is in it exactly once.
+#[test]
+fn r1687_a_node_that_is_only_reached_stands_before_one_that_only_reaches() {
+    let fixture = fixture();
+    let order = fixture.document.launch_order(ROOT);
+    assert_eq!(
+        order.len(),
+        fixture.document.tree(ROOT).unwrap().node_count(),
+        "every node is placed — a deployment cannot leave one out"
+    );
+
+    let at = |node: NodeId| order.iter().position(|p| p.node == node).unwrap();
+    // `two` and `three` are reached by nothing and reach `add`; `add` is both;
+    // `sink` is reached and reaches nothing.
+    assert_eq!(
+        order[at(fixture.sink)].standing,
+        Bringup::First,
+        "the one everything ends at has to be up first"
+    );
+    assert_eq!(order[at(fixture.add)].standing, Bringup::Between);
+    assert_eq!(order[at(fixture.two)].standing, Bringup::Last);
+    assert!(
+        at(fixture.sink) < at(fixture.add) && at(fixture.add) < at(fixture.two),
+        "and that is the order they come out in: {:?}",
+        order
+            .iter()
+            .map(|p| (&p.name, p.standing))
+            .collect::<Vec<_>>()
+    );
+}
+
+/// ★★★★★ R1687 — **the order is TRANSITIVE, which four buckets are not.**
+///
+/// This test is why the module walks instead of bucketing. In `a → b → c → d`
+/// both `b` and `c` are "reached and reaching", so a bucket puts them in one
+/// class and a NAME decides their order — but `b` reaches out to `c`, so `c`
+/// has to be standing first and no name can know that. The names here are
+/// chosen so the wrong answer is the alphabetical one: the first draft ordered
+/// `b` before `c` and passed its own three-deep fixture.
+#[test]
+fn r1687_a_chain_of_four_is_ordered_by_the_links_not_by_the_names() {
+    let mut document = Document::new("root");
+    let mut chain = Vec::new();
+    for at in 0..4 {
+        chain.push(
+            document
+                .add_node(ROOT, NodeBody::Kind(Op::Split), at * 200, 0)
+                .unwrap(),
+        );
+    }
+    for pair in chain.windows(2) {
+        document
+            .connect(ROOT, Socket::new(pair[0], 0), Socket::new(pair[1], 0))
+            .unwrap();
+    }
+    // Alphabetical order is the REVERSE of the launch order, so a name-sorted
+    // answer and a link-sorted one cannot be confused.
+    for (at, node) in chain.iter().enumerate() {
+        document
+            .relabel(ROOT, *node, Some(["a", "b", "c", "d"][at]))
+            .unwrap();
+    }
+
+    let order = document.launch_order(ROOT);
+    assert_eq!(
+        order.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+        vec!["d", "c", "b", "a"],
+        "each node stands before the one that reaches out to it"
+    );
+    assert_eq!(order[0].standing, Bringup::First);
+    assert_eq!(order[1].standing, Bringup::Between);
+    assert_eq!(order[2].standing, Bringup::Between);
+    assert_eq!(order[3].standing, Bringup::Last);
+}
+
+/// ★★★ R1687 — **the model refuses a cycle, and finding that out is what
+/// corrected this module.**
+///
+/// The first draft justified bucketing with "two peers that dial each other are
+/// a legal mesh, so a topological order does not exist". It does exist: an
+/// authored tree is acyclic by construction, and mutual reachability lives in
+/// the OBSERVED layer, which is not authored and not deployed. Pinned here so
+/// the excuse cannot come back without this failing first.
+#[test]
+fn r1687_an_authored_cycle_is_refused_so_a_launch_order_always_exists() {
+    let mut document = Document::new("root");
+    let a = document
+        .add_node(ROOT, NodeBody::Kind(Op::Split), 0, 0)
+        .unwrap();
+    let b = document
+        .add_node(ROOT, NodeBody::Kind(Op::Split), 200, 0)
+        .unwrap();
+    document
+        .connect(ROOT, Socket::new(a, 0), Socket::new(b, 0))
+        .unwrap();
+    assert!(
+        matches!(
+            document.connect(ROOT, Socket::new(b, 0), Socket::new(a, 0)),
+            Err(ConnectError::WouldCycle { .. })
+        ),
+        "the model is what guarantees the walk terminates with everything placed"
+    );
+    assert_eq!(document.launch_order(ROOT).len(), 2);
+}
+
+/// ★ R1687 — the tie inside a bucket is the NAME, not the id.
+///
+/// An id is minted in authoring order, so ordering by it would make the plan a
+/// fact about the sequence somebody happened to draw the graph in. Renaming a
+/// node re-orders the plan; adding one does not disturb it.
+#[test]
+fn r1687_a_tie_is_broken_by_name_so_authoring_order_does_not_leak() {
+    let mut document = Document::new("root");
+    let first = document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(1)), 0, 0)
+        .unwrap();
+    let second = document
+        .add_node(ROOT, NodeBody::Kind(Op::Num(2)), 0, 80)
+        .unwrap();
+    document.relabel(ROOT, first, Some("zulu")).unwrap();
+    document.relabel(ROOT, second, Some("alpha")).unwrap();
+
+    let order = document.launch_order(ROOT);
+    assert_eq!(
+        order.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+        vec!["alpha", "zulu"],
+        "the later-added node comes first because its NAME does"
+    );
+    for placed in &order {
+        assert_eq!(placed.standing, Bringup::Alone, "neither is linked");
+    }
+}
+
+/// ★★ R1687 — **a node that is switched off is not started, and the constraint
+/// it carried goes with it.**
+///
+/// Two separate claims, and the second is the one a fixture can miss. In `a → b
+/// → c` with `b` off, `a` never dialled `c`: the links are `a→b` and `b→c`, so
+/// with `b` gone there is nothing between the other two and they are ordered by
+/// name. A walk that dropped the node but kept its edges would make `a` wait
+/// for a `c` it has no business waiting for — and in this fixture that shows up
+/// as the wrong ORDER, not as a missing node, which is why the names are
+/// arranged so the two answers differ.
+#[test]
+fn r1687_a_node_that_is_switched_off_is_not_started_and_nor_are_its_links() {
+    let mut document = Document::new("root");
+    let mut chain = Vec::new();
+    for at in 0..3 {
+        chain.push(
+            document
+                .add_node(ROOT, NodeBody::Kind(Op::Split), at * 200, 0)
+                .unwrap(),
+        );
+    }
+    for pair in chain.windows(2) {
+        document
+            .connect(ROOT, Socket::new(pair[0], 0), Socket::new(pair[1], 0))
+            .unwrap();
+    }
+    // `a → b → c`, so while all three run the order is the reverse of the
+    // alphabet and the links are what say so.
+    for (at, node) in chain.iter().enumerate() {
+        document
+            .relabel(ROOT, *node, Some(["a", "b", "c"][at]))
+            .unwrap();
+    }
+    assert_eq!(
+        document
+            .launch_order(ROOT)
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["c", "b", "a"],
+        "the links order all three while all three are on"
+    );
+
+    document.set_disabled(ROOT, chain[1], true).unwrap();
+    let order = document.launch_order(ROOT);
+    assert_eq!(
+        order.iter().map(|p| p.name.as_str()).collect::<Vec<_>>(),
+        vec!["a", "c"],
+        "the off node is gone, and with its links gone the other two are \
+         ordered by NAME — not by a constraint neither of them has"
+    );
+    for placed in &order {
+        assert_eq!(
+            placed.standing,
+            Bringup::Alone,
+            "{} is reported as waiting for nothing, which is now true",
+            placed.name
+        );
+    }
+
+    // And it comes back, with the constraint, when the switch does.
+    document.set_disabled(ROOT, chain[1], false).unwrap();
+    assert_eq!(
+        document
+            .launch_order(ROOT)
+            .iter()
+            .map(|p| p.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["c", "b", "a"]
+    );
+}
+
+/// ★ R1687 — a tree that is not there is an empty plan, not a panic.
+#[test]
+fn r1687_a_tree_that_is_not_there_has_no_order() {
+    let fixture = fixture();
+    assert!(fixture.document.launch_order(TreeId(97)).is_empty());
+}
+
+/// ★ R1687 — every arm of the standing vocabulary is reachable and spells one
+/// word, so a wire census counts against the type.
+#[test]
+fn r1687_the_bringup_vocabulary_is_a_closed_set_of_four() {
+    let mut seen = std::collections::BTreeSet::new();
+    for standing in Bringup::ALL {
+        assert!(
+            seen.insert(standing.wire()),
+            "{} spells two",
+            standing.wire()
+        );
+    }
+    assert_eq!(seen.len(), 4);
+    // Derived from the two questions rather than listed, so the table in the
+    // module header cannot drift from the code under it.
+    for dialled in [true, false] {
+        for dials in [true, false] {
+            assert!(Bringup::ALL.contains(&Bringup::of(dialled, dials)));
+        }
+    }
 }

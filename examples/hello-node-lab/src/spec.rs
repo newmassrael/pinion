@@ -776,18 +776,28 @@ pub const OPERATIONS: &[OperationSpec] = &[
         needs: Some("zoom"),
     },
     // ── what leaves the screen ───────────────────────────────────
+    // ★★★ R1687 — the pair the reference writes as one group, and closing them
+    // together is not tidiness: they are ONE derivation rendered twice (the
+    // launch order, each node's document, and the rows that could not go into
+    // it), so doing either alone would have meant building the derivation and
+    // using half of it — and the unused half is the one that then drifts.
+    //
+    // ★ The witness is `produced` and not `document`. `document` answers the
+    // SELECTED card's configuration, and an export is over the whole graph and
+    // does not depend on what is selected — a row witnessing it would have been
+    // asserting that exporting changes the card you were looking at.
     OperationSpec {
         name: "export the configuration",
-        verb: None,
-        gesture: false,
-        witness: "document",
+        verb: Some(("export", "")),
+        gesture: true,
+        witness: "produced",
         needs: None,
     },
     OperationSpec {
         name: "produce the launch script",
-        verb: None,
-        gesture: false,
-        witness: "document",
+        verb: Some(("script", "")),
+        gesture: true,
+        witness: "produced",
         needs: None,
     },
     // ★ The master discovery switch is written through `scene/intervene`, not

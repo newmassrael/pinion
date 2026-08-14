@@ -732,9 +732,39 @@ AXES = [
         # so it is registered as [[debt-the-dcc-axis-measures-three-of-its-four-families]]
         # and the next demanded look inherits a stated question rather than a
         # silent one.
-        "judged_at": 1663,
+        # ---- R1687 re-judgment, 88 -> 88, demanded by `round-axis` going
+        # 29 -> 37 (+28%). **It holds still, and that is an answer.** The tool
+        # asks for a LOOK, not for a move, and a completion that moved because
+        # the check fired would be the hand-adjustment this table exists to
+        # stop.
+        #
+        # RE-MEASURED rather than carried forward (`tools/reference_census.py`,
+        # this round): the DCC 58/76 = 76%, the engine 132/211 = 62%, equal
+        # weight 69 — identical to R1663's and R1644's readings. No round since
+        # R1644 has touched the node graph against either reference's command
+        # list, so identical is what a faithful re-reading should say.
+        # Composition unchanged in method: property grid ~98, data grid ~98,
+        # node graph 69, averaging 88.3.
+        #
+        # ★ R1687's OWN node-graph work is deliberately NOT counted, and for the
+        # reason R1663 wrote one paragraph up rather than out of modesty. The
+        # round built `Document::launch_order` — the order a graph's nodes have
+        # to be STARTED in — and neither reference has anything to compare it
+        # against: a material graph and a visual-scripting graph are evaluated,
+        # not deployed, so the capability is real and the meter is blind to it
+        # by construction. That is the same disagreement
+        # [[debt-the-dcc-axis-measures-three-of-its-four-families]] already
+        # registers, seen from a new side: the method measures three families,
+        # and this round's work is in none of them.
+        #
+        # ★★ The property-grid third did move, slightly and unmeasurably:
+        # `ConfigForm::compose` makes the settings form able to answer "here is
+        # the document AND here is what would not go in it", which is the shape
+        # its READ half has always had. ~98 is not a figure that can absorb a
+        # small addition honestly, so it is recorded here and not spent.
+        "judged_at": 1687,
         "completion": 88,
-        "evidence_snapshot": {"example-name": 34, "round-axis": 29},
+        "evidence_snapshot": {"example-name": 34, "round-axis": 37},
     },
     {
         "key": "modelview",

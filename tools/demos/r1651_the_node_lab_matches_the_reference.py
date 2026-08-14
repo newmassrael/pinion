@@ -298,7 +298,13 @@ def body() -> None:
         FAMILIES = {
             "node_lab": 1,
             "lab.appbar": 3,
-            "lab.toolbar": 10,
+            # ★★ R1687 — 11, not 10: the toolbar gained the second of the two
+            # seats the reference puts side by side, `lab.toolbar.script`. Its
+            # sibling `lab.toolbar.config` was already here, answering the
+            # selected card's key count; this round made the pair what the
+            # reference has — one derivation rendered as a document and as a
+            # script. The pin is what noticed, which is the check working.
+            "lab.toolbar": 11,
             "lab.gate": 7,
             "lab.hint": 2,
             # ★ R1681 — the picked link now carries its own affordances: the
@@ -472,6 +478,7 @@ def body() -> None:
                 "lab.toolbar.zoom.in": "zoom:in",
                 "lab.toolbar.zoom.out": "zoom:out",
                 "lab.toolbar.config": "config",
+                "lab.toolbar.script": "script",  # R1687
                 "lab.toolbar.run": "run",
                 "lab.palette.discovery": "discovery",
             }.get(tag)
