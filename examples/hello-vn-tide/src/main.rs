@@ -387,8 +387,13 @@ impl WidgetA11y for HelloVnTide {
             None => "the-tide VN".to_string(),
         };
         vec![
+            // R1692 — the extent this list stands for. Its tag is the
+            // External's and the projected scene paints no region carrying it,
+            // so the node had no rectangle and `scene/voice` called it a ghost.
+            // The status row is the one region this binding tags itself.
             AccessNode::new(TAG, AriaRole::List)
                 .with_name(name)
+                .with_bounds_union_tag(FONT_ROW_TAG)
                 .with_focused(focused == Some(TAG)),
         ]
     }

@@ -734,6 +734,17 @@ def _read_budget(name: str) -> "Optional[tuple[dict[str, object], bool]]":
 _STATED_REASON_EXCEPTIONS: dict[str, int] = {}
 
 
+#: R1692 — surfaces allowed to carry an unconditional voice defect, and why.
+#:
+#: EMPTY, and for the same reason the table above is: the four arms this gate
+#: judges need no per-screen judgment at all. A node that says nothing, a name
+#: that is an address, a redirect to a node that does not speak, a box promising
+#: children that do not — none of those is a taste question, so none of them has
+#: a legitimate exception. (`unvoiced` DOES need one per screen, which is why it
+#: is reported here and not judged.)
+_VOICE_DEFECT_EXCEPTIONS: dict[str, int] = {}
+
+
 def _budget_for(
     file_name: str, example: str, gate: str, cache_key: str
 ) -> "int | tuple[str, str] | None":
@@ -1057,6 +1068,7 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         self._gate_stated_reasons()
         self._gate_scroll_reach()
         self._gate_tag_rects_agree()
+        self._gate_voice_census()
         return self
 
     def _gate_pointer_reach(self) -> None:
@@ -1548,6 +1560,90 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             f"report it at all."
         )
 
+    def _gate_voice_census(self) -> None:
+        """★★★★★ R1692 — every surface is told what a reader is told, and the
+        four defects that need no judgment are refused.
+
+        `scene/voice` has classified every addressable region since R1691 and
+        exactly one screen ever asked it. The other 196 surfaces' numbers were
+        not "unmeasured" — they were *unrequested*, which is the failure mode
+        this whole family of gates exists to end.
+
+        What is refused is derived rather than listed: **every arm the census
+        publishes except the two correct outcomes and the one this round
+        deliberately defers**. Today that is the part needing **no per-screen
+        judgment**:
+
+        * `mumbled` — a node whose name says nothing, is the tag, or has no
+          letter in it. Nobody has to decide whether that is wrong.
+        * `hollow` — a box declared quiet *because its children speak*, over a
+          subtree where nothing does.
+        * `dangling` — a silence that hands a reader to a node which is not in
+          the tree.
+        * `ghost` — a name with nothing painted, referring to it, or composing
+          it.
+
+        What is only **reported** is `unvoiced`: a painted region nobody decided
+        about. Refusing those needs a screen-by-screen answer to "which regions
+        owe a reader anything", which is a round of work per screen and not a
+        thing a boot gate can assume. It prints on every run so the backlog is a
+        number somebody can see falling — measured the day this landed, 1376 of
+        2260 regions across the surfaces that answer.
+
+        Prints unconditionally, defects or none. The debt this closes was
+        created by a surface that answered and was never asked.
+        """
+        if self.measuring:
+            return  # the producer is not judged by the file it produces
+        try:
+            resp = self.request("scene/voice")
+        except RpcError as exc:
+            if exc.code in (-32601, -32602):
+                return  # stale binary
+            raise
+        assert resp is not None
+        out = resp.result
+        counts = out.get("counts", {})
+        # ★ Derived from the arms the binary publishes, minus the two correct
+        # outcomes and the one deliberately deferred. A hand-written list of
+        # defect arms would judge the day it was written: R1692 added two arms
+        # to a partition that had five, and a gate naming its own four would
+        # have gone on ignoring whichever it had not heard of. A new arm is
+        # judged by default, which is the right way round — an arm nobody added
+        # to a list is a defect nobody refuses.
+        judged = tuple(
+            arm for arm in counts if arm not in ("announced", "silent", "unvoiced")
+        )
+        found = sum(counts.get(arm, 0) for arm in judged)
+        allowed = _VOICE_DEFECT_EXCEPTIONS.get(self.example, 0)
+        if found > allowed:
+            rows = "; ".join(
+                f"{r['tag']!r} is {r['voice']}"
+                + (f" ({r['fault']}, said {r.get('name')!r})" if r.get("fault") else "")
+                + (f" (its reason names {r.get('detail')!r})" if r["voice"] == "dangling" else "")
+                for r in out.get("nodes", [])
+                if r["voice"] in judged
+            )
+            raise AssertionError(
+                f"{self.example}: {found} region(s) whose accessibility answer "
+                f"is wrong on its own terms, and the budget allows {allowed} — "
+                f"{rows}. A `mumbled` row wants a name a person can hear: a "
+                f"decoration glyph painted before the label is declared with "
+                f"`TextNode::with_role(TextRole::Presentational)` so the "
+                f"name-from-contents walk steps past it, and a region with no "
+                f"text of its own is named with `aria_label` / "
+                f"`AccessNode::with_name`. A `hollow` box either holds "
+                f"something that speaks or is not a `layout` silence. A "
+                f"`ghost` is announced for a tag nothing paints — paint it, "
+                f"compose it from what does, or stop emitting it."
+            )
+        print(
+            f"[voice] {self.example}: {out.get('total', 0)} region(s) — "
+            f"{counts.get('announced', 0)} announced, "
+            f"{counts.get('silent', 0)} declared quiet, "
+            f"{counts.get('unvoiced', 0)} undecided (reported, not judged)"
+        )
+
     def __exit__(self, exc_type, exc, tb) -> None:
         leak = self.shutdown()
         # R1570.3 — a leak fails the demo that caused it, but never masks a
@@ -1853,8 +1949,14 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
 
         Answers `{total, counts, nodes}`. `counts` partitions the addressable
         population into `announced` / `silent` / `unvoiced` / `ghost` /
-        `dangling`; the last three are three different defects, which is why
-        they are three keys and not one number.
+        `dangling` / `mumbled` / `hollow`; the last five are five different
+        defects, which is why they are five keys and not one number.
+
+        R1692 — every row also carries `name` (what a reader hears) and `fault`
+        (why that is not usable, on a `mumbled` row). Prefer
+        [`voice_partition_sum`] and [`voice_defects`] over a hand-written list
+        of arm names: both derive from what the running binary publishes, and a
+        demo carrying its own list measures the day it was written.
 
         Reads the last painted scene and the same access-tree producer
         `scene/access` runs, so a demo asserting on both is asking one surface
@@ -3677,6 +3779,37 @@ def voice_rows(result: Any) -> dict[str, dict]:
         for row in result.get("nodes") or ()
         if isinstance(row, dict) and isinstance(row.get("tag"), str)
     }
+
+
+def voice_partition_sum(result: Any) -> int:
+    """The `scene/voice` counts summed over every **painted** arm (R1692).
+
+    Derived from the keys the running binary publishes rather than from a list
+    written here, which is the difference between checking the partition and
+    checking a copy of it: R1692 added two arms, and a demo carrying its own
+    four-name list would have gone on summing four and calling the result total.
+
+    `ghost` is the one arm excluded, and by a rule of the surface rather than a
+    convenience: a ghost is announced for a tag nothing paints, so it is not part
+    of the painted population `total` counts.
+    """
+    counts = result.get("counts", {}) if isinstance(result, dict) else {}
+    return sum(n for arm, n in counts.items() if arm != "ghost")
+
+
+def voice_defects(result: Any) -> list[dict]:
+    """Every census row on a defect arm, in census order (R1692).
+
+    Derived from the rows rather than from a list of arm names, so an arm added
+    to the enum is one this finds without being told: a row is a defect exactly
+    when it is not `announced` and not `silent`, and those two are the surface's
+    documented correct outcomes.
+    """
+    return [
+        row
+        for row in voice_rows(result).values()
+        if row.get("voice") not in ("announced", "silent")
+    ]
 
 
 def access_focus_flags(result: Any) -> set[str]:

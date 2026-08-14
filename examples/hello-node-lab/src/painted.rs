@@ -3893,11 +3893,30 @@ fn voice_of(state: &std::rc::Rc<LabState>, size: (u32, u32)) -> pinion_core::voi
     use pinion_a11y::WidgetA11y;
 
     let (_, scene) = painted_and_scene(state, size);
-    let nodes = super::NodeLabView::access_node(&(TextFieldState::Idle, 0), None);
-    let announced: BTreeSet<String> = nodes.iter().map(|n| n.tag.clone()).collect();
-    // ★ The framework's own derivation, not a second one. What counts as a
-    // reference is a rule the wire and this gate must agree about, and this
-    // gate had a hand copy of it until the round's third-consumer grep.
+    let mut nodes = super::NodeLabView::access_node(&(TextFieldState::Idle, 0), None);
+    // ★★★★★ R1692 — the shell's own enrichment, run here for the first time.
+    // A widget's `access_node` leaves the name `None`; the name a reader hears
+    // is resolved from the PAINT SCENE after layout, on WAI-ARIA 1.2's own
+    // name-computation precedence. Until this gate judged names it did not, and
+    // reading the tree without this step asks a question about a tree nobody
+    // receives — every node would be nameless by construction.
+    let derived = pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
+    // ★ And it finds nothing to do, which is a claim rather than an accident:
+    // this screen names every node it announces, at the site that builds it. A
+    // counterfactual is why this line is asserted instead of assumed — deleting
+    // the enrichment left every gate green, because there was nothing for it to
+    // fill. If that ever stops being true the name a reader hears starts coming
+    // from the paint scene, and this gate would have gone on judging names the
+    // production path resolves differently.
+    assert_eq!(
+        derived, 0,
+        "the screen left {derived} node(s) to be named from the paint scene",
+    );
+    // ★ The framework's own derivations, not second ones. What counts as a
+    // reference, and what an announcement is, are rules the wire and this gate
+    // must agree about; this gate had a hand copy of the first until the round's
+    // third-consumer grep.
+    let announced = pinion_a11y::announcements(&nodes);
     let referenced = pinion_a11y::referenced_tags(&nodes);
     pinion_core::voice::voice_census(&scene, &announced, &referenced)
 }

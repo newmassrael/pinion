@@ -225,6 +225,10 @@ fn view(state: ToggleState, bounds: bool, _frame: Frame) -> Scene {
     initial_size = (WIN_W, WIN_H),
     external = ToggleExternal::new,
     role = Switch,
+    // R1692 §5.40 — the toggle is a plain filled box with a caption BESIDE it,
+    // so there is nothing under its tag for the scene derivation to read and a
+    // reader was told "switch" and no more. Authored here, where the role is.
+    access_name = "Highlight image bounds",
     state_flags(
         hovered = Hover,
         pressed = Pressed,
@@ -337,5 +341,29 @@ mod tests {
             <ImageView as WidgetA11y>::access_node(&(ToggleState::Idle, true), Some(TOGGLE_TAG));
         assert!(!nodes.is_empty());
         assert_eq!(nodes[0].role, AriaRole::Switch);
+    }
+
+    /// ★★★★ R1692 — and it says WHICH switch. The toggle is a plain filled box
+    /// with its caption beside it, so there is nothing under its tag for the
+    /// scene derivation to read: before `access_name` this control announced
+    /// "switch" and no more, which is the floor's exact failure.
+    ///
+    /// A counterfactual asked for this test: making the macro accept
+    /// `access_name` and emit nothing left every crate green — the
+    /// declared-and-dropped shape this tree has been bitten by before.
+    #[test]
+    fn r1692_the_switch_says_which_switch_it_is() {
+        let nodes =
+            <ImageView as WidgetA11y>::access_node(&(ToggleState::Idle, true), Some(TOGGLE_TAG));
+        assert_eq!(nodes[0].name.as_deref(), Some("Highlight image bounds"));
+        assert!(
+            pinion_core::voice::NameFault::judge(
+                &nodes[0].tag,
+                nodes[0].name.as_deref().unwrap_or_default(),
+                nodes[0].role.name_required(),
+            )
+            .is_none(),
+            "and it is a name a reader can use",
+        );
     }
 }

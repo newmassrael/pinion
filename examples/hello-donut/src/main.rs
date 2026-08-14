@@ -218,7 +218,10 @@ impl WidgetA11y for DonutView {
         let readout = DonutChart::new(composition())
             .inspect(Some(scrub))
             .inspect_readout(CHART_RECT, &ChartStyle::default());
+        // R1692 — see `hello-chart`: a transparent capture surface has no
+        // contents, so its name has to be authored or a reader hears "slider".
         let control = AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Slider)
+            .with_name("Scrub position".to_owned())
             .with_value(AccessValue::Float {
                 value: scrub,
                 min: 0.0,

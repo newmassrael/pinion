@@ -4704,8 +4704,14 @@ impl WidgetA11y for PropertyGridView {
         // address), so the dynamic elements are part of the announced total.
         let data_count = rows.iter().filter(|r| row_ref(&r.id).is_some()).count();
         nodes.push(
+            // R1692 — declared the live region it was already described as.
+            // R873's own comment above calls this "a polite live region" and
+            // the node never said so, which left it announced with no painted
+            // rectangle and nothing pointing at it: a `ghost` to `scene/voice`,
+            // and to an AT a region that is neither reachable nor spoken.
             AccessNode::new("pg_search_status", AriaRole::Status)
-                .with_name(format!("{data_count} properties")),
+                .with_name(format!("{data_count} properties"))
+                .with_live(pinion_a11y::AccessLive::Polite),
         );
         // The open choice / colour popup's `listbox` nodes (gated on the same
         // `popup_view_pos` visibility predicate the paint uses, so the AT tree

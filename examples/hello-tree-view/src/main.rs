@@ -528,7 +528,11 @@ impl WidgetA11y for TreeViewBinding {
         tree_access_nodes(
             ROOT_BTN_TAG,
             TREE_TAG,
-            None,
+            // R1692 — the tree container is the focus stop, and it announced
+            // "tree" and nothing: its rows carry the words, and none of them is
+            // the tree's own name. The builder has taken an optional name since
+            // it was written and this caller passed `None`.
+            Some("Project files"),
             &flat_visible(&nodes),
             None,
             cursor.as_deref(),

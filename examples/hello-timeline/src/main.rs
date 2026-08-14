@@ -315,7 +315,10 @@ impl WidgetA11y for TimelineView {
         let readout =
             timeline(&timings, scrub).playhead_readout(CHART_RECT, &ChartStyle::default());
         let has_readout = readout.is_some();
+        // R1692 — a transparent capture surface has no contents to be named
+        // from, so an unauthored name reaches a reader as "slider" and nothing.
         let control = AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Slider)
+            .with_name("Playhead position".to_owned())
             .with_value(AccessValue::Float {
                 value: scrub,
                 min: 0.0,

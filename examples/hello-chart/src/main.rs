@@ -347,7 +347,11 @@ impl pinion_a11y::WidgetA11y for ChartView {
             .with_x_domain(x_lo, x_hi)
             .inspect_readout(CHART_RECT, &ChartStyle::default());
 
+        // R1692 — named here because a `capture_surface` is a transparent
+        // `Scene::Box` with no contents, so no derivation can reach it: this
+        // tab stop announced its role and nothing else.
         let control = AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Slider)
+            .with_name("Scrub position".to_owned())
             .with_value(AccessValue::Float {
                 value: scrub,
                 min: 0.0,

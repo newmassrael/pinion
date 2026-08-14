@@ -30,6 +30,19 @@
 //! where that other node does not speak either. It reads as handled and is a
 //! hole, which is why it is not folded into `silent`.
 //!
+//! # What a node says, not that it exists (R1692)
+//!
+//! `mumbled` is the arm the floor cannot have: the tree has a node and what it
+//! announces is unusable — nothing, an address, or a symbol. The same probe is
+//! why the arm needs the *rest* of this surface to mean anything. Run against
+//! 6.11.1, those three rules flag **8 of 9 nodes** on a six-region window, of
+//! which one is a defect and four are ornament and structure. There, a name has
+//! no owedness to be judged against; here the `silent` declarations supply it,
+//! so a `mumbled` row is a defect and not a suspicion.
+//!
+//! `hollow` completes the other half: `layout` is a promise that the children
+//! speak, and it is the one promise checkable only from below.
+//!
 //! # Wire shape
 //!
 //! ```json
@@ -39,11 +52,12 @@
 //!   "result": {
 //!     "total": 166,
 //!     "counts": { "announced": 115, "silent": 51, "unvoiced": 0,
-//!                 "ghost": 0, "dangling": 0 },
+//!                 "ghost": 0, "dangling": 0, "mumbled": 0, "hollow": 0 },
 //!     "nodes": [
-//!       { "tag": "lab.toolbar.run", "voice": "announced" },
-//!       { "tag": "lab.toolbar.run.label", "voice": "silent",
-//!         "reason": "name_of", "detail": "lab.toolbar.run",
+//!       { "tag": "lab.toolbar.run", "voice": "announced", "name": "Run",
+//!         "fault": null },
+//!       { "tag": "lab.toolbar.run.label", "voice": "silent", "name": null,
+//!         "fault": null, "reason": "name_of", "detail": "lab.toolbar.run",
 //!         "relay": "peer", "self_declared": true, "declared_by": null }
 //!     ]
 //!   }
@@ -59,7 +73,9 @@
 //! `ghost` rows follow, since they have no place in paint order.
 //!
 //! `total` is the painted, addressable population, so `counts` sums to it plus
-//! the ghosts. Both are **derived from the rows on every call** rather than
+//! the ghosts. Ghosts carry a `name` and never a `fault`: what is wrong with a
+//! ghost is that nothing is behind it, and judging its name too would report one
+//! defect as two. Both are **derived from the rows on every call** rather than
 //! stored: a coverage figure that is written down is one that stops falling
 //! when the thing it measures does.
 //!
@@ -67,9 +83,7 @@
 //! left it, read off the running application — not an illustration. Its census
 //! was `35` announced of the same `166` when the round began.)
 
-use std::collections::BTreeSet;
-
-use pinion_a11y::{AccessNode, referenced_tags};
+use pinion_a11y::{AccessNode, announcements, referenced_tags};
 use pinion_core::Scene;
 use pinion_core::voice::{Silence, Voice, VoiceCensus, VoiceNode, voice_census};
 use serde::Serialize;
@@ -83,9 +97,16 @@ pub struct VoiceEntry {
     /// The paint tag — the same spelling `scene/click`, `scene/invoke` and
     /// `scene/access` address, so a row can be acted on directly.
     pub tag: String,
-    /// `announced`, `silent`, `unvoiced`, `ghost` or `dangling`. Three of the
-    /// five are defects, and they are three *different* defects.
+    /// `announced`, `silent`, `unvoiced`, `ghost`, `dangling`, `mumbled` or
+    /// `hollow`. Five of the seven are defects, and they are five *different*
+    /// defects.
     pub voice: &'static str,
+    /// What a reader actually hears, or `null` when the tree has no node for
+    /// this tag.
+    pub name: Option<String>,
+    /// Why [`name`](Self::name) is not usable — `absent`, `address` or
+    /// `wordless` — and `null` when it is. Non-null exactly on a `mumbled` row.
+    pub fault: Option<&'static str>,
     /// The class of the silence that reached this node — `decorative`,
     /// `layout`, `name_of`, `part_of` — or `null` when none did.
     pub reason: Option<&'static str>,
@@ -114,10 +135,16 @@ pub struct VoiceCounts {
     pub silent: usize,
     /// Painted, no node, and nobody decided. **The defect this exists for.**
     pub unvoiced: usize,
-    /// Announced for a tag nothing paints and nobody refers to.
+    /// Announced for a tag nothing paints, nobody refers to and nothing
+    /// composes.
     pub ghost: usize,
     /// Quiet by a reason that hands a reader to a node which does not speak.
     pub dangling: usize,
+    /// In the tree, and what it says is not usable. **A node is not a voice.**
+    pub mumbled: usize,
+    /// Quiet by a reason that promises its children speak, over a subtree where
+    /// nothing does.
+    pub hollow: usize,
 }
 
 /// Response payload for `scene/voice`.
@@ -144,7 +171,7 @@ pub fn handle_scene_voice(
     last_paint_scene: Option<&Scene>,
     access_nodes: &[AccessNode],
 ) -> Result<Value, RpcError> {
-    let announced: BTreeSet<String> = access_nodes.iter().map(|n| n.tag.clone()).collect();
+    let announced = announcements(access_nodes);
     let referenced = referenced_tags(access_nodes);
     let census = last_paint_scene.map_or_else(VoiceCensus::default, |scene| {
         voice_census(scene, &announced, &referenced)
@@ -161,6 +188,8 @@ pub fn handle_scene_voice(
             unvoiced: census.count(Voice::Unvoiced),
             ghost: census.count(Voice::Ghost),
             dangling: census.count(Voice::Dangling),
+            mumbled: census.count(Voice::Mumbled),
+            hollow: census.count(Voice::Hollow),
         },
         nodes: census.nodes.iter().map(entry).collect(),
     };
@@ -172,6 +201,8 @@ fn entry(node: &VoiceNode) -> VoiceEntry {
     VoiceEntry {
         tag: node.tag.clone(),
         voice: node.voice.name(),
+        name: node.name.clone(),
+        fault: node.fault.map(pinion_core::voice::NameFault::name),
         reason: node.silence.as_ref().map(|s| s.kind().name()),
         detail: node.silence.as_ref().map(|s| s.detail().to_owned()),
         relay: node.silence.as_ref().map(|s| Silence::relay(s).name()),
@@ -200,8 +231,10 @@ mod tests {
         )
     }
 
+    /// A node that speaks: named after what it is, never after where it is —
+    /// the tag would be an `address` fault the moment the tag is structured.
     fn node(tag: &str) -> AccessNode {
-        AccessNode::new(tag.to_owned(), AriaRole::Button).with_name(tag.to_owned())
+        AccessNode::new(tag.to_owned(), AriaRole::Button).with_name(format!("the {tag}"))
     }
 
     fn row<'a>(value: &'a serde_json::Value, tag: &str) -> &'a serde_json::Value {
@@ -298,6 +331,95 @@ mod tests {
         assert_eq!(value["nodes"].as_array().expect("array").len(), 1);
     }
 
+    /// ★★★★★ R1692 — the arm the floor cannot have, on the wire: a node whose
+    /// name says nothing is not an announced region, and the row says which of
+    /// the three ways it failed and what it actually said.
+    #[test]
+    fn the_wire_separates_a_node_from_a_voice() {
+        let scene = Scene::Container(ContainerNode::new(vec![
+            text("named"),
+            text("mute"),
+            text("panel.status"),
+            text("close"),
+        ]));
+        let nodes = [
+            node("named"),
+            AccessNode::new("mute".to_owned(), AriaRole::Button),
+            AccessNode::new("panel.status".to_owned(), AriaRole::Status)
+                .with_name("panel.status".to_owned()),
+            AccessNode::new("close".to_owned(), AriaRole::Button).with_name("×".to_owned()),
+        ];
+        let value = handle_scene_voice(Some(&scene), &nodes).expect("ok");
+        assert_eq!(value["counts"]["announced"], 1);
+        assert_eq!(value["counts"]["mumbled"], 3);
+
+        assert_eq!(row(&value, "mute")["fault"], "absent");
+        assert!(
+            row(&value, "mute")["name"]
+                .as_str()
+                .unwrap_or("x")
+                .is_empty(),
+            "a node with no name at all still reports what it said",
+        );
+        assert_eq!(row(&value, "panel.status")["fault"], "address");
+        assert_eq!(row(&value, "close")["fault"], "wordless");
+        assert_eq!(row(&value, "close")["name"], "×");
+        assert!(row(&value, "named")["fault"].is_null());
+    }
+
+    /// ★★★★★ R1692 — `layout` promises the children speak, and this is the
+    /// promise nothing could check: every node under the box is correctly
+    /// quiet, and the region is inaudible whole.
+    #[test]
+    fn the_wire_reports_a_box_whose_children_do_not_speak() {
+        let body = Scene::Container(
+            ContainerNode::new(vec![text("swatch.a"), text("swatch.b")])
+                .with_tag("body")
+                .with_layout(LayoutStyle::new().with_silence(Silence::layout("stacks the rail"))),
+        );
+        let value = handle_scene_voice(Some(&body), &[]).expect("ok");
+        assert_eq!(row(&value, "body")["voice"], "hollow");
+        assert_eq!(value["counts"]["hollow"], 1);
+        assert_eq!(
+            value["counts"]["unvoiced"], 2,
+            "the members are unvoiced on their own terms — which is why the \
+             box's false promise needs its own arm",
+        );
+
+        // One member in the tree keeps the promise.
+        let value = handle_scene_voice(Some(&body), &[node("swatch.a")]).expect("ok");
+        assert_eq!(row(&value, "body")["voice"], "silent");
+        assert_eq!(value["counts"]["hollow"], 0);
+    }
+
+    /// ★★★★ R1692 — a composite container is announced for a tag the scene
+    /// never paints, and what it holds is what anchors it. Measured when this
+    /// landed, eight of the tree's nine `ghost` rows were exactly this and none
+    /// was a defect.
+    #[test]
+    fn a_container_announced_over_painted_members_is_not_a_ghost() {
+        let scene = Scene::Container(ContainerNode::new(vec![text("legend_0"), text("legend_1")]));
+        let legend = AccessNode::new("chart_legend".to_owned(), AriaRole::Group)
+            .with_name("Series".to_owned())
+            .with_child("legend_0")
+            .with_child("legend_1");
+        let value = handle_scene_voice(Some(&scene), &[legend, node("legend_0"), node("legend_1")])
+            .expect("ok");
+        assert_eq!(value["counts"]["ghost"], 0);
+
+        // And a status region that composes nothing is still a name a reader
+        // can be sent to and never find.
+        let status = AccessNode::new("search_status".to_owned(), AriaRole::Status)
+            .with_name("19 properties".to_owned());
+        let value = handle_scene_voice(Some(&scene), &[status, node("legend_0"), node("legend_1")])
+            .expect("ok");
+        assert_eq!(row(&value, "search_status")["voice"], "ghost");
+        assert!(
+            row(&value, "search_status")["fault"].is_null(),
+            "one defect is reported once",
+        );
+    }
+
     /// Every arm the wire publishes is one its own reader accepts — checked on
     /// the wire shape rather than on the enum alone (R1616).
     #[test]
@@ -305,9 +427,14 @@ mod tests {
         use pinion_core::voice::{Relay, SilenceKind, Voice};
 
         for kind in SilenceKind::ALL {
-            let scene = quiet("one", Silence::new(kind, "target"));
+            let scene = Scene::Container(
+                ContainerNode::new(vec![text("target")])
+                    .with_tag("one")
+                    .with_layout(LayoutStyle::new().with_silence(Silence::new(kind, "target"))),
+            );
             // `name_of` / `part_of` name a node; give it a voice so the row is
-            // `silent` rather than `dangling` and the reason column is the one
+            // `silent` rather than `dangling`, and it is inside the box so
+            // `layout`'s own promise is kept too. The reason column is the one
             // under test either way.
             let value = handle_scene_voice(Some(&scene), &[node("target")]).expect("ok");
             let row = row(&value, "one");

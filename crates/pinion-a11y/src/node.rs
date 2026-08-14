@@ -991,6 +991,51 @@ impl NodeIndex {
 /// counts as a reference. It reads **every** reference-carrying field, so a new
 /// kind of reference cannot silently start producing false alarms; that is the
 /// error direction to prefer, since a false alarm is noticed and a miss is not.
+/// R1692 §5.40 — what the tree says about each tag, as the voice census reads it.
+///
+/// The census needs two things a list of tags cannot give it: **the name a
+/// reader hears** — absent, an address, or unpronounceable are three different
+/// defects and none is visible from the tag — and **what each node is composed
+/// of**, which is what anchors a composite container whose own tag the scene
+/// never paints (a legend, a transcript, a radio group).
+///
+/// [`children`](AccessNode::children) and
+/// [`bounds_union_tags`](AccessNode::bounds_union_tags) are the composing
+/// fields, and the other three reference-carrying fields deliberately are not:
+/// a description, a name source and a controlled target are all statements
+/// about *another* node's content, and say nothing about whether this one has
+/// anything behind it.
+///
+/// Lifted here for the reason [`referenced_tags`] was: the wire handler and
+/// every screen's own gate must not each decide what an announcement is.
+#[must_use]
+pub fn announcements(
+    nodes: &[AccessNode],
+) -> std::collections::BTreeMap<String, pinion_core::voice::Announcement> {
+    nodes
+        .iter()
+        .map(|node| {
+            let mut composes = node.children.clone();
+            composes.extend(node.bounds_union_tags.iter().cloned());
+            (
+                node.tag.clone(),
+                pinion_core::voice::Announcement {
+                    name: node.name.clone().unwrap_or_default(),
+                    // The one judgment the census cannot make for itself: it
+                    // does not know what a `cell` is.
+                    name_required: node.role.name_required(),
+                    // A live region is announced when it changes rather than
+                    // navigated to, so it owes no rectangle — the standard
+                    // WAI-ARIA shape for reporting a filtered count or a panel
+                    // that rearranged.
+                    live: node.live.is_some(),
+                    composes,
+                },
+            )
+        })
+        .collect()
+}
+
 #[must_use]
 pub fn referenced_tags(nodes: &[AccessNode]) -> std::collections::BTreeSet<String> {
     let mut out = std::collections::BTreeSet::new();
@@ -1010,6 +1055,53 @@ pub fn referenced_tags(nodes: &[AccessNode]) -> std::collections::BTreeSet<Strin
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ★★★★ R1692 — what the census reads out of a node, field by field. A
+    /// counterfactual asked for this: making `announcements` report **no node as
+    /// a live region** — which turns every off-screen status region back into a
+    /// `ghost` across the tree — compiled and left every crate test green,
+    /// because nothing here tested this function at all.
+    #[test]
+    fn r1692_an_announcement_carries_what_the_census_cannot_see() {
+        let nodes = vec![
+            AccessNode::new("legend", AriaRole::Group)
+                .with_name("Series".to_owned())
+                .with_child("legend#0")
+                .with_bounds_union_tag("legend.strip")
+                // Statements about ANOTHER node's content: they say nothing
+                // about whether this one has anything behind it.
+                .with_described_by("said")
+                .with_name_from_tag("titled")
+                .with_controls("driven"),
+            AccessNode::new("blank", AriaRole::Cell),
+            AccessNode::new("count", AriaRole::Status)
+                .with_name("19 properties".to_owned())
+                .with_live(AccessLive::Polite),
+        ];
+        let out = announcements(&nodes);
+        assert_eq!(out.len(), 3);
+
+        let legend = &out["legend"];
+        assert_eq!(legend.name, "Series");
+        assert!(legend.name_required, "a group is named or it is nothing");
+        assert!(!legend.live);
+        assert_eq!(
+            legend.composes,
+            ["legend#0", "legend.strip"],
+            "composition is membership and extent, not every reference",
+        );
+
+        let blank = &out["blank"];
+        assert!(blank.name.is_empty());
+        assert!(
+            !blank.name_required,
+            "an empty cell is what the data says, not an omission",
+        );
+
+        let count = &out["count"];
+        assert!(count.live, "a live region owes no rectangle");
+        assert!(count.composes.is_empty());
+    }
 
     /// R1691 — every field a node can point through is read, and a node nobody
     /// points at is absent. The second half is what the census asks.

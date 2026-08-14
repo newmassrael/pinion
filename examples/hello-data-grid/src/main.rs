@@ -4360,13 +4360,22 @@ fn drop_edge_at(gap: Option<usize>, pos: usize, last: usize) -> Option<DropEdge>
 /// data columns never shift.
 fn view_handle_cell(row: usize, enabled: bool, row_modified: bool, theme: &Theme) -> Scene {
     let mut children = if enabled {
-        vec![Scene::Text(TextNode::styled(
-            GRIP_GLYPH,
-            Rect::default(),
-            TextStyle::new()
-                .with_size_px(CELL_PX)
-                .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
-        ))]
+        vec![Scene::Text(
+            TextNode::styled(
+                GRIP_GLYPH,
+                Rect::default(),
+                TextStyle::new()
+                    .with_size_px(CELL_PX)
+                    .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+            )
+            // R1692 — decoration, and the row's name is what is behind it. The
+            // grip is the FIRST text in a row in DFS order, so without this the
+            // name-from-contents walk stopped here and every data row announced
+            // itself as U+283F: a screen reader says "braille pattern
+            // dots-123456, row". Measured by `scene/voice`, which is what
+            // separates a node from a voice.
+            .with_role(TextRole::Presentational),
+        )]
     } else {
         Vec::new()
     };

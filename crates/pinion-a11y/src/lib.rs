@@ -93,8 +93,8 @@ pub use listbox::{ListOption, listbox_option_nodes};
 pub use menu::{MenuItemCell, SubmenuCell, menu_item_nodes};
 pub use navigation::{NavLink, navigation_link_nodes};
 pub use node::{
-    AccessLive, AccessNode, AccessState, AccessValue, NodeIndex, attach_child_button,
-    referenced_tags,
+    AccessLive, AccessNode, AccessState, AccessValue, NodeIndex, announcements,
+    attach_child_button, referenced_tags,
 };
 pub use radiogroup::{RadioCell, radiogroup_radio_nodes};
 pub use role::{AriaCurrent, AriaRole, AutoComplete, HasPopup, SortDirection};

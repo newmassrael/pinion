@@ -223,7 +223,10 @@ impl WidgetA11y for TreemapView {
         let readout = Treemap::new(assets())
             .inspect(Some(scrub))
             .inspect_readout(CHART_RECT);
+        // R1692 — a transparent capture surface has no contents to be named
+        // from, so an unauthored name reaches a reader as "slider" and nothing.
         let control = AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Slider)
+            .with_name("Scrub position".to_owned())
             .with_value(AccessValue::Float {
                 value: scrub,
                 min: 0.0,

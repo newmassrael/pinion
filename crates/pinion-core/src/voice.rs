@@ -65,9 +65,26 @@
 //! ```
 //!
 //! [`voice_census`] then walks a produced paint scene and answers per tag with
-//! a [`Voice`]. Three of its five arms are defects, and each is a *different*
+//! a [`Voice`]. Five of its seven arms are defects, and each is a *different*
 //! defect with a different fix — which is the whole reason the census is not a
 //! bool.
+//!
+//! ## A name is only judgeable where a voice is owed (R1692)
+//!
+//! Counting nodes is not the question either: `role = Button, name = ""` is a
+//! node. [`NameFault`] judges what a region actually says, by three rules with
+//! no taste in them — nothing said, the address said instead of a name, or
+//! nothing a reader can pronounce.
+//!
+//! The rules are worth nothing on their own, and the same probe shows why. Run
+//! against the floor at 6.11.1, a window of six regions answered **9 nodes, 8
+//! of which fail one of these three rules** — five with an empty name, of which
+//! exactly *one* is a defect and four are ornament, a layout box and the window
+//! itself. The framework had also derived a button's name from its visible text
+//! and produced `×` by construction. So there the rules are noise: 8 flags for
+//! 1 defect, because nothing separates a region that owes a voice from one that
+//! does not. Here the [`Silence`] declarations do that separating, so the rules
+//! only ever run where a voice was owed — and a flag is a defect.
 //!
 //! ## Silence is not invisibility
 //!
@@ -87,7 +104,7 @@
 //! speak is a lie the census refuses.
 
 use std::borrow::Cow;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -251,6 +268,135 @@ impl Relay {
     pub const fn is_reachable(self) -> bool {
         !matches!(self, Relay::Nowhere)
     }
+
+    /// The census arm a region takes when this relay's promise is **not kept**.
+    ///
+    /// A reachable relay is a claim about somewhere else: that a named peer
+    /// says this text, that a named ancestor folds it in, that the children
+    /// speak for the box. Each claim can be false, and a false one is worse
+    /// than an undeclared silence because it reads as handled — so each gets an
+    /// arm rather than being absorbed into [`Voice::Silent`].
+    ///
+    /// [`Nowhere`](Self::Nowhere) promises nothing, so there is nothing to
+    /// break and the region is simply quiet. That is what makes this total: the
+    /// mapping is stated once here instead of at the two places the census
+    /// checks a promise, and
+    /// [`is_reachable`](Self::is_reachable) agreeing with "this arm is a defect"
+    /// is an invariant a fifth [`SilenceKind`] has to answer for.
+    #[must_use]
+    pub const fn unkept(self) -> Voice {
+        match self {
+            Relay::Nowhere => Voice::Silent,
+            Relay::Children => Voice::Hollow,
+            Relay::Peer | Relay::Ancestor => Voice::Dangling,
+        }
+    }
+}
+
+/// Why the name a region announces is not one a reader can use.
+///
+/// Three rules, and the shared property is that **none of them has any taste in
+/// it**: each is decidable from the tag and the name alone, and each has been a
+/// real defect on this tree. Judging whether a name is a *good* name is not
+/// mechanisable and is not attempted — this is a floor, and a region that clears
+/// it can still be badly named.
+///
+/// The rules only run where a voice is **owed**, which is the whole reason they
+/// are usable. Measured against the reference toolkit at 6.11.1, where every
+/// widget is in the tree and nothing declares a silence, the same three rules
+/// flag 8 of 9 nodes to find 1 defect.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum NameFault {
+    /// Nothing is said. The tree has a node, and a reader is told its role and
+    /// no more — "button", and nothing about which button.
+    ///
+    /// The floor's default for any control without visible text, and there
+    /// indistinguishable from ornament.
+    Absent,
+    /// The **address** is said instead of a name: the announced text is this
+    /// node's own tag, and the tag is structured rather than a word.
+    ///
+    /// A tag is how a program addresses a region; it is not how a person is
+    /// told what it is. The structure test is what keeps this from firing on a
+    /// control whose visible label happens to be its tag spelled as one word —
+    /// a name matching the visible label is *correct* (WAI-ARIA's label-in-name),
+    /// so only a name that is recognisably an identifier is a fault.
+    Address,
+    /// Nothing pronounceable is said: the name has no letter or digit anywhere
+    /// — `×`, `…`, `+`, `—`.
+    ///
+    /// Announced verbatim, a screen reader says the symbol's Unicode name or
+    /// nothing at all. R1686 fixed exactly this on a remove control; the floor
+    /// *manufactures* it, deriving a button's accessible name from its visible
+    /// text with no test that the text is a word.
+    Wordless,
+}
+
+impl NameFault {
+    /// The lowercase wire spelling.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            NameFault::Absent => "absent",
+            NameFault::Address => "address",
+            NameFault::Wordless => "wordless",
+        }
+    }
+
+    /// Parse a wire spelling back.
+    #[must_use]
+    pub fn from_name(name: &str) -> Option<Self> {
+        Self::ALL.iter().copied().find(|f| f.name() == name)
+    }
+
+    /// Every arm, in declaration order.
+    pub const ALL: [NameFault; 3] = [NameFault::Absent, NameFault::Address, NameFault::Wordless];
+
+    /// Judge the name a reader hears for the region tagged `tag`, or [`None`]
+    /// when it clears all three rules.
+    ///
+    /// `name_required` is
+    /// [`Announcement::name_required`](Announcement::name_required) — the one
+    /// rule that a role can excuse, because for a blank table cell an empty name
+    /// is the data. The other two are never excused: an address and a symbol are
+    /// wrong answers wherever they appear.
+    ///
+    /// Order matters only in what gets reported: an empty name is [`Absent`]
+    /// rather than [`Wordless`], because "nobody wrote one" and "what was
+    /// written is unpronounceable" are different repairs.
+    ///
+    /// [`Absent`]: Self::Absent
+    /// [`Wordless`]: Self::Wordless
+    #[must_use]
+    pub fn judge(tag: &str, name: &str, name_required: bool) -> Option<Self> {
+        let said = name.trim();
+        if said.is_empty() {
+            return name_required.then_some(NameFault::Absent);
+        }
+        if said == tag && is_address_shaped(tag) {
+            return Some(NameFault::Address);
+        }
+        if !said.chars().any(char::is_alphanumeric) {
+            return Some(NameFault::Wordless);
+        }
+        None
+    }
+}
+
+/// Whether a tag is recognisably an identifier rather than a word.
+///
+/// True when it holds anything a written name does not: `lab.toolbar.run`,
+/// `method#0`, `grid/row`, `chart-tab`, `scale_group`.
+///
+/// The carve-out is deliberate and was measured. A tag that reads as a word or
+/// words — `notch`, `violin`, `log axis` — is *not* an address here, because
+/// those screens paint that word as the control's visible label and an
+/// accessible name matching the visible label is correct (WAI-ARIA's
+/// label-in-name). Three such tags on this tree would otherwise be flagged, and
+/// all three are right.
+fn is_address_shaped(tag: &str) -> bool {
+    tag.chars().any(|c| !c.is_alphanumeric() && c != ' ')
 }
 
 /// A declaration that a region deliberately has no voice, and why.
@@ -330,11 +476,12 @@ impl Silence {
 
 /// What the accessibility tree says about one addressable region.
 ///
-/// Five arms, of which [`Announced`](Self::Announced) and [`Silent`](Self::Silent)
-/// are the two correct outcomes and the other three are three *different*
+/// Seven arms, of which [`Announced`](Self::Announced) and [`Silent`](Self::Silent)
+/// are the two correct outcomes and the other five are five *different*
 /// defects. A census that only counted would merge them, and the fix for each is
-/// different: give it a name, decide why it is quiet, delete the node, or point
-/// the reason somewhere real.
+/// different: give it a name, say something usable instead of an address, decide
+/// why it is quiet, delete the node, point the reason somewhere real, or give
+/// the box that promised its children speak a child that does.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Voice {
@@ -355,6 +502,23 @@ pub enum Voice {
     /// The region is silent by a reason that names another node, and that node
     /// does not speak either. The redirect goes nowhere.
     Dangling,
+    /// The accessibility tree has a node for the region and what it announces is
+    /// not usable — see [`NameFault`] for which of the three it is.
+    ///
+    /// Distinct from [`Unvoiced`](Self::Unvoiced) by who has to act: an unvoiced
+    /// region needs a *decision* (does it owe a reader anything?), while this one
+    /// was already decided and the answer came out empty. Counting it as
+    /// announced is what the floor does, and is how a control can be in the tree
+    /// for years saying nothing.
+    Mumbled,
+    /// The region is silent by a reason that promises **its children speak**,
+    /// and nothing under it does.
+    ///
+    /// The subtree is inaudible whole, and every check passes: each descendant
+    /// is correctly quiet on its own terms, and the box that was supposed to
+    /// carry them says it is only arranging things. The one promise that cannot
+    /// be checked from the declaration — only from below.
+    Hollow,
 }
 
 impl Voice {
@@ -367,6 +531,8 @@ impl Voice {
             Voice::Unvoiced => "unvoiced",
             Voice::Ghost => "ghost",
             Voice::Dangling => "dangling",
+            Voice::Mumbled => "mumbled",
+            Voice::Hollow => "hollow",
         }
     }
 
@@ -377,18 +543,36 @@ impl Voice {
     }
 
     /// Every arm, in declaration order.
-    pub const ALL: [Voice; 5] = [
+    pub const ALL: [Voice; 7] = [
         Voice::Announced,
         Voice::Silent,
         Voice::Unvoiced,
         Voice::Ghost,
         Voice::Dangling,
+        Voice::Mumbled,
+        Voice::Hollow,
     ];
 
-    /// Whether this arm is a defect — three of the five are.
+    /// Whether this arm is a defect — five of the seven are.
     #[must_use]
     pub const fn is_defect(self) -> bool {
-        matches!(self, Voice::Unvoiced | Voice::Ghost | Voice::Dangling)
+        matches!(
+            self,
+            Voice::Unvoiced | Voice::Ghost | Voice::Dangling | Voice::Mumbled | Voice::Hollow
+        )
+    }
+
+    /// Whether the accessibility tree has a node for this region at all.
+    ///
+    /// Two arms do — a region that speaks and one that speaks unusably — and
+    /// the difference matters exactly once: a box promising that its children
+    /// speak has kept that promise the moment one of them is *in the tree*, so
+    /// its subtree is not [`Hollow`](Self::Hollow) merely because a child is
+    /// [`Mumbled`](Self::Mumbled). Reporting one region's defect twice, under
+    /// two tags, would make the census's own numbers wrong.
+    #[must_use]
+    pub const fn has_node(self) -> bool {
+        matches!(self, Voice::Announced | Voice::Mumbled)
     }
 }
 
@@ -430,6 +614,112 @@ pub const VOICE_WIRE_NAMES: [&str; Voice::ALL.len()] = {
     names
 };
 
+/// Every wire spelling a [`NameFault`] can take, derived the same way.
+pub const NAME_FAULT_WIRE_NAMES: [&str; NameFault::ALL.len()] = {
+    let mut names = [""; NameFault::ALL.len()];
+    let mut i = 0;
+    while i < NameFault::ALL.len() {
+        names[i] = NameFault::ALL[i].name();
+        i += 1;
+    }
+    names
+};
+
+/// What the accessibility tree says about one tag, as far as the census needs
+/// to know.
+///
+/// Two fields, and each answers a question a set of tags cannot: **what a
+/// reader hears** (a node is not a voice — see [`NameFault`]), and **what the
+/// node is made of** (a node with no region of its own is still anchored when
+/// its members have one).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Announcement {
+    /// The name a reader hears. Empty when the tree gives none, which is an
+    /// answer rather than a gap — the floor's default and its commonest defect.
+    pub name: String,
+    /// Whether an empty [`name`](Self::name) is a defect here.
+    ///
+    /// A property of the node's **role**, which this crate cannot see: a table
+    /// cell with no value is a blank cell and a container with no semantics has
+    /// nothing to be called, while a button, a slider or a column header that
+    /// says nothing is a region a reader lands on and learns nothing from.
+    /// Supplied by whoever builds the tree
+    /// (`pinion_a11y::AriaRole::name_required`).
+    ///
+    /// Defaults to `true`: an exemption is a claim somebody has to make, and a
+    /// field that silently defaulted to "no name needed" would let the whole
+    /// rule be switched off by forgetting it.
+    pub name_required: bool,
+    /// The node is a **live region**: it is announced when it changes rather
+    /// than reached by navigating, so it owes no painted rectangle.
+    ///
+    /// This is the WAI-ARIA pattern a screen has whenever it reports something
+    /// a sighted reader learns from the change itself — a filtered count, a
+    /// panel that rearranged. Without this the census would call such a node a
+    /// [`Ghost`](Voice::Ghost), which is the opposite of the truth: nobody can
+    /// be sent there, because it is what comes to them.
+    pub live: bool,
+    /// The tags this node is **composed of**: its members, and the fragments
+    /// its own rectangle is the union of.
+    ///
+    /// A composite container — a legend, a transcript, a radio group — is
+    /// announced for a tag the scene need not paint, because what it stands for
+    /// is what it holds. A reader landing on it descends to ink. That is a
+    /// different anchor from being *pointed at* (the `referenced` argument of
+    /// [`voice_census`]) and both are needed: one is "somebody sends a reader to
+    /// me", the other is "I can send a reader on".
+    ///
+    /// References that are **about another node's content** — a description
+    /// region, a name source, a controlled target — are deliberately not here.
+    /// They say nothing about whether this node has anything behind it.
+    pub composes: Vec<String>,
+}
+
+impl Default for Announcement {
+    fn default() -> Self {
+        Self {
+            name: String::new(),
+            name_required: true,
+            live: false,
+            composes: Vec::new(),
+        }
+    }
+}
+
+impl Announcement {
+    /// A node that announces `name`, composes nothing, and owes a name — the
+    /// ordinary case, and the one every test writes.
+    #[must_use]
+    pub fn named(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            ..Self::default()
+        }
+    }
+
+    /// Add a tag this node is composed of.
+    #[must_use]
+    pub fn composing(mut self, tag: impl Into<String>) -> Self {
+        self.composes.push(tag.into());
+        self
+    }
+
+    /// Declare that an empty name is the answer here rather than an omission —
+    /// see [`name_required`](Self::name_required).
+    #[must_use]
+    pub fn optionally_named(mut self) -> Self {
+        self.name_required = false;
+        self
+    }
+
+    /// Declare this a live region — see [`live`](Self::live).
+    #[must_use]
+    pub fn living(mut self) -> Self {
+        self.live = true;
+        self
+    }
+}
+
 /// One addressable region, and what the accessibility tree says about it.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct VoiceNode {
@@ -438,6 +728,16 @@ pub struct VoiceNode {
     pub tag: String,
     /// What the tree says.
     pub voice: Voice,
+    /// What a reader actually hears, when the tree has a node for this tag.
+    ///
+    /// Carried rather than judged-and-discarded so a row that fails is one a
+    /// person can act on without re-running anything: the census says the name
+    /// is unusable *and what it was*.
+    pub name: Option<String>,
+    /// Why [`name`](Self::name) is unusable. [`Some`] exactly when
+    /// [`voice`](Self::voice) is [`Voice::Mumbled`], since that arm is defined
+    /// as "there is a fault" and this is which one.
+    pub fault: Option<NameFault>,
     /// The declaration that reached this node, when one did — its own or an
     /// ancestor's, following the same precedence the disabled cascade uses.
     pub silence: Option<Silence>,
@@ -487,10 +787,17 @@ impl VoiceCensus {
 /// Classify every addressable region of a produced paint scene against the
 /// accessibility tree that was built beside it.
 ///
-/// `announced` is every tag the tree has a node for. `referenced` is every tag
-/// some node points at — a description region, a composite child, a bounds
-/// contributor, a name source — which is what separates a deliberately virtual
-/// node from a [`Ghost`](Voice::Ghost).
+/// `announced` maps every tag the tree has a node for to what it
+/// [`Announcement`] says. It is that rather than a set of tags because a census
+/// of nodes is not a census of voices: a node with nothing usable to say is
+/// exactly the floor's failure, and it cannot be seen from the tags alone.
+///
+/// `referenced` is every tag some node points at — a description region, a
+/// composite child, a bounds contributor, a name source — which is one of the
+/// three things that separate a deliberately virtual node from a
+/// [`Ghost`](Voice::Ghost). The others are [`composes`](Announcement::composes),
+/// the same question asked from the other end, and [`live`](Announcement::live),
+/// a region a reader never travels to because it comes to them.
 ///
 /// Untagged nodes are not rows. They cannot be addressed, so a row for one
 /// would name nothing — the same rule
@@ -499,22 +806,34 @@ impl VoiceCensus {
 #[must_use]
 pub fn voice_census(
     scene: &Scene,
-    announced: &BTreeSet<String>,
+    announced: &BTreeMap<String, Announcement>,
     referenced: &BTreeSet<String>,
 ) -> VoiceCensus {
     let mut nodes = Vec::new();
     let mut painted = BTreeSet::new();
     walk(scene, None, None, announced, &mut painted, &mut nodes);
-    // The other direction. A name with no region behind it is only reachable
-    // through whoever refers to it; with nobody referring, a reader can be sent
-    // to it and find nothing.
-    for tag in announced.difference(&painted) {
-        if referenced.contains(tag) {
+    // The other direction. A name with no region behind it is reachable only
+    // through something: whoever refers to it, or whatever it is made of. With
+    // neither, a reader can be sent to it and find nothing.
+    for (tag, announcement) in announced {
+        if painted.contains(tag) || referenced.contains(tag) || announcement.live {
+            continue;
+        }
+        if announcement
+            .composes
+            .iter()
+            .any(|member| painted.contains(member))
+        {
             continue;
         }
         nodes.push(VoiceNode {
             tag: tag.clone(),
             voice: Voice::Ghost,
+            name: Some(announcement.name.clone()),
+            // Not judged: what is wrong with a ghost is that it has nothing
+            // behind it, and the repair is to paint it or delete it. Judging
+            // its name too would report one defect as two.
+            fault: None,
             silence: None,
             self_declared: false,
             declared_by: None,
@@ -526,14 +845,18 @@ pub fn voice_census(
 /// Depth-first walk carrying the nearest covering declaration and the tag that
 /// made it, mirroring
 /// [`disabled_census`](crate::scene_disabled::disabled_census)'s cascade.
+///
+/// Returns whether anything in this subtree — including the node itself — has a
+/// node in the accessibility tree, which is the only way to check the one
+/// promise a declaration makes about what is *below* it.
 fn walk(
     scene: &Scene,
     declared_by: Option<&str>,
     inherited: Option<&Silence>,
-    announced: &BTreeSet<String>,
+    announced: &BTreeMap<String, Announcement>,
     painted: &mut BTreeSet<String>,
     out: &mut Vec<VoiceNode>,
-) {
+) -> bool {
     let own = scene
         .layout_style()
         .and_then(|layout| layout.silence.as_ref());
@@ -541,12 +864,18 @@ fn walk(
     // The node's own reason when it has one, otherwise the region's — the same
     // precedence the disabled cascade applies.
     let reason = own.or(inherited);
+    let mut row = None;
+    let mut speaks = false;
     if let Some(tag) = scene.tag() {
         painted.insert(tag.to_owned());
-        let voice = classify(tag, reason, announced);
+        let (voice, fault) = classify(tag, reason, announced);
+        speaks = voice.has_node();
+        row = Some(out.len());
         out.push(VoiceNode {
             tag: tag.to_owned(),
             voice,
+            name: announced.get(tag).map(|a| a.name.clone()),
+            fault,
             silence: reason.cloned(),
             self_declared,
             declared_by: declared_by.map(str::to_owned),
@@ -564,17 +893,19 @@ fn walk(
     match scene {
         Scene::Container(c) => {
             for child in &c.children {
-                walk(child, child_declarer, child_reason, announced, painted, out);
+                speaks |= walk(child, child_declarer, child_reason, announced, painted, out);
             }
         }
-        Scene::Scroll(s) => walk(
-            &s.content,
-            child_declarer,
-            child_reason,
-            announced,
-            painted,
-            out,
-        ),
+        Scene::Scroll(s) => {
+            speaks |= walk(
+                &s.content,
+                child_declarer,
+                child_reason,
+                announced,
+                painted,
+                out,
+            );
+        }
         Scene::Box(_)
         | Scene::Text(_)
         | Scene::Path(_)
@@ -584,25 +915,50 @@ fn walk(
         | Scene::ImmediateModeNode(_)
         | Scene::TextGrid(_) => {}
     }
+    // R1692 — the promise that can only be checked from below. `Relay::Children`
+    // says a reader receives this region's information from what it holds; if
+    // nothing under it is in the tree, the subtree is inaudible whole and every
+    // per-node check still passes. Expressed as the relay's property rather than
+    // as the arm's name, so a fifth kind relaying to its children inherits it.
+    if let Some(index) = row {
+        if out[index].voice == Voice::Silent
+            && own.is_some_and(|silence| silence.relay() == Relay::Children)
+            && !speaks
+        {
+            out[index].voice = Relay::Children.unkept();
+        }
+    }
+    speaks
 }
 
-/// The arm for one painted tag.
+/// The arm for one painted tag, and the name fault when there is one.
 ///
 /// A node that both speaks and declares a reason is [`Announced`](Voice::Announced):
 /// the tree is what a reader actually receives, and a stale declaration beside a
 /// real voice is a documentation problem rather than an accessibility one. The
 /// census still carries the declaration on the row, so it can be found.
-fn classify(tag: &str, reason: Option<&Silence>, announced: &BTreeSet<String>) -> Voice {
-    if announced.contains(tag) {
-        return Voice::Announced;
+fn classify(
+    tag: &str,
+    reason: Option<&Silence>,
+    announced: &BTreeMap<String, Announcement>,
+) -> (Voice, Option<NameFault>) {
+    if let Some(announcement) = announced.get(tag) {
+        return match NameFault::judge(tag, &announcement.name, announcement.name_required) {
+            Some(fault) => (Voice::Mumbled, Some(fault)),
+            None => (Voice::Announced, None),
+        };
     }
     let Some(reason) = reason else {
-        return Voice::Unvoiced;
+        return (Voice::Unvoiced, None);
     };
-    match reason.relay_target() {
-        Some(target) if !announced.contains(target) => Voice::Dangling,
+    let voice = match reason.relay_target() {
+        // A redirect to a node that is not in the tree at all. A node that IS in
+        // the tree and mumbles is a defect of its own, reported on its own row —
+        // the redirect did arrive somewhere.
+        Some(target) if !announced.contains_key(target) => reason.relay().unkept(),
         _ => Voice::Silent,
-    }
+    };
+    (voice, None)
 }
 
 #[cfg(test)]
@@ -611,7 +967,16 @@ mod tests {
     use crate::scene::{ContainerNode, Rect, TextNode};
     use crate::style::LayoutStyle;
 
-    fn tags(names: &[&str]) -> BTreeSet<String> {
+    /// Tags the tree announces, each with a name that clears every rule — so a
+    /// test about *classification* never fails for a reason about naming.
+    fn tags(names: &[&str]) -> BTreeMap<String, Announcement> {
+        names
+            .iter()
+            .map(|s| ((*s).to_owned(), Announcement::named(format!("the {s}"))))
+            .collect()
+    }
+
+    fn refs(names: &[&str]) -> BTreeSet<String> {
         names.iter().map(|s| (*s).to_owned()).collect()
     }
 
@@ -711,16 +1076,196 @@ mod tests {
             vec![quiet(
                 "body",
                 Silence::layout("stacks the palette"),
-                vec![text("role.a")],
+                vec![text("role.a"), text("role.b")],
             )],
         );
-        let census = voice_census(&scene, &tags(&["root"]), &BTreeSet::new());
+        // `role.b` speaks, so the box's promise is kept and the box itself is a
+        // plain silence — and `role.a` is still found.
+        let census = voice_census(&scene, &tags(&["root", "role.b"]), &BTreeSet::new());
         assert_eq!(row(&census, "body").voice, Voice::Silent);
         assert_eq!(
             row(&census, "role.a").voice,
             Voice::Unvoiced,
             "a layout declaration is not a licence for what it holds",
         );
+    }
+
+    /// ★★★★★ R1692 — the promise a `layout` silence makes is "the children
+    /// speak", and until now nothing asked whether they did. A box over a
+    /// subtree where **nothing** is in the tree leaves that whole region
+    /// inaudible while every per-node check passes: each descendant is
+    /// correctly quiet on its own terms.
+    #[test]
+    fn a_layout_box_whose_subtree_says_nothing_is_hollow() {
+        let scene = group(
+            "root",
+            vec![quiet(
+                "body",
+                Silence::layout("stacks the palette"),
+                vec![quiet(
+                    "swatch",
+                    Silence::decorative("a colour chip"),
+                    vec![],
+                )],
+            )],
+        );
+        let census = voice_census(&scene, &tags(&["root"]), &BTreeSet::new());
+        assert_eq!(
+            row(&census, "body").voice,
+            Voice::Hollow,
+            "nothing under the box is announced, so 'the children speak' is false",
+        );
+        assert_eq!(
+            row(&census, "swatch").voice,
+            Voice::Silent,
+            "and the child is correctly quiet — which is what makes the hole \
+             invisible without this arm",
+        );
+        assert!(!census.is_total());
+
+        // Give one descendant a voice and the promise is kept.
+        let census = voice_census(&scene, &tags(&["root", "swatch"]), &BTreeSet::new());
+        assert_eq!(row(&census, "body").voice, Voice::Silent);
+        assert!(census.is_total());
+    }
+
+    /// A box with no addressable children at all promises the same thing about
+    /// nothing.
+    #[test]
+    fn a_layout_box_over_an_empty_subtree_is_hollow() {
+        let scene = group(
+            "root",
+            vec![quiet("body", Silence::layout("stacks nothing"), vec![])],
+        );
+        let census = voice_census(&scene, &tags(&["root"]), &BTreeSet::new());
+        assert_eq!(row(&census, "body").voice, Voice::Hollow);
+    }
+
+    /// A descendant that is in the tree keeps the promise even when what it
+    /// says is unusable: the box did carry a reader somewhere, and the bad name
+    /// is that node's own defect, on that node's own row. Reporting it twice
+    /// would make the census's numbers wrong.
+    #[test]
+    fn a_mumbling_child_still_keeps_the_boxs_promise() {
+        let scene = group(
+            "root",
+            vec![quiet(
+                "body",
+                Silence::layout("stacks the palette"),
+                vec![text("chip")],
+            )],
+        );
+        let mut announced = tags(&["root"]);
+        announced.insert("chip".to_owned(), Announcement::named(""));
+        let census = voice_census(&scene, &announced, &BTreeSet::new());
+        assert_eq!(row(&census, "body").voice, Voice::Silent);
+        assert_eq!(row(&census, "chip").voice, Voice::Mumbled);
+        assert_eq!(census.count(Voice::Hollow), 0);
+    }
+
+    /// ★★★★★ R1692 — a node is not a voice. The floor answers `role = Button,
+    /// name = ""` and calls that an accessible control; the census does not.
+    #[test]
+    fn a_node_with_nothing_usable_to_say_is_not_announced() {
+        let scene = group("root", vec![text("save"), text("lab.toolbar.meta")]);
+        let mut announced = tags(&["root"]);
+        announced.insert("save".to_owned(), Announcement::named("   "));
+        announced.insert(
+            "lab.toolbar.meta".to_owned(),
+            Announcement::named("lab.toolbar.meta"),
+        );
+        let census = voice_census(&scene, &announced, &BTreeSet::new());
+
+        let save = row(&census, "save");
+        assert_eq!(save.voice, Voice::Mumbled);
+        assert_eq!(save.fault, Some(NameFault::Absent));
+        assert_eq!(
+            save.name.as_deref(),
+            Some("   "),
+            "the row carries what it said"
+        );
+
+        let meta = row(&census, "lab.toolbar.meta");
+        assert_eq!(meta.voice, Voice::Mumbled);
+        assert_eq!(meta.fault, Some(NameFault::Address));
+
+        assert_eq!(census.count(Voice::Mumbled), 2);
+        assert!(!census.is_total());
+    }
+
+    /// The fault is `Some` exactly when the arm is `Mumbled` — the arm says
+    /// there is one and this says which, so a row can never claim both or
+    /// neither.
+    #[test]
+    fn a_fault_is_carried_exactly_by_the_arm_that_means_there_is_one() {
+        let scene = group("root", vec![text("good"), text("bad"), text("quiet")]);
+        let mut announced = tags(&["root", "good"]);
+        announced.insert("bad".to_owned(), Announcement::named("×"));
+        let census = voice_census(&scene, &announced, &BTreeSet::new());
+        for node in &census.nodes {
+            assert_eq!(
+                node.fault.is_some(),
+                node.voice == Voice::Mumbled,
+                "{} is {} and carries {:?}",
+                node.tag,
+                node.voice.name(),
+                node.fault,
+            );
+        }
+        assert_eq!(row(&census, "bad").fault, Some(NameFault::Wordless));
+    }
+
+    /// ★★★★ R1692 — a composite container is announced for a tag the scene
+    /// need not paint: a legend, a transcript, a radio group. It is anchored by
+    /// what it holds, which is the same exemption as being pointed at, asked
+    /// from the other end. Measured when this landed: **eight of the tree's
+    /// nine ghosts** were exactly this shape and none was a defect.
+    #[test]
+    fn a_container_is_anchored_by_the_members_that_paint() {
+        let scene = group("root", vec![text("legend.0"), text("legend.1")]);
+        let mut announced = tags(&["root", "legend.0", "legend.1"]);
+        announced.insert(
+            "legend".to_owned(),
+            Announcement::named("Series")
+                .composing("legend.0")
+                .composing("legend.1"),
+        );
+        let census = voice_census(&scene, &announced, &BTreeSet::new());
+        assert_eq!(census.count(Voice::Ghost), 0);
+        assert!(census.is_total());
+
+        // And the discriminating case: a node that composes nothing painted is
+        // still a name a reader can be sent to and never find.
+        let mut announced = tags(&["root"]);
+        announced.insert("status".to_owned(), Announcement::named("19 properties"));
+        let census = voice_census(&scene, &announced, &BTreeSet::new());
+        assert_eq!(row(&census, "status").voice, Voice::Ghost);
+    }
+
+    /// ★★★ R1692 — the third anchor, and the one that is not about geometry at
+    /// all: a live region is announced when it changes rather than reached by
+    /// navigating, so a reader can never be sent somewhere and find nothing.
+    #[test]
+    fn a_live_region_owes_no_rectangle() {
+        let scene = group("root", vec![text("a")]);
+        let mut announced = tags(&["root", "a"]);
+        announced.insert(
+            "count".to_owned(),
+            Announcement::named("19 properties").living(),
+        );
+        let census = voice_census(&scene, &announced, &BTreeSet::new());
+        assert_eq!(census.count(Voice::Ghost), 0);
+        assert!(census.is_total());
+        assert!(
+            census.nodes.iter().all(|n| n.tag != "count"),
+            "and it is not a painted row either",
+        );
+
+        // The same node without the declaration is the defect it was.
+        let mut announced = tags(&["root", "a"]);
+        announced.insert("count".to_owned(), Announcement::named("19 properties"));
+        let census = voice_census(&scene, &announced, &BTreeSet::new());
+        assert_eq!(row(&census, "count").voice, Voice::Ghost);
     }
 
     /// A redirect to a node that does not speak sends a reader nowhere, and
@@ -752,7 +1297,7 @@ mod tests {
         assert_eq!(row(&census, "said.a").voice, Voice::Ghost);
 
         // A description region another node points at is deliberately virtual.
-        let census = voice_census(&scene, &tags(&["root", "a", "said.a"]), &tags(&["said.a"]));
+        let census = voice_census(&scene, &tags(&["root", "a", "said.a"]), &refs(&["said.a"]));
         assert!(
             census.nodes.iter().all(|n| n.voice != Voice::Ghost),
             "a referred-to node is not a ghost",
@@ -766,7 +1311,7 @@ mod tests {
             "loose",
             Rect::default(),
         ))]));
-        let census = voice_census(&scene, &BTreeSet::new(), &BTreeSet::new());
+        let census = voice_census(&scene, &BTreeMap::new(), &BTreeSet::new());
         assert!(
             census.nodes.is_empty(),
             "nothing addressable, nothing to say"
@@ -811,7 +1356,109 @@ mod tests {
         for voice in Voice::ALL {
             assert_eq!(Voice::from_name(voice.name()), Some(voice));
         }
+        for fault in NameFault::ALL {
+            assert_eq!(NameFault::from_name(fault.name()), Some(fault));
+        }
         assert_eq!(SilenceKind::from_name("nonsense"), None);
+    }
+
+    /// ★★★★★ R1692 — every promise a silence makes has an arm that catches it
+    /// broken, and the one arm that promises nothing has none. A fifth
+    /// [`SilenceKind`] relaying somewhere new has to answer this.
+    #[test]
+    fn every_promise_a_silence_makes_has_an_arm_for_it_being_false() {
+        for kind in SilenceKind::ALL {
+            let relay = kind.relay();
+            assert_eq!(
+                relay.unkept().is_defect(),
+                relay.is_reachable(),
+                "{}: a relay that sends a reader somewhere can send them nowhere",
+                kind.name(),
+            );
+        }
+        assert_eq!(Relay::Nowhere.unkept(), Voice::Silent);
+    }
+
+    /// The three rules, each on the shape it exists for, and each on the shape
+    /// it must NOT fire on — the second half is what keeps a gate usable.
+    #[test]
+    fn the_name_rules_judge_mechanics_and_not_english() {
+        assert_eq!(NameFault::judge("t", "", true), Some(NameFault::Absent));
+        assert_eq!(NameFault::judge("t", " \t ", true), Some(NameFault::Absent));
+        assert_eq!(
+            NameFault::judge("lab.toolbar.meta", "lab.toolbar.meta", true),
+            Some(NameFault::Address),
+        );
+        assert_eq!(
+            NameFault::judge("chart-tab", "chart-tab", true),
+            Some(NameFault::Address),
+            "a hyphenated identifier is an identifier",
+        );
+        for glyph in ["×", "…", "☐", "⠿", "—", "+"] {
+            assert_eq!(
+                NameFault::judge("t", glyph, true),
+                Some(NameFault::Wordless),
+                "{glyph} is not something a reader is told",
+            );
+        }
+
+        // Not faults. A name that matches the visible label is CORRECT, and the
+        // tags below are words their screens paint.
+        assert_eq!(NameFault::judge("notch", "notch", true), None);
+        assert_eq!(NameFault::judge("log axis", "log axis", true), None);
+        assert_eq!(NameFault::judge("lab.toolbar.run", "Run", true), None);
+        assert_eq!(
+            NameFault::judge("page#3", "3", true),
+            None,
+            "a digit is a word",
+        );
+        assert_eq!(
+            NameFault::judge("t", "닫기", true),
+            None,
+            "so is a non-Latin one",
+        );
+        assert_eq!(
+            NameFault::judge("t", "× close", true),
+            None,
+            "a glyph beside a word is a word",
+        );
+    }
+
+    /// ★★★ R1692 — the one rule a role can excuse, and the two it cannot. A
+    /// blank table cell is what the data says; an address or a symbol is a wrong
+    /// answer wherever it is given.
+    #[test]
+    fn only_the_empty_rule_can_be_excused_by_the_role() {
+        assert_eq!(NameFault::judge("grid#0_3", "", false), None);
+        assert_eq!(
+            NameFault::judge("grid#0_3", "grid#0_3", false),
+            Some(NameFault::Address),
+        );
+        assert_eq!(
+            NameFault::judge("grid#0_3", "×", false),
+            Some(NameFault::Wordless)
+        );
+    }
+
+    /// And the exemption has to be asked for. A default that excused an empty
+    /// name would switch the rule off by omission, which is how the thing this
+    /// module measures happened in the first place.
+    #[test]
+    fn a_name_is_required_unless_something_says_otherwise() {
+        assert!(Announcement::default().name_required);
+        assert!(Announcement::named("Save").name_required);
+        assert!(!Announcement::named("").optionally_named().name_required);
+
+        let scene = group("root", vec![text("blank"), text("forgotten")]);
+        let mut announced = tags(&["root"]);
+        announced.insert(
+            "blank".to_owned(),
+            Announcement::named("").optionally_named(),
+        );
+        announced.insert("forgotten".to_owned(), Announcement::named(""));
+        let census = voice_census(&scene, &announced, &BTreeSet::new());
+        assert_eq!(row(&census, "blank").voice, Voice::Announced);
+        assert_eq!(row(&census, "forgotten").voice, Voice::Mumbled);
     }
 
     /// Each arm leaves a reader somewhere different — the justification for the

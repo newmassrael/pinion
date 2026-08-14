@@ -4487,11 +4487,7 @@ fn canvas_world(state: &LabState, ink: Ink) -> Vec<Scene> {
         children.push(quiet(
             tagged_label(
                 &format!("lab.frame.{name}.name"),
-                if gist.is_empty() {
-                    name.clone()
-                } else {
-                    format!("{name} · {gist}")
-                },
+                frame_caption(&name, gist),
                 Rect::new(
                     box_rect.x + 12,
                     box_rect.y + 3,
@@ -5468,6 +5464,22 @@ fn restart_note(form: &ConfigForm) -> String {
                 .collect::<Vec<_>>()
                 .join(", ")
         )
+    }
+}
+
+/// What a host frame's tab says. **One derivation, read by the paint and by the
+/// announcement** — R1692 found them to be two: the tab painted `host-a · core`
+/// while the group announced `host host-a — core`, so the caption declared
+/// itself that node's NAME and the node said something else. A speech-input
+/// user reading the tab aloud reaches nothing, which is what WAI-ARIA's
+/// label-in-name is about, and R1691's census could not see it: it checks that
+/// a redirect ARRIVES somewhere that speaks, not that what arrives is what was
+/// painted.
+fn frame_caption(name: &str, gist: &str) -> String {
+    if gist.is_empty() {
+        name.to_owned()
+    } else {
+        format!("{name} · {gist}")
     }
 }
 
@@ -9196,7 +9208,10 @@ fn canvas_access(state: &LabState) -> Vec<AccessNode> {
             .map_or("", |f| f.gist);
         nodes.push(
             AccessNode::new(format!("lab.frame.{name}"), AriaRole::Group)
-                .with_name(format!("host {name} — {gist}"))
+                // R1692 — the tab's own words, with the kind in front. The
+                // caption declares itself this node's name, so what a reader
+                // hears has to CONTAIN what a reader sees.
+                .with_name(format!("host {}", frame_caption(&name, gist)))
                 .with_value(AccessValue::Text(format!(
                     "{} cards",
                     members_of(state, frame).len()

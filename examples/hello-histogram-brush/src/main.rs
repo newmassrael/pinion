@@ -348,7 +348,10 @@ impl WidgetA11y for HistogramBrushView {
             .with_x_domain(X_DOMAIN.0, X_DOMAIN.1)
             .inspect(Some(scrub))
             .inspect_readout(SCATTER_RECT, &ChartStyle::default());
+        // R1692 — a transparent capture surface has no contents to be named
+        // from, so an unauthored name reaches a reader as "slider" and nothing.
         let control = AccessNode::new(<Self as WidgetCore>::tag(), AriaRole::Slider)
+            .with_name("Scrub position".to_owned())
             .with_value(AccessValue::Float {
                 value: scrub,
                 min: 0.0,

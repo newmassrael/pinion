@@ -561,6 +561,77 @@ impl AriaRole {
         }
     }
 
+    /// R1692 §5.40 — whether a region of this role that announces **nothing**
+    /// is a defect.
+    ///
+    /// The voice census
+    /// ([`NameFault::Absent`](pinion_core::voice::NameFault::Absent)) asks this
+    /// before calling an empty name a fault, because for two roles emptiness is
+    /// the answer rather than an omission:
+    ///
+    /// * a **cell** with no value is a blank cell. It is what the data says, a
+    ///   screen reader announces it as blank, and there is nothing for an author
+    ///   to repair. Measured when this landed: ten of one grid's cells are the
+    ///   empty half of an optional column.
+    /// * a **generic** container carries no semantics by definition — it is the
+    ///   role for a box that is in the tree only to hold things.
+    ///
+    /// Deliberately **stricter than WAI-ARIA's own "Accessible Name Required"
+    /// table**, which excuses far more (`group`, `list`, `toolbar`,
+    /// `navigation`, `status` …). This is the floor-not-the-target rule applied
+    /// to ourselves: a region we bothered to announce and cannot name is a
+    /// region a reader lands on and learns nothing from, whatever the spec
+    /// permits. The two exemptions above are the ones where a name would be an
+    /// invention rather than a repair.
+    ///
+    /// Written as an **exhaustive match** rather than a `matches!` negation so a
+    /// forty-third role cannot inherit an answer nobody chose: adding one stops
+    /// this compiling, here, where the question is asked.
+    #[must_use]
+    pub const fn name_required(self) -> bool {
+        match self {
+            Self::Cell | Self::GridCell | Self::Generic => false,
+            Self::Button
+            | Self::Switch
+            | Self::CheckBox
+            | Self::RadioButton
+            | Self::Slider
+            | Self::RadioGroup
+            | Self::Listbox
+            | Self::ListBoxOption
+            | Self::ComboBox
+            | Self::EditableComboBox
+            | Self::TextInput
+            | Self::List
+            | Self::ListItem
+            | Self::Tree
+            | Self::TreeItem
+            | Self::TabList
+            | Self::Tab
+            | Self::TabPanel
+            | Self::MenuBar
+            | Self::Menu
+            | Self::MenuItem
+            | Self::MenuItemCheckbox
+            | Self::Toolbar
+            | Self::Dialog
+            | Self::Tooltip
+            | Self::Grid
+            | Self::Table
+            | Self::ColumnHeader
+            | Self::RowHeader
+            | Self::Row
+            | Self::TreeGrid
+            | Self::ProgressBar
+            | Self::Status
+            | Self::Navigation
+            | Self::Link
+            | Self::SpinButton
+            | Self::Group
+            | Self::Heading => true,
+        }
+    }
+
     /// ARIA literal name as it would appear in an HTML `role`
     /// attribute. Used by introspect schema so the RPC surface and
     /// the AT surface report identical role identifiers.
@@ -1099,5 +1170,61 @@ mod tests {
         assert_eq!(AriaRole::Group.to_accesskit(), Role::Group);
         assert_eq!(AriaRole::Group.aria_name(), "group");
         assert_ne!(AriaRole::Group.to_accesskit(), Role::GenericContainer);
+    }
+
+    /// ★★★★ R1692 — which roles may announce nothing. Three, and each because
+    /// emptiness there is the answer rather than an omission.
+    ///
+    /// A counterfactual is what asked for this test: `name_required` returning
+    /// `false` for every role — which switches the whole `absent` rule off
+    /// across 216 surfaces — compiled and passed every test in this tree. The
+    /// exhaustive match handles the OTHER failure (a new role inheriting an
+    /// answer nobody chose); this handles a wrong answer for an existing one.
+    #[test]
+    fn r1692_only_three_roles_may_announce_nothing() {
+        for role in [AriaRole::Cell, AriaRole::GridCell, AriaRole::Generic] {
+            assert!(
+                !role.name_required(),
+                "{} is the empty half of real data, not a defect",
+                role.aria_name(),
+            );
+        }
+        // The interactive roles and the structural ones a reader navigates to.
+        // Deliberately wider than WAI-ARIA's own "Accessible Name Required"
+        // table, which excuses `group`, `list`, `toolbar`, `navigation` and
+        // `status`: a region we bothered to announce and cannot name is one a
+        // reader lands on and learns nothing from.
+        for role in [
+            AriaRole::Button,
+            AriaRole::Switch,
+            AriaRole::CheckBox,
+            AriaRole::Slider,
+            AriaRole::SpinButton,
+            AriaRole::TextInput,
+            AriaRole::ComboBox,
+            AriaRole::Link,
+            AriaRole::Tab,
+            AriaRole::TabPanel,
+            AriaRole::ColumnHeader,
+            AriaRole::RowHeader,
+            AriaRole::Row,
+            AriaRole::Tree,
+            AriaRole::TreeItem,
+            AriaRole::List,
+            AriaRole::ListItem,
+            AriaRole::Group,
+            AriaRole::Status,
+            AriaRole::Dialog,
+            AriaRole::Heading,
+            AriaRole::Table,
+            AriaRole::Grid,
+        ] {
+            assert!(
+                role.name_required(),
+                "{} announcing nothing tells a reader only what it is, never \
+                 which one",
+                role.aria_name(),
+            );
+        }
     }
 }

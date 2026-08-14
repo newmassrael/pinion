@@ -267,6 +267,7 @@ pub(crate) fn expand(attr: TokenStream2, item: TokenStream2) -> syn::Result<Toke
         apply_key_strategy,
         state_flags,
         access_value,
+        access_name,
         flags,
     } = args;
 
@@ -306,6 +307,7 @@ pub(crate) fn expand(attr: TokenStream2, item: TokenStream2) -> syn::Result<Toke
             role.as_ref(),
             &state_flags,
             access_value.as_ref(),
+            access_name.as_ref(),
         )
     };
     let CoreMethodBodies {
@@ -654,6 +656,7 @@ fn emit_a11y_impl(
     role: Option<&Ident>,
     state_flags: &StateFlagsConfig,
     access_value: Option<&StateFlagSource>,
+    access_name: Option<&LitStr>,
 ) -> TokenStream2 {
     if let Some(role_ident) = role {
         // R645 §5.16 — tuple state `(SliderState, f32)` etc. dispatches
@@ -741,6 +744,14 @@ fn emit_a11y_impl(
             }
         };
 
+        // R1692 §5.40 — `access_name = "..."` when the scene has no words to
+        // derive a name from. Slotted before the value chain so the emitted
+        // body reads in WAI-ARIA precedence order: what it is called, then what
+        // it holds.
+        let name_chain = access_name.map_or_else(TokenStream2::new, |name| {
+            quote! { .with_name(#name) }
+        });
+
         quote! {
             impl ::pinion_a11y::WidgetA11y for #view_ident {
                 fn access_node(
@@ -767,6 +778,7 @@ fn emit_a11y_impl(
                             <#view_ident as ::pinion_core::WidgetCore>::tag(),
                             ::pinion_a11y::AriaRole::#role_ident,
                         )
+                        #name_chain
                         #value_chain
                         #expanded_chain
                         .with_state(access_state)
@@ -873,6 +885,23 @@ struct WidgetArgs {
     /// (e.g. `Slider` Cat B retrofit when value-sidecar substrate
     /// research lands).
     access_value: Option<StateFlagSource>,
+    /// R1692 §5.40 — `access_name = "..."`, the accessible name of the derived
+    /// node, authored where the role is.
+    ///
+    /// A name usually needs no declaring: `enrich_names_from_scene` derives it
+    /// from the paint scene after layout, which keeps the label in one place
+    /// (the view function). That derivation needs something to read, and a
+    /// binding whose tag sits on a region with no words — an icon-only toggle, a
+    /// canvas, a transparent capture surface — has nothing. Before this, such a
+    /// binding could only be named by abandoning the derived `access_node`
+    /// entirely (`a11y_manual`) and rewriting the state-flag plumbing to add one
+    /// string. Measured by `scene/voice`, that is how a switch came to announce
+    /// its role and nothing else.
+    ///
+    /// An explicit name wins over the scene derivation, which is WAI-ARIA 1.2's
+    /// own name-computation precedence and the same rule `AccessNode::with_name`
+    /// already had.
+    access_name: Option<LitStr>,
     flags: HashSet<String>,
 }
 
@@ -893,6 +922,7 @@ struct WidgetArgsBuilder {
     apply_key_strategy: Option<Ident>,
     state_flags: Option<StateFlagsConfig>,
     access_value: Option<StateFlagSource>,
+    access_name: Option<LitStr>,
     flags: HashSet<String>,
 }
 
@@ -947,6 +977,9 @@ impl WidgetArgsBuilder {
                 self.access_value = Some(source);
                 Ok(())
             }
+            WidgetArg::AccessName(v) => {
+                assign(&mut self.access_name, v, "access_name", Spanned::span)
+            }
         }
     }
 
@@ -985,6 +1018,19 @@ impl WidgetArgsBuilder {
                 input_span,
                 "'access_value = ...' requires 'role = <AriaRole>' (the chain \
                  attaches to the derived access_node body)",
+            ));
+        }
+        // R1692 §5.40 — same anchor rule for `access_name`, and the same
+        // reason: with no derived body there is nothing to chain onto, and a
+        // binding that writes its own `access_node` names the node there. A
+        // declaration nothing reads is worse than an omission, because it reads
+        // as done.
+        if self.access_name.is_some() && self.role.is_none() {
+            return Err(syn::Error::new(
+                input_span,
+                "'access_name = \"...\"' requires 'role = <AriaRole>' (the chain \
+                 attaches to the derived access_node body; a binding with its \
+                 own access_node names the node there)",
             ));
         }
         // R1249 §5.45 — hosting `extra_externals` reshapes the state scene
@@ -1028,6 +1074,7 @@ impl WidgetArgsBuilder {
             apply_key_strategy: self.apply_key_strategy,
             state_flags: self.state_flags.unwrap_or_default(),
             access_value: self.access_value,
+            access_name: self.access_name,
             flags: self.flags,
         })
     }
@@ -1111,6 +1158,8 @@ enum WidgetArg {
     /// against `AccessValue::Bool(bool)` — the finaliser rejects
     /// the Variant form via `expect_bool_field`).
     AccessValue(StateFlagSource, proc_macro2::Span),
+    /// R1692 §5.40 — `access_name = "..."`.
+    AccessName(LitStr),
     Flag(String, proc_macro2::Span),
 }
 
@@ -1171,6 +1220,7 @@ impl Parse for WidgetArg {
                 "state" => Ok(Self::State(input.parse()?)),
                 "event" => Ok(Self::Event(input.parse()?)),
                 "title" => Ok(Self::Title(input.parse()?)),
+                "access_name" => Ok(Self::AccessName(input.parse()?)),
                 "renderer" => Ok(Self::Renderer(input.parse()?)),
                 "initial_size" => {
                     let content;

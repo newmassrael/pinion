@@ -2123,6 +2123,8 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("unvoiced", WireTy::Integer, None),
                 WireField::new("ghost", WireTy::Integer, None),
                 WireField::new("dangling", WireTy::Integer, None),
+                WireField::new("mumbled", WireTy::Integer, None),
+                WireField::new("hollow", WireTy::Integer, None),
             ],
         },
     },
@@ -2133,6 +2135,10 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("tag", WireTy::String, None),
                 WireField::new("voice", WireTy::String, None)
                     .accepting(&pinion_core::voice::VOICE_WIRE_NAMES),
+                WireField::new("name", WireTy::String, None).nullable(),
+                WireField::new("fault", WireTy::String, None)
+                    .accepting(&pinion_core::voice::NAME_FAULT_WIRE_NAMES)
+                    .nullable(),
                 WireField::new("reason", WireTy::String, None)
                     .accepting(&pinion_core::voice::SILENCE_KIND_WIRE_NAMES)
                     .nullable(),

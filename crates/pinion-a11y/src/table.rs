@@ -77,35 +77,57 @@ use crate::{AccessNode, AriaRole, NodeIndex};
 /// lookup is indexed rather than scanned, which is also this round's repayment
 /// of R1559's own note — that pass merged by a linear `find` per item, and a
 /// table can have far more cells than a list has items.
-pub fn attach_block_tables(nodes: &mut Vec<AccessNode>, scene: &Scene) -> usize {
-    /// One cell, collected in paint order.
-    struct Cell {
-        tag: String,
-        row_tag: String,
-        table_tag: String,
-        row: u32,
-        column: u32,
-        row_span: u16,
-        column_span: u16,
-        header: HeaderScope,
-        row_count: u32,
-        column_count: u32,
-    }
+/// R1692 — a row's accessible name, assembled from what its cells say.
+///
+/// One line, because an accessible name is one line everywhere else in this
+/// crate ([`enrich_names_from_scene`](crate::enrich_names_from_scene) collapses
+/// to the first). Empty cells contribute nothing rather than a run of
+/// separators, so a sparse row reads as its filled cells.
+fn row_name(texts: &[String]) -> String {
+    texts
+        .iter()
+        .filter_map(|text| {
+            let line = text.split('\n').next().unwrap_or(text).trim();
+            (!line.is_empty()).then_some(line)
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
 
+/// One cell, collected in paint order.
+struct Cell {
+    tag: String,
+    /// What the cell says, kept so the row it belongs to can be named from its
+    /// contents (R1692).
+    text: String,
+    row_tag: String,
+    table_tag: String,
+    row: u32,
+    column: u32,
+    row_span: u16,
+    column_span: u16,
+    header: HeaderScope,
+    row_count: u32,
+    column_count: u32,
+}
+
+/// Every placed cell of `scene`, in paint order, one entry per cell tag.
+///
+/// A multi-block cell paints one box and several paragraphs; the cell is the
+/// box, so the first paragraph that names it is the one that creates it.
+fn collect_cells(scene: &Scene) -> Vec<Cell> {
     let mut cells: Vec<Cell> = Vec::new();
     let mut seen: HashSet<String> = HashSet::new();
     scene.for_each_text_leaf(|node, _, _| {
         let Some(placement) = node.cell.as_deref() else {
             return;
         };
-        // A multi-block cell paints one box and several paragraphs; the cell
-        // is the box, so the first paragraph that names it is the one that
-        // creates it.
         if !seen.insert(placement.cell_tag.clone()) {
             return;
         }
         cells.push(Cell {
             tag: placement.cell_tag.clone(),
+            text: node.content.clone(),
             row_tag: placement.row_tag.clone(),
             table_tag: placement.table_tag.clone(),
             row: placement.row,
@@ -117,19 +139,30 @@ pub fn attach_block_tables(nodes: &mut Vec<AccessNode>, scene: &Scene) -> usize 
             column_count: placement.column_count,
         });
     });
+    cells
+}
+
+pub fn attach_block_tables(nodes: &mut Vec<AccessNode>, scene: &Scene) -> usize {
+    let cells = collect_cells(scene);
     if cells.is_empty() {
         return 0;
     }
 
     // Rows and tables, in the order their first cell was painted — which is
     // flow order, so row-major.
-    let mut rows: Vec<(String, u32, Vec<String>)> = Vec::new();
+    let mut rows: Vec<(String, u32, Vec<String>, Vec<String>)> = Vec::new();
     let mut tables: Vec<(String, u32, u32, Vec<String>)> = Vec::new();
     for cell in &cells {
         if let Some(row) = rows.iter_mut().find(|(tag, ..)| *tag == cell.row_tag) {
             row.2.push(cell.tag.clone());
+            row.3.push(cell.text.clone());
         } else {
-            rows.push((cell.row_tag.clone(), cell.row, vec![cell.tag.clone()]));
+            rows.push((
+                cell.row_tag.clone(),
+                cell.row,
+                vec![cell.tag.clone()],
+                vec![cell.text.clone()],
+            ));
         }
         if let Some(table) = tables.iter_mut().find(|(tag, ..)| *tag == cell.table_tag) {
             if !table.3.contains(&cell.row_tag) {
@@ -173,11 +206,23 @@ pub fn attach_block_tables(nodes: &mut Vec<AccessNode>, scene: &Scene) -> usize 
         touched += 1;
     }
 
-    for (tag, row, children) in rows {
+    for (tag, row, children, texts) in rows {
         let node = index.upsert(nodes, &tag, AriaRole::Row);
         node.role = AriaRole::Row;
         node.row_index = Some(row.saturating_add(1));
         node.children = children;
+        // R1692 — name from contents, computed here because the scene cannot.
+        // A document's row is painted as an EMPTY box spanning the grid line
+        // and its cells are the box's SIBLINGS, so the scene derivation has
+        // nothing under the row tag to read and every row announced itself with
+        // no name at all. WAI-ARIA gives `row` name-from-contents, and the
+        // contents are exactly the cells this pass has just collected.
+        if node.name.is_none() {
+            let said = row_name(&texts);
+            if !said.is_empty() {
+                node.name = Some(said);
+            }
+        }
         touched += 1;
     }
 
@@ -266,6 +311,51 @@ mod tests {
         assert_eq!(table.row_count, Some(2));
         assert_eq!(table.column_count, Some(2));
         assert_eq!(table.children, ["doc_tbl0r0", "doc_tbl0r1"]);
+    }
+
+    /// ★★★★ R1692 — a row announces its cells. It is painted as an EMPTY box
+    /// spanning a grid line and its cells are that box's SIBLINGS, so the scene
+    /// derivation has nothing under the row's tag to read: every document row
+    /// on this tree announced `row` and no name at all until this pass computed
+    /// one. WAI-ARIA gives `row` name-from-contents, and the contents are
+    /// exactly what this pass has already collected.
+    ///
+    /// A counterfactual asked for this test: naming a row from NO cells left
+    /// every crate test green, and only a demo two crates away went red.
+    #[test]
+    fn r1692_a_row_is_named_by_the_cells_it_holds() {
+        let scene = painted(
+            &TableFormat::new(2),
+            &[("Mon", 1, 1), ("Room A", 1, 1), ("Tue", 1, 1), ("", 1, 1)],
+        );
+        let mut nodes = Vec::new();
+        attach_block_tables(&mut nodes, &scene);
+        assert_eq!(
+            by_tag(&nodes, "doc_tbl0r0").name.as_deref(),
+            Some("Mon Room A")
+        );
+        assert_eq!(
+            by_tag(&nodes, "doc_tbl0r1").name.as_deref(),
+            Some("Tue"),
+            "an empty cell contributes nothing rather than a stray separator",
+        );
+        assert_eq!(
+            by_tag(&nodes, "doc_cel3").name,
+            None,
+            "and the empty cell itself is left alone — a blank cell is data",
+        );
+    }
+
+    /// An explicit name wins, the WAI-ARIA precedence everything else in this
+    /// crate follows: a builder that already knew what the row is called is not
+    /// overwritten by the cells.
+    #[test]
+    fn r1692_an_authored_row_name_survives_the_derivation() {
+        let scene = painted(&TableFormat::new(2), &[("Mon", 1, 1), ("Room A", 1, 1)]);
+        let mut nodes =
+            vec![AccessNode::new("doc_tbl0r0", AriaRole::Row).with_name("Monday".to_owned())];
+        attach_block_tables(&mut nodes, &scene);
+        assert_eq!(by_tag(&nodes, "doc_tbl0r0").name.as_deref(), Some("Monday"));
     }
 
     /// The half a position alone cannot carry: a merged cell announces the

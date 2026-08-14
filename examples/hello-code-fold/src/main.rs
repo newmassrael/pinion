@@ -418,12 +418,15 @@ impl WidgetA11y for FoldView {
         let (interaction, _caret) = state;
         let text = use_text_edit_state(TF_TAG).text();
         let tag = <Self as WidgetCore>::tag();
-        vec![tf_paint::text_field_a11y_node(
-            tag,
-            text,
-            *interaction,
-            focused == Some(tag),
-        )]
+        // R1692 — named here rather than left to the scene derivation. The
+        // first text inside this editor is the gutter's fold chevron, so the
+        // name a reader heard was `\u{25be}`; even without a gutter it would
+        // have been the first line of the buffer, which is this control's
+        // VALUE and not what it is called.
+        vec![
+            tf_paint::text_field_a11y_node(tag, text, *interaction, focused == Some(tag))
+                .with_name("Source"),
+        ]
     }
 }
 

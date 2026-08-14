@@ -487,7 +487,7 @@ fn view(min_contrast: f32, _frame: &Frame) -> Scene {
                 .with_size_px(STATUS_FONT_PX)
                 .with_fg(on_surface_muted),
         )
-        .with_tag("dev.readout")
+        .with_tag(READOUT_TAG)
         .with_layout(LayoutStyle::new().with_absolute_position(GRID_X, WIN_H - 30)),
     ));
 
@@ -501,6 +501,10 @@ fn view(min_contrast: f32, _frame: &Frame) -> Scene {
 /// A cell's paint tag, `dev.cell.{r}.{c}`. A plain `String`: the scene's tag
 /// type is `Cow<'static, str>`, so an owned per-cell tag needs no leak and no
 /// cache — the substrate already carries the ownership.
+/// The status line under the grid — the one region outside the cells that this
+/// binding tags, and the bottom of the extent the group announces (R1692).
+const READOUT_TAG: &str = "dev.readout";
+
 fn cell_tag(r: usize, c: usize) -> String {
     format!("dev.cell.{r}.{c}")
 }
@@ -554,8 +558,18 @@ impl WidgetCore for DeviationGridView {
 impl WidgetA11y for DeviationGridView {
     fn access_node(state: &f32, _focused: Option<&str>) -> Vec<AccessNode> {
         vec![
+            // R1692 — the extent this group stands for, named rather than
+            // implied. Its tag is the External's and the view paints no region
+            // carrying it, so before this the node had no rectangle a magnifier
+            // could follow and `scene/voice` called it a ghost: a name with
+            // nothing behind it. Tagging the root CONTAINER would have given it
+            // one and made a full-window pointer target its own children cover,
+            // which the pointer-reach gate refuses and is right to.
             AccessNode::new(GRID_TAG, AriaRole::Group)
                 .with_name("Deviation grid")
+                .with_bounds_union_tag(cell_tag(0, 0))
+                .with_bounds_union_tag(cell_tag(ROWS - 1, COLS - 1))
+                .with_bounds_union_tag(READOUT_TAG.to_owned())
                 .with_value(AccessValue::Text(format!(
                     "{ROWS} by {COLS} deviations from baseline, worst cell contrast {state:.1} to 1"
                 ))),

@@ -59,6 +59,8 @@ from rpc_verify import (  # noqa: E402
     access_node_by_tag,
     assert_eq,
     run_demo,
+    voice_defects,
+    voice_partition_sum,
     voice_rows,
 )
 
@@ -123,7 +125,7 @@ def body() -> None:
             f"one — the census is measuring something else"
         )
         assert_eq(
-            counts["announced"] + counts["silent"] + counts["unvoiced"] + counts["dangling"],
+            voice_partition_sum(census),
             census["total"],
             "★ the partition covers the painted population exactly — a region "
             "in no arm would be one nobody had to decide about",
@@ -135,7 +137,7 @@ def body() -> None:
 
         # ── (B) total ───────────────────────────────────────────────
         rows = voice_rows(census)
-        holes = [t for t, r in rows.items() if r["voice"] in ("unvoiced", "ghost", "dangling")]
+        holes = [r["tag"] for r in voice_defects(census)]
         assert_eq(
             holes,
             [],

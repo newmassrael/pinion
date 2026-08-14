@@ -64,6 +64,10 @@ const THEME_TAG: &str = "app";
 /// registration tag — the oracle is addressed over RPC as `/external/<field>`.
 const ORACLE_TAG: &str = "memory_image";
 
+/// The painted tile itself — the region the group's announced extent unions
+/// over, since nothing in the scene carries [`ORACLE_TAG`] (R1692).
+const IMAGE_TAG: &str = "tile_image";
+
 /// The producer store key the image is registered under. The `Scene::Image`
 /// source is the `MEMORY_SCHEME` joined with this — see [`IMAGE_SOURCE`].
 const MEMORY_KEY: &str = "tile";
@@ -201,7 +205,7 @@ fn view(present: bool, palette: Palette, _frame: &Frame) -> Scene {
             Rect::default(),
             ImageStyle::default().with_fit(pinion_core::style::Fit::Fill),
         )
-        .with_tag("tile_image")
+        .with_tag(IMAGE_TAG)
         .with_layout(
             LayoutStyle::new()
                 .with_absolute_position(0, 0)
@@ -507,8 +511,13 @@ impl WidgetA11y for MemoryImageView {
             "no image registered".to_owned()
         };
         vec![
+            // R1692 — the extent this group stands for. Its tag is the oracle
+            // External's and the view paints no region carrying it, so the node
+            // had no rectangle and `scene/voice` called it a ghost: a name with
+            // nothing behind it.
             AccessNode::new(ORACLE_TAG, AriaRole::Group)
                 .with_name("Producer memory image")
+                .with_bounds_union_tag(IMAGE_TAG)
                 .with_value(AccessValue::Text(value)),
         ]
     }

@@ -487,6 +487,12 @@ fn view_preset_bar(theme: &Theme) -> Scene {
 
     Scene::Container(
         ContainerNode::new(vec![status_line, active_line])
+            // R1692 — the group this binding announces is this bar. Its tag was
+            // the extra External's and nothing carried it in the paint scene, so
+            // `scene/voice` called the node a ghost: a name a reader can be
+            // handed with no region behind it, and no rectangle for a magnifier
+            // to follow.
+            .with_tag(PRESETS_TAG)
             .with_style(BoxStyle::filled(
                 theme.resolve(ColorRole::SurfaceContainerLow),
             ))

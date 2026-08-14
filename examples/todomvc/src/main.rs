@@ -45,7 +45,7 @@ use pinion_core::external::{
     ThreadOwnership,
 };
 use pinion_core::reactive::{Effect, Owner, Signal};
-use pinion_core::scene::{ContainerNode, Rect, ScrollNode, TextNode};
+use pinion_core::scene::{ContainerNode, Rect, ScrollNode, TextNode, TextRole};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
@@ -2012,11 +2012,16 @@ fn build_todos_list(
         } else {
             (TOGGLE_GLYPH_UNCHECKED, toggle_style_active.clone())
         };
-        let toggle_glyph = Scene::Text(TextNode::styled(
-            toggle_glyph_str,
-            Rect::default(),
-            toggle_style_for_row,
-        ));
+        let toggle_glyph = Scene::Text(
+            TextNode::styled(toggle_glyph_str, Rect::default(), toggle_style_for_row)
+                // R1692 — the glyph is the checkbox's ink, not anybody's name.
+                // It is the first text in the row in DFS order, so the row
+                // itself announced `☐` to a screen reader for the whole life of
+                // this demo: "ballot box" where the entry text should be. The
+                // toggle keeps its own name from its `aria_label`, which is
+                // explicit and wins over contents.
+                .with_role(TextRole::Presentational),
+        );
         let toggle_button = Scene::Container(
             ContainerNode::new(vec![toggle_glyph])
                 .with_tag(toggle_tag)

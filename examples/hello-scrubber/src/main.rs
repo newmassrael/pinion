@@ -388,6 +388,12 @@ impl WidgetA11y for ScrubberView {
                 .with_name(status.clone())
                 .with_value(AccessValue::Text(status)),
             AccessNode::new(SCRUB_TAG, AriaRole::Slider)
+                // R1692 — a `capture_surface` is a transparent `Scene::Box`, so
+                // it has no contents to be named from and the scene enrichment
+                // (which indexes containers) cannot reach it either. This tab
+                // stop announced its role and nothing else: a reader landed on
+                // "slider" and was never told of what.
+                .with_name("Playback position".to_owned())
                 .with_value(AccessValue::Float {
                     value: clock.position(),
                     min: 0.0,

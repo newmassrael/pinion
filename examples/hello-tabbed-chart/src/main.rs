@@ -22,7 +22,7 @@
 //!
 //! ## What it proves
 //!
-//! A [`view_dock_surface`] hosts a horizontal split: the LEFT pane is a `Tabs`
+//! A [`view_dock_surface_chrome`] hosts a horizontal split: the LEFT pane is a `Tabs`
 //! well stacking a **chart tab** (a `LineChart::build_fill`, tag `CHART_TAG`) and
 //! a **notes tab**; the RIGHT pane is a readout that mirrors the seam's live state
 //! (the measured chart size, the active tab, the split ratio) as scene data (§2
@@ -65,8 +65,8 @@ use pinion_core::widget_core::{ExtraExternal, PrimarySurface};
 use pinion_core::{External, Frame, Owner, Scene, Signal, WidgetCore, use_pane_viewport_size};
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use pinion_widget_paint::dock::{
-    DockNode, DockReorganizer, DockSplitState, DockTopology, TabWellExternal,
-    dock_tablist_access_nodes, dock_tablist_focus_target, view_dock_surface,
+    DockNode, DockPanelChrome, DockReorganizer, DockSplitState, DockTopology, TabWellExternal,
+    dock_tablist_access_nodes, dock_tablist_focus_target, view_dock_surface_chrome,
 };
 use pinion_widget_paint::splitter::{SplitterExternal, SplitterOrientation};
 use std::borrow::Cow;
@@ -336,7 +336,20 @@ fn view(_state: (), _frame: &Frame) -> Scene {
     // empties; the fallback keeps the view total over the universal Option state.
     let topology = use_topology_signal().get().unwrap_or_else(build_topology);
     let active = topology.tab_well_active(WELL).unwrap_or(0);
-    let workspace = view_dock_surface(
+    // R1692 — a panel's id is how the program addresses it; a title is what a
+    // person is told it is. With no title provider the walker paints the id, so
+    // the tab strip read `chart-tab` and the accessibility tree announced the
+    // panel by its own address — which `scene/voice` reports as the `address`
+    // name fault, the same defect whether a reader sees it or hears it.
+    let chrome = DockPanelChrome::default().with_title(|panel_id| {
+        Cow::Borrowed(match panel_id {
+            CHART_PANEL => "Chart",
+            NOTES_PANEL => "Notes",
+            READOUT_PANEL => "Readout",
+            other => other,
+        })
+    });
+    let workspace = view_dock_surface_chrome(
         &topology,
         |panel_id| match panel_id {
             CHART_PANEL => chart_pane_content(&theme),
@@ -358,6 +371,7 @@ fn view(_state: (), _frame: &Frame) -> Scene {
         },
         // No in-flight reorganize drag: no panel shows a drop-zone overlay.
         |_panel_id| None,
+        &chrome,
         &theme,
     );
     // The dock surface fills the window on the theme Surface (so panel gaps sit on

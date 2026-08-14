@@ -86,15 +86,20 @@ pub fn enrich_names_from_scene(nodes: &mut [AccessNode], scene: &Scene) -> usize
         // pixels cannot disagree about what a panel is called even when the label is
         // app state the a11y walker never sees (R1318 display titles).
         let lookup = node.name_from_tag.as_deref().unwrap_or(&node.tag);
-        let Some(container) = index.get(lookup).copied() else {
+        let Some(painted) = index.get(lookup).copied() else {
             continue;
         };
-        if let Some(label) = container.aria_label.as_deref() {
-            node.name = Some(first_line(label).to_string());
-            filled += 1;
-            continue;
+        if let Scene::Container(container) = painted {
+            if let Some(label) = container.aria_label.as_deref() {
+                node.name = Some(first_line(label).to_string());
+                filled += 1;
+                continue;
+            }
         }
-        if let Some(text) = walk_for_text(container) {
+        // R1692 — one call for both shapes. A container asks its descendants; a
+        // tagged text node IS its own first leaf, and the presentational check
+        // holds there too, so a tag on a decoration glyph still names nothing.
+        if let Some(text) = first_text_leaf(painted) {
             node.name = Some(first_line(&text).to_string());
             filled += 1;
         }
@@ -109,18 +114,46 @@ pub fn enrich_names_from_scene(nodes: &mut [AccessNode], scene: &Scene) -> usize
 /// the per-node search had by construction (it returned at its first hit). A
 /// duplicate tag is a binding bug either way; this preserves which one wins so
 /// the change is a cost change and not a behaviour change.
-fn tag_index(scene: &Scene) -> HashMap<&str, &pinion_core::scene::ContainerNode> {
-    fn visit<'s>(
-        scene: &'s Scene,
-        out: &mut HashMap<&'s str, &'s pinion_core::scene::ContainerNode>,
-    ) {
+/// R1692 — a tagged **text** node is indexed too, and names itself from its own
+/// content.
+///
+/// Until R1692 only containers were, so a node whose tag sits on a `Scene::Text`
+/// could not be named at all: the lookup missed and the name stayed `None`,
+/// which reaches a reader as a role and nothing else. That is not a rare shape —
+/// a document's text blocks and a table's cells are tagged text — and it was
+/// invisible because nothing asked what a name *said* until `scene/voice` grew
+/// [`NameFault`](pinion_core::voice::NameFault).
+///
+/// A container still wins the tag when both carry it: it is the richer answer
+/// (an `aria_label` override, or a name assembled from several runs), so
+/// indexing text can only add names and never replace a better one.
+fn tag_index(scene: &Scene) -> HashMap<&str, &Scene> {
+    fn record<'s>(tag: &'s str, node: &'s Scene, out: &mut HashMap<&'s str, &'s Scene>) {
+        match out.entry(tag) {
+            std::collections::hash_map::Entry::Vacant(slot) => {
+                slot.insert(node);
+            }
+            std::collections::hash_map::Entry::Occupied(mut slot) => {
+                if matches!(node, Scene::Container(_)) && !matches!(slot.get(), Scene::Container(_))
+                {
+                    slot.insert(node);
+                }
+            }
+        }
+    }
+    fn visit<'s>(scene: &'s Scene, out: &mut HashMap<&'s str, &'s Scene>) {
         match scene {
             Scene::Container(c) => {
                 if let Some(tag) = c.tag.as_deref() {
-                    out.entry(tag).or_insert(c);
+                    record(tag, scene, out);
                 }
                 for child in &c.children {
                     visit(child, out);
+                }
+            }
+            Scene::Text(t) => {
+                if let Some(tag) = t.tag.as_deref() {
+                    record(tag, scene, out);
                 }
             }
             // R1536 §5.40 §5.45 — a scroll is **transparent** to a tag walk,
@@ -181,22 +214,6 @@ fn first_text_leaf(scene: &Scene) -> Option<String> {
 /// in `aria-description` (carry).
 fn first_line(s: &str) -> &str {
     s.split('\n').next().unwrap_or(s)
-}
-
-/// Re-entry helper that walks the children slice of a borrowed
-/// container without forcing it through `Scene::Container`.
-/// [`ContainerNode`](pinion_core::scene::ContainerNode) does not implement `Clone` (its `ExternalNode`
-/// children carry a `Box<dyn External>` with no generic clone
-/// strategy per scene.rs), so [`first_text_leaf`] cannot be reached
-/// directly from a `&ContainerNode` borrow — this walks the
-/// children slice in DFS pre-order and stops at the first match.
-fn walk_for_text(container: &pinion_core::scene::ContainerNode) -> Option<String> {
-    for child in &container.children {
-        if let Some(found) = first_text_leaf(child) {
-            return Some(found);
-        }
-    }
-    None
 }
 
 /// R1543 §5.40 §5.39 — populate `nodes[*].access_key` from the mnemonics
@@ -492,12 +509,59 @@ mod tests {
 
     #[test]
     fn walk_for_text_visits_in_order() {
-        let container = ContainerNode::new(vec![
+        let container = Scene::Container(ContainerNode::new(vec![
             Scene::Container(ContainerNode::new(vec![])),
             Scene::Text(TextNode::new("First".to_string(), Rect::default())),
             Scene::Text(TextNode::new("Second".to_string(), Rect::default())),
-        ]);
-        assert_eq!(walk_for_text(&container).as_deref(), Some("First"));
+        ]));
+        assert_eq!(first_text_leaf(&container).as_deref(), Some("First"));
+    }
+
+    /// ★★★★ R1692 — a tag on a **text** node names itself. Until this landed
+    /// the index held containers only, so such a node was unreachable by the
+    /// enrichment and announced its role with no name at all — a document's
+    /// text blocks and a table's cells are exactly this shape.
+    #[test]
+    fn r1692_a_tagged_text_node_names_itself() {
+        let scene = Scene::Container(ContainerNode::new(vec![Scene::Text(
+            TextNode::new("Thursday".to_string(), Rect::default()).with_tag("cell"),
+        )]));
+        let mut nodes = vec![AccessNode::new("cell", AriaRole::Cell)];
+        assert_eq!(enrich_names_from_scene(&mut nodes, &scene), 1);
+        assert_eq!(nodes[0].name.as_deref(), Some("Thursday"));
+    }
+
+    /// And the presentational declaration still holds there: a tag on a
+    /// decoration glyph names nothing, rather than naming the glyph.
+    #[test]
+    fn r1692_a_tagged_decoration_glyph_still_names_nothing() {
+        use pinion_core::scene::TextRole;
+        let scene = Scene::Container(ContainerNode::new(vec![Scene::Text(
+            TextNode::new("\u{283F}".to_string(), Rect::default())
+                .with_tag("grip")
+                .with_role(TextRole::Presentational),
+        )]));
+        let mut nodes = vec![AccessNode::new("grip", AriaRole::Button)];
+        assert_eq!(enrich_names_from_scene(&mut nodes, &scene), 0);
+        assert_eq!(nodes[0].name, None);
+    }
+
+    /// A container carrying the same tag wins it, so indexing text can only
+    /// add names and never replace a richer one — including when the text is
+    /// painted FIRST and would otherwise have taken the slot.
+    #[test]
+    fn r1692_a_container_still_wins_a_tag_a_text_node_also_carries() {
+        let scene = Scene::Container(ContainerNode::new(vec![
+            Scene::Text(TextNode::new("glyph".to_string(), Rect::default()).with_tag("both")),
+            Scene::Container(
+                ContainerNode::new(vec![])
+                    .with_tag("both")
+                    .with_aria_label("Save the document"),
+            ),
+        ]));
+        let mut nodes = vec![AccessNode::new("both", AriaRole::Button)];
+        enrich_names_from_scene(&mut nodes, &scene);
+        assert_eq!(nodes[0].name.as_deref(), Some("Save the document"));
     }
 
     #[test]

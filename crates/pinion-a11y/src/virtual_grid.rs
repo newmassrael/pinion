@@ -857,7 +857,14 @@ pub fn attach_corner_button(
     // Leading, because the corner sits left of the first column header — the
     // order the band is painted in and the order an AT reads.
     header_row.children.insert(0, corner_tag.clone());
-    let mut corner = AccessNode::new(corner_tag, AriaRole::ColumnHeader);
+    // R1692 — the corner is a `columnheader`, and a column header with no name
+    // is a column a reader cannot identify. It has no text of its own to be
+    // named from either: what it paints is the select-all mark, and that glyph
+    // is declared presentational precisely so it is not read as a name. So the
+    // name is authored here, once, for every grid topology — and it is what the
+    // column HEADS rather than what the control inside it does, which the child
+    // already says.
+    let mut corner = AccessNode::new(corner_tag, AriaRole::ColumnHeader).with_name("Row selection");
     corner.children.push(toggle_tag.clone());
     let mut toggle = AccessNode::new(toggle_tag, AriaRole::CheckBox).with_name("Select all");
     // `checked` and `mixed` are separate axes, exactly as in the DOM: the mixed
@@ -1540,6 +1547,10 @@ mod tests {
                 .expect("the corner node");
             assert_eq!(corner.role, AriaRole::ColumnHeader);
             assert_eq!(corner.children, vec![toggle_tag.clone()]);
+            // R1692 — and it says which column it is. The mark it paints is
+            // declared presentational, so there is nothing to derive a name
+            // from and an unnamed `columnheader` is what a reader gets.
+            assert_eq!(corner.name.as_deref(), Some("Row selection"));
             let toggle = nodes
                 .iter()
                 .find(|n| n.tag == toggle_tag)
