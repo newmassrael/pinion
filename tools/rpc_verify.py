@@ -1592,6 +1592,18 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
 
         Prints unconditionally, defects or none. The debt this closes was
         created by a surface that answered and was never asked.
+
+        ## What it does NOT see, stated because nothing checks it
+
+        **The opening screen only.** Every one of the 42 defects this found was
+        already on screen at boot; a region that exists only after an act — a
+        toast, a dialog, a row a chip added — is invisible here. That is not
+        hypothetical: R1691 measured its own screen's transient message as
+        inaudible, and only a DRIVEN act found it. Re-running the census at
+        teardown would double the coverage for about ten lines, and is filed as
+        `debt-the-voice-gate-judges-only-the-opening-screen` rather than done
+        here, because landing it means re-sweeping every demo to find the ones
+        that legitimately end in a state this would newly refuse.
         """
         if self.measuring:
             return  # the producer is not judged by the file it produces
