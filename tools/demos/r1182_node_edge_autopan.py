@@ -10,20 +10,24 @@ clock, exactly like the caret blink) — so the *logic* is headlessly
 reproducible by advancing the clock (`tf.tick(dt)`), and the live
 continuous-repaint comes free from the same non-at-rest path the caret uses.
 
-Because the headless backend ticks animations on every paint (each drag-march
-frame that lands in the rim already advances the pan), the assertions here are
-directional / net (against a seeded offset) and the ride invariant is read
-through back-to-back read-only queries (no mutation between them, so no tick
-sneaks in) rather than exact per-tick deltas.
+★★★★★ R1688.1 — the paragraph that used to be here was WRONG, and it is worth
+keeping the correction where the claim was rather than only at its call site.
+It said the ride invariant is read "through back-to-back read-only queries (no
+mutation between them, so no tick sneaks in)". Two `query` calls are two RPC
+round-trips; the pan advances on WALL TIME (measured: +796 px across one second
+of sleep, with `scene/set_fps 0` in force); and reading the two paths in the
+other order changes the computed ride by 27 px. The assertions here are
+directional / net against a seeded offset, and the ride is read from the PAINT
+in a single call — see `painted_x` and section (C).
 
 AI-first (§2 #2 / #7): the whole gesture is RPC-observable — `scene/drag`
 holds a node mid-drag (`phase="begin"`), the animation clock advances via
-`scene/animate`, and `query viewport.{x,y}` + `query node.<id>.{x,y}` read the
-pan and the node's ride, with no physical mouse and no wall-clock sleep.
+`scene/animate`, and `query viewport.{x,y}` + `scene/snapshot` read the pan and
+the node's ride, with no physical mouse and no wall-clock sleep.
 
   (A) boot + the R881/R882 drag-to-pan foundation still pans (middle + Space).
   (B) a node held at the RIGHT rim auto-pans +x and the node follows.
-  (C) the node rides the viewport 1:1 (node.x - viewport.x is invariant).
+  (C) the node rides the viewport 1:1 (it does not MOVE ON SCREEN).
   (D) release stops the auto-pan (the driver goes at-rest; node frozen too).
   (E) a node held at the CENTRE does not auto-pan (no rim = at rest).
   (F) each rim pans the correct axis / direction (left / top / bottom).
