@@ -39120,6 +39120,60 @@
         "permanent list."
       ]
     },
+    "R1686.1": {
+      "decision_summary": "R1686.1 — bump the statechart engine to upstream main.\n\nFour commits, and one of them changes what a document this tree writes MEANS:\n`datamodel` now selects a language rather than decorating the header, typed so\nan unsupported value cannot reach code generation, with W3C SCXML B.1 enforced\nper sub-section. Upstream's own message records that twenty documents declared\n`null` or `lua` while using value expressions.\n\nEvery one of this tree's twelve widget statecharts declares `datamodel=\"null\"`,\nso that enforcement is aimed squarely at them. None uses a value expression —\nthe one `<assign>` this tree contains is a sentence in a comment explaining why\nthere is none — and the bump is what proves it rather than the grep that\nsuggested it: `sce-build` and `sce-rust-runtime` recompiled at the new rev and\nthe generated state machines still build and pass.\n\nThe second commit reaches `log` through the runtime so a consumer declares only\nSCE, which changes the Rust template every generated machine is emitted from.\nThat is the one that touches this tree's own output, and it is covered by the\nsame run.\n\nThe other two are upstream's own build and mutation-verdict infrastructure.",
+      "changes_bullets": [
+        "`vendor/sce` gitlink, both `Cargo.toml` revs and `Cargo.lock` move together",
+        "to `7e46a5f8` — the triple pin `tools/pin_sync.py --check-dual-pin` enforces."
+      ],
+      "verification_bullets": [
+        "`pin_sync.py --check-dual-pin`: green, and it caught the intermediate state —",
+        "`git submodule update --remote` moves the WORKTREE and leaves the index at the",
+        "old rev, so the gitlink needs staging before the three agree.",
+        "`cargo test -p pinion-runtime -p pinion-core` at the new rev: green. Confirmed",
+        "from the build log that `sce-build` and `sce-rust-runtime` compiled at",
+        "`7e46a5f8` rather than the cached old rev — which is the whole point of the",
+        "triple pin, since a manifest left behind builds the previous engine and the run",
+        "proves nothing.",
+        "Aimed at what upstream moved: the twelve `datamodel=\"null\"` documents this tree",
+        "owns, against a release that now enforces W3C B.1 per sub-section."
+      ],
+      "impact_refs": [
+        "5.4",
+        "5.14"
+      ],
+      "carry_forward_bullets": [
+        "None. The statechart-widget demos are running as this lands; a red there is",
+        "paid off as its own round, which is the standing rule for a signal that arrives",
+        "after the local gates that authorise a push."
+      ],
+      "publishable_decision_summary": "R1686.1 — bump the statechart engine to upstream main.\n\nFour commits, and one of them changes what a document this tree writes MEANS:\n`datamodel` now selects a language rather than decorating the header, typed so\nan unsupported value cannot reach code generation, with W3C SCXML B.1 enforced\nper sub-section. Upstream's own message records that twenty documents declared\n`null` or `lua` while using value expressions.\n\nEvery one of this tree's twelve widget statecharts declares `datamodel=\"null\"`,\nso that enforcement is aimed squarely at them. None uses a value expression —\nthe one `<assign>` this tree contains is a sentence in a comment explaining why\nthere is none — and the bump is what proves it rather than the grep that\nsuggested it: `sce-build` and `sce-rust-runtime` recompiled at the new rev and\nthe generated state machines still build and pass.\n\nThe second commit reaches `log` through the runtime so a consumer declares only\nSCE, which changes the Rust template every generated machine is emitted from.\nThat is the one that touches this tree's own output, and it is covered by the\nsame run.\n\nThe other two are upstream's own build and mutation-verdict infrastructure.",
+      "publishable_changes_bullets": [
+        "`vendor/sce` gitlink, both `Cargo.toml` revs and `Cargo.lock` move together",
+        "to `7e46a5f8` — the triple pin `tools/pin_sync.py --check-dual-pin` enforces."
+      ],
+      "publishable_verification_bullets": [
+        "`pin_sync.py --check-dual-pin`: green, and it caught the intermediate state —",
+        "`git submodule update --remote` moves the WORKTREE and leaves the index at the",
+        "old rev, so the gitlink needs staging before the three agree.",
+        "`cargo test -p pinion-runtime -p pinion-core` at the new rev: green. Confirmed",
+        "from the build log that `sce-build` and `sce-rust-runtime` compiled at",
+        "`7e46a5f8` rather than the cached old rev — which is the whole point of the",
+        "triple pin, since a manifest left behind builds the previous engine and the run",
+        "proves nothing.",
+        "Aimed at what upstream moved: the twelve `datamodel=\"null\"` documents this tree",
+        "owns, against a release that now enforces W3C B.1 per sub-section."
+      ],
+      "publishable_impact_refs": [
+        "5.4",
+        "5.14"
+      ],
+      "publishable_carry_forward_bullets": [
+        "None. The statechart-widget demos are running as this lands; a red there is",
+        "paid off as its own round, which is the standing rule for a signal that arrives",
+        "after the local gates that authorise a push."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
