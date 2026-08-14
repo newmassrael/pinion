@@ -315,6 +315,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc, MethodWindow)] = &[
     ("scene/tick", MethodOcc::Mutate, MethodWindow::Scope),
     ("scene/type", MethodOcc::Read, MethodWindow::Scope),
     ("scene/unsubscribe", MethodOcc::Read, MethodWindow::Scope),
+    ("scene/voice", MethodOcc::Read, MethodWindow::Scope),
     ("scene/waitFor", MethodOcc::Read, MethodWindow::Path),
     ("scene/wheel", MethodOcc::Read, MethodWindow::Scope),
     ("scene/window_declare", MethodOcc::Read, MethodWindow::Scope),

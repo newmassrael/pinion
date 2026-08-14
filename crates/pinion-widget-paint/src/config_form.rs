@@ -42,13 +42,14 @@
 //! carries the key, always, because [`row_access_nodes`] derives them from the
 //! same geometry the paint came from.
 
-use pinion_a11y::{AccessNode, AccessValue, AriaRole, describedby_region};
+use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, describedby_region};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, Border, BoxStyle, Color, FlexDirection, JustifyContent, LayoutStyle, Size,
     TextOverflow, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
+use pinion_core::voice::Silence;
 use pinion_core::widgets::config_form::{
     Applies, ConfigDefect, ConfigField, ConfigForm, FieldType,
 };
@@ -714,7 +715,16 @@ fn applies_ink(applies: Applies, theme: &Theme) -> Color {
     }
 }
 
-fn badge(text: &str, ink: Color, theme: &Theme, tag: Option<String>) -> Scene {
+/// A read-out chip beside a row's key.
+///
+/// ★★ R1691 — a tagged badge declares its own **silence**. Its words are
+/// already announced, whole, as the name of the row's description region (the
+/// `said` node `describedby_region` builds), so a node here would read the
+/// applies-scope and the defect class out twice on every focus move — the
+/// duplicate the reference toolkit produces by construction for every label
+/// bound to a field, and which it offers nothing to suppress. Declaring it is
+/// what keeps `scene/voice` from counting it as forgotten.
+fn badge(text: &str, ink: Color, theme: &Theme, tag: Option<(String, Silence)>) -> Scene {
     let label = Scene::Text(TextNode::styled(
         text.to_owned(),
         Rect::default(),
@@ -746,8 +756,9 @@ fn badge(text: &str, ink: Color, theme: &Theme, tag: Option<String>) -> Scene {
                 // class, in a crate, so every consumer of this painter had it.
                 .with_pointer_transparent(true),
         );
-    if let Some(tag) = tag {
+    if let Some((tag, silence)) = tag {
         node = node.with_tag(tag);
+        node.layout.silence = Some(silence);
     }
     Scene::Container(node)
 }
@@ -873,11 +884,15 @@ fn view_header(
             theme,
             None,
         ));
+        let said = format!("{tag_prefix}.said.{}", row.key);
         header.push(badge(
             field.applies().wire(),
             applies_ink(field.applies(), theme),
             theme,
-            Some(format!("{tag_prefix}.applies.{}", row.key)),
+            Some((
+                format!("{tag_prefix}.applies.{}", row.key),
+                Silence::name_of(said.clone()),
+            )),
         ));
         if let Some(defect) = worst {
             let ink = if defect.blocks() {
@@ -889,7 +904,10 @@ fn view_header(
                 defect.wire(),
                 ink,
                 theme,
-                Some(format!("{tag_prefix}.defect.{}", row.key)),
+                Some((
+                    format!("{tag_prefix}.defect.{}", row.key),
+                    Silence::name_of(said),
+                )),
             ));
         }
         Scene::Container(
@@ -1379,13 +1397,18 @@ pub fn row_access_nodes(
         for defect in defects.iter().filter(|d| d.key() == row.key) {
             said.push(defect.sentence());
         }
+        // ★★★ R1691 — the role is the SHAPE's, not `TextInput` for everything.
+        // A boolean row was announced as a text box for its whole life: a
+        // reader was told to type into a control that only toggles, which is
+        // the accessibility half of a defect a person reported about its ink.
         let control = AccessNode::new(
             format!("{tag_prefix}.control.{}", row.key),
-            AriaRole::TextInput,
+            control_role(field.shape()),
         )
         .with_name(field.key())
         .with_bounds(row.control)
-        .with_value(AccessValue::Text(field.value().to_owned()));
+        .with_state(control_state(field))
+        .with_value(control_value(field));
         nodes.extend(describedby_region(
             control,
             format!("{tag_prefix}.said.{}", row.key),
@@ -1402,8 +1425,144 @@ pub fn row_access_nodes(
                 .with_name(format!("remove {}", field.key()))
                 .with_bounds(row.remove),
         );
+        // ★★★ R1691 — every affordance INSIDE the control, from the list the
+        // painter and the hit test already share. A stepper, a checkbox, an
+        // option chip and a list element are all pressable and all of them were
+        // silent: measured on the reference tool's first screen, 15 of the 136
+        // regions it painted without announcing were these.
+        //
+        // Derived from `row.parts` rather than re-enumerated, so a shape that
+        // grows an affordance gets a voice in the same act it gets a rectangle.
+        for (suffix, seat) in &row.parts {
+            nodes.push(part_access_node(tag_prefix, field, suffix, *seat));
+        }
+    }
+    // The chips that offer a key the form does not hold yet.
+    for (key, seat) in &geometry.chips {
+        nodes.push(
+            AccessNode::new(format!("{tag_prefix}.add.{key}"), AriaRole::Button)
+                .with_name(format!("add {key}"))
+                .with_bounds(*seat),
+        );
     }
     nodes
+}
+
+/// The role a row's control takes, from the shape of what it holds.
+///
+/// A control announced as the wrong kind is worse than one announced with a
+/// poor name: a reader is told what they can *do*, and "text box" on a control
+/// that only toggles is an instruction that fails.
+fn control_role(shape: &FieldType) -> AriaRole {
+    match shape {
+        FieldType::Boolean => AriaRole::CheckBox,
+        FieldType::Integer { .. } => AriaRole::SpinButton,
+        // Exactly one of a fixed set — the radio group's own semantics, which
+        // is what tells a reader that picking one un-picks another.
+        FieldType::Choice { .. } => AriaRole::RadioGroup,
+        // Any subset, so the members are independent checkboxes and the
+        // container is a plain group.
+        FieldType::Flags { .. } => AriaRole::Group,
+        FieldType::List { .. } => AriaRole::List,
+        FieldType::Text | FieldType::Formatted { .. } => AriaRole::TextInput,
+    }
+}
+
+/// The value a row's control announces.
+///
+/// A boolean announces the BIT rather than the word, because `aria-checked` is
+/// what a reader's toggle command reads; everything else announces its text.
+fn control_value(field: &ConfigField) -> AccessValue {
+    match field.shape() {
+        FieldType::Boolean => AccessValue::Bool(field.value().trim() == "true"),
+        _ => AccessValue::Text(field.value().to_owned()),
+    }
+}
+
+/// The state a row's control announces — the checked bit for a boolean, so the
+/// role and the state agree.
+fn control_state(field: &ConfigField) -> AccessState {
+    let mut state = AccessState::default();
+    if matches!(field.shape(), FieldType::Boolean) {
+        state.checked = Some(field.value().trim() == "true");
+    }
+    state
+}
+
+/// One affordance inside a control, named from the suffix the painter gave it.
+///
+/// The suffix vocabulary is [`RowBox::parts`]' own — `option.<key>.<word>`,
+/// `step.<key>.up`, `toggle.<key>`, `item.<key>.<n>`, `item.<key>.add` — and it
+/// is matched on its LEADING word so a key containing a dot (which every
+/// configuration path does) cannot be mistaken for a shape.
+fn part_access_node(tag_prefix: &str, field: &ConfigField, suffix: &str, seat: Rect) -> AccessNode {
+    let tag = format!("{tag_prefix}.{suffix}");
+    let key = field.key();
+    let last = suffix.rsplit('.').next().unwrap_or(suffix);
+    let (role, name, checked) = match suffix.split('.').next().unwrap_or("") {
+        // An option: a radio when exactly one may be chosen, a checkbox when
+        // any subset may. The chosen set is the field's own value.
+        "option" => {
+            let on = FieldType::elements(field.value()).any(|word| word == last);
+            let role = if matches!(field.shape(), FieldType::Choice { .. }) {
+                AriaRole::RadioButton
+            } else {
+                AriaRole::CheckBox
+            };
+            (role, format!("{last}, {key}"), Some(on))
+        }
+        // The checkbox of a boolean row. Its state is the control's, so it is
+        // announced as the same bit rather than as a second opinion.
+        "toggle" => (
+            AriaRole::CheckBox,
+            key.to_owned(),
+            Some(field.value().trim() == "true"),
+        ),
+        // A stepper. "up"/"down" alone would announce as a direction with no
+        // subject, which is what a reader hears when they land on it.
+        "step" => (
+            AriaRole::Button,
+            format!(
+                "{} {key}",
+                if last == "up" { "increase" } else { "decrease" }
+            ),
+            None,
+        ),
+        // A list: the seat that appends, then the elements.
+        "item" if last == "add" => (AriaRole::Button, format!("add one more to {key}"), None),
+        "item" => (
+            AriaRole::TextInput,
+            format!("{key} element {}", element_ordinal(last)),
+            None,
+        ),
+        // An unrecognised suffix still gets a voice — silence is the failure
+        // this whole census exists to prevent, so the fallback is a named node
+        // rather than a skip.
+        _ => (AriaRole::Button, format!("{last}, {key}"), None),
+    };
+    let mut node = AccessNode::new(tag, role).with_name(name).with_bounds(seat);
+    if let Some(on) = checked {
+        node = node.with_state(AccessState {
+            checked: Some(on),
+            ..AccessState::default()
+        });
+    }
+    if suffix.starts_with("item.") && last != "add" {
+        let element = FieldType::elements(field.value())
+            .nth(last.parse::<usize>().unwrap_or(usize::MAX))
+            .unwrap_or_default();
+        node = node.with_value(AccessValue::Text(element.to_owned()));
+    }
+    node
+}
+
+/// A list element's position as a person counts them, from the zero-based index
+/// the tag carries.
+///
+/// One-based because the number is read out loud: "element 0" is an index and
+/// "element 1" is the first one.
+fn element_ordinal(index: &str) -> usize {
+    index.parse::<usize>().unwrap_or(0).saturating_add(1)
 }
 
 /// What the status region for `key` says, for a caller checking a claim about
@@ -2626,5 +2785,203 @@ mod tests {
             let geometry = form_geometry(&form, (0, 0), &style);
             view_config_form("f", &form, &geometry, &theme)
         });
+    }
+
+    /// ★★★★★ R1691 — **every shape's control announces the kind it is**, over
+    /// the whole vocabulary rather than over the shapes one screen happens to
+    /// hold.
+    ///
+    /// This test exists because a counterfactual passed. Flipping the boolean
+    /// arm to `TextInput` — the exact defect the round set out to fix, where a
+    /// reader is told to type into a toggle — was caught by nothing: the
+    /// consumer whose gate checked the mapping has five fields and not one of
+    /// them is a boolean, so the arm was never reached. The corpus, not the
+    /// gate, was the hole ([[debt-a-gate-that-only-sees-correct-code-is-unproven]],
+    /// fifth occurrence).
+    ///
+    /// So the population is the TYPE's, here, in the crate that owns the
+    /// mapping — and a seventh shape fails to compile rather than going
+    /// unchecked.
+    /// One row of the shape census: what the field holds, what its control
+    /// announces as, a value of that shape, and every affordance the shape
+    /// paints inside the control with the kind each announces as.
+    struct ShapeVoice {
+        shape: FieldType,
+        control: pinion_a11y::AriaRole,
+        value: &'static str,
+        parts: &'static [(&'static str, pinion_a11y::AriaRole)],
+    }
+
+    /// Every shape a configuration document can hold, and the voice its editor
+    /// gives a reader.
+    ///
+    /// ★★ The PARTS are declared too, and by role. A counterfactual proved that
+    /// half: announcing a single-choice set as checkboxes — telling a reader
+    /// they may pick several when picking one un-picks another — was caught by
+    /// nothing while the test checked only that each part had a name. A named
+    /// node satisfies a census whatever it calls itself.
+    fn shape_voices() -> [ShapeVoice; 7] {
+        use pinion_a11y::AriaRole;
+        [
+            ShapeVoice {
+                shape: FieldType::Text,
+                control: AriaRole::TextInput,
+                value: "free",
+                parts: &[],
+            },
+            ShapeVoice {
+                shape: FieldType::Formatted {
+                    of: pinion_core::widgets::text_format::TextFormat::number(0, 9),
+                },
+                control: AriaRole::TextInput,
+                value: "7",
+                parts: &[],
+            },
+            ShapeVoice {
+                shape: FieldType::Integer { min: 0, max: 9 },
+                control: AriaRole::SpinButton,
+                value: "3",
+                parts: &[
+                    ("step.k.down", AriaRole::Button),
+                    ("step.k.up", AriaRole::Button),
+                ],
+            },
+            ShapeVoice {
+                shape: FieldType::Boolean,
+                control: AriaRole::CheckBox,
+                value: "true",
+                parts: &[("toggle.k", AriaRole::CheckBox)],
+            },
+            ShapeVoice {
+                shape: FieldType::Choice {
+                    of: vec!["a".into(), "b".into()],
+                },
+                control: AriaRole::RadioGroup,
+                value: "a",
+                parts: &[
+                    ("option.k.a", AriaRole::RadioButton),
+                    ("option.k.b", AriaRole::RadioButton),
+                ],
+            },
+            ShapeVoice {
+                shape: FieldType::Flags {
+                    of: vec!["r".into(), "w".into()],
+                },
+                control: AriaRole::Group,
+                value: "r",
+                parts: &[
+                    ("option.k.r", AriaRole::CheckBox),
+                    ("option.k.w", AriaRole::CheckBox),
+                ],
+            },
+            ShapeVoice {
+                shape: FieldType::List {
+                    of: Box::new(FieldType::Text),
+                },
+                control: AriaRole::List,
+                value: "x, y",
+                parts: &[
+                    ("item.k.0", AriaRole::TextInput),
+                    ("item.k.1", AriaRole::TextInput),
+                    ("item.k.add", AriaRole::Button),
+                ],
+            },
+        ]
+    }
+
+    #[test]
+    fn r1691_every_field_shape_announces_the_kind_its_control_is() {
+        let style = FormStyle::default();
+        for ShapeVoice {
+            shape,
+            control: want,
+            value,
+            parts,
+        } in shape_voices()
+        {
+            let word = shape.clone();
+            let form = ConfigForm::new(
+                vec![ConfigField::new("k", "t", Applies::Hot, value).with_shape(shape)],
+                Vec::new(),
+            );
+            let geometry = form_geometry(&form, (0, 0), &style);
+            let nodes = row_access_nodes("f", &form, &geometry);
+            let control = nodes
+                .iter()
+                .find(|n| n.tag == "f.control.k")
+                .expect("the row announces its control");
+            assert_eq!(
+                control.role, want,
+                "a {word:?} row announces as {:?}, and a reader is told what \
+                 they can do with it",
+                control.role,
+            );
+            // A bijection with what the painter laid out: a part with no voice
+            // and a voice for a part nobody paints are both failures, and the
+            // first is the one a count alone would hide.
+            let painted: Vec<&str> = geometry.rows[0]
+                .parts
+                .iter()
+                .map(|(suffix, _)| suffix.as_str())
+                .collect();
+            let declared: Vec<&str> = parts.iter().map(|(suffix, _)| *suffix).collect();
+            assert_eq!(
+                painted, declared,
+                "a {word:?} row paints affordances this test does not name",
+            );
+            for (suffix, part_role) in parts {
+                let tag = format!("f.{suffix}");
+                let part = nodes
+                    .iter()
+                    .find(|n| n.tag == tag)
+                    .unwrap_or_else(|| panic!("{tag} is painted and has no voice"));
+                assert_eq!(
+                    part.role, *part_role,
+                    "{tag} announces as {:?} — the kind is what tells a reader \
+                     whether picking one un-picks another",
+                    part.role,
+                );
+                let name = part.name.as_deref().unwrap_or_default();
+                assert!(
+                    name.contains('k'),
+                    "{tag} announces as {name:?}, which names no subject",
+                );
+            }
+        }
+    }
+
+    /// The boolean row's state is the BIT, so a reader's toggle command reads
+    /// the same fact the ink does.
+    #[test]
+    fn r1691_a_boolean_row_announces_its_bit_in_both_places() {
+        use pinion_a11y::AccessValue;
+
+        let style = FormStyle::default();
+        for (value, want) in [("true", true), ("false", false)] {
+            let form = ConfigForm::new(
+                vec![
+                    ConfigField::new("on", "bool", Applies::Hot, value)
+                        .with_shape(FieldType::Boolean),
+                ],
+                Vec::new(),
+            );
+            let geometry = form_geometry(&form, (0, 0), &style);
+            let nodes = row_access_nodes("f", &form, &geometry);
+            let control = nodes
+                .iter()
+                .find(|n| n.tag == "f.control.on")
+                .expect("announced");
+            assert_eq!(control.state.checked, Some(want));
+            assert_eq!(control.value, Some(AccessValue::Bool(want)));
+            let toggle = nodes
+                .iter()
+                .find(|n| n.tag == "f.toggle.on")
+                .expect("the checkbox inside it is announced too");
+            assert_eq!(
+                toggle.state.checked,
+                Some(want),
+                "the pill and the control must not disagree about the bit",
+            );
+        }
     }
 }

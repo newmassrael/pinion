@@ -875,6 +875,278 @@ pub const OPERATIONS: &[OperationSpec] = &[
     },
 ];
 
+/// ★★★★★ R1691 — **what a reader is told this screen has**, which nothing in
+/// this table said until now.
+///
+/// The tables above describe what is painted and what can be done. Neither says
+/// what reaches somebody who never sees the drawing, and the gap that opened
+/// under that silence was measured the day this was written: the screen painted
+/// **166** addressable regions and announced **30** of them (its tree held 35
+/// nodes; five are virtual description regions). The palette, the icon rail,
+/// the canvas's frames and wires and pins, the launch gate, the gesture hint and
+/// the inspector's own chrome had no voice at all — and every check in this
+/// example was green, because a region with no accessibility node paints
+/// perfectly and answers every question about its rectangle.
+///
+/// [`pinion_core::voice`] is what makes that measurable at all: it classifies
+/// every addressable region as announced, deliberately silent, or a hole. But a
+/// *total* census can be satisfied by declaring everything silent, and that is
+/// what this table exists to prevent. It pins the **split**: these regions owe a
+/// voice and these owe a silence, and a round that moves one across the line
+/// fails here rather than in somebody's screen reader.
+///
+/// # Why a population and not a list of tags
+///
+/// Because most of the screen is one shape repeated per item — a button per
+/// role, a link per rail seat, a card per node, a wire per link, a control per
+/// field — and a list of the expanded tags would be a second copy of the tables
+/// above. [`Population`] names the table the family comes from, so the gate
+/// expands it and a family that grows a member cannot be satisfied by the
+/// members that were there when this was written.
+pub struct VoiceSpec {
+    /// The tag, verbatim for [`Population::One`] and with `{}` where the family
+    /// substitutes its member's name otherwise.
+    pub tag: &'static str,
+    /// The role a reader is told this region is — the WAI-ARIA word
+    /// `scene/access` publishes, so the two surfaces join on it.
+    pub role: &'static str,
+    /// Which table the family's members come from.
+    pub population: Population,
+}
+
+/// Where a [`VoiceSpec`]'s members come from.
+///
+/// Naming the source table rather than the count is what makes the gate hold as
+/// the screen grows: a ninth role or a second observed link expands the
+/// population automatically, and a member that stopped being announced fails.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Population {
+    /// Exactly one region, at [`VoiceSpec::tag`] verbatim.
+    One,
+    /// One per [`ROLES`] entry.
+    Roles,
+    /// One per [`RAIL`] seat.
+    Rail,
+    /// One per [`NODES`] card.
+    Nodes,
+    /// One per [`LINKS`] wire, keyed by the link's mint order.
+    Links,
+    /// One per [`FIELDS`] row of the inspector.
+    Fields,
+    /// One per [`PROTOCOLS`] chip.
+    Protocols,
+    /// One per [`PIN_LEGEND`] entry.
+    PinKinds,
+}
+
+/// Every region of the opening screen that owes a reader a voice, and what it
+/// announces as.
+///
+/// The dynamic regions are deliberately absent — the launch gate's findings, the
+/// picked link's chrome, the reset seats — because their population is the
+/// state's rather than this table's. They are not unchecked: the census asks the
+/// stronger question of them, which is that nothing is left unclassified at all.
+pub const VOICES: &[VoiceSpec] = &[
+    // The shell.
+    VoiceSpec {
+        tag: "lab.appbar",
+        role: "group",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "lab.appbar.state",
+        role: "status",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "lab.rail",
+        role: "navigation",
+        population: Population::One,
+    },
+    // ★ A LINK per seat, including the two that are locked — the reference
+    // exposes later scope rather than hiding it, and a destination a reader
+    // cannot hear about is hidden however visible it is.
+    VoiceSpec {
+        tag: "lab.rail.{}",
+        role: "link",
+        population: Population::Rail,
+    },
+    // The palette.
+    VoiceSpec {
+        tag: "lab.palette",
+        role: "group",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "lab.palette.role.{}",
+        role: "button",
+        population: Population::Roles,
+    },
+    VoiceSpec {
+        tag: "lab.palette.pin.{}",
+        role: "group",
+        population: Population::PinKinds,
+    },
+    // ★★ A SWITCH, not a button and not a checkbox. R1681.3 reported this
+    // control as unreadable on screen; what a reader is TOLD it is has to be
+    // right whatever the ink does.
+    VoiceSpec {
+        tag: "lab.palette.discovery",
+        role: "switch",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "lab.palette.discovery.state",
+        role: "status",
+        population: Population::One,
+    },
+    // The canvas.
+    VoiceSpec {
+        tag: "lab.canvas",
+        role: "group",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "lab.node.{}",
+        role: "group",
+        population: Population::Nodes,
+    },
+    VoiceSpec {
+        tag: "lab.link.{}",
+        role: "group",
+        population: Population::Links,
+    },
+    // The toolbar and the two floating panels.
+    VoiceSpec {
+        tag: "lab.toolbar",
+        role: "toolbar",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "lab.toolbar.meta",
+        role: "status",
+        population: Population::One,
+    },
+    // ★ The zoom read-out is painted INSIDE this seat, and declares itself its
+    // name — so this row is what makes that redirect true rather than
+    // well-formed.
+    VoiceSpec {
+        tag: "lab.reset.view",
+        role: "button",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "lab.gate",
+        role: "list",
+        population: Population::One,
+    },
+    // ★★★ The gesture strip. This screen's ONLY statement of what a pointer can
+    // do, and it was inaudible — a reader was left to discover panning, zooming
+    // and link authoring by trying.
+    VoiceSpec {
+        tag: "lab.hint",
+        role: "status",
+        population: Population::One,
+    },
+    // The inspector.
+    VoiceSpec {
+        tag: "lab.inspector",
+        role: "group",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "lab.inspector.id",
+        role: "heading",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "lab.inspector.role",
+        role: "status",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "lab.inspector.degree",
+        role: "status",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "lab.inspector.reach",
+        role: "status",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "lab.inspector.note",
+        role: "status",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "lab.inspector.rename",
+        role: "button",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "lab.inspector.addkey",
+        role: "button",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "lab.inspector.name",
+        role: "textbox",
+        population: Population::One,
+    },
+    // The form's rows, from the framework's painter. The ROLE is the shape's,
+    // which is checked against [`FIELDS`]' own type words rather than listed
+    // here — see the gate.
+    VoiceSpec {
+        tag: "lab.form.control.{}",
+        role: "",
+        population: Population::Fields,
+    },
+    VoiceSpec {
+        tag: "lab.form.remove.{}",
+        role: "button",
+        population: Population::Fields,
+    },
+];
+
+/// Every region of the opening screen that deliberately has **no** voice, and
+/// the class of silence it declares.
+///
+/// The other half of the split, and the half that makes the first half mean
+/// something: a census with nothing in this column would be satisfiable by
+/// naming every rectangle, and one with everything in it by naming none.
+///
+/// The `kind` words are [`pinion_core::voice::SilenceKind`]'s own wire
+/// spellings, so what this table says is what `scene/voice` publishes.
+pub const SILENCES: &[(&str, Population, &str)] = &[
+    // The graph's name, painted three times and announced once.
+    ("lab.appbar.graph", Population::One, "name_of"),
+    ("lab.toolbar.title", Population::One, "name_of"),
+    // Colour keys. A reader who never sees the colours loses the membership of
+    // the transport set, which the palette announces as its value — so the
+    // chips are part of that rather than five stops saying one word each.
+    ("lab.palette.swatch.{}", Population::Roles, "decorative"),
+    ("lab.palette.protocol.{}", Population::Protocols, "part_of"),
+    ("lab.palette.discovery.track", Population::One, "decorative"),
+    // The scrolling bodies. Their panes are what a reader lands on.
+    ("lab.palette.body", Population::One, "layout"),
+    ("lab.inspector.body", Population::One, "layout"),
+    // A card's identifier and its role chip: the card says both.
+    ("lab.node.{}.id", Population::Nodes, "name_of"),
+    ("lab.node.{}.badge", Population::Nodes, "part_of"),
+    // Captions inside the seat they name.
+    ("lab.toolbar.run.label", Population::One, "name_of"),
+    ("lab.toolbar.zoom", Population::One, "name_of"),
+    ("lab.gate.head", Population::One, "name_of"),
+    ("lab.gate.verdict", Population::One, "part_of"),
+    ("lab.hint.text", Population::One, "name_of"),
+    ("lab.inspector.degree.text", Population::One, "name_of"),
+    ("lab.inspector.reach.text", Population::One, "name_of"),
+    ("lab.inspector.note.text", Population::One, "name_of"),
+    // The applies badge: its words are already the row's description.
+    ("lab.form.applies.{}", Population::Fields, "name_of"),
+];
+
 /// Whether a save carries what an operation moved.
 ///
 /// ★★★ R1689 — the reference has a meter for exactly this question and it is

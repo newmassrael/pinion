@@ -322,6 +322,9 @@ impl WidgetA11y for PaginationView {
             state: end_state(state.can_prev),
             current: false,
             focused: false,
+            // At the first page this refuses, and the reason is the position
+            // rather than a booking — nothing a person can be told to await.
+            unavailable: None,
         });
         for i in 0..N {
             links.push(NavLink {
@@ -330,6 +333,7 @@ impl WidgetA11y for PaginationView {
                 state: state.pages[i].0,
                 current: state.pages[i].1,
                 focused: nav_focused && i == active,
+                unavailable: None,
             });
         }
         links.push(NavLink {
@@ -338,6 +342,7 @@ impl WidgetA11y for PaginationView {
             state: end_state(state.can_next),
             current: false,
             focused: false,
+            unavailable: None,
         });
         navigation_link_nodes(<Self as WidgetCore>::tag(), "Pagination", &links)
     }

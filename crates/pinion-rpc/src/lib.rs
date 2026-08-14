@@ -67,6 +67,7 @@ pub mod text_state;
 pub mod text_tables;
 pub mod theme;
 pub mod transport;
+pub mod voice;
 pub mod wait_for;
 pub mod waiter;
 pub mod window_declare;

@@ -1847,6 +1847,27 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         assert resp is not None
         return resp.result
 
+    def voice(self, *, window: Optional[str] = None) -> dict[str, Any]:
+        """`scene/voice` typed wrapper (R1691 §5.40 §2 #7) — which painted
+        regions a reader is told about, and why the silent ones are silent.
+
+        Answers `{total, counts, nodes}`. `counts` partitions the addressable
+        population into `announced` / `silent` / `unvoiced` / `ghost` /
+        `dangling`; the last three are three different defects, which is why
+        they are three keys and not one number.
+
+        Reads the last painted scene and the same access-tree producer
+        `scene/access` runs, so a demo asserting on both is asking one surface
+        rather than comparing two.
+        """
+        params: dict[str, Any] = {}
+        if window is not None:
+            params["window"] = window
+        resp = self.request("scene/voice", params or None)
+        assert resp is not None, "scene/voice answered nothing"
+        assert isinstance(resp.result, dict), f"scene/voice: {resp.result!r}"
+        return resp.result
+
     def locate_region(
         self,
         *,
@@ -3638,6 +3659,24 @@ def access_node_by_tag(result: Any, tag: str) -> Optional[dict]:
         if isinstance(node, dict) and node.get("tag") == tag:
             return node
     return None
+
+
+def voice_rows(result: Any) -> dict[str, dict]:
+    """The `scene/voice` census keyed by tag (R1691).
+
+    The census answers `{total, counts, nodes}` and almost every question a
+    caller has is about one region, so the flat list is turned into a lookup
+    once here rather than scanned per assertion. The counts stay on the
+    envelope: they are DERIVED on every call, and a caller that re-derived them
+    from these rows would be checking the arithmetic rather than the screen.
+    """
+    if not isinstance(result, dict):
+        return {}
+    return {
+        row["tag"]: row
+        for row in result.get("nodes") or ()
+        if isinstance(row, dict) and isinstance(row.get("tag"), str)
+    }
 
 
 def access_focus_flags(result: Any) -> set[str]:

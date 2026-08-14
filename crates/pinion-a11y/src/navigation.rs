@@ -23,6 +23,7 @@
 
 use crate::node::{AccessNode, AccessState};
 use crate::role::{AriaCurrent, AriaRole};
+use pinion_core::availability::Unavailable;
 use pinion_core::widgets::radio::RadioState;
 
 /// One `link` within a [`navigation_link_nodes`] landmark.
@@ -39,6 +40,18 @@ pub struct NavLink<'a> {
     /// `true` when this link is the roving active descendant (the landmark
     /// owns focus and this is the active index).
     pub focused: bool,
+    /// (R1691 §5.39 §5.40) **Why** this destination is inert, when it is.
+    ///
+    /// [`state`](Self::state) already says *that* it refuses; this says whether
+    /// it is booked for a release that has not shipped or will never exist —
+    /// the distinction R1668 gave the framework and which a rail exposing later
+    /// scope as visible-but-locked is the archetypal consumer of. Without it a
+    /// reader is told a destination is unavailable and nothing more, which is
+    /// exactly the one bit the reference toolkit's accessibility layer carries.
+    ///
+    /// `None` for a live link, and for an inert one whose declaration named no
+    /// reason.
+    pub unavailable: Option<&'a Unavailable>,
 }
 
 /// Build the `navigation` landmark + one `link` per entry.
@@ -71,6 +84,7 @@ pub fn navigation_link_nodes(
         if link.current {
             node = node.with_current(AriaCurrent::Page);
         }
+        node.unavailable = link.unavailable.cloned();
         nodes.push(node);
     }
     nodes
@@ -88,6 +102,7 @@ mod tests {
                 state: RadioState::Idle,
                 current: false,
                 focused: false,
+                unavailable: None,
             },
             NavLink {
                 tag: "n#1",
@@ -95,6 +110,7 @@ mod tests {
                 state: RadioState::Hover,
                 current: false,
                 focused: true,
+                unavailable: None,
             },
             NavLink {
                 tag: "n#2",
@@ -102,6 +118,7 @@ mod tests {
                 state: RadioState::Idle,
                 current: true,
                 focused: false,
+                unavailable: None,
             },
         ]
     }
@@ -142,5 +159,49 @@ mod tests {
         assert!(nodes[2].state.focused, "link 1 focused");
         assert!(nodes[2].state.hovered, "link 1 hovered");
         assert!(!nodes[1].state.focused, "link 0 not focused");
+    }
+
+    /// R1691 — a locked destination says *why*, not only that it refuses. The
+    /// two arms that matter are the ones a single inert bit cannot separate: a
+    /// destination booked for a release that has not shipped, and one this
+    /// build will never have.
+    #[test]
+    fn r1691_an_inert_destination_carries_its_reason() {
+        let later = Unavailable::reserved("requirement 12");
+        let never = Unavailable::unsupported("no such device here");
+        let links = [
+            NavLink {
+                tag: "n#0",
+                label: "Live",
+                state: RadioState::Idle,
+                current: true,
+                focused: false,
+                unavailable: None,
+            },
+            NavLink {
+                tag: "n#1",
+                label: "Later",
+                state: RadioState::Disabled,
+                current: false,
+                focused: false,
+                unavailable: Some(&later),
+            },
+            NavLink {
+                tag: "n#2",
+                label: "Never",
+                state: RadioState::Disabled,
+                current: false,
+                focused: false,
+                unavailable: Some(&never),
+            },
+        ];
+        let nodes = navigation_link_nodes("nav", "Sections", &links);
+        assert_eq!(nodes[1].unavailable, None, "a live link states no reason");
+        assert_eq!(nodes[2].unavailable.as_ref(), Some(&later));
+        assert_eq!(nodes[3].unavailable.as_ref(), Some(&never));
+        // Same inert bit, two futures — which is the whole point of carrying
+        // the reason rather than the flag alone.
+        assert_eq!(nodes[2].state.disabled, nodes[3].state.disabled);
+        assert_ne!(nodes[2].unavailable, nodes[3].unavailable);
     }
 }

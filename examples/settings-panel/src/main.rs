@@ -1539,6 +1539,8 @@ impl WidgetA11y for SettingsPanelView {
                 state: nav.states[i],
                 current: nav.selected == i,
                 focused: focused == Some(NAV_TAG) && nav.selected == i,
+                // Every section of this panel is built and reachable.
+                unavailable: None,
             })
             .collect();
         navigation_link_nodes(NAV_TAG, "Settings sections", &links)

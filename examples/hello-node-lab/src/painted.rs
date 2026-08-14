@@ -3882,6 +3882,243 @@ fn split_fraction(text: &str) -> (u32, u32) {
     )
 }
 
+// ── R1691: what a reader is told this screen has ────────────────────────────
+
+/// The voice census of the screen as it is painted right now.
+///
+/// ★ Built from the SAME two producers the window uses — `view` + layout for the
+/// scene, `NodeLabView::access_node` for the tree — so this asks the question of
+/// what a screen reader would actually receive, not of a model of it.
+fn voice_of(state: &std::rc::Rc<LabState>, size: (u32, u32)) -> pinion_core::voice::VoiceCensus {
+    use pinion_a11y::WidgetA11y;
+
+    let (_, scene) = painted_and_scene(state, size);
+    let nodes = super::NodeLabView::access_node(&(TextFieldState::Idle, 0), None);
+    let announced: BTreeSet<String> = nodes.iter().map(|n| n.tag.clone()).collect();
+    // ★ The framework's own derivation, not a second one. What counts as a
+    // reference is a rule the wire and this gate must agree about, and this
+    // gate had a hand copy of it until the round's third-consumer grep.
+    let referenced = pinion_a11y::referenced_tags(&nodes);
+    pinion_core::voice::voice_census(&scene, &announced, &referenced)
+}
+
+/// The tags a [`spec::VoiceSpec`] row stands for, expanded from the table its
+/// population names.
+///
+/// ★ Expanded rather than listed, so a ninth role or a sixth field is demanded
+/// by this gate the moment it is added to the specification — the property
+/// R1651.1 wrote down after a hand-written population reported a sample as
+/// coverage.
+fn voice_population(tag: &str, population: spec::Population) -> Vec<String> {
+    let fill = |member: &str| tag.replace("{}", member);
+    match population {
+        spec::Population::One => vec![tag.to_owned()],
+        spec::Population::Roles => spec::ROLES.iter().map(|r| fill(r.name)).collect(),
+        spec::Population::Rail => spec::RAIL.iter().map(|(n, _)| fill(n)).collect(),
+        spec::Population::Nodes => spec::NODES.iter().map(|n| fill(n.id)).collect(),
+        // A link is addressed by the identifier it was minted with, and the
+        // opening graph mints them in the specification's own order.
+        spec::Population::Links => (0..spec::LINKS.len())
+            .map(|i| fill(&i.to_string()))
+            .collect(),
+        spec::Population::Fields => spec::FIELDS.iter().map(|f| fill(f.key)).collect(),
+        spec::Population::Protocols => spec::PROTOCOLS.iter().map(|p| fill(p)).collect(),
+        spec::Population::PinKinds => spec::PIN_LEGEND.iter().map(|(k, _)| fill(k)).collect(),
+    }
+}
+
+/// ★★★★★ R1691 — **every addressable region of this screen is classified**, and
+/// the split between what speaks and what is deliberately quiet is the
+/// specification's rather than whatever the last round happened to leave.
+///
+/// Two properties, and the second is what makes the first mean anything:
+///
+/// 1. Nothing is unclassified. A painted, addressable region with no
+///    accessibility node and no declared reason is a region a reader is never
+///    told about and no author chose that — measured the day this was written,
+///    **131 of this screen's 166**.
+/// 2. The split is the one [`spec::VOICES`] and [`spec::SILENCES`] declare. A
+///    total census is satisfiable by declaring everything silent, so totality
+///    alone would let the whole finding be answered by writing it off.
+///
+/// Swept over every state, because a region that speaks as the screen opens and
+/// goes quiet once a card is added is exactly the failure a one-state check
+/// cannot see.
+#[test]
+fn r1691_every_addressable_region_is_classified_in_every_state() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        for (when, mutate) in STATES {
+            mutate(&state);
+            // ★ Both sizes. The floor is where the side panes overflow and their
+            // content is reached only by scrolling, and "painted where nobody
+            // can see it" and "painted with no voice" are two different ways to
+            // be unreachable — a screen could close one by opening the other.
+            for size in [(WIN_W, WIN_H), (super::MIN_W, super::MIN_H)] {
+                let census = voice_of(&state, size);
+                let holes: Vec<String> = census
+                    .defects()
+                    .map(|row| format!("{} ({})", row.tag, row.voice.name()))
+                    .collect();
+                assert!(
+                    holes.is_empty(),
+                    "{when} at {size:?}: regions a reader is not told about and \
+                     nobody declared quiet: {holes:?}",
+                );
+                // Not vacuous: a screen that painted nothing addressable would
+                // pass the line above.
+                assert!(
+                    census.count(pinion_core::voice::Voice::Announced) >= 100,
+                    "{when} at {size:?}: only {} regions announce — the census \
+                     is passing on an empty population",
+                    census.count(pinion_core::voice::Voice::Announced),
+                );
+            }
+        }
+    });
+}
+
+/// The declared split, driven: what owes a voice speaks, and what owes a
+/// silence is quiet **with the class the specification names**.
+#[test]
+fn r1691_the_screen_speaks_and_is_quiet_exactly_where_the_specification_says() {
+    use pinion_a11y::WidgetA11y;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let census = voice_of(&state, (WIN_W, WIN_H));
+        let rows: BTreeMap<&str, &pinion_core::voice::VoiceNode> =
+            census.nodes.iter().map(|n| (n.tag.as_str(), n)).collect();
+        let nodes = super::NodeLabView::access_node(&(TextFieldState::Idle, 0), None);
+        let roles: BTreeMap<&str, &'static str> = nodes
+            .iter()
+            .map(|n| (n.tag.as_str(), n.role.aria_name()))
+            .collect();
+
+        let mut spoken = 0;
+        for want in spec::VOICES {
+            for tag in voice_population(want.tag, want.population) {
+                let row = rows.get(tag.as_str()).unwrap_or_else(|| {
+                    panic!("the specification says {tag} is on screen and nothing paints it")
+                });
+                assert_eq!(
+                    row.voice,
+                    pinion_core::voice::Voice::Announced,
+                    "{tag} owes a reader a voice and is {}",
+                    row.voice.name(),
+                );
+                // ★ And carries no silence. A voice wins over a declaration in
+                // the census — the tree is what a reader receives — so a
+                // `quiet()` left on a region that also speaks would be a dead
+                // declaration nothing else can fail on.
+                assert!(
+                    row.silence.is_none(),
+                    "{tag} speaks AND declares a silence, so the declaration is \
+                     a claim nobody acts on",
+                );
+                // The role is what a reader is told they can DO, so a control
+                // announced as the wrong kind is worse than one poorly named.
+                // An empty column means the role is the shape's — checked
+                // against the field's own type word below.
+                if !want.role.is_empty() {
+                    assert_eq!(
+                        roles.get(tag.as_str()).copied(),
+                        Some(want.role),
+                        "{tag} announces as the wrong kind",
+                    );
+                }
+                spoken += 1;
+            }
+        }
+        assert!(spoken >= 60, "the declared population is {spoken}");
+
+        let mut quiet = 0;
+        for (tag, population, kind) in spec::SILENCES {
+            for tag in voice_population(tag, *population) {
+                let row = rows.get(tag.as_str()).unwrap_or_else(|| {
+                    panic!("the specification declares {tag} quiet and nothing paints it")
+                });
+                assert_eq!(
+                    row.voice,
+                    pinion_core::voice::Voice::Silent,
+                    "{tag} is declared quiet and the census calls it {}",
+                    row.voice.name(),
+                );
+                assert_eq!(
+                    row.silence.as_ref().map(|s| s.kind().name()),
+                    Some(*kind),
+                    "{tag} is quiet for a reason the specification does not state",
+                );
+                quiet += 1;
+            }
+        }
+        assert!(quiet >= 25, "the declared silences are {quiet}");
+    });
+}
+
+/// ★★★ A control announced as the wrong kind tells a reader to do something the
+/// control cannot do, and the form had exactly that for its whole life: a
+/// boolean row was a **text box** to a screen reader.
+///
+/// The population is [`spec::FIELDS`]' own type words, so a field whose shape
+/// changes moves this without anybody editing it.
+#[test]
+fn r1691_a_rows_control_announces_the_kind_its_shape_is() {
+    use pinion_a11y::WidgetA11y;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let _state = use_lab_state();
+        let nodes = super::NodeLabView::access_node(&(TextFieldState::Idle, 0), None);
+        let roles: BTreeMap<&str, &'static str> = nodes
+            .iter()
+            .map(|n| (n.tag.as_str(), n.role.aria_name()))
+            .collect();
+        for field in spec::FIELDS {
+            let want = match field.ty {
+                "int" => "spinbutton",
+                "perm" => "group",
+                "address[]" => "list",
+                // `id` is a formatted string and `text` is free text; both are
+                // typed into.
+                _ => "textbox",
+            };
+            let tag = format!("lab.form.control.{}", field.key);
+            assert_eq!(
+                roles.get(tag.as_str()).copied(),
+                Some(want),
+                "{} is typed {} and announces as the wrong kind",
+                field.key,
+                field.ty,
+            );
+        }
+        // ★★ And every affordance INSIDE a control, which is where the roles
+        // are decided per shape and where a fallback would otherwise let a
+        // wrong one pass unseen: a named node satisfies the census whatever it
+        // calls itself.
+        let want_part = [
+            ("lab.form.step.transport.link.tx.batch_size.up", "button"),
+            ("lab.form.step.transport.link.tx.batch_size.down", "button"),
+            ("lab.form.item.listen.endpoints.0", "textbox"),
+            ("lab.form.item.listen.endpoints.add", "button"),
+            // A `perm` field takes any subset, so its options are independent
+            // checkboxes rather than a radio set — the distinction that tells a
+            // reader whether picking one un-picks another.
+            ("lab.form.option.control.permissions.read", "checkbox"),
+            ("lab.form.option.control.permissions.write", "checkbox"),
+        ];
+        for (tag, want) in want_part {
+            assert_eq!(
+                roles.get(tag).copied(),
+                Some(want),
+                "{tag} announces as the wrong kind",
+            );
+        }
+    });
+}
+
 /// The slot that moves when a scope is put back — read off the operation table
 /// rather than restated here, so a scope whose witness changes moves this too.
 fn scope_witness(scope: super::ResetScope) -> &'static str {

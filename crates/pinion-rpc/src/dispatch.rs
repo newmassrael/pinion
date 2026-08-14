@@ -2768,6 +2768,21 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                     crate::disabled::handle_scene_disabled(last_paint_scene),
                     HandlerKind::Read,
                 ),
+                // R1691 §5.40 — which painted regions a reader is told about,
+                // and why the silent ones are silent. Joins the last painted
+                // scene with the SAME access-tree producer `scene/access` runs,
+                // so the two surfaces cannot disagree about what is announced.
+                "scene/voice" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let producer = access_producer.as_mut().map(|p| &mut **p);
+                    (
+                        handle_scene_voice(last_paint_scene, producer),
+                        HandlerKind::Read,
+                    )
+                }
                 // R1650 §5.35 — which painted tags a real pointer can drive,
                 // and which of them swallow a widget's input. Reads the same
                 // two scenes the router resolves between, so the answer is the
@@ -4209,6 +4224,25 @@ fn handle_scene_access(
     };
     let (nodes, focus) = producer();
     Ok(crate::access::access_to_json(&nodes, focus.as_ref()))
+}
+
+/// R1691 §5.40 §2 #7 — `scene/voice` handler: classify every addressable region
+/// of the last painted scene against the accessibility tree built beside it.
+///
+/// The producer is the **same** one `scene/access` runs, deliberately: a census
+/// that built its own idea of what is announced would be a second opinion, and
+/// the two could then disagree about the very fact the census exists to check.
+///
+/// A binding with no access producer is not an error here, unlike `scene/access`
+/// — it is a surface where nothing at all is announced, which is exactly the
+/// state the census is for. It answers with every painted region classified
+/// against an empty tree.
+fn handle_scene_voice(
+    last_paint_scene: Option<&Scene>,
+    producer: Option<&mut (dyn FnMut() -> (Vec<AccessNode>, Option<AccessFocus>) + '_)>,
+) -> Result<Value, RpcError> {
+    let nodes = producer.map(|producer| producer().0).unwrap_or_default();
+    crate::voice::handle_scene_voice(last_paint_scene, &nodes)
 }
 
 /// R763 §5.49 §5.39 — `scene/modifiers` handler: enqueue a

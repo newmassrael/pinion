@@ -147,6 +147,9 @@ fn access_node_to_json(node: &AccessNode) -> Value {
     if let Some(controls) = &node.controls {
         obj.insert("controls".to_string(), Value::String(controls.clone()));
     }
+    if let Some(reason) = &node.unavailable {
+        obj.insert("unavailable".to_string(), unavailable_to_json(reason));
+    }
     if let Some(ac) = node.auto_complete {
         obj.insert(
             "auto_complete".to_string(),
@@ -205,6 +208,36 @@ fn access_value_to_json(value: &AccessValue) -> Value {
 /// the flags that are set (`checked` is emitted whenever the widget has a
 /// two-state value, including explicit `false`). Returns `None` when no
 /// flag is set, so the caller omits the `state` key entirely.
+/// ★★★ R1691 — **why** a node is inert, not only that it is.
+///
+/// R1668 gave the framework the reason and gave the accessibility node a slot
+/// for it, and this serializer never published it: an agent reading
+/// `scene/access` saw `state.disabled` and nothing else, which is exactly the
+/// one bit the reference toolkit's accessibility layer carries and the thing
+/// R1668 existed to beat. Measured on a rail whose two locked seats are booked
+/// for named requirements — a reader was told they refuse and never told they
+/// will stop refusing.
+///
+/// `recourse` is derived from the kind rather than declared, so a screen and an
+/// agent cannot disagree about what to do — the same posture `scene/disabled`
+/// takes for the same value.
+fn unavailable_to_json(reason: &pinion_core::availability::Unavailable) -> Value {
+    Value::Object(Map::from_iter([
+        (
+            "kind".to_string(),
+            Value::String(reason.kind().name().to_string()),
+        ),
+        (
+            "detail".to_string(),
+            Value::String(reason.detail().to_string()),
+        ),
+        (
+            "recourse".to_string(),
+            Value::String(reason.recourse().name().to_string()),
+        ),
+    ]))
+}
+
 fn access_state_to_json(state: AccessState) -> Option<Value> {
     let mut obj = Map::new();
     if state.focused {

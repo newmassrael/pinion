@@ -244,6 +244,8 @@ impl WidgetA11y for BreadcrumbView {
                 state: crumb_state,
                 current: selected,
                 focused: nav_focused && i == active_idx,
+                // Every crumb is live: a trail is the path already taken.
+                unavailable: None,
             })
             .collect();
         navigation_link_nodes(<Self as WidgetCore>::tag(), "Breadcrumb", &links)

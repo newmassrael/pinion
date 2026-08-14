@@ -2112,6 +2112,49 @@ pub const WIRE_TYPES: &[WireType] = &[
             ],
         },
     },
+    // R1691 §5.40 — `scene/voice`: which painted regions a reader is told about,
+    // and why the silent ones are silent.
+    WireType {
+        name: "VoiceCounts",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("announced", WireTy::Integer, None),
+                WireField::new("silent", WireTy::Integer, None),
+                WireField::new("unvoiced", WireTy::Integer, None),
+                WireField::new("ghost", WireTy::Integer, None),
+                WireField::new("dangling", WireTy::Integer, None),
+            ],
+        },
+    },
+    WireType {
+        name: "VoiceEntry",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("tag", WireTy::String, None),
+                WireField::new("voice", WireTy::String, None)
+                    .accepting(&pinion_core::voice::VOICE_WIRE_NAMES),
+                WireField::new("reason", WireTy::String, None)
+                    .accepting(&pinion_core::voice::SILENCE_KIND_WIRE_NAMES)
+                    .nullable(),
+                WireField::new("detail", WireTy::String, None).nullable(),
+                WireField::new("relay", WireTy::String, None)
+                    .accepting(&pinion_core::voice::RELAY_WIRE_NAMES)
+                    .nullable(),
+                WireField::new("self_declared", WireTy::Boolean, None),
+                WireField::new("declared_by", WireTy::String, None).nullable(),
+            ],
+        },
+    },
+    WireType {
+        name: "VoiceOutcome",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("total", WireTy::Integer, None),
+                WireField::new("counts", WireTy::Object, Some("VoiceCounts")),
+                WireField::new("nodes", WireTy::Array, Some("VoiceEntry")),
+            ],
+        },
+    },
     WireType {
         name: "WindowDeclareOutcome",
         shape: WireShape::Object {

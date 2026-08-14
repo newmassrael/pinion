@@ -249,6 +249,8 @@ impl WidgetA11y for NavRailView {
                 state: dest_state,
                 current: selected,
                 focused: nav_focused && i == active_idx,
+                // Every destination in this rail exists; none is booked.
+                unavailable: None,
             })
             .collect();
         navigation_link_nodes(<Self as WidgetCore>::tag(), "Primary", &links)

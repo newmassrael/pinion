@@ -976,9 +976,67 @@ impl NodeIndex {
     }
 }
 
+/// R1691 §5.40 — every tag some node in `nodes` **points at**.
+///
+/// A node can name another: as a composite child, as a rectangle contributor,
+/// as the source of its own name, as the description read when a reader lands
+/// on it, or as the thing it controls. A tag in this set is reachable through
+/// whoever names it, whatever paints — which is exactly what separates a
+/// deliberately **virtual** node (the form painter's description regions have
+/// no rectangle of their own and are announced anyway) from a name a reader can
+/// be sent to and never find.
+///
+/// Lifted because it was computed twice — once in the `scene/voice` handler and
+/// once in the screen's own gate — and the two must not disagree about what
+/// counts as a reference. It reads **every** reference-carrying field, so a new
+/// kind of reference cannot silently start producing false alarms; that is the
+/// error direction to prefer, since a false alarm is noticed and a miss is not.
+#[must_use]
+pub fn referenced_tags(nodes: &[AccessNode]) -> std::collections::BTreeSet<String> {
+    let mut out = std::collections::BTreeSet::new();
+    for node in nodes {
+        out.extend(node.children.iter().cloned());
+        out.extend(node.bounds_union_tags.iter().cloned());
+        for tag in [&node.described_by, &node.name_from_tag, &node.controls]
+            .into_iter()
+            .flatten()
+        {
+            out.insert(tag.clone());
+        }
+    }
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// R1691 — every field a node can point through is read, and a node nobody
+    /// points at is absent. The second half is what the census asks.
+    #[test]
+    fn r1691_referenced_tags_reads_every_pointing_field() {
+        let nodes = vec![
+            AccessNode::new("a", AriaRole::Button)
+                .with_child("child")
+                .with_bounds_union_tag("union")
+                .with_described_by("said")
+                .with_name_from_tag("named")
+                .with_controls("driven"),
+            AccessNode::new("lonely", AriaRole::Button),
+        ];
+        let seen = referenced_tags(&nodes);
+        for tag in ["child", "union", "said", "named", "driven"] {
+            assert!(seen.contains(tag), "{tag} is pointed at and was not seen");
+        }
+        assert!(
+            !seen.contains("lonely"),
+            "a node nobody points at is not referenced by existing",
+        );
+        assert!(
+            !seen.contains("a"),
+            "and neither is the one doing the pointing"
+        );
+    }
 
     #[test]
     fn r818_with_set_position_is_one_based_posinset_plus_setsize() {

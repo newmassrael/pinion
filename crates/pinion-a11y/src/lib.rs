@@ -92,7 +92,10 @@ pub use list::attach_block_lists;
 pub use listbox::{ListOption, listbox_option_nodes};
 pub use menu::{MenuItemCell, SubmenuCell, menu_item_nodes};
 pub use navigation::{NavLink, navigation_link_nodes};
-pub use node::{AccessLive, AccessNode, AccessState, AccessValue, NodeIndex, attach_child_button};
+pub use node::{
+    AccessLive, AccessNode, AccessState, AccessValue, NodeIndex, attach_child_button,
+    referenced_tags,
+};
 pub use radiogroup::{RadioCell, radiogroup_radio_nodes};
 pub use role::{AriaCurrent, AriaRole, AutoComplete, HasPopup, SortDirection};
 pub use scene_label::{enrich_access_keys_from_scene, enrich_names_from_scene};

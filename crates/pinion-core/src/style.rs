@@ -14,6 +14,7 @@
 use std::num::NonZeroU32;
 
 use crate::availability::Unavailable;
+use crate::voice::Silence;
 
 /// 8-bit-per-channel sRGB color with separate alpha.
 ///
@@ -4197,6 +4198,44 @@ pub struct LayoutStyle {
     ///
     /// [`Unavailable`]: crate::availability::Unavailable
     pub resolved_unavailable: Option<Unavailable>,
+    /// (R1691 §5.40 §2 #7) This region deliberately has **no voice** in the
+    /// accessibility tree, and why — a [`Silence`].
+    ///
+    /// The declaration a comparable toolkit has nowhere. Measured against the
+    /// reference toolkit at 6.11.1, built and run: its widget carries exactly
+    /// three author-settable accessibility slots (a name, a description, an
+    /// identifier), clearing all three removes nothing from the tree, and the
+    /// one act that quiets a region — hiding it — takes the ink with it and
+    /// still leaves the node behind. So there a forgotten control and a
+    /// decorative rule are the same answer: a role and an empty name.
+    ///
+    /// Here they are different rows of [`voice_census`](crate::voice::voice_census),
+    /// which is what makes "nobody gave this region a name" a number rather
+    /// than a silence. `None` — the default, and every pre-R1691 node — is the
+    /// arm that says nobody decided.
+    ///
+    /// It reaches the descendants exactly when the kind
+    /// [`covers_subtree`](crate::voice::SilenceKind::covers_subtree), which is
+    /// every kind but the layout box: ornament is ornament all the way down,
+    /// while a box that merely places things has said nothing about what it
+    /// placed.
+    ///
+    /// **Independent of the ink and of visibility**, which is the conflation
+    /// the floor cannot escape: a decorative rule declared here stays painted
+    /// exactly as it was.
+    ///
+    /// Deliberately **absent from this type's [`Hash`]** — which is the layout
+    /// cache key and, through it, part of `Scene::paint_hash` — unlike
+    /// [`unavailable`](Self::unavailable) and
+    /// [`resolved_unavailable`](Self::resolved_unavailable), which are in it
+    /// because the cascade fades the ink. Two scenes differing only by a silence
+    /// declaration lay out the same rectangles and paint the same pixels, and
+    /// R972.1's contract is that observably identical output hashes identically.
+    /// Nothing is lost: the census reads the produced scene, never a cached
+    /// fragment.
+    ///
+    /// [`Hash`]: core::hash::Hash
+    pub silence: Option<Silence>,
     /// (R1674 §5.32 §2 #7) This node occupies its parent's chrome band of this
     /// role — the title a titled frame draws, the header strip on a card, the
     /// tabs on a well — rather than being content placed inside the parent.
@@ -4364,6 +4403,9 @@ impl LayoutStyle {
             // (R1554 §5.39) Derived; `resolve_disabled` overwrites it every
             // paint, in both directions.
             resolved_unavailable: None,
+            // (R1691 §5.40) `None` = nobody decided whether this region should
+            // have a voice, which is the arm the census counts.
+            silence: None,
             // (R1674 §5.32) `None` = ordinary content, judged against the
             // parent's content rectangle rather than against a band.
             chrome_slot: None,
@@ -4465,6 +4507,27 @@ impl LayoutStyle {
     #[must_use]
     pub fn with_availability(mut self, reason: Option<Unavailable>) -> Self {
         self.unavailable = reason;
+        self
+    }
+
+    /// (R1691 §5.40) Builder: declare that this region deliberately has no
+    /// voice in the accessibility tree, **and why**. See
+    /// [`silence`](Self::silence).
+    ///
+    /// There is no builder that says the fact without the reason, unlike
+    /// [`with_disabled`](Self::with_disabled) — because there is nothing to
+    /// migrate. Every region that was silent before this existed was silent by
+    /// omission, and an `unstated` arm here would let the census's whole
+    /// finding be answered by declaring it.
+    ///
+    /// There is likewise no `Option`-taking form, unlike
+    /// [`with_availability`](Self::with_availability): that one exists because
+    /// a widget's availability is genuinely conditional, and no site yet has a
+    /// region that is silent in one shape and announced in another. A builder
+    /// with no caller is a shape nobody has judged.
+    #[must_use]
+    pub fn with_silence(mut self, silence: Silence) -> Self {
+        self.silence = Some(silence);
         self
     }
 

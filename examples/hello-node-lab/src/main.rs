@@ -60,7 +60,10 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use pinion_a11y::{AccessNode, AccessValue, AriaRole, WidgetA11y};
+use pinion_a11y::{
+    AccessLive, AccessNode, AccessState, AccessValue, AriaRole, NavLink, WidgetA11y,
+    navigation_link_nodes,
+};
 use pinion_core::availability::Unavailable;
 use pinion_core::containment::line_box;
 use pinion_core::external::{
@@ -76,9 +79,11 @@ use pinion_core::style::{
     Border, BoxStyle, Color, Dash, LayoutStyle, PathStyle, Size, Stroke, TextOverflow, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme, use_theme};
+use pinion_core::voice::Silence;
 use pinion_core::widgets::config_form::{
     Applies, ConfigDefect, ConfigField, ConfigForm, FieldType, Verdict,
 };
+use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::scroll::{AutoScroll, ScrollState};
 use pinion_core::widgets::text_edit::{TextEditState, use_text_edit_state};
 use pinion_core::widgets::text_field::TextFieldState;
@@ -3756,6 +3761,28 @@ fn panel(tag: &str, rect: Rect, fill: Color, border: Option<Color>, children: Ve
     )
 }
 
+/// ★★★ R1691 — declare a painted region deliberately voiceless, **at the site
+/// that paints it**.
+///
+/// The alternative was one table beside the screen listing the quiet tags, and
+/// it is the wrong shape for the same reason every other second copy in this
+/// tree is: the table would be edited by whoever noticed, not by whoever moved
+/// the region, and a tag that stopped being painted would keep its entry
+/// forever. Here the reason travels with the node, so deleting the paint
+/// deletes the declaration.
+///
+/// Fails loud on a node with no layout sidecar rather than declaring nothing: a
+/// silence that quietly did not attach would read as an undeclared region in
+/// the census, and the author would be looking for a missing name instead of a
+/// missing carrier.
+fn quiet(mut scene: Scene, silence: Silence) -> Scene {
+    scene
+        .layout_style_mut()
+        .expect("a declared silence needs a node with a layout sidecar to carry it")
+        .silence = Some(silence);
+    scene
+}
+
 fn box_at(tag: &str, rect: Rect, fill: Color, border: Option<Color>, radius: u32) -> Scene {
     let mut style = BoxStyle::filled(fill).with_corner_radius(radius);
     if let Some(colour) = border {
@@ -3844,12 +3871,15 @@ fn app_bar(state: &LabState, ink: Ink) -> Scene {
         Some(ink.outline),
         vec![
             label("node lab", Rect::new(16, 19, 90, 16), FONT_TITLE, ink.text),
-            tagged_label(
-                "lab.appbar.graph",
-                spec::GRAPH_NAME,
-                Rect::new(118, 20, 200, 14),
-                FONT_SMALL,
-                ink.text_2,
+            quiet(
+                tagged_label(
+                    "lab.appbar.graph",
+                    spec::GRAPH_NAME,
+                    Rect::new(118, 20, 200, 14),
+                    FONT_SMALL,
+                    ink.text_2,
+                ),
+                Silence::name_of("lab.appbar"),
             ),
             tagged_label(
                 "lab.appbar.state",
@@ -4005,12 +4035,15 @@ fn palette(state: &LabState, ink: Ink) -> Scene {
             Some(ink.outline),
             8,
         ));
-        children.push(box_at(
-            &format!("lab.palette.swatch.{}", role.name()),
-            Rect::new(row.x + 9, row.y + 6, 3, row.h - 12),
-            role_ink(role),
-            None,
-            2,
+        children.push(quiet(
+            box_at(
+                &format!("lab.palette.swatch.{}", role.name()),
+                Rect::new(row.x + 9, row.y + 6, 3, row.h - 12),
+                role_ink(role),
+                None,
+                2,
+            ),
+            Silence::decorative("a colour band keying this role to its wires"),
         ));
         children.push(label(
             role.name(),
@@ -4040,15 +4073,18 @@ fn palette(state: &LabState, ink: Ink) -> Scene {
         rect,
         ink.surface,
         Some(ink.outline),
-        vec![scroll_pane(
-            &state.palette_scroll,
-            panel_content(rect),
-            (0, PAD),
-            // Every press on this screen belongs to the one root `External`
-            // that does the screen's own hit test, so the pane must be
-            // invisible to the router (R1655).
-            PanePointer::PassesThrough,
-            children,
+        vec![quiet(
+            scroll_pane(
+                &state.palette_scroll,
+                panel_content(rect),
+                (0, PAD),
+                // Every press on this screen belongs to the one root `External`
+                // that does the screen's own hit test, so the pane must be
+                // invisible to the router (R1655).
+                PanePointer::PassesThrough,
+                children,
+            ),
+            Silence::layout("scrolls the palette; the pane above it is what a reader lands on"),
         )],
     )
 }
@@ -4090,12 +4126,20 @@ fn palette_legend(rect: Rect, ink: Ink) -> Vec<Scene> {
     }
     for (n, transport) in Transport::ALL.into_iter().enumerate() {
         let chip = local(protocol_chip(n));
-        children.push(box_at(
-            &format!("lab.palette.protocol.{}", transport.word()),
-            chip,
-            ink.surface,
-            Some(transport_ink(transport)),
-            4,
+        // ★★ R1691 — a colour key. What a reader who never sees the colours
+        // loses is the MEMBERSHIP of the set, not the individual chips, so the
+        // set is announced once as the pane's value and each chip says it is
+        // part of that. Five nodes saying one word each would be five stops on
+        // a reader's way through the palette for one fact.
+        children.push(quiet(
+            box_at(
+                &format!("lab.palette.protocol.{}", transport.word()),
+                chip,
+                ink.surface,
+                Some(transport_ink(transport)),
+                4,
+            ),
+            Silence::part_of("lab.palette"),
         ));
         children.push(label(
             transport.word(),
@@ -4106,6 +4150,17 @@ fn palette_legend(rect: Rect, ink: Ink) -> Vec<Scene> {
     }
 
     children
+}
+
+/// What the determinism switch's caption says at each position — one
+/// derivation, read by the paint and by the announcement it is the description
+/// for.
+const fn discovery_caption(on: bool) -> &'static str {
+    if on {
+        "discovery on · links may appear"
+    } else {
+        "discovery off · fully specified"
+    }
 }
 
 /// The determinism switch, off by default.
@@ -4127,20 +4182,22 @@ fn palette_determinism(state: &LabState, rect: Rect, ink: Ink) -> Vec<Scene> {
         Some(if on { ink.warn } else { ink.outline }),
         9,
     ));
-    children.push(box_at(
-        "lab.palette.discovery.track",
-        Rect::new(toggle.x + 10, toggle.y + 12, 30, 16),
-        if on { ink.warn } else { ink.outline_2 },
-        None,
-        8,
+    children.push(quiet(
+        box_at(
+            "lab.palette.discovery.track",
+            Rect::new(toggle.x + 10, toggle.y + 12, 30, 16),
+            if on { ink.warn } else { ink.outline_2 },
+            None,
+            8,
+        ),
+        Silence::decorative("the switch's track, whose position the switch announces"),
     ));
+    // ★ The caption IS the switch's description — the switch points at it with
+    // `described_by`, so it is announced when a reader lands on the control
+    // rather than as a separate stop beside it.
     children.push(tagged_label(
         "lab.palette.discovery.state",
-        if on {
-            "discovery on · links may appear"
-        } else {
-            "discovery off · fully specified"
-        },
+        discovery_caption(on),
         Rect::new(
             toggle.x + 48,
             toggle.y + 10,
@@ -4194,12 +4251,18 @@ fn toolbar(state: &LabState, ink: Ink) -> Scene {
     // and a count. ★ R1688 — from the same three functions the hit test and the
     // width gate read, rather than written out here.
     let mut children = vec![
-        tagged_label(
-            "lab.toolbar.title",
-            spec::GRAPH_NAME,
-            local(toolbar_title_rect()),
-            FONT_TITLE,
-            ink.text,
+        quiet(
+            tagged_label(
+                "lab.toolbar.title",
+                spec::GRAPH_NAME,
+                local(toolbar_title_rect()),
+                FONT_TITLE,
+                ink.text,
+            ),
+            // The graph's name, painted twice on this screen. The application
+            // bar is where a reader is told it; a second stop saying the same
+            // word is a second stop saying nothing.
+            Silence::name_of("lab.appbar"),
         ),
         tagged_label(
             "lab.toolbar.meta",
@@ -4252,9 +4315,6 @@ fn toolbar(state: &LabState, ink: Ink) -> Scene {
 fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
     let bar = toolbar_rect();
     let local = |r: Rect| Rect::new(r.x - bar.x, r.y - bar.y, r.w, r.h);
-    let verdict = state.verdict();
-    let running = state.running.get();
-    let nodes = state.cards().len();
     let mut children: Vec<Scene> = Vec::new();
     for plus in [false, true] {
         let seat = local(zoom_rect(plus));
@@ -4296,12 +4356,17 @@ fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
         Some(ink.outline),
         6,
     ));
-    children.push(tagged_label(
-        "lab.toolbar.zoom",
-        format!("{}%", state.zoom.get()),
-        seat_caption(view_reset),
-        FONT_SMALL,
-        ink.text,
+    // ★ The percentage is painted INSIDE the reset seat, and that seat's name
+    // already carries it ("zoom 84%, reset the view") — one stop, both facts.
+    children.push(quiet(
+        tagged_label(
+            "lab.toolbar.zoom",
+            format!("{}%", state.zoom.get()),
+            seat_caption(view_reset),
+            FONT_SMALL,
+            ink.text,
+        ),
+        Silence::name_of("lab.reset.view"),
     ));
     // ★★ R1688 — the pill's trailing seat: frame the whole graph.
     let fit = local(fit_rect());
@@ -4350,7 +4415,16 @@ fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
         ));
     }
 
-    let run = local(run_rect());
+    children.extend(toolbar_run_seat(state, local(run_rect()), ink));
+    children
+}
+
+/// The launch control: the chip, and the word that says what pressing it will
+/// do right now.
+fn toolbar_run_seat(state: &LabState, run: Rect, ink: Ink) -> Vec<Scene> {
+    let verdict = state.verdict();
+    let running = state.running.get();
+    let nodes = state.cards().len();
     let run_ink = if !verdict.may_launch() {
         ink.text_3
     } else if running {
@@ -4358,21 +4432,28 @@ fn toolbar_controls(state: &LabState, ink: Ink) -> Vec<Scene> {
     } else {
         ink.accent
     };
-    children.push(box_at("lab.toolbar.run", run, ink.raised, Some(run_ink), 7));
-    children.push(tagged_label(
-        "lab.toolbar.run.label",
-        if running {
-            format!("running {nodes}/{nodes}")
-        } else if verdict.may_launch() {
-            "run".to_string()
-        } else {
-            "run blocked".to_string()
-        },
-        seat_caption(run),
-        FONT_SMALL,
-        run_ink,
-    ));
-    children
+    vec![
+        box_at("lab.toolbar.run", run, ink.raised, Some(run_ink), 7),
+        // ★ The caption IS the seat's name — `toolbar_seats` builds both from
+        // the same two facts, so announcing it here would say "run blocked"
+        // twice.
+        quiet(
+            tagged_label(
+                "lab.toolbar.run.label",
+                if running {
+                    format!("running {nodes}/{nodes}")
+                } else if verdict.may_launch() {
+                    "run".to_string()
+                } else {
+                    "run blocked".to_string()
+                },
+                seat_caption(run),
+                FONT_SMALL,
+                run_ink,
+            ),
+            Silence::name_of("lab.toolbar.run"),
+        ),
+    ]
 }
 
 fn canvas_world(state: &LabState, ink: Ink) -> Vec<Scene> {
@@ -4403,21 +4484,24 @@ fn canvas_world(state: &LabState, ink: Ink) -> Vec<Scene> {
         ));
         // The tab is the frame's handle: the interior belongs to the cards, so
         // a group can be moved without a press inside it stealing a node drag.
-        children.push(tagged_label(
-            &format!("lab.frame.{name}.name"),
-            if gist.is_empty() {
-                name.clone()
-            } else {
-                format!("{name} · {gist}")
-            },
-            Rect::new(
-                box_rect.x + 12,
-                box_rect.y + 3,
-                box_rect.w.saturating_sub(24).max(40),
-                13,
+        children.push(quiet(
+            tagged_label(
+                &format!("lab.frame.{name}.name"),
+                if gist.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{name} · {gist}")
+                },
+                Rect::new(
+                    box_rect.x + 12,
+                    box_rect.y + 3,
+                    box_rect.w.saturating_sub(24).max(40),
+                    13,
+                ),
+                10,
+                ink.text_3,
             ),
-            10,
-            ink.text_3,
+            Silence::name_of(format!("lab.frame.{name}")),
         ));
     }
     children.extend(canvas_wires(state, ink));
@@ -4676,12 +4760,15 @@ fn link_affordances(chrome: &LinkChrome, ink: Ink) -> Vec<Scene> {
         chrome.label,
         ink.accent_soft,
         Some(ink.accent_line),
-        vec![tagged_label(
-            "lab.link.label.text",
-            chrome.caption.clone(),
-            inner(chrome.label),
-            chrome.font,
-            ink.accent,
+        vec![quiet(
+            tagged_label(
+                "lab.link.label.text",
+                chrome.caption.clone(),
+                inner(chrome.label),
+                chrome.font,
+                ink.accent,
+            ),
+            Silence::name_of("lab.link.label"),
         )],
     )];
     for (n, (endpoint, seat)) in chrome.chips.iter().enumerate() {
@@ -4691,12 +4778,15 @@ fn link_affordances(chrome: &LinkChrome, ink: Ink) -> Vec<Scene> {
             *seat,
             ink.surface,
             Some(if picked { ink.accent } else { ink.outline }),
-            vec![tagged_label(
-                &format!("lab.link.endpoint.{n}.text"),
-                endpoint.clone(),
-                inner(*seat),
-                chrome.font,
-                if picked { ink.accent } else { ink.text_2 },
+            vec![quiet(
+                tagged_label(
+                    &format!("lab.link.endpoint.{n}.text"),
+                    endpoint.clone(),
+                    inner(*seat),
+                    chrome.font,
+                    if picked { ink.accent } else { ink.text_2 },
+                ),
+                Silence::name_of(format!("lab.link.endpoint.{n}")),
             )],
         ));
     }
@@ -4710,15 +4800,50 @@ fn link_affordances(chrome: &LinkChrome, ink: Ink) -> Vec<Scene> {
         chrome.act,
         ink.surface,
         Some(edge),
-        vec![tagged_label(
-            "lab.link.act.text",
-            word.to_owned(),
-            inner(chrome.act),
-            chrome.font,
-            edge,
+        vec![quiet(
+            tagged_label(
+                "lab.link.act.text",
+                word.to_owned(),
+                inner(chrome.act),
+                chrome.font,
+                edge,
+            ),
+            Silence::name_of("lab.link.act"),
         )],
     ));
     out
+}
+
+/// The picked link's own chrome, announced: what the wire is, which endpoint it
+/// took, and the one act offered on it.
+///
+/// ★ Derived from [`link_chrome`], the same authority the painter and the hit
+/// test read. A second derivation here is how the announcement would come to
+/// name an endpoint the screen is not showing.
+fn link_chrome_access(state: &LabState) -> Vec<AccessNode> {
+    let Some(chrome) = link_chrome(state) else {
+        return Vec::new();
+    };
+    let mut nodes = vec![
+        AccessNode::new("lab.link.label", AriaRole::Status).with_name(chrome.caption.clone()),
+        AccessNode::new("lab.link.act", AriaRole::Button).with_name(if chrome.adopt {
+            "adopt this reported link into the drawing"
+        } else {
+            "delete this link"
+        }),
+    ];
+    for (n, (endpoint, _)) in chrome.chips.iter().enumerate() {
+        nodes.push(
+            AccessNode::new(format!("lab.link.endpoint.{n}"), AriaRole::RadioButton)
+                .with_name(endpoint.clone())
+                .with_state(AccessState {
+                    checked: Some(n == chrome.current),
+                    ..AccessState::default()
+                })
+                .with_set_position(n, chrome.chips.len()),
+        );
+    }
+    nodes
 }
 
 /// Whether the picked link's own chrome covers this window point (R1681.3).
@@ -4915,19 +5040,28 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
         let role = state.role_of(node).unwrap_or(Role::Peer);
         let chosen = selected == Some(node);
         let mut parts: Vec<Scene> = Vec::new();
-        parts.push(tagged_label(
-            &format!("lab.node.{name}.id"),
-            name.clone(),
-            shape.id,
-            shape.id_font,
-            ink.text,
+        // ★ R1691 — the identifier and the role chip are what the CARD is
+        // called and what it is. Its own announcement carries both, so a node
+        // here would read the identifier twice before saying anything new.
+        parts.push(quiet(
+            tagged_label(
+                &format!("lab.node.{name}.id"),
+                name.clone(),
+                shape.id,
+                shape.id_font,
+                ink.text,
+            ),
+            Silence::name_of(format!("lab.node.{name}")),
         ));
-        parts.push(box_at(
-            &format!("lab.node.{name}.badge"),
-            shape.badge,
-            ink.surface,
-            Some(role_ink(role)),
-            4,
+        parts.push(quiet(
+            box_at(
+                &format!("lab.node.{name}.badge"),
+                shape.badge,
+                ink.surface,
+                Some(role_ink(role)),
+                4,
+            ),
+            Silence::part_of(format!("lab.node.{name}")),
         ));
         parts.push(label(
             role.badge(),
@@ -5023,23 +5157,31 @@ fn canvas_overlays(state: &LabState, ink: Ink) -> Vec<Scene> {
         Some(ink.outline_2),
         10,
     ));
-    children.push(tagged_label(
-        "lab.gate.head",
-        "pre-launch check",
-        Rect::new(gate.x + 12, gate.y + 10, 150, 13),
-        FONT_SMALL,
-        ink.text,
+    children.push(quiet(
+        tagged_label(
+            "lab.gate.head",
+            "pre-launch check",
+            Rect::new(gate.x + 12, gate.y + 10, 150, 13),
+            FONT_SMALL,
+            ink.text,
+        ),
+        Silence::name_of("lab.gate"),
     ));
-    children.push(tagged_label(
-        "lab.gate.verdict",
-        verdict.sentence(),
-        Rect::new(gate.x + 12, gate.y + 28, gate.w - 24, 13),
-        9,
-        if verdict.may_launch() {
-            ink.ok
-        } else {
-            ink.err
-        },
+    children.push(quiet(
+        tagged_label(
+            "lab.gate.verdict",
+            verdict.sentence(),
+            Rect::new(gate.x + 12, gate.y + 28, gate.w - 24, 13),
+            9,
+            if verdict.may_launch() {
+                ink.ok
+            } else {
+                ink.err
+            },
+        ),
+        // The sentence IS the panel's value; the panel is one stop and the
+        // findings under it are the list a reader walks.
+        Silence::part_of("lab.gate"),
     ));
     let (shown, hidden) = gate_shown(state);
     let line_at = |n: usize| {
@@ -5090,16 +5232,22 @@ fn canvas_overlays(state: &LabState, ink: Ink) -> Vec<Scene> {
 
     let hint = local(hint_rect());
     children.push(box_at("lab.hint", hint, ink.surface, Some(ink.outline), 8));
-    children.push(tagged_label(
-        "lab.hint.text",
-        spec::GESTURES
-            .iter()
-            .map(|(g, what)| format!("{g} = {what}"))
-            .collect::<Vec<_>>()
-            .join(" · "),
-        Rect::new(hint.x + 10, hint.y + 6, hint.w - 20, 13),
-        9,
-        ink.text_3,
+    children.push(quiet(
+        tagged_label(
+            "lab.hint.text",
+            spec::GESTURES
+                .iter()
+                .map(|(g, what)| format!("{g} = {what}"))
+                .collect::<Vec<_>>()
+                .join(" · "),
+            Rect::new(hint.x + 10, hint.y + 6, hint.w - 20, 13),
+            9,
+            ink.text_3,
+        ),
+        // The strip's whole content is the run inside it, and the strip is what
+        // announces it — this screen's only statement of what the pointer can
+        // do, which a reader needs most and could not hear at all.
+        Silence::name_of("lab.hint"),
     ));
 
     children.extend(canvas_toast(state, ink));
@@ -5122,18 +5270,24 @@ fn canvas_toast(state: &LabState, ink: Ink) -> Option<Scene> {
         ink.raised,
         Some(ink.outline_2),
         vec![
-            box_at("lab.toast.dot", dot, ink.accent, None, 4),
-            tagged_label(
-                "lab.toast.text",
-                state.toast.get(),
-                Rect::new(
-                    dot.x + TOAST_DOT,
-                    inner.y + TOAST_PAD,
-                    inner.w.saturating_sub(TOAST_DOT + TOAST_PAD * 2).max(1),
-                    line_box(FONT_SMALL),
+            quiet(
+                box_at("lab.toast.dot", dot, ink.accent, None, 4),
+                Silence::decorative("the bullet before the message"),
+            ),
+            quiet(
+                tagged_label(
+                    "lab.toast.text",
+                    state.toast.get(),
+                    Rect::new(
+                        dot.x + TOAST_DOT,
+                        inner.y + TOAST_PAD,
+                        inner.w.saturating_sub(TOAST_DOT + TOAST_PAD * 2).max(1),
+                        line_box(FONT_SMALL),
+                    ),
+                    FONT_SMALL,
+                    ink.text,
                 ),
-                FONT_SMALL,
-                ink.text,
+                Silence::name_of("lab.toast"),
             ),
         ],
     ))
@@ -5201,12 +5355,17 @@ fn inspector(state: &LabState, field: (TextFieldState, u32), theme: &Theme, ink:
             rect,
             ink.surface,
             Some(ink.outline),
-            vec![scroll_pane(
-                &state.inspector_scroll,
-                panel_content(rect),
-                (0, PAD),
-                PanePointer::PassesThrough,
-                children,
+            vec![quiet(
+                scroll_pane(
+                    &state.inspector_scroll,
+                    panel_content(rect),
+                    (0, PAD),
+                    PanePointer::PassesThrough,
+                    children,
+                ),
+                Silence::layout(
+                    "scrolls the inspector; the pane above it is what a reader lands on",
+                ),
             )],
         );
     };
@@ -5246,22 +5405,76 @@ fn inspector_reach(ink: Ink) -> Vec<Scene> {
     let caption = seat_caption(seat);
     vec![
         box_at("lab.inspector.reach", seat, fill, Some(edge), 6),
-        tagged_label(
-            "lab.inspector.reach.text",
-            format!("{} · {}", reach.label(), settings::strings().label()),
-            caption,
-            FONT_SMALL,
-            text,
+        // ★ R1691 — the run inside the pill is the pill's own words. Announcing
+        // it too would read the same two figures out twice; the pill carries
+        // them.
+        quiet(
+            tagged_label(
+                "lab.inspector.reach.text",
+                reach_caption(),
+                caption,
+                FONT_SMALL,
+                text,
+            ),
+            Silence::name_of("lab.inspector.reach"),
         ),
     ]
 }
 
-/// Who the inspected node is: its identifier, its role and frame, and how many
-/// links reach it.
-fn inspector_identity(state: &LabState, node: NodeId, ink: Ink) -> Vec<Scene> {
-    let name = state.name_of(node);
+/// What the reach pill says — **one derivation**, read by the paint and by the
+/// announcement.
+///
+/// Written twice they drift, and the drift is the worst kind here: a reader is
+/// told a coverage figure that the screen does not show.
+fn reach_caption() -> String {
+    format!(
+        "{} · {}",
+        palette_reach().label(),
+        settings::strings().label()
+    )
+}
+
+/// Whether a card is drawn small and whether it is switched off — the pair the
+/// node's-life row reads to choose its words.
+fn card_switches(state: &LabState, node: NodeId) -> (bool, bool) {
+    state
+        .doc
+        .borrow()
+        .tree(ROOT)
+        .and_then(|tree| tree.node(node))
+        .map_or((false, false), |slot| {
+            (slot.appearance.collapsed, slot.disabled)
+        })
+}
+
+/// What the restart note says — one derivation, read by the paint and by the
+/// announcement it is the words of.
+fn restart_note(form: &ConfigForm) -> String {
+    let pending = form.pending_restart();
+    if pending.is_empty() {
+        let hot: Vec<&str> = form
+            .fields()
+            .iter()
+            .filter(|f| f.applies() == Applies::Hot)
+            .map(pinion_core::widgets::config_form::ConfigField::key)
+            .collect();
+        format!("only {} reaches a running node", hot.join(", "))
+    } else {
+        format!(
+            "{} edited; restart to apply",
+            pending
+                .iter()
+                .map(|f| f.key())
+                .collect::<Vec<_>>()
+                .join(", ")
+        )
+    }
+}
+
+/// What the inspector's role line says: the card's role and the host it starts
+/// on. One derivation, read by the paint and by the announcement.
+fn identity_caption(state: &LabState, node: NodeId) -> String {
     let role = state.role_of(node).unwrap_or(Role::Peer);
-    let (inbound, outbound) = state.degree(node);
     let frame = state
         .doc
         .borrow()
@@ -5270,6 +5483,19 @@ fn inspector_identity(state: &LabState, node: NodeId, ink: Ink) -> Vec<Scene> {
         .and_then(|n| n.parent)
         .and_then(|p| state.frames.borrow().get(&p).cloned())
         .unwrap_or_else(|| "unframed".to_owned());
+    format!("{} · frame {frame}", role.name())
+}
+
+/// What the inspector's degree pill says.
+fn degree_caption(state: &LabState, node: NodeId) -> String {
+    let (inbound, outbound) = state.degree(node);
+    format!("{inbound} inbound · {outbound} outbound")
+}
+
+/// Who the inspected node is: its identifier, its role and frame, and how many
+/// links reach it.
+fn inspector_identity(state: &LabState, node: NodeId, ink: Ink) -> Vec<Scene> {
+    let name = state.name_of(node);
     let mut parts = vec![
         tagged_label(
             "lab.inspector.id",
@@ -5280,7 +5506,7 @@ fn inspector_identity(state: &LabState, node: NodeId, ink: Ink) -> Vec<Scene> {
         ),
         tagged_label(
             "lab.inspector.role",
-            format!("{} · frame {frame}", role.name()),
+            identity_caption(state, node),
             Rect::new(PAD, 68, 260, 13),
             FONT_SMALL,
             ink.text_3,
@@ -5292,25 +5518,21 @@ fn inspector_identity(state: &LabState, node: NodeId, ink: Ink) -> Vec<Scene> {
             Some(ink.accent_line),
             8,
         ),
-        tagged_label(
-            "lab.inspector.degree.text",
-            format!("{inbound} inbound · {outbound} outbound"),
-            Rect::new(PAD + 10, 92, 220, 13),
-            FONT_SMALL,
-            ink.accent,
+        quiet(
+            tagged_label(
+                "lab.inspector.degree.text",
+                degree_caption(state, node),
+                Rect::new(PAD + 10, 92, 220, 13),
+                FONT_SMALL,
+                ink.accent,
+            ),
+            Silence::name_of("lab.inspector.degree"),
         ),
     ];
     // ★★ R1682 — the node's-life row. Painted for a selected card only, which
     // is the same condition the hit test asks: an act on "the selected card"
     // with no card selected is a button that cannot mean anything.
-    let (collapsed, disabled) = state
-        .doc
-        .borrow()
-        .tree(ROOT)
-        .and_then(|tree| tree.node(node))
-        .map_or((false, false), |slot| {
-            (slot.appearance.collapsed, slot.disabled)
-        });
+    let (collapsed, disabled) = card_switches(state, node);
     for act in NodeAct::ALL {
         let seat = act.local_seat();
         // Delete is the one that cannot be undone, so it is the one drawn in
@@ -5522,26 +5744,7 @@ fn inspector_pane(
     let geometry = inspector_geometry_local(state);
     let painted = view_config_form("lab.form", &form, &geometry, theme);
 
-    let pending = form.pending_restart();
     let note_y = geometry.origin.1 + geometry.height + 16;
-    let restart_note = if pending.is_empty() {
-        let hot: Vec<&str> = form
-            .fields()
-            .iter()
-            .filter(|f| f.applies() == Applies::Hot)
-            .map(pinion_core::widgets::config_form::ConfigField::key)
-            .collect();
-        format!("only {} reaches a running node", hot.join(", "))
-    } else {
-        format!(
-            "{} edited; restart to apply",
-            pending
-                .iter()
-                .map(|f| f.key())
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    };
 
     children.push(box_at(
         "lab.inspector.note",
@@ -5550,12 +5753,15 @@ fn inspector_pane(
         Some(ink.warn),
         8,
     ));
-    children.push(tagged_label(
-        "lab.inspector.note.text",
-        restart_note,
-        Rect::new(PAD + 10, note_y + 8, INSP_W - PAD * 2 - 20, 26),
-        10,
-        ink.text_2,
+    children.push(quiet(
+        tagged_label(
+            "lab.inspector.note.text",
+            restart_note(&form),
+            Rect::new(PAD + 10, note_y + 8, INSP_W - PAD * 2 - 20, 26),
+            10,
+            ink.text_2,
+        ),
+        Silence::name_of("lab.inspector.note"),
     ));
     // ★ R1662 — the form is now a CHILD of the pane body rather than a sibling
     // of the pane. It was a sibling because its geometry was in window
@@ -5574,15 +5780,18 @@ fn inspector_pane(
         rect,
         ink.surface,
         Some(ink.outline),
-        vec![scroll_pane(
-            &state.inspector_scroll,
-            panel_content(rect),
-            (0, PAD),
-            // Every press on this screen belongs to the one root `External`
-            // that does the screen's own hit test, so the pane must be
-            // invisible to the router (R1655).
-            PanePointer::PassesThrough,
-            children,
+        vec![quiet(
+            scroll_pane(
+                &state.inspector_scroll,
+                panel_content(rect),
+                (0, PAD),
+                // Every press on this screen belongs to the one root `External`
+                // that does the screen's own hit test, so the pane must be
+                // invisible to the router (R1655).
+                PanePointer::PassesThrough,
+                children,
+            ),
+            Silence::layout("scrolls the inspector; the pane above it is what a reader lands on"),
         )],
     )
 }
@@ -6724,6 +6933,22 @@ impl ExternalIntrospect for LabOracle {
 }
 
 /// The specification, as the wire publishes it.
+/// The wire spelling of a voice family's population — the name of the table its
+/// members come from, so a reader on the wire expands it the same way the local
+/// gate does.
+const fn population_wire(population: spec::Population) -> &'static str {
+    match population {
+        spec::Population::One => "one",
+        spec::Population::Roles => "roles",
+        spec::Population::Rail => "rail",
+        spec::Population::Nodes => "nodes",
+        spec::Population::Links => "links",
+        spec::Population::Fields => "fields",
+        spec::Population::Protocols => "protocols",
+        spec::Population::PinKinds => "pin_legend",
+    }
+}
+
 fn spec_json() -> serde_json::Value {
     serde_json::json!({
         // ★ R1664 — `body` is published too. R1662 added the column to the
@@ -6805,6 +7030,24 @@ fn spec_json() -> serde_json::Value {
                 spec::Keeps::Volatile => "volatile",
             },
             "why": k.why,
+        })).collect::<Vec<_>>(),
+        // ★★★★ R1691 — **what a reader is told this screen has**, as the split
+        // between the regions that owe a voice and the ones that owe a declared
+        // silence. Published for the reason every other table here is: a demo
+        // that carried its own copy would be checking the copy.
+        //
+        // The `population` names the table a family expands from rather than
+        // listing the expansion, so a ninth role or a sixth field is demanded
+        // without anybody editing either copy.
+        "voices": spec::VOICES.iter().map(|v| serde_json::json!({
+            "tag": v.tag,
+            "role": v.role,
+            "population": population_wire(v.population),
+        })).collect::<Vec<_>>(),
+        "silences": spec::SILENCES.iter().map(|(tag, population, kind)| serde_json::json!({
+            "tag": tag,
+            "population": population_wire(*population),
+            "reason": kind,
         })).collect::<Vec<_>>(),
         "graph": spec::GRAPH_NAME,
         "zoom": spec::OPENING_ZOOM,
@@ -8768,10 +9011,20 @@ impl WidgetCore for NodeLabView {
 }
 
 impl WidgetA11y for NodeLabView {
-    /// The graph is a group, every node is a node, and **the inspector's rows
-    /// come from the form painter** — so a control cannot be on screen without
-    /// a name, and what its badges say is carried in a status region rather
-    /// than lost.
+    /// ★★★★★ R1691 — **the whole screen, not the parts somebody asked about.**
+    ///
+    /// Until this round the tree held the graph, the eight cards, the toolbar
+    /// seats and the inspector's form rows: 35 nodes, of which **30** name a
+    /// painted region, against **166** painted addressable regions — so **136**
+    /// were unclassified. The palette, the icon rail, the canvas's frames and
+    /// wires and pins, the launch gate, the gesture hint and the inspector's own
+    /// chrome had no voice at all. That was not one omission — each of the three
+    /// clusters that *did* have one had a round that asked for it (the cards at
+    /// R1651, the toolbar at R1687), and nothing had ever asked about the rest.
+    ///
+    /// So it is answered by region, each from the data the painter uses, and the
+    /// question "did anything get left out" is [`pinion_core::voice`]'s to ask
+    /// rather than a reader's to notice.
     fn access_node(_state: &(TextFieldState, u32), _focused: Option<&str>) -> Vec<AccessNode> {
         let state = use_lab_state();
         let verdict = state.verdict();
@@ -8785,40 +9038,394 @@ impl WidgetA11y for NodeLabView {
                     verdict.sentence(),
                 ))),
         ];
-        for node in state.cards() {
-            let name = state.name_of(node);
-            let role = state.role_of(node).unwrap_or(Role::Peer);
-            let (inbound, outbound) = state.degree(node);
-            nodes.push(
-                AccessNode::new(format!("lab.node.{name}"), AriaRole::Group)
-                    .with_name(name.clone())
-                    .with_value(AccessValue::Text(format!(
-                        "{}, {inbound} inbound, {outbound} outbound",
-                        role.name()
-                    ))),
-            );
-        }
-        // ★★★★ R1687 — **the toolbar was silent, all of it.** The graph, the
-        // cards and the form rows have announced themselves since R1651, and
-        // the strip holding the launch control had no node at all — so a screen
-        // reader could be told the gate's verdict (it is in the group's value,
-        // above) and not be told there was a button for it.
-        //
-        // Found by adding two seats to that strip and asking whether they were
-        // named. They were not, and neither was anything beside them. The list
-        // is therefore the WHOLE cluster and not the two this round put there:
-        // a gate placed where the last defect was finds only the last defect
-        // (R1684.2), and a seventh seat added later fails the demo's roster
-        // check rather than going quiet.
-        for (tag, name) in toolbar_seat_names(&state) {
-            nodes.push(AccessNode::new(tag, AriaRole::Button).with_name(name));
-        }
-        if let Some(form) = selected_form(&state) {
-            let geometry = inspector_geometry(&state);
-            nodes.extend(row_access_nodes("lab.form", &form, &geometry));
-        }
+        nodes.extend(appbar_access(&state));
+        nodes.extend(rail_access());
+        nodes.extend(palette_access(&state));
+        nodes.extend(canvas_access(&state));
+        nodes.extend(gate_access(&state));
+        nodes.extend(toolbar_access(&state));
+        nodes.extend(inspector_access(&state));
         nodes
     }
+}
+
+/// The application bar: what this screen is, and whether the graph is running.
+///
+/// ★ The running word is its own **live** status rather than part of the bar's
+/// name: it changes without anybody moving focus, which is the one case where a
+/// reader has to be told rather than asked to go and look.
+fn appbar_access(state: &LabState) -> Vec<AccessNode> {
+    let running = state.running.get();
+    vec![
+        AccessNode::new("lab.appbar", AriaRole::Group)
+            .with_name(format!("node lab: {}", spec::GRAPH_NAME)),
+        AccessNode::new("lab.appbar.state", AriaRole::Status)
+            .with_name(if running { "running" } else { "stopped" })
+            .with_live(AccessLive::Polite),
+    ]
+}
+
+/// The icon rail, through the framework's own navigation landmark.
+///
+/// ★★ [`navigation_link_nodes`] rather than a hand-rolled landmark: this is its
+/// fourth consumer, and a rail that built its own would be the divergence that
+/// rule exists to prevent. What this round added to the substrate is the
+/// **reason** a destination is inert — the rail's whole design is to show later
+/// scope as visible-and-locked, and "unavailable" with no reason is exactly the
+/// one bit the floor's accessibility layer carries.
+fn rail_access() -> Vec<AccessNode> {
+    let reasons: Vec<Option<Unavailable>> = spec::RAIL
+        .iter()
+        .map(|(_, requirement)| requirement.map(Unavailable::reserved))
+        .collect();
+    let tags: Vec<String> = spec::RAIL
+        .iter()
+        .map(|(name, _)| format!("lab.rail.{name}"))
+        .collect();
+    let links: Vec<NavLink<'_>> = spec::RAIL
+        .iter()
+        .enumerate()
+        .map(|(i, (name, _))| NavLink {
+            tag: &tags[i],
+            label: name,
+            state: if reasons[i].is_some() {
+                RadioState::Disabled
+            } else {
+                RadioState::Idle
+            },
+            current: *name == spec::RAIL_ACTIVE,
+            focused: false,
+            unavailable: reasons[i].as_ref(),
+        })
+        .collect();
+    navigation_link_nodes("lab.rail", "sections", &links)
+}
+
+/// The palette: the pane, a button per role, the pin legend, and the
+/// determinism switch.
+///
+/// ★ The transports are the pane's **value** rather than five nodes saying one
+/// word each. Their chips are a colour key, and what a reader who cannot see the
+/// key loses is the membership of the set — so the set is announced once, where
+/// it can be read in one breath, and each chip declares itself part of it.
+fn palette_access(state: &LabState) -> Vec<AccessNode> {
+    let on = state.discovery.get();
+    let mut nodes = vec![
+        AccessNode::new("lab.palette", AriaRole::Group)
+            .with_name(spec::PANES[1].title)
+            .with_value(AccessValue::Text(format!(
+                "{} roles; transports {}",
+                spec::ROLES.len(),
+                spec::PROTOCOLS.join(", "),
+            ))),
+    ];
+    for role in spec::ROLES {
+        nodes.push(
+            AccessNode::new(format!("lab.palette.role.{}", role.name), AriaRole::Button)
+                .with_name(format!("add a {} — {}", role.name, role.gist)),
+        );
+    }
+    // The pin legend states what a pin can DO, which is not a fact about
+    // colour: a reader who never sees the drawing still needs the vocabulary
+    // its announcements use.
+    for (kind, meaning) in spec::PIN_LEGEND {
+        nodes.push(
+            AccessNode::new(format!("lab.palette.pin.{kind}"), AriaRole::Group)
+                .with_name(format!("{kind} pin — {meaning}")),
+        );
+    }
+    nodes.push(
+        AccessNode::new("lab.palette.discovery", AriaRole::Switch)
+            .with_name("graph determinism")
+            .with_state(AccessState {
+                checked: Some(on),
+                ..AccessState::default()
+            })
+            .with_value(AccessValue::Bool(on))
+            .with_described_by("lab.palette.discovery.state"),
+    );
+    // The caption the switch points at. It is PAINTED, so it gets a node with
+    // the words it paints — a `described_by` naming a region a reader can also
+    // walk onto is the ordinary shape, and the words come from one place so the
+    // description and the ink cannot disagree.
+    nodes.push(
+        AccessNode::new("lab.palette.discovery.state", AriaRole::Status)
+            .with_name(discovery_caption(on)),
+    );
+    nodes
+}
+
+/// The canvas: the surface itself, the cards, the host frames, the wires, and
+/// the pins a link is drawn between.
+fn canvas_access(state: &LabState) -> Vec<AccessNode> {
+    let selected = state.selected.get();
+    let mut nodes = vec![
+        AccessNode::new("lab.canvas", AriaRole::Group)
+            .with_name("canvas")
+            .with_value(AccessValue::Text(format!(
+                "{} cards, {} links, zoom {}%",
+                state.cards().len(),
+                state.link_count(),
+                state.zoom.get(),
+            ))),
+    ];
+    for node in state.cards() {
+        let name = state.name_of(node);
+        let role = state.role_of(node).unwrap_or(Role::Peer);
+        let (inbound, outbound) = state.degree(node);
+        let (collapsed, disabled) = card_switches(state, node);
+        nodes.push(
+            AccessNode::new(format!("lab.node.{name}"), AriaRole::Group)
+                .with_name(name.clone())
+                .with_selected(selected == Some(node))
+                .with_state(AccessState {
+                    disabled,
+                    ..AccessState::default()
+                })
+                .with_expanded(!collapsed)
+                .with_value(AccessValue::Text(format!(
+                    "{}, {inbound} inbound, {outbound} outbound",
+                    role.name()
+                ))),
+        );
+    }
+    for (frame, name) in frames_of(state) {
+        let gist = spec::FRAMES
+            .iter()
+            .find(|f| f.name == name)
+            .map_or("", |f| f.gist);
+        nodes.push(
+            AccessNode::new(format!("lab.frame.{name}"), AriaRole::Group)
+                .with_name(format!("host {name} — {gist}"))
+                .with_value(AccessValue::Text(format!(
+                    "{} cards",
+                    members_of(state, frame).len()
+                ))),
+        );
+    }
+    nodes.extend(wire_access(state));
+    nodes.extend(link_chrome_access(state));
+    nodes
+}
+
+/// Every wire, drawn and reported, and every pin one can be drawn from.
+fn wire_access(state: &LabState) -> Vec<AccessNode> {
+    let mut nodes = Vec::new();
+    let selected = state.selected_link.get();
+    let doc = state.doc.borrow();
+    let Some(tree) = doc.tree(ROOT) else {
+        return nodes;
+    };
+    for link in tree.links() {
+        let from = state.name_of(link.from.node);
+        let to = state.name_of(link.to.node);
+        nodes.push(
+            AccessNode::new(format!("lab.link.{}", link.id.0), AriaRole::Group)
+                .with_name(format!("link {from} to {to}"))
+                .with_selected(selected == Some(LinkPick::Authored(link.id))),
+        );
+    }
+    // ★ A reported link is NOT in the graph, and its announcement has to say so
+    // — the drawing says it with a dash rhythm and a warning colour, which is
+    // the half a reader never receives.
+    for seen in doc.observations(ROOT) {
+        let from = state.name_of(seen.from.node);
+        let to = state.name_of(seen.to.node);
+        nodes.push(
+            AccessNode::new(format!("lab.observed.{from}.{to}"), AriaRole::Group)
+                .with_name(format!("reported link {from} to {to}, not authored"))
+                .with_selected(selected == Some(LinkPick::Observed(seen.from, seen.to))),
+        );
+    }
+    for node in state.cards() {
+        let name = state.name_of(node);
+        let Some(role) = state.role_of(node) else {
+            continue;
+        };
+        nodes.push(
+            AccessNode::new(format!("lab.pin.{name}.dial"), AriaRole::Button)
+                .with_name(format!("{name} dial pin — drag to author a link")),
+        );
+        if role.accepts() {
+            nodes.push(
+                AccessNode::new(format!("lab.pin.{name}.accept"), AriaRole::Button)
+                    .with_name(format!("{name} accept pin — drop a link here")),
+            );
+        }
+    }
+    nodes
+}
+
+/// The launch gate panel and the gesture hint: the two things that float over
+/// the canvas.
+///
+/// ★ The findings are a **list**, because that is what a reader navigates them
+/// as: one at a time, with a position and a count. Folding them into the panel's
+/// value would make four problems one paragraph.
+fn gate_access(state: &LabState) -> Vec<AccessNode> {
+    let verdict = state.verdict();
+    let (shown, hidden) = gate_shown(state);
+    let mut gate = AccessNode::new("lab.gate", AriaRole::List)
+        .with_name("pre-launch check")
+        .with_value(AccessValue::Text(verdict.sentence()));
+    for n in 0..shown.len() {
+        gate = gate.with_child(format!("lab.gate.line.{n}"));
+    }
+    let mut nodes = vec![gate];
+    for (n, (blocks, sentence)) in shown.iter().enumerate() {
+        nodes.push(
+            AccessNode::new(format!("lab.gate.line.{n}"), AriaRole::ListItem)
+                .with_name(format!(
+                    "{}: {sentence}",
+                    if *blocks { "blocks launch" } else { "warning" }
+                ))
+                .with_set_position(n, shown.len()),
+        );
+    }
+    if hidden > 0 {
+        nodes.push(
+            AccessNode::new("lab.gate.more", AriaRole::Status)
+                .with_name(format!("{hidden} more the panel has no room for")),
+        );
+    }
+    // The reset seats. `reset_seats` is the same list the hit test resolves
+    // against, so a scope that gains an affordance gains a voice with it.
+    for (scope, _) in reset_seats(state) {
+        nodes.push(
+            AccessNode::new(format!("lab.reset.{}", scope.wire()), AriaRole::Button)
+                .with_name(format!("reset the {}", scope.wire())),
+        );
+    }
+    nodes.push(
+        AccessNode::new("lab.hint", AriaRole::Status).with_name(
+            spec::GESTURES
+                .iter()
+                .map(|(g, what)| format!("{g} = {what}"))
+                .collect::<Vec<_>>()
+                .join("; "),
+        ),
+    );
+    // ★★★★★ R1691 — **the toast, and the sweep is what found it.** It is the
+    // one place several of this screen's operations report what they did (the
+    // export, the script, the reset that put something back), so a reader who
+    // is not told it appeared is not told the operation happened at all.
+    //
+    // It exists only after an act, so the census at boot could not see it and
+    // no round had ever looked. `Assertive` because it is the answer to
+    // something the person just did, and a polite announcement waits for a
+    // pause that a person working the tool does not leave.
+    if toast_rect(state).is_some() {
+        nodes.push(
+            AccessNode::new("lab.toast", AriaRole::Status)
+                .with_name(state.toast.get())
+                .with_live(AccessLive::Assertive),
+        );
+    }
+    nodes
+}
+
+/// The canvas toolbar: its seats, and the counts beside them.
+///
+/// ★★★★ R1687 — **the toolbar was silent, all of it.** The graph, the cards and
+/// the form rows had announced themselves since R1651, and the strip holding the
+/// launch control had no node at all — so a screen reader could be told the
+/// gate's verdict (it is in the root group's value) and not be told there was a
+/// button for it.
+///
+/// Found by adding two seats to that strip and asking whether they were named.
+/// They were not, and neither was anything beside them. The list is therefore
+/// the WHOLE cluster and not the two that round put there: a gate placed where
+/// the last defect was finds only the last defect (R1684.2), and a seventh seat
+/// added later fails the demo's roster check rather than going quiet.
+fn toolbar_access(state: &LabState) -> Vec<AccessNode> {
+    let mut nodes = vec![
+        AccessNode::new("lab.toolbar", AriaRole::Toolbar).with_name("canvas"),
+        AccessNode::new("lab.toolbar.meta", AriaRole::Status)
+            .with_name(format!(
+                "{} nodes, {} links",
+                state.cards().len(),
+                state.link_count()
+            ))
+            .with_live(AccessLive::Polite),
+    ];
+    for (tag, name) in toolbar_seat_names(state) {
+        nodes.push(AccessNode::new(tag, AriaRole::Button).with_name(name));
+    }
+    nodes
+}
+
+/// The inspector: the pane, the chrome that says which card is selected, the
+/// three acts on that card, and the form rows.
+fn inspector_access(state: &LabState) -> Vec<AccessNode> {
+    let mut nodes =
+        vec![AccessNode::new("lab.inspector", AriaRole::Group).with_name(spec::PANES[3].title)];
+    if let Some(node) = state.selected.get() {
+        let name = state.name_of(node);
+        nodes.push(
+            AccessNode::new("lab.inspector.id", AriaRole::Heading)
+                .with_name(name.clone())
+                .with_level(2),
+        );
+        nodes.push(
+            AccessNode::new("lab.inspector.role", AriaRole::Status)
+                .with_name(identity_caption(state, node)),
+        );
+        nodes.push(
+            AccessNode::new("lab.inspector.degree", AriaRole::Status)
+                .with_name(degree_caption(state, node)),
+        );
+        // ★ The seat's name is the word it PAINTS, from the same call — a
+        // toggle whose button reads "expand" and whose announcement reads
+        // "collapse" is a control that does the opposite of what a reader is
+        // told, and two derivations of one word is how that happens.
+        let (collapsed, disabled) = card_switches(state, node);
+        for act in NodeAct::ALL {
+            nodes.push(
+                AccessNode::new(act.tag(), AriaRole::Button)
+                    .with_name(format!("{} {name}", act.word(collapsed, disabled))),
+            );
+        }
+        nodes.push(
+            AccessNode::new("lab.inspector.rename", AriaRole::Button)
+                .with_name(format!("rename {name}")),
+        );
+    }
+    // ★ The shut box, announced exactly while it is PAINTED. The open editor is
+    // its own external with its own node, so a row here in both states would be
+    // a name for a region that is not on screen — which the census calls a
+    // ghost, and which it is what caught the condition being needed at all.
+    if !matches!(
+        state.editing.get(),
+        Some(Editing::Name(_) | Editing::Key(_))
+    ) {
+        nodes.push(
+            AccessNode::new("lab.inspector.name", AriaRole::TextInput)
+                .with_name("a name for this card, or a configuration path to add"),
+        );
+    }
+    nodes.push(
+        AccessNode::new("lab.inspector.addkey", AriaRole::Button)
+            .with_name("add a field by typing its key"),
+    );
+    nodes.push(
+        AccessNode::new("lab.inspector.reach", AriaRole::Status)
+            .with_name(reach_caption())
+            .with_live(AccessLive::Polite),
+    );
+    if let Some(form) = selected_form(state) {
+        // The note under the form: which keys reach a running node, or which
+        // edits are waiting for a restart. It is a WARNING about what a person
+        // just did, so it is live — a reader who edits a restart-scoped key and
+        // is told nothing has been told the edit took effect.
+        nodes.push(
+            AccessNode::new("lab.inspector.note", AriaRole::Status)
+                .with_name(restart_note(&form))
+                .with_live(AccessLive::Polite),
+        );
+        let geometry = inspector_geometry(state);
+        nodes.extend(row_access_nodes("lab.form", &form, &geometry));
+    }
+    nodes
 }
 
 /// Every pressable seat of the canvas toolbar, and what it announces as.
