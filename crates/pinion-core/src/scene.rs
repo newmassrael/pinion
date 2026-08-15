@@ -896,6 +896,42 @@ impl Scene {
         self
     }
 
+    /// ★★ R1696 §5.39 — declare this painted region a **keyboard stop**, at the
+    /// site that paints it.
+    ///
+    /// The peer of [`silenced`](Self::silenced), lifted for the same reason and
+    /// on the same evidence: R1693 wrote a four-line free function on one screen
+    /// to turn a painted panel into a Tab stop, and R1696 needed a verbatim copy
+    /// on the second — which is how a mechanism becomes two mechanisms. A widget
+    /// from the catalogue declares its own stop through
+    /// [`LayoutStyle::with_focusable`]; this is for the regions a screen paints
+    /// itself, where the WAI-ARIA composite pattern puts **one stop on the
+    /// container** and moves a cursor among its members.
+    ///
+    /// # The order is the paint order, by ratified choice
+    ///
+    /// Worth knowing before reaching for this: the §5.39 enumeration is
+    /// depth-first over the paint scene, so a stop's place in the Tab ring is
+    /// its place in the child list — and a screen whose page must be painted
+    /// *under* its chrome therefore Tabs into the page first. §5.39 rejected a
+    /// manual tab index deliberately, so that is a spec question rather than a
+    /// missing builder; see `debt-a-screens-tab-order-is-its-z-order`.
+    ///
+    /// # Panics
+    ///
+    /// On an [`Effect`](Self::Effect), the one node with no layout sidecar —
+    /// loud rather than silent, because a stop that quietly did not attach is a
+    /// control a keyboard cannot reach and nothing else reports it.
+    ///
+    /// [`LayoutStyle::with_focusable`]: crate::style::LayoutStyle::with_focusable
+    #[must_use]
+    pub fn with_focusable(mut self, focusable: bool) -> Self {
+        self.layout_style_mut()
+            .expect("a keyboard stop needs a node with a layout sidecar to carry it")
+            .focusable = focusable;
+        self
+    }
+
     /// (R55.G.19 §5.49) Returns `true` when this scene tree contains
     /// at least one node tagged `target`. Walks depth-first matching
     /// [`Self::tag`] before descending into `Container.children` and

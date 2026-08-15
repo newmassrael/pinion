@@ -300,6 +300,86 @@ pub const THEME_ROW: (&str, &str) = ("Theme", "Both themes are first-class");
 /// The segment's choices, in the reference's order.
 pub const THEMES: [&str; 2] = ["Dark", "Light"];
 
+// --- The keyboard ring ---------------------------------------------------------
+
+/// ★★★★★ R1696 — **where the Tab key stops**, in the order it stops there.
+///
+/// This screen had NONE. Measured on CI the round after it gained an
+/// accessibility tree: it announces a `navigation` landmark of links, two
+/// `toolbar`s, a `list` of items, four `tab`s, a `textbox` and thirty-nine
+/// buttons, and `focus/next` from cold answered nothing at all — announced as
+/// operable, unreachable by keyboard. Two gates refused it (`r1518`,
+/// `r1570.1`), which is the same pair that refused the sibling screen at R1693
+/// for the same reason.
+///
+/// # The shape is the WAI-ARIA composite pattern
+///
+/// **One stop per composite**, not one per control: a toolbar, a navigation
+/// rail and a list are each a single stop whose members a cursor moves among,
+/// which is what every floor does and what the sibling screen already holds.
+/// A control that is not inside a composite is its own stop — which on this
+/// screen is the Settings page's switches and its appearance segment, and those
+/// declare it through the catalogue widgets rather than here.
+///
+/// # The order is the paint order, and that is RATIFIED rather than missing
+///
+/// The §5.39 enumeration is depth-first over the painted scene, so this table's
+/// order must BE the child order in `view` — and it is asserted to be. The page
+/// region is painted first because the chrome is painted over it, so a reader
+/// Tabs into the page before the application bar, which is not the order a
+/// reader would choose.
+///
+/// It is worth being exact about why it stays that way. §5.39's own alternatives
+/// record **rejects a manual tab index** — the reason given is that imitating
+/// HTML's `tabindex` violates the declarative spirit of a view function, and
+/// that automatic traversal is the canonical form. So this is not a gap to fill
+/// from a consumer; changing it is a spec round, and the argument that round
+/// would have to weigh is recorded in
+/// `debt-a-screens-tab-order-is-its-z-order`: paint order is not a free choice
+/// for a screen whose chrome is painted OVER its page, which is a case the
+/// original rejection did not address.
+pub struct StopSpec {
+    /// The painted tag the stop lands on. It must also be a node in the
+    /// accessibility tree, or a reader is told nothing about what they landed
+    /// on — the `missing bearer` arm `r1518` reports.
+    pub tag: &'static str,
+    /// What a cursor does once it is here, in one phrase, for a reader of this
+    /// table. Not painted: this is the specification saying what the stop is
+    /// FOR, which is the part a tag cannot carry.
+    pub holds: &'static str,
+    /// Which destination it is on.
+    pub at: Where,
+}
+
+/// The ring, in Tab order — which is paint order.
+pub const FOCUS_RING: &[StopSpec] = &[
+    StopSpec {
+        tag: "shell.canvas",
+        holds: "the board; the arrows move the selection among its cards",
+        at: Where::At("dashboard"),
+    },
+    StopSpec {
+        tag: "shell.appbar",
+        holds: "the application bar's views, source, capture and search",
+        at: Where::Chrome,
+    },
+    StopSpec {
+        tag: "shell.rail",
+        holds: "the tool's destinations",
+        at: Where::Chrome,
+    },
+    StopSpec {
+        tag: "shell.subbar",
+        holds: "the layout preset and the two board verbs",
+        at: Where::At("dashboard"),
+    },
+    StopSpec {
+        tag: "shell.palette",
+        holds: "the widget catalogue the board is populated from",
+        at: Where::At("dashboard"),
+    },
+];
+
 /// The Settings page's groups, top to bottom: the key its tag carries and the
 /// heading a reader sees.
 pub const OPTION_GROUPS: [(&str, &str); 4] = [

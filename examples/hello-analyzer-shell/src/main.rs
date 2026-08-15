@@ -3297,8 +3297,28 @@ fn app_bar_scene(state: &ShellState, palette: Palette) -> Scene {
     // The search box says which of its two states it is in; a box that looked
     // the same either way would leave a person typing into the board.
     let searching = state.searching.get();
+    children.push(search_chip(state, palette, searching));
+    keyboard_stop(
+        Scene::Container(
+            ContainerNode::new(children)
+                .with_tag("shell.appbar")
+                .with_style(BoxStyle::filled(palette.panel))
+                .with_layout(absolute(Rect::new(0, 0, win_w(), APP_BAR_H))),
+        ),
+        "shell.appbar",
+        &state.at(),
+    )
+}
+
+/// The application bar's search field: the hint when empty, the query when not,
+/// and a caret while it has the keys.
+///
+/// Split out at R1696 because the bar grew a line past the hundred this project
+/// allows a function, and the search field is the part of it with its own
+/// three-way state — which is the one worth having a name.
+fn search_chip(state: &ShellState, palette: Palette, searching: bool) -> Scene {
     let search = state.search.get();
-    children.push(Scene::Container(
+    Scene::Container(
         ContainerNode::new(vec![label(
             &if searching {
                 format!("{search}|")
@@ -3329,12 +3349,6 @@ fn app_bar_scene(state: &ShellState, palette: Palette) -> Scene {
                 )),
         )
         .with_layout(absolute(BarChip::Search.rect())),
-    ));
-    Scene::Container(
-        ContainerNode::new(children)
-            .with_tag("shell.appbar")
-            .with_style(BoxStyle::filled(palette.panel))
-            .with_layout(absolute(Rect::new(0, 0, win_w(), APP_BAR_H))),
     )
 }
 
@@ -3386,16 +3400,20 @@ fn sub_bar_scene(state: &ShellState, palette: Palette) -> Scene {
             palette,
         ),
     ];
-    Scene::Container(
-        ContainerNode::new(children)
-            .with_tag("shell.subbar")
-            .with_style(BoxStyle::filled(palette.canvas))
-            .with_layout(absolute(Rect::new(
-                RAIL_W,
-                APP_BAR_H,
-                win_w() - RAIL_W - PALETTE_W,
-                SUB_BAR_H,
-            ))),
+    keyboard_stop(
+        Scene::Container(
+            ContainerNode::new(children)
+                .with_tag("shell.subbar")
+                .with_style(BoxStyle::filled(palette.canvas))
+                .with_layout(absolute(Rect::new(
+                    RAIL_W,
+                    APP_BAR_H,
+                    win_w() - RAIL_W - PALETTE_W,
+                    SUB_BAR_H,
+                ))),
+        ),
+        "shell.subbar",
+        &state.at(),
     )
 }
 
@@ -3501,16 +3519,20 @@ fn rail_scene(state: &ShellState, palette: Palette) -> Scene {
         .with_style(BoxStyle::filled(palette.accent).with_corner_radius(16))
         .with_layout(absolute(Rect::new(10, win_h() - APP_BAR_H - 46, 32, 32))),
     ));
-    Scene::Container(
-        ContainerNode::new(entries)
-            .with_tag("shell.rail")
-            .with_style(BoxStyle::filled(palette.panel))
-            .with_layout(absolute(Rect::new(
-                0,
-                APP_BAR_H,
-                RAIL_W,
-                win_h().saturating_sub(APP_BAR_H),
-            ))),
+    keyboard_stop(
+        Scene::Container(
+            ContainerNode::new(entries)
+                .with_tag("shell.rail")
+                .with_style(BoxStyle::filled(palette.panel))
+                .with_layout(absolute(Rect::new(
+                    0,
+                    APP_BAR_H,
+                    RAIL_W,
+                    win_h().saturating_sub(APP_BAR_H),
+                ))),
+        ),
+        "shell.rail",
+        &nav,
     )
 }
 
@@ -3668,9 +3690,17 @@ fn settings_key_rows(palette: Palette, region: Rect) -> Vec<Scene> {
                     .with_corner_radius(8)
                     .with_size(Size::px(seat.w, seat.h))
                     .with_label_font_size_px(FONT_BODY)
-                    // Booked for a later release, so not a Tab stop: a reader
-                    // who can land on it is being offered what the screen has
-                    // closed, which is the floor's behaviour and not ours.
+                    // ★ R1696 — booked for a later release, so not a Tab stop.
+                    // The flag is NOT what makes that true and a counterfactual
+                    // proved it: flipping this to `true` changed nothing,
+                    // because the row below declares `Unavailable` and R1554's
+                    // enumeration returns at a disabled region before it reads
+                    // any child's flag (`r1554_a_disabled_region_contributes_
+                    // no_tab_stops`). It stays `false` so the declaration and
+                    // the guarantee agree, and this comment says which one is
+                    // load-bearing — a widget default of `true` under a
+                    // structural `no` reads as a control that is one edit away
+                    // from being reachable.
                     .with_focusable(false),
             )])
             .with_layout(
@@ -4606,6 +4636,20 @@ fn in_chrome(node: Scene, role: ChromeRole) -> Scene {
     node
 }
 
+/// ★★ R1696 — a region is a keyboard stop **because the specification says so**.
+///
+/// The declaration is read rather than restated: `spec::FOCUS_RING` is the ring,
+/// and this is the only place the paint consults it, so a stop added to the
+/// table appears on screen and a stop removed from it disappears. Writing
+/// `.with_focusable(true)` at each painter would be five independent decisions
+/// and the table would become a description of what somebody remembered.
+fn keyboard_stop(node: Scene, tag: &str, at: &str) -> Scene {
+    let declared = spec::FOCUS_RING
+        .iter()
+        .any(|stop| stop.tag == tag && stop.at.shows_at(at));
+    node.with_focusable(declared)
+}
+
 fn card_scene(
     card: &Card,
     rect: Rect,
@@ -4852,6 +4896,13 @@ fn spec_json() -> serde_json::Value {
         })).collect::<Vec<_>>(),
         "themes": spec::THEMES,
         "theme_row": { "title": spec::THEME_ROW.0, "gist": spec::THEME_ROW.1 },
+        // ★★ R1696 — where the Tab key stops, in the order it stops there, and
+        // WHAT each stop holds. The last column is the part a tag cannot carry:
+        // an agent reading this learns that landing on `shell.rail` puts it
+        // among the tool's destinations rather than on one of them.
+        "focus_ring": spec::FOCUS_RING.iter().map(|stop| serde_json::json!({
+            "tag": stop.tag, "holds": stop.holds, "at": where_word(stop.at),
+        })).collect::<Vec<_>>(),
         "sections": spec::SECTIONS.iter().map(|(key, title, tier)| serde_json::json!({
             "key": key, "title": title, "tier": tier_word(*tier),
         })).collect::<Vec<_>>(),
@@ -5115,11 +5166,15 @@ fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
         palette.muted,
         TextOverflow::Ellipsis,
     ));
-    Scene::Container(
-        ContainerNode::new(children)
-            .with_tag("shell.palette")
-            .with_style(BoxStyle::filled(palette.panel))
-            .with_layout(absolute(panel)),
+    keyboard_stop(
+        Scene::Container(
+            ContainerNode::new(children)
+                .with_tag("shell.palette")
+                .with_style(BoxStyle::filled(palette.panel))
+                .with_layout(absolute(panel)),
+        ),
+        "shell.palette",
+        &state.at(),
     )
 }
 
@@ -5184,15 +5239,23 @@ fn view(_state: (), _frame: Frame) -> Scene {
     // the rail moved a string and the window did not change: measured through
     // the router, four of seven seats left the screen at 193 painted regions
     // before and 193 after.
-    let page = view_page_region(
+    let page = keyboard_stop(
+        view_page_region(
+            "shell.canvas",
+            region,
+            palette.canvas,
+            &here,
+            |here| match here.key.as_ref() {
+                "settings" => settings_scene(&state, palette, region),
+                _ => dashboard_scene(&state, palette),
+            },
+        ),
+        // ★ R1696 — a stop at the DASHBOARD only, where this region is the
+        // board and the arrows already move a selection among its cards. At
+        // Settings the same rectangle is a page whose controls are their own
+        // stops, and a landmark is not a Tab stop.
         "shell.canvas",
-        region,
-        palette.canvas,
-        &here,
-        |here| match here.key.as_ref() {
-            "settings" => settings_scene(&state, palette, region),
-            _ => dashboard_scene(&state, palette),
-        },
+        here.key.as_ref(),
     );
 
     let children = std::iter::once(page)

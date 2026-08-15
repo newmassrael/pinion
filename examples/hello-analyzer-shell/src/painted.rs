@@ -1619,6 +1619,109 @@ fn r1695_each_destination_paints_the_regions_the_specification_gives_it() {
     });
 }
 
+/// ★★★★★ R1696 — **the screen has a keyboard, and the ring is the one the
+/// specification declares.**
+///
+/// It had none. Measured on CI the round after this screen gained an
+/// accessibility tree: it announces a navigation landmark of links, two
+/// toolbars, a list of items, four tabs, a textbox and thirty-nine buttons, and
+/// `focus/next` from cold answered nothing — announced as operable, unreachable
+/// by keyboard. Two gates refused it, the same pair that refused the sibling
+/// screen at R1693 for the same reason.
+///
+/// Three claims, because they fail differently:
+///
+/// * every stop the specification declares for a destination is focusable in
+///   the scene painted at that destination, and nothing else is;
+/// * the ring's ORDER is the paint order, which is what the §5.39 enumeration
+///   walks — a table whose order was decorative would describe a Tab sequence
+///   the screen does not have;
+/// * every stop is a node in the accessibility tree, or a reader lands on
+///   something the tree cannot name (`r1518`'s `missing bearer` arm).
+#[test]
+fn r1696_the_keyboard_ring_is_the_one_the_specification_declares() {
+    use pinion_a11y::WidgetA11y;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let roster = spec::destinations();
+        for destination in roster.open() {
+            let key = destination.key.as_ref();
+            if key != state.at() {
+                state.go(key).expect("an open destination is reachable");
+            }
+            let (_, scene) = painted_at((WIN_W, WIN_H));
+            // The enumeration the framework walks, in the order it walks it.
+            let walked = scene.collect_focusable_tags();
+            let declared: Vec<&str> = spec::FOCUS_RING
+                .iter()
+                .filter(|stop| stop.at.shows_at(key))
+                .map(|stop| stop.tag)
+                .collect();
+            assert!(
+                !declared.is_empty(),
+                "at {key}: the specification declares no keyboard stop, so this \
+                 destination is announced as operable and unreachable",
+            );
+            // ★ The composites the table names come first and IN ORDER,
+            // because the enumeration is depth-first over the paint scene and
+            // this table's order is a claim about that. A control the
+            // catalogue's own widgets declare (a switch, an appearance chip)
+            // follows inside the page, which is why this is a prefix rather
+            // than an equality.
+            let composites: Vec<&str> = walked
+                .iter()
+                .map(String::as_str)
+                .filter(|tag| spec::FOCUS_RING.iter().any(|stop| stop.tag == *tag))
+                .collect();
+            assert_eq!(
+                composites, declared,
+                "at {key}: the ring the scene enumerates is not the ring the \
+                 specification declares (walked {walked:?})",
+            );
+            // ★★★ The half that is NOT self-comparison. The paint reads the
+            // table, so "every declared stop is focusable" compares the table
+            // with itself and R1669's rule says that is not a check. What the
+            // table cannot produce is a stop it never named — a stray
+            // `focusable` anywhere in the tree — so the set is closed here
+            // against the two things allowed to be one: the table, and the
+            // catalogue widgets the Settings page paints.
+            let allowed: BTreeSet<String> = declared
+                .iter()
+                .map(|tag| (*tag).to_owned())
+                .chain(
+                    spec::OPTIONS
+                        .iter()
+                        .map(|o| format!("shell.settings.option.{}", o.key)),
+                )
+                .chain((0..spec::THEMES.len()).map(|n| format!("shell.settings.theme.{n}")))
+                .collect();
+            for tag in &walked {
+                assert!(
+                    allowed.contains(tag),
+                    "at {key}: {tag:?} is a keyboard stop the specification \
+                     never declared — a ring nobody wrote down is a ring \
+                     nobody can read",
+                );
+            }
+            // Every stop is a node a reader can be told about.
+            let announced: BTreeSet<String> = super::AnalyzerShellView::access_node(&(), None)
+                .into_iter()
+                .map(|node| node.tag)
+                .collect();
+            for tag in &walked {
+                assert!(
+                    announced.contains(tag),
+                    "at {key}: {tag:?} is a keyboard stop and not a node in the \
+                     accessibility tree — a reader lands on something the tree \
+                     cannot name",
+                );
+            }
+        }
+    });
+}
+
 /// ★★★★★ R1695 — and the **accessibility tree** follows the rail too.
 ///
 /// Found by a counterfactual that PASSED: emitting the settings page's nodes

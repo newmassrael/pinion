@@ -274,13 +274,75 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         # match. Every switch was flipped in (D).
         ok("F: and they are not the opening values", flipped != opening)
 
+        # ── (F2) ★★ R1696 — the screen has a keyboard ─────────────────────
+        banner("F2 — the Tab ring is the one the specification declares")
+        ring = spec["focus_ring"]
+        ok("F2: the specification declares a ring at all", len(ring) > 0)
+        for key in opens:
+            go(app, key)
+            want = [row["tag"] for row in ring if row["at"] in ("*", key)]
+            assert want, f"F2: {key} declares no stop"
+            # Walk it the way a Tab key does and let it close. There is no
+            # `focus/clear` on the wire, so the walk starts wherever the last
+            # section left it and the ring is read by ROTATING to the first
+            # declared stop — which is also the stronger check: a ring is a
+            # cycle, and asserting the cycle rather than a prefix means the
+            # order holds from any entry point.
+            seen: list[str] = []
+            for _ in range(len(want) * 3 + 8):
+                stop = app.request("focus/next").result.get("focused")
+                assert stop is not None, (
+                    f"F2: at {key} the ring ran out — the screen announces "
+                    f"operable roles and a keyboard reaches nothing"
+                )
+                if stop in seen:
+                    seen = seen[seen.index(stop) :]
+                    break
+                seen.append(stop)
+            composites = [tag for tag in seen if tag in {row["tag"] for row in ring}]
+            rotate = composites.index(want[0])
+            composites = composites[rotate:] + composites[:rotate]
+            assert_eq(composites, want, f"F2: the ring at {key} is the declared one")
+            # Each stop says what it holds — the part a tag cannot carry.
+            for row in (r for r in ring if r["at"] in ("*", key)):
+                ok(f"F2: {row['tag']} says what it holds", len(row["holds"]) > 10)
+            # And the reader is told where they are.
+            app.request("focus/set", {"tag": want[0]})
+            app.tick(16)
+            focus = app.request("scene/access").result.get("focus") or {}
+            assert_eq(focus.get("tag"), want[0], f"F2: AT focus rests on {want[0]}")
+            assert_eq(focus.get("resolved"), "tag", f"F2: and it resolved to a node")
+        go(app, "settings")
+        # ★ The settings page's own controls are stops in their own right,
+        # because a switch is not inside a composite — and they come from the
+        # catalogue widget rather than from the ring table.
+        reached: set[str] = set()
+        for _ in range(24):
+            stop = app.request("focus/next").result.get("focused")
+            if stop is None or stop in reached:
+                break
+            reached.add(stop)
+        for option in spec["options"]:
+            ok(
+                f"F2: the {option['key']} switch is a stop of its own",
+                f"shell.settings.option.{option['key']}" in reached,
+            )
+        # ★ NEGATIVE CONTROL — a booked affordance is NOT a stop. Without this
+        # the walk above is satisfied by stamping every node focusable.
+        for row in spec["key_rows"]:
+            ok(
+                f"F2: ★ the booked {row['key']} button is not a stop",
+                f"shell.settings.key.{row['key']}" not in reached,
+            )
+        go(app, "dashboard")
+
         # ── The closed set, on the wire ────────────────────────────────────
         banner("G — the wire refuses what the rail refuses, in the same words")
         assert "is not a rail section" in refused(app, "nav", "nowhere"), "G: closed set"
         for key in closed:
             said = refused(app, "nav", key)
             ok(f"G: {key} refuses on the wire", rows[key]["detail"] in said)
-        assert_eq(q(app, "nav"), "settings", "G: no refusal moved the journey")
+        assert_eq(q(app, "nav"), "dashboard", "G: no refusal moved the journey")
 
         print(f"\n[demo] {len(CHECKS)} narrated check(s) beyond the assertions")
 

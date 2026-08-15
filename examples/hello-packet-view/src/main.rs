@@ -589,26 +589,19 @@ fn panel(tag: &str, rect: Rect, fill: Color, border: Option<Color>, children: Ve
     )
 }
 
-/// ★★★★★ R1693 — make a painted region a **keyboard stop**.
-///
-/// This screen had none. It announced three `button` chips and three composite
-/// panes and a keyboard user could reach none of them — which is the same defect
-/// as announcing a `table` with no rows, one axis over: a role that promises
-/// something the screen cannot do. Nothing here asked until the round's own a11y
-/// tree put an interactive role on the screen, and `r1518` — which walks 95
-/// bindings and checks that a binding announcing an interactive role has a stop
-/// — refused it immediately.
-///
-/// The ring is the WAI-ARIA composite pattern: **one stop per composite** (the
-/// grid, the tree, the byte grid — arrows move *within* them, which is what this
-/// screen's `ArrowUp`/`ArrowDown` already do) plus one per plain button.
-fn focusable(scene: Scene, focusable: bool) -> Scene {
-    let mut scene = scene;
-    if let Some(layout) = scene.layout_style_mut() {
-        layout.focusable = focusable;
-    }
-    scene
-}
+// ★★★★★ R1693 — this screen had NO keyboard stop. It announced three `button`
+// chips and three composite panes and a keyboard user could reach none of them,
+// which is the same defect as announcing a `table` with no rows, one axis over:
+// a role that promises something the screen cannot do.
+//
+// The ring is the WAI-ARIA composite pattern: **one stop per composite** (the
+// grid, the tree, the byte grid — arrows move *within* them, which is what this
+// screen's `ArrowUp`/`ArrowDown` already do) plus one per plain button.
+//
+// ★ R1696 — the four-line helper that declared it is gone: the sibling screen
+// needed the same thing and a verbatim copy is how a mechanism becomes two, so
+// it is `Scene::with_focusable` now. Same lift, same evidence and the same
+// second-consumer trigger as `Scene::silenced` at R1693.
 
 fn box_at(tag: &str, rect: Rect, fill: Color, border: Option<Color>, radius: u32) -> Scene {
     let mut style = BoxStyle::filled(fill).with_corner_radius(radius);
@@ -1024,17 +1017,17 @@ fn filter_bar(state: &Rc<ViewState>, ink: Ink) -> Scene {
     for (n, name) in spec::SAVED_FILTERS.iter().enumerate() {
         let chip = saved_chip(n);
         let on = saved.get(n).copied().unwrap_or(false);
-        children.push(focusable(
+        children.push(
             box_at(
                 &format!("pv.filter.saved.{n}"),
                 Rect::new(chip.x, chip.y - rect.y, chip.w, chip.h),
                 if on { ink.lit } else { ink.surface },
                 Some(if on { ink.accent } else { ink.outline }),
                 11,
-            ),
+            )
             // A plain button is its own stop.
-            true,
-        ));
+            .with_focusable(true),
+        );
         children.push(label(
             *name,
             Rect::new(chip.x + 10, chip.y - rect.y + 5, chip.w - 20, 12),
@@ -1133,27 +1126,25 @@ fn list_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
     // ★ One stop for the whole grid — the WAI-ARIA composite pattern, and the
     // one this screen already behaves like: the arrows move the selection
     // *inside* it rather than off it.
-    focusable(
-        panel(
-            "pv.list",
-            rect,
-            ink.bg,
-            Some(ink.outline),
-            vec![
-                scroll_pane(
-                    &state.list_scroll,
-                    panel_content(rect),
-                    (0, PAD),
-                    PanePointer::PassesThrough,
-                    children,
-                )
-                .silenced(Silence::layout(
-                    "scrolls the message grid; the rows inside it are what a reader lands on",
-                )),
-            ],
-        ),
-        true,
+    panel(
+        "pv.list",
+        rect,
+        ink.bg,
+        Some(ink.outline),
+        vec![
+            scroll_pane(
+                &state.list_scroll,
+                panel_content(rect),
+                (0, PAD),
+                PanePointer::PassesThrough,
+                children,
+            )
+            .silenced(Silence::layout(
+                "scrolls the message grid; the rows inside it are what a reader lands on",
+            )),
+        ],
     )
+    .with_focusable(true)
 }
 
 /// One message row, in the list pane's own coordinates.
@@ -1398,27 +1389,25 @@ fn tree_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
         children.extend(tree_row_paint(state, n, &field, selected.as_str(), ink));
     }
     // One stop for the tree, like the grid beside it.
-    focusable(
-        panel(
-            "pv.tree",
-            rect,
-            ink.surface,
-            Some(ink.outline),
-            vec![
-                scroll_pane(
-                    &state.tree_scroll,
-                    panel_content(rect),
-                    (0, PAD),
-                    PanePointer::PassesThrough,
-                    children,
-                )
-                .silenced(Silence::layout(
-                    "scrolls the decode tree; the items inside it are what a reader lands on",
-                )),
-            ],
-        ),
-        true,
+    panel(
+        "pv.tree",
+        rect,
+        ink.surface,
+        Some(ink.outline),
+        vec![
+            scroll_pane(
+                &state.tree_scroll,
+                panel_content(rect),
+                (0, PAD),
+                PanePointer::PassesThrough,
+                children,
+            )
+            .silenced(Silence::layout(
+                "scrolls the decode tree; the items inside it are what a reader lands on",
+            )),
+        ],
     )
+    .with_focusable(true)
 }
 
 fn bytes_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
@@ -1505,27 +1494,25 @@ fn bytes_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
         ));
     }
     // And one for the byte grid, so the three composites are three stops.
-    focusable(
-        panel(
-            "pv.bytes",
-            rect,
-            ink.surface,
-            Some(ink.outline),
-            vec![
-                scroll_pane(
-                    &state.bytes_scroll,
-                    panel_content(rect),
-                    (0, PAD),
-                    PanePointer::PassesThrough,
-                    children,
-                )
-                .silenced(Silence::layout(
-                    "scrolls the byte grid; the rows inside it are what a reader lands on",
-                )),
-            ],
-        ),
-        true,
+    panel(
+        "pv.bytes",
+        rect,
+        ink.surface,
+        Some(ink.outline),
+        vec![
+            scroll_pane(
+                &state.bytes_scroll,
+                panel_content(rect),
+                (0, PAD),
+                PanePointer::PassesThrough,
+                children,
+            )
+            .silenced(Silence::layout(
+                "scrolls the byte grid; the rows inside it are what a reader lands on",
+            )),
+        ],
     )
+    .with_focusable(true)
 }
 
 /// The tag one row of the byte grid addresses its offset by.

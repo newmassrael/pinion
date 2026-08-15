@@ -925,3 +925,36 @@ fn r1663_the_decode_tree_and_the_byte_map_name_the_same_fields() {
         );
     });
 }
+
+/// ★★★★ R1696 — **the keyboard ring this screen gained at R1693 is checked
+/// where it is painted.**
+///
+/// It was not. R1693 made three composite panes and three filter chips into Tab
+/// stops and left the verification entirely to two tree-wide python demos —
+/// which do run, and take three and a half minutes to say so. A counterfactual
+/// on the sibling screen proved the gap directly: reverting the framework
+/// builder that attaches the flag left every test in THIS example green while
+/// the screen lost its whole keyboard.
+///
+/// The ring is derived from the specification's own pane table plus the saved
+/// filters, so a pane added there joins this check without anybody remembering,
+/// and it is asserted as an ordered set because the §5.39 enumeration is
+/// depth-first over the paint scene.
+#[test]
+fn r1696_every_composite_pane_and_chip_is_a_keyboard_stop() {
+    sweep(|_, _, scene, _, case| {
+        let walked = scene.collect_focusable_tags();
+        let mut want: Vec<String> = spec::SAVED_FILTERS
+            .iter()
+            .enumerate()
+            .map(|(n, _)| format!("pv.filter.saved.{n}"))
+            .collect();
+        want.extend(spec::PANES.iter().map(|pane| pane.tag.to_owned()));
+        assert_eq!(
+            walked, want,
+            "{case}: the Tab ring is not the panes and chips this screen \
+             declares — a composite announced as operable that no keyboard \
+             reaches is the defect R1693 repaired and nothing here checked",
+        );
+    });
+}
