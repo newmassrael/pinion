@@ -113,7 +113,15 @@ def body() -> None:
         ok("the specification declares what owes a voice", len(voices) > 0)
         ok("the specification declares what owes a silence", len(silences) > 0)
         ok("the specification declares which seats are locked", len(locked) > 0)
-        assert_eq(len(locked), 11, "A: eleven regions are declared unavailable")
+        # ★ R1695 — sixteen, and the five that joined are that round's finding:
+        # three rail destinations this application cannot take you to (painted
+        # live and refusing nothing until then) and the settings page's own two
+        # booked affordances. Each row now says WHICH destination it belongs to,
+        # so this demo can ask about the one the screen opens at.
+        assert_eq(len(locked), 16, "A: sixteen regions are declared unavailable")
+        here = spec["rail_active"]
+        locked = [row["tag"] for row in locked if row["at"] in ("*", here)]
+        assert_eq(len(locked), 14, "A: fourteen of them are on the opening screen")
         assert_eq(
             len(spec["catalogue"]),
             13,
@@ -158,8 +166,15 @@ def body() -> None:
         # BOTH ways, which is the whole point of holding a specification: a
         # region the table has and the screen does not is as much a failure as
         # a region the screen paints and the table never named.
-        declared_voices = {v["tag"] for v in voices}
-        declared_silences = {s["tag"] for s in silences}
+        # ★ R1695 — filtered to the destination the screen OPENS at. Before that
+        # round the application had one page and this table described it; now
+        # each row says which destination owns it, and comparing the whole table
+        # against one page would demand the settings page's regions on the
+        # dashboard. `r1695_the_rail_takes_you_there` is what asks the same
+        # question of the other destination.
+        shown = ("*", here)
+        declared_voices = {v["tag"] for v in voices if v["at"] in shown}
+        declared_silences = {s["tag"] for s in silences if s["at"] in shown}
         announced = {t for t, r in rows.items() if r["voice"] == "announced"}
         quiet = {t for t, r in rows.items() if r["voice"] == "silent"}
         assert_eq(
@@ -180,7 +195,7 @@ def body() -> None:
         # And the ROLE each one announces is the specification's too — a name is
         # not evidence of the right kind (the R1691 lesson, twice over).
         access = nodes_by_tag(app)
-        for entry in voices:
+        for entry in (v for v in voices if v["at"] in shown):
             node = access.get(entry["tag"])
             ok(f"C: {entry['tag']} is announced", node is not None)
             assert_eq(node["role"], entry["role"], f"C: {entry['tag']} role")
@@ -212,11 +227,19 @@ def body() -> None:
             ok(f"E: {tag} is announced unavailable", is_disabled(node))
             reason = node.get("unavailable")
             ok(f"E: {tag} carries WHY, not only THAT", reason is not None)
-            assert_eq(reason["kind"], "reserved", f"E: {tag} kind")
+            # ★ R1695 — the kind and the recourse come from the CASCADE rather
+            # than being written here, because there are two kinds of locked
+            # now and a demo naming one would have gone on ignoring the other.
+            # The recourse is still derived, never declared.
+            assert_eq(reason["kind"], disabled[tag]["reason"], f"E: {tag} kind")
             assert_eq(
                 reason["recourse"],
-                "await_release",
+                disabled[tag]["recourse"],
                 f"E: {tag} recourse — what a person can do about it",
+            )
+            ok(
+                f"E: {tag} names a recourse that is not nothing",
+                reason["recourse"] in ("await_release", "open_elsewhere"),
             )
             # The detail is the SAME string the panel paints and the wire
             # publishes: one declaration, not three spellings of an intention.
@@ -350,11 +373,17 @@ def body() -> None:
         banner("H — driven: a press through the router moves the announcement")
         before = access["shell.rail.dashboard"].get("current")
         assert_eq(before, "page", "H: the dashboard seat is the current one")
-        app.request("scene/click", {"button": "left", "at": center(rects["shell.rail.stream"])})
+        # ★ R1695 — `settings` rather than `stream`, because `stream` is now a
+        # destination this application cannot take you to. The swap is forced,
+        # and what forced it is the round's finding: this assertion used to be
+        # satisfied by a rail that moved the highlight and arrived nowhere.
+        app.request(
+            "scene/click", {"button": "left", "at": center(rects["shell.rail.settings"])}
+        )
         app.tick(16)
         after = nodes_by_tag(app)
         assert_eq(
-            after["shell.rail.stream"].get("current"),
+            after["shell.rail.settings"].get("current"),
             "page",
             "H: the seat pressed is now the current one",
         )
@@ -368,10 +397,13 @@ def body() -> None:
         app.request("scene/click", {"button": "left", "at": center(rects["shell.rail.topology"])})
         app.tick(16)
         assert_eq(
-            nodes_by_tag(app)["shell.rail.stream"].get("current"),
+            nodes_by_tag(app)["shell.rail.settings"].get("current"),
             "page",
             "H: ★ pressing a locked destination does not move the reader",
         )
+        # Back where the rest of this demo expects to be.
+        app.intervene(f"{EXT}/nav", "dashboard")
+        app.tick(16)
 
         # ── (I) the censuses read the live tree ────────────────────────────
         banner("I — discriminating: the numbers move when the screen does")

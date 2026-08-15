@@ -257,8 +257,27 @@ def body() -> None:
             row = inert.get(f"shell.rail.{seat}")
             assert row is not None, f"B2: the {seat} rail seat is reserved and reported live"
             assert_eq(row["detail"], booking, f"B2: and names what it waits for")
+        # ★ R1695 — a SECOND reason joined, and the split is exact: everything
+        # inert here is either booked for a later release or built on another
+        # surface of this product, and the three that are the second kind are
+        # rail destinations this application cannot take you to. Before that
+        # round they were painted live and refused nothing.
+        elsewhere = [
+            row["tag"]
+            for row in tf.request("scene/disabled", {}).result["disabled"]
+            if row["reason"] == "elsewhere"
+        ]
         assert_eq(
-            [row["tag"] for row in tf.request("scene/disabled", {}).result["disabled"] if row["reason"] != "reserved"],
+            sorted(elsewhere),
+            ["shell.rail.catalog", "shell.rail.decode", "shell.rail.stream"],
+            "B2: three destinations are built and not here",
+        )
+        assert_eq(
+            [
+                row["tag"]
+                for row in tf.request("scene/disabled", {}).result["disabled"]
+                if row["reason"] not in ("reserved", "elsewhere")
+            ],
             [],
             "B2: nothing on this screen is inert for any other reason",
         )
@@ -725,9 +744,17 @@ def body() -> None:
         # `scene/click {at}` is the wire verb that goes through the router. Two
         # targets, in different panes, so a repair that happens to fix one
         # region does not read as coverage of the screen.
+        # ★ R1695 — aimed at `settings` rather than `stream`, because `stream`
+        # is now a destination this application cannot take you to and a press
+        # on it correctly moves nothing. That the swap was FORCED is the point:
+        # before this round every seat moved the string and none of them
+        # arrived anywhere, so this assertion was true of a rail that navigated
+        # nothing at all.
         assert_router_press_moves(
-            tf, "shell.rail.stream", lambda: q(tf, "nav"), "N: a rail seat"
+            tf, "shell.rail.settings", lambda: q(tf, "nav"), "N: a rail seat"
         )
+        tf.intervene(f"{EXT}/nav", "dashboard")
+        tf.tick(16)
         assert_router_press_moves(
             tf, "shell.subbar.edit", lambda: q(tf, "editing"), "N: the layout-edit toggle"
         )

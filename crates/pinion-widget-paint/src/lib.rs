@@ -103,6 +103,7 @@ pub mod group_header;
 pub mod hex_dump;
 pub mod listbox;
 pub mod menu;
+pub mod pages;
 pub mod pane;
 pub mod popup;
 pub mod radio_composite;

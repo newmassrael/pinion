@@ -80,7 +80,7 @@ use std::rc::Rc;
 
 use pinion_a11y::{
     AccessLive, AccessNode, AccessState, AccessValue, AriaRole, GridCell, GridColumn, GridRow,
-    HasPopup, NavLink, WidgetA11y, grid_table_nodes, navigation_link_nodes,
+    HasPopup, NavLink, WidgetA11y, grid_table_nodes, navigation_link_nodes, page_region_node,
 };
 use pinion_chart::{ChartStyle, Sparkline};
 use pinion_core::availability::Unavailable;
@@ -97,17 +97,23 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{ColorRole, Theme, ThemeMode, ThemeProvider, use_theme};
 use pinion_core::voice::Silence;
+use pinion_core::widgets::button::ButtonState;
 use pinion_core::widgets::card::{Card, CardAffordance, CardChrome, CardState, Remedy};
+use pinion_core::widgets::destination::{Destinations, Detour, Journey};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::widgets::tile_grid::{
     Maximized, Tile, TileDirection, TileGrid, TileId, TileNudge,
 };
+use pinion_core::widgets::toggle::ToggleState;
 use pinion_core::widgets::transport::{TransportClock, TransportStatus, use_transport_clock};
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
+use pinion_widget_paint::button::{self, ButtonColors, ButtonStyle};
+use pinion_widget_paint::pages::view_page_region;
 use pinion_widget_paint::pane::{PanePointer, scroll_pane};
 use pinion_widget_paint::run::text_run;
+use pinion_widget_paint::switch::{self, SwitchStyle};
 
 mod spec;
 
@@ -220,6 +226,29 @@ fn canvas_rect() -> Rect {
         win_w() - RAIL_W - PALETTE_W,
         win_h() - APP_BAR_H - SUB_BAR_H,
     )
+}
+
+/// ★★ R1695 — the rectangle the **paged region** occupies at a destination.
+///
+/// At the dashboard it is exactly [`canvas_rect`], because the dashboard also
+/// paints a layout bar above it and a palette beside it; anywhere else those
+/// are not there and the page gets the whole area the rail and application bar
+/// leave. A destination-dependent rectangle is what a region is: the page is
+/// what the window gives that destination, not a fixed hole in the chrome.
+fn page_rect(at: &str) -> Rect {
+    if at == "dashboard" {
+        return canvas_rect();
+    }
+    Rect::new(RAIL_W, APP_BAR_H, win_w() - RAIL_W, win_h() - APP_BAR_H)
+}
+
+/// The opening value of each Settings switch, from the specification.
+fn opening_options() -> [bool; spec::OPTIONS.len()] {
+    let mut opens = [false; spec::OPTIONS.len()];
+    for (slot, option) in opens.iter_mut().zip(spec::OPTIONS) {
+        *slot = option.opens;
+    }
+    opens
 }
 
 /// One grid column's pitch, gutters included.
@@ -454,7 +483,29 @@ struct ShellState {
     search: Signal<String>,
     searching: Signal<bool>,
     tab: Signal<String>,
-    nav: Signal<String>,
+    /// ★★★★★ R1695 — **where the rail has taken you**, and the roster it is
+    /// taken from.
+    ///
+    /// This was a bare `Signal<String>` the rail highlighted itself from, and
+    /// nothing else read it. Four of the seven seats therefore "navigated" to a
+    /// dashboard: measured through the router, the press moved this string and
+    /// left the painted scene at 193 tagged regions before and 193 after.
+    ///
+    /// A [`Journey`] instead, because the string could hold a destination no
+    /// press could reach and had no way to refuse one — and the region below
+    /// now reads it, so *arriving* is a fact about the window rather than about
+    /// a variable.
+    journey: Signal<Journey>,
+    /// The roster the journey is navigated against. Held rather than rebuilt at
+    /// each read so the paint, the hit test and the wire cannot be looking at
+    /// three rosters — the failure this whole axis is a repair for.
+    roster: Destinations,
+    /// The Settings destination's four switches, in specification order.
+    ///
+    /// One array rather than four signals because the page renders them from a
+    /// table and the wire publishes them from the same table; four fields would
+    /// be four chances for the two to disagree about the order.
+    options: Signal<[bool; spec::OPTIONS.len()]>,
     selected: Signal<Option<String>>,
     cursor: Signal<(u32, u32)>,
     pressed: RefCell<Option<Hit>>,
@@ -513,6 +564,7 @@ impl ShellState {
                     .with_state(CardState::Ready),
             );
         }
+        let roster = spec::destinations();
         let mut presets = BTreeMap::new();
         presets.insert(
             spec::PRESET.to_string(),
@@ -538,7 +590,12 @@ impl ShellState {
             search: Signal::new(String::new()),
             searching: Signal::new(false),
             tab: Signal::new(TABS[0].to_string()),
-            nav: Signal::new(spec::RAIL_ACTIVE.to_string()),
+            journey: Signal::new(
+                Journey::begin(&roster, spec::RAIL_ACTIVE)
+                    .expect("the screen opens at a destination it can reach"),
+            ),
+            roster,
+            options: Signal::new(opening_options()),
             selected: Signal::new(None),
             cursor: Signal::new((0, 0)),
             pressed: RefCell::new(None),
@@ -552,6 +609,32 @@ impl ShellState {
 
     fn card(&self, id: &str) -> Option<Card> {
         self.cards.get().into_iter().find(|c| c.id().as_str() == id)
+    }
+
+    /// Where the rail has taken this window.
+    fn at(&self) -> String {
+        self.journey.get().at().to_owned()
+    }
+
+    /// Go to a destination the way both a press and the wire do.
+    ///
+    /// One function rather than one per channel: R1673 measured this screen's
+    /// two paths giving a reserved seat two different answers, and a shared
+    /// verb is the only arrangement in which they cannot.
+    fn go(&self, key: &str) -> Result<(), Detour> {
+        let mut journey = self.journey.get();
+        let arrival = journey.navigate(&self.roster, key)?;
+        let title = journey.here(&self.roster).title.clone();
+        self.journey.set(journey);
+        match arrival {
+            pinion_core::widgets::destination::Arrival::AlreadyHere => {
+                self.say(format!("already in {title}"));
+            }
+            pinion_core::widgets::destination::Arrival::Moved { .. } => {
+                self.say(format!("{title} section"));
+            }
+        }
+        Ok(())
     }
 
     fn update_card(&self, id: &str, edit: impl FnOnce(&mut Card)) -> bool {
@@ -956,6 +1039,12 @@ enum Hit {
     Sub(SubChip),
     PresetItem(usize),
     Rail(&'static str),
+    /// R1695 — a Settings switch, by its specification key.
+    Option(&'static str),
+    /// R1695 — a Settings key row's button, which is booked for a later release.
+    KeyRow(&'static str),
+    /// R1695 — a theme segment, by its index in [`spec::THEMES`].
+    Theme(usize),
     Palette(&'static str),
     Grip(String),
     Affordance(String, CardAffordance),
@@ -991,6 +1080,25 @@ impl Hit {
             }
             return Self::Nothing;
         }
+        // ★★ R1695 — the rail is chrome and is asked first, whatever the page.
+        // Everything after it belongs to the destination showing, which is why
+        // this branch moved above the palette's: the palette is the dashboard's
+        // and is not painted anywhere else, so a press in its old column at
+        // another destination must fall through to that page rather than reach a
+        // row nobody can see. The paint and this test read one `page_rect`.
+        if px < RAIL_W {
+            for (n, seat) in spec::RAIL.iter().enumerate() {
+                if contains(rail_rect(u(n)), px, py - APP_BAR_H) {
+                    return Self::Rail(seat.key);
+                }
+            }
+            return Self::Nothing;
+        }
+        let at = state.at();
+        if at != "dashboard" {
+            let region = page_rect(&at);
+            return Self::in_settings(state, px - region.x, py - region.y);
+        }
         if px >= palette_rect().x {
             let panel = palette_rect();
             let (lx, ly) = (px - panel.x, py - panel.y);
@@ -999,14 +1107,6 @@ impl Hit {
                     && contains(row.rect, lx, ly)
                 {
                     return Self::Palette(def.kind);
-                }
-            }
-            return Self::Nothing;
-        }
-        if px < RAIL_W {
-            for (n, seat) in spec::RAIL.iter().enumerate() {
-                if contains(rail_rect(u(n)), px, py - APP_BAR_H) {
-                    return Self::Rail(seat.key);
                 }
             }
             return Self::Nothing;
@@ -1022,6 +1122,66 @@ impl Hit {
         }
         let canvas = canvas_rect();
         Self::in_canvas(state, px - canvas.x, py - canvas.y)
+    }
+
+    /// ★ R1695 — what is under a point on the Settings page, in the region's own
+    /// space.
+    ///
+    /// The rectangles come from the same `settings_*_rect` helpers the painter
+    /// uses, which is the standing rule on this screen: what is drawn and what
+    /// responds are derived from ONE fact.
+    fn in_settings(state: &ShellState, cx: u32, cy: u32) -> Self {
+        let region = page_rect(&state.at());
+        for (n, option) in spec::OPTIONS.iter().enumerate() {
+            let seat = Self::option_seat(region, n);
+            if contains(seat, cx, cy) {
+                return Self::Option(option.key);
+            }
+        }
+        for (n, row) in spec::KEY_ROWS.iter().enumerate() {
+            let card = settings_group_rect(region, "keys");
+            let local_row = Rect::new(0, u(n) * SET_ROW_H, card.w, SET_ROW_H);
+            let seat = settings_ctrl_rect(local_row, SET_CTRL_W);
+            if contains(
+                Rect::new(card.x + seat.x, card.y + seat.y, seat.w, seat.h),
+                cx,
+                cy,
+            ) {
+                return Self::KeyRow(row.key);
+            }
+        }
+        for n in 0..spec::THEMES.len() {
+            if contains(Self::theme_seat(region, u(n)), cx, cy) {
+                return Self::Theme(n);
+            }
+        }
+        Self::Nothing
+    }
+
+    /// The region-space rectangle of the `n`th switch on the Settings page.
+    fn option_seat(region: Rect, n: usize) -> Rect {
+        let option = &spec::OPTIONS[n];
+        let card = settings_group_rect(region, option.group);
+        let within = u(spec::OPTIONS[..n]
+            .iter()
+            .filter(|o| o.group == option.group)
+            .count());
+        let row = Rect::new(0, within * SET_ROW_H, card.w, SET_ROW_H);
+        let seat = settings_ctrl_rect(row, 64);
+        Rect::new(card.x + seat.x, card.y + seat.y, seat.w, seat.h)
+    }
+
+    /// The region-space rectangle of a theme segment.
+    fn theme_seat(region: Rect, n: u32) -> Rect {
+        let card = settings_group_rect(region, "appearance");
+        let seat = settings_ctrl_rect(Rect::new(0, 0, card.w, SET_ROW_H), SEG_W);
+        let w = seg_chip_w();
+        Rect::new(
+            card.x + seat.x + SEG_PAD + n * w,
+            card.y + seat.y + 1 + SEG_PAD,
+            w,
+            SEG_CHIP_H,
+        )
     }
 
     /// What is under a point in the canvas's own space.
@@ -1138,6 +1298,9 @@ fn hit_word(hit: &Hit) -> String {
         Hit::Sub(chip) => chip.tag().to_string(),
         Hit::PresetItem(n) => format!("shell.preset.item.{n}"),
         Hit::Rail(name) => format!("shell.rail.{name}"),
+        Hit::Option(key) => format!("shell.settings.option.{key}"),
+        Hit::KeyRow(key) => format!("shell.settings.key.{key}"),
+        Hit::Theme(n) => format!("shell.settings.theme.{n}"),
         Hit::Palette(kind) => format!("shell.palette.{kind}"),
         Hit::Grip(id) => format!("card.{id}.grip"),
         Hit::Affordance(id, affordance) => format!("card.{id}.{}", affordance.wire()),
@@ -1691,6 +1854,11 @@ const FIELDS: &[SchemaField] = const {
         SchemaField::new("rail", "string"),
         SchemaField::new("reserved_rail", "json"),
         SchemaField::new("nav", "string"),
+        // ★★ R1695 — where the rail can take you, what each seat's standing is,
+        // and which one is showing. `nav` above says only the last of those.
+        SchemaField::new("destinations", "json"),
+        // The Settings destination's switches.
+        SchemaField::new("options", "json"),
         SchemaField::new("editing", "bool"),
         SchemaField::new("config_open", "string"),
         // the catalogue and the board
@@ -1848,7 +2016,14 @@ impl ExternalIntrospect for ShellOracle {
             "tab" => text(state.tab.get()),
             "tabs" => text(TABS.join(",")),
             "spec" | "rail" | "reserved_rail" | "catalogue" => read_specification(path),
-            "nav" => text(state.nav.get()),
+            "nav" => text(state.at()),
+            // ★★ R1695 — the roster and the position, in one published value
+            // built by the framework so two screens of one product cannot
+            // publish the same fact in two shapes.
+            "destinations" => Ok(IntrospectValue::Json(
+                state.roster.wire(&state.journey.get()),
+            )),
+            "options" => Ok(IntrospectValue::Json(options_json(state))),
             "editing" => Ok(IntrospectValue::Bool(state.editing.get())),
             "config_open" => text(state.config_open.get().unwrap_or_default()),
             "cards" => text(state.card_ids()),
@@ -1977,32 +2152,29 @@ impl ExternalIntrospect for ShellOracle {
                 state.say(format!("view {chosen}"));
                 Ok(())
             }
+            // ★ R1695 — the wire drives the SAME verb the pointer does, so the
+            // two channels cannot answer a destination differently. What the
+            // wire adds is the closed set in its refusal, which a person gets
+            // from the rail itself.
             "nav" => {
                 let name = word(&value)?;
-                let chosen = spec::RAIL
-                    .iter()
-                    .find(|seat| seat.key == name)
-                    .ok_or_else(|| {
-                        InterveneError::out_of_range(format!(
-                            "{name:?} is not a rail section; they are {}",
-                            spec::RAIL
-                                .iter()
-                                .map(|seat| seat.key)
-                                .collect::<Vec<_>>()
-                                .join(", ")
-                        ))
-                    })?;
-                // R1668 — a reserved seat refuses, and says what it is waiting
-                // for. The wire learns this the same way a person does: the
-                // rail paints it inert and `scene/disabled` names the reason.
-                if let Some(why) = chosen.reserved_for {
-                    return Err(InterveneError::out_of_range(format!(
-                        "the {name:?} section is reserved for {why}"
-                    )));
-                }
-                state.nav.set(chosen.key.to_string());
-                state.say(format!("{} section", chosen.title));
-                Ok(())
+                state.go(&name).map_err(|detour| match detour {
+                    Detour::NoSuchDestination { .. } => InterveneError::out_of_range(format!(
+                        "{name:?} is not a rail section; they are {}",
+                        state.roster.keys().collect::<Vec<_>>().join(", ")
+                    )),
+                    Detour::Closed { .. } => InterveneError::out_of_range(format!(
+                        "the {name:?} section is {}",
+                        state
+                            .roster
+                            .get(&name)
+                            .and_then(|d| d.standing.why())
+                            .map_or_else(
+                                String::new,
+                                pinion_core::availability::Unavailable::sentence
+                            )
+                    )),
+                })
             }
             "preset" => ShellOracle::apply_preset(&state, &word(&value)?),
             "sources" | "cards" | "card_count" | "placed_count" | "layout" | "maximized"
@@ -2212,18 +2384,29 @@ impl ShellOracle {
             Hit::Chip(chip) => Self::press_chip(state, chip),
             Hit::Sub(chip) => Self::press_sub(state, chip),
             Hit::PresetItem(n) => Self::press_preset_item(state, n),
+            // ★ R1695 — one verb, and its refusal is the roster's sentence.
+            // Before this the press path authored its own message and told a
+            // reserved seat the wrong thing on the sibling screen; a refusal
+            // nobody derives is a refusal two channels will spell two ways.
             Hit::Rail(key) => {
-                let seat = spec::RAIL.iter().find(|seat| seat.key == key);
-                let title = seat.map_or(key, |seat| seat.title);
-                if let Some(why) = seat.and_then(|seat| seat.reserved_for) {
-                    // The seat is painted inert, so a pointer never reaches it;
-                    // this is the keyboard and wire path saying the same thing.
-                    state.say(format!("{title} is reserved for {why}"));
-                    return;
+                if let Err(detour) = state.go(key) {
+                    state.say(detour.sentence(&state.roster));
                 }
-                state.nav.set(key.to_string());
-                state.say(format!("{title} section"));
             }
+            Hit::Option(key) => Self::toggle_option(state, key),
+            // Painted inert, so a pointer never reaches it; this is the
+            // keyboard and wire path saying the same thing the seat declares.
+            Hit::KeyRow(key) => {
+                let row = spec::KEY_ROWS.iter().find(|row| row.key == key);
+                if let Some(row) = row {
+                    state.say(format!(
+                        "{} is {}",
+                        row.title,
+                        Unavailable::reserved(row.reserved_for).sentence()
+                    ));
+                }
+            }
+            Hit::Theme(n) => Self::choose_theme(state, n),
             Hit::Palette(kind) => {
                 if let Err(why) = Self::add(state, kind) {
                     state.say(format!("refused: {why:?}"));
@@ -2304,12 +2487,49 @@ impl ShellOracle {
             }
             SubChip::AddWidget => {
                 // The palette is always open in this shell, so the button is
-                // what SAYS where widgets come from: it selects the catalogue
-                // section rather than opening a second chooser.
-                state.nav.set("catalog".to_string());
+                // what SAYS where widgets come from rather than opening a second
+                // chooser.
+                //
+                // ★ R1695 — it used to move the rail's highlight to `catalog`
+                // as well, which is this round's own defect in miniature: the
+                // rail said you were at a destination the window had not taken
+                // you to. The pointer is what the button aims, and it aims at
+                // the palette on this page.
                 state.say("pick a widget from the palette \u{2192}");
             }
         }
+    }
+
+    /// ★ R1695 — flip one Settings switch.
+    ///
+    /// Keyed by the specification's own order rather than by a field per option,
+    /// so a fifth switch is a row in the table and nothing here.
+    fn toggle_option(state: &Rc<ShellState>, key: &str) {
+        let Some(n) = spec::OPTIONS.iter().position(|o| o.key == key) else {
+            return;
+        };
+        let mut on = state.options.get();
+        on[n] = !on[n];
+        state.options.set(on);
+        state.say(format!(
+            "{} {}",
+            spec::OPTIONS[n].title,
+            if on[n] { "on" } else { "off" }
+        ));
+    }
+
+    /// ★ R1695 — choose a theme from the Settings page's segment.
+    ///
+    /// The same `ThemeProvider` the application bar's toggle and the `t` chord
+    /// write, so three affordances over one fact rather than three facts.
+    fn choose_theme(state: &Rc<ShellState>, n: usize) {
+        let dark = n == 0;
+        state.theme.set_mode(if dark {
+            ThemeMode::Dark
+        } else {
+            ThemeMode::Light
+        });
+        state.say(format!("theme {}", spec::THEMES[n].to_lowercase()));
     }
 
     /// The preset menu's rows: every saved layout, then "Save current layout".
@@ -2702,6 +2922,81 @@ fn absolute(rect: Rect) -> LayoutStyle {
         .with_absolute_position(rect.x, rect.y)
         .with_size(Size::px(rect.w, rect.h))
         .with_pointer_transparent(true)
+}
+
+// --- The Settings destination ------------------------------------------------
+//
+// ★★ R1695 — the reference's own Settings section, reproduced: four switch rows
+// in two groups, two rows whose affordance is booked for a later release, and a
+// two-way appearance segment. The switch is
+// [`pinion_widget_paint::switch`](switch::view_switch) rather than a hand-drawn
+// track — the class R1673 measured on screen A, where a track was painted with
+// no knob at all because the screen drew a switch instead of using one.
+
+/// The Settings page's metrics, region-local.
+const SET_PAD: u32 = 24;
+const SET_MAX_W: u32 = 720;
+const SET_HEAD_H: u32 = 14;
+const SET_HEAD_GAP: u32 = 10;
+const SET_GROUP_GAP: u32 = 22;
+const SET_ROW_H: u32 = 64;
+const SET_ROW_PAD: u32 = 18;
+const SET_CTRL_W: u32 = 96;
+/// The appearance segment: its overall width, its inner pad and a chip's height.
+///
+/// Named rather than written into the painter and the hit test separately —
+/// this screen's standing rule, and the class it has paid for three times.
+const SEG_W: u32 = 148;
+const SEG_PAD: u32 = 3;
+const SEG_CHIP_H: u32 = 30;
+
+/// One appearance chip's width, derived so the pair fills the segment.
+const fn seg_chip_w() -> u32 {
+    (SEG_W - SEG_PAD * 2) / 2
+}
+
+/// The content column: the page inset, bounded so the rows do not stretch to a
+/// maximised window's width and leave their controls a screen away from their
+/// titles.
+fn settings_col(region: Rect) -> Rect {
+    let w = region.w.saturating_sub(SET_PAD * 2).min(SET_MAX_W);
+    Rect::new(SET_PAD, SET_PAD, w, region.h.saturating_sub(SET_PAD * 2))
+}
+
+/// How many rows a group holds — the switch groups from [`spec::OPTIONS`], the
+/// key group from [`spec::KEY_ROWS`], and appearance is the single theme row.
+fn settings_group_rows(group: &str) -> u32 {
+    match group {
+        "keys" => u(spec::KEY_ROWS.len()),
+        "appearance" => 1,
+        other => u(spec::OPTIONS.iter().filter(|o| o.group == other).count()),
+    }
+}
+
+/// The card rectangle a group occupies, region-local.
+fn settings_group_rect(region: Rect, group: &str) -> Rect {
+    let col = settings_col(region);
+    let mut y = col.y;
+    for (key, _) in spec::OPTION_GROUPS {
+        let rows = settings_group_rows(key);
+        y += SET_HEAD_H + SET_HEAD_GAP;
+        if key == group {
+            return Rect::new(col.x, y, col.w, rows * SET_ROW_H);
+        }
+        y += rows * SET_ROW_H + SET_GROUP_GAP;
+    }
+    Rect::new(col.x, y, col.w, 0)
+}
+
+/// A row's control seat, at the trailing end.
+fn settings_ctrl_rect(row: Rect, w: u32) -> Rect {
+    let h = 32;
+    Rect::new(
+        row.x + row.w.saturating_sub(SET_ROW_PAD + w),
+        row.y + (SET_ROW_H.saturating_sub(h)) / 2,
+        w,
+        h,
+    )
 }
 
 /// A small square dot — a grid pip, a status light, a grip dot.
@@ -3162,21 +3457,29 @@ fn preset_menu_scene(state: &ShellState, palette: Palette) -> Scene {
 
 fn rail_scene(state: &ShellState, palette: Palette) -> Scene {
     let mut entries = Vec::new();
-    let nav = state.nav.get();
+    let nav = state.at();
     for (n, seat) in spec::RAIL.iter().enumerate() {
         let key = seat.key;
         let rect = rail_rect(u(n));
         let on = nav == key;
         let ink = if on { palette.accent_fg } else { palette.muted };
-        // R1668 — a reserved seat is DECLARED unavailable rather than painted
-        // grey by hand. The declaration is what makes it inert to the pointer,
-        // fades its ink, announces it to a screen reader and puts the reason on
-        // `scene/disabled`; a hand-picked grey would do only the last of those,
-        // and would do it in a way nothing can check.
-        let layout = seat.reserved_for.map_or_else(
-            || absolute(rect),
-            |why| absolute(rect).with_unavailable(Unavailable::reserved(why)),
-        );
+        // R1668 — a seat this application cannot take you to is DECLARED
+        // unavailable rather than painted grey by hand. The declaration is what
+        // makes it inert to the pointer, fades its ink, announces it to a screen
+        // reader and puts the reason on `scene/disabled`; a hand-picked grey
+        // would do only the last of those, in a way nothing can check.
+        //
+        // ★ R1695 — the reason comes from the ROSTER, so the seat's paint, its
+        // refusal and its accessibility node are one fact. Three of these were
+        // painted live and refused nothing until this round.
+        let layout = state
+            .roster
+            .get(key)
+            .and_then(|d| d.standing.why())
+            .map_or_else(
+                || absolute(rect),
+                |why| absolute(rect).with_unavailable(why.clone()),
+            );
         entries.push(Scene::Container(
             ContainerNode::new(rail_mark(key, local(rect), ink))
                 .with_tag(format!("shell.rail.{key}"))
@@ -3209,6 +3512,237 @@ fn rail_scene(state: &ShellState, palette: Palette) -> Scene {
                 win_h().saturating_sub(APP_BAR_H),
             ))),
     )
+}
+
+/// The Settings destination's page, region-local.
+///
+/// ★★ R1695 — the second page, and what makes the region worth building: a
+/// paged region with one page proves nothing about paging.
+fn settings_scene(state: &ShellState, palette: Palette, region: Rect) -> Vec<Scene> {
+    let col = settings_col(region);
+    let mut out = Vec::new();
+    for (key, heading) in spec::OPTION_GROUPS {
+        let card = settings_group_rect(region, key);
+        out.push(label(
+            heading,
+            Rect::new(col.x, card.y - SET_HEAD_H - SET_HEAD_GAP, col.w, SET_HEAD_H),
+            FONT_SMALL,
+            palette.muted,
+        ));
+        let rows = match key {
+            "keys" => settings_key_rows(palette, region),
+            "appearance" => settings_theme_row(state, palette, region),
+            group => settings_option_rows(state, palette, region, group),
+        };
+        out.push(Scene::Container(
+            ContainerNode::new(rows)
+                .with_tag(format!("shell.settings.group.{key}"))
+                .with_style(
+                    BoxStyle::filled(palette.panel)
+                        .with_corner_radius(12)
+                        .with_border(Border::new(palette.outline, 1)),
+                )
+                .with_layout(absolute(card)),
+        ));
+    }
+    out
+}
+
+/// A row's title and the sentence under it, in the card's own space.
+///
+/// Silenced as `part_of` the control it names: the switch beside it takes its
+/// accessible name from this text, so a reader who heard both would hear the
+/// row twice. `named` is that control's **tag** — a silence that points at
+/// prose is a silence pointing at nothing, which is what `dangling` counts and
+/// what the first draft of this page produced seven of.
+fn settings_text(
+    key: &str,
+    title: &str,
+    gist: &str,
+    row: Rect,
+    palette: Palette,
+    named: String,
+) -> Scene {
+    let inner = Rect::new(
+        SET_ROW_PAD,
+        row.y,
+        row.w.saturating_sub(SET_ROW_PAD * 2),
+        row.h,
+    );
+    Scene::Container(
+        ContainerNode::new(vec![
+            label(
+                title,
+                Rect::new(0, 15, inner.w.saturating_sub(SET_CTRL_W), 16),
+                FONT_TITLE,
+                palette.ink,
+            ),
+            label(
+                gist,
+                Rect::new(0, 34, inner.w.saturating_sub(SET_CTRL_W), 15),
+                FONT_BODY,
+                palette.muted,
+            ),
+        ])
+        .with_tag(format!("shell.settings.row.{key}"))
+        .with_layout(absolute(inner)),
+    )
+    .silenced(Silence::part_of(named))
+}
+
+/// The switch rows of one group.
+fn settings_option_rows(
+    state: &ShellState,
+    palette: Palette,
+    region: Rect,
+    group: &str,
+) -> Vec<Scene> {
+    let on = state.options.get();
+    let theme = use_theme(THEME_TAG).theme_animated();
+    let card = settings_group_rect(region, group);
+    let mut out = Vec::new();
+    // Two indices, and both are load-bearing: `n` is the row's place in this
+    // group's card and `index` its place in the specification, which is what the
+    // value array is keyed by. Collapsing them would work only while every group
+    // held every option.
+    for (n, (index, option)) in spec::OPTIONS
+        .iter()
+        .enumerate()
+        .filter(|(_, option)| option.group == group)
+        .enumerate()
+    {
+        let row = Rect::new(0, u(n) * SET_ROW_H, card.w, SET_ROW_H);
+        out.push(settings_text(
+            option.key,
+            option.title,
+            option.gist,
+            row,
+            palette,
+            format!("shell.settings.option.{}", option.key),
+        ));
+        let seat = settings_ctrl_rect(row, 64);
+        out.push(Scene::Container(
+            ContainerNode::new(vec![switch::view_switch(
+                format!("shell.settings.option.{}", option.key),
+                ToggleState::Idle,
+                on[index],
+                &theme,
+                &SwitchStyle::m3(),
+                option.title,
+            )])
+            .with_layout(absolute(seat)),
+        ));
+    }
+    out
+}
+
+/// The two key rows, whose affordance is booked for a later release.
+fn settings_key_rows(palette: Palette, region: Rect) -> Vec<Scene> {
+    let theme = use_theme(THEME_TAG).theme_animated();
+    let mut out = Vec::new();
+    for (n, key_row) in spec::KEY_ROWS.iter().enumerate() {
+        let card = settings_group_rect(region, "keys");
+        let row = Rect::new(0, u(n) * SET_ROW_H, card.w, SET_ROW_H);
+        out.push(settings_text(
+            key_row.key,
+            key_row.title,
+            key_row.gist,
+            row,
+            palette,
+            format!("shell.settings.key.{}", key_row.key),
+        ));
+        let seat = settings_ctrl_rect(row, SET_CTRL_W);
+        // ★★ R1695 — the framework's BUTTON, not a box with a word in it.
+        // Hand-rolling it is the class R1673 measured on the sibling screen,
+        // where a switch was drawn as a track with no knob at all; here the
+        // hand-rolled version put its label flush against the left border,
+        // because centring a label is what a button does and a box does not.
+        // Measured on the first draft by ink span: 683 in a box from 682.
+        out.push(Scene::Container(
+            ContainerNode::new(vec![button::view_button(
+                key_row.verb,
+                ButtonState::Disabled,
+                0.0,
+                &ButtonColors::filled_tonal(&theme),
+                &ButtonStyle::m3_default(format!("shell.settings.key.{}", key_row.key))
+                    .with_corner_radius(8)
+                    .with_size(Size::px(seat.w, seat.h))
+                    .with_label_font_size_px(FONT_BODY)
+                    // Booked for a later release, so not a Tab stop: a reader
+                    // who can land on it is being offered what the screen has
+                    // closed, which is the floor's behaviour and not ours.
+                    .with_focusable(false),
+            )])
+            .with_layout(
+                absolute(seat).with_unavailable(Unavailable::reserved(key_row.reserved_for)),
+            ),
+        ));
+    }
+    out
+}
+
+/// The appearance row: one two-way segment over the theme.
+fn settings_theme_row(state: &ShellState, palette: Palette, region: Rect) -> Vec<Scene> {
+    let card = settings_group_rect(region, "appearance");
+    let row = Rect::new(0, 0, card.w, SET_ROW_H);
+    let dark = theme_word(&state.theme) == "dark";
+    let theme = use_theme(THEME_TAG).theme_animated();
+    let seg_w = SEG_W;
+    let seat = settings_ctrl_rect(row, seg_w);
+    let mut segs = Vec::new();
+    for (n, name) in spec::THEMES.iter().enumerate() {
+        let on = (n == 0) == dark;
+        let w = seg_chip_w();
+        // The chosen half is the accent surface and the other is the tonal
+        // one — the reference's own two-way appearance segment, painted with
+        // the catalogue's button rather than a box and a word.
+        let colors = if on {
+            ButtonColors::accent(&theme)
+        } else {
+            ButtonColors::filled_tonal(&theme)
+        };
+        segs.push(Scene::Container(
+            ContainerNode::new(vec![button::view_button(
+                name,
+                ButtonState::Idle,
+                0.0,
+                &colors,
+                &ButtonStyle::m3_default(format!("shell.settings.theme.{n}"))
+                    .with_corner_radius(6)
+                    .with_size(Size::px(w, SEG_CHIP_H))
+                    .with_label_font_size_px(FONT_BODY),
+            )])
+            .with_layout(absolute(Rect::new(
+                SEG_PAD + u(n) * w,
+                SEG_PAD,
+                w,
+                SEG_CHIP_H,
+            ))),
+        ));
+    }
+    vec![
+        settings_text(
+            "theme",
+            spec::THEME_ROW.0,
+            spec::THEME_ROW.1,
+            row,
+            palette,
+            // The row names the pair, not either button, so it folds into the
+            // group that owns them.
+            "shell.settings.group.appearance".to_owned(),
+        ),
+        Scene::Container(
+            ContainerNode::new(segs)
+                .with_tag("shell.settings.theme")
+                .with_style(BoxStyle::filled(palette.canvas).with_corner_radius(8))
+                .with_layout(absolute(Rect::new(
+                    seat.x,
+                    seat.y + 1,
+                    seg_w,
+                    SEG_CHIP_H + SEG_PAD * 2,
+                ))),
+        ),
+    ]
 }
 
 /// The canvas's dot grid: one pip per cell corner.
@@ -3482,6 +4016,20 @@ fn clipped(text: &str, rect: Rect, px: u32, fg: Color, overflow: TextOverflow) -
         .with_layout(absolute(rect)),
     )
 }
+
+// ★★★ R1695 — there is no `centred` helper here, and the reason is a
+// measurement worth keeping.
+//
+// The first repair for the left-flush button labels set
+// `TextStyle::with_align(TextAlign::Center)`. Measured by ink span on the
+// rendered page it did **nothing**: the segment's `Dark` inked 634..659 inside a
+// chip starting at 635, and `Import…` inked 683..729 in a box from 682 — the
+// glyphs at the node's left edge in every case. The framework's own button does
+// not use that property either; `pinion_widget_paint::button::view_button`
+// centres with `JustifyContent::Center` on a flex row, which is the idiom this
+// screen now uses. Filed as `debt-a-declared-text-alignment-does-nothing-on-an-
+// absolutely-placed-run` rather than worked around, because the property is
+// published, accepted and reported back on `scene/snapshot`.
 
 /// ★★★★★ R1694 — [`clipped`], **addressable**.
 ///
@@ -4240,7 +4788,7 @@ fn read_specification(path: &str) -> Result<IntrospectValue, ReadRefusal> {
             spec::RAIL
                 .iter()
                 .filter_map(|seat| {
-                    seat.reserved_for
+                    seat.reserved_for()
                         .map(|why| serde_json::json!({ "key": seat.key, "reserved_for": why }))
                 })
                 .collect(),
@@ -4280,10 +4828,30 @@ fn spec_json() -> serde_json::Value {
         "rate": spec::RATE,
         "preset": spec::PRESET,
         "board_verbs": spec::BOARD_VERBS,
+        // ★ R1695 — `open` joined `reserved_for`, because a seat that is neither
+        // this page nor booked for a release is a third thing and the old two
+        // columns could not say it.
         "rail": spec::RAIL.iter().map(|seat| serde_json::json!({
-            "key": seat.key, "title": seat.title, "reserved_for": seat.reserved_for,
+            "key": seat.key,
+            "title": seat.title,
+            "reserved_for": seat.reserved_for(),
+            "open": matches!(seat.seat, spec::Seat::Page),
         })).collect::<Vec<_>>(),
         "rail_active": spec::RAIL_ACTIVE,
+        // ★ R1695 — the Settings destination.
+        "options": spec::OPTIONS.iter().map(|o| serde_json::json!({
+            "key": o.key, "title": o.title, "gist": o.gist,
+            "group": o.group, "opens": o.opens,
+        })).collect::<Vec<_>>(),
+        "key_rows": spec::KEY_ROWS.iter().map(|r| serde_json::json!({
+            "key": r.key, "title": r.title, "gist": r.gist,
+            "verb": r.verb, "reserved_for": r.reserved_for,
+        })).collect::<Vec<_>>(),
+        "option_groups": spec::OPTION_GROUPS.iter().map(|(key, title)| serde_json::json!({
+            "key": key, "title": title,
+        })).collect::<Vec<_>>(),
+        "themes": spec::THEMES,
+        "theme_row": { "title": spec::THEME_ROW.0, "gist": spec::THEME_ROW.1 },
         "sections": spec::SECTIONS.iter().map(|(key, title, tier)| serde_json::json!({
             "key": key, "title": title, "tier": tier_word(*tier),
         })).collect::<Vec<_>>(),
@@ -4327,24 +4895,58 @@ fn spec_json() -> serde_json::Value {
         // ★ R1694 — what reaches a reader who never sees the drawing, EXPANDED
         // here rather than listed, so a family that grows a member cannot be
         // satisfied by the members that were there when the table was written.
+        // ★ R1695 — each row now says WHICH destination it belongs to, so a
+        // client can ask the census about a page it is not looking at.
         "voices": spec::VOICES.iter().flat_map(|voice| {
             voice.population.members().into_iter().map(move |member| serde_json::json!({
                 "tag": voice.tag.replace("{}", &member),
                 "role": voice.role,
+                "at": where_word(voice.at),
             }))
         }).collect::<Vec<_>>(),
-        "silences": spec::SILENCES.iter().flat_map(|(tag, population, kind)| {
+        "silences": spec::SILENCES.iter().flat_map(|(tag, population, kind, at)| {
             population.members().into_iter().map(move |member| serde_json::json!({
                 "tag": tag.replace("{}", &member),
                 "kind": kind,
+                "at": where_word(*at),
             }))
         }).collect::<Vec<_>>(),
-        "locked": spec::LOCKED.iter().flat_map(|(tag, population)| {
-            population.members().into_iter().map(move |member| {
-                serde_json::Value::String(tag.replace("{}", &member))
-            })
+        "locked": spec::LOCKED.iter().flat_map(|(tag, population, at)| {
+            population.members().into_iter().map(move |member| serde_json::json!({
+                "tag": tag.replace("{}", &member),
+                "at": where_word(*at),
+            }))
         }).collect::<Vec<_>>(),
     })
+}
+
+/// ★ R1695 — the Settings switches, as the wire reads them.
+fn options_json(state: &ShellState) -> serde_json::Value {
+    let on = state.options.get();
+    serde_json::Value::Array(
+        spec::OPTIONS
+            .iter()
+            .zip(on)
+            .map(|(option, on)| {
+                serde_json::json!({
+                    "key": option.key,
+                    "title": option.title,
+                    "gist": option.gist,
+                    "group": option.group,
+                    "on": on,
+                })
+            })
+            .collect(),
+    )
+}
+
+/// The wire spelling of where a region belongs — `"*"` for chrome, which is on
+/// screen at every destination, and the key otherwise.
+const fn where_word(at: spec::Where) -> &'static str {
+    match at {
+        spec::Where::Chrome => "*",
+        spec::Where::At(key) => key,
+    }
 }
 
 /// The wire spelling of a tier.
@@ -4574,11 +5176,81 @@ fn view(_state: (), _frame: Frame) -> Scene {
     let dark = theme_word(&state.theme) == "dark";
     let palette = palette_of(&theme, dark);
 
+    let journey = state.journey.get();
+    let here = journey.here(&state.roster).clone();
+    let region = page_rect(here.key.as_ref());
+    // ★★★★★ R1695 — the page a destination gets, built by the framework's
+    // region so that the pages it is NOT at are never constructed. Before this
+    // the rail moved a string and the window did not change: measured through
+    // the router, four of seven seats left the screen at 193 painted regions
+    // before and 193 after.
+    let page = view_page_region(
+        "shell.canvas",
+        region,
+        palette.canvas,
+        &here,
+        |here| match here.key.as_ref() {
+            "settings" => settings_scene(&state, palette, region),
+            _ => dashboard_scene(&state, palette),
+        },
+    );
+
+    let children = std::iter::once(page)
+        .chain([
+            app_bar_scene(&state, palette),
+            rail_scene(&state, palette),
+            toast_scene(&state, palette),
+        ])
+        // ★ R1695 — the layout bar and the palette are the DASHBOARD's. They sit
+        // outside the region because they sit outside its rectangle, so the
+        // substrate's guarantee does not reach them; the specification's
+        // destination column is what checks them, in both directions.
+        .chain(if spec::shows_board_chrome(here.key.as_ref()) {
+            vec![
+                sub_bar_scene(&state, palette),
+                palette_scene(&state, palette),
+            ]
+        } else {
+            Vec::new()
+        })
+        .chain([
+            // ★★ R1672 — the preset menu is a POPUP: anchored to the sub bar's
+            // chip, bounded by the window. It used to be a child of the bar and
+            // hung 81 pixels below it, which is an escape and was invisible
+            // until the ink gate reached this screen. A sibling here also puts
+            // it over everything it opens across, which a child of one bar can
+            // never be.
+            if state.preset_open.get() && spec::shows_board_chrome(here.key.as_ref()) {
+                preset_menu_scene(&state, palette)
+            } else {
+                Scene::Container(ContainerNode::new(Vec::new()))
+            },
+            label(
+                HELP_STRIP,
+                Rect::new(canvas_rect().x + 610, win_h() - 47, 470, 14),
+                FONT_SMALL,
+                palette.muted,
+            ),
+        ])
+        .collect::<Vec<_>>();
+
+    Scene::Container(
+        ContainerNode::new(children)
+            .with_tag(VIEW_TAG)
+            .with_style(BoxStyle::filled(palette.canvas))
+            .with_layout(LayoutStyle::new().with_size(Size::px(win_w(), win_h()))),
+    )
+}
+
+/// The dashboard destination's page, region-local: the board, and the cards
+/// torn off it.
+fn dashboard_scene(state: &ShellState, palette: Palette) -> Vec<Scene> {
     let board = state.board.get();
     let selected = state.selected.get();
     let editing = state.editing.get();
     let drag = state.drag.get();
 
+    let canvas = canvas_rect();
     let mut canvas_children = grid_scene(board.rows() + 1, palette, editing || drag.is_some());
     for card in &state.placed() {
         let Some(tile) = board.tile(card.id()) else {
@@ -4620,7 +5292,7 @@ fn view(_state: (), _frame: Frame) -> Scene {
     let mut canvas_children = vec![
         scroll_pane(
             &state.canvas_scroll,
-            Rect::new(0, 0, canvas_rect().w, canvas_rect().h),
+            Rect::new(0, 0, canvas.w, canvas.h),
             (0, GAP),
             // Every press goes to the one root `External` that runs this
             // screen's own hit test, so the pane must be invisible to the
@@ -4633,47 +5305,11 @@ fn view(_state: (), _frame: Frame) -> Scene {
         .silenced(Silence::layout("the board's scrolling viewport")),
     ];
     for float in &state.floats.get() {
-        if let Some(scene) = float_scene(&state, float, palette) {
+        if let Some(scene) = float_scene(state, float, palette) {
             canvas_children.push(scene);
         }
     }
-
-    let children = vec![
-        Scene::Container(
-            ContainerNode::new(canvas_children)
-                .with_tag("shell.canvas")
-                .with_style(BoxStyle::filled(palette.canvas))
-                .with_layout(absolute(canvas_rect())),
-        ),
-        app_bar_scene(&state, palette),
-        sub_bar_scene(&state, palette),
-        rail_scene(&state, palette),
-        palette_scene(&state, palette),
-        toast_scene(&state, palette),
-        // ★★ R1672 — the preset menu is a POPUP: anchored to the sub bar's
-        // chip, bounded by the window. It used to be a child of the bar and hung
-        // 81 pixels below it, which is an escape and was invisible until the ink
-        // gate reached this screen. A sibling here also puts it over everything
-        // it opens across, which a child of one bar can never be.
-        if state.preset_open.get() {
-            preset_menu_scene(&state, palette)
-        } else {
-            Scene::Container(ContainerNode::new(Vec::new()))
-        },
-        label(
-            HELP_STRIP,
-            Rect::new(canvas_rect().x + 610, win_h() - 47, 470, 14),
-            FONT_SMALL,
-            palette.muted,
-        ),
-    ];
-
-    Scene::Container(
-        ContainerNode::new(children)
-            .with_tag(VIEW_TAG)
-            .with_style(BoxStyle::filled(palette.canvas))
-            .with_layout(LayoutStyle::new().with_size(Size::px(win_w(), win_h()))),
-    )
+    canvas_children
 }
 
 struct AnalyzerShellView;
@@ -4726,31 +5362,58 @@ impl WidgetA11y for AnalyzerShellView {
     /// activate exactly the seats the screen has closed. Here every locked seat
     /// is announced unavailable, keeps its place in the set, and carries the
     /// kind, the detail and the recourse the bit cannot hold.
+    /// ★★ R1695 — and the tree now follows the rail. A destination's nodes are
+    /// emitted only where that destination is showing, which is the same
+    /// property the paint has and for the same reason: a reader offered a
+    /// control that is not on screen is offered a control nobody can reach.
     fn access_node(_state: &(), _focused: Option<&str>) -> Vec<AccessNode> {
         let state = use_shell_state();
-        let mut nodes = vec![
-            AccessNode::new(VIEW_TAG, AriaRole::Group)
-                .with_name("Analyzer dashboard")
-                .with_value(AccessValue::Text(format!(
-                    "{} of {} widgets placed on layout \"{}\", {} reserved, source {}",
-                    state.placed().len(),
-                    spec::placeable_count(),
-                    state.preset.get(),
-                    spec::reserved_count(),
-                    state.source.get(),
-                )))
-                .with_child("shell.appbar")
-                .with_child("shell.rail")
-                .with_child("shell.subbar")
-                .with_child("shell.canvas")
-                .with_child("shell.palette")
-                .with_child("shell.toast"),
-        ];
+        let journey = state.journey.get();
+        let here = journey.here(&state.roster);
+        let dashboard = spec::shows_board_chrome(here.key.as_ref());
+        let mut root = AccessNode::new(VIEW_TAG, AriaRole::Group)
+            .with_name("Analyzer dashboard")
+            .with_value(AccessValue::Text(format!(
+                "{} of {} widgets placed on layout \"{}\", {} reserved, source {}",
+                state.placed().len(),
+                spec::placeable_count(),
+                state.preset.get(),
+                spec::reserved_count(),
+                state.source.get(),
+            )))
+            .with_child("shell.appbar")
+            .with_child("shell.rail");
+        if dashboard {
+            root = root.with_child("shell.subbar");
+        }
+        root = root.with_child("shell.canvas");
+        if dashboard {
+            root = root.with_child("shell.palette");
+        }
+        let mut nodes = vec![root.with_child("shell.toast")];
         nodes.extend(app_bar_nodes(&state));
         nodes.extend(rail_nodes(&state));
-        nodes.extend(sub_bar_nodes(&state));
-        nodes.extend(board_nodes(&state));
-        nodes.extend(palette_nodes(&state));
+        // The region says which destination arrived — the fact the reference
+        // toolkit's paged container leaves empty on its own accessible value.
+        let mut region = page_region_node("shell.canvas", here);
+        if dashboard {
+            let (value, children, cards) = board_nodes(&state);
+            region = region.with_value(AccessValue::Text(value));
+            for child in children {
+                region = region.with_child(child);
+            }
+            nodes.push(region);
+            nodes.extend(sub_bar_nodes(&state));
+            nodes.extend(cards);
+            nodes.extend(palette_nodes(&state));
+        } else {
+            let (children, rows) = settings_nodes(&state);
+            for child in children {
+                region = region.with_child(child);
+            }
+            nodes.push(region);
+            nodes.extend(rows);
+        }
         nodes.push(
             AccessNode::new("shell.toast", AriaRole::Status)
                 .with_name("Activity")
@@ -4841,7 +5504,7 @@ const APP_BAR_TABS: &str = "shell.appbar.tabs";
 /// and the accessibility assembler relays what the disabled cascade resolved, so
 /// there is one declaration and no second spelling to drift from it.
 fn rail_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
-    let here = state.nav.get();
+    let here = state.at();
     let tags: Vec<String> = spec::RAIL
         .iter()
         .map(|seat| format!("shell.rail.{}", seat.key))
@@ -4894,23 +5557,117 @@ fn sub_bar_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
     ]
 }
 
-/// The board and every card placed on it.
-fn board_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
+/// Every card placed on the board, and the tags the page region owns them by.
+///
+/// ★ R1695 — the board's own node is gone from here: the rectangle it described
+/// is the **page region** now, and a region that is also a board would be two
+/// nodes at one tag. What the board contributes is what it is — a value saying
+/// how full it is, and the children.
+fn board_nodes(state: &Rc<ShellState>) -> (String, Vec<String>, Vec<AccessNode>) {
     let cards = state.cards.get();
-    let mut board = AccessNode::new("shell.canvas", AriaRole::Group)
-        .with_name("Board")
-        .with_value(AccessValue::Text(format!(
-            "{} widget(s) placed on a {}-column grid",
-            state.placed().len(),
-            spec::GRID_COLS,
-        )));
+    let value = format!(
+        "{} widget(s) placed on a {}-column grid",
+        state.placed().len(),
+        spec::GRID_COLS,
+    );
+    let mut children = Vec::new();
     let mut nodes = Vec::new();
     for card in &cards {
-        let id = card.id().as_str();
-        board = board.with_child(format!("card.{id}"));
+        children.push(format!("card.{}", card.id().as_str()));
         nodes.extend(card_nodes(state, card));
     }
-    nodes.insert(0, board);
+    (value, children, nodes)
+}
+
+/// ★★ R1695 — the Settings destination, as a reader walks it: four groups, each
+/// owning its rows.
+///
+/// Returns the region's children and the nodes, the same split the board makes,
+/// so the page region owns whichever destination is showing.
+///
+/// The two key rows carry **no reason of their own here**: they declare it once
+/// on their layout style and the assembler relays what the disabled cascade
+/// resolved. A second spelling is a second thing to drift.
+fn settings_nodes(state: &Rc<ShellState>) -> (Vec<String>, Vec<AccessNode>) {
+    let mut children = Vec::new();
+    let mut nodes = Vec::new();
+    for (key, heading) in spec::OPTION_GROUPS {
+        let tag = format!("shell.settings.group.{key}");
+        children.push(tag.clone());
+        let rows = match key {
+            "keys" => settings_key_nodes(),
+            "appearance" => settings_theme_nodes(state),
+            group_key => settings_option_nodes(state, group_key),
+        };
+        let mut group = AccessNode::new(&tag, AriaRole::Group).with_name(heading);
+        for row in &rows {
+            group = group.with_child(row.tag.clone());
+        }
+        nodes.push(group);
+        nodes.extend(rows);
+    }
+    (children, nodes)
+}
+
+/// The switch rows of one Settings group.
+fn settings_option_nodes(state: &Rc<ShellState>, group: &str) -> Vec<AccessNode> {
+    let on = state.options.get();
+    spec::OPTIONS
+        .iter()
+        .enumerate()
+        .filter(|(_, option)| option.group == group)
+        .map(|(index, option)| {
+            AccessNode::new(
+                format!("shell.settings.option.{}", option.key),
+                AriaRole::Switch,
+            )
+            .with_name(option.title)
+            .with_value(AccessValue::Text(option.gist.to_owned()))
+            .with_state(AccessState {
+                checked: Some(on[index]),
+                ..AccessState::default()
+            })
+        })
+        .collect()
+}
+
+/// The two rows whose affordance is booked for a later release.
+fn settings_key_nodes() -> Vec<AccessNode> {
+    spec::KEY_ROWS
+        .iter()
+        .map(|row| {
+            AccessNode::new(format!("shell.settings.key.{}", row.key), AriaRole::Button)
+                .with_name(format!("{} \u{2014} {}", row.title, row.verb))
+        })
+        .collect()
+}
+
+/// The appearance segment: an exclusive choice, so a `radiogroup` of `radio`s.
+///
+/// ★ R1695 — not two buttons carrying a checked flag, which is what the first
+/// draft emitted. A reader told "Dark, button, checked" learns that something is
+/// on; told "Dark, radio button, selected, 1 of 2" they learn that choosing the
+/// other one turns this off. WAI-ARIA binds `radio` to an owning `radiogroup`
+/// and `pinion_a11y::structure` enforces exactly that, so the group is a node
+/// rather than a convention.
+fn settings_theme_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
+    let dark = theme_word(&state.theme) == "dark";
+    let mut group =
+        AccessNode::new("shell.settings.theme", AriaRole::RadioGroup).with_name(spec::THEME_ROW.0);
+    let mut nodes = Vec::new();
+    for (n, name) in spec::THEMES.iter().enumerate() {
+        let tag = format!("shell.settings.theme.{n}");
+        group = group.with_child(&tag);
+        nodes.push(
+            AccessNode::new(&tag, AriaRole::RadioButton)
+                .with_name(*name)
+                .with_state(AccessState {
+                    checked: Some((n == 0) == dark),
+                    ..AccessState::default()
+                }),
+        );
+    }
+    nodes.insert(0, group);
     nodes
 }
 

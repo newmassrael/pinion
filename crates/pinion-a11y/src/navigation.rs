@@ -24,6 +24,7 @@
 use crate::node::{AccessNode, AccessState};
 use crate::role::{AriaCurrent, AriaRole};
 use pinion_core::availability::Unavailable;
+use pinion_core::widgets::destination::Destination;
 use pinion_core::widgets::radio::RadioState;
 
 /// One `link` within a [`navigation_link_nodes`] landmark.
@@ -88,6 +89,27 @@ pub fn navigation_link_nodes(
         nodes.push(node);
     }
     nodes
+}
+
+/// ★★ R1695 §5.40 — the node for the **region a rail navigates to**.
+///
+/// The other half of [`navigation_link_nodes`]: the rail says where you can go,
+/// this says where you are. It is a `region` landmark named for the destination
+/// showing in it, so a reader who has jumped to the rail can jump to the
+/// content it chose and hear which one arrived.
+///
+/// The name comes from the destination rather than from the caller, which is
+/// the whole reason this is one function and not a line at each screen: two
+/// screens of one product naming the same region differently is how a rail ends
+/// up describing a tool nobody can navigate — measured, and the reason the
+/// [`Destination`] roster exists at all.
+///
+/// Measured on the reference toolkit at 6.11.1: its paged container reports a
+/// layered-pane whose accessible **value is empty**, so a reader is told there
+/// is a stack of panes and never which one is on top.
+#[must_use]
+pub fn page_region_node(tag: &str, here: &Destination) -> AccessNode {
+    AccessNode::new(tag, AriaRole::Region).with_name(here.title.as_ref())
 }
 
 #[cfg(test)]
@@ -203,5 +225,33 @@ mod tests {
         // the reason rather than the flag alone.
         assert_eq!(nodes[2].state.disabled, nodes[3].state.disabled);
         assert_ne!(nodes[2].unavailable, nodes[3].unavailable);
+    }
+
+    /// ★★ R1695 — the region says which destination arrived, and a landmark
+    /// with no name is not a landmark.
+    #[test]
+    fn r1695_the_page_region_is_a_named_landmark() {
+        let here = Destination::open("settings", "Settings");
+        let node = page_region_node("shell.page", &here);
+        assert_eq!(node.role, AriaRole::Region);
+        assert_eq!(node.name.as_deref(), Some("Settings"));
+        assert!(
+            AriaRole::Region.name_required(),
+            "a region with no accessible name is dropped by AT, so the \
+             vocabulary has to demand one"
+        );
+        // The rail's current link and the region name the same destination, and
+        // they come from one roster rather than from two hand-written strings.
+        let links = [NavLink {
+            tag: "rail#1",
+            label: here.title.as_ref(),
+            state: RadioState::Idle,
+            current: true,
+            focused: false,
+            unavailable: None,
+        }];
+        let rail = navigation_link_nodes("rail", "Destinations", &links);
+        assert_eq!(rail[1].name, node.name);
+        assert_eq!(rail[1].current, Some(AriaCurrent::Page));
     }
 }

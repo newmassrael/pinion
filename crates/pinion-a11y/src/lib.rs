@@ -92,7 +92,7 @@ pub use heading::attach_block_headings;
 pub use list::attach_block_lists;
 pub use listbox::{ListOption, listbox_option_nodes};
 pub use menu::{MenuItemCell, SubmenuCell, menu_item_nodes};
-pub use navigation::{NavLink, navigation_link_nodes};
+pub use navigation::{NavLink, navigation_link_nodes, page_region_node};
 pub use node::{
     AccessLive, AccessNode, AccessState, AccessValue, NodeIndex, announcements,
     attach_child_button, referenced_tags,

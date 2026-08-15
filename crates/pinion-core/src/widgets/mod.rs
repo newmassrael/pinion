@@ -14,6 +14,7 @@ pub mod config_form;
 pub mod config_schema;
 pub mod context_menu;
 pub mod datepicker;
+pub mod destination;
 pub mod disclosure;
 pub mod disclosure_group;
 pub mod dock_panel;

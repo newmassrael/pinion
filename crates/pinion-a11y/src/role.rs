@@ -505,6 +505,25 @@ pub enum AriaRole {
     /// a long document, which is what makes that gap worth crossing rather
     /// than matching.
     Heading,
+    /// ★★ R1695 §5.40 — WAI-ARIA 1.2 §3.5 `region` landmark: a perceivable
+    /// section of a page whose purpose the author names, listed by AT among the
+    /// landmarks so a reader can jump straight to it.
+    ///
+    /// The role a **paged region** takes — the part of a window showing one of
+    /// a product's destinations while a navigation rail chooses which. It is
+    /// deliberately not [`TabPanel`](Self::TabPanel), which the spec binds to an
+    /// owning `tablist` and `tab`: a rail is a
+    /// [`Navigation`](Self::Navigation) landmark of [`Link`](Self::Link)s, so a
+    /// `tabpanel` here would claim a relationship the tree does not hold and
+    /// [`structure`](crate::structure) would be right to reject it.
+    ///
+    /// A `region` **must** carry an accessible name — an unnamed one is not a
+    /// landmark at all and AT drops it, which is why the destination's title is
+    /// not optional wherever this role is used. Measured on the reference
+    /// toolkit at 6.11.1 by building and running its paged container: the
+    /// container reports a layered-pane role whose accessible **value is
+    /// empty**, so no client can ask which destination is showing.
+    Region,
     Generic,
 }
 
@@ -517,7 +536,7 @@ impl AriaRole {
     /// [`roles_with_structure`](crate::structure::roles_with_structure) derives
     /// the roles carrying a structural requirement from the relation itself, and
     /// a role that gains one joins that set without anybody remembering.
-    pub const ALL: [AriaRole; 41] = [
+    pub const ALL: [AriaRole; 42] = [
         Self::Button,
         Self::Switch,
         Self::CheckBox,
@@ -558,6 +577,7 @@ impl AriaRole {
         Self::SpinButton,
         Self::Group,
         Self::Heading,
+        Self::Region,
         Self::Generic,
     ];
 
@@ -624,6 +644,8 @@ impl AriaRole {
     pub const fn to_accesskit(self) -> Role {
         match self {
             Self::Heading => Role::Heading,
+            // R1695 — AccessKit carries the `region` landmark one-to-one.
+            Self::Region => Role::Region,
             Self::Button => Role::Button,
             Self::Switch => Role::Switch,
             Self::CheckBox => Role::CheckBox,
@@ -758,6 +780,7 @@ impl AriaRole {
             | Self::Link
             | Self::SpinButton
             | Self::Group
+            | Self::Region
             | Self::Heading => true,
         }
     }
@@ -830,6 +853,14 @@ impl AriaRole {
             | Self::SpinButton
             | Self::Group
             | Self::Heading
+            // R1695 — a `region` landmark owns whatever its destination puts
+            // there. WAI-ARIA lists no required owned element for it, and
+            // inventing one (say, "a region must own something") would reject
+            // the legitimate empty page a destination with nothing in it is.
+            // The emptiness question belongs to
+            // [`declares_empty`](crate::AccessNode::declares_empty), which is
+            // about collections.
+            | Self::Region
             | Self::Generic => &[],
         }
     }
@@ -891,6 +922,13 @@ impl AriaRole {
             | Self::SpinButton
             | Self::Group
             | Self::Heading
+            // R1695 — `region` is a LANDMARK, and a landmark stands anywhere by
+            // definition: it is a top-level division of a window, not a member
+            // of a collection. Requiring the rail that chooses it as a context
+            // would be the copied-column mistake this function's doc names —
+            // the rail and the region are siblings, and a product whose region
+            // is chosen some other way is still well-formed.
+            | Self::Region
             | Self::Generic => &[],
         }
     }
@@ -904,6 +942,7 @@ impl AriaRole {
             // R1551 — the WAI-ARIA literal; the level rides `aria-level`, not
             // the role (HTML's `h1`..`h6` collapse to one ARIA role).
             Self::Heading => "heading",
+            Self::Region => "region",
             Self::Button => "button",
             Self::Switch => "switch",
             Self::CheckBox => "checkbox",

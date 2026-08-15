@@ -160,7 +160,7 @@ fn r1668_every_reserved_seat_names_what_it_waits_for() {
     }
     let locked: Vec<_> = spec::RAIL
         .iter()
-        .filter_map(|seat| seat.reserved_for.map(|why| (seat.key, why)))
+        .filter_map(|seat| seat.reserved_for().map(|why| (seat.key, why)))
         .collect();
     assert_eq!(locked.len(), 2, "the reference locks two rail seats");
     for (key, why) in locked {
@@ -172,9 +172,27 @@ fn r1668_every_reserved_seat_names_what_it_waits_for() {
     assert!(
         spec::RAIL
             .iter()
-            .any(|seat| seat.key == spec::RAIL_ACTIVE && seat.reserved_for.is_none()),
+            .any(|seat| seat.key == spec::RAIL_ACTIVE && seat.reserved_for().is_none()),
         "the seat this screen IS cannot be a reserved one",
     );
+    // ★★ R1695 — a seat that is neither this application's page nor booked for
+    // a release names the surface that HAS it, and names a real one. The arm
+    // exists because *reserved* would send a reader to wait for something that
+    // has already shipped.
+    let elsewhere: Vec<_> = spec::RAIL
+        .iter()
+        .filter_map(|seat| match seat.seat {
+            spec::Seat::Elsewhere(surface) => Some((seat.key, surface)),
+            spec::Seat::Page | spec::Seat::Reserved(_) => None,
+        })
+        .collect();
+    assert_eq!(elsewhere.len(), 3, "{elsewhere:?}");
+    for (key, surface) in elsewhere {
+        assert!(
+            surface.starts_with("the ") && surface.len() > 8,
+            "the {key} seat points at {surface:?}, which names no surface",
+        );
+    }
 }
 
 /// R1668 — the header controls the specification names all map onto an
@@ -763,7 +781,7 @@ fn the_voice_table_is_a_partition_with_no_tag_in_both_halves() {
             assert!(voiced.insert(tag.clone()), "{tag} owes a voice twice");
         }
     }
-    for (template, population, _) in spec::SILENCES {
+    for (template, population, _, _) in spec::SILENCES {
         for member in population.members() {
             let tag = template.replace("{}", &member);
             assert!(
@@ -776,19 +794,20 @@ fn the_voice_table_is_a_partition_with_no_tag_in_both_halves() {
 
 #[test]
 fn the_locked_table_is_derived_from_the_tier_and_the_reservation() {
-    // Eleven: nine catalogue entries booked for a later release, and the two
-    // rail destinations booked the same way. Derived rather than listed, so a
+    // ★ R1695 — sixteen now, not eleven: nine catalogue entries booked for a
+    // later release, FIVE rail destinations this application cannot take you to,
+    // and the settings page's two key rows. Derived rather than listed, so a
     // seat that is unlocked leaves the table by being unlocked.
     let tags: Vec<String> = spec::LOCKED
         .iter()
-        .flat_map(|(template, population)| {
+        .flat_map(|(template, population, _)| {
             population
                 .members()
                 .into_iter()
                 .map(move |member| template.replace("{}", &member))
         })
         .collect();
-    assert_eq!(tags.len(), 11, "{tags:?}");
+    assert_eq!(tags.len(), 16, "{tags:?}");
     assert_eq!(
         tags.iter()
             .filter(|t| t.starts_with("shell.palette."))
@@ -797,11 +816,49 @@ fn the_locked_table_is_derived_from_the_tier_and_the_reservation() {
     );
     assert_eq!(
         tags.iter().filter(|t| t.starts_with("shell.rail.")).count(),
-        spec::RAIL
-            .iter()
-            .filter(|seat| seat.reserved_for.is_some())
-            .count(),
+        spec::destinations().closed().count(),
     );
+    assert_eq!(
+        tags.iter()
+            .filter(|t| t.starts_with("shell.settings."))
+            .count(),
+        spec::KEY_ROWS.len(),
+    );
+}
+
+/// ★★★★★ R1695 — the census is a partition **per destination**, and every open
+/// destination is covered.
+///
+/// The table used to describe one screen because the application had one, and
+/// nothing said so — a page added to this screen would simply not appear in any
+/// census, which is `debt-the-voice-gate-judges-only-the-opening-screen` in the
+/// small. The roster is the enumeration that was missing.
+#[test]
+fn r1695_every_open_destination_owns_at_least_one_declared_region() {
+    let roster = spec::destinations();
+    for destination in roster.open() {
+        let key = destination.key.as_ref();
+        let own = spec::VOICES
+            .iter()
+            .filter(|voice| matches!(voice.at, spec::Where::At(k) if k == key))
+            .count();
+        assert!(
+            own > 0,
+            "the {key} destination is open and the census gives it no region \
+             of its own, so arriving there is a page nobody judges",
+        );
+    }
+    // And a row cannot name a destination the rail does not hold — the join
+    // that would otherwise rot silently.
+    for voice in spec::VOICES {
+        if let spec::Where::At(key) = voice.at {
+            assert!(
+                roster.get(key).is_some(),
+                "{} belongs to {key:?}, which is not on the rail",
+                voice.tag,
+            );
+        }
+    }
 }
 
 #[test]

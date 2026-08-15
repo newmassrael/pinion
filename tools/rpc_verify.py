@@ -4400,6 +4400,152 @@ def assert_router_press_moves(
     return after
 
 
+def assert_every_destination_arrives(
+    tf: "RpcSubprocess",
+    *,
+    roster_path: str,
+    seat: "Callable[[str], str]",
+    region: str,
+    viewport: tuple[int, int] = (1440, 900),
+) -> dict:
+    """★★★★★ R1695 — pressing a destination **takes you there**, and a
+    destination that refuses says why.
+
+    The law of a navigation rail, written once. Every screen that grew one wrote
+    its own half of it and both analyzer screens got a different half wrong:
+
+    * One highlighted the seat and painted the same page. Measured through the
+      router before the repair: pressing four of its seven seats moved the
+      string the rail highlights itself from and left the window at **193
+      tagged regions before and 193 after**.
+    * The other answered every seat — including the one it already was, and
+      including two seats declared unavailable with a stated reason — with a
+      message saying the destination is not this screen.
+
+    `assert_router_press_moves` could not catch either, and the reason is worth
+    naming: it asserts that a press **moved the state**, which is exactly what a
+    screen that highlights a seat and shows nothing new does. *Moved* is not
+    *arrived*, and the difference is a rectangle.
+
+    So this reads the roster the screen publishes (`roster_path`, the shape
+    `pinion_core::widgets::destination::Destinations::wire` produces), presses
+    each seat **through the §5.35 router**, and asserts against the painted
+    scene inside `region`:
+
+    * an **open** destination arrives — `at` becomes its key, and the tags
+      inside the region are not the tags that were there before;
+    * the open destinations' pages are **pairwise distinct**, without which
+      "arriving" is satisfied by a region that paints one page whatever the
+      journey says;
+    * a **closed** destination does not arrive, and the wire channel refuses it
+      naming the reason the seat is painted with — one reason, two channels.
+
+    Returns the roster, so a caller can go on asserting about it.
+
+    ## The floor
+
+    Measured by building a probe against the reference toolkit at 6.11.1 and
+    running it: its paged container is addressed by ordinal,
+    `setCurrentIndex` returns `void`, an out-of-range ordinal is a silent
+    no-op, and a **disabled page is arrived at anyway** — so there is no
+    refusal there for a test to assert on, and the container's own accessible
+    value is empty, so no client can even ask which page is showing.
+    """
+
+    def read_at() -> str:
+        answer = tf.query(f"{roster_path}")
+        return answer["at"] if isinstance(answer, dict) else json.loads(answer)["at"]
+
+    def roster() -> dict:
+        answer = tf.query(roster_path)
+        return answer if isinstance(answer, dict) else json.loads(answer)
+
+    def page_tags() -> frozenset:
+        """Every tag in the region's SUBTREE.
+
+        The subtree and not the rectangle. Chrome legitimately overlaps a page
+        region — the toast on this screen floats over it at every destination —
+        so a geometric test would report the same tag as belonging to both
+        pages and the disjointness assertion below would be about the toast
+        rather than about the pages. What makes a node part of a page is that
+        the page built it, which is the tree relation.
+        """
+        snap = tf.snapshot(source="paint", viewport=viewport)
+        node = find_by_tag(snap, region)
+        assert node is not None, (
+            f"the screen paints no {region!r}, so there is no page region to "
+            f"compare across destinations"
+        )
+        return frozenset(
+            found.get("tag")
+            for _, found in walk_nodes(node)
+            if found.get("tag") and found.get("tag") != region
+        )
+
+    start = roster()
+    rows = start["destinations"]
+    current = [row["key"] for row in rows if row["current"]]
+    assert current == [start["at"]], (
+        f"the roster marks {current} current and says it is at "
+        f"{start['at']!r} — one journey, two answers"
+    )
+
+    pages: dict[str, frozenset] = {}
+    for row in rows:
+        key, tag = row["key"], seat(row["key"])
+        before_at, before_page = read_at(), page_tags()
+        x, y, w, h = abs_rects_of(tf.snapshot(source="paint", viewport=viewport))[tag]
+        tf.request("scene/click", {"button": "left", "at": {"x": x + w // 2, "y": y + h // 2}})
+        tf.tick(16)
+        if row["open"]:
+            assert read_at() == key, (
+                f"a press at the centre of {tag!r}, driven through the §5.35 "
+                f"router the way a mouse arrives, left the journey at "
+                f"{read_at()!r} rather than taking it to {key!r}"
+            )
+            after = page_tags()
+            if before_at != key:
+                assert after != before_page, (
+                    f"arriving at {key!r} changed the journey and painted the "
+                    f"same {len(after)} region(s) inside {region!r}. That is "
+                    f"the shape this helper exists for: the rail highlighted a "
+                    f"seat and the window did not move"
+                )
+            pages[key] = after
+            continue
+        # A closed seat is painted inert, so the pointer never reaches it.
+        assert read_at() == before_at, (
+            f"{key!r} is closed ({row['sentence']}) and a press navigated there"
+        )
+        assert page_tags() == before_page, f"{key!r} is closed and the page changed"
+        # The wire says the same thing, in words, which is the channel a person
+        # gets from the seat's own declaration.
+        refusal = ""
+        try:
+            tf.intervene(f"{roster_path.rsplit('/', 1)[0]}/nav", key)
+        except Exception as why:  # noqa: BLE001 - any refusal shape is fine
+            refusal = str(why)
+        assert row["detail"] and row["detail"] in refusal, (
+            f"the wire refused {key!r} with {refusal!r}, which does not name "
+            f"the reason {row['detail']!r} its seat is painted with"
+        )
+
+    assert len(pages) >= 2, (
+        f"{len(pages)} open destination(s): a paged region with one page proves "
+        f"nothing about paging"
+    )
+    keys = sorted(pages)
+    for i, a in enumerate(keys):
+        for b in keys[i + 1 :]:
+            shared = pages[a] & pages[b]
+            assert not shared, (
+                f"{a!r} and {b!r} paint the same regions inside {region!r} "
+                f"({sorted(shared)[:6]}), so the rail chooses between two names "
+                f"for one page"
+            )
+    return start
+
+
 def _clipped_into(
     x: int, y: int, w: int, h: int, clip: Optional[tuple[int, int, int, int]]
 ) -> Optional[tuple[int, int, int, int]]:

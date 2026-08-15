@@ -841,6 +841,10 @@ fn add_actions_for_role(node: &mut Node, role: AriaRole) {
         | AriaRole::Status
         | AriaRole::Navigation
         | AriaRole::Heading
+        // R1695 — a `region` landmark is a passive container: what a reader
+        // acts on is inside it, and the rail's links are what move between
+        // regions. Giving it a Click would offer an action nothing performs.
+        | AriaRole::Region
         | AriaRole::Group => {}
     }
 }

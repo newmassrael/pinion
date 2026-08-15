@@ -1326,9 +1326,37 @@ AXES = [
         # an axis whose remaining 2% is four missing widget kinds and one
         # missing input hook does not move the number, and saying so is the
         # judgment.
-        "judged_at": 1680,
-        "completion": 98,
-        "evidence_snapshot": {"example-name": 77, "round-axis": 22},
+        # ★★ R1695 RE-JUDGMENT — 98 -> 99, and it is BREADTH, which is what the
+        # R1680 judgment above said this axis's remaining 2% consists of.
+        #
+        # The four absent widget kinds are three. `pinion_core::widgets::
+        # destination` + `pinion_widget_paint::pages` is the **paged
+        # container** — the member named on that list since R1554 — and the
+        # judgment is a point rather than two because the other three (dial,
+        # font picker, a canned message box) and the wheel hook are untouched.
+        #
+        # It passes the floor rather than reaching it, measured by building a
+        # probe against the reference toolkit at 6.11.1 and running it, and the
+        # rows are not cosmetic. There a page is addressed by an ORDINAL;
+        # `setCurrentIndex` returns `void` so an unknown page is a silent
+        # no-op; a **disabled page is arrived at anyway**; a destination that
+        # has no page yet cannot be expressed at all; a non-current page stays
+        # live and, sent a press, a key and a wheel directly, counted all
+        # three; and the container's accessible value is EMPTY, so no client
+        # can ask which page is showing. Here the key is the address, the
+        # navigation returns a typed refusal carrying the reason, a
+        # destination with no page is an ordinary roster entry, the page that
+        # is not current is never constructed, and the region is a named
+        # `region` landmark that publishes its destination.
+        #
+        # WHY IT IS ONLY A POINT, stated because the temptation is to claim
+        # more: this closes one member of a five-item list and the round's real
+        # weight — the analyzer's rail navigating at all, and the census
+        # learning to judge a second destination — belongs to consumers and to
+        # the a11y axis, not to catalogue breadth. R1542's rule.
+        "judged_at": 1695,
+        "completion": 99,
+        "evidence_snapshot": {"example-name": 78, "round-axis": 24},
     },
     {
         "key": "dataviz",

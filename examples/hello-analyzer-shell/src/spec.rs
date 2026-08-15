@@ -19,7 +19,7 @@
 //! the routing do not have to be redesigned when the nine arrive.
 //!
 //! That is why this round gave the framework
-//! [`Unavailable`](pinion_core::availability::Unavailable): a locked seat that
+//! [`Unavailable`]: a locked seat that
 //! could only be drawn grey would be a screenshot of the reference rather than
 //! a reproduction of it. Each reserved item states the requirement it is booked
 //! under, the shell hands that to the disabled cascade, and it comes back out
@@ -30,6 +30,9 @@
 //! words the tool class uses generally, and its requirement identifiers with
 //! plain ordinals. The structure and the behaviour are what is being
 //! reproduced, and those are what this table holds.
+
+use pinion_core::availability::Unavailable;
+use pinion_core::widgets::destination::{Destination, Destinations};
 
 /// The window the screen is specified at.
 pub const WIN_W: u32 = 1440;
@@ -70,19 +73,58 @@ pub const SEARCH_HINT: &str = "name, address, value\u{2026}";
 
 // --- The rail ----------------------------------------------------------------
 
+/// ★★★★★ R1695 — what this application does when a rail seat is pressed.
+///
+/// Before this arm existed the table said only whether a seat was *reserved*,
+/// and the four that were neither reserved nor this screen fell through the gap
+/// between those two words. Driven through the pointer router and measured:
+/// pressing Stream, Decode, Catalog or Settings moved the string the rail
+/// highlights itself from and left the painted scene at **193 tagged regions
+/// before and 193 after** — the screen said *Stream* and showed the dashboard.
+///
+/// A seat is now one of three things, and the two that refuse refuse for
+/// different reasons a reader must be able to tell apart.
+pub enum Seat {
+    /// This application shows it: pressing the seat arrives, and the page
+    /// region changes.
+    Page,
+    /// Booked under a named requirement of a release that has not shipped.
+    ///
+    /// The reference locks rail seats the same way it locks palette items, and
+    /// for the same stated reason: *"when the second release arrives the lock is
+    /// lifted and the screen structure does not change"*.
+    Reserved(&'static str),
+    /// Built and shipping, on a **different surface of this product**; the
+    /// detail names that surface.
+    ///
+    /// Not the same answer as [`Reserved`](Self::Reserved), and the difference
+    /// is the reader's next move: one is waited for and the other is opened.
+    /// The behaviour reference is one application whose rail switches between
+    /// all of its sections; this tree assembles the tool as several, so a
+    /// destination can be finished and still not be here. Saying *reserved*
+    /// would send a reader off to wait for something that already exists.
+    Elsewhere(&'static str),
+}
+
 /// One seat on the icon rail.
 pub struct RailSpec {
     /// The seat's key, and the suffix of its paint tag.
     pub key: &'static str,
     /// What a reader calls it.
     pub title: &'static str,
-    /// The requirement this seat is booked under when it is reserved, or `None`
-    /// when the first release opens it.
-    ///
-    /// The reference locks two rail seats the same way it locks palette items,
-    /// and for the same stated reason: *"when the second release arrives the
-    /// lock is lifted and the screen structure does not change"*.
-    pub reserved_for: Option<&'static str>,
+    /// What pressing it does.
+    pub seat: Seat,
+}
+
+impl RailSpec {
+    /// The requirement this seat is booked under, when it is booked under one.
+    #[must_use]
+    pub const fn reserved_for(&self) -> Option<&'static str> {
+        match self.seat {
+            Seat::Reserved(why) => Some(why),
+            Seat::Page | Seat::Elsewhere(_) => None,
+        }
+    }
 }
 
 /// The rail, top to bottom.
@@ -90,42 +132,182 @@ pub const RAIL: &[RailSpec] = &[
     RailSpec {
         key: "dashboard",
         title: "Dashboard",
-        reserved_for: None,
+        seat: Seat::Page,
     },
     RailSpec {
         key: "stream",
         title: "Stream",
-        reserved_for: None,
+        seat: Seat::Elsewhere("the capture viewer"),
     },
     RailSpec {
         key: "decode",
         title: "Decode",
-        reserved_for: None,
+        seat: Seat::Elsewhere("the capture viewer"),
     },
     RailSpec {
         key: "catalog",
         title: "Catalog",
-        reserved_for: None,
+        seat: Seat::Elsewhere("the node graph lab"),
     },
     RailSpec {
         key: "settings",
         title: "Settings",
-        reserved_for: None,
+        seat: Seat::Page,
     },
     RailSpec {
         key: "topology",
         title: "Topology",
-        reserved_for: Some("requirement 12"),
+        seat: Seat::Reserved("requirement 12"),
     },
     RailSpec {
         key: "sessions",
         title: "Sessions",
-        reserved_for: Some("requirement 14"),
+        seat: Seat::Reserved("requirement 14"),
     },
 ];
 
-/// Which rail seat this screen is.
+/// The rail as the framework's own roster, which is what the screen navigates
+/// with and publishes.
+///
+/// Built from [`RAIL`] rather than written twice: the seat table is what a
+/// reader of this specification checks against the reference, and the roster is
+/// what the application runs on. A second hand-written list is how the two
+/// screens of this tool came to disagree about what the tool contains.
+///
+/// # Panics
+///
+/// If [`RAIL`] holds a duplicate or blank key, or opens nothing — all three
+/// checked by [`Destinations::new`], and all three a defect in this file rather
+/// than a state the running screen can reach.
+#[must_use]
+pub fn destinations() -> Destinations {
+    Destinations::new(
+        RAIL.iter()
+            .map(|seat| match seat.seat {
+                Seat::Page => Destination::open(seat.key, seat.title),
+                Seat::Reserved(why) => {
+                    Destination::closed(seat.key, seat.title, Unavailable::reserved(why))
+                }
+                Seat::Elsewhere(where_) => {
+                    Destination::closed(seat.key, seat.title, Unavailable::elsewhere(where_))
+                }
+            })
+            .collect(),
+    )
+    .expect("the rail declares a navigable roster")
+}
+
+/// Which rail seat this screen opens at.
 pub const RAIL_ACTIVE: &str = "dashboard";
+
+// --- The Settings destination -------------------------------------------------
+//
+// ★★ R1695 — the second page, and the reason the region is worth building: a
+// paged region with one page proves nothing. The reference's own Settings
+// section is four switch rows in two groups, two rows whose affordance is booked
+// for a later release, and a two-way appearance segment — small enough to
+// reproduce faithfully in one round and shaped to exercise every part of this
+// axis at once (a real control, a locked one, and a choice).
+
+/// One switch row on the Settings page.
+pub struct OptionSpec {
+    /// The key the wire addresses it by, and the suffix of its paint tag.
+    pub key: &'static str,
+    /// The row's title.
+    pub title: &'static str,
+    /// The sentence under it.
+    pub gist: &'static str,
+    /// The group heading it sits under.
+    pub group: &'static str,
+    /// Whether the screen opens with it on.
+    pub opens: bool,
+}
+
+/// The four switches, in the reference's order.
+///
+/// The opening values are the reference's and they **alternate**, which is worth
+/// keeping: a page whose controls all open the same way lets a check that reads
+/// the wrong one pass anyway.
+pub const OPTIONS: &[OptionSpec] = &[
+    OptionSpec {
+        key: "reconnect",
+        title: "Auto-reconnect",
+        gist: "Resume capture on link recovery",
+        group: "capture",
+        opens: true,
+    },
+    OptionSpec {
+        key: "on_launch",
+        title: "Start capture on launch",
+        gist: "Begin capturing when the app opens",
+        group: "capture",
+        opens: false,
+    },
+    OptionSpec {
+        key: "resolve",
+        title: "Resolve names from session start",
+        gist: "Full mapping requires capturing from the handshake",
+        group: "decode",
+        opens: true,
+    },
+    OptionSpec {
+        key: "numeric",
+        title: "Show unresolved numeric ids",
+        gist: "Display the raw id when the name is unknown",
+        group: "decode",
+        opens: false,
+    },
+];
+
+/// One row on the Settings page whose affordance is booked for a later release.
+///
+/// The reference wires both of these to the same *arrives later* handler, so
+/// they are the settings page's own locked seats — declared unavailable the way
+/// the rail's are, rather than painted grey.
+pub struct KeyRowSpec {
+    /// The key the wire addresses it by, and the suffix of its paint tag.
+    pub key: &'static str,
+    /// The row's title.
+    pub title: &'static str,
+    /// The sentence under it.
+    pub gist: &'static str,
+    /// What the button says.
+    pub verb: &'static str,
+    /// The requirement it is booked under.
+    pub reserved_for: &'static str,
+}
+
+/// The two key rows, in the reference's order.
+pub const KEY_ROWS: &[KeyRowSpec] = &[
+    KeyRowSpec {
+        key: "keylog",
+        title: "Transport key log",
+        gist: "Import a key log to decrypt links",
+        verb: "Import\u{2026}",
+        reserved_for: "requirement 22",
+    },
+    KeyRowSpec {
+        key: "e2e",
+        title: "Application end-to-end key",
+        gist: "Decode payloads the application encrypted end to end",
+        verb: "Add key\u{2026}",
+        reserved_for: "requirement 23",
+    },
+];
+
+/// The appearance row, and the two-way segment on it.
+pub const THEME_ROW: (&str, &str) = ("Theme", "Both themes are first-class");
+/// The segment's choices, in the reference's order.
+pub const THEMES: [&str; 2] = ["Dark", "Light"];
+
+/// The Settings page's groups, top to bottom: the key its tag carries and the
+/// heading a reader sees.
+pub const OPTION_GROUPS: [(&str, &str); 4] = [
+    ("capture", "Capture"),
+    ("decode", "Decode"),
+    ("keys", "Keys"),
+    ("appearance", "Appearance"),
+];
 
 // --- The layout bar ----------------------------------------------------------
 
@@ -562,6 +744,48 @@ pub struct VoiceSpec {
     pub role: &'static str,
     /// Which family the members come from.
     pub population: Population,
+    /// ★★★★★ R1695 — **which destination this region belongs to.**
+    ///
+    /// The table used to describe one screen, because the application had one:
+    /// [[debt-the-voice-gate-judges-only-the-opening-screen]] records exactly
+    /// that limit, and records it as unclosable because nothing enumerated the
+    /// screens an application has. The rail's roster is that enumeration, so
+    /// the gate can now walk every open destination and judge what each one
+    /// paints — and a page added without a row here fails rather than escaping.
+    pub at: Where,
+}
+
+/// Which destination a region belongs to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Where {
+    /// Painted whatever the rail has chosen — the application bar, the rail
+    /// itself, the toast.
+    Chrome,
+    /// Painted only while the journey is at this destination.
+    At(&'static str),
+}
+
+impl Where {
+    /// Whether a region with this standing is on screen at `destination`.
+    #[must_use]
+    pub fn shows_at(self, destination: &str) -> bool {
+        match self {
+            Where::Chrome => true,
+            Where::At(key) => key == destination,
+        }
+    }
+}
+
+/// Whether a destination shows the **dashboard's own chrome** — the layout bar
+/// and the palette, which name a board's preset and populate a board and are
+/// meaningless anywhere else.
+///
+/// One predicate for the painter, the accessibility tree and the census, so the
+/// screen cannot build a bar the census says is not there. Both of those used to
+/// spell it as a key written into an `if`.
+#[must_use]
+pub fn shows_board_chrome(destination: &str) -> bool {
+    Where::At("dashboard").shows_at(destination)
 }
 
 /// Where a [`VoiceSpec`]'s members come from.
@@ -613,9 +837,18 @@ pub enum Population {
     /// over [`CATALOGUE`] rather than the whole of it, so the gate demands
     /// exactly the nine locked seats and not thirteen.
     Reserved,
-    /// ★ One per rail seat the first release reserves — the same predicate over
-    /// the other table.
+    /// ★ One per rail seat this application **cannot take you to** — booked for
+    /// a later release or built on another surface. A predicate over [`RAIL`],
+    /// so a seat that opens leaves this family by opening.
     ReservedRail,
+    /// R1695 — one per [`OPTION_GROUPS`] heading on the Settings page.
+    OptionGroups,
+    /// R1695 — one per [`OPTIONS`] switch, keyed by its key.
+    Options,
+    /// R1695 — one per [`KEY_ROWS`] row, keyed by its key.
+    KeyRows,
+    /// R1695 — one per [`THEMES`] choice, keyed by index.
+    Themes,
 }
 
 impl Population {
@@ -671,9 +904,16 @@ impl Population {
                 .collect(),
             Population::ReservedRail => RAIL
                 .iter()
-                .filter(|seat| seat.reserved_for.is_some())
+                .filter(|seat| !matches!(seat.seat, Seat::Page))
                 .map(|seat| seat.key.to_owned())
                 .collect(),
+            Population::OptionGroups => OPTION_GROUPS
+                .iter()
+                .map(|(key, _)| (*key).to_owned())
+                .collect(),
+            Population::Options => OPTIONS.iter().map(|o| o.key.to_owned()).collect(),
+            Population::KeyRows => KEY_ROWS.iter().map(|r| r.key.to_owned()).collect(),
+            Population::Themes => indexes(THEMES.len()),
         }
     }
 }
@@ -690,9 +930,22 @@ impl Population {
 ///
 /// Derived from the tier and the reservation rather than listed, so a seat that
 /// is unlocked leaves this table by being unlocked.
-pub const LOCKED: &[(&str, Population)] = &[
-    ("shell.rail.{}", Population::ReservedRail),
-    ("shell.palette.{}", Population::Reserved),
+/// ★ R1695 — sixteen now, not eleven, and the five that joined are the point of
+/// the round: three rail seats this application cannot take you to were painted
+/// as ordinary destinations, and the Settings page has two affordances of its
+/// own that are booked for a later release.
+pub const LOCKED: &[(&str, Population, Where)] = &[
+    ("shell.rail.{}", Population::ReservedRail, Where::Chrome),
+    (
+        "shell.palette.{}",
+        Population::Reserved,
+        Where::At("dashboard"),
+    ),
+    (
+        "shell.settings.key.{}",
+        Population::KeyRows,
+        Where::At("settings"),
+    ),
 ];
 
 /// The catalogue kinds whose card body is a table with a header strip.
@@ -727,27 +980,32 @@ pub const VOICES: &[VoiceSpec] = &[
         tag: "analyzer_shell",
         role: "group",
         population: Population::One,
+        at: Where::Chrome,
     },
     // --- the application bar --------------------------------------------
     VoiceSpec {
         tag: "shell.appbar",
         role: "toolbar",
         population: Population::One,
+        at: Where::Chrome,
     },
     VoiceSpec {
         tag: "shell.appbar.tab.dashboard",
         role: "tab",
         population: Population::One,
+        at: Where::Chrome,
     },
     VoiceSpec {
         tag: "shell.appbar.tab.design",
         role: "tab",
         population: Population::One,
+        at: Where::Chrome,
     },
     VoiceSpec {
         tag: "shell.appbar.source",
         role: "button",
         population: Population::One,
+        at: Where::Chrome,
     },
     // The rate readout changes while nobody touches it, which is what a live
     // region is for — and the only one of the bar's regions that is.
@@ -755,175 +1013,255 @@ pub const VOICES: &[VoiceSpec] = &[
         tag: "shell.appbar.capture",
         role: "status",
         population: Population::One,
+        at: Where::Chrome,
     },
     VoiceSpec {
         tag: "shell.appbar.search",
         role: "textbox",
         population: Population::One,
+        at: Where::Chrome,
     },
     // --- the rail -------------------------------------------------------
     VoiceSpec {
         tag: "shell.rail",
         role: "navigation",
         population: Population::One,
+        at: Where::Chrome,
     },
     VoiceSpec {
         tag: "shell.rail.{}",
         role: "link",
         population: Population::Rail,
+        at: Where::Chrome,
     },
     VoiceSpec {
         tag: "shell.rail.account",
         role: "button",
         population: Population::One,
+        at: Where::Chrome,
     },
     // --- the layout bar -------------------------------------------------
+    //
+    // ★ R1695 — the layout bar and the palette below are the DASHBOARD's, not
+    // the window's: they name a board's preset and populate a board, and both
+    // are meaningless at any other destination. They are built outside
+    // [`view_page_region`](pinion_widget_paint::pages::view_page_region), so
+    // the substrate's "only the current page is built" guarantee does not cover
+    // them — this column is what does, in both directions.
     VoiceSpec {
         tag: "shell.subbar",
         role: "toolbar",
         population: Population::One,
+        at: Where::At("dashboard"),
     },
     VoiceSpec {
         tag: "shell.subbar.preset",
         role: "button",
         population: Population::One,
+        at: Where::At("dashboard"),
     },
     VoiceSpec {
         tag: "shell.subbar.edit",
         role: "button",
         population: Population::One,
+        at: Where::At("dashboard"),
     },
     VoiceSpec {
         tag: "shell.subbar.add",
         role: "button",
         population: Population::One,
+        at: Where::At("dashboard"),
     },
-    // --- the board ------------------------------------------------------
+    // --- the page region ------------------------------------------------
+    //
+    // ★★ R1695 — a `region` landmark rather than a group, named for the
+    // destination inside it, so a reader who jumps to it is told which one
+    // arrived. It is chrome because the rectangle is always there; what is in
+    // it is not.
     VoiceSpec {
         tag: "shell.canvas",
-        role: "group",
+        role: "region",
         population: Population::One,
+        at: Where::Chrome,
     },
     VoiceSpec {
         tag: "card.{}",
         role: "group",
         population: Population::Cards,
+        at: Where::At("dashboard"),
     },
     VoiceSpec {
         tag: "card.{}",
         role: "button",
         population: Population::CardChrome,
+        at: Where::At("dashboard"),
     },
     VoiceSpec {
         tag: "card.{}.grip",
         role: "button",
         population: Population::Cards,
+        at: Where::At("dashboard"),
     },
     // --- the message stream ---------------------------------------------
     VoiceSpec {
         tag: "card.{}",
         role: "row",
         population: Population::TableHeads,
+        at: Where::At("dashboard"),
     },
     VoiceSpec {
         tag: "card.{}",
         role: "columnheader",
         population: Population::StreamColumns,
+        at: Where::At("dashboard"),
     },
     VoiceSpec {
         tag: "card.{}",
         role: "row",
         population: Population::StreamRows,
+        at: Where::At("dashboard"),
     },
     VoiceSpec {
         tag: "card.{}",
         role: "gridcell",
         population: Population::StreamCells,
+        at: Where::At("dashboard"),
     },
     // --- the decode inspector -------------------------------------------
     VoiceSpec {
         tag: "card.{}",
         role: "treeitem",
         population: Population::DecodeRows,
+        at: Where::At("dashboard"),
     },
     VoiceSpec {
         tag: "card.{}",
         role: "row",
         population: Population::ByteRows,
+        at: Where::At("dashboard"),
     },
     VoiceSpec {
         tag: "card.{}",
         role: "gridcell",
         population: Population::Bytes,
+        at: Where::At("dashboard"),
     },
     // --- the identifier map ---------------------------------------------
     VoiceSpec {
         tag: "card.{}",
         role: "columnheader",
         population: Population::MapColumns,
+        at: Where::At("dashboard"),
     },
     VoiceSpec {
         tag: "card.{}",
         role: "row",
         population: Population::MapRows,
+        at: Where::At("dashboard"),
     },
     VoiceSpec {
         tag: "card.{}",
         role: "gridcell",
         population: Population::MapCells,
+        at: Where::At("dashboard"),
     },
     // --- search and filter ----------------------------------------------
     VoiceSpec {
         tag: "card.filter#3.query",
         role: "textbox",
         population: Population::One,
+        at: Where::At("dashboard"),
     },
     VoiceSpec {
         tag: "card.filter#3.chip.{}",
         role: "button",
         population: Population::Chips,
+        at: Where::At("dashboard"),
     },
     VoiceSpec {
         tag: "card.filter#3.stat.{}",
         role: "status",
         population: Population::Stats,
+        at: Where::At("dashboard"),
     },
     VoiceSpec {
         tag: "card.filter#3.sparkline",
         role: "group",
         population: Population::One,
+        at: Where::At("dashboard"),
     },
     // --- the palette ----------------------------------------------------
     VoiceSpec {
         tag: "shell.palette",
         role: "list",
         population: Population::One,
+        at: Where::At("dashboard"),
     },
     VoiceSpec {
         tag: "shell.palette.section.{}",
         role: "group",
         population: Population::Sections,
+        at: Where::At("dashboard"),
     },
     VoiceSpec {
         tag: "shell.palette.{}",
         role: "listitem",
         population: Population::Catalogue,
+        at: Where::At("dashboard"),
     },
     VoiceSpec {
         tag: "shell.palette.placed",
         role: "status",
         population: Population::One,
+        at: Where::At("dashboard"),
     },
     VoiceSpec {
         tag: "shell.palette.reserved",
         role: "status",
         population: Population::One,
+        at: Where::At("dashboard"),
+    },
+    // --- the settings destination ----------------------------------------
+    //
+    // ★★ R1695 — the second page, and the rows this table would never have
+    // held before it had a destination column: they are not on the opening
+    // screen, so every census this screen has ever run was blind to them.
+    VoiceSpec {
+        tag: "shell.settings.group.{}",
+        role: "group",
+        population: Population::OptionGroups,
+        at: Where::At("settings"),
+    },
+    VoiceSpec {
+        tag: "shell.settings.option.{}",
+        role: "switch",
+        population: Population::Options,
+        at: Where::At("settings"),
+    },
+    VoiceSpec {
+        tag: "shell.settings.key.{}",
+        role: "button",
+        population: Population::KeyRows,
+        at: Where::At("settings"),
+    },
+    VoiceSpec {
+        tag: "shell.settings.theme",
+        role: "radiogroup",
+        population: Population::One,
+        at: Where::At("settings"),
+    },
+    VoiceSpec {
+        tag: "shell.settings.theme.{}",
+        role: "radio",
+        population: Population::Themes,
+        at: Where::At("settings"),
     },
     // --- what just happened ---------------------------------------------
     VoiceSpec {
         tag: "shell.toast",
         role: "status",
         population: Population::One,
+        at: Where::Chrome,
     },
 ];
 
@@ -931,12 +1269,51 @@ pub const VOICES: &[VoiceSpec] = &[
 ///
 /// A total census is satisfied by declaring everything silent, so this table is
 /// the other half of the split and is what makes the first one a claim.
-pub const SILENCES: &[(&str, Population, &str)] = &[
+pub const SILENCES: &[(&str, Population, &str, Where)] = &[
     // The scrolling viewport is a clip, not a thing on the screen: what a
     // reader walks is the board inside it.
-    ("shell.canvas.body", Population::One, "layout"),
+    (
+        "shell.canvas.body",
+        Population::One,
+        "layout",
+        Where::At("dashboard"),
+    ),
     // The plot area and its stroke. The card's sparkline region is the thing a
     // reader is told about and it states the series; these are how it is drawn.
-    ("match.spark", Population::One, "part_of"),
-    ("match.spark.line", Population::One, "decorative"),
+    (
+        "match.spark",
+        Population::One,
+        "part_of",
+        Where::At("dashboard"),
+    ),
+    (
+        "match.spark.line",
+        Population::One,
+        "decorative",
+        Where::At("dashboard"),
+    ),
+    // R1695 — a settings row's title and its sentence under it are what the
+    // control beside them is NAMED by, so announcing them again would say
+    // everything twice. The silence names that control's **tag**: a `part_of`
+    // holding prose points at nothing, and the census counts that as
+    // `dangling` — which is how the first draft of this page was caught, with
+    // seven of them.
+    (
+        "shell.settings.row.{}",
+        Population::Options,
+        "part_of",
+        Where::At("settings"),
+    ),
+    (
+        "shell.settings.row.{}",
+        Population::KeyRows,
+        "part_of",
+        Where::At("settings"),
+    ),
+    (
+        "shell.settings.row.theme",
+        Population::One,
+        "part_of",
+        Where::At("settings"),
+    ),
 ];

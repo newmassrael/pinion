@@ -93,6 +93,25 @@ pub enum UnavailableKind {
     /// The arm [`Reserved`](Self::Reserved) is measured against: both are inert
     /// today, and only one will ever stop being.
     Unsupported,
+    /// ★★ R1695 — the product has it and **this surface** does not.
+    /// [`detail`](Unavailable::detail) names the surface that does.
+    ///
+    /// Measured on the analysis tool: its navigation rail offers seven
+    /// destinations and the application behind the rail hosts one of them, so
+    /// four seats claimed an arrival that never happened. Neither existing arm
+    /// says that. [`Reserved`](Self::Reserved) is false — the thing is built and
+    /// shipping — and [`Unsupported`](Self::Unsupported) is false too, because
+    /// its recourse is [`Nothing`](Recourse::Nothing) while here there is a
+    /// perfectly good something: go to the surface that has it. A reader told
+    /// "not available in this build" would stop looking for a feature that is
+    /// one window away.
+    ///
+    /// General beyond that screen, and the reason to spend an arm on it: any
+    /// product with more than one surface routes work between them, and
+    /// "editable in the other editor" is the sentence it needs. The rule this
+    /// module states for adding an arm is met — **the reader's next action is
+    /// its own**, which is why it derives its own [`Recourse`].
+    Elsewhere,
     /// A region was declared unavailable and no reason was given.
     ///
     /// Deliberately an arm rather than an absence. Every declaration that
@@ -112,6 +131,7 @@ impl UnavailableKind {
             UnavailableKind::Busy => "busy",
             UnavailableKind::Reserved => "reserved",
             UnavailableKind::Unsupported => "unsupported",
+            UnavailableKind::Elsewhere => "elsewhere",
             UnavailableKind::Unstated => "unstated",
         }
     }
@@ -130,12 +150,13 @@ impl UnavailableKind {
     ///
     /// A member list rather than a count: R1650 measured that proving a set is
     /// complete by searching for what is missing yields zero every time.
-    pub const ALL: [UnavailableKind; 6] = [
+    pub const ALL: [UnavailableKind; 7] = [
         UnavailableKind::Precondition,
         UnavailableKind::Permission,
         UnavailableKind::Busy,
         UnavailableKind::Reserved,
         UnavailableKind::Unsupported,
+        UnavailableKind::Elsewhere,
         UnavailableKind::Unstated,
     ];
 
@@ -154,6 +175,7 @@ impl UnavailableKind {
             UnavailableKind::Permission => Recourse::Authorize,
             UnavailableKind::Busy => Recourse::Wait,
             UnavailableKind::Reserved => Recourse::AwaitRelease,
+            UnavailableKind::Elsewhere => Recourse::OpenElsewhere,
             // Nothing today and nothing later — but for different reasons, which
             // is why the kinds stay apart even though the recourse merges.
             UnavailableKind::Unsupported | UnavailableKind::Unstated => Recourse::Nothing,
@@ -174,6 +196,13 @@ pub enum Recourse {
     Wait,
     /// Wait for a release. Nothing done today changes it, and it will arrive.
     AwaitRelease,
+    /// ★ R1695 — go to the surface that has it; it is built and it is not here.
+    ///
+    /// Available today, like [`Satisfy`](Self::Satisfy), and out of this
+    /// surface's hands, like [`Nothing`](Self::Nothing) — which is why it is
+    /// neither. The action is a **move**, and a reader who is told to wait or
+    /// to give up will not make it.
+    OpenElsewhere,
     /// Nothing, in this build.
     Nothing,
 }
@@ -187,6 +216,7 @@ impl Recourse {
             Recourse::Authorize => "authorize",
             Recourse::Wait => "wait",
             Recourse::AwaitRelease => "await_release",
+            Recourse::OpenElsewhere => "open_elsewhere",
             Recourse::Nothing => "nothing",
         }
     }
@@ -198,11 +228,12 @@ impl Recourse {
     }
 
     /// Every arm, in declaration order.
-    pub const ALL: [Recourse; 5] = [
+    pub const ALL: [Recourse; 6] = [
         Recourse::Satisfy,
         Recourse::Authorize,
         Recourse::Wait,
         Recourse::AwaitRelease,
+        Recourse::OpenElsewhere,
         Recourse::Nothing,
     ];
 
@@ -294,6 +325,13 @@ impl Unavailable {
         Self::new(UnavailableKind::Unsupported, detail)
     }
 
+    /// ★ R1695 — built and shipping, on a different surface of this product;
+    /// `detail` names that surface.
+    #[must_use]
+    pub fn elsewhere(detail: impl Into<Cow<'static, str>>) -> Self {
+        Self::new(UnavailableKind::Elsewhere, detail)
+    }
+
     /// Declared unavailable with no reason given — what
     /// [`with_disabled(true)`](crate::style::LayoutStyle::with_disabled)
     /// produces, and what every declaration written before this module means.
@@ -354,6 +392,7 @@ impl Unavailable {
                 UnavailableKind::Busy => "in use",
                 UnavailableKind::Reserved => "reserved for a later release",
                 UnavailableKind::Unsupported => "not available in this build",
+                UnavailableKind::Elsewhere => "on another surface of this product",
                 UnavailableKind::Unstated => "unavailable",
             }
             .to_owned();
@@ -364,6 +403,7 @@ impl Unavailable {
             UnavailableKind::Busy => "in use by",
             UnavailableKind::Reserved => "reserved for",
             UnavailableKind::Unsupported => "not available in this build:",
+            UnavailableKind::Elsewhere => "in",
             UnavailableKind::Unstated => "unavailable:",
         };
         format!("{lead} {detail}")
@@ -409,8 +449,43 @@ mod tests {
                 "{recourse:?} publishes a name its own reader does not accept"
             );
         }
-        assert_eq!(UnavailableKind::ALL.len(), 6);
-        assert_eq!(Recourse::ALL.len(), 5);
+        assert_eq!(UnavailableKind::ALL.len(), 7);
+        assert_eq!(Recourse::ALL.len(), 6);
+    }
+
+    /// ★★ R1695 — **available today, and not from here** is its own answer.
+    ///
+    /// The three inert-today arms are kept apart by what the reader should do
+    /// next, which is the rule this module states for spending an arm. A tool
+    /// that collapsed them would send a reader to wait for a release that has
+    /// already shipped, or to give up on a feature one window away.
+    #[test]
+    fn r1695_elsewhere_is_neither_waiting_nor_giving_up() {
+        let elsewhere = Unavailable::elsewhere("the packet viewer");
+        assert_eq!(elsewhere.recourse(), Recourse::OpenElsewhere);
+        assert_eq!(elsewhere.sentence(), "in the packet viewer");
+        assert!(elsewhere.is_stated());
+
+        // Not waiting: nothing arrives on its own, because it has arrived.
+        assert!(!elsewhere.recourse().resolves_by_itself());
+        assert_ne!(
+            elsewhere.recourse(),
+            Unavailable::reserved("r12").recourse()
+        );
+        // Not giving up either, which is the confusion that costs a reader the
+        // feature: `unsupported` says no action helps, and here one does.
+        assert_ne!(
+            elsewhere.recourse(),
+            Unavailable::unsupported("no such device").recourse()
+        );
+
+        // The recourse is this arm's alone, so a client switching on the
+        // recourse can act on it without also reading the kind.
+        let sharing: Vec<_> = UnavailableKind::ALL
+            .iter()
+            .filter(|k| k.recourse() == Recourse::OpenElsewhere)
+            .collect();
+        assert_eq!(sharing, vec![&UnavailableKind::Elsewhere]);
     }
 
     /// R1668 — the arms exist because the recourses differ, and the two that

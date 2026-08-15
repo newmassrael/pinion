@@ -1280,19 +1280,31 @@ fn r1668_every_reserved_seat_is_declared_with_the_booking_it_states() {
                 ),
             }
         }
-        // The rail's two locked seats, the same way.
+        // ★ R1695 — the rail's locked seats, the same way, and now there are
+        // five rather than two: three destinations this application cannot take
+        // you to were painted live and refused nothing. The reason is read from
+        // the ROSTER, so the seat's paint, its refusal and its accessibility
+        // node cannot say three different things.
+        let roster = spec::destinations();
         for seat in spec::RAIL {
             let tag = format!("shell.rail.{}", seat.key);
             let inert = shot.inert.get(&tag);
-            match seat.reserved_for {
+            match roster.get(seat.key).and_then(|d| d.standing.why()) {
                 Some(why) => {
-                    let (kind, detail, _) = inert.unwrap_or_else(|| {
-                        panic!("{case}: the {} seat is reserved and painted live", seat.key)
+                    let (kind, detail, recourse) = inert.unwrap_or_else(|| {
+                        panic!("{case}: the {} seat is closed and painted live", seat.key)
                     });
-                    assert_eq!(*kind, UnavailableKind::Reserved);
+                    assert_eq!(*kind, why.kind(), "{case}: the {} seat's kind", seat.key);
                     assert_eq!(
-                        detail, why,
+                        detail,
+                        why.detail(),
                         "{case}: the {} seat's booking drifted",
+                        seat.key
+                    );
+                    assert_eq!(
+                        *recourse,
+                        why.recourse(),
+                        "{case}: the {} seat offers the wrong recourse",
                         seat.key
                     );
                 }
@@ -1334,10 +1346,7 @@ fn r1668_the_screen_paints_exactly_the_reserved_seats_it_specifies() {
             .count();
         assert_eq!(
             inert_seats,
-            spec::RAIL
-                .iter()
-                .filter(|s| s.reserved_for.is_some())
-                .count(),
+            spec::destinations().closed().count(),
             "{case}: the rail paints a different number of locked seats than it declares",
         );
     });
@@ -1373,15 +1382,21 @@ fn r1668_no_path_places_a_reserved_seat() {
             "a reserved kind reached the board anyway",
         );
 
-        // And the reserved rail seats do not become the current section.
-        let was = state.nav.get();
-        for seat in spec::RAIL.iter().filter(|s| s.reserved_for.is_some()) {
-            ShellOracle::act_on_hit(&state, Hit::Rail(seat.key));
+        // And a rail seat this application cannot take you to does not become
+        // the current section — five of them now, not two.
+        let was = state.at();
+        let roster = spec::destinations();
+        for (destination, _) in roster.closed() {
+            let key = spec::RAIL
+                .iter()
+                .find(|seat| seat.key == destination.key)
+                .expect("the roster is built from the rail")
+                .key;
+            ShellOracle::act_on_hit(&state, Hit::Rail(key));
             assert_eq!(
-                state.nav.get(),
+                state.at(),
                 was,
-                "the {} seat is reserved and pressing it navigated there",
-                seat.key,
+                "the {key} seat is closed and pressing it navigated there",
             );
         }
     });
@@ -1459,4 +1474,273 @@ fn r1674_the_declared_bands_are_the_placed_bands() {
             );
         }
     }
+}
+
+// --- R1695: arriving is not highlighting -------------------------------------
+
+/// Paint the screen at `destination`, at the size it opens in.
+///
+/// A sweep of its own rather than a fifth axis on [`sweep`], because every check
+/// in this file above is a question about the dashboard and would have to learn
+/// to skip itself. What the destinations need is a different question.
+fn painted_at_destination(destination: &str) -> Painted {
+    let state = use_shell_state();
+    if destination != state.at() {
+        state
+            .go(destination)
+            .unwrap_or_else(|why| panic!("{destination} is open and refused: {why:?}"));
+    }
+    painted_at((WIN_W, WIN_H)).0
+}
+
+/// ★★★★★ R1695 — **every open destination is a place you arrive at, and every
+/// closed one says why you did not.**
+///
+/// The check this screen did not have, and the reason it did not: the rail's
+/// only consequence was a string it highlighted itself from, so "the press
+/// worked" and "the window changed" were different facts and nothing compared
+/// them. Driven through this screen's own hit path and measured before the
+/// repair, four of the seven seats moved the string and left the painted scene
+/// at **193 tagged regions before and 193 after**.
+///
+/// The floor cannot ask this at all. Measured by building a probe against the
+/// reference toolkit at 6.11.1 and running it: its paged container is addressed
+/// by ordinal, `setCurrentIndex` returns `void`, an out-of-range ordinal is a
+/// silent no-op, and a **disabled page is arrived at anyway** — so there is no
+/// refusal to assert and no reason to compare one against.
+#[test]
+fn r1695_every_open_destination_is_a_place_you_arrive_at() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let roster = spec::destinations();
+        let mut seen: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+
+        for destination in roster.all() {
+            let key = destination.key.as_ref();
+            match &destination.standing {
+                pinion_core::widgets::destination::Standing::Open => {
+                    let shot = painted_at_destination(key);
+                    assert_eq!(
+                        state.at(),
+                        key,
+                        "arriving at {key} did not move the journey"
+                    );
+                    let inside: BTreeSet<String> = shot
+                        .tags
+                        .keys()
+                        .filter(|tag| {
+                            tag.starts_with("shell.settings.") || tag.starts_with("card.")
+                        })
+                        .cloned()
+                        .collect();
+                    assert!(
+                        !inside.is_empty(),
+                        "the {key} page paints nothing of its own, so arriving \
+                         at it is indistinguishable from not arriving",
+                    );
+                    seen.insert(key.to_owned(), inside);
+                }
+                pinion_core::widgets::destination::Standing::Closed(why) => {
+                    let was = state.at();
+                    let refusal = state
+                        .go(key)
+                        .expect_err("a closed destination refuses the journey");
+                    assert_eq!(state.at(), was, "{key} refused and moved anyway");
+                    let said = refusal.sentence(&roster);
+                    assert!(
+                        said.contains(why.detail()),
+                        "the refusal for {key} is {said:?} and does not name \
+                         the reason the seat is painted with",
+                    );
+                }
+            }
+        }
+
+        // ★ The two pages are DIFFERENT pages. Without this the check above is
+        // satisfied by a region that paints the dashboard whatever the journey
+        // says — which is the exact defect this round repairs, and it would
+        // otherwise pass every assertion above.
+        let pages: Vec<&BTreeSet<String>> = seen.values().collect();
+        assert_eq!(pages.len(), 2, "two open destinations, measured");
+        assert!(
+            pages[0].is_disjoint(pages[1]),
+            "two destinations painted overlapping content: {:?}",
+            pages[0].intersection(pages[1]).collect::<Vec<_>>(),
+        );
+    });
+}
+
+/// ★★★★★ R1695 — the specification says which destination each region belongs
+/// to, and the screen paints exactly those.
+///
+/// Both directions, per destination. This is what closes the half of
+/// `debt-the-voice-gate-judges-only-the-opening-screen` that lives here: the
+/// census used to describe one screen because the application had one, and the
+/// rail's roster is the enumeration that was missing.
+#[test]
+fn r1695_each_destination_paints_the_regions_the_specification_gives_it() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let roster = spec::destinations();
+        for destination in roster.open() {
+            let key = destination.key.as_ref();
+            let shot = painted_at_destination(key);
+            // Forward: a region this destination owns is painted here.
+            for voice in spec::VOICES {
+                if !voice.at.shows_at(key) {
+                    continue;
+                }
+                for member in voice.population.members() {
+                    let tag = voice.tag.replace("{}", &member);
+                    assert!(
+                        shot.rect(&tag).is_some(),
+                        "at {key}: the specification gives this destination \
+                         {tag:?} and the screen does not paint it",
+                    );
+                }
+            }
+            // Backward: a region another destination owns is NOT painted here.
+            for voice in spec::VOICES {
+                if voice.at.shows_at(key) {
+                    continue;
+                }
+                for member in voice.population.members() {
+                    let tag = voice.tag.replace("{}", &member);
+                    assert!(
+                        shot.rect(&tag).is_none(),
+                        "at {key}: {tag:?} belongs to another destination and \
+                         is painted here anyway — a page nobody navigated to \
+                         is on screen",
+                    );
+                }
+            }
+        }
+    });
+}
+
+/// ★★★★★ R1695 — and the **accessibility tree** follows the rail too.
+///
+/// Found by a counterfactual that PASSED: emitting the settings page's nodes
+/// while the dashboard is showing left every check above green, because they
+/// all read the painted scene and a tree can announce what nothing paints. The
+/// demo's boot census caught it as four `ghost` rows — which is the right
+/// answer arriving in the wrong place, one build and forty seconds later, and
+/// only for the destination the application happens to open at.
+///
+/// A reader offered a control that is not on screen is offered a control nobody
+/// can reach, and that is the same defect as painting it — so it is the same
+/// law, asked of the other surface.
+#[test]
+fn r1695_each_destination_announces_only_its_own_regions() {
+    use pinion_a11y::WidgetA11y;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let roster = spec::destinations();
+        for destination in roster.open() {
+            let key = destination.key.as_ref();
+            if key != state.at() {
+                state.go(key).expect("an open destination is reachable");
+            }
+            let announced: BTreeSet<String> = super::AnalyzerShellView::access_node(&(), None)
+                .into_iter()
+                .map(|node| node.tag)
+                .collect();
+            for voice in spec::VOICES {
+                for member in voice.population.members() {
+                    let tag = voice.tag.replace("{}", &member);
+                    if voice.at.shows_at(key) {
+                        assert!(
+                            announced.contains(&tag),
+                            "at {key}: {tag:?} is this destination's and the tree \
+                             does not announce it",
+                        );
+                    } else {
+                        assert!(
+                            !announced.contains(&tag),
+                            "at {key}: {tag:?} belongs to another destination and \
+                             the tree announces it anyway — a reader is offered a \
+                             control that is not on screen",
+                        );
+                    }
+                }
+            }
+        }
+    });
+}
+
+/// ★★ R1695 — the Settings page's two locked affordances are declared
+/// unavailable with their booking, the same law the rail's seats keep.
+///
+/// A page the census could not see until this round is a page whose locked
+/// seats nobody checked, which is how five of the sixteen came to be untested.
+#[test]
+fn r1695_the_settings_page_declares_its_locked_affordances() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let shot = painted_at_destination("settings");
+        for row in spec::KEY_ROWS {
+            let tag = format!("shell.settings.key.{}", row.key);
+            let (kind, detail, recourse) = shot
+                .inert
+                .get(&tag)
+                .unwrap_or_else(|| panic!("{tag} is booked for a later release and painted live"));
+            assert_eq!(*kind, UnavailableKind::Reserved);
+            assert_eq!(detail, row.reserved_for, "{tag}'s booking drifted");
+            assert_eq!(*recourse, Recourse::AwaitRelease);
+        }
+        // And nothing else on the page is inert, so a switch that stopped
+        // working would not hide inside the two that are meant to.
+        let inert: Vec<&String> = shot
+            .inert
+            .keys()
+            .filter(|t| t.starts_with("shell.settings."))
+            .collect();
+        assert_eq!(
+            inert.len(),
+            spec::KEY_ROWS.len(),
+            "the settings page paints {} inert regions and books {}: {inert:?}",
+            inert.len(),
+            spec::KEY_ROWS.len(),
+        );
+    });
+}
+
+/// ★★★ R1695 — every control on the Settings page answers for **itself** when
+/// pressed at the centre of the rectangle it was painted in.
+///
+/// The reachability half, which on this screen has caught the same class three
+/// times: the painter and the hit test are two expressions of one geometry and
+/// nothing but this makes them agree.
+#[test]
+fn r1695_every_settings_control_is_pressable_where_it_is_painted() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let shot = painted_at_destination("settings");
+        let mut checked = 0;
+        for (tag, rect) in &shot.tags {
+            if !tag.starts_with("shell.settings.option.")
+                && !tag.starts_with("shell.settings.key.")
+                && !tag.starts_with("shell.settings.theme.")
+            {
+                continue;
+            }
+            let (px, py) = (rect.x + rect.w / 2, rect.y + rect.h / 2);
+            let hit = Hit::at(&state, px, py);
+            assert_eq!(
+                &super::hit_word(&hit),
+                tag,
+                "a press at the centre of {tag} ({px},{py}) answered {hit:?}",
+            );
+            checked += 1;
+        }
+        assert_eq!(
+            checked,
+            spec::OPTIONS.len() + spec::KEY_ROWS.len() + spec::THEMES.len(),
+            "the sweep reached a different number of controls than the page has",
+        );
+    });
 }
