@@ -510,14 +510,25 @@ fn effective_cursor(rows: &[VisibleRow], cursor: &Signal<Option<String>>) -> Opt
     pinion_core::widgets::tree_nav::effective_cursor(rows, Some(&id)).map(ToOwned::to_owned)
 }
 
+/// Whose children are in flight, or `None` when nothing is being fetched.
+///
+/// ★ R1693.1 — **one predicate, two announcements.** The band says it in words
+/// and the tree lowers the same moment to `aria-busy`; a screen that carried one
+/// and not the other would be telling a reader two different things about the
+/// same instant. The tree at boot held no `treeitem` and said nothing about why,
+/// which the structural census reports as a forgotten collection — and it is not
+/// one: it is a collection that has asked and is waiting.
+fn loading_under(rows: &[LazyRow]) -> Option<String> {
+    rows.iter().find_map(|r| match r {
+        LazyRow::Skeleton { parent_label, .. } => Some(parent_label.clone()),
+        LazyRow::Node(_) => None,
+    })
+}
+
 /// The `role=status` band text: the loading branch while children are in
 /// flight (the first skeleton's parent), else the loaded visible-row count.
 fn status_text(rows: &[LazyRow]) -> String {
-    let loading = rows.iter().find_map(|r| match r {
-        LazyRow::Skeleton { parent_label, .. } => Some(parent_label.clone()),
-        LazyRow::Node(_) => None,
-    });
-    if let Some(label) = loading {
+    if let Some(label) = loading_under(rows) {
         format!("Loading {label}\u{2026}")
     } else {
         let n = node_rows(rows).len();
@@ -1019,6 +1030,17 @@ impl WidgetA11y for LazyTreeView {
             None,
             cursor.as_deref(),
         );
+        // ★★★ R1693.1 — while a fetch is in flight the tree holds no `treeitem`,
+        // and that is neither full nor empty. `aria-busy` is the third answer,
+        // and it is the same moment [`status_text`] puts into words — read from
+        // the one predicate so the two cannot disagree. Before this the opening
+        // screen announced a `tree` a reader could not enter, with nothing
+        // saying why.
+        if loading_under(&all).is_some()
+            && let Some(root) = nodes.first_mut()
+        {
+            root.busy = true;
+        }
         nodes.push(AccessNode::new(STATUS_TAG, AriaRole::Status).with_name(status_text(&all)));
         nodes
     }
@@ -1442,6 +1464,49 @@ mod tests {
             assert!(
                 loaded > 100,
                 "an expanded section is a large folder ({loaded} rows) — the scale case",
+            );
+        });
+    }
+
+    #[test]
+    fn a_tree_still_fetching_says_it_is_busy_and_stops_when_it_lands() {
+        // ★★★ R1693.1 — the opening screen announced a `tree` holding no
+        // `treeitem`, which the structural census reports as a collection a
+        // reader is told about and cannot enter. It is not forgotten: it has
+        // asked and is waiting, and `aria-busy` is the word for that moment.
+        //
+        // Both halves are asserted because only the pair is the claim. Dropping
+        // the flag entirely passes the first; setting it unconditionally passes
+        // the second; and the screen would be lying in one direction either way.
+        let owner = Owner::new();
+        owner.run(|| {
+            boot();
+            let fetching = LazyTreeView::access_node(&(), None);
+            let root = &fetching[0];
+            assert_eq!(root.tag, ROOT_TAG, "the container comes first");
+            assert!(
+                root.busy,
+                "a tree with a fetch in flight declares aria-busy",
+            );
+            assert!(
+                !fetching.iter().any(|n| n.role == AriaRole::TreeItem),
+                "…which is the whole point: it holds nothing yet",
+            );
+            assert!(
+                loading_under(&rows_now()).is_some(),
+                "and the band it shares its predicate with agrees",
+            );
+
+            drain_pump();
+            use_scroll_state(SCROLL_KEY).set_measured_viewport(WIN_W, 10 * tree_pitch());
+            let landed = LazyTreeView::access_node(&(), None);
+            assert!(
+                !landed[0].busy,
+                "once the children land the tree stops saying wait",
+            );
+            assert!(
+                landed.iter().any(|n| n.role == AriaRole::TreeItem),
+                "and holds what it promised",
             );
         });
     }
