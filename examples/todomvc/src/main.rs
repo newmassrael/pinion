@@ -2491,7 +2491,20 @@ impl WidgetA11y for TodoMvcView {
         // checked/unchecked state on `aria-checked`, not on any
         // visible glyph — screen readers read this announcement
         // independent of the row's text.
-        let entries = use_todos().get();
+        // R1692 — the AT tree walks the SAME derived visible list the
+        // paint does ([`FilterMode::matches`], the declared predicate).
+        // Reading the unfiltered signal here announced a toggle and a
+        // delete button for every row the active filter hides: a screen
+        // reader was offered — and `scene/invoke` could fire — controls
+        // with nothing on screen behind them. Caught by the R1692 voice
+        // census as a `ghost` on `todo_toggle#<id>` / `todo_delete#<id>`
+        // (the row itself escaped only because `todo_list` references it
+        // as a child, which anchors it).
+        let entries: Vec<TodoItem> = use_todos()
+            .get()
+            .into_iter()
+            .filter(|item| current_filter.matches(item))
+            .collect();
         let mut list_node = AccessNode::new(LIST_TAG, AriaRole::List);
         for item in &entries {
             let row_tag = format!("{ITEM_TAG_PREFIX}#{}", item.id);
@@ -3721,6 +3734,102 @@ mod tests {
             assert_eq!(
                 nodes[11].children,
                 vec!["todo_item#1".to_owned(), "todo_item#2".to_owned()],
+            );
+        });
+    }
+
+    /// (R1692) A row the active filter hides is not announced at all.
+    ///
+    /// Before R1692 the AT emitter read the unfiltered signal while the
+    /// paint read the derived visible list, so a completed row under
+    /// `Active` still published `todo_toggle#<id>` and
+    /// `todo_delete#<id>` — names a screen reader could land on, and
+    /// tags `scene/invoke` would happily fire, with nothing painted
+    /// behind them. The voice census calls that a `ghost`; this asserts
+    /// the emitter never produces one.
+    #[test]
+    fn r1692_a_filtered_out_row_is_not_announced() {
+        with_owner(|| {
+            use_todos().set(vec![
+                TodoItem {
+                    id: 1,
+                    text: "done already".to_owned(),
+                    completed: true,
+                },
+                TodoItem {
+                    id: 2,
+                    text: "still open".to_owned(),
+                    completed: false,
+                },
+            ]);
+            use_filter().set(FilterMode::Active);
+            let nodes = <TodoMvcView as WidgetA11y>::access_node(
+                &(
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                None,
+            );
+            let tags: Vec<&str> = nodes.iter().map(|n| n.tag.as_str()).collect();
+            for hidden in ["todo_item#1", "todo_toggle#1", "todo_delete#1"] {
+                assert!(
+                    !tags.contains(&hidden),
+                    "R1692: `{hidden}` is filtered out of the paint, so it must \
+                     not be announced — got {tags:?}",
+                );
+            }
+            for shown in ["todo_item#2", "todo_toggle#2", "todo_delete#2"] {
+                assert!(
+                    tags.contains(&shown),
+                    "R1692: `{shown}` is painted, so it must still be announced",
+                );
+            }
+            let list = nodes
+                .iter()
+                .find(|n| n.tag == LIST_TAG)
+                .expect("list root is emitted");
+            assert_eq!(
+                list.children,
+                vec!["todo_item#2".to_owned()],
+                "R1692: the list root references only the visible rows",
+            );
+        });
+    }
+
+    /// (R1692) The counterfactual for the test above: with `All`
+    /// selected the completed row IS painted, so it must still be
+    /// announced. Without this, filtering the emitter to the empty set
+    /// would pass.
+    #[test]
+    fn r1692_under_all_a_completed_row_is_still_announced() {
+        with_owner(|| {
+            use_todos().set(vec![TodoItem {
+                id: 1,
+                text: "done already".to_owned(),
+                completed: true,
+            }]);
+            use_filter().set(FilterMode::All);
+            let nodes = <TodoMvcView as WidgetA11y>::access_node(
+                &(
+                    TextFieldState::Idle,
+                    0,
+                    FilterRadioStates::default(),
+                    TextFieldState::Idle,
+                    0,
+                ),
+                None,
+            );
+            let toggle = nodes
+                .iter()
+                .find(|n| n.tag == "todo_toggle#1")
+                .expect("R1692: the visible completed row keeps its toggle");
+            assert_eq!(
+                toggle.state.checked,
+                Some(true),
+                "R1692: and it still carries aria-checked",
             );
         });
     }
