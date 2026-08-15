@@ -160,9 +160,10 @@ pub struct AccessNode {
     /// whose members wrap across lines and where both axes advance the same
     /// linear roster ([`Axis::Both`](pinion_core::widgets::roving::Axis::Both)).
     ///
-    /// Declared through [`Axis::aria`](pinion_core::widgets::roving::Axis::aria)
-    /// rather than as a free string, so the value published here and the keys
-    /// the composite actually navigates by come from one declaration.
+    /// Set through [`Orientation::of`] from the roving
+    /// [`Axis`](pinion_core::widgets::roving::Axis) rather than as a free
+    /// string, so the value published here and the keys the composite actually
+    /// navigates by come from one declaration.
     pub orientation: Option<Orientation>,
     /// R1698 §5.40 §5.39 — **the cursor this composite owns**: which members
     /// its arrows reach, in cursor order, and where the cursor rests.

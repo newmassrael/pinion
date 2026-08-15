@@ -107,16 +107,6 @@ impl Axis {
         }
     }
 
-    /// The `aria-orientation` value, or `None` when the axis is undefined.
-    #[must_use]
-    pub const fn aria(self) -> Option<&'static str> {
-        match self {
-            Self::Horizontal => Some("horizontal"),
-            Self::Vertical => Some("vertical"),
-            Self::Both => None,
-        }
-    }
-
     /// The wire spelling.
     #[must_use]
     pub const fn wire(self) -> &'static str {
@@ -252,15 +242,6 @@ impl Member {
         }
     }
 
-    /// A member the cursor reaches and choosing refuses.
-    #[must_use]
-    pub fn locked(tag: impl Into<String>) -> Self {
-        Self {
-            tag: tag.into(),
-            enabled: false,
-        }
-    }
-
     /// A member that can be chosen when `enabled`.
     #[must_use]
     pub fn maybe(tag: impl Into<String>, enabled: bool) -> Self {
@@ -334,16 +315,6 @@ pub enum Landing {
 }
 
 impl Landing {
-    /// The index the cursor rests on afterwards.
-    #[must_use]
-    pub const fn cursor(self) -> Option<usize> {
-        match self {
-            Self::Moved { to, .. } => Some(to),
-            Self::Held(at) => Some(at),
-            Self::Nowhere => None,
-        }
-    }
-
     /// Whether the cursor changed position.
     #[must_use]
     pub const fn moved(self) -> bool {
@@ -583,9 +554,11 @@ mod tests {
     #[test]
     fn r1698_home_and_end_reach_the_first_and_last_member() {
         let mut r = three();
-        assert_eq!(r.key("End").and_then(Landing::cursor), Some(2));
+        assert!(r.key("End").is_some_and(Landing::moved));
+        assert_eq!(r.cursor(), Some(2));
         assert_eq!(r.cursor_tag(), Some("c"));
-        assert_eq!(r.key("Home").and_then(Landing::cursor), Some(0));
+        assert!(r.key("Home").is_some_and(Landing::moved));
+        assert_eq!(r.cursor(), Some(0));
         assert_eq!(r.cursor_tag(), Some("a"));
         assert_eq!(r.key("Home"), Some(Landing::Held(0)), "already first");
     }
@@ -620,7 +593,7 @@ mod tests {
         let mut r = Roving::new(RovingSpec::new(Axis::Vertical));
         r.seat(vec![
             Member::new("open"),
-            Member::locked("booked"),
+            Member::maybe("booked", false),
             Member::new("also_open"),
         ]);
         assert!(r.key("ArrowDown").is_some_and(Landing::moved));
@@ -669,8 +642,9 @@ mod tests {
         let mut r = three();
         assert!(r.point_at("c"));
         assert_eq!(r.cursor_tag(), Some("c"));
+        assert!(r.step(Step::Previous).moved());
         assert_eq!(
-            r.step(Step::Previous).cursor(),
+            r.cursor(),
             Some(1),
             "the arrow continues from where the pointer left it"
         );
@@ -703,13 +677,19 @@ mod tests {
     }
 
     #[test]
-    fn r1698_the_aria_orientation_is_absent_exactly_when_it_is_undefined() {
-        assert_eq!(Axis::Horizontal.aria(), Some("horizontal"));
-        assert_eq!(Axis::Vertical.aria(), Some("vertical"));
+    fn r1698_the_wire_spelling_is_distinct_for_every_arm() {
+        // The wire is a vocabulary a client matches on, so two arms sharing a
+        // word would make a policy unaskable rather than merely ugly.
+        let axes: Vec<&str> = [Axis::Horizontal, Axis::Vertical, Axis::Both]
+            .iter()
+            .map(|a| a.wire())
+            .collect();
+        assert_eq!(axes.len(), 3);
         assert_eq!(
-            Axis::Both.aria(),
-            None,
-            "ARIA has no 'both'; the attribute's absence IS undefined"
+            axes.iter().collect::<std::collections::BTreeSet<_>>().len(),
+            3
         );
+        assert_ne!(Ends::Stop.wire(), Ends::Wrap.wire());
+        assert_ne!(Activation::Follows.wire(), Activation::Explicit.wire());
     }
 }
