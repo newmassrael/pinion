@@ -62,6 +62,7 @@ pub mod node;
 pub mod radiogroup;
 pub mod role;
 pub mod scene_label;
+pub mod structure;
 pub mod table;
 pub mod tabs;
 pub mod toggle_group;
@@ -84,8 +85,8 @@ pub use described::describedby_region;
 pub use focus::AccessFocus;
 pub use grid::{GridCell, GridColumn, GridRow, grid_table_nodes};
 pub use grouped::{
-    GroupedGridSelection, GroupedGridSpec, GroupedTreeSpec, grouped_focus_target,
-    grouped_grid_access_nodes, grouped_tree_access_nodes,
+    GroupedGridSelection, GroupedGridSpec, GroupedTreeSpec, group_header_cell_tag,
+    grouped_focus_target, grouped_grid_access_nodes, grouped_tree_access_nodes,
 };
 pub use heading::attach_block_headings;
 pub use list::attach_block_lists;
@@ -99,6 +100,9 @@ pub use node::{
 pub use radiogroup::{RadioCell, radiogroup_radio_nodes};
 pub use role::{AriaCurrent, AriaRole, AutoComplete, HasPopup, SortDirection};
 pub use scene_label::{enrich_access_keys_from_scene, enrich_names_from_scene};
+pub use structure::{
+    StructureCensus, StructureFault, StructureNode, roles_with_structure, structure_census,
+};
 pub use table::attach_block_tables;
 pub use tabs::{TabCell, tablist_tab_nodes};
 pub use toggle_group::{ToggleSegment, toggle_button_group_nodes};

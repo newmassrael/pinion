@@ -172,6 +172,17 @@ pub fn grouped_tree_access_nodes(
     nodes
 }
 
+/// The tag of the one spanning cell a group header row owns (R1693).
+///
+/// Derived from the row's tag rather than taken as another closure argument: the
+/// cell is not something a author places, it is what makes the header row a row.
+/// Public so a consumer asserting on the tree can name it without re-deriving
+/// the convention.
+#[must_use]
+pub fn group_header_cell_tag(row_tag: &str) -> String {
+    format!("{row_tag}.span")
+}
+
 /// R874 §5.40 — whether a grouped grid exposes an `aria-selected` axis on its
 /// data rows, and (if so) which source is selected.
 ///
@@ -253,6 +264,10 @@ pub struct GroupedGridSpec<'a> {
 /// scheme (`data_grid#g<g>` / `dg_row<src>`) build from the SAME topology,
 /// differing only in the closure they pass — the same caller-owned-tag
 /// convention `cell_tag` already follows.
+///
+/// R1693 — a group header row owns one spanning cell at
+/// [`group_header_cell_tag`], which is what makes it a `row` rather than a
+/// labelled node claiming to be one.
 #[must_use]
 pub fn grouped_grid_access_nodes(
     spec: &GroupedGridSpec,
@@ -314,14 +329,34 @@ pub fn grouped_grid_access_nodes(
                 collapsed,
             } => {
                 // Group header = level-1 expandable branch row (WAI-ARIA 6.6.8).
+                //
+                // ★★★ R1693 — carrying **one spanning cell**, which it did not
+                // until `scene/conform` asked what the row held. A WAI-ARIA
+                // `row` owns cells; a header row that owned none was a row an
+                // assistive technology could descend into and find nothing, and
+                // every per-node check passed because the row itself was named,
+                // levelled and placed. The cell is the standard shape for a
+                // group header — one `gridcell` with `aria-colspan` over every
+                // column — and it is anchored in the voice census by being the
+                // row's child rather than by painting a rectangle of its own,
+                // because the header IS painted as one spanning band.
+                let label = format!("{} ({member_count})", group_label(group));
+                let cell = group_header_cell_tag(&row_tag(row));
                 nodes.push(
                     AccessNode::new(row_tag(row), AriaRole::Row)
-                        .with_name(format!("{} ({member_count})", group_label(group)))
+                        .with_name(label.clone())
                         .with_level(1)
                         .with_position_in_set(posinset)
                         .with_size_of_set(total)
                         .with_expanded(!collapsed)
-                        .with_focused(focused),
+                        .with_focused(focused)
+                        .with_child(cell.clone()),
+                );
+                nodes.push(
+                    AccessNode::new(cell, AriaRole::GridCell)
+                        .with_name(label)
+                        .with_column(0)
+                        .with_span(1, u32::try_from(spec.columns.len()).unwrap_or(u32::MAX)),
                 );
             }
             GroupRow::Data { source } => {
@@ -363,8 +398,8 @@ pub fn grouped_grid_access_nodes(
 #[cfg(test)]
 mod tests {
     use super::{
-        GroupedGridSelection, GroupedGridSpec, GroupedTreeSpec, grouped_focus_target,
-        grouped_grid_access_nodes, grouped_tree_access_nodes,
+        GroupedGridSelection, GroupedGridSpec, GroupedTreeSpec, group_header_cell_tag,
+        grouped_focus_target, grouped_grid_access_nodes, grouped_tree_access_nodes,
     };
     use crate::grid::GridColumn;
     use crate::role::{AriaRole, SortDirection};
@@ -508,6 +543,67 @@ mod tests {
             .find(|n| n.tag == "cell_0_1")
             .expect("cell 0,1");
         assert_eq!(cell01.name.as_deref(), Some("v01"));
+    }
+
+    /// ★★★★ R1693 — a group header row **owns a cell**, and until this round it
+    /// owned nothing: a WAI-ARIA `row` holds cells, and an assistive technology
+    /// descending into a header row found an empty container while every check
+    /// about the row itself — its name, its level, its `aria-expanded` — passed.
+    ///
+    /// The cell spans every column, which is what a header band drawn across the
+    /// grid *is*.
+    #[test]
+    fn r1693_a_group_header_row_owns_one_spanning_cell() {
+        let rows = sample();
+        let win = full_window(&rows);
+        let columns = grid_columns();
+        let spec = GroupedGridSpec {
+            grid_tag: "grid",
+            name: Some("Grouped grid"),
+            header_row_tag: "head",
+            columns: &columns,
+            selection: GroupedGridSelection::Single(Some(0)),
+            focused_view_pos: None,
+            focused_cell: None,
+        };
+        let nodes = grouped_grid_access_nodes(
+            &spec,
+            &rows,
+            win,
+            |g| format!("G{g}"),
+            |s, c| format!("cell_{s}_{c}"),
+            |s, c| format!("v{s}{c}"),
+            |r| r.composite_tag("grp", "row"),
+        );
+        let header = nodes
+            .iter()
+            .find(|n| n.tag == "grp#0")
+            .expect("group 0 header");
+        let cell_tag = group_header_cell_tag("grp#0");
+        assert_eq!(header.children, vec![cell_tag.clone()]);
+        let cell = nodes
+            .iter()
+            .find(|n| n.tag == cell_tag)
+            .expect("the spanning cell");
+        assert_eq!(cell.role, AriaRole::GridCell);
+        assert_eq!(
+            cell.name.as_deref(),
+            Some("G0 (2)"),
+            "it says what the row says"
+        );
+        assert_eq!(
+            cell.column_span,
+            Some(u32::try_from(columns.len()).unwrap()),
+            "a header band covers every column",
+        );
+        assert_eq!(cell.column_index, Some(1), "and starts at the first");
+
+        // ★ The structural census is the reason this exists, so it is what the
+        // test asserts against — a hand check of `children` would pass on a tree
+        // the census still refuses.
+        let census = crate::structure::structure_census(&nodes);
+        assert!(census.is_sound(), "{:?}", census.nodes);
+        assert!(census.judged > 0, "and it judged this grid");
     }
 
     #[test]

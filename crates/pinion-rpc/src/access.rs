@@ -124,6 +124,14 @@ fn access_node_to_json(node: &AccessNode) -> Value {
     if node.modal {
         obj.insert("modal".to_string(), Value::Bool(true));
     }
+    // R1693 §5.40 — `aria-busy`: this collection is being populated, so what it
+    // holds is not yet what it will hold. Published because it is the difference
+    // between "this list is empty" and "this list is still arriving", and an
+    // agent reading the tree has to be able to tell those apart for the same
+    // reason an assistive technology does.
+    if node.busy {
+        obj.insert("busy".to_string(), Value::Bool(true));
+    }
     // R1609 — WAI-ARIA `aria-live`. Published because a live region is a *declaration*
     // rather than a fired event, so "what will an AT say when this changes" is
     // answerable from the scene (§2 #7). The toolkit's announcement event
@@ -138,15 +146,7 @@ fn access_node_to_json(node: &AccessNode) -> Value {
     if let Some(expanded) = node.expanded {
         obj.insert("expanded".to_string(), Value::Bool(expanded));
     }
-    if let Some(described_by) = &node.described_by {
-        obj.insert(
-            "described_by".to_string(),
-            Value::String(described_by.clone()),
-        );
-    }
-    if let Some(controls) = &node.controls {
-        obj.insert("controls".to_string(), Value::String(controls.clone()));
-    }
+    references_to_json(node, &mut obj);
     if let Some(reason) = &node.unavailable {
         obj.insert("unavailable".to_string(), unavailable_to_json(reason));
     }
@@ -325,6 +325,44 @@ fn finite(f: f32) -> Value {
 /// [`access_node_to_json`]'s body for the reason `lower_table_axes` was lifted
 /// out of the AccessKit writer: six independent properties on one axis, and an
 /// `allow` would raise this writer's length bound for every other property.
+/// Every tag this node **points at**, lowered together.
+///
+/// ★★★ R1693 — five relations, published as one block because that is the claim
+/// they make together: the voice census READS all five to decide whether an
+/// announced node with no painted region of its own is deliberately virtual or a
+/// `ghost`, and three of them reached the wire while two did not. A surface that
+/// publishes a verdict and withholds one of its inputs is one a client has to
+/// trust rather than check.
+///
+/// Split from [`access_node_to_json`] when the two additions took it past the
+/// hundred-line bound — and the seam is the right one, since a sixth reference
+/// belongs here and nowhere else.
+fn references_to_json(node: &AccessNode, obj: &mut Map<String, Value>) {
+    if let Some(described_by) = &node.described_by {
+        obj.insert(
+            "described_by".to_string(),
+            Value::String(described_by.clone()),
+        );
+    }
+    if let Some(controls) = &node.controls {
+        obj.insert("controls".to_string(), Value::String(controls.clone()));
+    }
+    if let Some(source) = &node.name_from_tag {
+        obj.insert("name_from_tag".to_string(), Value::String(source.clone()));
+    }
+    if !node.bounds_union_tags.is_empty() {
+        obj.insert(
+            "bounds_union_tags".to_string(),
+            Value::Array(
+                node.bounds_union_tags
+                    .iter()
+                    .map(|t| Value::String(t.clone()))
+                    .collect(),
+            ),
+        );
+    }
+}
+
 fn table_axes_to_json(node: &AccessNode, obj: &mut Map<String, Value>) {
     // R1523 §5.40 §5.27 — the column axis' extent pair. It reaches the wire for
     // the same reason `size_of_set` does, and more urgently: the RPC access
@@ -445,6 +483,44 @@ mod tests {
         assert_eq!(n["children"][0], "row#reset");
         assert_eq!(json["focus"]["tag"], "grid");
         assert_eq!(json["focus"]["active_descendant"], "row");
+    }
+
+    /// ★★★ R1693 — the last two references a node can carry reach the wire.
+    ///
+    /// The voice census **reads** both to decide whether an announced node with
+    /// no painted region is deliberately virtual or a `ghost`, and this
+    /// serializer published three of the five reference fields and withheld
+    /// these two — so a client reading only the wire could not reproduce a rule
+    /// the same surface publishes the verdict of. A surface that answers a
+    /// question and hides one of its inputs is one you have to trust rather than
+    /// check, which is the opposite of what §2 #7 is for.
+    #[test]
+    fn r1693_every_reference_a_node_carries_reaches_the_wire() {
+        let nodes = vec![
+            AccessNode::new("panel", AriaRole::TabPanel)
+                .with_name_from_tag("tab")
+                .with_bounds_union_tag("frag_a")
+                .with_bounds_union_tag("frag_b")
+                .with_described_by("said")
+                .with_controls("popup")
+                .with_child("inner"),
+        ];
+        let json = access_to_json(&nodes, None);
+        let n = &json["nodes"][0];
+        assert_eq!(n["name_from_tag"], "tab");
+        assert_eq!(n["bounds_union_tags"][0], "frag_a");
+        assert_eq!(n["bounds_union_tags"][1], "frag_b");
+        // The three that were already there, asserted beside them so the set is
+        // the claim rather than the two additions being it.
+        assert_eq!(n["described_by"], "said");
+        assert_eq!(n["controls"], "popup");
+        assert_eq!(n["children"][0], "inner");
+
+        // A node carrying neither publishes neither, rather than an empty array
+        // and a null — the omit-the-default convention this serializer keeps.
+        let bare = access_to_json(&[AccessNode::new("ok", AriaRole::Button)], None);
+        assert!(bare["nodes"][0].get("name_from_tag").is_none());
+        assert!(bare["nodes"][0].get("bounds_union_tags").is_none());
     }
 
     // ── R1583: the focus is reported as THIS window's tree resolves it ──────

@@ -237,6 +237,24 @@ pub struct AccessNode {
     /// shell installs). Meaningful on [`AriaRole::Dialog`]; default
     /// `false` omits the attribute.
     pub modal: bool,
+    /// R1693 §5.40 — WAI-ARIA `aria-busy` per WAI-ARIA 1.2 §6.6.1: this node is
+    /// **being populated**, so what it holds right now is not what it will hold.
+    ///
+    /// The third answer a collection can give, beside "here are my members" and
+    /// "I am empty", and the one this tree had no way to say. A list that has
+    /// asked for forty assets and received none is neither full nor empty — and
+    /// [`structure_census`](crate::structure::structure_census) accepts it for
+    /// that reason, which is the same exemption WAI-ARIA's own required-owned
+    /// rule carves out.
+    ///
+    /// The distinction matters to a reader and not only to a gate: an assistive
+    /// technology is told to wait rather than told the list is empty, and it
+    /// stops re-reading a subtree that is still changing.
+    ///
+    /// Found by a demo that drives 95 bindings, after a sweep of every surface
+    /// missed it: the load completes before an ordinary probe looks, and the
+    /// boot gate looks earlier. Default `false` omits the attribute.
+    pub busy: bool,
     /// R695 §5.40 — WAI-ARIA `aria-describedby` per WAI-ARIA 1.2
     /// §6.6.2. The tag of another [`AccessNode`] whose accessible name
     /// supplies *this* node's description (announced after the name).
@@ -489,6 +507,7 @@ impl AccessNode {
             row_span: None,
             column_span: None,
             modal: false,
+            busy: false,
             described_by: None,
             expanded: None,
             controls: None,
@@ -622,6 +641,14 @@ impl AccessNode {
         self
     }
 
+    /// R1693 §5.40 — set WAI-ARIA `aria-busy`: this node is being populated and
+    /// what it holds right now is not what it will hold. See [`Self::busy`].
+    #[must_use]
+    pub const fn with_busy(mut self) -> Self {
+        self.busy = true;
+        self
+    }
+
     /// R674 §5.40 — set the WAI-ARIA `aria-level` attribute. See
     /// [`Self::level`] for the semantic axis and authoring contract.
     /// One-based: the root of the hierarchy is `1`.
@@ -645,6 +672,33 @@ impl AccessNode {
     pub fn with_size_of_set(mut self, size: u32) -> Self {
         self.size_of_set = Some(size);
         self
+    }
+
+    /// R1693 §5.40 — whether this node **says it holds nothing**.
+    ///
+    /// True when any declared extent — `aria-rowcount`, `aria-colcount` or
+    /// `aria-setsize` — is zero. A collection with no members is a real state (a
+    /// filter that matched nothing, a capture with no messages), and
+    /// [`structure_census`](crate::structure::structure_census) accepts it
+    /// exactly when the node has told a reader so, which is the same rule R1691
+    /// applied to silence: the empty answer and the forgotten one have to be two
+    /// different answers.
+    ///
+    /// The vocabulary is ARIA's own, so nothing is invented for the purpose. On
+    /// the floor at 6.11.1 this distinction does not exist: an item view with an
+    /// emptied model and one whose author never filled it both answer
+    /// `rowCount = 0` with no diagnostic.
+    ///
+    /// Any of the three counts, rather than the one that matches the role,
+    /// because a row declares its emptiness on the column axis and a table on
+    /// the row axis — and a node that has declared a zero extent on any axis has
+    /// made the statement this rule is asking for.
+    #[must_use]
+    pub fn declares_empty(&self) -> bool {
+        [self.row_count, self.column_count, self.size_of_set]
+            .into_iter()
+            .flatten()
+            .any(|extent| extent == 0)
     }
 
     /// R1523 §5.40 — set the WAI-ARIA `aria-colcount` attribute. See

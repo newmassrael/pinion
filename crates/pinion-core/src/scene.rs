@@ -867,6 +867,35 @@ impl Scene {
         }
     }
 
+    /// R1693 §5.40 — declare this painted region deliberately voiceless, **at
+    /// the site that paints it**.
+    ///
+    /// The alternative is one table beside the screen listing the quiet tags,
+    /// and it is the wrong shape for the reason every second copy in this tree
+    /// is: the table gets edited by whoever noticed, not by whoever moved the
+    /// region, and a tag that stopped being painted keeps its entry forever.
+    /// Here the reason travels with the node, so deleting the paint deletes the
+    /// declaration.
+    ///
+    /// # Panics
+    ///
+    /// On an [`Effect`](Self::Effect), the one node with no layout sidecar to
+    /// carry a declaration. Loud rather than silent: a silence that quietly did
+    /// not attach reads as an *undeclared* region in
+    /// [`voice_census`](crate::voice::voice_census), and its author goes looking
+    /// for a missing name instead of a missing carrier.
+    ///
+    /// Lifted here at R1693 from the second screen that wanted it — the first
+    /// (R1691) carried it as a four-line free function, and a verbatim copy in
+    /// the second is how a mechanism becomes two mechanisms.
+    #[must_use]
+    pub fn silenced(mut self, silence: crate::voice::Silence) -> Self {
+        self.layout_style_mut()
+            .expect("a declared silence needs a node with a layout sidecar to carry it")
+            .silence = Some(silence);
+        self
+    }
+
     /// (R55.G.19 §5.49) Returns `true` when this scene tree contains
     /// at least one node tagged `target`. Walks depth-first matching
     /// [`Self::tag`] before descending into `Container.children` and
@@ -5311,6 +5340,68 @@ mod tests {
 
     fn stub_handle() -> Box<dyn External> {
         Box::new(StubExternal::new())
+    }
+
+    // ─── R1693 §5.40: a silence travels with the node that paints it ────────
+
+    /// ★★★ R1693 — [`Scene::silenced`] attaches the declaration, and the census
+    /// reads it back.
+    ///
+    /// A test rather than a trusted one-liner because the failure mode is
+    /// **silent**: a declaration that did not attach reads as an *undeclared*
+    /// region, and its author goes looking for a missing name instead of a
+    /// missing carrier. Two screens now build every quiet region through this.
+    #[test]
+    fn r1693_a_declared_silence_attaches_and_the_census_reads_it() {
+        use crate::voice::{Relay, Silence, SilenceKind, Voice, voice_census};
+
+        let scene = Scene::Container(ContainerNode::new(vec![
+            Scene::Box(BoxNode::new(Rect::new(0, 0, 8, 8), BoxStyle::default()).with_tag("rule"))
+                .silenced(Silence::decorative("a separator")),
+        ]))
+        .silenced(Silence::layout("stacks the panel"));
+
+        let census = voice_census(
+            &scene,
+            &std::collections::BTreeMap::new(),
+            &std::collections::BTreeSet::new(),
+        );
+        let rule = census
+            .nodes
+            .iter()
+            .find(|n| n.tag == "rule")
+            .expect("the ornament is a row");
+        assert_eq!(rule.voice, Voice::Silent, "the declaration attached");
+        assert_eq!(
+            rule.silence.as_ref().map(Silence::kind),
+            Some(SilenceKind::Decorative),
+        );
+        assert_eq!(
+            rule.silence.as_ref().map(Silence::relay),
+            Some(Relay::Nowhere)
+        );
+        assert!(rule.self_declared, "on the node that paints it");
+
+        // And the untagged root's declaration reached its layout sidecar too,
+        // which a census cannot show because an untagged node is not a row.
+        assert_eq!(
+            scene
+                .layout_style()
+                .and_then(|l| l.silence.as_ref())
+                .map(Silence::kind),
+            Some(SilenceKind::Layout),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "layout sidecar")]
+    fn r1693_a_silence_on_a_node_that_cannot_carry_one_fails_loud() {
+        use crate::voice::Silence;
+
+        // An `Effect` is the one node with no layout sidecar. Failing loud is
+        // the point: a declaration that quietly did not attach would leave the
+        // region reading as forgotten.
+        let _ = Scene::Effect(EffectNode::new()).silenced(Silence::decorative("nothing"));
     }
 
     // ─── R1560 §5.12: the indexed rect walk answers what the lookup does ────

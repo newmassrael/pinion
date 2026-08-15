@@ -576,7 +576,10 @@ fn section_row(content: String) -> Scene {
 impl WidgetA11y for HelloAudioRt {
     fn access_node(state: &u16, focused: Option<&str>) -> Vec<AccessNode> {
         vec![
-            AccessNode::new(TAG, AriaRole::List)
+            // R1693 — a `group`, not a `list`: this panel paints lines of prose
+            // in a column and never built a `listitem`, so the role promised a
+            // collection a reader could enter and there was nothing inside it.
+            AccessNode::new(TAG, AriaRole::Group)
                 .with_name(format!("real-time audio — {state} live voice(s)"))
                 .with_focused(focused == Some(TAG)),
         ]
@@ -818,5 +821,18 @@ mod r1345_layout_tests {
                 assert!(r.x + r.w <= w, "row {r:?} overruns the {w}px width");
             }
         });
+    }
+
+    /// ★★★ R1693 — a `group`, not a `list`: this panel paints prose and has
+    /// never built a `listitem`, so the role sent a reader into a collection
+    /// that was not there.
+    #[test]
+    fn r1693_the_panel_announces_a_container_a_reader_can_walk() {
+        use pinion_a11y::{AriaRole, WidgetA11y};
+
+        let nodes = HelloAudioRt::access_node(&0, None);
+        assert_eq!(nodes[0].role, AriaRole::Group);
+        let census = pinion_a11y::structure_census(&nodes);
+        assert!(census.is_sound(), "{:?}", census.nodes);
     }
 }

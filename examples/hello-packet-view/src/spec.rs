@@ -691,3 +691,335 @@ pub const LANES: &[LaneSpec] = &[
 pub const CHANNELS: u32 = 8;
 /// Reassemblies completed, in progress and abandoned.
 pub const REASSEMBLY: (u32, u32, u32) = (1_204, 2, 1);
+
+// ── What a reader is told this screen has (R1693) ──────────────────────────
+
+/// ★★★★★ R1693 — **what a reader is told this screen has**, which nothing in
+/// this table said until now.
+///
+/// The tables above describe what is painted. None of them says what reaches
+/// somebody who never sees the drawing, and the gap that opened under that
+/// silence was measured the day this was written: the screen painted **186**
+/// addressable regions and announced **three** nodes — a `table` with no row, a
+/// `tree` with no item, and a `group`. Sixteen messages of seven columns each,
+/// twenty-one decoded fields, seventy-two bytes, the query, the negotiated
+/// context and the reassembly lanes were not in the accessibility tree at all,
+/// and every check in this example was green.
+///
+/// [`pinion_core::voice`] classifies every addressable region, but a *total*
+/// census is satisfied by declaring everything silent — so this table pins the
+/// **split**: these regions owe a voice and these owe a silence.
+///
+/// # Why a population and not a list of tags
+///
+/// Because most of this screen is one shape repeated per item, and a list of the
+/// expanded tags would be a second copy of the tables above. [`Population`]
+/// names where the family's members come from, so a family that grows a member
+/// cannot be satisfied by the members that were there when this was written.
+///
+/// ★★★★ **Screen B is what settled whether that has to be a closed enum.** The
+/// question was registered when screen A's eight arms were all "index into a
+/// table this specification has", and a family with no backing table would have
+/// had to be written out member by member — the shape the structure exists to
+/// avoid. This screen has two families of neither kind and needed no new
+/// machinery for either: [`Population::Cells`] is a **product** of two tables,
+/// and [`Population::Bytes`] is a **range** derived from a scalar. What has to
+/// generalise is the *expander*, which was already a function; the arm list is
+/// per-screen and closed on purpose, because a screen naming a family it does
+/// not have should not compile.
+pub struct VoiceSpec {
+    /// The tag, verbatim for [`Population::One`] and with `{}` where the family
+    /// substitutes its member's name otherwise.
+    pub tag: &'static str,
+    /// The role a reader is told this region is — the WAI-ARIA word
+    /// `scene/access` publishes, so the two surfaces join on it.
+    pub role: &'static str,
+    /// Which family the members come from.
+    pub population: Population,
+}
+
+/// Where a [`VoiceSpec`]'s members come from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Population {
+    /// Exactly one region, at [`VoiceSpec::tag`] verbatim.
+    One,
+    /// One per [`COLUMNS`] entry, keyed by index.
+    Columns,
+    /// One per [`ROWS`] message, keyed by index.
+    Rows,
+    /// ★ One per (message, column) **pair** — the product of [`ROWS`] and
+    /// [`COLUMNS`], substituted as `{row}_{column}`. Screen A had no family of
+    /// this shape, and it is the first evidence that a population is a rule
+    /// rather than an index.
+    Cells,
+    /// One per [`FIELDS`] row of the decode, keyed by its path.
+    Fields,
+    /// One per [`LAYERS`] entry, keyed by its identifier.
+    Layers,
+    /// ★ One per **byte of the captured frame** — a range whose length comes
+    /// from [`SOURCES`] rather than from any table of rows. The second shape
+    /// screen A's families do not have.
+    Bytes,
+    /// One per row of the byte grid: [`SOURCES`] divided by [`BYTES_PER_ROW`].
+    ByteRows,
+    /// One per [`CONTEXT`] value, keyed by its name with spaces underscored —
+    /// the same slug the painter builds the tag from.
+    Context,
+    /// One per [`LANES`] entry, keyed by index.
+    Lanes,
+    /// One per [`QUERY_CLAUSES`] clause, keyed by index.
+    Clauses,
+    /// One per [`SAVED_FILTERS`] entry, keyed by index.
+    SavedFilters,
+    /// ★ One per message that **carries an annotation**, keyed by index.
+    ///
+    /// Four of the families below are *conditional*: only some members of a
+    /// table paint the region. Declaring them over the whole table would make
+    /// the gate demand thirteen notes this capture does not have, and declaring
+    /// them as "whichever happen to be painted" would let the region stop being
+    /// painted with nothing failing. A predicate over the same table is exact in
+    /// both directions, which is the property the population shape exists for.
+    Annotated,
+    /// One per message that is one piece of a larger one, keyed by index.
+    Fragmented,
+    /// One per [`FIELDS`] row the decoder **computed** rather than read from
+    /// bytes, keyed by its path.
+    Derived,
+    /// One per byte of the frame the field the screen opens on was read from.
+    LitBytes,
+}
+
+impl Population {
+    /// The members this family expands to, as the strings a tag substitutes.
+    ///
+    /// The expander lives beside the arms rather than in the gate, because the
+    /// two families this screen added are **computed** — a product and a range —
+    /// and a gate holding the rule would be the place a screen's own shape got
+    /// re-derived by whoever wrote the gate.
+    #[must_use]
+    pub fn members(self) -> Vec<String> {
+        let indexes = |n: usize| (0..n).map(|i| i.to_string()).collect();
+        match self {
+            Population::One => vec![String::new()],
+            Population::Columns => indexes(COLUMNS.len()),
+            Population::Rows => indexes(ROWS.len()),
+            Population::Cells => (0..ROWS.len())
+                .flat_map(|row| (0..COLUMNS.len()).map(move |col| format!("{row}_{col}")))
+                .collect(),
+            Population::Fields => FIELDS.iter().map(|f| f.path.to_owned()).collect(),
+            Population::Layers => LAYERS.iter().map(|(id, _)| (*id).to_owned()).collect(),
+            Population::Bytes => indexes(SOURCES[0].1),
+            Population::ByteRows => indexes(SOURCES[0].1.div_ceil(BYTES_PER_ROW)),
+            Population::Context => CONTEXT
+                .iter()
+                .map(|value| value.key.replace(' ', "_"))
+                .collect(),
+            Population::Lanes => indexes(LANES.len()),
+            Population::Clauses => indexes(QUERY_CLAUSES.len()),
+            Population::SavedFilters => indexes(SAVED_FILTERS.len()),
+            Population::Annotated => picked(|row| !row.note.is_empty()),
+            Population::Fragmented => picked(|row| row.fragment.is_some()),
+            Population::Derived => FIELDS
+                .iter()
+                .filter(|f| f.source.is_none())
+                .map(|f| f.path.to_owned())
+                .collect(),
+            Population::LitBytes => FIELDS
+                .iter()
+                .find(|f| f.path == OPENING_FIELD)
+                .filter(|f| f.source == Some(0))
+                .map_or_else(Vec::new, |f| {
+                    (f.at..f.at + f.len).map(|b| b.to_string()).collect()
+                }),
+        }
+    }
+}
+
+/// The indexes of the messages a predicate picks.
+fn picked(keep: impl Fn(&RowSpec) -> bool) -> Vec<String> {
+    ROWS.iter()
+        .enumerate()
+        .filter(|(_, row)| keep(row))
+        .map(|(n, _)| n.to_string())
+        .collect()
+}
+
+/// Every region of the opening screen that owes a reader a voice, and what it
+/// announces as.
+pub const VOICES: &[VoiceSpec] = &[
+    // The application bar.
+    VoiceSpec {
+        tag: "pv.appbar",
+        role: "group",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "pv.appbar.interface",
+        role: "status",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "pv.appbar.rate",
+        role: "status",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "pv.appbar.said",
+        role: "status",
+        population: Population::One,
+    },
+    // The filter bar. The saved filters are TOGGLES, not links: each one is on
+    // or off, and a reader who is told "button" and not which way it is set
+    // cannot know what the count below is counting.
+    VoiceSpec {
+        tag: "pv.filter",
+        role: "group",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "pv.filter.clause.{}",
+        role: "status",
+        population: Population::Clauses,
+    },
+    VoiceSpec {
+        tag: "pv.filter.saved.{}",
+        role: "button",
+        population: Population::SavedFilters,
+    },
+    VoiceSpec {
+        tag: "pv.filter.count",
+        role: "status",
+        population: Population::One,
+    },
+    // The negotiated context. Always on screen because the decode is not
+    // interpretable without it — which makes an inaudible context strip a
+    // reader looking at a decode whose premises they cannot reach.
+    VoiceSpec {
+        tag: "pv.context",
+        role: "group",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "pv.context.session",
+        role: "status",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "pv.context.{}",
+        role: "status",
+        population: Population::Context,
+    },
+    // ★★ The message list, as a GRID. Not a `table`: rows are selected, the
+    // arrow keys move the selection, and what a reader is told they can do has
+    // to be what they can do.
+    VoiceSpec {
+        tag: "pv.list",
+        role: "grid",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "pv.list.head.{}",
+        role: "columnheader",
+        population: Population::Columns,
+    },
+    VoiceSpec {
+        tag: "pv.list.row.{}",
+        role: "row",
+        population: Population::Rows,
+    },
+    VoiceSpec {
+        tag: "pv.list.cell.{}",
+        role: "gridcell",
+        population: Population::Cells,
+    },
+    // The decode tree.
+    VoiceSpec {
+        tag: "pv.tree",
+        role: "tree",
+        population: Population::One,
+    },
+    // ★ Every FIELD, not every visible row: a folded layer's children are not
+    // painted, so the gate expands this against what the screen currently
+    // shows. The opening screen shows them all.
+    VoiceSpec {
+        tag: "pv.tree.field.{}",
+        role: "treeitem",
+        population: Population::Fields,
+    },
+    // The byte grid.
+    VoiceSpec {
+        tag: "pv.bytes",
+        role: "grid",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "pv.bytes.span",
+        role: "status",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "pv.bytes.offset.{}",
+        role: "rowheader",
+        population: Population::ByteRows,
+    },
+    VoiceSpec {
+        tag: "pv.bytes.cell.{}",
+        role: "gridcell",
+        population: Population::Bytes,
+    },
+    // The reassembly strip.
+    VoiceSpec {
+        tag: "pv.reassembly",
+        role: "group",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "pv.reassembly.counts",
+        role: "status",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "pv.reassembly.lane.{}",
+        role: "status",
+        population: Population::Lanes,
+    },
+];
+
+/// Every region of the opening screen that deliberately has **no** voice, and
+/// the class of silence it declares.
+///
+/// The other half of the split, and the half that makes the first half mean
+/// something: a census with nothing in this column would be satisfiable by
+/// naming every rectangle, and one with everything in it by naming none.
+///
+/// The `kind` words are [`pinion_core::voice::SilenceKind`]'s own wire
+/// spellings, so what this table says is what `scene/voice` publishes.
+pub const SILENCES: &[(&str, Population, &str)] = &[
+    // The two roots: an address for the sweep, and the receiver a press falls
+    // through to. Neither is a place a reader travels.
+    ("packet_view", Population::One, "layout"),
+    ("pv.root", Population::One, "layout"),
+    // The scrolling bodies. What a reader lands on is what is inside them.
+    ("pv.list.body", Population::One, "layout"),
+    ("pv.tree.body", Population::One, "layout"),
+    ("pv.bytes.body", Population::One, "layout"),
+    // Titles painted inside the pane they name.
+    ("pv.tree.title", Population::One, "name_of"),
+    ("pv.bytes.title", Population::One, "name_of"),
+    ("pv.reassembly.title", Population::One, "name_of"),
+    // Selection bands. The row and the item announce that they are selected;
+    // the ink behind them is how a sighted reader is told the same thing.
+    ("pv.list.selected", Population::One, "decorative"),
+    ("pv.tree.selected", Population::One, "decorative"),
+    // Annotations painted inside the name column, announced with that cell —
+    // "out of band" as its own stop names nothing.
+    ("pv.list.row.{}.note", Population::Annotated, "part_of"),
+    ("pv.list.row.{}.fragment", Population::Fragmented, "part_of"),
+    // The fold chevron and the derived badge, announced with the item they
+    // belong to: `aria-expanded` is the state the chevron draws, and "derived"
+    // is a fact about the field beside it.
+    ("pv.tree.layer.{}", Population::Layers, "part_of"),
+    ("pv.tree.derived.{}", Population::Derived, "part_of"),
+    // The highlight behind a byte the open field was read from.
+    ("pv.bytes.lit.{}", Population::LitBytes, "decorative"),
+];

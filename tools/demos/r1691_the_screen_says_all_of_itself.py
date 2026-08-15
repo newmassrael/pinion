@@ -271,7 +271,13 @@ def body() -> None:
         print(f"[F] {len(described)} virtual region(s), each pointed at by a control")
 
         # ── (G) a control announces the kind its shape is ───────────
-        want_role = {"int": "spinbutton", "perm": "group", "address[]": "list"}
+        # ★ R1693 — `address[]` is a `group`, like `perm`, and was a `list`
+        # until `scene/conform` asked what the list HELD: the parts this shape
+        # paints are editable text boxes and an add button, so a `list` promised
+        # `listitem`s nothing builds — and a field with no entries yet announced
+        # a collection with nothing in it at all. Both endpoint rows on this
+        # screen open empty, which is how the census found it.
+        want_role = {"int": "spinbutton", "perm": "group", "address[]": "group"}
         for field in spec["fields"]:
             node = access_node_by_tag(access, f"lab.form.control.{field['key']}")
             assert node is not None, f"{field['key']} announces"

@@ -762,7 +762,14 @@ fn audio_panel_scene(state: u16, camera: pinion_audio::Vec3) -> Scene {
 impl WidgetA11y for HelloAudioDevice {
     fn access_node(state: &u16, focused: Option<&str>) -> Vec<AccessNode> {
         vec![
-            AccessNode::new(TAG, AriaRole::List)
+            // R1693 — a `group`, not a `list`. WAI-ARIA's `list` promises
+            // `listitem`s a reader can move through, and this panel paints seven
+            // lines of prose in a column with no items behind them: the role
+            // told an assistive technology to enter a collection that was never
+            // there. Nothing could ask that until `scene/conform` existed, and
+            // the name was right the whole time — which is exactly why a good
+            // name is not evidence of a right role.
+            AccessNode::new(TAG, AriaRole::Group)
                 .with_name(format!("device audio — {state} live voice(s)"))
                 .with_focused(focused == Some(TAG)),
         ]
@@ -973,5 +980,23 @@ mod tests {
                  delegate."
             );
         }
+    }
+
+    /// ★★★ R1693 — the panel announces a `group`, not a `list`.
+    ///
+    /// It was a `list` and it has never built a `listitem`: a WAI-ARIA `list`
+    /// promises members a reader moves through, and this panel paints lines of
+    /// prose. The name was right the whole time, which is exactly why a good
+    /// name is not evidence of a right role — and nothing could ask the question
+    /// until the structural census existed.
+    #[test]
+    fn r1693_the_panel_announces_a_container_a_reader_can_walk() {
+        use crate::HelloAudioDevice;
+        use pinion_a11y::{AriaRole, WidgetA11y};
+
+        let nodes = <HelloAudioDevice as WidgetA11y>::access_node(&0, None);
+        assert_eq!(nodes[0].role, AriaRole::Group);
+        let census = pinion_a11y::structure_census(&nodes);
+        assert!(census.is_sound(), "{:?}", census.nodes);
     }
 }

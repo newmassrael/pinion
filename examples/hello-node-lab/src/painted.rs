@@ -4098,8 +4098,11 @@ fn r1691_a_rows_control_announces_the_kind_its_shape_is() {
         for field in spec::FIELDS {
             let want = match field.ty {
                 "int" => "spinbutton",
-                "perm" => "group",
-                "address[]" => "list",
+                // R1693 — `address[]` is a `group` for the same reason `perm`
+                // is: what both shapes paint is a row of independent controls,
+                // not members of a collection. It was `list` until
+                // `scene/conform` asked what the list held.
+                "perm" | "address[]" => "group",
                 // `id` is a formatted string and `text` is free text; both are
                 // typed into.
                 _ => "textbox",

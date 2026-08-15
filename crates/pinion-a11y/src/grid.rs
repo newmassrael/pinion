@@ -119,7 +119,20 @@ pub fn grid_table_nodes(
 
     // Grid root: children are the header row then every data row (in the
     // passed order = visual order).
-    let mut grid = AccessNode::new(grid_tag, AriaRole::Grid).with_name(grid_name);
+    // ★★★ R1693 — the grid STATES its extent. A grid always holds its header
+    // row, so it is never structurally empty; the counts are here because a
+    // reader landing on a filtered-to-nothing catalog should be told it has no
+    // data rows rather than left to discover it by trying to move.
+    //
+    // The header row is COUNTED, which is WAI-ARIA's own reading of
+    // `aria-rowcount` ("the total number of rows") and the convention
+    // [`chart_table_nodes`](crate::chart) already set. Measured before choosing
+    // it, because the two readings differ by exactly one and a second convention
+    // would make every consumer's number mean something slightly different.
+    let mut grid = AccessNode::new(grid_tag, AriaRole::Grid)
+        .with_name(grid_name)
+        .with_row_count(u32::try_from(rows.len() + 1).unwrap_or(u32::MAX))
+        .with_column_count(u32::try_from(columns.len()).unwrap_or(u32::MAX));
     if multiselectable {
         grid = grid.with_multiselectable();
     }

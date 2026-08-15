@@ -391,7 +391,12 @@ impl WidgetA11y for LiveDataView {
         let posture = *state;
         let lines = log_lines(&use_live_log());
 
-        let mut list = AccessNode::new(LIST_TAG, AriaRole::List).with_name("Event log");
+        // R1693 — the log says how many lines it holds. It opens empty, so
+        // before this it announced a `list` a reader could not enter and nothing
+        // distinguished that from a log whose items nobody built.
+        let mut list = AccessNode::new(LIST_TAG, AriaRole::List)
+            .with_name("Event log")
+            .with_size_of_set(u32::try_from(lines.len()).unwrap_or(u32::MAX));
         let mut items: Vec<AccessNode> = Vec::new();
         for (i, line) in lines.iter().enumerate() {
             let tag = row_tag(i);
@@ -596,5 +601,28 @@ mod tests {
         // §5.39: collected from the paint scene.
         let scene = Owner::new().run(|| view(idle(), &Frame::new()));
         assert_eq!(scene.collect_focusable_tags(), vec![TICK_TAG.to_owned()]);
+    }
+
+    /// ★★★ R1693 — the log **opens empty**, and says so.
+    ///
+    /// A `list` with no `listitem` is a collection a reader is told about and
+    /// cannot enter, and an empty log is a real state — so the two have to be
+    /// two different answers. `aria-setsize` is what makes them: the container
+    /// states its extent, and the structural census accepts zero because it was
+    /// declared rather than merely arrived at.
+    #[test]
+    fn r1693_an_empty_log_says_it_is_empty() {
+        Owner::new().run(|| {
+            let nodes = LiveDataView::access_node(&idle(), None);
+            let list = nodes
+                .iter()
+                .find(|n| n.tag == LIST_TAG)
+                .expect("the log is announced");
+            assert_eq!(list.children.len(), 0, "the capture opens with no lines");
+            assert_eq!(list.size_of_set, Some(0), "and the list says so");
+            let census = pinion_a11y::structure_census(&nodes);
+            assert!(census.is_sound(), "{:?}", census.nodes);
+            assert!(census.judged > 0, "and the list WAS judged");
+        });
     }
 }

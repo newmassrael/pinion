@@ -734,6 +734,19 @@ def _read_budget(name: str) -> "Optional[tuple[dict[str, object], bool]]":
 _STATED_REASON_EXCEPTIONS: dict[str, int] = {}
 
 
+#: R1693 — surfaces allowed to carry an unconditional structural fault, and why.
+#:
+#: EMPTY, and it stays that way for the same reason the two tables around it do:
+#: neither arm needs a per-screen judgment. A collection that owns none of what
+#: its role promises is one a reader is told about and cannot enter, and an
+#: empty collection has a way to SAY it is empty (`aria-rowcount` /
+#: `aria-colcount` / `aria-setsize` of zero), so "it is legitimately empty" is
+#: not an exception — it is a declaration the screen makes and the census
+#: accepts. A member outside the collection its role requires is a member an
+#: assistive technology cannot place, wherever it appears.
+_CONFORM_FAULT_EXCEPTIONS: dict[str, int] = {}
+
+
 #: R1692 — surfaces allowed to carry an unconditional voice defect, and why.
 #:
 #: EMPTY, and for the same reason the table above is: the four arms this gate
@@ -1069,6 +1082,7 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         self._gate_scroll_reach()
         self._gate_tag_rects_agree()
         self._gate_voice_census()
+        self._gate_aria_structure()
         return self
 
     def _gate_pointer_reach(self) -> None:
@@ -1656,6 +1670,79 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             f"{counts.get('unvoiced', 0)} undecided (reported, not judged)"
         )
 
+    def _gate_aria_structure(self) -> None:
+        """★★★★★ R1693 — the announced tree is one a reader can **walk**.
+
+        `scene/voice` asks whether each painted region has a voice and
+        `NameFault` asks whether that voice says anything usable. Both are about
+        one node at a time, and neither can see a node that is perfect on its own
+        terms and structurally a lie: a pane announcing `role = table`, named,
+        with a rectangle a reader can land on, that holds no row.
+
+        Measured across the surfaces that answer the day this landed, **16
+        carried a violation** — small enough to close in the round that found it,
+        which is what lets this gate refuse at a budget of zero instead of
+        ratcheting. The reference analysis tool's screen B was two of them.
+
+        Both arms are refused and neither needs a per-screen judgment:
+
+        * `empty` — a collection owning none of the roles its own role promises,
+          **and not declaring itself empty**. An empty list is a real state and
+          ARIA has the vocabulary for it (`aria-setsize` / `aria-rowcount` /
+          `aria-colcount` of zero), so the legitimate case is a declaration
+          rather than an exception.
+        * `stray` — a member outside the collection its role requires. Every
+          check about the node itself passes and an assistive technology still
+          cannot place it.
+
+        Prints unconditionally, faults or none, including `judged`: a structural
+        census over a tree with no collections in it is green, and "well formed"
+        and "nothing to check" must not read alike.
+
+        ## What it does NOT see, stated because nothing checks it
+
+        The opening screen, like its two siblings — see
+        `debt-the-voice-gate-judges-only-the-opening-screen`. A collection is
+        emptied by *editing* (a filter that matches nothing, a folded branch), so
+        this arm has more to gain from a teardown pass than either of the others.
+        """
+        if self.measuring:
+            return  # the producer is not judged by the file it produces
+        try:
+            resp = self.request("scene/conform")
+        except RpcError as exc:
+            if exc.code in (-32601, -32602):
+                return  # stale binary
+            raise
+        assert resp is not None
+        out = resp.result
+        counts = out.get("counts", {})
+        found = sum(counts.values())
+        allowed = _CONFORM_FAULT_EXCEPTIONS.get(self.example, 0)
+        if found > allowed:
+            rows = "; ".join(
+                f"{r['tag']!r} ({r['role']}) is {r['fault']}, wanted "
+                + "/".join(r.get("required", []))
+                + (f" and is inside {r['found']}" if r.get("found") else "")
+                for r in out.get("nodes", [])
+            )
+            raise AssertionError(
+                f"{self.example}: {found} announced node(s) do not hold their "
+                f"end of WAI-ARIA's structural relation, and the budget allows "
+                f"{allowed} — {rows}. An `empty` collection either owns a member "
+                f"of a role it promises, or SAYS it is empty "
+                f"(`AccessNode::with_size_of_set(0)` / `with_row_count(0)`) — an "
+                f"empty list is a state, a forgotten one is a defect, and the "
+                f"declaration is what separates them. A `stray` member is "
+                f"attached with `with_child` on a node of one of the roles its "
+                f"own role requires."
+            )
+        print(
+            f"[conform] {self.example}: {out.get('judged', 0)} node(s) carry a "
+            f"structural requirement — {counts.get('empty', 0)} empty, "
+            f"{counts.get('stray', 0)} stray"
+        )
+
     def __exit__(self, exc_type, exc, tb) -> None:
         leak = self.shutdown()
         # R1570.3 — a leak fails the demo that caused it, but never masks a
@@ -1980,6 +2067,31 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         resp = self.request("scene/voice", params or None)
         assert resp is not None, "scene/voice answered nothing"
         assert isinstance(resp.result, dict), f"scene/voice: {resp.result!r}"
+        return resp.result
+
+    def conform(self, *, window: Optional[str] = None) -> dict[str, Any]:
+        """`scene/conform` typed wrapper (R1693 §5.40 §2 #7) — whether the
+        announced tree is one a reader can **walk**.
+
+        Answers `{judged, counts, nodes}`. `counts` has two keys, because
+        WAI-ARIA's structural relation has two directions and the repairs
+        differ: `empty` is a collection owning none of what its role promises,
+        `stray` is a member outside the collection its role requires.
+
+        `judged` is the denominator — how many announced nodes carry a
+        structural requirement at all. Read it: a tree with no collections in it
+        is soundly green and says nothing about a screen full of tables.
+
+        Runs the same access-tree producer `scene/access` and `scene/voice` run,
+        so a demo asserting on all three is asking one surface three questions
+        rather than comparing three answers.
+        """
+        params: dict[str, Any] = {}
+        if window is not None:
+            params["window"] = window
+        resp = self.request("scene/conform", params or None)
+        assert resp is not None, "scene/conform answered nothing"
+        assert isinstance(resp.result, dict), f"scene/conform: {resp.result!r}"
         return resp.result
 
     def locate_region(

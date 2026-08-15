@@ -27,8 +27,32 @@ use accesskit::{
 ///
 /// `#[non_exhaustive]` is deliberate — additional widgets (`TextInput`,
 /// `ScrollBar`, etc.) land additively as new axes ratify.
+/// Byte-wise `str` equality, at compile time.
+///
+/// `==` is not `const` for `&str`, and [`AriaRole::WIRE_NAMES`] has to know
+/// which literals repeat before it can size itself.
+const fn str_eq(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut i = 0;
+    while i < a.len() {
+        if a[i] != b[i] {
+            return false;
+        }
+        i += 1;
+    }
+    true
+}
+
 #[non_exhaustive]
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+// R1693 — `PartialOrd, Ord` so a *set* of roles has a deterministic order, which
+// [`roles_with_structure`](crate::structure::roles_with_structure) is the first
+// consumer of: a census reporting roles in hash order would print differently on
+// every run. The ordering is declaration order, the same order [`AriaRole::ALL`]
+// fixes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum AriaRole {
     /// WAI-ARIA 1.2 §4.3 `button` role: a clickable control that
     /// triggers an action (the default `ButtonExternal` / disclosure
@@ -485,6 +509,112 @@ pub enum AriaRole {
 }
 
 impl AriaRole {
+    /// Every arm, in declaration order.
+    ///
+    /// A member list rather than a count, so a set is proved complete by naming
+    /// its members instead of searching for what is missing — which yields zero
+    /// every time (R1650). R1693 is the first consumer:
+    /// [`roles_with_structure`](crate::structure::roles_with_structure) derives
+    /// the roles carrying a structural requirement from the relation itself, and
+    /// a role that gains one joins that set without anybody remembering.
+    pub const ALL: [AriaRole; 41] = [
+        Self::Button,
+        Self::Switch,
+        Self::CheckBox,
+        Self::RadioButton,
+        Self::Slider,
+        Self::RadioGroup,
+        Self::Listbox,
+        Self::ListBoxOption,
+        Self::ComboBox,
+        Self::EditableComboBox,
+        Self::TextInput,
+        Self::List,
+        Self::ListItem,
+        Self::Tree,
+        Self::TreeItem,
+        Self::TabList,
+        Self::Tab,
+        Self::TabPanel,
+        Self::MenuBar,
+        Self::Menu,
+        Self::MenuItem,
+        Self::MenuItemCheckbox,
+        Self::Toolbar,
+        Self::Dialog,
+        Self::Tooltip,
+        Self::Grid,
+        Self::Table,
+        Self::Cell,
+        Self::GridCell,
+        Self::ColumnHeader,
+        Self::RowHeader,
+        Self::Row,
+        Self::TreeGrid,
+        Self::ProgressBar,
+        Self::Status,
+        Self::Navigation,
+        Self::Link,
+        Self::SpinButton,
+        Self::Group,
+        Self::Heading,
+        Self::Generic,
+    ];
+
+    /// Every **distinct** WAI-ARIA literal this vocabulary can publish, derived
+    /// from [`ALL`](Self::ALL) so a role surface cannot lag the enum (R1616).
+    ///
+    /// One shorter than the roster, because [`ComboBox`](Self::ComboBox) and
+    /// [`EditableComboBox`](Self::EditableComboBox) are **one ARIA role** and
+    /// spell the same literal — the spec's own arrangement rather than an
+    /// accident here (editability rides `aria-autocomplete`, not the role). The
+    /// second is skipped rather than the length being fudged, and
+    /// [`DUPLICATE_LITERALS`](Self::DUPLICATE_LITERALS) is asserted below so a
+    /// third collision stops this compiling instead of silently truncating the
+    /// published vocabulary.
+    pub const WIRE_NAMES: [&'static str; Self::ALL.len() - Self::DUPLICATE_LITERALS] = {
+        let mut names = [""; Self::ALL.len() - Self::DUPLICATE_LITERALS];
+        let mut out = 0;
+        let mut i = 0;
+        while i < Self::ALL.len() {
+            let name = Self::ALL[i].aria_name();
+            let mut seen = false;
+            let mut j = 0;
+            while j < i {
+                if str_eq(Self::ALL[j].aria_name(), name) {
+                    seen = true;
+                }
+                j += 1;
+            }
+            if !seen {
+                names[out] = name;
+                out += 1;
+            }
+            i += 1;
+        }
+        names
+    };
+
+    /// How many arms spell a literal an earlier arm already spelled.
+    ///
+    /// Computed rather than written down, so it is the enum that decides it.
+    pub const DUPLICATE_LITERALS: usize = {
+        let mut count = 0;
+        let mut i = 0;
+        while i < Self::ALL.len() {
+            let mut j = 0;
+            while j < i {
+                if str_eq(Self::ALL[j].aria_name(), Self::ALL[i].aria_name()) {
+                    count += 1;
+                    j = i; // one collision per arm, whatever it collides with
+                }
+                j += 1;
+            }
+            i += 1;
+        }
+        count
+    };
+
     /// Lower into `accesskit::Role` for `TreeUpdate` construction.
     ///
     /// `Generic` lowers to `Role::GenericContainer` per the WAI-ARIA
@@ -629,6 +759,139 @@ impl AriaRole {
             | Self::SpinButton
             | Self::Group
             | Self::Heading => true,
+        }
+    }
+
+    /// R1693 §5.40 — WAI-ARIA 1.2 **Required Owned Elements**: the roles a node
+    /// of this role must own at least one of, or `&[]` when it owns nothing in
+    /// particular.
+    ///
+    /// A collection role is a promise about what a reader can descend into. The
+    /// promise is exactly as checkable as
+    /// [`Relay::Children`](pinion_core::voice::Relay::Children)'s — and until
+    /// R1693 nothing asked it, so a pane could announce itself a `table` and
+    /// hold no row at all. Measured on this tree the day this landed: the
+    /// reference analysis tool's screen B announced **three** nodes for a
+    /// 186-region screen, and two of them were a `table` and a `tree` with
+    /// nothing inside.
+    ///
+    /// The floor is no better and cannot be: built and run at 6.11.1, an item
+    /// view with an emptied model answers `role = Table`, `rowCount = 0` and no
+    /// diagnostic, and a tree with no items answers `role = Tree` the same way.
+    /// There is no conformance notion there to violate.
+    ///
+    /// `rowgroup` is absent from the returned sets because this vocabulary has
+    /// no such role: a `table` here owns its [`Row`](Self::Row)s directly.
+    ///
+    /// An exhaustive match, so a forty-second role cannot inherit an answer
+    /// nobody chose.
+    #[must_use]
+    pub const fn required_owned(self) -> &'static [AriaRole] {
+        match self {
+            Self::Table | Self::Grid | Self::TreeGrid => &[Self::Row],
+            Self::Row => &[
+                Self::Cell,
+                Self::GridCell,
+                Self::ColumnHeader,
+                Self::RowHeader,
+            ],
+            Self::List => &[Self::ListItem, Self::Group],
+            Self::Listbox => &[Self::ListBoxOption, Self::Group],
+            Self::Tree => &[Self::TreeItem, Self::Group],
+            Self::TabList => &[Self::Tab],
+            Self::Menu | Self::MenuBar => &[Self::MenuItem, Self::MenuItemCheckbox, Self::Group],
+            Self::RadioGroup => &[Self::RadioButton],
+            Self::Button
+            | Self::Switch
+            | Self::CheckBox
+            | Self::RadioButton
+            | Self::Slider
+            | Self::ListBoxOption
+            | Self::ComboBox
+            | Self::EditableComboBox
+            | Self::TextInput
+            | Self::ListItem
+            | Self::TreeItem
+            | Self::Tab
+            | Self::TabPanel
+            | Self::MenuItem
+            | Self::MenuItemCheckbox
+            | Self::Toolbar
+            | Self::Dialog
+            | Self::Tooltip
+            | Self::Cell
+            | Self::GridCell
+            | Self::ColumnHeader
+            | Self::RowHeader
+            | Self::ProgressBar
+            | Self::Status
+            | Self::Navigation
+            | Self::Link
+            | Self::SpinButton
+            | Self::Group
+            | Self::Heading
+            | Self::Generic => &[],
+        }
+    }
+
+    /// R1693 §5.40 — WAI-ARIA 1.2 **Required Context Role**: the roles a node of
+    /// this role must sit inside, or `&[]` when it may stand anywhere.
+    ///
+    /// The mirror of [`required_owned`](Self::required_owned), and the half that
+    /// catches the opposite mistake: a `gridcell` emitted beside its table
+    /// rather than inside a row is a cell an assistive technology cannot place,
+    /// and every per-node check passes because the cell itself is perfect.
+    ///
+    /// Both directions come from one relation and are worth having for the same
+    /// reason the [`Voice`](pinion_core::voice::Voice) census has five defect
+    /// arms rather than one bool: the repairs differ. An empty collection wants
+    /// members; a displaced member wants a parent.
+    ///
+    /// [`RadioButton`](Self::RadioButton) is deliberately **not** here even
+    /// though [`RadioGroup`](Self::RadioGroup) requires it: WAI-ARIA lists no
+    /// required context for `radio`, because a lone radio is well-formed. The
+    /// relation is genuinely asymmetric and copying one column into the other
+    /// would invent a rule.
+    #[must_use]
+    pub const fn required_context(self) -> &'static [AriaRole] {
+        match self {
+            Self::Row => &[Self::Table, Self::Grid, Self::TreeGrid],
+            Self::Cell | Self::GridCell | Self::ColumnHeader | Self::RowHeader => &[Self::Row],
+            Self::ListItem => &[Self::List, Self::Group],
+            Self::ListBoxOption => &[Self::Listbox, Self::Group],
+            Self::TreeItem => &[Self::Tree, Self::Group],
+            Self::Tab => &[Self::TabList],
+            Self::MenuItem | Self::MenuItemCheckbox => &[Self::Menu, Self::MenuBar, Self::Group],
+            Self::Button
+            | Self::Switch
+            | Self::CheckBox
+            | Self::RadioButton
+            | Self::Slider
+            | Self::RadioGroup
+            | Self::Listbox
+            | Self::ComboBox
+            | Self::EditableComboBox
+            | Self::TextInput
+            | Self::List
+            | Self::Tree
+            | Self::TabList
+            | Self::TabPanel
+            | Self::MenuBar
+            | Self::Menu
+            | Self::Toolbar
+            | Self::Dialog
+            | Self::Tooltip
+            | Self::Grid
+            | Self::Table
+            | Self::TreeGrid
+            | Self::ProgressBar
+            | Self::Status
+            | Self::Navigation
+            | Self::Link
+            | Self::SpinButton
+            | Self::Group
+            | Self::Heading
+            | Self::Generic => &[],
         }
     }
 
@@ -1170,6 +1433,50 @@ mod tests {
         assert_eq!(AriaRole::Group.to_accesskit(), Role::Group);
         assert_eq!(AriaRole::Group.aria_name(), "group");
         assert_ne!(AriaRole::Group.to_accesskit(), Role::GenericContainer);
+    }
+
+    /// ★★★ R1693 — the roster holds each arm once, and every arm the enum has
+    /// is in it.
+    ///
+    /// Completeness is checked the only way a non-macro roster can be: the three
+    /// **exhaustive matches** (`name_required`, `required_owned`,
+    /// `required_context`) already stop a forty-second role compiling, at the
+    /// site whose author then has to add it here — and this asserts the roster
+    /// agrees with the count those matches cover. A duplicate entry, which the
+    /// compiler would not catch at all, fails here.
+    #[test]
+    fn r1693_all_holds_every_arm_once() {
+        let mut seen = std::collections::BTreeSet::new();
+        for role in AriaRole::ALL {
+            assert!(
+                seen.insert(role),
+                "{} appears twice in ALL",
+                role.aria_name(),
+            );
+        }
+        assert_eq!(seen.len(), AriaRole::ALL.len());
+
+        // The published vocabulary is the roster's DISTINCT literals, and the
+        // one pair that shares a literal is the reason those two numbers differ.
+        assert_eq!(AriaRole::DUPLICATE_LITERALS, 1);
+        assert_eq!(
+            AriaRole::ComboBox.aria_name(),
+            AriaRole::EditableComboBox.aria_name(),
+        );
+        let published: std::collections::BTreeSet<&str> =
+            AriaRole::WIRE_NAMES.iter().copied().collect();
+        assert_eq!(
+            published.len(),
+            AriaRole::WIRE_NAMES.len(),
+            "a wire vocabulary listing a spelling twice is one its reader rejects",
+        );
+        for role in AriaRole::ALL {
+            assert!(
+                published.contains(role.aria_name()),
+                "{} is in the roster and not in the published vocabulary",
+                role.aria_name(),
+            );
+        }
     }
 
     /// ★★★★ R1692 — which roles may announce nothing. Three, and each because

@@ -3775,12 +3775,12 @@ fn panel(tag: &str, rect: Rect, fill: Color, border: Option<Color>, children: Ve
 /// silence that quietly did not attach would read as an undeclared region in
 /// the census, and the author would be looking for a missing name instead of a
 /// missing carrier.
-fn quiet(mut scene: Scene, silence: Silence) -> Scene {
-    scene
-        .layout_style_mut()
-        .expect("a declared silence needs a node with a layout sidecar to carry it")
-        .silence = Some(silence);
-    scene
+///
+/// R1693 — the mechanism moved to [`Scene::silenced`] when a second screen
+/// wanted it. This is the call-shape this file already reads in, kept so the
+/// several hundred call sites below say what they said.
+fn quiet(scene: Scene, silence: Silence) -> Scene {
+    scene.silenced(silence)
 }
 
 fn box_at(tag: &str, rect: Rect, fill: Color, border: Option<Color>, radius: u32) -> Scene {

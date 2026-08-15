@@ -2783,6 +2783,19 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                         HandlerKind::Read,
                     )
                 }
+                // R1693 §5.40 — whether the announced tree is one a reader can
+                // walk: a collection that owns none of what its role promises,
+                // and a member outside the collection its role requires. Runs
+                // the SAME producer as `scene/access` and `scene/voice`, so the
+                // three surfaces describe one tree rather than three.
+                "scene/conform" => {
+                    #[allow(
+                        clippy::option_as_ref_deref,
+                        reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                    )]
+                    let producer = access_producer.as_mut().map(|p| &mut **p);
+                    (handle_scene_conform(producer), HandlerKind::Read)
+                }
                 // R1650 §5.35 — which painted tags a real pointer can drive,
                 // and which of them swallow a widget's input. Reads the same
                 // two scenes the router resolves between, so the answer is the
@@ -4243,6 +4256,21 @@ fn handle_scene_voice(
 ) -> Result<Value, RpcError> {
     let nodes = producer.map(|producer| producer().0).unwrap_or_default();
     crate::voice::handle_scene_voice(last_paint_scene, &nodes)
+}
+
+/// R1693 §5.40 §2 #7 — `scene/conform` handler: check the announced tree
+/// against WAI-ARIA's structural relation.
+///
+/// Takes the tree and **not** the painted scene, which is the line between this
+/// surface and `scene/voice`: whether a region has a voice is a question about
+/// the paint, and whether a collection holds what it promises is a question
+/// about the tree alone. A binding with no producer announces nothing, has no
+/// collections, and is soundly empty.
+fn handle_scene_conform(
+    producer: Option<&mut (dyn FnMut() -> (Vec<AccessNode>, Option<AccessFocus>) + '_)>,
+) -> Result<Value, RpcError> {
+    let nodes = producer.map(|producer| producer().0).unwrap_or_default();
+    crate::conform::handle_scene_conform(&nodes)
 }
 
 /// R763 §5.49 §5.39 — `scene/modifiers` handler: enqueue a

@@ -67,7 +67,9 @@ use pinion_core::external::{External, IntrospectValue};
 use pinion_core::scene::ContainerNode;
 use pinion_core::style::{AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle};
 use pinion_core::theme::{ColorRole, use_theme};
-use pinion_core::widgets::datepicker::{CivilDate, DatePickerExternal, days_in_month};
+use pinion_core::widgets::datepicker::{
+    CivilDate, DatePickerExternal, days_in_month, weekday_of_first,
+};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::{Frame, Scene, WidgetCore, WidgetStateName};
 use pinion_shell::{WidgetView, vello_renderer_impl};
@@ -470,22 +472,57 @@ impl WidgetA11y for DatePickerView {
 
         let mut nodes: Vec<AccessNode> = Vec::with_capacity(usize::from(days) + 10);
 
-        // Grid root + weekday column headers as children.
+        // ★★★★ R1693 — a grid of ROWS, which this calendar did not have. It
+        // owned its seven weekday headers and its thirty-one day cells
+        // directly, so every one of those thirty-eight was a member outside the
+        // container its role requires: `columnheader` and `gridcell` both need a
+        // `row`, and there was not one in the tree. An assistive technology
+        // reading a calendar reads it a week at a time, and a grid with no rows
+        // has no weeks in it — the shape a sighted reader sees was not the shape
+        // a reader was given.
+        //
+        // The weeks are derived from the same two facts the paint lays the
+        // calendar out from: which weekday the month starts on, and how long it
+        // is. A second layout rule here would be a second calendar.
+        let leading = usize::from(weekday_of_first(state.year, state.month));
+        let weeks = (leading + usize::from(days)).div_ceil(7);
+        let week_tag = |week: usize| format!("{PRIMARY_TAG}_week{week}");
+        let header_row_tag = format!("{PRIMARY_TAG}_whrow");
+
         let mut grid = AccessNode::new(PRIMARY_TAG, AriaRole::Grid)
-            .with_name(format!("{month_name} {}", state.year));
-        for col in 0..7 {
-            grid = grid.with_child(format!("{PRIMARY_TAG}_wh{col}"));
-        }
-        for day in 1..=days {
-            grid = grid.with_child(format!("{PRIMARY_TAG}#{day}"));
+            .with_name(format!("{month_name} {}", state.year))
+            .with_row_count(u32::try_from(weeks).unwrap_or(u32::MAX) + 1)
+            .with_column_count(7)
+            .with_child(header_row_tag.clone());
+        for week in 0..weeks {
+            grid = grid.with_child(week_tag(week));
         }
         nodes.push(grid);
 
+        // The weekday header row and its seven headers.
+        let mut header_row = AccessNode::new(header_row_tag, AriaRole::Row).with_row(0);
+        for col in 0..7 {
+            header_row = header_row.with_child(format!("{PRIMARY_TAG}_wh{col}"));
+        }
+        nodes.push(header_row);
         for (col, weekday) in WEEKDAY_NAMES.iter().enumerate() {
             nodes.push(
                 AccessNode::new(format!("{PRIMARY_TAG}_wh{col}"), AriaRole::ColumnHeader)
-                    .with_name(*weekday),
+                    .with_name(*weekday)
+                    .with_column(col),
             );
+        }
+
+        // One row per week, holding the days that fall in it. A leading or
+        // trailing blank contributes no cell, exactly as it contributes no ink.
+        for week in 0..weeks {
+            let mut row = AccessNode::new(week_tag(week), AriaRole::Row).with_row(week + 1);
+            for day in 1..=days {
+                if (leading + usize::from(day) - 1) / 7 == week {
+                    row = row.with_child(format!("{PRIMARY_TAG}#{day}"));
+                }
+            }
+            nodes.push(row);
         }
 
         for day in 1..=days {
@@ -493,12 +530,15 @@ impl WidgetA11y for DatePickerView {
             let is_selected = selected_day == Some(day);
             let interaction = state.day_state(day);
             let cell_focused = grid_focused && active_day == day;
+            let slot = leading + usize::from(day) - 1;
             nodes.push(
                 AccessNode::new(&cell_tag, AriaRole::GridCell)
                     .with_name(format!("{month_name} {day}, {}", state.year))
                     .with_selected(is_selected)
                     .with_position_in_set(u32::from(day))
                     .with_size_of_set(u32::from(days))
+                    .with_row(slot / 7 + 1)
+                    .with_column(slot % 7)
                     .with_state(AccessState {
                         focused: cell_focused,
                         ..AccessState::from_interaction(interaction, None)
@@ -842,28 +882,112 @@ mod tests {
 
     // ── a11y ──────────────────────────────────────────────────────
 
+    /// The node carrying `tag`, looked up rather than indexed: R1693 put rows
+    /// between the grid and its cells, and every positional assertion in this
+    /// module moved at once. A lookup says what it means and survives the next
+    /// level of structure.
+    fn node_at<'a>(nodes: &'a [AccessNode], tag: &str) -> &'a AccessNode {
+        nodes
+            .iter()
+            .find(|n| n.tag == tag)
+            .unwrap_or_else(|| panic!("no node tagged {tag}"))
+    }
+
     #[test]
     fn emits_grid_root_with_weekday_and_day_children() {
         let nodes =
             DatePickerView::access_node(&PickerState::idle(INITIAL_YEAR, INITIAL_MONTH), None);
-        assert_eq!(nodes[0].role, AriaRole::Grid);
-        assert_eq!(nodes[0].name.as_deref(), Some("May 2026"));
+        let grid = node_at(&nodes, PRIMARY_TAG);
+        assert_eq!(grid.role, AriaRole::Grid);
+        assert_eq!(grid.name.as_deref(), Some("May 2026"));
         for col in 0..7 {
-            assert_eq!(nodes[1 + col].role, AriaRole::ColumnHeader);
+            let head = node_at(&nodes, &format!("{PRIMARY_TAG}_wh{col}"));
+            assert_eq!(head.role, AriaRole::ColumnHeader);
+            assert_eq!(head.column_index, Some(u32::try_from(col).unwrap() + 1));
         }
-        assert_eq!(nodes[1].name.as_deref(), Some("Sunday"));
+        assert_eq!(
+            node_at(&nodes, &format!("{PRIMARY_TAG}_wh0"))
+                .name
+                .as_deref(),
+            Some("Sunday"),
+        );
+    }
+
+    /// ★★★★ R1693 — a calendar is read a **week at a time**, and this grid had
+    /// no weeks: it owned its seven headers and its thirty-one days directly,
+    /// so all thirty-eight were members outside the container their role
+    /// requires and nothing in the tree said which days share a line.
+    #[test]
+    fn the_grid_owns_week_rows_that_own_the_days() {
+        let nodes =
+            DatePickerView::access_node(&PickerState::idle(INITIAL_YEAR, INITIAL_MONTH), None);
+        let grid = node_at(&nodes, PRIMARY_TAG);
+        // May 2026 starts on a Friday and has 31 days: 5+31 = 36 slots = 6 weeks.
+        assert_eq!(weekday_of_first(INITIAL_YEAR, INITIAL_MONTH), 5);
+        assert_eq!(grid.children.len(), 7, "a header row and six week rows");
+        assert_eq!(grid.row_count, Some(7));
+        assert_eq!(grid.column_count, Some(7));
+
+        // Every day is inside exactly one week row, and the first week holds
+        // only the two days that fall in it.
+        let mut placed = 0;
+        for week in 0..6 {
+            let row = node_at(&nodes, &format!("{PRIMARY_TAG}_week{week}"));
+            assert_eq!(row.role, AriaRole::Row);
+            // `aria-rowindex` is one-based and the weekday header is row 1, so
+            // the first week of days is row 2.
+            assert_eq!(row.row_index, Some(week + 2));
+            placed += row.children.len();
+        }
+        assert_eq!(placed, 31, "every day sits in a week");
+        assert_eq!(
+            node_at(&nodes, &format!("{PRIMARY_TAG}_week0")).children,
+            vec![format!("{PRIMARY_TAG}#1"), format!("{PRIMARY_TAG}#2")],
+            "the month opens on a Friday, so its first line holds two days",
+        );
+
+        // ★ Asserted against the structural census itself, because that is the
+        // surface the repair is for: a hand check of `children` would pass on a
+        // tree the census still refuses.
+        let census = pinion_a11y::structure_census(&nodes);
+        assert!(census.is_sound(), "{:?}", census.nodes);
+        assert!(census.judged > 30, "every header and day carries a rule");
+    }
+
+    /// A month that starts on the first column and fills its last line exactly
+    /// — the shape the week arithmetic is easiest to get wrong on.
+    #[test]
+    fn r1693_a_month_starting_on_sunday_is_still_a_grid_of_weeks() {
+        // February 2026 starts on a Sunday and has 28 days: four full weeks.
+        let nodes = DatePickerView::access_node(&PickerState::idle(2026, 2), None);
+        assert_eq!(weekday_of_first(2026, 2), 0);
+        let grid = node_at(&nodes, PRIMARY_TAG);
+        assert_eq!(grid.children.len(), 5, "a header row and four week rows");
+        assert_eq!(
+            node_at(&nodes, &format!("{PRIMARY_TAG}_week0"))
+                .children
+                .len(),
+            7,
+            "the first line is full",
+        );
+        let census = pinion_a11y::structure_census(&nodes);
+        assert!(census.is_sound(), "{:?}", census.nodes);
     }
 
     #[test]
     fn day_cells_carry_gridcell_role_and_set_position() {
         let nodes =
             DatePickerView::access_node(&PickerState::idle(INITIAL_YEAR, INITIAL_MONTH), None);
-        // 1 grid + 7 columnheaders -> first day cell at index 8.
-        let first_cell = &nodes[8];
+        let first_cell = node_at(&nodes, &format!("{PRIMARY_TAG}#1"));
         assert_eq!(first_cell.role, AriaRole::GridCell);
         assert_eq!(first_cell.name.as_deref(), Some("May 1, 2026"));
         assert_eq!(first_cell.position_in_set, Some(1));
         assert_eq!(first_cell.size_of_set, Some(31));
+        // R1693 — and where it is in the grid. The 1st is a Friday, so it is in
+        // the sixth column of the first line of days — row 2, because the
+        // weekday header row is row 1.
+        assert_eq!(first_cell.row_index, Some(2));
+        assert_eq!(first_cell.column_index, Some(6));
     }
 
     #[test]

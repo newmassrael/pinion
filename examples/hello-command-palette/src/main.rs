@@ -39,6 +39,7 @@
 
 use std::rc::Rc;
 
+use pinion_a11y::{AccessNode, ListOption, listbox_option_nodes};
 #[cfg(test)]
 use pinion_a11y::{AriaRole, WidgetA11y};
 use pinion_core::composite_tag::send_activation_index;
@@ -51,6 +52,7 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, Color, FlexDirection, LayoutStyle, Size, TextStyle,
 };
+use pinion_core::widgets::listbox_item::ListboxItemState;
 use pinion_core::{ColorRole, Frame, Owner, Scene, Signal, use_theme};
 use pinion_derive::widget;
 use pinion_shell::vello_renderer_impl;
@@ -528,10 +530,47 @@ fn result_row(index: usize, name: &str, selected: bool, fg: Color, accent: Color
     renderer = HelloCommandPaletteRenderer,
     initial_size = (WIN_W, WIN_H),
     external = make_palette_external,
-    role = Listbox,
     apply_key,
 )]
 struct PaletteView;
+
+impl PaletteView {
+    /// ★★★ R1693 — the palette's **options**, which it never announced.
+    ///
+    /// The binding declared `role = Listbox` on its root and stopped there, so
+    /// an assistive technology was told a listbox was present and found nothing
+    /// to move through: the result rows are painted and tagged `palette#<i>`,
+    /// and none of them was in the tree. `scene/conform` is what asks that, and
+    /// this is the substrate that answers it — the same builder every other
+    /// listbox in this tree uses, so the `aria-selected` / `aria-posinset` /
+    /// `aria-setsize` topology cannot diverge one binding at a time.
+    ///
+    /// A query matching nothing is a real state and the container says so:
+    /// [`listbox_option_nodes`] leaves it with no options, and the empty
+    /// declaration is what separates that from a palette whose options nobody
+    /// built.
+    fn access_node(state: usize, _focused: Option<&str>) -> Vec<AccessNode> {
+        let visible = visible_commands(&use_query().get());
+        let selected = state.min(visible.len().saturating_sub(1));
+        let tags: Vec<String> = (0..visible.len())
+            .map(|i| format!("{PALETTE_TAG}#{i}"))
+            .collect();
+        let options: Vec<ListOption<'_>> = visible
+            .iter()
+            .enumerate()
+            .map(|(i, &cmd)| ListOption {
+                tag: &tags[i],
+                label: Some(COMMANDS[cmd]),
+                state: ListboxItemState::Idle,
+                selected: i == selected,
+                focused: i == selected,
+            })
+            .collect();
+        // The builder states the container's extent, which is what makes "the
+        // query matched nothing" a state rather than a listbox nobody filled.
+        listbox_option_nodes(PALETTE_TAG, "Commands", false, &options)
+    }
+}
 
 impl PaletteView {
     fn read_state(scene: &Scene) -> usize {
@@ -721,10 +760,36 @@ mod tests {
         pinion_core::test_fixtures::assert_widget_view_carries_tag::<PaletteView>(0, &Frame::new());
     }
 
+    /// ★★★ R1693 — the listbox announces its **options**, and until this round
+    /// it announced none: the binding declared `role = Listbox` on its root and
+    /// stopped, so an assistive technology was told a listbox was there and
+    /// found nothing to move through. Runs inside an owner scope because the
+    /// options come from the live query, which is the point — a filtered
+    /// palette announces what it is showing.
     #[test]
-    fn palette_root_reports_listbox_role() {
-        let nodes = <PaletteView as WidgetA11y>::access_node(&0, None);
-        assert_eq!(nodes[0].role, AriaRole::Listbox);
-        assert_eq!(nodes[0].tag, PALETTE_TAG);
+    fn palette_announces_a_listbox_of_its_visible_options() {
+        pinion_core::reactive::Owner::new().run(|| {
+            let nodes = <PaletteView as WidgetA11y>::access_node(&0, None);
+            assert_eq!(nodes[0].role, AriaRole::Listbox);
+            assert_eq!(nodes[0].tag, PALETTE_TAG);
+
+            let shown = visible_commands(&use_query().get()).len();
+            assert_eq!(nodes.len(), shown + 1, "one option per visible command");
+            assert_eq!(
+                nodes[0].size_of_set,
+                Some(u32::try_from(shown).unwrap_or(u32::MAX)),
+                "the container states its extent, so an empty result is a state",
+            );
+            for (i, option) in nodes[1..].iter().enumerate() {
+                assert_eq!(option.role, AriaRole::ListBoxOption);
+                assert_eq!(option.tag, format!("{PALETTE_TAG}#{i}"));
+                assert_eq!(
+                    nodes[0].children.get(i).map(String::as_str),
+                    Some(option.tag.as_str()),
+                    "the listbox owns the option it announces",
+                );
+            }
+            assert_eq!(nodes[1].selected, Some(true), "the first row is selected");
+        });
     }
 }

@@ -391,7 +391,10 @@ impl WidgetA11y for HelloVnTide {
             // External's and the projected scene paints no region carrying it,
             // so the node had no rectangle and `scene/voice` called it a ghost.
             // The status row is the one region this binding tags itself.
-            AccessNode::new(TAG, AriaRole::List)
+            // R1693 — a `group`, not a `list`. The projected scene is a render
+            // readout, not a collection of items, and announcing `list` sent a
+            // reader looking for `listitem`s this binding has never built.
+            AccessNode::new(TAG, AriaRole::Group)
                 .with_name(name)
                 .with_bounds_union_tag(FONT_ROW_TAG)
                 .with_focused(focused == Some(TAG)),
@@ -605,6 +608,23 @@ mod r1345_layout_tests {
         owner.run(|| {
             let live = use_vn_state(super::VN_KEY, tide_script);
             assert_eq!(live.step_count(), tide_script().len(), "same script");
+        });
+    }
+
+    /// ★★★ R1693 — a `group`, not a `list`. The projected scene is a render
+    /// readout and this binding has never built a `listitem`, so an assistive
+    /// technology was told to enter a collection with nothing in it.
+    #[test]
+    fn r1693_the_readout_announces_a_container_a_reader_can_walk() {
+        use crate::{HelloVnTide, VnCursor};
+        use pinion_a11y::{AriaRole, WidgetA11y};
+
+        let owner = Owner::new();
+        owner.run(|| {
+            let nodes = <HelloVnTide as WidgetA11y>::access_node(&VnCursor::default(), None);
+            assert_eq!(nodes[0].role, AriaRole::Group);
+            let census = pinion_a11y::structure_census(&nodes);
+            assert!(census.is_sound(), "{:?}", census.nodes);
         });
     }
 }

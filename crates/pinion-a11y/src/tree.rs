@@ -367,6 +367,36 @@ fn collect_claimed_children(nodes: &HashMap<String, AccessNode>) -> HashSet<&str
     claimed
 }
 
+/// The three boolean flags a **container** carries, lowered together.
+///
+/// Split out at R1693 when `aria-busy` took `lower_access_node` past the
+/// hundred-line bound. They belong together for a reason beyond arithmetic:
+/// each is a claim about the container as a whole rather than about the node's
+/// own content, and each is boolean-set — omitted when false, so a node that
+/// says nothing about the axis keeps the attribute absent.
+fn lower_container_flags(access: &AccessNode, node: &mut Node) {
+    // R51.98 §5.40 — WAI-ARIA `aria-multiselectable`. Only meaningful on
+    // container roles with a selection set (Listbox primarily; Grid / Tree /
+    // TabList future).
+    if access.multiselectable {
+        node.set_multiselectable();
+    }
+
+    // R693 §5.40 — WAI-ARIA `aria-modal`. Set on the open `Dialog` root so AT
+    // confines its virtual cursor to the dialog subtree (the AT-side mirror of
+    // the shell focus trap).
+    if access.modal {
+        node.set_modal();
+    }
+
+    // R1693 §5.40 — WAI-ARIA `aria-busy`. A collection that is being populated
+    // tells an assistive technology to wait rather than letting it announce a
+    // subtree that is still arriving — and read the emptiness as the answer.
+    if access.busy {
+        node.set_busy();
+    }
+}
+
 fn lower_access_node(access: &AccessNode) -> Node {
     let mut node = Node::new(access.role.to_accesskit());
 
@@ -465,22 +495,7 @@ fn lower_access_node(access: &AccessNode) -> Node {
         node.set_selected(v);
     }
 
-    // R51.98 §5.40 — WAI-ARIA `aria-multiselectable` mapping. Only
-    // meaningful on container roles with a selection set (Listbox
-    // primarily; Grid/Tree/TabList future). AccessKit's flag is
-    // boolean-set; we omit it when false to keep TreeUpdate payload
-    // minimal per the R51.72 incremental-update guidance.
-    if access.multiselectable {
-        node.set_multiselectable();
-    }
-
-    // R693 §5.40 — WAI-ARIA `aria-modal` mapping. Set on the open
-    // `Dialog` root so AT confines its virtual cursor to the dialog
-    // subtree (the AT-side mirror of the shell focus trap). Boolean-set;
-    // omitted when false to keep the TreeUpdate payload minimal.
-    if access.modal {
-        node.set_modal();
-    }
+    lower_container_flags(access, &mut node);
 
     // R1609 §5.40 — WAI-ARIA `aria-live`. Emitted only when declared, so a node that
     // says nothing about liveness keeps the attribute absent rather than

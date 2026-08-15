@@ -559,6 +559,44 @@ pub const WIRE_TYPES: &[WireType] = &[
             ],
         },
     },
+    // R1693 §5.40 — `scene/conform`: whether the announced tree is one a reader
+    // can walk. A collection that owns none of what its role promises, and a
+    // member outside the collection its role requires.
+    WireType {
+        name: "ConformCounts",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("empty", WireTy::Integer, None),
+                WireField::new("stray", WireTy::Integer, None),
+            ],
+        },
+    },
+    WireType {
+        name: "ConformEntry",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("tag", WireTy::String, None),
+                WireField::new("role", WireTy::String, None)
+                    .accepting(&pinion_a11y::AriaRole::WIRE_NAMES),
+                WireField::new("fault", WireTy::String, None)
+                    .accepting(&pinion_a11y::structure::STRUCTURE_FAULT_WIRE_NAMES),
+                WireField::new("required", WireTy::Array, None),
+                WireField::new("found", WireTy::String, None)
+                    .accepting(&pinion_a11y::AriaRole::WIRE_NAMES)
+                    .nullable(),
+            ],
+        },
+    },
+    WireType {
+        name: "ConformOutcome",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("judged", WireTy::Integer, None),
+                WireField::new("counts", WireTy::Object, Some("ConformCounts")),
+                WireField::new("nodes", WireTy::Array, Some("ConformEntry")),
+            ],
+        },
+    },
     WireType {
         name: "ContainmentOutcome",
         shape: WireShape::Object {

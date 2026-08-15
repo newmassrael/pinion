@@ -236,9 +236,14 @@ fn r1663_every_declared_element_of_the_screen_is_painted() {
         for n in 0..spec::COLUMNS.len() {
             wanted.push(format!("pv.list.head.{n}"));
         }
+        // R1693 — every message row, and every CELL of it. The cells were
+        // untagged runs until this round, which is why sixteen messages of seven
+        // columns reached a reader as nothing at all.
         for n in 0..spec::ROWS.len() {
             wanted.push(format!("pv.list.row.{n}"));
-            wanted.push(format!("pv.list.row.{n}.kind"));
+            for c in 0..spec::COLUMNS.len() {
+                wanted.push(crate::list_cell_tag(n, c));
+            }
         }
         for n in 0..spec::SAVED_FILTERS.len() {
             wanted.push(format!("pv.filter.saved.{n}"));
@@ -718,6 +723,176 @@ fn r1663_pressing_an_unclaimed_byte_leaves_the_selection_alone() {
             state.said.borrow().contains("no field"),
             "the screen must say why nothing happened, said {:?}",
             state.said.borrow()
+        );
+    });
+}
+
+/// The tags a [`spec::VoiceSpec`] row stands for, expanded from the family its
+/// population names.
+///
+/// Expanded rather than listed, so an eighth column or a twenty-second field is
+/// demanded by this gate the moment it joins the specification — the property
+/// R1651.1 wrote down after a hand-written population reported a sample as
+/// coverage. The rule lives on [`spec::Population`] itself because two of this
+/// screen's families are **computed** (a product and a range), and a gate
+/// holding the rule would be a second place a screen's shape got derived.
+fn voice_population(tag: &str, population: spec::Population) -> Vec<String> {
+    population
+        .members()
+        .into_iter()
+        .map(|member| tag.replace("{}", &member))
+        .collect()
+}
+
+/// The census of the screen as it opens, built the way the shell builds it.
+fn voice_of(state: &std::rc::Rc<ViewState>) -> pinion_core::voice::VoiceCensus {
+    use pinion_a11y::WidgetA11y;
+
+    let (_, scene) = painted_at(state, (WIN_W, WIN_H));
+    let mut nodes = super::PacketView::access_node(&(), None);
+    // ★ The shell's own enrichment. A widget's `access_node` may leave a name
+    // `None`, and the name a reader hears is resolved from the PAINT SCENE after
+    // layout on WAI-ARIA 1.2's name-computation precedence — so a gate that read
+    // the tree without this step would be asking about a tree nobody receives.
+    // This screen leaves two panes to be named from the runs that declare
+    // themselves their names, which is what makes those `name_of` redirects
+    // true rather than merely well formed.
+    let derived = pinion_a11y::enrich_names_from_scene(&mut nodes, &scene);
+    assert!(
+        derived > 0,
+        "no node was named from the paint, so the `name_of` redirects name nothing",
+    );
+    // The framework's own derivations rather than second ones: what counts as a
+    // reference, and what an announcement is, are rules the wire and this gate
+    // have to agree about.
+    let announced = pinion_a11y::announcements(&nodes);
+    let referenced = pinion_a11y::referenced_tags(&nodes);
+    pinion_core::voice::voice_census(&scene, &announced, &referenced)
+}
+
+/// ★★★★★ R1693 — **every addressable region of this screen is classified**, and
+/// the split between what speaks and what is deliberately quiet is the
+/// specification's rather than whatever the last round happened to leave.
+///
+/// Measured the day this was written, before the round: **186 painted regions,
+/// three announced nodes, 183 unclassified.** Two of the three announced a
+/// collection role and held nothing.
+///
+/// Totality alone would not be worth asserting — a census with every region
+/// declared silent is total — so the gate drives both halves of
+/// [`spec::VOICES`] / [`spec::SILENCES`], and the role each region announces as,
+/// which is what a reader is told they can *do* with it.
+#[test]
+fn r1693_the_screen_speaks_and_is_quiet_exactly_where_the_specification_says() {
+    use pinion_a11y::WidgetA11y;
+    use pinion_core::voice::Voice;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_view_state();
+        let census = voice_of(&state);
+        let rows: BTreeMap<&str, &pinion_core::voice::VoiceNode> =
+            census.nodes.iter().map(|n| (n.tag.as_str(), n)).collect();
+        let nodes = super::PacketView::access_node(&(), None);
+        let roles: BTreeMap<&str, &'static str> = nodes
+            .iter()
+            .map(|n| (n.tag.as_str(), n.role.aria_name()))
+            .collect();
+
+        let mut spoken = 0;
+        for want in spec::VOICES {
+            for tag in voice_population(want.tag, want.population) {
+                let row = rows.get(tag.as_str()).unwrap_or_else(|| {
+                    panic!("the specification says {tag} is on screen and nothing paints it")
+                });
+                assert_eq!(
+                    row.voice,
+                    Voice::Announced,
+                    "{tag} owes a reader a voice and is {}",
+                    row.voice.name(),
+                );
+                assert!(
+                    row.silence.is_none(),
+                    "{tag} speaks AND declares a silence, so the declaration is \
+                     a claim nobody acts on",
+                );
+                assert_eq!(
+                    roles.get(tag.as_str()).copied(),
+                    Some(want.role),
+                    "{tag} announces as the wrong kind",
+                );
+                spoken += 1;
+            }
+        }
+
+        let mut quiet = 0;
+        for (tag, population, kind) in spec::SILENCES {
+            for tag in voice_population(tag, *population) {
+                let row = rows.get(tag.as_str()).unwrap_or_else(|| {
+                    panic!("the specification declares {tag} quiet and nothing paints it")
+                });
+                assert_eq!(
+                    row.voice,
+                    Voice::Silent,
+                    "{tag} is declared quiet and the census calls it {}",
+                    row.voice.name(),
+                );
+                assert_eq!(
+                    row.silence.as_ref().map(|s| s.kind().name()),
+                    Some(*kind),
+                    "{tag} is quiet for a reason the specification does not state",
+                );
+                quiet += 1;
+            }
+        }
+
+        // ★ The two halves together are the whole screen. Asserted as an
+        // equality rather than as two floors, because a floor is satisfied by a
+        // screen that grew a region nobody classified — which is the defect this
+        // whole family of gates exists to end.
+        assert_eq!(
+            spoken + quiet,
+            census.nodes.len(),
+            "{} region(s) are painted and the specification classifies {}",
+            census.nodes.len(),
+            spoken + quiet,
+        );
+        assert!(
+            census.is_total(),
+            "{:?}",
+            census.defects().collect::<Vec<_>>()
+        );
+    });
+}
+
+/// ★★★★★ R1693 — the announced tree is one a reader can **walk**: every
+/// collection holds what its role promises, and every member is inside the
+/// collection its role requires.
+///
+/// This is the check that was missing when the screen announced a `table` with
+/// no row. Run over every swept state, because a collection is emptied by
+/// editing — folding a layer removes tree items — and a screen that is
+/// well-formed only as it opens is well-formed in the one state nobody works in.
+#[test]
+fn r1693_every_announced_collection_holds_what_its_role_promises() {
+    use pinion_a11y::WidgetA11y;
+
+    sweep(|_state, _shot, scene, _size, case| {
+        let mut nodes = super::PacketView::access_node(&(), None);
+        pinion_a11y::enrich_names_from_scene(&mut nodes, scene);
+        let census = pinion_a11y::structure_census(&nodes);
+        assert!(
+            census.is_sound(),
+            "{case}: {:?}",
+            census.nodes.iter().collect::<Vec<_>>(),
+        );
+        // ★ And it judged something. A structural census over a tree with no
+        // collections in it is green, and this screen's whole point is that it
+        // has three.
+        assert!(
+            census.judged > 100,
+            "{case}: only {} node(s) carried a structural requirement",
+            census.judged,
         );
     });
 }

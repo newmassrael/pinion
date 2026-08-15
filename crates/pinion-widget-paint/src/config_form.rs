@@ -1460,10 +1460,18 @@ fn control_role(shape: &FieldType) -> AriaRole {
         // Exactly one of a fixed set — the radio group's own semantics, which
         // is what tells a reader that picking one un-picks another.
         FieldType::Choice { .. } => AriaRole::RadioGroup,
-        // Any subset, so the members are independent checkboxes and the
-        // container is a plain group.
-        FieldType::Flags { .. } => AriaRole::Group,
-        FieldType::List { .. } => AriaRole::List,
+        // A plain group in both cases, and for one reason: what the shape
+        // paints is a row of independent controls rather than members of a
+        // collection. `Flags` paints checkboxes; `List` paints editable text
+        // boxes and an add button.
+        //
+        // ★★★ R1693 — `List` was `AriaRole::List` until `scene/conform` asked
+        // what the list HELD. A WAI-ARIA `list` promises `listitem`s a reader
+        // moves through, so the role announced a collection whose members were a
+        // different kind of thing — and a field with no entries yet announced a
+        // collection with nothing in it at all. Measured on the reference tool's
+        // first screen, where two endpoint fields open empty.
+        FieldType::Flags { .. } | FieldType::List { .. } => AriaRole::Group,
         FieldType::Text | FieldType::Formatted { .. } => AriaRole::TextInput,
     }
 }
@@ -2878,7 +2886,10 @@ mod tests {
                 shape: FieldType::List {
                     of: Box::new(FieldType::Text),
                 },
-                control: AriaRole::List,
+                // R1693 — a `group`. What this shape paints is text boxes, and
+                // the parts below are the evidence: a `list` would promise
+                // `listitem`s that do not exist.
+                control: AriaRole::Group,
                 value: "x, y",
                 parts: &[
                     ("item.k.0", AriaRole::TextInput),

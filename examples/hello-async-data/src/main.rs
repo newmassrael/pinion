@@ -577,9 +577,19 @@ impl WidgetA11y for AsyncDataView {
         let page = page_signal().get();
         let res = result().state();
 
+        // ★★★ R1693 — while the page is in flight the list holds nothing and
+        // still says it has forty assets, which is neither full nor empty. That
+        // is what `aria-busy` is for: a reader is told to wait rather than told
+        // the list is empty, and `scene/conform` accepts it for the same reason.
+        // Before this it announced a `list` with no `listitem` and nothing said
+        // why — found by the demo that drives 95 bindings, after a sweep of
+        // every surface missed it because the load lands before a probe looks.
         let mut list = AccessNode::new(LIST_TAG, AriaRole::List)
             .with_name("Assets")
             .with_size_of_set(u32::try_from(TOTAL_ASSETS).unwrap_or(u32::MAX));
+        if !matches!(res, ResourceState::Ready(_)) {
+            list = list.with_busy();
+        }
         let mut items: Vec<AccessNode> = Vec::new();
         if let ResourceState::Ready(rows) = &res {
             for (r, row) in rows.iter().enumerate() {

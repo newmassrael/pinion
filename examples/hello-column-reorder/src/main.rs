@@ -136,6 +136,10 @@ const THEME_TAG: &str = "app";
 const HDR_TAG: &str = "colhdr";
 /// The body container tag; data cells paint as `colbody#<row>_<visual>`.
 const BODY_TAG: &str = "colbody";
+/// R1693 — the table the header strip heads, announced but never painted: a
+/// `columnheader` needs a `row` and a `row` needs a table, and the tree stopped
+/// at the strip. Anchored by the row it composes.
+const GRID_TAG: &str = "colreorder_grid";
 /// Scene-as-data readout of the current section order.
 const ORDER_TAG: &str = "colreorder_order";
 /// R1451 — scene-as-data readout of the rest of the header state: the
@@ -1538,14 +1542,39 @@ impl WidgetA11y for ColumnReorderView {
     /// screen shows, which is the whole point of a movable section.
     fn access_node(state: &HeaderState, focused: Option<&str>) -> Vec<AccessNode> {
         let strip_focused = focused == Some(HDR_TAG);
-        let mut nodes = vec![
-            AccessNode::new(HDR_TAG, AriaRole::Row)
-                .with_name("Columns")
-                .with_state(AccessState {
-                    focused: strip_focused,
-                    ..AccessState::default()
-                }),
-        ];
+        // ★★★ R1693 — the row **owns** its headers. Both existed and neither
+        // referred to the other, so the strip was a `row` holding nothing and
+        // every header was a `columnheader` an assistive technology could not
+        // place: five nodes, each perfect on its own terms, and no tree between
+        // them. Built from `placements()` like the paint, so a hidden column
+        // leaves the tree in the same act it leaves the screen.
+        let mut strip = AccessNode::new(HDR_TAG, AriaRole::Row)
+            .with_name("Columns")
+            .with_state(AccessState {
+                focused: strip_focused,
+                ..AccessState::default()
+            });
+        for p in state.placements() {
+            strip = strip.with_child(section_tag(p.visual));
+        }
+        // ★★ And the row sits in the grid it heads. A `row` outside a table is a
+        // row an assistive technology cannot place, which is what this strip was
+        // — the requirement chain (`columnheader` needs a `row`, a `row` needs a
+        // `grid`) is ARIA saying the tree stopped one level short.
+        //
+        // Nothing paints a container for the whole table, so the node is
+        // anchored by the header row it composes — the exemption the census
+        // verifies for itself rather than one this screen declares.
+        //
+        // `aria-rowcount` is how a grid states an extent its tree does not hold:
+        // the six data rows are painted and still not announced, which is the
+        // reported-not-judged `unvoiced` backlog and not this round's charter.
+        let grid = AccessNode::new(GRID_TAG, AriaRole::Grid)
+            .with_name("Files")
+            .with_row_count(u32::try_from(NROWS).unwrap_or(u32::MAX) + 1)
+            .with_column_count(u32::try_from(state.placements().len()).unwrap_or(u32::MAX))
+            .with_child(HDR_TAG);
+        let mut nodes = vec![grid, strip];
         // R1451 — the same placements the paint uses, so a hidden column is
         // absent from the AT tree for exactly the reason it is absent from the
         // screen, and `aria-colcount` follows without a second rule.
@@ -3092,5 +3121,33 @@ mod tests {
             "and the rule still overrides whatever it was set to"
         );
         assert_eq!(cycled.total_w(), AVAILABLE_W, "so the row still fills");
+    }
+
+    /// ★★★★ R1693 — the announced tree is one a reader can **walk**.
+    ///
+    /// Six nodes, each perfect on its own terms, and no tree between them: the
+    /// header strip announced `row` and owned none of its five
+    /// `columnheader`s, and the row itself sat inside nothing — a `columnheader`
+    /// needs a `row` and a `row` needs a table, so the tree stopped two levels
+    /// short of something an assistive technology could enter. Nothing asked
+    /// until `scene/conform`.
+    #[test]
+    fn r1693_the_header_strip_is_a_row_of_a_grid() {
+        let state = read_header_state(&boot_scene());
+        let nodes = ColumnReorderView::access_node(&state, None);
+        let census = pinion_a11y::structure_census(&nodes);
+        assert!(census.is_sound(), "{:?}", census.nodes);
+        assert!(census.judged > 0, "and it judged this strip");
+
+        let grid = nodes.iter().find(|n| n.tag == GRID_TAG).expect("the grid");
+        assert_eq!(grid.role, AriaRole::Grid);
+        assert_eq!(grid.children, vec![HDR_TAG.to_owned()]);
+        let strip = nodes.iter().find(|n| n.tag == HDR_TAG).expect("the strip");
+        assert_eq!(strip.role, AriaRole::Row);
+        assert_eq!(
+            strip.children.len(),
+            state.placements().len(),
+            "the row owns every visible section",
+        );
     }
 }

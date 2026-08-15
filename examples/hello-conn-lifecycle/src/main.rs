@@ -489,7 +489,14 @@ impl WidgetA11y for ConnLifecycleView {
     fn access_node(_state: &Self::State, _focused: Option<&str>) -> Vec<AccessNode> {
         let ids = BOARD.snapshot_ids();
 
-        let mut list = AccessNode::new(LIST_TAG, AriaRole::List).with_name("Live connections");
+        // R1693 — the list SAYS how many connections it holds, which is what
+        // makes "there are none yet" a state a reader is told about rather than
+        // a `list` announced over nothing. This binding opens with no
+        // connections, so before this it announced a collection an assistive
+        // technology could not enter and nothing said why.
+        let mut list = AccessNode::new(LIST_TAG, AriaRole::List)
+            .with_name("Live connections")
+            .with_size_of_set(u32::try_from(ids.len()).unwrap_or(u32::MAX));
         let mut items: Vec<AccessNode> = Vec::new();
         for (i, id) in ids.iter().enumerate() {
             let tag = row_tag(i);
@@ -744,5 +751,25 @@ mod tests {
     struct NoopIngress;
     impl RpcIngress for NoopIngress {
         fn submit(&self, _frame: RpcFrame) {}
+    }
+
+    /// ★★★ R1693 — the connection list **opens empty**, and says so.
+    ///
+    /// Announcing a `list` that owns no `listitem` tells a reader a collection
+    /// is there and gives them nothing to enter. "No connections yet" is a real
+    /// state, and `aria-setsize` is how ARIA lets a container say it — which is
+    /// what separates the empty answer from a list nobody filled.
+    #[test]
+    fn r1693_an_empty_connection_list_says_it_is_empty() {
+        BOARD.ids.lock().unwrap().clear();
+        let nodes = <ConnLifecycleView as WidgetA11y>::access_node(&(), None);
+        let list = nodes
+            .iter()
+            .find(|n| n.tag == LIST_TAG)
+            .expect("the list is announced");
+        assert_eq!(list.size_of_set, Some(0));
+        let census = pinion_a11y::structure_census(&nodes);
+        assert!(census.is_sound(), "{:?}", census.nodes);
+        assert!(census.judged > 0, "and the list WAS judged");
     }
 }

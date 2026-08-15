@@ -72,7 +72,15 @@ pub fn listbox_option_nodes(
     options: &[ListOption<'_>],
 ) -> Vec<AccessNode> {
     let mut nodes: Vec<AccessNode> = Vec::with_capacity(options.len() + 1);
-    let mut list = AccessNode::new(list_tag, AriaRole::Listbox).with_name(list_name);
+    // ★★★ R1693 — the container STATES how many options it has, which is what
+    // makes "the filter matched nothing" a state a reader is told about rather
+    // than a `listbox` announced over nothing. Declared in the builder and not
+    // at each call site, so every consumer of this shape gets the empty case
+    // right by construction — the lift the three hand-built lists this round
+    // repaired one at a time would otherwise become a fourth of.
+    let mut list = AccessNode::new(list_tag, AriaRole::Listbox)
+        .with_name(list_name)
+        .with_size_of_set(u32::try_from(options.len()).unwrap_or(u32::MAX));
     if multiselectable {
         list = list.with_multiselectable();
     }

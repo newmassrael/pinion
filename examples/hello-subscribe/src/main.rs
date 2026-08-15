@@ -375,7 +375,12 @@ impl WidgetA11y for SubscribeView {
         let streams = pinion_rpc::process_registry().views();
         let revision = use_scene_revision().current();
 
-        let mut list = AccessNode::new(LIST_TAG, AriaRole::List).with_name("Live change streams");
+        // R1693 — the list says how many streams it holds. This binding opens
+        // with none, so before this it announced a collection with nothing in it
+        // and nothing said that was the answer rather than an omission.
+        let mut list = AccessNode::new(LIST_TAG, AriaRole::List)
+            .with_name("Live change streams")
+            .with_size_of_set(u32::try_from(streams.subscriptions.len()).unwrap_or(u32::MAX));
         let mut items: Vec<AccessNode> = Vec::new();
         for (i, s) in streams.subscriptions.iter().enumerate() {
             let tag = row_tag(i);
@@ -558,5 +563,26 @@ mod tests {
             text_under(&scene, &row_tag(1)).as_deref(),
             Some("stream #2 on conn #5 — 0 delivered"),
         );
+    }
+
+    /// ★★★ R1693 — the stream list **opens empty**, and says so.
+    ///
+    /// A `list` with no `listitem` is a collection an assistive technology is
+    /// told about and cannot enter. "No streams yet" is a real state, so the
+    /// container declares its extent and the structural census accepts a
+    /// declared zero — the same rule R1691 applied to silence.
+    #[test]
+    fn r1693_an_empty_stream_list_says_it_is_empty() {
+        Owner::new().run(|| {
+            let nodes = <SubscribeView as WidgetA11y>::access_node(&(), None);
+            let list = nodes
+                .iter()
+                .find(|n| n.tag == LIST_TAG)
+                .expect("the list is announced");
+            assert_eq!(list.size_of_set, Some(0));
+            let census = pinion_a11y::structure_census(&nodes);
+            assert!(census.is_sound(), "{:?}", census.nodes);
+            assert!(census.judged > 0, "and the list WAS judged");
+        });
     }
 }
