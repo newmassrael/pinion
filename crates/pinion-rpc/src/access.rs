@@ -111,6 +111,7 @@ fn access_node_to_json(node: &AccessNode) -> Value {
     if node.multiselectable {
         obj.insert("multiselectable".to_string(), Value::Bool(true));
     }
+    cursor_to_json(node, &mut obj);
     if let Some(level) = node.level {
         obj.insert("level".to_string(), Value::from(level));
     }
@@ -361,6 +362,77 @@ fn references_to_json(node: &AccessNode, obj: &mut Map<String, Value>) {
             ),
         );
     }
+}
+
+/// R1698 §5.40 §5.39 §2 #7 — **the cursor a composite owns, as data.**
+///
+/// Two facts, published together because they are one fact split in half: how
+/// to move the cursor (`aria-orientation`) and what it moves over. The second
+/// is the part no accessibility tree carries and the part a client cannot
+/// derive from `children`, which is the container's structure rather than its
+/// navigable roster — measured on this project's palette (3 children, 13
+/// members) and at the floor (5 accessible children for 3 tabs).
+///
+/// So a composite here answers "which keys reach you, in what order, where is
+/// the cursor now, and does arriving choose" without anybody pressing a key.
+/// `orientation` is emitted even when `navigation` is absent, because a slider
+/// or a separator has an orientation and no cursor.
+fn cursor_to_json(node: &AccessNode, obj: &mut Map<String, Value>) {
+    if let Some(orientation) = node.orientation {
+        obj.insert(
+            "orientation".to_string(),
+            Value::String(orientation.aria_name().to_string()),
+        );
+    }
+    let Some(nav) = &node.navigation else { return };
+    let spec = nav.spec();
+    let mut out = Map::new();
+    out.insert(
+        "axis".to_string(),
+        Value::String(spec.axis.wire().to_owned()),
+    );
+    out.insert(
+        "ends".to_string(),
+        Value::String(spec.ends.wire().to_owned()),
+    );
+    out.insert(
+        "activation".to_string(),
+        Value::String(spec.activation.wire().to_owned()),
+    );
+    out.insert(
+        "keys".to_string(),
+        Value::Array(
+            spec.axis
+                .keys()
+                .iter()
+                .map(|k| Value::String((*k).to_owned()))
+                .collect(),
+        ),
+    );
+    out.insert(
+        "cursor".to_string(),
+        nav.cursor().map_or(Value::Null, Value::from),
+    );
+    out.insert(
+        "cursor_tag".to_string(),
+        nav.cursor_tag()
+            .map_or(Value::Null, |t| Value::String(t.to_owned())),
+    );
+    out.insert(
+        "members".to_string(),
+        Value::Array(
+            nav.members()
+                .iter()
+                .map(|m| {
+                    let mut member = Map::new();
+                    member.insert("tag".to_string(), Value::String(m.tag.clone()));
+                    member.insert("enabled".to_string(), Value::Bool(m.enabled));
+                    Value::Object(member)
+                })
+                .collect(),
+        ),
+    );
+    obj.insert("navigation".to_string(), Value::Object(out));
 }
 
 fn table_axes_to_json(node: &AccessNode, obj: &mut Map<String, Value>) {

@@ -36,6 +36,7 @@ use pinion_core::availability::Unavailable;
 /// second copy of the sibling screen's (see [`OPERATIONS`]).
 pub use pinion_core::operation::Operation as OperationSpec;
 use pinion_core::widgets::destination::{Destination, Destinations};
+pub use pinion_core::widgets::roving::{Activation, Axis, Ends, RovingSpec};
 
 /// The window the screen is specified at.
 pub const WIN_W: u32 = 1440;
@@ -352,6 +353,17 @@ pub struct StopSpec {
     pub holds: &'static str,
     /// Which destination it is on.
     pub at: Where,
+    /// ★★★★★ R1698 — **what the arrows do once a reader is here.**
+    ///
+    /// A stop with no cursor is a room with a door and no floor: R1696 gave
+    /// this screen one Tab stop per composite and measuring it the day this
+    /// round opened found eleven stops, four arrow keys each, forty-four
+    /// presses that moved nothing, and an active descendant that was `None`
+    /// everywhere. That is half of WAI-ARIA's composite pattern.
+    ///
+    /// `None` for a stop that is a single control rather than a composite —
+    /// there is nothing inside it for a cursor to move between.
+    pub cursor: Option<RovingSpec>,
 }
 
 /// The ring, in Tab order — which is paint order.
@@ -360,26 +372,61 @@ pub const FOCUS_RING: &[StopSpec] = &[
         tag: "shell.canvas",
         holds: "the board; the arrows move the selection among its cards",
         at: Where::At("dashboard"),
+        // ★ The board's cursor is SPATIAL — the arrows move to the neighbouring
+        // card in that direction, not to the next one in a list — so it is not
+        // a linear roster and declares none. It has had that cursor since
+        // R1662 and published it to nobody; this round makes it the active
+        // descendant, which is the half it was missing.
+        cursor: None,
     },
     StopSpec {
         tag: "shell.appbar",
         holds: "the application bar's views, source, capture and search",
         at: Where::Chrome,
+        // A bar of peers with no meaningful last one, so it wraps.
+        cursor: Some(
+            RovingSpec::new(Axis::Horizontal)
+                .with_ends(Ends::Wrap)
+                .with_activation(Activation::Explicit),
+        ),
     },
     StopSpec {
         tag: "shell.rail",
         holds: "the tool's destinations",
         at: Where::Chrome,
+        // ★★ Vertical, wrapping, and EXPLICIT — the last of those is the one
+        // that matters. A rail whose selection followed its cursor would
+        // navigate away from the page a reader is trying to leave, once per
+        // arrow press, on the way to the destination they want. The floor's
+        // tab list has no way to say this: measured, it changes the current
+        // tab on every arrow and exposes no property that would let an author
+        // ask for anything else.
+        cursor: Some(
+            RovingSpec::new(Axis::Vertical)
+                .with_ends(Ends::Wrap)
+                .with_activation(Activation::Explicit),
+        ),
     },
     StopSpec {
         tag: "shell.subbar",
         holds: "the layout preset and the two board verbs",
         at: Where::At("dashboard"),
+        cursor: Some(
+            RovingSpec::new(Axis::Horizontal)
+                .with_ends(Ends::Wrap)
+                .with_activation(Activation::Explicit),
+        ),
     },
     StopSpec {
         tag: "shell.palette",
         holds: "the widget catalogue the board is populated from",
         at: Where::At("dashboard"),
+        // ★★ A catalogue read top to bottom, and it STOPS at its ends: the
+        // list has a first and a last entry a reader is meant to feel, which
+        // wrapping would take away. Its members are the thirteen entries and
+        // NOT its accessibility children, which are three section groups and
+        // two status readouts — the distinction `Roving` exists to keep.
+        cursor: Some(RovingSpec::new(Axis::Vertical).with_ends(Ends::Stop)),
     },
 ];
 

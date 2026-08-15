@@ -12,9 +12,12 @@ use pinion_core::reactive::Owner;
 use pinion_core::widgets::field_bytes::{Coverage, FieldSpan, SourceId};
 
 use super::{
-    NAME_COLUMN, cell_texts, char_count, comma, decode, frame_bytes, lane_reading, row_cells,
-    select_byte, select_field, select_message, sibling_place, spec, use_view_state,
+    NAME_COLUMN, PacketView, cell_texts, char_count, comma, decode, frame_bytes, lane_reading,
+    pane_cursor, row_cells, select_byte, select_field, select_message, sibling_place, spec,
+    use_view_state,
 };
+use pinion_a11y::WidgetA11y;
+use pinion_core::WidgetCore;
 
 /// Run `body` inside a scope with the screen's state.
 fn with_state(body: impl FnOnce(&std::rc::Rc<super::ViewState>)) {
@@ -551,4 +554,159 @@ fn r1693_every_voice_population_expands_to_what_the_capture_holds() {
             .map(|b| b.to_string())
             .collect::<Vec<_>>(),
     );
+}
+
+// ── R1698: the cursor inside each pane ───────────────────────────────────────
+
+/// Press a key the way the SHELL does — through `WidgetCore::apply_key`, with
+/// the focus manager's tag.
+///
+/// ★★★★★ Not through `key_at`, which is what the first draft of these gates
+/// drove: a counterfactual dropping `focused` inside `apply_key` — the exact
+/// state this screen was in before the round, where all six stops moved the
+/// message list — left every one of them green, because none went through the
+/// door a person's key comes in by.
+fn press_key(focused: Option<&str>, chord: &str) -> bool {
+    let mut scene = super::view((), pinion_core::Frame::default());
+    PacketView::apply_key(
+        &mut scene,
+        focused,
+        chord,
+        pinion_core::input::Modifiers::default(),
+    )
+}
+
+/// The three panes that own a keyboard cursor, and the key that advances each.
+const PANE_CURSORS: [(&str, &str); 3] = [
+    ("pv.list", "ArrowDown"),
+    ("pv.tree", "ArrowDown"),
+    ("pv.bytes", "ArrowRight"),
+];
+
+/// ★★★★★ R1698 — **each pane's arrows move that pane's cursor, and nobody
+/// else's.**
+///
+/// Measured on this running screen the day the round started: at ALL SIX Tab
+/// stops — the three saved-filter chips, the decode tree and the byte grid
+/// included — `ArrowDown` moved the **message list**, because `apply_key`
+/// dropped the `focused` argument the shell hands it. An arrow meant one thing
+/// no matter where anybody was standing, which is the other half of the
+/// composite pattern R1693 left open when it gave these panes their Tab stops.
+#[test]
+fn r1698_each_panes_arrows_move_that_panes_cursor() {
+    for (stop, advance) in PANE_CURSORS {
+        with_state(|state| {
+            let before = pane_cursor(state, stop)
+                .and_then(|r| r.cursor_tag().map(str::to_owned))
+                .unwrap_or_else(|| panic!("{stop} has a cursor"));
+            let others: Vec<(&str, Option<String>)> = PANE_CURSORS
+                .iter()
+                .filter(|(other, _)| *other != stop)
+                .map(|(other, _)| {
+                    (
+                        *other,
+                        pane_cursor(state, other).and_then(|r| r.cursor_tag().map(str::to_owned)),
+                    )
+                })
+                .collect();
+
+            assert!(press_key(Some(stop), advance), "{stop} took {advance}");
+            let after = pane_cursor(state, stop).and_then(|r| r.cursor_tag().map(str::to_owned));
+            assert_ne!(Some(before), after, "{stop}: {advance} moved its cursor");
+
+            // ★ And nothing else moved. This is the assertion that fails on the
+            // pre-R1698 screen, where every stop drove the message list.
+            for (other, was) in others {
+                // The byte grid's cursor is the selected field's first byte, so
+                // moving the tree legitimately moves it. Every other pair is
+                // independent.
+                if stop == "pv.tree" && other == "pv.bytes" {
+                    continue;
+                }
+                assert_eq!(
+                    pane_cursor(state, other).and_then(|r| r.cursor_tag().map(str::to_owned)),
+                    was,
+                    "{stop}'s {advance} moved {other}'s cursor"
+                );
+            }
+        });
+    }
+}
+
+/// ★★★★★ R1698 — **a plain button owns no cursor, and an arrow there moves
+/// nothing.**
+///
+/// The three saved-filter chips are single controls rather than composites, so
+/// they legitimately have no cursor — and that is exactly where the old
+/// fall-through did its damage, because a key nothing consumed reached a global
+/// handler that moved a pane the reader was not in.
+#[test]
+fn r1698_an_arrow_on_a_plain_button_moves_no_pane() {
+    with_state(|state| {
+        let before: Vec<Option<String>> = PANE_CURSORS
+            .iter()
+            .map(|(stop, _)| {
+                pane_cursor(state, stop).and_then(|r| r.cursor_tag().map(str::to_owned))
+            })
+            .collect();
+        for n in 0..spec::SAVED_FILTERS.len() {
+            let chip = format!("pv.filter.saved.{n}");
+            assert!(pane_cursor(state, &chip).is_none(), "{chip} owns no cursor");
+            assert!(
+                !press_key(Some(&chip), "ArrowDown"),
+                "{chip} does not claim an arrow"
+            );
+        }
+        let after: Vec<Option<String>> = PANE_CURSORS
+            .iter()
+            .map(|(stop, _)| {
+                pane_cursor(state, stop).and_then(|r| r.cursor_tag().map(str::to_owned))
+            })
+            .collect();
+        assert_eq!(before, after, "★ and no pane's cursor moved");
+
+        // The wire's own channel still reaches the list, so an agent asking for
+        // it is not collateral damage of the scoping.
+        assert!(press_key(None, "ArrowDown"), "the wire still drives it");
+    });
+}
+
+/// ★★★ R1698 — the panes publish their cursor, and the message list's cursor
+/// **is** its selection.
+///
+/// The `Follows` arm's real consumer: moving down a message list means reading
+/// the next message, which is the opposite of what a navigation rail must do —
+/// and the sibling screen declares every one of its composites `Explicit` for
+/// exactly that reason. Both arms are load-bearing across the two screens.
+#[test]
+fn r1698_the_list_cursor_is_the_selection_and_it_is_published() {
+    with_state(|state| {
+        let roving = pane_cursor(state, "pv.list").expect("the list has a cursor");
+        assert_eq!(
+            roving.spec().activation,
+            pinion_core::widgets::roving::Activation::Follows,
+            "the list's cursor IS its selection"
+        );
+        assert_eq!(
+            roving.cursor(),
+            Some(state.row.get()),
+            "and it reports the row the screen already holds, not a second one"
+        );
+
+        assert!(press_key(Some("pv.list"), "ArrowDown"));
+        assert_eq!(
+            pane_cursor(state, "pv.list").and_then(|r| r.cursor()),
+            Some(state.row.get()),
+            "moving the cursor moved the selection — one fact, not two"
+        );
+
+        let focus = PacketView::access_focus_target(&(), Some("pv.list"))
+            .expect("a focused pane reports a focus target");
+        assert_eq!(focus.focus_tag, "pv.list");
+        assert_eq!(
+            focus.active_descendant,
+            Some(format!("pv.list.row.{}", state.row.get())),
+            "and the active descendant names the row the cursor is on"
+        );
+    });
 }

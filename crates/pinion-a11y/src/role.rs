@@ -13,9 +13,10 @@
 //! they would in HTML's `role` attribute.
 
 use accesskit::{
-    AriaCurrent as AkAriaCurrent, AutoComplete as AkAutoComplete, HasPopup as AkHasPopup, Role,
-    SortDirection as AkSortDirection,
+    AriaCurrent as AkAriaCurrent, AutoComplete as AkAutoComplete, HasPopup as AkHasPopup,
+    Orientation as AkOrientation, Role, SortDirection as AkSortDirection,
 };
+use pinion_core::widgets::roving::Axis;
 
 /// Pinion-native ARIA role enum.
 ///
@@ -1090,6 +1091,61 @@ impl SortDirection {
         match self {
             Self::Ascending => "ascending",
             Self::Descending => "descending",
+        }
+    }
+}
+
+/// R1698 §5.40 §5.39 — WAI-ARIA 1.2 §6.6.6 `aria-orientation`: which way a
+/// composite's cursor runs, and therefore which arrow keys reach its members.
+/// The wrapper keeps [`AccessNode`](crate::AccessNode) free of a direct
+/// `accesskit` dependency, exactly as [`SortDirection`] does.
+///
+/// `aria-orientation="undefined"` — a composite whose members wrap across lines,
+/// where neither axis alone is the reading order — is modelled by the *absence*
+/// of the value ([`AccessNode::orientation`](crate::AccessNode::orientation) =
+/// `None`), which is what the attribute's absence already means in ARIA. Only
+/// the two defined directions are carried.
+#[non_exhaustive]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Orientation {
+    /// `aria-orientation="horizontal"` — `ArrowRight` / `ArrowLeft`.
+    Horizontal,
+    /// `aria-orientation="vertical"` — `ArrowDown` / `ArrowUp`.
+    Vertical,
+}
+
+impl Orientation {
+    /// The orientation a roving [`Axis`] declares, or `None` when the axis
+    /// leaves it undefined.
+    ///
+    /// The one bridge between the keyboard declaration and the attribute, so a
+    /// composite cannot publish an orientation its arrows disagree with.
+    #[must_use]
+    pub const fn of(axis: Axis) -> Option<Self> {
+        match axis {
+            Axis::Horizontal => Some(Self::Horizontal),
+            Axis::Vertical => Some(Self::Vertical),
+            Axis::Both => None,
+        }
+    }
+
+    /// Lower to `accesskit::Orientation`. The single bridge point so an
+    /// `accesskit` minor bump rewrites only this arm.
+    #[must_use]
+    pub const fn to_accesskit(self) -> AkOrientation {
+        match self {
+            Self::Horizontal => AkOrientation::Horizontal,
+            Self::Vertical => AkOrientation::Vertical,
+        }
+    }
+
+    /// WAI-ARIA literal as it appears in an HTML `aria-orientation` attribute,
+    /// so introspect / RPC and AT report identical tokens.
+    #[must_use]
+    pub const fn aria_name(self) -> &'static str {
+        match self {
+            Self::Horizontal => "horizontal",
+            Self::Vertical => "vertical",
         }
     }
 }

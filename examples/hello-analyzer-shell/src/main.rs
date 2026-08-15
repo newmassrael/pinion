@@ -79,8 +79,9 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use pinion_a11y::{
-    AccessLive, AccessNode, AccessState, AccessValue, AriaRole, GridCell, GridColumn, GridRow,
-    HasPopup, NavLink, WidgetA11y, grid_table_nodes, navigation_link_nodes, page_region_node,
+    AccessFocus, AccessLive, AccessNode, AccessState, AccessValue, AriaRole, GridCell, GridColumn,
+    GridRow, HasPopup, NavLink, WidgetA11y, grid_table_nodes, navigation_link_nodes,
+    page_region_node,
 };
 use pinion_chart::{ChartStyle, Sparkline};
 use pinion_core::availability::Unavailable;
@@ -89,6 +90,7 @@ use pinion_core::external::{
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
     SchemaArg, SchemaField, ThreadOwnership,
 };
+use pinion_core::focus_state;
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect, TextNode};
 use pinion_core::style::{
@@ -101,6 +103,7 @@ use pinion_core::widgets::button::ButtonState;
 use pinion_core::widgets::card::{Card, CardAffordance, CardChrome, CardState, Remedy};
 use pinion_core::widgets::destination::{Destinations, Detour, Journey};
 use pinion_core::widgets::radio::RadioState;
+use pinion_core::widgets::roving::{Landing, Member, Roving};
 use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::widgets::tile_grid::{
     Maximized, Tile, TileDirection, TileGrid, TileId, TileNudge,
@@ -559,6 +562,14 @@ struct ShellState {
     cursor: Signal<(u32, u32)>,
     pressed: RefCell<Option<Hit>>,
     drag: Signal<Option<Drag>>,
+    /// ★★★★★ R1698 — **one keyboard cursor per composite**, keyed by the tag
+    /// that owns the Tab stop.
+    ///
+    /// Held rather than rebuilt because a cursor is a position somebody put
+    /// there: rebuilding it every frame would reset it whenever anything else
+    /// on the screen changed. Re-seated (rather than replaced) each time it is
+    /// read, so a roster that grows keeps the cursor on the member it was on.
+    cursors: RefCell<BTreeMap<&'static str, Roving>>,
     /// R1697 — a detached panel being moved or sized, in flight.
     float_grab: Signal<Option<FloatGrab>>,
     /// R1697 — the next stacking number a raise hands out. Monotonic, as the
@@ -655,6 +666,12 @@ impl ShellState {
             cursor: Signal::new((0, 0)),
             pressed: RefCell::new(None),
             drag: Signal::new(None),
+            cursors: RefCell::new(
+                spec::FOCUS_RING
+                    .iter()
+                    .filter_map(|stop| stop.cursor.map(|spec| (stop.tag, Roving::new(spec))))
+                    .collect(),
+            ),
             float_grab: Signal::new(None),
             float_z: RefCell::new(0),
             toast: Signal::new(format!("{} loaded", spec::PRESET)),
@@ -778,6 +795,77 @@ impl ShellState {
     /// R1697 — one panel, by id.
     fn float(&self, id: &str) -> Option<Float> {
         self.floats.get().into_iter().find(|f| f.id == id)
+    }
+
+    /// ★★★★★ R1698 — **what a composite's arrows reach, in cursor order.**
+    ///
+    /// Derived from the same tables the paint and the accessibility tree read,
+    /// so there is one roster rather than three. And deliberately NOT the
+    /// accessibility children: the palette's children are three section groups
+    /// and two status readouts while the thing a cursor walks is the thirteen
+    /// catalogue entries inside them — the distinction the framework's `Roving`
+    /// exists to keep, and the one the reference toolkit loses (its tab bar of
+    /// three tabs reports five accessible children).
+    ///
+    /// A locked member stays in the roster. That is this screen's whole
+    /// subject: a seat booked for a later release is SHOWN rather than hidden,
+    /// so a reader must be able to put the cursor on it and be told what it is
+    /// waiting for. The floor skips its disabled entries, which makes them
+    /// undiscoverable from the keyboard.
+    fn cursor_members(stop: &str) -> Vec<Member> {
+        match stop {
+            "shell.appbar" => vec![
+                // The two view tabs are a composite of their own, so the bar
+                // reaches them as ONE member — WAI-ARIA's nesting, and the
+                // reason a member is a tag rather than a control.
+                Member::new(APP_BAR_TABS),
+                Member::new(BarChip::Source.tag()),
+                Member::new(BarChip::Capture.tag()),
+                Member::new(BarChip::Search.tag()),
+            ],
+            "shell.rail" => spec::RAIL
+                .iter()
+                .map(|seat| {
+                    Member::maybe(
+                        format!("shell.rail.{}", seat.key),
+                        matches!(seat.seat, spec::Seat::Page),
+                    )
+                })
+                .chain(std::iter::once(Member::new("shell.rail.account")))
+                .collect(),
+            "shell.subbar" => SubChip::ALL
+                .iter()
+                .map(|chip| Member::new(chip.tag()))
+                .collect(),
+            "shell.palette" => spec::CATALOGUE
+                .iter()
+                .map(|def| {
+                    Member::maybe(
+                        format!("shell.palette.{}", def.kind),
+                        def.tier == spec::Tier::Placeable,
+                    )
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
+    /// R1698 — the composite's cursor, re-seated from the live roster first.
+    ///
+    /// Re-seating rather than rebuilding is what keeps the cursor on the member
+    /// somebody put it on when the roster changes underneath — the property
+    /// `Roving::seat` exists for.
+    fn with_cursor<R>(&self, stop: &str, f: impl FnOnce(&mut Roving) -> R) -> Option<R> {
+        let members = Self::cursor_members(stop);
+        let mut cursors = self.cursors.borrow_mut();
+        let roving = cursors.get_mut(stop)?;
+        roving.seat(members);
+        Some(f(roving))
+    }
+
+    /// R1698 — a read-only snapshot of one composite's cursor, seated.
+    fn cursor_of(&self, stop: &str) -> Option<Roving> {
+        self.with_cursor(stop, |roving| roving.clone())
     }
 
     fn preset_names(&self) -> String {
@@ -2525,6 +2613,40 @@ impl ShellOracle {
         }
     }
 
+    /// R1698 — what a composite's cursor landing somewhere does besides move.
+    ///
+    /// Every stop here declares
+    /// [`Activation::Explicit`](pinion_core::widgets::roving::Activation::Explicit),
+    /// so arriving never chooses — and the `choose` bit is read rather than
+    /// ignored, because a declaration nothing reads is the "declared and thrown
+    /// away" arm R1684 named. If a stop is ever declared `Follows`, this is
+    /// where that becomes an action rather than a comment.
+    ///
+    /// The toast is what makes the cursor perceivable at all to somebody
+    /// driving the wire, and the ring is what makes it perceivable on screen:
+    /// the framework frames the active descendant, which this screen publishes
+    /// through `access_focus_target`.
+    fn landed(state: &Rc<ShellState>, stop: &str, landing: Landing) {
+        let Some(tag) = state
+            .cursor_of(stop)
+            .and_then(|r| r.cursor_tag().map(str::to_owned))
+        else {
+            return;
+        };
+        let what = match landing {
+            // ★ Every stop on THIS screen declares `Explicit`, and a unit test
+            // asserts that, so a `choose: true` reaching here would mean the
+            // specification changed without this arm being written. The other
+            // arm's real consumer is the capture viewer's message list, where
+            // the cursor IS the selection.
+            Landing::Moved { choose: true, .. } => "cursor moved and chose",
+            Landing::Moved { .. } => "cursor moved",
+            Landing::Held(_) => "cursor held at the end",
+            Landing::Nowhere => return,
+        };
+        state.say(format!("{tag} \u{00B7} {what}"));
+    }
+
     /// R1697 — bring a detached panel forward and start moving or sizing it.
     ///
     /// The raise comes first because the reference's `startFloatDrag` calls
@@ -2895,6 +3017,31 @@ impl ShellOracle {
     /// The keymap, as one function so the wire and a real keyboard drive the
     /// same one rather than two that drift.
     fn key(state: &Rc<ShellState>, chord: &str) -> bool {
+        Self::key_at(state, focus_state::focused().as_deref(), chord)
+    }
+
+    /// ★★★★★ R1698 — **the keymap, told where the reader is standing.**
+    ///
+    /// Before this round the screen's keyboard was global: an arrow meant "move
+    /// the board's selection" wherever focus was, so Tabbing to the rail and
+    /// pressing Down moved a card on a board the reader had left. That is half
+    /// of the WAI-ARIA composite pattern missing — R1696 gave each composite one
+    /// Tab stop and nothing gave it a cursor inside.
+    ///
+    /// So the composite that owns the focus is asked FIRST, and only a key it
+    /// does not navigate by falls through to the screen. A composite declaring
+    /// [`Axis::Horizontal`](pinion_core::widgets::roving::Axis::Horizontal)
+    /// returns `None` for `ArrowUp`, which is what lets a vertical enclosing
+    /// gesture still work while the reader is inside a horizontal bar.
+    fn key_at(state: &Rc<ShellState>, focused: Option<&str>, chord: &str) -> bool {
+        if let Some(stop) = focused
+            && let Some(landing) = state
+                .with_cursor(stop, |roving| roving.key(chord))
+                .flatten()
+        {
+            Self::landed(state, stop, landing);
+            return true;
+        }
         if state.searching.get() {
             return Self::search_key(state, chord);
         }
@@ -2915,6 +3062,22 @@ impl ShellOracle {
             _ => None,
         };
         if let Some(direction) = direction {
+            // ★★★★★ R1698 — **the board's arrows belong to the board.**
+            //
+            // A key a composite does not navigate by falls through, which is
+            // right; what is not right is where it used to land. Measured after
+            // the cursors went in: standing on the application bar and pressing
+            // Down moved a CARD on the board the reader had left, because this
+            // handler had no idea where anybody was standing.
+            //
+            // `None` still reaches it, and deliberately: that is the wire's own
+            // channel (`invoke("key", …)` with nothing focused) and an agent
+            // asking the board to move its selection is asking for exactly
+            // that. What is refused is an arrow arriving from inside another
+            // composite.
+            if focused.is_some_and(|tag| tag != "shell.canvas") {
+                return false;
+            }
             return Self::arrow(state, direction, shift, alt);
         }
         match base {
@@ -5820,9 +5983,67 @@ impl WidgetCore for AnalyzerShellView {
     fn title() -> &'static str {
         "pinion hello-analyzer-shell (R1649 §5.21 analysis-tool dashboard shell)"
     }
+
+    /// ★★★★★ R1698 — **the hook this screen did not have, so its keyboard was
+    /// not reachable from a keyboard.**
+    ///
+    /// Measured before it existed, by driving the running application: the wire
+    /// `invoke("key", "ArrowRight")` moved the board's selection and a REAL
+    /// `scene/key` press moved nothing at all. The screen publishes a keymap of
+    /// twelve chords through `KEYMAP` and not one of them was reachable by
+    /// pressing a key. Every test that drove the keyboard passed because every
+    /// test drove it through the wire — R1693's lesson, on the sibling screen,
+    /// recurring here: *the test and the defect were the same mistake.*
+    ///
+    /// The census across all 225 examples: 172 bindings implement this hook and
+    /// 135 of them read `focused`. This screen implemented it zero times.
+    ///
+    /// `focused` is threaded through rather than dropped, which is what makes
+    /// the composite cursors work at all: the arrows have to mean something
+    /// different depending on which composite the reader is standing in, and
+    /// three of this tree's bindings forward a key to one External without ever
+    /// asking where focus is.
+    fn apply_key(
+        _scene: &mut Scene,
+        focused: Option<&str>,
+        chord: &str,
+        _modifiers: pinion_core::Modifiers,
+    ) -> bool {
+        ShellOracle::key_at(&use_shell_state(), focused, chord)
+    }
 }
 
 impl WidgetA11y for AnalyzerShellView {
+    /// ★★★★★ R1698 — **where the cursor rests inside the focused composite.**
+    ///
+    /// WAI-ARIA's composite model in two lines: the AT focus stays on the
+    /// composite and `aria-activedescendant` names the member the arrows are
+    /// on. This screen returned nothing at all before, so an assistive
+    /// technology landing on the rail was told "Destinations" and never which
+    /// destination the cursor was on — and the framework's focus ring framed
+    /// the whole bar rather than the member.
+    ///
+    /// The ring comes free with it: `resolve_focus_ring_tag` reads exactly this
+    /// hook, so publishing the descendant is also what makes the cursor visible
+    /// on screen.
+    fn access_focus_target(_state: &(), focused: Option<&str>) -> Option<AccessFocus> {
+        let stop = focused?;
+        let state = use_shell_state();
+        let cursor = state
+            .cursor_of(stop)
+            .and_then(|roving| roving.cursor_tag().map(str::to_owned))
+            // The board's cursor is its selection: it is spatial rather than a
+            // linear roster, so it declares no `Roving` and reports the card it
+            // is on. It has had that cursor since R1662 and published it to
+            // nobody.
+            .or_else(|| {
+                (stop == "shell.canvas")
+                    .then(|| state.selected.get().map(|id| format!("card.{id}")))
+                    .flatten()
+            });
+        Some(AccessFocus::addressing(stop, cursor))
+    }
+
     /// ★★★★★ R1694 — **the screen a reader can walk, locked seats included.**
     ///
     /// Before this round the dashboard painted 128 addressable regions and
@@ -5928,12 +6149,15 @@ fn app_bar_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
     nodes.insert(0, tabs);
     nodes.insert(
         0,
-        AccessNode::new("shell.appbar", AriaRole::Toolbar)
-            .with_name("Application bar")
-            .with_child(APP_BAR_TABS)
-            .with_child(BarChip::Source.tag())
-            .with_child(BarChip::Capture.tag())
-            .with_child(BarChip::Search.tag()),
+        with_cursor_declared(
+            AccessNode::new("shell.appbar", AriaRole::Toolbar)
+                .with_name("Application bar")
+                .with_child(APP_BAR_TABS)
+                .with_child(BarChip::Source.tag())
+                .with_child(BarChip::Capture.tag())
+                .with_child(BarChip::Search.tag()),
+            state,
+        ),
     );
     nodes.push(
         AccessNode::new(BarChip::Source.tag(), AriaRole::Button)
@@ -5967,6 +6191,20 @@ fn app_bar_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
             .with_focused(searching),
     );
     nodes
+}
+
+/// ★★★★★ R1698 — publish the cursor this composite owns, if the specification
+/// gave it one.
+///
+/// One place, read from the state's own seated `Roving`, so what the wire says
+/// the arrows reach and what the arrows actually reach are the same object
+/// rather than two lists that agree today. A stop the ring declares with no
+/// cursor (the board, whose cursor is spatial) passes through unchanged.
+fn with_cursor_declared(node: AccessNode, state: &Rc<ShellState>) -> AccessNode {
+    match state.cursor_of(&node.tag) {
+        Some(roving) => node.with_navigation(&roving),
+        None => node,
+    }
 }
 
 /// The tag the two view tabs are announced under. Nothing paints it — the tabs
@@ -6003,6 +6241,7 @@ fn rail_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
     let mut nodes = navigation_link_nodes("shell.rail", "Destinations", &links);
     if let Some(rail) = nodes.first_mut() {
         rail.children.push("shell.rail.account".to_owned());
+        *rail = with_cursor_declared(rail.clone(), state);
     }
     nodes.push(AccessNode::new("shell.rail.account", AriaRole::Button).with_name("Account"));
     nodes
@@ -6012,11 +6251,14 @@ fn rail_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
 /// board.
 fn sub_bar_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
     vec![
-        AccessNode::new("shell.subbar", AriaRole::Toolbar)
-            .with_name("Layout bar")
-            .with_child(SubChip::Preset.tag())
-            .with_child(SubChip::EditLayout.tag())
-            .with_child(SubChip::AddWidget.tag()),
+        with_cursor_declared(
+            AccessNode::new("shell.subbar", AriaRole::Toolbar)
+                .with_name("Layout bar")
+                .with_child(SubChip::Preset.tag())
+                .with_child(SubChip::EditLayout.tag())
+                .with_child(SubChip::AddWidget.tag()),
+            state,
+        ),
         AccessNode::new(SubChip::Preset.tag(), AriaRole::Button)
             .with_name("Layout preset")
             .with_value(AccessValue::Text(state.preset.get()))
@@ -6521,9 +6763,11 @@ fn palette_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
         }
         nodes.push(section);
     }
-    list = list
-        .with_child("shell.palette.placed")
-        .with_child("shell.palette.reserved");
+    list = with_cursor_declared(
+        list.with_child("shell.palette.placed")
+            .with_child("shell.palette.reserved"),
+        state,
+    );
     nodes.push(
         AccessNode::new("shell.palette.placed", AriaRole::Status)
             .with_name("Placed")

@@ -40,6 +40,7 @@ pub mod radio;
 pub mod radio_group;
 pub mod range_slider;
 pub mod reorder;
+pub mod roving;
 pub mod row_dissect;
 pub mod row_search;
 pub mod row_style;

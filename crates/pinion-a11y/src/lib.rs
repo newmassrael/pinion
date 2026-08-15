@@ -98,7 +98,7 @@ pub use node::{
     attach_child_button, referenced_tags,
 };
 pub use radiogroup::{RadioCell, radiogroup_radio_nodes};
-pub use role::{AriaCurrent, AriaRole, AutoComplete, HasPopup, SortDirection};
+pub use role::{AriaCurrent, AriaRole, AutoComplete, HasPopup, Orientation, SortDirection};
 pub use scene_label::{enrich_access_keys_from_scene, enrich_names_from_scene};
 pub use structure::{
     StructureCensus, StructureFault, StructureNode, roles_with_structure, structure_census,

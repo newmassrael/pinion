@@ -395,6 +395,14 @@ fn lower_container_flags(access: &AccessNode, node: &mut Node) {
     if access.busy {
         node.set_busy();
     }
+
+    // R1698 §5.40 §5.39 — WAI-ARIA `aria-orientation`. A composite that
+    // publishes an active descendant has said a cursor exists; this is the half
+    // that says which arrows move it, without which an assistive technology can
+    // only tell somebody to try all four.
+    if let Some(orientation) = access.orientation {
+        node.set_orientation(orientation.to_accesskit());
+    }
 }
 
 fn lower_access_node(access: &AccessNode) -> Node {

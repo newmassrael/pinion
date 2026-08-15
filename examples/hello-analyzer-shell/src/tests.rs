@@ -11,11 +11,15 @@ use pinion_core::widgets::card::{CardAffordance, CardState, Remedy};
 use pinion_core::widgets::tile_grid::Tile;
 use pinion_core::widgets::transport::TransportStatus;
 
+use std::collections::BTreeMap;
+
 use super::{
-    BarChip, GRID_COLS, KEYMAP, SOURCES, STEPPERS, SubChip, TABS, cell_at, cell_rect, chrome,
-    def_of, kind_of, kind_span, parse_state, remedy_label, remedy_word, spec, state_sentence,
-    transport_word, type_ink,
+    AnalyzerShellView, BarChip, GRID_COLS, KEYMAP, SOURCES, STEPPERS, SubChip, TABS, cell_at,
+    cell_rect, chrome, def_of, kind_of, kind_span, parse_state, remedy_label, remedy_word, spec,
+    state_sentence, transport_word, type_ink, use_shell_state,
 };
+use pinion_a11y::WidgetA11y;
+use pinion_core::WidgetCore;
 
 /// A palette whose roles are all distinct, so a test that asks "did this take
 /// the fallback ink" gets an answer rather than a coincidence.
@@ -939,5 +943,328 @@ fn a_table_card_counts_its_header_row_in_both_the_count_and_the_indices() {
             last.row_index, grid.row_count,
             "{kind}: the last row IS the row count, so none is unreachable",
         );
+    }
+}
+
+// ── R1698: the cursor inside each composite ──────────────────────────────────
+
+/// Press a key the way the SHELL does — through `WidgetCore::apply_key`, with
+/// the focus manager's tag.
+///
+/// ★★★★★ Not through `ShellOracle::key_at`, which is what the first draft of
+/// these gates drove: four counterfactuals passed against that draft, and every
+/// one of them was this round's own headline defect. Deleting the `apply_key`
+/// hook entirely — the exact state this screen was in before the round —
+/// changed nothing in any of them, because none of them went through the door a
+/// person's key comes in by. A gate that drives the layer BELOW the defect is
+/// the shape R1693 named and this is its fourth recorded occurrence.
+fn press_key(focused: Option<&str>, chord: &str) -> bool {
+    let mut scene = super::view((), pinion_core::Frame::default());
+    AnalyzerShellView::apply_key(
+        &mut scene,
+        focused,
+        chord,
+        pinion_core::input::Modifiers::default(),
+    )
+}
+
+/// ★★★★★ R1698 — **every composite the ring declares has a cursor its arrows
+/// move, and the cursor is published.**
+///
+/// The half of WAI-ARIA's composite pattern R1696 left open. Measured on this
+/// running screen the day the round started: five Tab stops, four arrow keys
+/// each, forty-four presses and an active descendant that was `None` at every
+/// one of them.
+///
+/// It drives `ShellOracle::key_at` — the same function the shell's `apply_key`
+/// calls with the focus manager's tag — rather than writing a cursor, because a
+/// cursor a test moves by hand proves nothing about a key press.
+#[test]
+fn r1698_every_declared_composite_has_a_cursor_its_arrows_move() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let mut checked = 0;
+        for stop in spec::FOCUS_RING {
+            let Some(declared) = stop.cursor else {
+                continue;
+            };
+            let roving = state
+                .cursor_of(stop.tag)
+                .unwrap_or_else(|| panic!("{} declares a cursor and has none", stop.tag));
+            assert_eq!(
+                roving.spec(),
+                declared,
+                "{}'s policy is the declared one",
+                stop.tag
+            );
+            assert!(
+                roving.members().len() >= 2,
+                "{} is a composite, so it holds more than one member",
+                stop.tag
+            );
+            let first = roving
+                .cursor_tag()
+                .expect("a seated composite has a cursor")
+                .to_owned();
+
+            // The advancing key moves it; the retreating key brings it back.
+            let keys = declared.axis.keys();
+            assert!(press_key(Some(stop.tag), keys[0]));
+            let moved = state
+                .cursor_of(stop.tag)
+                .and_then(|r| r.cursor_tag().map(str::to_owned))
+                .expect("still seated");
+            assert_ne!(moved, first, "{}: {} moved the cursor", stop.tag, keys[0]);
+            let back = keys[keys.len() / 2];
+            assert!(press_key(Some(stop.tag), back));
+            assert_eq!(
+                state
+                    .cursor_of(stop.tag)
+                    .and_then(|r| r.cursor_tag().map(str::to_owned)),
+                Some(first.clone()),
+                "{}: {back} brought it back",
+                stop.tag
+            );
+
+            // Home and End reach the ends — the pair the reference toolkit's
+            // tab list does not implement at all.
+            assert!(press_key(Some(stop.tag), "End"));
+            assert_eq!(
+                state.cursor_of(stop.tag).and_then(|r| r.cursor()),
+                Some(roving.members().len() - 1),
+                "{}: End reaches the last member",
+                stop.tag
+            );
+            assert!(press_key(Some(stop.tag), "Home"));
+            assert_eq!(
+                state.cursor_of(stop.tag).and_then(|r| r.cursor()),
+                Some(0),
+                "{}: Home reaches the first",
+                stop.tag
+            );
+            checked += 1;
+        }
+        assert_eq!(
+            checked,
+            spec::FOCUS_RING
+                .iter()
+                .filter(|s| s.cursor.is_some())
+                .count(),
+            "every declared cursor was driven"
+        );
+        assert!(
+            checked >= 4,
+            "the ring declares four composites, not {checked}"
+        );
+    });
+}
+
+/// ★★★★★ R1698 — **an arrow from inside a composite does not reach the board.**
+///
+/// The defect the cursors created and a measurement caught: a key a composite
+/// declines falls through, and what it used to fall through to was a global
+/// handler that moved a card on the board the reader had left. Both halves are
+/// asserted, because a screen that swallowed every arrow would satisfy the
+/// first alone.
+#[test]
+fn r1698_an_arrow_from_inside_a_composite_does_not_reach_the_board() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let first = state.placed()[0].id().as_str().to_owned();
+        state.selected.set(Some(first.clone()));
+
+        // The rail is vertical, so ArrowDown is ITS key and never the board's.
+        assert!(press_key(Some("shell.rail"), "ArrowDown"));
+        assert_eq!(
+            state.selected.get(),
+            Some(first.clone()),
+            "the rail's own arrow left the board's selection alone"
+        );
+        // And a key the rail declines does not reach the board either.
+        assert!(!press_key(Some("shell.rail"), "ArrowRight"));
+        assert_eq!(
+            state.selected.get(),
+            Some(first.clone()),
+            "★ an arrow the rail declines must not move a card on a board the \
+             reader is not in — this is what the fall-through used to do"
+        );
+
+        // With focus on the board it moves, and so does the wire's own channel.
+        assert!(press_key(Some("shell.canvas"), "ArrowRight"));
+        assert_ne!(
+            state.selected.get(),
+            Some(first.clone()),
+            "the board's arrow moves the board"
+        );
+        state.selected.set(Some(first.clone()));
+        assert!(press_key(None, "ArrowRight"));
+        assert_ne!(
+            state.selected.get(),
+            Some(first),
+            "and an agent driving the wire with nothing focused still reaches it"
+        );
+    });
+}
+
+/// ★★★ R1698 — **the tree publishes the cursor**, and publishes the roster the
+/// arrows walk rather than the container's children.
+///
+/// The two are not the same list and the palette is the proof: its children are
+/// three section groups and two status readouts while its cursor walks the
+/// thirteen catalogue entries. A gate comparing `navigation` with `children`
+/// would pass on a screen that published the wrong one.
+#[test]
+fn r1698_the_tree_publishes_the_cursor_and_the_roster_it_walks() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let _ = use_shell_state();
+        let nodes = AnalyzerShellView::access_node(&(), None);
+        let by_tag: BTreeMap<&str, &pinion_a11y::AccessNode> =
+            nodes.iter().map(|n| (n.tag.as_str(), n)).collect();
+
+        for stop in spec::FOCUS_RING {
+            let Some(declared) = stop.cursor else {
+                continue;
+            };
+            let Some(node) = by_tag.get(stop.tag) else {
+                continue; // not at this destination
+            };
+            let nav = node
+                .navigation
+                .as_ref()
+                .unwrap_or_else(|| panic!("{} declares a cursor and publishes none", stop.tag));
+            assert_eq!(
+                nav.spec(),
+                declared,
+                "{} publishes its declared policy",
+                stop.tag
+            );
+            assert_eq!(
+                node.orientation,
+                pinion_a11y::Orientation::of(declared.axis),
+                "{} publishes the orientation its axis implies",
+                stop.tag
+            );
+            // Every member is a node in the tree, or the active descendant
+            // names something no reader can be told about.
+            for member in nav.members() {
+                assert!(
+                    by_tag.contains_key(member.tag.as_str()),
+                    "{}'s member {} is not in the tree",
+                    stop.tag,
+                    member.tag
+                );
+            }
+        }
+
+        // ★ The palette is where children and roster differ, so it is asserted
+        // explicitly rather than only in the loop.
+        let palette = by_tag["shell.palette"];
+        let nav = palette
+            .navigation
+            .as_ref()
+            .expect("the palette has a cursor");
+        assert_eq!(
+            nav.members().len(),
+            spec::CATALOGUE.len(),
+            "the cursor walks the catalogue entries"
+        );
+        assert_ne!(
+            nav.members().len(),
+            palette.children.len(),
+            "★ and NOT the container's children, which are its sections and its \
+             two status readouts — the distinction the floor loses"
+        );
+        // A locked entry stays in the roster: this screen's subject is that a
+        // seat booked for a later release is shown rather than hidden.
+        let locked = nav.members().iter().filter(|m| !m.enabled).count();
+        assert_eq!(
+            locked,
+            spec::reserved_count(),
+            "every reserved entry is reachable by the cursor and says it refuses"
+        );
+    });
+}
+
+/// ★★★★★ R1698 — **the focus target names the member the cursor is on.**
+///
+/// Demanded by a counterfactual that passed: replacing the composite focus
+/// target with an atomic one — telling a reader the rail has focus and never
+/// which destination, which is exactly the state this screen was in — left
+/// every other gate here green, because none of them read the hook the
+/// framework lowers to `aria-activedescendant` and frames the focus ring from.
+#[test]
+fn r1698_the_focus_target_names_the_member_the_cursor_is_on() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let mut checked = 0;
+        for stop in spec::FOCUS_RING {
+            let Some(declared) = stop.cursor else {
+                continue;
+            };
+            let target = AnalyzerShellView::access_focus_target(&(), Some(stop.tag))
+                .unwrap_or_else(|| panic!("{} owns the focus and reports no target", stop.tag));
+            assert_eq!(
+                target.focus_tag, stop.tag,
+                "the AT focus stays on the composite"
+            );
+            let cursor = state
+                .cursor_of(stop.tag)
+                .and_then(|r| r.cursor_tag().map(str::to_owned));
+            assert_eq!(
+                target.active_descendant, cursor,
+                "★ {} must name the member its arrows are on",
+                stop.tag
+            );
+            assert!(
+                target.active_descendant.is_some(),
+                "{} has members, so it has a descendant to name",
+                stop.tag
+            );
+
+            // And it FOLLOWS the arrows rather than being a value read once.
+            let before = target.active_descendant.clone();
+            assert!(press_key(Some(stop.tag), declared.axis.keys()[0]));
+            let after = AnalyzerShellView::access_focus_target(&(), Some(stop.tag))
+                .and_then(|t| t.active_descendant);
+            assert_ne!(
+                before, after,
+                "{}: the descendant moved with the cursor",
+                stop.tag
+            );
+            checked += 1;
+        }
+        assert!(checked >= 4, "four composites were checked, not {checked}");
+
+        // The board declares no roster and still names the card it is on, so a
+        // reader landing there is told which one.
+        let first = state.placed()[0].id().as_str().to_owned();
+        state.selected.set(Some(first.clone()));
+        let target = AnalyzerShellView::access_focus_target(&(), Some("shell.canvas"))
+            .expect("the board reports a target");
+        assert_eq!(target.active_descendant, Some(format!("card.{first}")));
+    });
+}
+
+/// ★★★ R1698 — every stop this screen declares chooses **explicitly**.
+///
+/// The assertion that keeps `Landing::choose` from being a bit nobody reads
+/// here: if a stop is ever declared `Follows`, this fails and whoever declared
+/// it has to write the arm. The other arm's real consumer is the capture
+/// viewer's message list, where the cursor IS the selection.
+#[test]
+fn r1698_no_stop_on_this_screen_chooses_by_arriving() {
+    for stop in spec::FOCUS_RING {
+        if let Some(cursor) = stop.cursor {
+            assert_eq!(
+                cursor.activation,
+                spec::Activation::Explicit,
+                "{} arrives without choosing",
+                stop.tag
+            );
+        }
     }
 }

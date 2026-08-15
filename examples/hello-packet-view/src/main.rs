@@ -48,14 +48,15 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 use pinion_a11y::{
-    AccessLive, AccessNode, AccessState, AccessValue, AriaRole, GridCell, GridColumn, GridRow,
-    WidgetA11y, grid_table_nodes,
+    AccessFocus, AccessLive, AccessNode, AccessState, AccessValue, AriaRole, GridCell, GridColumn,
+    GridRow, WidgetA11y, grid_table_nodes,
 };
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaArg,
     SchemaField, ThreadOwnership,
 };
+use pinion_core::focus_state;
 use pinion_core::reactive::Signal;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{Border, BoxStyle, Color, LayoutStyle, Size, TextOverflow, TextStyle};
@@ -68,6 +69,7 @@ use pinion_core::widgets::field_bytes::{
 };
 use pinion_core::widgets::hex_dump::{ByteSelection, HexLayout};
 use pinion_core::widgets::radio::RadioState;
+use pinion_core::widgets::roving::{Activation, Axis, Landing, Member, Roving, RovingSpec};
 use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -333,6 +335,19 @@ struct ViewState {
     row: Signal<usize>,
     /// Which decode field is selected, by path.
     field: Signal<String>,
+    /// ★★★★★ R1698 — which byte the hex grid's keyboard cursor rests on.
+    ///
+    /// **Not** derivable from [`field`](Self::field), and the round found that
+    /// out by trying: what the grid LIGHTS is the selected field's extent, and
+    /// a cursor computed from it cannot move within a field at all — every
+    /// arrow snapped back to the field's first byte. Selection and cursor are
+    /// two facts in every grid that has both (WAI-ARIA gives them
+    /// `aria-selected` and `aria-activedescendant` for the same reason), and
+    /// collapsing them is what made the byte grid's arrows a no-op.
+    ///
+    /// A press writes it too, so the pointer and the keyboard never disagree
+    /// about where the cursor is.
+    byte: Signal<usize>,
     /// Which saved filters are on.
     saved: Signal<Vec<bool>>,
     /// Which layers are folded, by index into [`spec::LAYERS`].
@@ -398,6 +413,15 @@ fn use_view_state() -> Rc<ViewState> {
     owner.cache("packet_view.state", || ViewState {
         row: Signal::new(spec::OPENING_ROW),
         field: Signal::new(spec::OPENING_FIELD.to_owned()),
+        // The cursor opens on the first byte of the field the screen opens
+        // with, so the two agree at boot and diverge only once somebody moves
+        // one of them. Derived rather than written down, because a second
+        // literal would be a second thing to keep in step with the field.
+        byte: Signal::new(
+            map.map()
+                .extent_of(spec::OPENING_FIELD)
+                .map_or(0, |(_, extent)| extent.at()),
+        ),
         saved: Signal::new(vec![false; spec::SAVED_FILTERS.len()]),
         folded: Signal::new(vec![false; spec::LAYERS.len()]),
         map,
@@ -826,6 +850,10 @@ fn select_field(state: &Rc<ViewState>, path: &str) {
 /// asked, so the highlight a press produces and the highlight a field selection
 /// produces are the same derivation.
 fn select_byte(state: &Rc<ViewState>, byte: usize) {
+    // ★ R1698 — the cursor goes where the byte is, whether a press or an arrow
+    // brought us here, so the pointer and the keyboard never disagree about
+    // where the grid's cursor rests.
+    state.byte.set(byte);
     let map = state.map.map();
     match map.coverage_at(SourceId::new(0), byte) {
         Coverage::Field(span) => {
@@ -877,7 +905,101 @@ fn press(state: &Rc<ViewState>) {
     }
 }
 
+/// ★★★★★ R1698 — **the cursor each pane already has, said in the framework's
+/// vocabulary.**
+///
+/// Not new state: the message list's cursor IS `row`, the decode tree's IS
+/// `field`, and the byte grid's is the byte the map has selected. A second copy
+/// of any of them would be a second thing to keep in step. So this projects
+/// what the screen holds into a [`Roving`] — which is what makes the arrows
+/// scopable, the active descendant publishable, and the policy askable, without
+/// the screen owning a cursor twice.
+///
+/// All three declare [`Activation::Follows`], and that is the substantive
+/// difference from the sibling screen: here the cursor **is** the selection —
+/// moving down a message list means reading the next message — while a
+/// navigation rail whose selection followed its cursor would navigate away from
+/// the page a reader is trying to leave.
+fn pane_cursor(state: &Rc<ViewState>, stop: &str) -> Option<Roving> {
+    let (spec, members, at) = match stop {
+        "pv.list" => (
+            RovingSpec::new(Axis::Vertical).with_activation(Activation::Follows),
+            (0..spec::ROWS.len())
+                .map(|n| Member::new(format!("pv.list.row.{n}")))
+                .collect::<Vec<_>>(),
+            format!("pv.list.row.{}", state.row.get()),
+        ),
+        "pv.tree" => (
+            RovingSpec::new(Axis::Vertical).with_activation(Activation::Follows),
+            visible_fields(state)
+                .iter()
+                .map(|(path, ..)| Member::new(format!("pv.tree.field.{path}")))
+                .collect(),
+            format!("pv.tree.field.{}", state.field.get()),
+        ),
+        "pv.bytes" => (
+            // Both axes, because the grid wraps: a byte's neighbour to the
+            // right is the next byte and the one below is sixteen further on,
+            // and both are steps along the SAME linear buffer. `Both` is the
+            // arm ARIA leaves undefined rather than calling horizontal.
+            RovingSpec::new(Axis::Both).with_activation(Activation::Follows),
+            (0..state.frame_bytes().len())
+                .map(|b| Member::new(format!("pv.bytes.cell.{b}")))
+                .collect(),
+            format!("pv.bytes.cell.{}", state.byte.get()),
+        ),
+        _ => return None,
+    };
+    let mut roving = Roving::new(spec);
+    roving.seat(members);
+    roving.point_at(&at);
+    Some(roving)
+}
+
+/// R1698 — put a pane's cursor where a [`Roving`] left it.
+///
+/// The write half of [`pane_cursor`]'s projection: one place, so a cursor that
+/// moved and a selection that did not is not a state this screen can be in.
+fn seat_pane_cursor(state: &Rc<ViewState>, stop: &str, roving: &Roving) {
+    let Some(index) = roving.cursor() else { return };
+    match stop {
+        "pv.list" => select_message(state, index),
+        "pv.tree" => {
+            if let Some((path, ..)) = visible_fields(state).get(index) {
+                select_field(state, &path.clone());
+            }
+        }
+        "pv.bytes" => select_byte(state, index),
+        _ => {}
+    }
+}
+
 fn key(state: &Rc<ViewState>, chord: &str) -> bool {
+    key_at(state, focus_state::focused().as_deref(), chord)
+}
+
+/// ★★★★★ R1698 — **the keymap, told where the reader is standing.**
+///
+/// Measured before this existed, by driving the running application: at all
+/// SIX of this screen's Tab stops — three filter chips, the decode tree and the
+/// byte grid included — pressing `ArrowDown` moved the **message list**, and
+/// the active descendant was `None` everywhere. An arrow meant one thing no
+/// matter where anybody was standing, which is the other half of the composite
+/// pattern R1693 left open when it gave the panes their Tab stops.
+///
+/// A plain button is its own stop and owns no cursor, so a chord arriving there
+/// falls through to the screen — which is why `Escape` still works from
+/// anywhere and why the pane arrows no longer do.
+fn key_at(state: &Rc<ViewState>, focused: Option<&str>, chord: &str) -> bool {
+    if let Some(stop) = focused
+        && let Some(mut roving) = pane_cursor(state, stop)
+        && let Some(landing) = roving.key(chord)
+    {
+        if let Landing::Moved { choose: true, .. } = landing {
+            seat_pane_cursor(state, stop, &roving);
+        }
+        return true;
+    }
     match chord {
         // ★★★★★ R1693 — the chords a real keyboard sends. They were `Down` and
         // `Up`, which **no key press produces**: the shell spells a named key
@@ -892,7 +1014,16 @@ fn key(state: &Rc<ViewState>, chord: &str) -> bool {
         // `grid`, which is a composite widget whose contract IS that the arrows
         // move the selection. Announcing that while the arrows are dead is the
         // same class of defect as announcing a table with no rows.
-        "ArrowDown" | "ArrowUp" => {
+        // ★★★★★ R1698 — **the message list's arrows belong to the message
+        // list.** A chord a composite does not navigate by falls through, and
+        // this is where it used to land: measured on the running screen,
+        // standing on any of the three saved-filter chips and pressing Down
+        // moved a row in a pane the reader was not in.
+        //
+        // `None` still reaches it, deliberately — that is the wire's own
+        // channel (`invoke("key", …)` with nothing focused), where an agent
+        // asking the list to move its selection is asking for exactly that.
+        "ArrowDown" | "ArrowUp" if focused.is_none_or(|tag| tag == "pv.list") => {
             let row = state.row.get();
             let next = if chord == "ArrowDown" {
                 (row + 1).min(spec::ROWS.len() - 1)
@@ -2005,25 +2136,42 @@ impl WidgetCore for PacketView {
         "pinion hello-packet-view (R1663 §5.41 field-to-bytes capture viewer)"
     }
 
+    /// ★★ R1698 — `focused` is threaded through rather than dropped.
+    ///
+    /// It was `_focused`, and the census across the tree says that is the
+    /// minority position: 135 of 172 `apply_key` implementations read it. What
+    /// dropping it cost here was measured on the running screen — at all six
+    /// Tab stops, `ArrowDown` moved the message list, including from the decode
+    /// tree and the byte grid, which have cursors of their own.
+    ///
+    /// It goes over the wire as a second argument rather than through a second
+    /// channel, so the RPC `invoke("key", …)` path and a real key press reach
+    /// the same function with the same information.
     fn apply_key(
-        scene: &mut Scene,
-        _focused: Option<&str>,
+        _scene: &mut Scene,
+        focused: Option<&str>,
         chord: &str,
         _modifiers: pinion_core::Modifiers,
     ) -> bool {
-        let Some(node) = scene.find_external_with_tag_mut(VIEW_TAG) else {
-            return false;
-        };
-        let Some(intro) = node.handle.introspect_mut() else {
-            return false;
-        };
-        intro
-            .invoke("key", IntrospectValue::Text(chord.to_owned()))
-            .is_ok_and(|v| v.as_bool() == Some(true))
+        key_at(&use_view_state(), focused, chord)
     }
 }
 
 impl WidgetA11y for PacketView {
+    /// ★★★★★ R1698 — where the cursor rests inside the focused pane.
+    ///
+    /// The panes announce themselves as a `grid`, a `tree` and a `grid`, and
+    /// every one of those roles' contract is that the arrows move a cursor an
+    /// assistive technology can follow. Measured before this existed: the
+    /// active descendant was `None` at every stop, so a reader was told the
+    /// list had focus and never which row.
+    fn access_focus_target(_state: &(), focused: Option<&str>) -> Option<AccessFocus> {
+        let stop = focused?;
+        let state = use_view_state();
+        let cursor = pane_cursor(&state, stop).and_then(|r| r.cursor_tag().map(str::to_owned));
+        Some(AccessFocus::addressing(stop, cursor))
+    }
+
     /// ★★★★★ R1693 — **the screen, announced.**
     ///
     /// It announced three nodes until this round: a `table` with no row, a
@@ -2051,6 +2199,17 @@ impl WidgetA11y for PacketView {
         nodes.extend(tree_nodes(&state));
         nodes.extend(bytes_nodes(&state));
         nodes.extend(reassembly_nodes());
+        // ★★★★★ R1698 — each pane publishes the cursor its arrows move, in one
+        // place rather than at three builders. What it publishes is NOT the
+        // node's children: the tree's children are its visible fields (which
+        // happens to match) while the byte grid's are its ROWS and the cursor
+        // walks its cells. A client reading `children` to learn what the arrows
+        // reach would be told rows and given cells.
+        for node in &mut nodes {
+            if let Some(roving) = pane_cursor(&state, &node.tag) {
+                *node = node.clone().with_navigation(&roving);
+            }
+        }
         nodes
     }
 }

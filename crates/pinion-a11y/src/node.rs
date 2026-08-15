@@ -16,9 +16,10 @@
 use pinion_core::availability::Unavailable;
 use pinion_core::scene::Rect;
 use pinion_core::widgets::interaction::InteractionState;
+use pinion_core::widgets::roving::Roving;
 use std::collections::HashMap;
 
-use crate::role::{AriaCurrent, AriaRole, AutoComplete, HasPopup, SortDirection};
+use crate::role::{AriaCurrent, AriaRole, AutoComplete, HasPopup, Orientation, SortDirection};
 
 /// Pinion-native a11y descriptor for one widget.
 ///
@@ -144,6 +145,41 @@ pub struct AccessNode {
     /// container roles that own a selection set (`Listbox`,
     /// future `Grid`/`Tree`/`TabList`); atomic roles ignore the flag.
     pub multiselectable: bool,
+    /// R1698 §5.40 §5.39 — WAI-ARIA `aria-orientation` per WAI-ARIA 1.2
+    /// §6.6.6: which way this composite's cursor runs, and therefore **which
+    /// arrow keys reach its members**.
+    ///
+    /// The keyboard half of a composite widget: [`Self::children`] says what the
+    /// container holds structurally, and this says the direction an assistive
+    /// technology should tell somebody to press. A composite that publishes an
+    /// active descendant without publishing the axis has told a reader that a
+    /// cursor exists and not how to move it.
+    ///
+    /// `None` omits the attribute, which in ARIA means the orientation is
+    /// **undefined** rather than horizontal — the right answer for a composite
+    /// whose members wrap across lines and where both axes advance the same
+    /// linear roster ([`Axis::Both`](pinion_core::widgets::roving::Axis::Both)).
+    ///
+    /// Declared through [`Axis::aria`](pinion_core::widgets::roving::Axis::aria)
+    /// rather than as a free string, so the value published here and the keys
+    /// the composite actually navigates by come from one declaration.
+    pub orientation: Option<Orientation>,
+    /// R1698 §5.40 §5.39 — **the cursor this composite owns**: which members
+    /// its arrows reach, in cursor order, and where the cursor rests.
+    ///
+    /// Distinct from [`children`](Self::children), which is the container's
+    /// **structure**. The two are not the same list, and treating them as one
+    /// is a measured defect rather than a theoretical one: this project's own
+    /// widget palette has three section groups and two status readouts as
+    /// children while the thing a cursor walks is the thirteen catalogue
+    /// entries inside those groups — and at the floor, a tab bar of three tabs
+    /// reports five accessible children, so a client reading the child list to
+    /// learn what the arrows reach is told two things that are not members.
+    ///
+    /// This is what makes a composite askable rather than only drivable: an
+    /// agent reads the roster, the axis and the policy instead of pressing
+    /// every key to find out. `None` on anything that is not a composite.
+    pub navigation: Option<Roving>,
     /// R674 §5.40 — WAI-ARIA `aria-level` per WAI-ARIA 1.2 §6.6.8.
     /// One-based depth in the hierarchy. Required on per-item
     /// descriptors inside roles that own a hierarchical structure
@@ -497,6 +533,8 @@ impl AccessNode {
             children: Vec::new(),
             selected: None,
             multiselectable: false,
+            orientation: None,
+            navigation: None,
             level: None,
             position_in_set: None,
             size_of_set: None,
@@ -617,6 +655,33 @@ impl AccessNode {
     #[must_use]
     pub fn with_multiselectable(mut self) -> Self {
         self.multiselectable = true;
+        self
+    }
+
+    /// R1698 §5.40 §5.39 — declare which way this composite's cursor runs
+    /// (`aria-orientation`), taking the answer from the roving
+    /// [`Axis`](pinion_core::widgets::roving::Axis) the composite navigates by
+    /// so the attribute and the arrow keys cannot disagree.
+    ///
+    /// [`Axis::Both`](pinion_core::widgets::roving::Axis::Both) leaves the
+    /// attribute absent, which is what ARIA already means by an undefined
+    /// orientation.
+    #[must_use]
+    pub fn with_axis(mut self, axis: pinion_core::widgets::roving::Axis) -> Self {
+        self.orientation = Orientation::of(axis);
+        self
+    }
+
+    /// R1698 §5.40 §5.39 — declare the cursor this composite owns: its roster
+    /// in cursor order, its policy, and where the cursor rests.
+    ///
+    /// Sets [`orientation`](Self::orientation) from the same declaration, so
+    /// the attribute an assistive technology reads and the arrows the composite
+    /// actually answers cannot disagree — they are one call.
+    #[must_use]
+    pub fn with_navigation(mut self, roving: &Roving) -> Self {
+        self.orientation = Orientation::of(roving.spec().axis);
+        self.navigation = Some(roving.clone());
         self
     }
 
