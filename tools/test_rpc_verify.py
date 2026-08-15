@@ -534,9 +534,14 @@ def test_the_stated_reason_gate_fails_a_silent_region_and_passes_a_stated_one() 
     tf = RpcSubprocess("fixture-example")
     tf._proc = None
     rows: list[dict] = []
-    tf.request = lambda method, params=None, **kw: Response(  # type: ignore[assignment]
-        id=1, result={"disabled": rows}
-    )
+    nodes: list[dict] = []
+
+    def answer(method, params=None, **kw):
+        if method == "scene/access":
+            return Response(id=1, result={"nodes": nodes})
+        return Response(id=1, result={"disabled": rows})
+
+    tf.request = answer  # type: ignore[assignment]
     tf._gate_stated_reasons()  # nothing inert at all: no raise
 
     rows.append(
@@ -550,7 +555,55 @@ def test_the_stated_reason_gate_fails_a_silent_region_and_passes_a_stated_one() 
             "recourse": "await_release",
         }
     )
-    tf._gate_stated_reasons()  # inert WITH a reason: reported, not fatal
+    # ★★★★★ R1694 — an inert region with a stated reason and NO accessibility
+    # node. R1669 counted the reason and never asked whether it reached the one
+    # audience its own failure text names. Measured over 215 running surfaces:
+    # thirteen stated reasons, eleven of them unheard.
+    raised = None
+    try:
+        tf._gate_stated_reasons()
+    except AssertionError as exc:
+        raised = str(exc)
+    check(
+        raised is not None and "panel" in raised and "no accessibility node" in raised,
+        "stated-reason: a reason no reader is told fails the demo, by name",
+    )
+
+    # Announced, and the assembler relayed the reason onto it: reported, not
+    # fatal. This is what every surface in the tree looks like after R1694.
+    nodes.append(
+        {
+            "tag": "panel",
+            "role": "listitem",
+            "name": "Topology Map",
+            "state": {"disabled": True},
+            "unavailable": {
+                "kind": "reserved",
+                "detail": "requirement 12",
+                "recourse": "await_release",
+            },
+        }
+    )
+    tf._gate_stated_reasons()  # inert, stated AND heard: no raise
+
+    # ★ The other half of the same failure, and it is a different repair: the
+    # node is there and the reason was dropped between the cascade and the tree.
+    nodes[0].pop("unavailable")
+    raised = None
+    try:
+        tf._gate_stated_reasons()
+    except AssertionError as exc:
+        raised = str(exc)
+    check(
+        raised is not None and "reason dropped" in raised and "listitem" in raised,
+        "stated-reason: a node that lost the reason fails, and says what it is",
+    )
+    nodes[0]["unavailable"] = {
+        "kind": "reserved",
+        "detail": "requirement 12",
+        "recourse": "await_release",
+    }
+    tf._gate_stated_reasons()
 
     rows.append(
         {

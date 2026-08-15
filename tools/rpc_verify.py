@@ -1390,12 +1390,83 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
                 f"accessibility tree's state description, and the person "
                 f"looking at a greyed control wondering what to do about it."
             )
+        unheard = self._unheard_reasons(rows)
+        if unheard:
+            named = "; ".join(
+                f"{tag} ({why})" for tag, why in unheard[:6]
+            )
+            raise AssertionError(
+                f"{self.example}: {len(unheard)} region(s) state WHY they are "
+                f"inert and no reader is told — {named}. A reason on "
+                f"`scene/disabled` that never reaches `scene/access` is a "
+                f"sentence written for somebody who cannot receive it. A region "
+                f"the cascade declares unavailable owes an accessibility node: "
+                f"announce it (`WidgetA11y::access_node`) and the assembler "
+                f"relays the declared reason onto it — there is nothing to "
+                f"restate. Measured tree-wide before this gate was armed: "
+                f"13 stated reasons over 215 surfaces, 11 of them unheard, all "
+                f"on one screen."
+            )
         if rows:
             kinds = sorted({r.get("reason", "?") for r in rows})
             print(
                 f"[stated-reason] {self.example}: {len(rows)} inert region(s), "
-                f"{len(silent)} silent (budget {allowed}), kinds {kinds}"
+                f"{len(silent)} silent (budget {allowed}), {len(rows)} heard, "
+                f"kinds {kinds}"
             )
+
+    def _unheard_reasons(self, rows: list) -> "list[tuple[str, str]]":
+        """★★★★★ R1694 — every stated reason that reaches no reader.
+
+        R1668 gave the framework a reason a disabled region can carry — a kind,
+        a detail, and a recourse derived from the kind — and R1669 counted the
+        regions that state one. Neither asked the next question: **does the
+        reason reach the accessibility tree**, which is the audience it was
+        built for and which the gate above names in its own failure text as a
+        destination. It did not, and nothing said so.
+
+        Measured over 215 running surfaces the day this was written: **13**
+        regions state a reason, and **11** of them had no accessibility node at
+        all — every one on the dashboard, whose whole subject is that nine seats
+        are locked and each says what it is booked under. The reason was
+        computed, published on the wire, painted as faded ink, and inaudible.
+
+        Two ways to fail, because the repairs differ: a region with no node
+        wants announcing, and a node that lost the reason wants the assembler
+        looked at. The relay itself is automatic — `stamp_inherited_disabled`
+        copies the resolved reason onto whatever node carries the tag — so a
+        screen never restates it, and this gate is what notices when a region
+        is missing from the tree rather than when somebody forgot to copy it.
+
+        Zero for every surface, with no exception list: the population is the
+        regions a screen ITSELF declared unavailable, so a surface that declares
+        none is silent here.
+
+        A row whose reason is `unstated` is **not** in the population. It is
+        already the other half of this gate's failure, and reporting one region
+        under two arms would make a single repair look like two — the mistake
+        R1693 wrote down about adding an arm for a defect an existing arm
+        already names.
+        """
+        rows = [r for r in rows if r.get("reason") not in (None, "unstated")]
+        if not rows:
+            return []
+        try:
+            resp = self.request("scene/access")
+        except RpcError as exc:
+            if exc.code in (-32601, -32602):
+                return []  # stale binary
+            raise
+        assert resp is not None
+        nodes = {n.get("tag"): n for n in resp.result.get("nodes", [])}
+        out: list[tuple[str, str]] = []
+        for row in rows:
+            node = nodes.get(row["tag"])
+            if node is None:
+                out.append((row["tag"], "no accessibility node at all"))
+            elif node.get("unavailable") is None:
+                out.append((row["tag"], f"announced as {node.get('role')}, reason dropped"))
+        return out
 
     def _gate_font_pin(self) -> None:
         """R1662 — the font pin is actually ON, and the screen still has text.

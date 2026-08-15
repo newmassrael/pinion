@@ -556,6 +556,14 @@ def body() -> None:
             # and the DETACHED badge are not in this population.
             if tag != "shell.rail.account"
             and not tag.endswith(".badge")
+            # ★ R1694 — the palette's section headings and its two counts are
+            # addressable so a reader can walk into a group and hear how many
+            # seats are placed and reserved. They are readouts, not controls,
+            # and pressing one does nothing on purpose: the population here is
+            # a PREFIX rule, so the exclusion has to be by name and stated,
+            # exactly as the two above are.
+            and not tag.startswith("shell.palette.section.")
+            and tag not in ("shell.palette.placed", "shell.palette.reserved")
             and (
                 tag.startswith(
                     ("shell.appbar.", "shell.subbar.", "shell.rail.", "shell.palette.")

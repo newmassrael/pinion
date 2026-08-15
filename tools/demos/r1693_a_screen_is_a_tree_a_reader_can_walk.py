@@ -240,23 +240,29 @@ def body() -> None:
         header = tree["pv.list.header"]
         assert_eq(header["role"], "row", "D: the headers sit in a row")
         assert_eq(len(header["children"]), len(columns), "D: one header per column")
+        # ★ R1694 — the header row is row ONE, because `aria-rowcount` above
+        # counts it. Until this was corrected the count said seventeen, the
+        # rows were numbered one to sixteen, the header carried no index at all,
+        # and the first message claimed the header's place.
+        assert_eq(header["row_index"], 1, "D: the header row is row one")
         for n, column in enumerate(columns):
             head = tree[f"pv.list.head.{n}"]
             assert_eq(head["role"], "columnheader", f"D: head {n} is a column header")
             assert_eq(head["name"], column["title"], f"D: head {n} is named")
             assert_eq(head["column_index"], n + 1, f"D: head {n} says which column")
+            assert_eq(head["row_index"], 1, f"D: head {n} is in the header row")
         CHECKS.extend(["header row", "column headers named", "column indices"])
 
         # Every cell of every message, addressable and placed.
         for n, message in enumerate(rows):
             row_node = tree[f"pv.list.row.{n}"]
             assert_eq(row_node["role"], "row", f"D: message {n} is a row")
-            assert_eq(row_node["row_index"], n + 1, f"D: message {n} says which row")
+            assert_eq(row_node["row_index"], n + 2, f"D: message {n} says which row")
             assert_eq(len(row_node["children"]), len(columns), f"D: message {n} cells")
             for c in range(len(columns)):
                 cell = tree[f"pv.list.cell.{n}_{c}"]
                 assert_eq(cell["role"], "gridcell", f"D: cell {n},{c}")
-                assert_eq(cell["row_index"], n + 1, f"D: cell {n},{c} row")
+                assert_eq(cell["row_index"], n + 2, f"D: cell {n},{c} row")
                 assert_eq(cell["column_index"], c + 1, f"D: cell {n},{c} column")
             # And the cells say what is painted in them.
             assert_eq(
@@ -264,6 +270,11 @@ def body() -> None:
                 message["time"],
                 f"D: message {n}'s timestamp cell",
             )
+        assert_eq(
+            tree[f"pv.list.row.{len(rows) - 1}"]["row_index"],
+            tree["pv.list"]["row_count"],
+            "D: ★ the last message is the row count, so no row is unreachable",
+        )
         CHECKS.extend(["every row", "every cell", "cell coordinates", "cell contents"])
         print(f"[demo] {len(rows) * len(columns)} addressable cell(s)")
 

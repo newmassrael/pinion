@@ -47,7 +47,10 @@ mod tests;
 use std::cell::RefCell;
 use std::rc::Rc;
 
-use pinion_a11y::{AccessLive, AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
+use pinion_a11y::{
+    AccessLive, AccessNode, AccessState, AccessValue, AriaRole, GridCell, GridColumn, GridRow,
+    WidgetA11y, grid_table_nodes,
+};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaArg,
@@ -64,10 +67,12 @@ use pinion_core::widgets::field_bytes::{
     use_byte_map,
 };
 use pinion_core::widgets::hex_dump::{ByteSelection, HexLayout};
+use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use pinion_widget_paint::pane::{PanePointer, scroll_pane};
+use pinion_widget_paint::run::text_run;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 
@@ -540,12 +545,12 @@ fn label(text: impl Into<String>, rect: Rect, px: u32, fg: Color) -> Scene {
     Scene::Text(TextNode::styled(text.into(), rect, run_style(px, fg)).with_layout(absolute(rect)))
 }
 
+/// A run that can be addressed — the lifted
+/// [`text_run`], which is where the
+/// rectangle-used-twice and pointer-transparency decisions now live (R1694,
+/// the third identical copy).
 fn tagged_label(tag: &str, text: impl Into<String>, rect: Rect, px: u32, fg: Color) -> Scene {
-    Scene::Text(
-        TextNode::styled(text.into(), rect, run_style(px, fg))
-            .with_tag(tag.to_owned())
-            .with_layout(absolute(rect)),
-    )
+    text_run(tag, text, rect, run_style(px, fg))
 }
 
 /// A bordered panel's CONTENT rectangle in its own space: its box less the 1px
@@ -2163,46 +2168,47 @@ fn list_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
     let columns = spec::COLUMNS.len();
     // `aria-rowcount` is the total, so the header row is counted — the reading
     // WAI-ARIA states and the one this tree's chart tables already use.
-    let mut grid = AccessNode::new("pv.list", AriaRole::Grid)
-        .with_name(spec::PANES[0].title)
-        .with_row_count(u32::try_from(spec::ROWS.len() + 1).unwrap_or(u32::MAX))
-        .with_column_count(u32::try_from(columns).unwrap_or(u32::MAX))
-        .with_child(LIST_HEADER);
-    let mut header = AccessNode::new(LIST_HEADER, AriaRole::Row);
-    let mut nodes = Vec::new();
-    for n in 0..columns {
-        let tag = format!("pv.list.head.{n}");
-        header = header.with_child(tag.clone());
-        nodes.push(AccessNode::new(tag, AriaRole::ColumnHeader).with_column(n));
-    }
-    for (n, message) in spec::ROWS.iter().enumerate() {
-        let tag = format!("pv.list.row.{n}");
-        grid = grid.with_child(tag.clone());
-        let cells = row_cells(message);
-        let mut row = AccessNode::new(tag, AriaRole::Row)
-            // WAI-ARIA gives `row` name-from-contents, and the contents are the
-            // cells. The row is painted as an EMPTY box spanning the grid line
-            // with its cells as SIBLINGS, so nothing under the row tag can be
-            // read — the same reason the document-table pass computes it.
-            .with_name(cells.join(" "))
-            .with_row(n)
-            .with_selected(n == selected)
-            .with_set_position(n, spec::ROWS.len());
-        for (c, text) in cells.iter().enumerate() {
-            let tag = list_cell_tag(n, c);
-            row = row.with_child(tag.clone());
-            nodes.push(
-                AccessNode::new(tag, AriaRole::GridCell)
-                    .with_name(text.clone())
-                    .with_row(n)
-                    .with_column(c),
-            );
-        }
-        nodes.push(row);
-    }
-    nodes.insert(0, header);
-    nodes.insert(0, grid);
-    nodes
+    // ★★★★★ R1694 — built by [`grid_table_nodes`] rather than by hand. This
+    // was the hand-rolled copy, and the sibling dashboard screen wrote a second
+    // one; the two disagreed about where the header row sits. WAI-ARIA counts
+    // it in `aria-rowcount`, so it has to be counted in `aria-rowindex` too,
+    // and this copy counted it in one and not the other: sixteen messages
+    // numbered one to sixteen out of seventeen, a header with no index at all,
+    // and the first message standing where the header belongs. The rule now
+    // lives once, in the builder, and the row's name-from-contents with it.
+    let grid_columns: Vec<GridColumn> = (0..columns)
+        .map(|n| GridColumn {
+            tag: format!("pv.list.head.{n}"),
+            sort: None,
+        })
+        .collect();
+    let grid_rows: Vec<GridRow> = spec::ROWS
+        .iter()
+        .enumerate()
+        .map(|(n, message)| GridRow {
+            tag: format!("pv.list.row.{n}"),
+            selected: n == selected,
+            state: RadioState::Idle,
+            cells: row_cells(message)
+                .into_iter()
+                .enumerate()
+                .map(|(c, text)| GridCell {
+                    tag: list_cell_tag(n, c),
+                    name: text,
+                    focused: false,
+                    selected: None,
+                })
+                .collect(),
+        })
+        .collect();
+    grid_table_nodes(
+        "pv.list",
+        spec::PANES[0].title,
+        false,
+        LIST_HEADER,
+        &grid_columns,
+        &grid_rows,
+    )
 }
 
 /// The tag the header row is announced under. Nothing paints it — the seven

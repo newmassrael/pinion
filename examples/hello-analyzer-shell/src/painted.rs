@@ -715,18 +715,35 @@ fn r1671_the_screen_fills_the_window_it_was_given() {
 #[test]
 fn r1668_the_screen_invents_no_seat_and_states_the_counts_it_specifies() {
     sweep(|state, shot, _, case| {
-        let declared_kinds: BTreeSet<&str> = spec::CATALOGUE.iter().map(|w| w.kind).collect();
+        // ★ R1694 — the panel now paints three more KINDS of addressable thing:
+        // a heading per section, and the two counts. They are here rather than
+        // excluded by name because the whole point of a backward check is that
+        // it enumerates everything the screen paints, and an exclusion list is
+        // where an invention hides.
+        let declared: BTreeSet<String> = spec::CATALOGUE
+            .iter()
+            .map(|w| format!("shell.palette.{}", w.kind))
+            .chain(
+                spec::SECTIONS
+                    .iter()
+                    .map(|(key, _, _)| format!("shell.palette.section.{key}")),
+            )
+            .chain([
+                "shell.palette.placed".to_owned(),
+                "shell.palette.reserved".to_owned(),
+            ])
+            .collect();
         for tag in shot.family("shell.palette.") {
-            let kind = tag.trim_start_matches("shell.palette.");
             assert!(
-                declared_kinds.contains(kind),
-                "{case}: the palette paints a row {kind:?} the specification does not declare",
+                declared.contains(tag),
+                "{case}: the palette paints {tag:?}, which the specification does not declare",
             );
         }
         assert_eq!(
             shot.family("shell.palette.").len(),
-            spec::CATALOGUE.len(),
-            "{case}: the palette paints a different number of rows than the catalogue has",
+            declared.len(),
+            "{case}: the palette paints a different number of regions than the \
+             catalogue, its sections and its two counts come to",
         );
 
         let declared_seats: BTreeSet<&str> = spec::RAIL.iter().map(|s| s.key).collect();

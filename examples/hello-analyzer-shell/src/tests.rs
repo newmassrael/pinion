@@ -737,3 +737,150 @@ fn r1662_a_board_taller_than_the_canvas_is_reachable_by_scrolling() {
         );
     });
 }
+
+// ── R1694: what reaches a reader who never sees the drawing ────────────────
+
+/// The accessibility tree of the opening screen, keyed by tag.
+fn announced() -> std::collections::BTreeMap<String, pinion_a11y::AccessNode> {
+    use pinion_a11y::WidgetA11y;
+    Owner::new().run(|| {
+        super::AnalyzerShellView::access_node(&(), None)
+            .into_iter()
+            .map(|node| (node.tag.clone(), node))
+            .collect()
+    })
+}
+
+#[test]
+fn the_voice_table_is_a_partition_with_no_tag_in_both_halves() {
+    // ★ A total census is satisfied by declaring everything silent, so the
+    // table has to fix the SPLIT — and a tag on both sides would let it claim
+    // both answers at once.
+    let mut voiced = std::collections::BTreeSet::new();
+    for voice in spec::VOICES {
+        for member in voice.population.members() {
+            let tag = voice.tag.replace("{}", &member);
+            assert!(voiced.insert(tag.clone()), "{tag} owes a voice twice");
+        }
+    }
+    for (template, population, _) in spec::SILENCES {
+        for member in population.members() {
+            let tag = template.replace("{}", &member);
+            assert!(
+                !voiced.contains(&tag),
+                "{tag} is declared both spoken and quiet",
+            );
+        }
+    }
+}
+
+#[test]
+fn the_locked_table_is_derived_from_the_tier_and_the_reservation() {
+    // Eleven: nine catalogue entries booked for a later release, and the two
+    // rail destinations booked the same way. Derived rather than listed, so a
+    // seat that is unlocked leaves the table by being unlocked.
+    let tags: Vec<String> = spec::LOCKED
+        .iter()
+        .flat_map(|(template, population)| {
+            population
+                .members()
+                .into_iter()
+                .map(move |member| template.replace("{}", &member))
+        })
+        .collect();
+    assert_eq!(tags.len(), 11, "{tags:?}");
+    assert_eq!(
+        tags.iter()
+            .filter(|t| t.starts_with("shell.palette."))
+            .count(),
+        spec::reserved_count(),
+    );
+    assert_eq!(
+        tags.iter().filter(|t| t.starts_with("shell.rail.")).count(),
+        spec::RAIL
+            .iter()
+            .filter(|seat| seat.reserved_for.is_some())
+            .count(),
+    );
+}
+
+#[test]
+fn a_locked_seat_is_announced_named_and_keeps_its_place_in_the_set() {
+    // ★★★★★ The screen's whole claim, checked where it is cheapest. Measured at
+    // 6.11.1 by building and running the same shape: a locked entry in an item
+    // view and a locked destination in a tab bar come back `focusable,
+    // selectable` and carry no unavailable state at all, so a reader there is
+    // invited to activate exactly the seats the screen has closed.
+    let tree = announced();
+    for (n, entry) in spec::CATALOGUE.iter().enumerate() {
+        let node = tree
+            .get(&format!("shell.palette.{}", entry.kind))
+            .unwrap_or_else(|| panic!("{} is not announced", entry.kind));
+        assert_eq!(node.role, pinion_a11y::AriaRole::ListItem);
+        assert_eq!(node.name.as_deref(), Some(entry.label));
+        assert_eq!(
+            node.position_in_set,
+            Some(u32::try_from(n + 1).unwrap()),
+            "{} keeps its place whether or not it is locked",
+            entry.kind,
+        );
+        assert_eq!(node.size_of_set, Some(13));
+    }
+    let list = &tree["shell.palette"];
+    assert_eq!(
+        list.size_of_set,
+        Some(u32::try_from(spec::CATALOGUE.len()).unwrap()),
+        "the palette counts the locked seats among its entries",
+    );
+    // The reason itself is NOT restated by the builder: it is declared once on
+    // the row's layout style and the assembler relays what the cascade
+    // resolved. So the tree built in isolation carries no reason at all, and
+    // the demo is what proves the relay end to end.
+    assert!(
+        tree.values().all(|node| node.unavailable.is_none()),
+        "the screen states the reason once, on the scene, not twice",
+    );
+}
+
+#[test]
+fn a_value_that_is_not_knowable_is_announced_as_its_meaning() {
+    // The map's unresolved row paints an em dash, which is the typographic
+    // stand-in for a value nobody has — and to somebody reading rather than
+    // looking it is a punctuation mark with no word in it.
+    let tree = announced();
+    let card = spec::card_of("keymap").expect("the opening board places the map");
+    let last = spec::MAP_COLUMNS.len() - 1;
+    assert_eq!(
+        tree[&format!("card.{card}.cell.{}_{last}", spec::MAP_UNRESOLVED)]
+            .name
+            .as_deref(),
+        Some("not known"),
+    );
+    // The negative half: a row that HAS a timestamp announces the timestamp.
+    assert_eq!(
+        tree[&format!("card.{card}.cell.0_{last}")].name.as_deref(),
+        Some(spec::MAP_ROWS[0].2),
+    );
+}
+
+#[test]
+fn a_table_card_counts_its_header_row_in_both_the_count_and_the_indices() {
+    // ★ WAI-ARIA counts the header row in `aria-rowcount`, so `aria-rowindex`
+    // has to count it too: the header is row one and the last data row is the
+    // row count. Held here as well as in the builder because this screen is
+    // where the disagreement was found.
+    let tree = announced();
+    for kind in spec::TABLE_CARDS {
+        let card = spec::card_of(kind).expect("the opening board places it");
+        let grid = &tree[&format!("card.{card}.grid")];
+        let head = &tree[&format!("card.{card}.head")];
+        assert_eq!(head.row_index, Some(1), "{kind}: the header is row one");
+        let rows = usize::try_from(grid.row_count.unwrap()).unwrap() - 1;
+        let suffix = if *kind == "keymap" { "map" } else { "row" };
+        let last = &tree[&format!("card.{card}.{suffix}.{}", rows - 1)];
+        assert_eq!(
+            last.row_index, grid.row_count,
+            "{kind}: the last row IS the row count, so none is unreachable",
+        );
+    }
+}

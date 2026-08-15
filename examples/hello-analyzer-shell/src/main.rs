@@ -78,7 +78,10 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use pinion_a11y::{AccessNode, AccessState, AccessValue, AriaRole, WidgetA11y};
+use pinion_a11y::{
+    AccessLive, AccessNode, AccessState, AccessValue, AriaRole, GridCell, GridColumn, GridRow,
+    HasPopup, NavLink, WidgetA11y, grid_table_nodes, navigation_link_nodes,
+};
 use pinion_chart::{ChartStyle, Sparkline};
 use pinion_core::availability::Unavailable;
 use pinion_core::external::{
@@ -93,7 +96,9 @@ use pinion_core::style::{
     TextOverflow, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme, ThemeMode, ThemeProvider, use_theme};
+use pinion_core::voice::Silence;
 use pinion_core::widgets::card::{Card, CardAffordance, CardChrome, CardState, Remedy};
+use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::widgets::tile_grid::{
     Maximized, Tile, TileDirection, TileGrid, TileId, TileNudge,
@@ -102,6 +107,7 @@ use pinion_core::widgets::transport::{TransportClock, TransportStatus, use_trans
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use pinion_widget_paint::pane::{PanePointer, scroll_pane};
+use pinion_widget_paint::run::text_run;
 
 mod spec;
 
@@ -903,23 +909,43 @@ fn palette_rect() -> Rect {
 /// Returned rather than recomputed at each site: the painter walks it to draw
 /// and the hit test walks it to resolve, which is the discipline the card
 /// rectangles follow.
-fn palette_rows() -> Vec<(Option<&'static spec::WidgetSpec>, &'static str, Rect)> {
+fn palette_rows() -> Vec<PaletteRow> {
     let mut out = Vec::new();
     let mut y = 76_u32;
     for (key, title, _tier) in spec::SECTIONS {
-        out.push((None, *title, Rect::new(16, y, PALETTE_W - 32, 20)));
+        out.push(PaletteRow {
+            def: None,
+            section: key,
+            title,
+            rect: Rect::new(16, y, PALETTE_W - 32, 20),
+        });
         y += 26;
         for def in spec::CATALOGUE.iter().filter(|w| w.section == *key) {
-            out.push((
-                Some(def),
-                def.label,
-                Rect::new(10, y, PALETTE_W - 30, PALETTE_ROW_H),
-            ));
+            out.push(PaletteRow {
+                def: Some(def),
+                section: key,
+                title: def.label,
+                rect: Rect::new(10, y, PALETTE_W - 30, PALETTE_ROW_H),
+            });
             y += PALETTE_ROW_H + 4;
         }
         y += 8;
     }
     out
+}
+
+/// One line of the palette panel: a section heading, or a catalogue entry.
+struct PaletteRow {
+    /// The catalogue entry, or `None` for the section heading above them.
+    def: Option<&'static spec::WidgetSpec>,
+    /// The section this line belongs to — the heading's own key, and the key of
+    /// the section an entry sits under. Carried rather than recomputed because
+    /// the heading is the group a reader descends through, and it needs a tag.
+    section: &'static str,
+    /// The words painted on the line.
+    title: &'static str,
+    /// Where, in the palette panel's own space.
+    rect: Rect,
 }
 
 // --- What is under a point ---------------------------------------------------
@@ -968,9 +994,9 @@ impl Hit {
         if px >= palette_rect().x {
             let panel = palette_rect();
             let (lx, ly) = (px - panel.x, py - panel.y);
-            for (def, _title, rect) in palette_rows() {
-                if let Some(def) = def
-                    && contains(rect, lx, ly)
+            for row in palette_rows() {
+                if let Some(def) = row.def
+                    && contains(row.rect, lx, ly)
                 {
                     return Self::Palette(def.kind);
                 }
@@ -3457,6 +3483,36 @@ fn clipped(text: &str, rect: Rect, px: u32, fg: Color, overflow: TextOverflow) -
     )
 }
 
+/// ★★★★★ R1694 — [`clipped`], **addressable**.
+///
+/// A table cell painted without a tag is a value a reader can see and cannot
+/// ask about: the row is one box and its cells are its siblings, so the whole
+/// row collapses to one run of words. Measured at 6.11.1, a model-driven item
+/// view answers a cell query with the cell's own name, its row, its column and
+/// its column header — the strong case, and the reason both of this screen's
+/// tables are announced cell by cell rather than row by row.
+fn cell(tag: String, text: &str, rect: Rect, px: u32, fg: Color, overflow: TextOverflow) -> Scene {
+    text_run(
+        tag,
+        text,
+        rect,
+        TextStyle::new()
+            .with_size_px(px)
+            .with_fg(fg)
+            .with_overflow(overflow),
+    )
+}
+
+/// The tag a table card's cell is addressed by.
+fn cell_tag(id: &str, row: usize, column: usize) -> String {
+    format!("card.{id}.cell.{row}_{column}")
+}
+
+/// The tag a table card's column header is addressed by.
+fn head_cell_tag(id: &str, column: usize) -> String {
+    format!("card.{id}.head.{column}")
+}
+
 /// The message stream: a header row of columns over the opening rows.
 fn stream_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
     const HEAD_H: u32 = 20;
@@ -3466,8 +3522,10 @@ fn stream_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
         ContainerNode::new(
             columns
                 .iter()
-                .map(|(name, x, w)| {
-                    clipped(
+                .enumerate()
+                .map(|(c, (name, x, w))| {
+                    cell(
+                        head_cell_tag(id, c),
                         name,
                         Rect::new(*x, 4, *w, 13),
                         FONT_TINY,
@@ -3496,7 +3554,8 @@ fn stream_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
         let cells = columns
             .iter()
             .zip(values)
-            .map(|((column, x, w), value)| {
+            .enumerate()
+            .map(|(c, ((column, x, w), value))| {
                 let ink = if *column == "type" {
                     type_ink(value, palette)
                 } else if *column == "name" {
@@ -3511,7 +3570,14 @@ fn stream_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
                 } else {
                     TextOverflow::Ellipsis
                 };
-                clipped(value, Rect::new(*x, 3, *w, 13), FONT_TINY, ink, overflow)
+                cell(
+                    cell_tag(id, n, c),
+                    value,
+                    Rect::new(*x, 3, *w, 13),
+                    FONT_TINY,
+                    ink,
+                    overflow,
+                )
             })
             .collect();
         out.push(Scene::Container(
@@ -3665,8 +3731,15 @@ fn map_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
     let room = rect.w.saturating_sub(12 + ID_W + 6);
     let with_seen = room >= PATH_FLOOR + SEEN_W;
     let path_w = if with_seen { room - SEEN_W } else { room };
-    let cells = |ink: Color, cols: [&str; 3], warn: bool| {
-        let mut out = vec![clipped(
+    // `row` is `None` for the header strip and the row index otherwise, which is
+    // what the cell tags are built from.
+    let cells = |ink: Color, cols: [&str; 3], warn: bool, row: Option<usize>| {
+        let tag = |column: usize| match row {
+            None => head_cell_tag(id, column),
+            Some(r) => cell_tag(id, r, column),
+        };
+        let mut out = vec![cell(
+            tag(0),
             cols[0],
             Rect::new(12, 2, ID_W, 13),
             FONT_TINY,
@@ -3674,7 +3747,8 @@ fn map_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
             TextOverflow::Ellipsis,
         )];
         if path_w > 0 {
-            out.push(clipped(
+            out.push(cell(
+                tag(1),
                 cols[1],
                 Rect::new(12 + ID_W + 6, 2, path_w, 13),
                 FONT_TINY,
@@ -3683,7 +3757,8 @@ fn map_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
             ));
         }
         if with_seen {
-            out.push(clipped(
+            out.push(cell(
+                tag(2),
                 cols[2],
                 Rect::new(12 + ID_W + 6 + path_w, 2, SEEN_W, 13),
                 FONT_TINY,
@@ -3702,6 +3777,7 @@ fn map_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
                 spec::MAP_COLUMNS[2],
             ],
             false,
+            None,
         ))
         .with_tag(format!("card.{id}.head"))
         .with_style(BoxStyle::filled(palette.raised))
@@ -3722,6 +3798,7 @@ fn map_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
                 },
                 [key, path, seen],
                 unresolved,
+                Some(n),
             ))
             .with_tag(format!("card.{id}.map.{n}"))
             .with_layout(absolute(Rect::new(rect.x, top, rect.w, ROW_H))),
@@ -3848,13 +3925,17 @@ fn filter_counts(id: &str, area: Rect, card: Rect, palette: Palette) -> Vec<Scen
     if spark_y + 30 <= card.y + card.h {
         out.push(Scene::Container(
             ContainerNode::new(vec![
+                // The plot area and its stroke are HOW the region is drawn; the
+                // region itself states the series, so these two are declared
+                // quiet rather than left undecided.
                 Sparkline::new(MATCH_SERIES.to_vec())
                     .with_color(kind_color("filter"))
                     .with_tag_prefix("match.spark")
                     .build(
                         Rect::new(0, 0, area.w, card.y + card.h - spark_y),
                         &ChartStyle::default(),
-                    ),
+                    )
+                    .silenced(Silence::part_of(format!("card.{id}.sparkline"))),
             ])
             .with_tag(format!("card.{id}.sparkline"))
             .with_layout(absolute(Rect::new(
@@ -4243,6 +4324,26 @@ fn spec_json() -> serde_json::Value {
         "filter_stats": spec::FILTER_STATS.iter().map(|(value, what)| serde_json::json!({
             "value": value, "of": what,
         })).collect::<Vec<_>>(),
+        // ★ R1694 — what reaches a reader who never sees the drawing, EXPANDED
+        // here rather than listed, so a family that grows a member cannot be
+        // satisfied by the members that were there when the table was written.
+        "voices": spec::VOICES.iter().flat_map(|voice| {
+            voice.population.members().into_iter().map(move |member| serde_json::json!({
+                "tag": voice.tag.replace("{}", &member),
+                "role": voice.role,
+            }))
+        }).collect::<Vec<_>>(),
+        "silences": spec::SILENCES.iter().flat_map(|(tag, population, kind)| {
+            population.members().into_iter().map(move |member| serde_json::json!({
+                "tag": tag.replace("{}", &member),
+                "kind": kind,
+            }))
+        }).collect::<Vec<_>>(),
+        "locked": spec::LOCKED.iter().flat_map(|(tag, population)| {
+            population.members().into_iter().map(move |member| {
+                serde_json::Value::String(tag.replace("{}", &member))
+            })
+        }).collect::<Vec<_>>(),
     })
 }
 
@@ -4370,15 +4471,25 @@ fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
             palette.muted,
         ),
     ];
-    for (def, title, rect) in palette_rows() {
-        match def {
-            None => children.push(label(title, rect, FONT_TINY, palette.muted)),
-            Some(def) => children.push(palette_row(state, def, rect, palette)),
+    for row in palette_rows() {
+        match row.def {
+            // The heading is the group a reader descends through, so it is
+            // addressable rather than loose ink between the entries.
+            None => children.push(cell(
+                format!("shell.palette.section.{}", row.section),
+                row.title,
+                row.rect,
+                FONT_TINY,
+                palette.muted,
+                TextOverflow::Ellipsis,
+            )),
+            Some(def) => children.push(palette_row(state, def, row.rect, palette)),
         }
     }
     // Both counts, because the screen's whole claim is the relation between
     // them: this release places four, and holds nine seats open.
-    children.push(label(
+    children.push(cell(
+        "shell.palette.placed".to_owned(),
         &format!(
             "{} placed of {}",
             state.placed().len(),
@@ -4387,8 +4498,10 @@ fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
         Rect::new(16, panel.h.saturating_sub(30), 130, 16),
         FONT_SMALL,
         palette.muted,
+        TextOverflow::Ellipsis,
     ));
-    children.push(label(
+    children.push(cell(
+        "shell.palette.reserved".to_owned(),
         &format!("{} reserved", spec::reserved_count()),
         Rect::new(
             panel.w.saturating_sub(110),
@@ -4398,6 +4511,7 @@ fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
         ),
         FONT_SMALL,
         palette.muted,
+        TextOverflow::Ellipsis,
     ));
     Scene::Container(
         ContainerNode::new(children)
@@ -4503,15 +4617,21 @@ fn view(_state: (), _frame: Frame) -> Scene {
     // the gate panel floating over it. The scroll range is derived from the
     // cards themselves by the pane, so a board that grows a row cannot outrun
     // a number written here.
-    let mut canvas_children = vec![scroll_pane(
-        &state.canvas_scroll,
-        Rect::new(0, 0, canvas_rect().w, canvas_rect().h),
-        (0, GAP),
-        // Every press goes to the one root `External` that runs this screen's
-        // own hit test, so the pane must be invisible to the router (R1655).
-        PanePointer::PassesThrough,
-        canvas_children,
-    )];
+    let mut canvas_children = vec![
+        scroll_pane(
+            &state.canvas_scroll,
+            Rect::new(0, 0, canvas_rect().w, canvas_rect().h),
+            (0, GAP),
+            // Every press goes to the one root `External` that runs this
+            // screen's own hit test, so the pane must be invisible to the
+            // router (R1655).
+            PanePointer::PassesThrough,
+            canvas_children,
+        )
+        // The viewport is a clip rather than a thing on the screen: what a
+        // reader walks is the board inside it.
+        .silenced(Silence::layout("the board's scrolling viewport")),
+    ];
     for float in &state.floats.get() {
         if let Some(scene) = float_scene(&state, float, palette) {
             canvas_children.push(scene);
@@ -4588,13 +4708,24 @@ impl WidgetCore for AnalyzerShellView {
 }
 
 impl WidgetA11y for AnalyzerShellView {
-    /// The board is a group, and **every card is a node that says what it is
-    /// showing**.
+    /// ★★★★★ R1694 — **the screen a reader can walk, locked seats included.**
     ///
-    /// The half a paint cannot carry, and the reason the state is a value: a
-    /// card that failed announces its failure and its remedy. Measured on the
-    /// toolkit at 6.11, no panel or view class has a content-state concept, so
-    /// this is not something an assistive technology can be told there.
+    /// Before this round the dashboard painted 128 addressable regions and
+    /// announced five: a group for the window and one per card, each holding
+    /// nothing. The rail, both bars, two tables, the decode tree, seventy-two
+    /// bytes and the whole palette were not in the tree at all — and with them
+    /// went the screen's own claim, which is that **nine seats are locked and
+    /// each says what it is booked under**. The framework has computed that
+    /// reason since R1668 and published it on `scene/disabled`; none of the
+    /// eleven locked regions had a node to carry it.
+    ///
+    /// Measured at 6.11.1 by building and running the same shape: a locked entry
+    /// in an item view and a locked destination in a tab bar answer
+    /// `focusable, selectable` and carry **no unavailable state at all** — the
+    /// bit survives only on a plain widget — so a reader there is invited to
+    /// activate exactly the seats the screen has closed. Here every locked seat
+    /// is announced unavailable, keeps its place in the set, and carries the
+    /// kind, the detail and the recourse the bit cannot hold.
     fn access_node(_state: &(), _focused: Option<&str>) -> Vec<AccessNode> {
         let state = use_shell_state();
         let mut nodes = vec![
@@ -4607,32 +4738,572 @@ impl WidgetA11y for AnalyzerShellView {
                     state.preset.get(),
                     spec::reserved_count(),
                     state.source.get(),
-                ))),
+                )))
+                .with_child("shell.appbar")
+                .with_child("shell.rail")
+                .with_child("shell.subbar")
+                .with_child("shell.canvas")
+                .with_child("shell.palette")
+                .with_child("shell.toast"),
         ];
-        for card in &state.cards.get() {
-            let id = card.id().as_str();
-            let where_it_is = if state.is_floating(id) {
-                "detached; "
-            } else {
-                ""
-            };
-            let announce = match card.remedy() {
-                None => format!("{where_it_is}{}", state_sentence(card.state())),
-                Some(remedy) => format!(
-                    "{where_it_is}{}; {}",
-                    state_sentence(card.state()),
-                    remedy_label(remedy)
-                ),
-            };
-            nodes.push(
-                AccessNode::new(format!("card.{id}"), AriaRole::Group)
-                    .with_name(card.title())
-                    .with_value(AccessValue::Text(announce))
-                    .with_state(AccessState::default()),
-            );
-        }
+        nodes.extend(app_bar_nodes(&state));
+        nodes.extend(rail_nodes(&state));
+        nodes.extend(sub_bar_nodes(&state));
+        nodes.extend(board_nodes(&state));
+        nodes.extend(palette_nodes(&state));
+        nodes.push(
+            AccessNode::new("shell.toast", AriaRole::Status)
+                .with_name("Activity")
+                .with_value(AccessValue::Text(state.toast.get()))
+                .with_live(AccessLive::Polite),
+        );
         nodes
     }
+}
+
+/// The application bar: which view is open, what capture is being read, how fast
+/// it is arriving, and the search field.
+fn app_bar_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
+    let current = state.tab.get();
+    let searching = state.searching.get();
+    let search = state.search.get();
+    let mut tabs = AccessNode::new(APP_BAR_TABS, AriaRole::TabList).with_name("View");
+    let mut nodes = Vec::new();
+    for (n, name) in TABS.iter().enumerate() {
+        let tag = if n == 0 {
+            BarChip::Tab0.tag()
+        } else {
+            BarChip::Tab1.tag()
+        };
+        tabs = tabs.with_child(tag);
+        nodes.push(
+            AccessNode::new(tag, AriaRole::Tab)
+                .with_name(*name)
+                .with_selected(current == *name)
+                .with_set_position(n, TABS.len()),
+        );
+    }
+    nodes.insert(0, tabs);
+    nodes.insert(
+        0,
+        AccessNode::new("shell.appbar", AriaRole::Toolbar)
+            .with_name("Application bar")
+            .with_child(APP_BAR_TABS)
+            .with_child(BarChip::Source.tag())
+            .with_child(BarChip::Capture.tag())
+            .with_child(BarChip::Search.tag()),
+    );
+    nodes.push(
+        AccessNode::new(BarChip::Source.tag(), AriaRole::Button)
+            .with_name("Capture source")
+            .with_value(AccessValue::Text(state.source.get()))
+            .with_has_popup(HasPopup::Menu),
+    );
+    // The rate readout moves while nobody touches it, which is what a live
+    // region is for — and the only region on this bar that is one.
+    nodes.push(
+        AccessNode::new(BarChip::Capture.tag(), AriaRole::Status)
+            .with_name("Capture")
+            .with_value(AccessValue::Text(format!(
+                "{}, {}",
+                if state.capturing.get() {
+                    spec::TRANSPORT
+                } else {
+                    "Paused"
+                },
+                spec::RATE,
+            )))
+            .with_live(AccessLive::Polite),
+    );
+    nodes.push(
+        AccessNode::new(BarChip::Search.tag(), AriaRole::TextInput)
+            .with_name("Search")
+            // An empty field announces what it is FOR rather than the hint text
+            // painted in it: the hint is a placeholder, and reading it as the
+            // value would tell a reader the field already holds those words.
+            .with_value(AccessValue::Text(search))
+            .with_focused(searching),
+    );
+    nodes
+}
+
+/// The tag the two view tabs are announced under. Nothing paints it — the tabs
+/// are painted individually and the list is what a reader descends through — so
+/// it is anchored by the members it composes.
+const APP_BAR_TABS: &str = "shell.appbar.tabs";
+
+/// The rail: seven destinations and the account seat, two of them **locked**.
+///
+/// Built through [`navigation_link_nodes`] rather than by hand, and the reason
+/// this screen is that builder's forcing consumer: a destination that is not
+/// available is exactly what its `unavailable` slot exists for. The reason
+/// itself is NOT restated here — the seat declares it once on its layout style
+/// and the accessibility assembler relays what the disabled cascade resolved, so
+/// there is one declaration and no second spelling to drift from it.
+fn rail_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
+    let here = state.nav.get();
+    let tags: Vec<String> = spec::RAIL
+        .iter()
+        .map(|seat| format!("shell.rail.{}", seat.key))
+        .collect();
+    let links: Vec<NavLink<'_>> = spec::RAIL
+        .iter()
+        .zip(&tags)
+        .map(|(seat, tag)| NavLink {
+            tag: tag.as_str(),
+            label: seat.title,
+            state: RadioState::Idle,
+            current: seat.key == here,
+            focused: false,
+            unavailable: None,
+        })
+        .collect();
+    let mut nodes = navigation_link_nodes("shell.rail", "Destinations", &links);
+    if let Some(rail) = nodes.first_mut() {
+        rail.children.push("shell.rail.account".to_owned());
+    }
+    nodes.push(AccessNode::new("shell.rail.account", AriaRole::Button).with_name("Account"));
+    nodes
+}
+
+/// The layout bar: which layout is open, and the two verbs that change the
+/// board.
+fn sub_bar_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
+    vec![
+        AccessNode::new("shell.subbar", AriaRole::Toolbar)
+            .with_name("Layout bar")
+            .with_child(SubChip::Preset.tag())
+            .with_child(SubChip::EditLayout.tag())
+            .with_child(SubChip::AddWidget.tag()),
+        AccessNode::new(SubChip::Preset.tag(), AriaRole::Button)
+            .with_name("Layout preset")
+            .with_value(AccessValue::Text(state.preset.get()))
+            .with_has_popup(HasPopup::Menu)
+            .with_expanded(state.preset_open.get()),
+        AccessNode::new(SubChip::EditLayout.tag(), AriaRole::Button)
+            .with_name(if state.editing.get() {
+                "Done"
+            } else {
+                spec::BOARD_VERBS[0]
+            })
+            .with_state(AccessState {
+                checked: Some(state.editing.get()),
+                ..AccessState::default()
+            }),
+        AccessNode::new(SubChip::AddWidget.tag(), AriaRole::Button).with_name(spec::BOARD_VERBS[1]),
+    ]
+}
+
+/// The board and every card placed on it.
+fn board_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
+    let cards = state.cards.get();
+    let mut board = AccessNode::new("shell.canvas", AriaRole::Group)
+        .with_name("Board")
+        .with_value(AccessValue::Text(format!(
+            "{} widget(s) placed on a {}-column grid",
+            state.placed().len(),
+            spec::GRID_COLS,
+        )));
+    let mut nodes = Vec::new();
+    for card in &cards {
+        let id = card.id().as_str();
+        board = board.with_child(format!("card.{id}"));
+        nodes.extend(card_nodes(state, card));
+    }
+    nodes.insert(0, board);
+    nodes
+}
+
+/// One placed card: the region, its header controls, and its body.
+fn card_nodes(state: &Rc<ShellState>, card: &Card) -> Vec<AccessNode> {
+    let id = card.id().as_str();
+    let where_it_is = if state.is_floating(id) {
+        "detached; "
+    } else {
+        ""
+    };
+    let announce = match card.remedy() {
+        None => format!("{where_it_is}{}", state_sentence(card.state())),
+        Some(remedy) => format!(
+            "{where_it_is}{}; {}",
+            state_sentence(card.state()),
+            remedy_label(remedy)
+        ),
+    };
+    let mut region = AccessNode::new(format!("card.{id}"), AriaRole::Group)
+        .with_name(card.title())
+        .with_value(AccessValue::Text(announce))
+        .with_state(AccessState::default())
+        .with_child(format!("card.{id}.grip"));
+    let mut nodes = vec![
+        AccessNode::new(format!("card.{id}.grip"), AriaRole::Button)
+            .with_name(format!("Move {}", card.title())),
+    ];
+    for control in spec::CARD_CHROME {
+        let tag = format!("card.{id}.{control}");
+        region = region.with_child(tag.clone());
+        nodes.push(
+            AccessNode::new(tag, AriaRole::Button).with_name(match *control {
+                "settings" => "Configure".to_owned(),
+                "tear_off" => {
+                    if state.is_floating(id) {
+                        "Redock".to_owned()
+                    } else {
+                        "Detach".to_owned()
+                    }
+                }
+                "maximize" => "Maximize".to_owned(),
+                _ => format!("Remove {}", card.title()),
+            }),
+        );
+    }
+    let body = match def_for_card(id).map(|def| def.kind) {
+        Some("packet") => stream_nodes(id),
+        Some("decode") => decode_nodes(id),
+        Some("keymap") => map_nodes(id),
+        Some("filter") => filter_nodes(id),
+        _ => Vec::new(),
+    };
+    for node in &body {
+        // The body's own containers are the card's children; everything under
+        // them is reached through them.
+        if BODY_ROOTS
+            .iter()
+            .any(|suffix| node.tag == format!("card.{id}.{suffix}"))
+        {
+            region = region.with_child(node.tag.clone());
+        }
+    }
+    nodes.extend(body);
+    nodes.insert(0, region);
+    nodes
+}
+
+/// The tag suffixes a card body's own top-level containers use — the nodes that
+/// become the card region's children.
+const BODY_ROOTS: &[&str] = &[
+    "grid",
+    "tree",
+    "bytegrid",
+    "query",
+    "chips",
+    "counts",
+    "sparkline",
+];
+
+/// The message stream, as a **grid**: a header row of column headers, then one
+/// row per message holding one cell per column.
+///
+/// This is the shape a model-driven item view builds for itself at the floor —
+/// measured at 6.11.1, its cell query answers the cell's name, its row, its
+/// column and its column header — and the shape a hand-painted table has to
+/// build or it has none at all.
+fn stream_nodes(id: &str) -> Vec<AccessNode> {
+    let rows: Vec<Vec<String>> = spec::STREAM_ROWS
+        .iter()
+        .map(|(time, kind, name, len)| {
+            vec![
+                (*time).to_owned(),
+                (*kind).to_owned(),
+                (*name).to_owned(),
+                (*len).to_owned(),
+            ]
+        })
+        .collect();
+    table_nodes(id, "Message stream", spec::STREAM_COLUMNS.len(), &rows)
+}
+
+/// The identifier map, as a grid on the same shape as the stream.
+///
+/// ★ The unresolved row's timestamp is painted as an em dash, which is the
+/// typographic stand-in for a value that is not knowable — and to somebody
+/// reading rather than looking it is a punctuation mark. The cell announces the
+/// meaning instead, which the voice census is what asked for: a name with no
+/// word in it is a hole.
+fn map_nodes(id: &str) -> Vec<AccessNode> {
+    let rows: Vec<Vec<String>> = spec::MAP_ROWS
+        .iter()
+        .map(|(key, path, seen)| {
+            let when = if seen.chars().all(|c| !c.is_alphanumeric()) {
+                "not known".to_owned()
+            } else {
+                (*seen).to_owned()
+            };
+            vec![(*key).to_owned(), (*path).to_owned(), when]
+        })
+        .collect();
+    table_nodes(id, "Identifier map", spec::MAP_COLUMNS.len(), &rows)
+}
+
+/// A card body that is a table.
+///
+/// ★★★★★ Built by [`grid_table_nodes`] rather than by hand. The first draft of
+/// this screen hand-rolled the shape — as the sibling capture screen already
+/// did — and the two disagreed about where the header row sits: WAI-ARIA counts
+/// it in `aria-rowcount`, so it has to be counted in `aria-rowindex` too, and a
+/// tree that counts it in one and not the other leaves its header unplaced and
+/// its last row unreachable. The rule now lives once, in the builder, where a
+/// third table cannot re-derive it differently.
+///
+/// The column headers are deliberately left unnamed here: they are painted with
+/// their own tags, so the name comes from the paint and the two cannot drift.
+fn table_nodes(id: &str, name: &str, columns: usize, rows: &[Vec<String>]) -> Vec<AccessNode> {
+    let grid_columns: Vec<GridColumn> = (0..columns)
+        .map(|c| GridColumn {
+            tag: head_cell_tag(id, c),
+            sort: None,
+        })
+        .collect();
+    let grid_rows: Vec<GridRow> = rows
+        .iter()
+        .enumerate()
+        .map(|(r, values)| GridRow {
+            tag: format!("card.{id}.{}.{r}", row_suffix(id)),
+            selected: false,
+            state: RadioState::Idle,
+            cells: values
+                .iter()
+                .enumerate()
+                .map(|(c, value)| GridCell {
+                    tag: cell_tag(id, r, c),
+                    name: value.clone(),
+                    focused: false,
+                    selected: None,
+                })
+                .collect(),
+        })
+        .collect();
+    grid_table_nodes(
+        &format!("card.{id}.grid"),
+        name,
+        false,
+        &format!("card.{id}.head"),
+        &grid_columns,
+        &grid_rows,
+    )
+}
+
+/// The tag segment a table card's data rows are painted under.
+fn row_suffix(id: &str) -> &'static str {
+    if def_for_card(id).map(|def| def.kind) == Some("keymap") {
+        "map"
+    } else {
+        "row"
+    }
+}
+
+/// The decode inspector: the layer tree, and the bytes it was decoded from.
+///
+/// ★ The tree is where this beats the floor rather than matching it. Built and
+/// run at 6.11.1, a two-column tree announces a row as **two sibling items** —
+/// the field and its value are peers, the value reports that it can expand, and
+/// the hierarchy is gone: every item is a direct child whatever its depth. Here
+/// a field is one item, its value is its value, and the level carries the depth
+/// the paint indents by.
+fn decode_nodes(id: &str) -> Vec<AccessNode> {
+    let mut tree = AccessNode::new(format!("card.{id}.tree"), AriaRole::Tree)
+        .with_name("Decoded layers")
+        .with_size_of_set(u32::try_from(spec::DECODE_ROWS.len()).unwrap_or(u32::MAX));
+    let mut nodes = Vec::new();
+    for (n, (depth, key, value)) in spec::DECODE_ROWS.iter().enumerate() {
+        let tag = format!("card.{id}.tree.{n}");
+        tree = tree.with_child(tag.clone());
+        let (place, siblings) = sibling_place(n);
+        let mut item = AccessNode::new(tag, AriaRole::TreeItem)
+            .with_name(*key)
+            .with_level(*depth + 1)
+            .with_set_position(place, siblings)
+            .with_selected(n == spec::DECODE_SELECTED);
+        if !value.is_empty() {
+            item = item.with_value(AccessValue::Text((*value).to_owned()));
+        }
+        // A layer heading is what folds; a field under it does not.
+        if *depth == 0 {
+            item = item.with_expanded(true);
+        }
+        nodes.push(item);
+    }
+    nodes.insert(0, tree);
+    nodes.extend(byte_nodes(id));
+    nodes
+}
+
+/// Where one decode row sits **among its own siblings** — the pair a flat index
+/// cannot give, and the one a reader is told.
+fn sibling_place(n: usize) -> (usize, usize) {
+    let depth = spec::DECODE_ROWS[n].0;
+    let siblings: Vec<usize> = spec::DECODE_ROWS
+        .iter()
+        .enumerate()
+        .filter(|(m, row)| row.0 == depth && same_parent(*m, n))
+        .map(|(m, _)| m)
+        .collect();
+    let place = siblings.iter().position(|m| *m == n).unwrap_or(0);
+    (place, siblings.len())
+}
+
+/// Whether two decode rows of the same depth hang under the same heading.
+fn same_parent(a: usize, b: usize) -> bool {
+    let parent = |n: usize| {
+        let depth = spec::DECODE_ROWS[n].0;
+        (0..n).rev().find(|m| spec::DECODE_ROWS[*m].0 < depth)
+    };
+    parent(a) == parent(b)
+}
+
+/// The captured frame as a grid: one row per painted line, one cell per byte,
+/// and the bytes the selected field was read from announced as selected.
+fn byte_nodes(id: &str) -> Vec<AccessNode> {
+    let per_line = 4;
+    let lines = spec::DECODE_BYTES.len();
+    let mut grid = AccessNode::new(format!("card.{id}.bytegrid"), AriaRole::Grid)
+        .with_name("Captured bytes")
+        .with_row_count(u32::try_from(lines).unwrap_or(u32::MAX))
+        .with_column_count(u32::try_from(per_line).unwrap_or(u32::MAX));
+    let mut nodes = Vec::new();
+    let (from, to) = spec::DECODE_SELECTED_SPAN;
+    for (line, bytes) in spec::DECODE_BYTES.iter().enumerate() {
+        let row_tag = format!("card.{id}.bytes.{line}");
+        grid = grid.with_child(row_tag.clone());
+        // The row is named by the offset it starts at, which is what the strip
+        // paints in its left column and what a reader counts from.
+        let mut row = AccessNode::new(row_tag, AriaRole::Row)
+            .with_name(format!("{:04x}", line * per_line))
+            .with_row(line);
+        for (column, byte) in bytes.iter().enumerate() {
+            let index = line * per_line + column;
+            let tag = format!("card.{id}.byte.{index}");
+            row = row.with_child(tag.clone());
+            nodes.push(
+                AccessNode::new(tag, AriaRole::GridCell)
+                    .with_name(format!("{byte:02x}"))
+                    .with_row(line)
+                    .with_column(column)
+                    .with_selected(index >= from && index < to),
+            );
+        }
+        nodes.push(row);
+    }
+    nodes.insert(0, grid);
+    nodes
+}
+
+/// The search and filter card: the query, the saved chips, and the three counts
+/// whose **relation** is the point of the card.
+fn filter_nodes(id: &str) -> Vec<AccessNode> {
+    let mut nodes = vec![
+        AccessNode::new(format!("card.{id}.query"), AriaRole::TextInput)
+            .with_name("Query")
+            .with_value(AccessValue::Text(spec::FILTER_QUERY.to_owned())),
+    ];
+    let mut chips =
+        AccessNode::new(format!("card.{id}.chips"), AriaRole::Group).with_name("Saved filters");
+    for (n, (name, on)) in spec::FILTER_CHIPS.iter().enumerate() {
+        let tag = format!("card.{id}.chip.{n}");
+        chips = chips.with_child(tag.clone());
+        // A saved filter is on or off, which WAI-ARIA reflects as a toggle
+        // button's pressed state rather than as a separate control kind.
+        nodes.push(
+            AccessNode::new(tag, AriaRole::Button)
+                .with_name(*name)
+                .with_state(AccessState {
+                    checked: Some(*on),
+                    ..AccessState::default()
+                })
+                .with_set_position(n, spec::FILTER_CHIPS.len()),
+        );
+    }
+    let mut counts =
+        AccessNode::new(format!("card.{id}.counts"), AriaRole::Group).with_name("Match counts");
+    for (n, (value, what)) in spec::FILTER_STATS.iter().enumerate() {
+        let tag = format!("card.{id}.stat.{n}");
+        counts = counts.with_child(tag.clone());
+        // The word is the name and the number is the value: a reader told only
+        // "12,418" has been told which of three numbers it is by position, and
+        // position is exactly what somebody not looking at the card does not
+        // have.
+        nodes.push(
+            AccessNode::new(tag, AriaRole::Status)
+                .with_name(*what)
+                .with_value(AccessValue::Text((*value).to_owned())),
+        );
+    }
+    nodes.push(
+        AccessNode::new(format!("card.{id}.sparkline"), AriaRole::Group)
+            .with_name("Matched over time")
+            .with_value(AccessValue::Text(series_reading(&MATCH_SERIES))),
+    );
+    nodes.push(chips);
+    nodes.push(counts);
+    nodes
+}
+
+/// What a sparkline says to somebody who cannot see it: how many samples, the
+/// range they cover, and where it ended.
+fn series_reading(series: &[f64]) -> String {
+    let low = series.iter().copied().fold(f64::INFINITY, f64::min);
+    let high = series.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+    let last = series.last().copied().unwrap_or(0.0);
+    format!(
+        "{} samples, {low:.0} to {high:.0}, latest {last:.0}",
+        series.len()
+    )
+}
+
+/// The palette: three sections of catalogue entries, **nine of them locked**.
+///
+/// Every entry is a `listitem` whatever its tier, and its place in the set is
+/// counted over the whole catalogue — because a locked seat is a seat. Dropping
+/// the locked ones would make the palette announce four entries while the panel
+/// shows thirteen and its own footer says nine are reserved.
+///
+/// The reason a locked entry is locked is **not restated here**: the row
+/// declares it once on its layout style, and the accessibility assembler relays
+/// what the disabled cascade resolved. One declaration, and the wire, the
+/// accessibility tree and the ink cannot disagree.
+fn palette_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
+    let mut list = AccessNode::new("shell.palette", AriaRole::List)
+        .with_name(spec::PALETTE_TITLE)
+        .with_size_of_set(u32::try_from(spec::CATALOGUE.len()).unwrap_or(u32::MAX));
+    let mut nodes = Vec::new();
+    for (key, title, _tier) in spec::SECTIONS {
+        let section_tag = format!("shell.palette.section.{key}");
+        list = list.with_child(section_tag.clone());
+        let mut section = AccessNode::new(section_tag, AriaRole::Group).with_name(*title);
+        for (n, def) in spec::CATALOGUE.iter().enumerate() {
+            if def.section != *key {
+                continue;
+            }
+            let tag = format!("shell.palette.{}", def.kind);
+            section = section.with_child(tag.clone());
+            nodes.push(
+                AccessNode::new(tag, AriaRole::ListItem)
+                    .with_name(def.label)
+                    .with_value(AccessValue::Text(def.gist.to_owned()))
+                    .with_set_position(n, spec::CATALOGUE.len()),
+            );
+        }
+        nodes.push(section);
+    }
+    list = list
+        .with_child("shell.palette.placed")
+        .with_child("shell.palette.reserved");
+    nodes.push(
+        AccessNode::new("shell.palette.placed", AriaRole::Status)
+            .with_name("Placed")
+            .with_value(AccessValue::Text(format!(
+                "{} of {}",
+                state.placed().len(),
+                spec::placeable_count()
+            ))),
+    );
+    nodes.push(
+        AccessNode::new("shell.palette.reserved", AriaRole::Status)
+            .with_name("Reserved")
+            .with_value(AccessValue::Text(spec::reserved_count().to_string())),
+    );
+    nodes.insert(0, list);
+    nodes
 }
 
 impl WidgetView for AnalyzerShellView {

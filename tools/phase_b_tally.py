@@ -929,9 +929,44 @@ AXES = [
         # `Table` holds its own single-rectangle cell selection (R952), so the
         # tree now has two cell-selection models, one canonical and windowed,
         # one a rectangle bounded by a model small enough to materialise.
-        "judged_at": 1563,
+        #
+        # R1694 re-judgment, DEMANDED by the tool: the round ledger takes this
+        # axis 11 -> 14 (+27%), past the band. It absorbs R1693 and R1694, and
+        # it HOLDS AT 95 — which is a legitimate outcome, because what the tool
+        # demands is a look.
+        #
+        # ★★★★★ THE LOOK FOUND AN ITEM NO GAP STATEMENT HAD EVER NAMED, and
+        # R1694 closes it: the shared grid builder stated a grid's EXTENT and
+        # gave no member its COORDINATES. `aria-rowcount` / `aria-colcount`
+        # since R1693, and not one row or cell carried `aria-rowindex` /
+        # `aria-colindex` — so a reader could be told a grid has seventeen rows
+        # and seven columns and could not learn which row or column anything
+        # was in. Measured at 6.11.1 by building and running it: a model-driven
+        # item view answers a cell query with the cell's name, ITS ROW, ITS
+        # COLUMN and its column header, so this was below the floor on the one
+        # dimension the floor is strongest on. Two screens that hand-rolled the
+        # shape had each invented the numbering and DISAGREED — one counted the
+        # header row in the count and numbered its data rows from one, leaving
+        # its header unplaced and its last row unreachable — which is the
+        # signature of a rule living in prose. It now lives in
+        # `grid_table_nodes`, with the row's WAI-ARIA name-from-contents beside
+        # it, and both screens were converted onto the builder rather than
+        # corrected in place.
+        #
+        # Held at 95 and not moved, because the eight items R1563 audited were
+        # re-checked here and every one still holds: the section axis answers 2
+        # of the toolkit's roles on both axes; the band's width is stated rather
+        # than resized to contents; a binding still states its row window twice
+        # (paint + a11y) and `virtual_grid.rs` still has two row emitters;
+        # drag-select across sections is still blocked on the pointer wire not
+        # reporting held buttons; the keyboard still has no two-axis vocabulary;
+        # `SelectColumns` still has no binding; and the eager `Table` still
+        # keeps its own rectangle cell-selection beside the canonical one. A
+        # capability that was silently ABSENT and is now present does not move a
+        # completion that was never counting it.
+        "judged_at": 1694,
         "completion": 95,
-        "evidence_snapshot": {"example-name": 37, "round-axis": 11},
+        "evidence_snapshot": {"example-name": 37, "round-axis": 14},
     },
     {
         "key": "catalog",

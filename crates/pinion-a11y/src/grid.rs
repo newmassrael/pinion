@@ -143,15 +143,32 @@ pub fn grid_table_nodes(
     nodes.push(grid);
 
     // Header row + its columnheader cells.
-    let mut header_row = AccessNode::new(header_row_tag, AriaRole::Row);
+    //
+    // ★★★★★ R1694 — the header row is row ONE, and every row and cell says
+    // where it is. Until this round the builder stated the grid's extent and
+    // gave no member its coordinates, so a reader could be told a grid has
+    // seventeen rows and seven columns and could not learn which row or column
+    // anything was in — the capability a model-driven item view has at the
+    // floor, whose cell query answers the cell's name, its row, its column and
+    // its column header.
+    //
+    // It is HERE rather than at each caller because the numbering has an
+    // off-by-one everybody meets: the row count above includes the header, so
+    // the indices must too. Two screens that hand-rolled this shape were
+    // measured disagreeing about it — one numbered its data rows from one,
+    // leaving its header unplaced and its last row unreachable — which is what
+    // a rule living in prose does.
+    let mut header_row = AccessNode::new(header_row_tag, AriaRole::Row).with_row(0);
     for column in columns {
         header_row = header_row.with_child(column.tag.as_str());
     }
     nodes.push(header_row);
-    for column in columns {
+    for (c, column) in columns.iter().enumerate() {
         // R1547 §5.40 — NO `with_name`: the name is derived from the painted
         // header (see `GridColumn`).
-        let mut ch = AccessNode::new(column.tag.as_str(), AriaRole::ColumnHeader);
+        let mut ch = AccessNode::new(column.tag.as_str(), AriaRole::ColumnHeader)
+            .with_row(0)
+            .with_column(c);
         if let Some(dir) = column.sort {
             ch = ch.with_sort(dir);
         }
@@ -162,14 +179,26 @@ pub fn grid_table_nodes(
     for (i, row) in rows.iter().enumerate() {
         let mut row_node = AccessNode::new(row.tag.as_str(), AriaRole::Row)
             .with_selected(row.selected)
+            .with_row(i + 1)
             .with_set_position(i, rows.len());
+        // ★ R1694 — WAI-ARIA gives `row` name-from-contents, and a row is
+        // usually painted as an empty band with its cells as SIBLINGS, so
+        // nothing under the row's own tag can be read. The cells are the
+        // contents, so the row is named from them here rather than by each
+        // caller deciding whether to.
+        if !row.cells.is_empty() {
+            let words: Vec<&str> = row.cells.iter().map(|cell| cell.name.as_str()).collect();
+            row_node = row_node.with_name(words.join(" "));
+        }
         for cell in &row.cells {
             row_node = row_node.with_child(cell.tag.as_str());
         }
         nodes.push(row_node);
-        for cell in &row.cells {
+        for (c, cell) in row.cells.iter().enumerate() {
             let mut cell_node = AccessNode::new(cell.tag.as_str(), AriaRole::GridCell)
                 .with_name(cell.name.as_str())
+                .with_row(i + 1)
+                .with_column(c)
                 .with_state(AccessState {
                     focused: cell.focused,
                     ..AccessState::from_interaction(row.state, None)
@@ -356,6 +385,64 @@ mod tests {
         assert!(by_tag(&n, "g#1_0").state.hovered);
         // Grid cells never carry aria-checked (membership = aria-selected on rows).
         assert!(n.iter().all(|node| node.state.checked.is_none()));
+    }
+
+    #[test]
+    fn every_row_and_cell_says_where_it_is_and_the_header_is_row_one() {
+        // ★★★★★ R1694 — the grid stated its extent and gave no member its
+        // coordinates, so two screens invented the numbering and disagreed:
+        // one counted the header row in `aria-rowcount` and numbered its data
+        // rows from one, which leaves the header unplaced and the last row
+        // unreachable. Both halves are asserted, because the count and the
+        // indices only mean anything together.
+        let n = nodes();
+        let grid = by_tag(&n, "g");
+        assert_eq!(grid.row_count, Some(3), "two data rows under a header row");
+        assert_eq!(grid.column_count, Some(2));
+        assert_eq!(
+            by_tag(&n, "g_hrow").row_index,
+            Some(1),
+            "the header row is row one"
+        );
+        assert_eq!(
+            (
+                by_tag(&n, "g_ch0").row_index,
+                by_tag(&n, "g_ch0").column_index
+            ),
+            (Some(1), Some(1)),
+        );
+        assert_eq!(by_tag(&n, "g_ch1").column_index, Some(2));
+        assert_eq!(
+            by_tag(&n, "g_row0").row_index,
+            Some(2),
+            "the first data row"
+        );
+        assert_eq!(
+            by_tag(&n, "g_row1").row_index,
+            grid.row_count,
+            "★ the last data row IS the row count — no row is unreachable",
+        );
+        assert_eq!(
+            (
+                by_tag(&n, "g#1_1").row_index,
+                by_tag(&n, "g#1_1").column_index
+            ),
+            (Some(3), Some(2)),
+            "a cell carries its own coordinates, not only its row's",
+        );
+    }
+
+    #[test]
+    fn a_row_is_named_from_the_cells_it_holds() {
+        // A row is painted as an empty band with its cells as siblings, so
+        // nothing under the row's own tag can be read: WAI-ARIA's
+        // name-from-contents has to be computed, and computing it per caller is
+        // how one screen got it and the other did not.
+        let n = nodes();
+        assert_eq!(
+            by_tag(&n, "g_row0").name.as_deref(),
+            Some("Name: Button Tier: 1"),
+        );
     }
 
     #[test]

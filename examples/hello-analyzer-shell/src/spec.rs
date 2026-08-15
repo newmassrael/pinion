@@ -517,3 +517,426 @@ pub const FILTER_STATS: &[(&str, &str)] = &[
 /// uniform, and a card missing a control it should have is exactly the kind of
 /// drift a hand-maintained screen accumulates.
 pub const CARD_CHROME: &[&str] = &["settings", "tear_off", "maximize", "close"];
+
+// --- What reaches somebody who never sees the drawing ------------------------
+
+/// The identifier a placed card's tags are built from — `packet#0` and so on,
+/// which is [`BOARD`]'s order applied to its kinds.
+#[must_use]
+pub fn card_ids() -> Vec<String> {
+    BOARD
+        .iter()
+        .enumerate()
+        .map(|(n, placed)| format!("{}#{n}", placed.kind))
+        .collect()
+}
+
+/// One region of the opening screen that owes a reader a voice, and what it
+/// announces as.
+///
+/// Screens A and B have held this table since R1691 and R1693. Screen C had
+/// none, and the day this was written it painted **128** addressable regions and
+/// announced **five** — a group for the window and one per card, holding
+/// nothing. The rail, the bars, both tables, the decode tree, the bytes and the
+/// whole palette reached a reader as four names and a summary sentence.
+///
+/// ★★★★★ **What makes screen C the one worth writing down is the nine locked
+/// seats.** They are the screen's entire claim: a second-release item is shown
+/// rather than hidden, so the shape of the finished tool is legible before it
+/// exists. The framework has stated *why* each is locked since R1668 — a kind, a
+/// detail and a derived recourse, on `scene/disabled` — and none of the eleven
+/// locked regions was in the accessibility tree at all, so the reason reached
+/// nobody it was built for.
+///
+/// Measured at 6.11.1 by building and running the same shape rather than reading
+/// about it: a locked entry in an item view and a locked destination in a tab
+/// bar answer **`focusable, selectable` and carry no unavailable state at all** —
+/// the bit survives only on a plain widget. So there a reader is invited to
+/// activate exactly the seats the screen has closed.
+pub struct VoiceSpec {
+    /// The tag, verbatim for [`Population::One`] and with `{}` where the family
+    /// substitutes its member's name otherwise.
+    pub tag: &'static str,
+    /// The role a reader is told this region is — the WAI-ARIA word
+    /// `scene/access` publishes, so the two surfaces join on it.
+    pub role: &'static str,
+    /// Which family the members come from.
+    pub population: Population,
+}
+
+/// Where a [`VoiceSpec`]'s members come from.
+///
+/// Per-screen and closed on purpose (the R1693 finding): a screen naming a
+/// family it does not have should not compile, and the thing that has to
+/// generalise is the *expander*, which is a function.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Population {
+    /// Exactly one region, at [`VoiceSpec::tag`] verbatim.
+    One,
+    /// One per [`RAIL`] seat, keyed by its key.
+    Rail,
+    /// One per [`CATALOGUE`] entry, keyed by its kind.
+    Catalogue,
+    /// One per [`SECTIONS`] heading, keyed by its key.
+    Sections,
+    /// One per placed card, keyed by its [`card_ids`] identifier.
+    Cards,
+    /// ★ One per (card, control) **pair** — the product of [`card_ids`] and
+    /// [`CARD_CHROME`], substituted as `{id}.{control}`.
+    CardChrome,
+    /// One per card whose body is a table: the header strip each of them paints.
+    TableHeads,
+    /// One per [`STREAM_COLUMNS`] entry.
+    StreamColumns,
+    /// One per [`STREAM_ROWS`] message.
+    StreamRows,
+    /// ★ One per (message, column) pair.
+    StreamCells,
+    /// One per [`DECODE_ROWS`] entry.
+    DecodeRows,
+    /// One per line of the byte pane: [`DECODE_BYTES`] rows.
+    ByteRows,
+    /// ★ One per **byte of the frame** — a range whose length is four times the
+    /// line count rather than an index into any table of rows.
+    Bytes,
+    /// One per [`MAP_COLUMNS`] entry.
+    MapColumns,
+    /// One per [`MAP_ROWS`] row.
+    MapRows,
+    /// ★ One per (identifier, column) pair.
+    MapCells,
+    /// One per [`FILTER_CHIPS`] saved filter, keyed by index.
+    Chips,
+    /// One per [`FILTER_STATS`] count, keyed by index.
+    Stats,
+    /// ★ One per catalogue entry the first release **reserves** — a predicate
+    /// over [`CATALOGUE`] rather than the whole of it, so the gate demands
+    /// exactly the nine locked seats and not thirteen.
+    Reserved,
+    /// ★ One per rail seat the first release reserves — the same predicate over
+    /// the other table.
+    ReservedRail,
+}
+
+impl Population {
+    /// The members this family expands to, as the strings a tag substitutes.
+    ///
+    /// The expander lives beside the arms rather than in the gate, because two
+    /// of this screen's families are **computed** — a product and a range — and
+    /// a gate holding the rule would be the place a screen's own shape got
+    /// re-derived by whoever wrote the gate.
+    #[must_use]
+    pub fn members(self) -> Vec<String> {
+        let indexes = |n: usize| (0..n).map(|i| i.to_string()).collect::<Vec<_>>();
+        let under = |kind: &str, suffix: &str, n: usize| {
+            card_of(kind).map_or_else(Vec::new, |id| {
+                (0..n).map(|i| format!("{id}.{suffix}.{i}")).collect()
+            })
+        };
+        match self {
+            Population::One => vec![String::new()],
+            Population::Rail => RAIL.iter().map(|seat| seat.key.to_owned()).collect(),
+            Population::Catalogue => CATALOGUE.iter().map(|w| w.kind.to_owned()).collect(),
+            Population::Sections => SECTIONS
+                .iter()
+                .map(|(key, _, _)| (*key).to_owned())
+                .collect(),
+            Population::Cards => card_ids(),
+            Population::CardChrome => card_ids()
+                .into_iter()
+                .flat_map(|id| CARD_CHROME.iter().map(move |c| format!("{id}.{c}")))
+                .collect(),
+            Population::TableHeads => TABLE_CARDS
+                .iter()
+                .filter_map(|kind| card_of(kind))
+                .map(|id| format!("{id}.head"))
+                .collect(),
+            Population::StreamColumns => under("packet", "head", STREAM_COLUMNS.len()),
+            Population::StreamRows => under("packet", "row", STREAM_ROWS.len()),
+            Population::StreamCells => {
+                cell_members("packet", STREAM_ROWS.len(), STREAM_COLUMNS.len())
+            }
+            Population::DecodeRows => under("decode", "tree", DECODE_ROWS.len()),
+            Population::ByteRows => under("decode", "bytes", DECODE_BYTES.len()),
+            Population::Bytes => under("decode", "byte", DECODE_BYTES.len() * 4),
+            Population::MapColumns => under("keymap", "head", MAP_COLUMNS.len()),
+            Population::MapRows => under("keymap", "map", MAP_ROWS.len()),
+            Population::MapCells => cell_members("keymap", MAP_ROWS.len(), MAP_COLUMNS.len()),
+            Population::Chips => indexes(FILTER_CHIPS.len()),
+            Population::Stats => indexes(FILTER_STATS.len()),
+            Population::Reserved => CATALOGUE
+                .iter()
+                .filter(|w| w.tier == Tier::Reserved)
+                .map(|w| w.kind.to_owned())
+                .collect(),
+            Population::ReservedRail => RAIL
+                .iter()
+                .filter(|seat| seat.reserved_for.is_some())
+                .map(|seat| seat.key.to_owned())
+                .collect(),
+        }
+    }
+}
+
+/// ★★★★★ Every region the opening screen declares **unavailable**, and where a
+/// reader finds it.
+///
+/// Eleven of them: nine catalogue entries booked for a later release, and the
+/// two rail destinations booked the same way. This is the screen's entire
+/// claim — *"a second-release item is not a missing thing, it is a locked
+/// seat"* — and until R1694 not one of the eleven was in the accessibility tree
+/// at all, so the kind, the detail and the recourse the framework computes for
+/// each of them reached nobody.
+///
+/// Derived from the tier and the reservation rather than listed, so a seat that
+/// is unlocked leaves this table by being unlocked.
+pub const LOCKED: &[(&str, Population)] = &[
+    ("shell.rail.{}", Population::ReservedRail),
+    ("shell.palette.{}", Population::Reserved),
+];
+
+/// The catalogue kinds whose card body is a table with a header strip.
+pub const TABLE_CARDS: &[&str] = &["packet", "keymap"];
+
+/// The card identifier a kind is placed under, or `None` when this layout does
+/// not place it.
+#[must_use]
+pub fn card_of(kind: &str) -> Option<String> {
+    BOARD
+        .iter()
+        .position(|placed| placed.kind == kind)
+        .map(|n| format!("{kind}#{n}"))
+}
+
+/// `{card}.cell.{row}_{column}` for every cell of a placed table card.
+fn cell_members(kind: &str, rows: usize, columns: usize) -> Vec<String> {
+    card_of(kind).map_or_else(Vec::new, |id| {
+        (0..rows)
+            .flat_map(|r| {
+                let id = id.clone();
+                (0..columns).map(move |c| format!("{id}.cell.{r}_{c}"))
+            })
+            .collect()
+    })
+}
+
+/// Every region of the opening screen that owes a reader a voice, and what it
+/// announces as.
+pub const VOICES: &[VoiceSpec] = &[
+    VoiceSpec {
+        tag: "analyzer_shell",
+        role: "group",
+        population: Population::One,
+    },
+    // --- the application bar --------------------------------------------
+    VoiceSpec {
+        tag: "shell.appbar",
+        role: "toolbar",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "shell.appbar.tab.dashboard",
+        role: "tab",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "shell.appbar.tab.design",
+        role: "tab",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "shell.appbar.source",
+        role: "button",
+        population: Population::One,
+    },
+    // The rate readout changes while nobody touches it, which is what a live
+    // region is for — and the only one of the bar's regions that is.
+    VoiceSpec {
+        tag: "shell.appbar.capture",
+        role: "status",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "shell.appbar.search",
+        role: "textbox",
+        population: Population::One,
+    },
+    // --- the rail -------------------------------------------------------
+    VoiceSpec {
+        tag: "shell.rail",
+        role: "navigation",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "shell.rail.{}",
+        role: "link",
+        population: Population::Rail,
+    },
+    VoiceSpec {
+        tag: "shell.rail.account",
+        role: "button",
+        population: Population::One,
+    },
+    // --- the layout bar -------------------------------------------------
+    VoiceSpec {
+        tag: "shell.subbar",
+        role: "toolbar",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "shell.subbar.preset",
+        role: "button",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "shell.subbar.edit",
+        role: "button",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "shell.subbar.add",
+        role: "button",
+        population: Population::One,
+    },
+    // --- the board ------------------------------------------------------
+    VoiceSpec {
+        tag: "shell.canvas",
+        role: "group",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "card.{}",
+        role: "group",
+        population: Population::Cards,
+    },
+    VoiceSpec {
+        tag: "card.{}",
+        role: "button",
+        population: Population::CardChrome,
+    },
+    VoiceSpec {
+        tag: "card.{}.grip",
+        role: "button",
+        population: Population::Cards,
+    },
+    // --- the message stream ---------------------------------------------
+    VoiceSpec {
+        tag: "card.{}",
+        role: "row",
+        population: Population::TableHeads,
+    },
+    VoiceSpec {
+        tag: "card.{}",
+        role: "columnheader",
+        population: Population::StreamColumns,
+    },
+    VoiceSpec {
+        tag: "card.{}",
+        role: "row",
+        population: Population::StreamRows,
+    },
+    VoiceSpec {
+        tag: "card.{}",
+        role: "gridcell",
+        population: Population::StreamCells,
+    },
+    // --- the decode inspector -------------------------------------------
+    VoiceSpec {
+        tag: "card.{}",
+        role: "treeitem",
+        population: Population::DecodeRows,
+    },
+    VoiceSpec {
+        tag: "card.{}",
+        role: "row",
+        population: Population::ByteRows,
+    },
+    VoiceSpec {
+        tag: "card.{}",
+        role: "gridcell",
+        population: Population::Bytes,
+    },
+    // --- the identifier map ---------------------------------------------
+    VoiceSpec {
+        tag: "card.{}",
+        role: "columnheader",
+        population: Population::MapColumns,
+    },
+    VoiceSpec {
+        tag: "card.{}",
+        role: "row",
+        population: Population::MapRows,
+    },
+    VoiceSpec {
+        tag: "card.{}",
+        role: "gridcell",
+        population: Population::MapCells,
+    },
+    // --- search and filter ----------------------------------------------
+    VoiceSpec {
+        tag: "card.filter#3.query",
+        role: "textbox",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "card.filter#3.chip.{}",
+        role: "button",
+        population: Population::Chips,
+    },
+    VoiceSpec {
+        tag: "card.filter#3.stat.{}",
+        role: "status",
+        population: Population::Stats,
+    },
+    VoiceSpec {
+        tag: "card.filter#3.sparkline",
+        role: "group",
+        population: Population::One,
+    },
+    // --- the palette ----------------------------------------------------
+    VoiceSpec {
+        tag: "shell.palette",
+        role: "list",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "shell.palette.section.{}",
+        role: "group",
+        population: Population::Sections,
+    },
+    VoiceSpec {
+        tag: "shell.palette.{}",
+        role: "listitem",
+        population: Population::Catalogue,
+    },
+    VoiceSpec {
+        tag: "shell.palette.placed",
+        role: "status",
+        population: Population::One,
+    },
+    VoiceSpec {
+        tag: "shell.palette.reserved",
+        role: "status",
+        population: Population::One,
+    },
+    // --- what just happened ---------------------------------------------
+    VoiceSpec {
+        tag: "shell.toast",
+        role: "status",
+        population: Population::One,
+    },
+];
+
+/// Every region of the opening screen that owes a reader **silence**, and why.
+///
+/// A total census is satisfied by declaring everything silent, so this table is
+/// the other half of the split and is what makes the first one a claim.
+pub const SILENCES: &[(&str, Population, &str)] = &[
+    // The scrolling viewport is a clip, not a thing on the screen: what a
+    // reader walks is the board inside it.
+    ("shell.canvas.body", Population::One, "layout"),
+    // The plot area and its stroke. The card's sparkline region is the thing a
+    // reader is told about and it states the series; these are how it is drawn.
+    ("match.spark", Population::One, "part_of"),
+    ("match.spark.line", Population::One, "decorative"),
+];

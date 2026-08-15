@@ -99,6 +99,7 @@ use pinion_widget_paint::config_form::{
     view_config_form,
 };
 use pinion_widget_paint::pane::{PanePointer, scroll_pane};
+use pinion_widget_paint::run::text_run;
 use pinion_widget_paint::text_field as tf_paint;
 use serde::{Deserialize, Serialize};
 
@@ -3683,12 +3684,12 @@ fn label(text: impl Into<String>, rect: Rect, px: u32, fg: Color) -> Scene {
     Scene::Text(TextNode::styled(text.into(), rect, run_style(px, fg)).with_layout(absolute(rect)))
 }
 
+/// A run that can be addressed — the lifted
+/// [`text_run`], which is where the
+/// rectangle-used-twice and pointer-transparency decisions now live (R1694,
+/// the third identical copy).
 fn tagged_label(tag: &str, text: impl Into<String>, rect: Rect, px: u32, fg: Color) -> Scene {
-    Scene::Text(
-        TextNode::styled(text.into(), rect, run_style(px, fg))
-            .with_tag(tag.to_owned())
-            .with_layout(absolute(rect)),
-    )
+    text_run(tag, text, rect, run_style(px, fg))
 }
 
 /// The style every run on this screen carries.
