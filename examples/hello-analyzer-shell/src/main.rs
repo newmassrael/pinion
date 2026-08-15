@@ -208,6 +208,15 @@ const EDIT_BAR_H: u32 = 26;
 const FLOAT_W: u32 = 520;
 const FLOAT_H: u32 = 380;
 const FLOAT_STEP: u32 = 30;
+/// R1697 — the floor a resize clamps at, from the reference's own source.
+///
+/// Not a guess and not a fraction of the opening size: the reference writes
+/// `Math.max(320, …)` and `Math.max(220, …)` literally, and a panel smaller
+/// than that cannot show its header controls beside its title.
+const FLOAT_MIN_W: u32 = 320;
+const FLOAT_MIN_H: u32 = 220;
+/// The corner a resize is grabbed by, square, inside the panel's bottom right.
+const FLOAT_GRIP: u32 = 16;
 
 /// R1662 — the input-router tag the board's scrolling body answers to.
 const CANVAS_SCROLL: &str = "shell.canvas.body";
@@ -440,6 +449,46 @@ struct Float {
     id: String,
     x: u32,
     y: u32,
+    /// ★★★★★ R1697 — the panel's own size, which it did not have.
+    ///
+    /// The width and height were module constants, so every detached panel was
+    /// the same size for ever and the corner could not be pulled. The reference
+    /// gives each float its own `w`/`h` and a resize that clamps at
+    /// [`FLOAT_MIN_W`] x [`FLOAT_MIN_H`] — measured by extracting its own
+    /// source rather than inferred from the mockup.
+    w: u32,
+    h: u32,
+    /// Which panel is in front, when two overlap.
+    ///
+    /// It was the vector's order, read backwards at the hit test — which works
+    /// exactly until something has to change it, and bringing a panel forward
+    /// is the first thing a press on one must do. Explicit, from a monotonic
+    /// counter, because the reference's `raiseFloat` is what its drag calls
+    /// first and the two are one gesture.
+    z: u32,
+}
+
+/// A detached panel being moved or resized, in flight.
+///
+/// A separate type from [`Drag`] rather than an arm added to it, because the
+/// two live on **different planes**: a card is dragged between the board's
+/// cells and previews where it would land, and a panel is dragged in pixels and
+/// moves as the pointer moves — which is what the reference does, and what a
+/// window does. Folding a pixel gesture into a type whose fields are a cell
+/// coordinate and a snap target would give one of them a meaning it cannot
+/// carry.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+struct FloatGrab {
+    /// Which panel.
+    id: String,
+    /// Whether the pointer is moving the panel or sizing it.
+    edge: bool,
+    /// Where the pointer was when the grab opened.
+    from: (u32, u32),
+    /// The panel's position or size at that moment — the origin every
+    /// subsequent delta is added to, so a drag is exact rather than accumulated
+    /// (an accumulating drag drifts by one pixel per event that is swallowed).
+    origin: (u32, u32),
 }
 
 /// A drag in flight: which card, where inside it the grab landed, and the cell
@@ -510,6 +559,12 @@ struct ShellState {
     cursor: Signal<(u32, u32)>,
     pressed: RefCell<Option<Hit>>,
     drag: Signal<Option<Drag>>,
+    /// R1697 — a detached panel being moved or sized, in flight.
+    float_grab: Signal<Option<FloatGrab>>,
+    /// R1697 — the next stacking number a raise hands out. Monotonic, as the
+    /// reference's is: comparing two panels' `z` is only meaningful while the
+    /// numbers are never reused.
+    float_z: RefCell<u32>,
     /// The last thing that happened, shown as the reference's toast.
     toast: Signal<String>,
     /// The ordinal the next placed card takes.
@@ -600,6 +655,8 @@ impl ShellState {
             cursor: Signal::new((0, 0)),
             pressed: RefCell::new(None),
             drag: Signal::new(None),
+            float_grab: Signal::new(None),
+            float_z: RefCell::new(0),
             toast: Signal::new(format!("{} loaded", spec::PRESET)),
             next_id: RefCell::new(u(spec::BOARD.len())),
             canvas_scroll: Rc::new(ScrollState::with_tag(CANVAS_SCROLL)),
@@ -668,6 +725,59 @@ impl ShellState {
 
     fn is_floating(&self, id: &str) -> bool {
         self.floats.get().iter().any(|f| f.id == id)
+    }
+
+    /// R1697 — the detached panels in stacking order, frontmost first.
+    ///
+    /// The hit test walks this and the paint walks its reverse, so the panel a
+    /// press lands on is the panel drawn on top by construction rather than by
+    /// two functions agreeing. Ties keep the roster's order, which only
+    /// happens before anything has been raised.
+    fn floats_front_to_back(&self) -> Vec<Float> {
+        let mut floats = self.floats.get();
+        floats.sort_by(|a, b| b.z.cmp(&a.z));
+        floats
+    }
+
+    /// R1697 — hand out the next stacking number.
+    ///
+    /// The reference's `raiseFloat`, and its drag calls it first: bringing a
+    /// panel forward is part of grabbing it, not a separate affordance.
+    fn raise_float(&self, id: &str) {
+        let next = {
+            let mut counter = self.float_z.borrow_mut();
+            *counter += 1;
+            *counter
+        };
+        let floats = self
+            .floats
+            .get()
+            .into_iter()
+            .map(|f| {
+                if f.id == id {
+                    Float { z: next, ..f }
+                } else {
+                    f
+                }
+            })
+            .collect();
+        self.floats.set(floats);
+    }
+
+    /// R1697 — replace one panel, by id. Nothing if it is not detached.
+    fn set_float(&self, id: &str, next: &Float) {
+        let floats = self
+            .floats
+            .get()
+            .into_iter()
+            .map(|f| if f.id == id { next.clone() } else { f })
+            .collect();
+        self.floats.set(floats);
+    }
+
+    /// R1697 — one panel, by id.
+    fn float(&self, id: &str) -> Option<Float> {
+        self.floats.get().into_iter().find(|f| f.id == id)
     }
 
     fn preset_names(&self) -> String {
@@ -1053,6 +1163,10 @@ enum Hit {
     Card(String),
     FloatRedock(String),
     FloatClose(String),
+    /// R1697 — the corner that sizes a detached panel. Its own arm rather than
+    /// a modifier on [`Self::Float`], because the reference stops the event
+    /// propagating there: a grab on the corner must not also start a move.
+    FloatResize(String),
     Float(String),
     Nothing,
 }
@@ -1191,11 +1305,21 @@ impl Hit {
     /// its body — and reading that order should not mean scrolling past the
     /// four chrome regions first.
     fn in_canvas(state: &ShellState, cx: u32, cy: u32) -> Self {
-        // Floats are over the canvas, newest first.
-        for float in state.floats.get().iter().rev() {
-            let rect = float_rect(float);
+        // ★ R1697 — floats are over the canvas, FRONTMOST first. It was the
+        // vector read backwards, which is the same answer only while nothing
+        // reorders them; a press now raises the panel it lands on, so the
+        // stacking order is state and the hit test reads that state.
+        for float in state.floats_front_to_back() {
+            let rect = float_rect(&float);
             if !contains(rect, cx, cy) {
                 continue;
+            }
+            // The corner is tested before the body, because it is inside it.
+            // ★ R1681.3's invariant, and this is a case of it: a new affordance
+            // drawn over an existing one has to be reached before it, and the
+            // paint draws the grip last for the same reason.
+            if contains(float_grip_rect(&float), cx, cy) {
+                return Self::FloatResize(float.id.clone());
             }
             let (lx, ly) = (cx - rect.x, cy - rect.y);
             let header = header_rect(local(rect));
@@ -1283,8 +1407,24 @@ impl Hit {
 }
 
 /// A detached panel's rectangle, in the canvas's own space.
+///
+/// ★ R1697 — the one function the paint AND the hit test read, kept that way
+/// deliberately ([[debt-paint-and-gesture-read-two-facts]]): a resizable panel
+/// whose corner is computed twice is a corner that can be drawn in one place
+/// and grabbed in another.
 const fn float_rect(float: &Float) -> Rect {
-    Rect::new(float.x, float.y, FLOAT_W, FLOAT_H)
+    Rect::new(float.x, float.y, float.w, float.h)
+}
+
+/// The corner a resize is grabbed by, in the same space as [`float_rect`].
+const fn float_grip_rect(float: &Float) -> Rect {
+    let rect = float_rect(float);
+    Rect::new(
+        rect.x + rect.w.saturating_sub(FLOAT_GRIP),
+        rect.y + rect.h.saturating_sub(FLOAT_GRIP),
+        FLOAT_GRIP,
+        FLOAT_GRIP,
+    )
 }
 
 /// One hit, named by the **scene tag** of the thing that was hit.
@@ -1309,6 +1449,7 @@ fn hit_word(hit: &Hit) -> String {
         Hit::Card(id) => format!("card.{id}"),
         Hit::FloatRedock(id) => format!("float.{id}.redock"),
         Hit::FloatClose(id) => format!("float.{id}.close"),
+        Hit::FloatResize(id) => format!("float.{id}.resize"),
         Hit::Float(id) => format!("float.{id}"),
         Hit::Nothing => "nothing".to_string(),
     }
@@ -1471,7 +1612,27 @@ impl ShellOracle {
                 ));
             }
             CardAffordance::TearOff => return Self::detach(state, id),
-            CardAffordance::Maximize => return Self::maximize(state, id),
+            // ★★★★★ R1697 — the header control **toggles**, and it did not.
+            //
+            // Found by this round's own operations gate on its first run: the
+            // card was maximised with a press and the same press then called
+            // `maximize` again, which refuses with "a card is already
+            // maximised; restore first". So a person who maximised a card with
+            // the mouse had no way back with the mouse — only `Escape`, or the
+            // wire. Every window control that grows a thing shrinks it again;
+            // nothing had ever asked this one to.
+            //
+            // The two WIRE verbs stay separate and precise (`maximize` and
+            // `restore` each refuse when they do not apply), because an agent
+            // asking for a specific outcome should not get a toggle. This is
+            // the affordance, and an affordance is a press.
+            CardAffordance::Maximize => {
+                return if state.maximized.get().is_some_and(|m| m.id().as_str() == id) {
+                    Self::restore(state)
+                } else {
+                    Self::maximize(state, id)
+                };
+            }
             CardAffordance::Close => {
                 Self::remove(state, id);
                 state.say(format!("{} removed", label_of(id)));
@@ -1523,11 +1684,23 @@ impl ShellOracle {
         board.remove(&TileId::new(id)).ok();
         state.board.set(board);
         let n = u(state.floats.get().len());
+        let z = {
+            let mut counter = state.float_z.borrow_mut();
+            *counter += 1;
+            *counter
+        };
         let mut floats = state.floats.get();
         floats.push(Float {
             id: id.to_string(),
             x: 120 + n * FLOAT_STEP,
             y: 40 + n * FLOAT_STEP,
+            // R1697 — the reference's opening size, per panel from here on
+            // rather than for all of them at once.
+            w: FLOAT_W,
+            h: FLOAT_H,
+            // A panel arrives in front, which is also what its `detachWidget`
+            // does — it takes `floatZ + 1` in the same breath as its position.
+            z,
         });
         state.floats.set(floats);
         state.say(format!("{} \u{2192} detached window", label_of(id)));
@@ -1870,6 +2043,8 @@ const FIELDS: &[SchemaField] = const {
         SchemaField::new("maximized", "string"),
         SchemaField::new("restore_to", "string"),
         SchemaField::new("floating", "string"),
+        SchemaField::new("floats", "json"),
+        SchemaField::new("float_grab", "string"),
         // named layouts
         SchemaField::new("preset", "string"),
         SchemaField::new("presets", "string"),
@@ -1995,6 +2170,25 @@ const FIELDS: &[SchemaField] = const {
     ]
 };
 
+/// R1697 — every detached panel's geometry, front to back.
+///
+/// Its own function so the reply is one place and so the read arm stays inside
+/// the length the lints allow; the order IS the stacking order, so a client
+/// never has to sort for it.
+fn floats_json(state: &ShellState) -> serde_json::Value {
+    serde_json::Value::Array(
+        state
+            .floats_front_to_back()
+            .iter()
+            .map(|f| {
+                serde_json::json!({
+                    "id": f.id, "x": f.x, "y": f.y, "w": f.w, "h": f.h, "z": f.z,
+                })
+            })
+            .collect(),
+    )
+}
+
 impl ExternalIntrospect for ShellOracle {
     fn schema(&self) -> IntrospectSchema {
         IntrospectSchema::new(FIELDS)
@@ -2050,6 +2244,24 @@ impl ExternalIntrospect for ShellOracle {
                     .collect::<Vec<_>>()
                     .join(","),
             ),
+            // ★★★★★ R1697 — **where each detached panel is, how big, and which
+            // is in front**, which nothing published.
+            //
+            // `floating` above is the roster and answers "which cards have
+            // left the board"; this is their geometry, and without it a moved
+            // panel is invisible to every reader that is not a screenshot.
+            // That is the whole reason the defect survived: the operation had
+            // no witness a test could name, so no test could name it.
+            //
+            // Front to back, so the order IS the stacking order rather than
+            // something a reader has to sort for.
+            "floats" => Ok(IntrospectValue::Json(floats_json(state))),
+            // What the pointer is doing to a panel right now, or empty. The
+            // peer of `drag` below, and separate for the reason the types are
+            // separate: one gesture lands in a cell and the other in a pixel.
+            "float_grab" => text(state.float_grab.get().map_or_else(String::new, |g| {
+                format!("{},{}", g.id, if g.edge { "resize" } else { "move" })
+            })),
             "preset" => text(state.preset.get()),
             "presets" => text(state.preset_names()),
             "preset_open" => Ok(IntrospectValue::Bool(state.preset_open.get())),
@@ -2178,11 +2390,10 @@ impl ExternalIntrospect for ShellOracle {
             }
             "preset" => ShellOracle::apply_preset(&state, &word(&value)?),
             "sources" | "cards" | "card_count" | "placed_count" | "layout" | "maximized"
-            | "restore_to" | "floating" | "presets" | "transport" | "playhead" | "affordances"
-            | "states" | "remedies" | "steppers" | "toast" | "cursor" | "selected" | "hit"
-            | "keymap" | "rail" | "tabs" | "catalogue" | "config_open" | "drag" => {
-                Err(InterveneError::ReadOnly)
-            }
+            | "restore_to" | "floating" | "floats" | "float_grab" | "presets" | "transport"
+            | "playhead" | "affordances" | "states" | "remedies" | "steppers" | "toast"
+            | "cursor" | "selected" | "hit" | "keymap" | "rail" | "tabs" | "catalogue"
+            | "config_open" | "drag" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -2289,6 +2500,10 @@ impl ShellOracle {
     /// Move the cursor, and update the snap preview if a drag is in flight.
     fn move_cursor(state: &Rc<ShellState>, px: u32, py: u32) {
         state.cursor.set((px, py));
+        if let Some(grab) = state.float_grab.get() {
+            Self::carry_float_grab(state, &grab, px, py);
+            return;
+        }
         let Some(mut drag) = state.drag.get() else {
             return;
         };
@@ -2308,6 +2523,71 @@ impl ShellOracle {
             drag.snap = snap;
             state.drag.set(Some(drag));
         }
+    }
+
+    /// R1697 — bring a detached panel forward and start moving or sizing it.
+    ///
+    /// The raise comes first because the reference's `startFloatDrag` calls
+    /// `raiseFloat` before it reads the panel's origin, and the order is load
+    /// bearing: grabbing a panel that is behind another must bring it out from
+    /// under before the pointer starts moving it, or the panel being dragged is
+    /// the one the person cannot see.
+    fn open_float_grab(state: &Rc<ShellState>, id: &str, edge: bool, at: (u32, u32)) {
+        state.raise_float(id);
+        let Some(float) = state.float(id) else {
+            return;
+        };
+        state.float_grab.set(Some(FloatGrab {
+            id: id.to_string(),
+            edge,
+            from: at,
+            origin: if edge {
+                (float.w, float.h)
+            } else {
+                (float.x, float.y)
+            },
+        }));
+    }
+
+    /// R1697 — carry a float grab to the cursor.
+    ///
+    /// Live rather than previewed, which is the opposite of what a card drag
+    /// does on this same screen and is correct for both: a card lands in a cell
+    /// and the board would reflow under the finger, and a panel lands where it
+    /// is put. The reference draws the same line.
+    fn carry_float_grab(state: &Rc<ShellState>, grab: &FloatGrab, px: u32, py: u32) {
+        let Some(float) = state.float(&grab.id) else {
+            return;
+        };
+        // Signed, because a panel can be dragged left and up as readily as
+        // right and down, and unsigned arithmetic would clamp a leftward drag
+        // to zero movement rather than to the window edge.
+        let dx = i64::from(px) - i64::from(grab.from.0);
+        let dy = i64::from(py) - i64::from(grab.from.1);
+        let shift = |origin: u32, delta: i64, floor: u32| -> u32 {
+            #[allow(
+                clippy::cast_sign_loss,
+                clippy::cast_possible_truncation,
+                reason = "clamped into u32's range on the line above the cast"
+            )]
+            let moved =
+                (i64::from(origin) + delta).clamp(i64::from(floor), i64::from(u32::MAX)) as u32;
+            moved
+        };
+        let next = if grab.edge {
+            Float {
+                w: shift(grab.origin.0, dx, FLOAT_MIN_W),
+                h: shift(grab.origin.1, dy, FLOAT_MIN_H),
+                ..float
+            }
+        } else {
+            Float {
+                x: shift(grab.origin.0, dx, 0),
+                y: shift(grab.origin.1, dy, 0),
+                ..float
+            }
+        };
+        state.set_float(&grab.id, &next);
     }
 
     /// A press latches what is under the cursor; a press on a card header opens
@@ -2334,6 +2614,17 @@ impl ShellOracle {
                 }));
             }
         }
+        // ★★★★★ R1697 — **a press on a detached panel grabs it.**
+        //
+        // This is the arm a person reported: it read
+        // `Hit::Float(_) | Hit::Nothing => {}` on the release path and nothing
+        // opened a gesture on the press path, so a torn-off panel was nailed
+        // where it landed. Every gate on this screen was green and each was
+        // correct — the panel is painted, hit-testable, named and announced.
+        // None of them asks whether grabbing it moves it.
+        if let Hit::Float(id) | Hit::FloatResize(id) = &hit {
+            Self::open_float_grab(state, id, matches!(hit, Hit::FloatResize(_)), (px, py));
+        }
         *state.pressed.borrow_mut() = Some(hit);
     }
 
@@ -2341,6 +2632,29 @@ impl ShellOracle {
     /// commits a drag wherever the preview ended up.
     fn release(state: &Rc<ShellState>) {
         let latched = state.pressed.borrow_mut().take();
+        // ★ R1697 — a float grab has already done its work by the time the
+        // button comes up (it moves live), so releasing only ends it. Returning
+        // here is what stops the release ALSO acting on the latched hit: a drag
+        // that finished over the panel's body must not read as a press on the
+        // body.
+        if let Some(grab) = state.float_grab.get() {
+            state.float_grab.set(None);
+            // Only speak if something actually changed. A press and release
+            // without movement is a click on the panel, and announcing "moved"
+            // for it would be the same class of lie the rail told before R1695:
+            // a message describing an arrival that did not happen.
+            let now = state
+                .float(&grab.id)
+                .map(|f| if grab.edge { (f.w, f.h) } else { (f.x, f.y) });
+            if now.is_some_and(|now| now != grab.origin) {
+                state.say(format!(
+                    "{} {}",
+                    label_of(&grab.id),
+                    if grab.edge { "resized" } else { "moved" }
+                ));
+            }
+            return;
+        }
         if let Some(drag) = state.drag.get() {
             state.drag.set(None);
             let mut board = state.board.get();
@@ -2436,7 +2750,10 @@ impl ShellOracle {
                 state.say(format!("{} closed", label_of(&id)));
             }
             Hit::Card(id) | Hit::Grip(id) => state.say(format!("{} selected", label_of(&id))),
-            Hit::Float(_) | Hit::Nothing => {}
+            // A press on a panel raised and grabbed it (`open_float_grab`);
+            // there is nothing left for the release to do, and the raise is
+            // why this is no longer the same arm as hitting nothing.
+            Hit::Float(_) | Hit::FloatResize(_) | Hit::Nothing => {}
         }
     }
 
@@ -3066,6 +3383,22 @@ fn detach_mark(rect: Rect, ink: Color) -> Scene {
     )
 }
 
+/// R1697 — the resize mark: two diagonals climbing out of the bottom-right
+/// corner, the form every window manager and every reference toolkit uses for
+/// a size grip.
+fn resize_mark(rect: Rect, ink: Color) -> Scene {
+    let (w, h) = (rect.w, rect.h);
+    strokes(
+        rect,
+        &[
+            vec![(w - 11, h - 3), (w - 3, h - 11)],
+            vec![(w - 6, h - 3), (w - 3, h - 6)],
+        ],
+        ink,
+        1,
+    )
+}
+
 /// The re-dock mark: a box with a bar along its foot.
 fn redock_mark(rect: Rect, ink: Color) -> Scene {
     let (cx, cy) = (rect.w / 2, rect.h / 2);
@@ -3087,13 +3420,40 @@ fn redock_mark(rect: Rect, ink: Color) -> Scene {
 }
 
 /// One header control's mark.
-fn affordance_mark(affordance: CardAffordance, rect: Rect, ink: Color) -> Vec<Scene> {
+///
+/// ★ R1697 — `restore` is the maximise control's OTHER face. The control
+/// toggles, and a control that toggles without changing its mark tells a person
+/// the same thing in both states — which is the shape R1690 named: a capability
+/// that exists and is not drawn is one nobody can use.
+fn affordance_mark(
+    affordance: CardAffordance,
+    rect: Rect,
+    ink: Color,
+    restore: bool,
+) -> Vec<Scene> {
     let (cx, cy) = (rect.w / 2, rect.h / 2);
     match affordance {
         CardAffordance::Settings => (0..3)
             .map(|n| dot(cx - 1, cy - 5 + n * 5, 2, ink))
             .collect(),
         CardAffordance::TearOff => vec![detach_mark(rect, ink)],
+        // Two overlapping squares, the form a restore control has everywhere:
+        // one box come back out of another.
+        CardAffordance::Maximize if restore => vec![strokes(
+            rect,
+            &[
+                vec![
+                    (cx - 6, cy - 2),
+                    (cx + 2, cy - 2),
+                    (cx + 2, cy + 6),
+                    (cx - 6, cy + 6),
+                    (cx - 6, cy - 2),
+                ],
+                vec![(cx - 2, cy - 6), (cx + 6, cy - 6), (cx + 6, cy + 2)],
+            ],
+            ink,
+            1,
+        )],
         CardAffordance::Maximize => vec![strokes(
             rect,
             &[vec![
@@ -3803,7 +4163,7 @@ fn grid_scene(rows: u32, palette: Palette, bright: bool) -> Vec<Scene> {
 }
 
 /// A card's header: grip, status light, title, LIVE badge, controls.
-fn header_scene(card: &Card, rect: Rect, palette: Palette) -> Vec<Scene> {
+fn header_scene(card: &Card, rect: Rect, palette: Palette, maximized: bool) -> Vec<Scene> {
     /// The clearance the affordance strip keeps at the header's right edge.
     const HDR_TAIL: u32 = 6;
     /// The narrowest a title may be and still be worth painting.
@@ -3891,9 +4251,14 @@ fn header_scene(card: &Card, rect: Rect, palette: Palette) -> Vec<Scene> {
     for (n, affordance) in offered.iter().enumerate().skip(dropped) {
         let slot = affordance_rect(rect, u(offered.len()), u(n));
         out.push(Scene::Container(
-            ContainerNode::new(affordance_mark(*affordance, local(slot), palette.muted))
-                .with_tag(format!("card.{id}.{}", affordance.wire()))
-                .with_layout(absolute(slot)),
+            ContainerNode::new(affordance_mark(
+                *affordance,
+                local(slot),
+                palette.muted,
+                maximized,
+            ))
+            .with_tag(format!("card.{id}.{}", affordance.wire()))
+            .with_layout(absolute(slot)),
         ));
     }
     out
@@ -4657,6 +5022,7 @@ fn card_scene(
     editing: bool,
     cell: (u32, u32),
     palette: Palette,
+    maximized: bool,
 ) -> Scene {
     let inside = local(rect);
     // ★★ R1674 — the header's marks say they are IN the header band, so the
@@ -4671,7 +5037,7 @@ fn card_scene(
     // of as an undifferentiated overhang, so a reader is told which band was
     // invaded. The floor has no form for that — its whole reservation is four
     // integers with the reason discarded.
-    let mut children: Vec<Scene> = header_scene(card, header_rect(inside), palette)
+    let mut children: Vec<Scene> = header_scene(card, header_rect(inside), palette, maximized)
         .into_iter()
         .map(|node| in_chrome(node, ChromeRole::Header))
         .collect();
@@ -4798,6 +5164,21 @@ fn float_scene(state: &ShellState, float: &Float, palette: Palette) -> Option<Sc
         ),
     ];
     children.extend(body_scene(&card, body_rect(inside, false), palette));
+    // ★★ R1697 — the corner, painted last so it is over the body it sits in,
+    // and from the SAME function the hit test reads. An affordance a person is
+    // meant to grab has to be visible: R1690's lesson is that a capability
+    // built and not drawn is one no gate can see and nobody can use.
+    let grip = Rect::new(
+        inside.w.saturating_sub(FLOAT_GRIP),
+        inside.h.saturating_sub(FLOAT_GRIP),
+        FLOAT_GRIP,
+        FLOAT_GRIP,
+    );
+    children.push(Scene::Container(
+        ContainerNode::new(vec![resize_mark(local(grip), palette.muted)])
+            .with_tag(format!("float.{}.resize", float.id))
+            .with_layout(absolute(grip)),
+    ));
     Some(Scene::Container(
         ContainerNode::new(children)
             .with_tag(format!("float.{}", float.id))
@@ -4853,6 +5234,29 @@ fn read_specification(path: &str) -> Result<IntrospectValue, ReadRefusal> {
     }
 }
 
+/// R1697 — the operations table, on the wire.
+///
+/// Each row carries the introspection slot that must move once the operation
+/// has run, which is what turns the table from a list of names into something
+/// a client can check for itself: read the slot, cause the operation the way
+/// the row says it can be caused, read the slot again.
+fn operations_json() -> serde_json::Value {
+    serde_json::Value::Array(
+        spec::OPERATIONS
+            .iter()
+            .map(|op| {
+                serde_json::json!({
+                    "name": op.name,
+                    "verb": op.verb.map(|(action, arg)| serde_json::json!([action, arg])),
+                    "gesture": op.gesture,
+                    "witness": op.witness,
+                    "needs": op.needs,
+                })
+            })
+            .collect(),
+    )
+}
+
 /// R1668 — the reference screen C, as the wire hands it to a client.
 ///
 /// Every field is read straight out of `spec`, so the running application and
@@ -4903,6 +5307,9 @@ fn spec_json() -> serde_json::Value {
         "focus_ring": spec::FOCUS_RING.iter().map(|stop| serde_json::json!({
             "tag": stop.tag, "holds": stop.holds, "at": where_word(stop.at),
         })).collect::<Vec<_>>(),
+        // ★★ R1697 — what this screen can be ASKED to do, published so an
+        // agent reads the operations rather than discovering them by trying.
+        "operations": operations_json(),
         "sections": spec::SECTIONS.iter().map(|(key, title, tier)| serde_json::json!({
             "key": key, "title": title, "tier": tier_word(*tier),
         })).collect::<Vec<_>>(),
@@ -5312,6 +5719,10 @@ fn dashboard_scene(state: &ShellState, palette: Palette) -> Vec<Scene> {
     let selected = state.selected.get();
     let editing = state.editing.get();
     let drag = state.drag.get();
+    // R1697 — which card, if any, wears the restore face of the maximise
+    // control. Read once here rather than per card so the paint and the toggle
+    // read one fact.
+    let maximized = state.maximized.get();
 
     let canvas = canvas_rect();
     let mut canvas_children = grid_scene(board.rows() + 1, palette, editing || drag.is_some());
@@ -5326,6 +5737,7 @@ fn dashboard_scene(state: &ShellState, palette: Palette) -> Vec<Scene> {
             editing,
             (tile.w, tile.h),
             palette,
+            maximized.as_ref().is_some_and(|m| m.id() == card.id()),
         ));
     }
     // ★ The snap preview: where a release would put the dragged card. Drawn
@@ -5367,7 +5779,11 @@ fn dashboard_scene(state: &ShellState, palette: Palette) -> Vec<Scene> {
         // reader walks is the board inside it.
         .silenced(Silence::layout("the board's scrolling viewport")),
     ];
-    for float in &state.floats.get() {
+    // ★ R1697 — back to front, which is the REVERSE of the order the hit test
+    // walks. Both read `floats_front_to_back`, so painting the frontmost panel
+    // last and hitting it first are one decision rather than two that agree
+    // until somebody changes one of them.
+    for float in state.floats_front_to_back().iter().rev() {
         if let Some(scene) = float_scene(state, float, palette) {
             canvas_children.push(scene);
         }

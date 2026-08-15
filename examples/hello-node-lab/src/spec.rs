@@ -498,43 +498,16 @@ pub const RAIL_ACTIVE: &str = "lab";
 /// leave the sixteen exactly as invisible as they were.
 ///
 /// [`gesture`]: OperationSpec::gesture
-pub struct OperationSpec {
-    /// What the operation is called, in the tool-class words this table uses
-    /// throughout.
-    pub name: &'static str,
-    /// The action an agent invokes, and an argument that exercises it — or
-    /// `None` when this screen has no path to the operation at all.
-    pub verb: Option<(&'static str, &'static str)>,
-    /// Whether a person can cause it with the pointer or the keyboard.
-    ///
-    /// A bool here and the driver in `painted.rs`, because the driver is a
-    /// gesture — a press at a place, a drag between two — and a gesture is not
-    /// a value this table can hold. The gate asserts the two agree in both
-    /// directions: a `true` with no driver, and a driver for a `false`, are
-    /// both failures.
-    pub gesture: bool,
-    /// The introspection slot whose value must DIFFER once the operation has
-    /// run. Named per operation rather than derived, because "what changed" is
-    /// the part of an operation a reader most needs and the part a test is
-    /// most tempted to skip.
-    pub witness: &'static str,
-    /// ★★ R1678 — the operation that has to have run first, by name, or `None`
-    /// when this one can be caused from the screen as it opens.
-    ///
-    /// A real property of the tool, not a convenience for the gate. Putting
-    /// something back is only possible once it has been changed, which is why
-    /// the reference wraps four of its five reset affordances in a conditional
-    /// and shows them only when there is something to put back — the operation
-    /// and its precondition are one design, and a table that recorded the first
-    /// without the second would describe a screen where the buttons are always
-    /// there.
-    ///
-    /// It names an operation rather than describing a state, so the gate
-    /// reaches the precondition the way a person would — by doing the earlier
-    /// thing — and a `needs` pointing at an operation this table does not hold
-    /// is a failure.
-    pub needs: Option<&'static str>,
-}
+///
+/// ★★ R1697 — **the shape is the framework's now**, and this is a re-export
+/// rather than a second copy of it. The sibling screen produced the identical
+/// defect three rounds later (a detached panel that could be torn off and not
+/// moved, with every gate on that screen green), which is the second consumer
+/// this table's shape needed — so
+/// [`Operation`](pinion_core::operation::Operation) holds the columns and the
+/// consistency checks a reader of the table alone can run, and each screen
+/// keeps only its own rows and its own driver.
+pub use pinion_core::operation::Operation as OperationSpec;
 
 /// The thirty operations, in the reference's own order.
 ///

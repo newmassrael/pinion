@@ -37,6 +37,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use pinion_core::availability::{Recourse, UnavailableKind};
+use pinion_core::external::{ExternalIntrospect, IntrospectValue};
 use pinion_core::reactive::Owner;
 use pinion_core::scene::Rect;
 use pinion_core::{Frame, Scene};
@@ -1846,4 +1847,513 @@ fn r1695_every_settings_control_is_pressable_where_it_is_painted() {
             "the sweep reached a different number of controls than the page has",
         );
     });
+}
+
+// ── R1697: every declared operation actually happens ─────────────────────────
+
+/// The gesture that causes one operation, joined to [`spec::OPERATIONS`] by the
+/// operation's name.
+///
+/// A function rather than a column in the table, for the reason the table's own
+/// documentation gives: a gesture is a press at a place and a drag between two,
+/// which is not a value a `const` can hold. The gate asserts the join is total
+/// in both directions, so a declared gesture with no driver — and a driver for
+/// an operation the table says has none — are both failures.
+type OperationGesture = (&'static str, fn(&std::rc::Rc<ShellState>, &Painted));
+
+const OPERATION_GESTURES: &[OperationGesture] = &[
+    ("place a widget on the board", |state, shot| {
+        press_tag(state, shot, "shell.palette.packet");
+    }),
+    ("move a card on the board", |state, shot| {
+        // Grab the first card by its header grip and carry it right, far enough
+        // that it lands in a cell it did not start in.
+        drag_tag(state, shot, "card.packet#0.grip", (CELL_STEP, 0));
+    }),
+    ("resize a card", |state, shot| {
+        // The size steppers exist in layout-edit mode only, and that is a
+        // property of the SCREEN rather than a precondition of the table: the
+        // affordance that opens the mode is the layout bar's own, so pressing
+        // it here is how a person reaches the steppers at all.
+        press_tag(state, shot, "shell.subbar.edit");
+        let shot = painted();
+        press_tag(state, &shot, "card.packet#0.widen");
+    }),
+    ("maximise a card", |state, shot| {
+        press_tag(state, shot, "card.packet#0.maximize");
+    }),
+    ("restore a maximised card", |state, shot| {
+        press_tag(state, shot, "card.packet#0.maximize");
+    }),
+    ("close a card", |state, shot| {
+        press_tag(state, shot, "card.packet#0.close");
+    }),
+    ("detach a card", |state, shot| {
+        press_tag(state, shot, "card.packet#0.tear_off");
+    }),
+    // ★★★★★ The three rows this round exists for, and the three that had no
+    // driver because they had no operation.
+    ("move a detached panel", |state, shot| {
+        drag_tag(state, shot, "float.packet#0", (40, 25));
+    }),
+    ("size a detached panel", |state, shot| {
+        drag_tag(state, shot, "float.packet#0.resize", (60, 40));
+    }),
+    ("bring a detached panel forward", |state, shot| {
+        press_tag(state, shot, "float.packet#0");
+    }),
+    ("re-dock a detached panel", |state, shot| {
+        press_tag(state, shot, "float.packet#0.redock");
+    }),
+    ("close a detached panel", |state, shot| {
+        press_tag(state, shot, "float.packet#0.close");
+    }),
+];
+
+/// Far enough along the board's row that a card lands in a cell it did not
+/// start in — more than one column plus its gap at the opening window size.
+const CELL_STEP: i32 = 160;
+
+/// The centre of a painted rectangle.
+const fn centre(rect: Rect) -> (u32, u32) {
+    (rect.x + rect.w / 2, rect.y + rect.h / 2)
+}
+
+/// Where a painted tag is, or a message naming the tag that is missing.
+fn aim(shot: &Painted, tag: &str) -> (u32, u32) {
+    centre(
+        shot.rect(tag)
+            .unwrap_or_else(|| panic!("{tag} is painted, so a person can aim at it")),
+    )
+}
+
+/// A press and a release at one painted tag's centre.
+fn press_tag(state: &std::rc::Rc<ShellState>, shot: &Painted, tag: &str) {
+    let (x, y) = aim(shot, tag);
+    ShellOracle::move_cursor(state, x, y);
+    ShellOracle::press(state);
+    ShellOracle::release(state);
+}
+
+/// A press at one painted tag's centre, a move by a signed delta, a release.
+fn drag_tag(state: &std::rc::Rc<ShellState>, shot: &Painted, tag: &str, by: (i32, i32)) {
+    let (x, y) = aim(shot, tag);
+    ShellOracle::move_cursor(state, x, y);
+    ShellOracle::press(state);
+    let to = |v: u32, d: i32| u32::try_from(i64::from(v) + i64::from(d)).unwrap_or(0);
+    ShellOracle::move_cursor(state, to(x, by.0), to(y, by.1));
+    ShellOracle::release(state);
+}
+
+/// Read one introspection slot, through the surface an agent reads it through.
+///
+/// Not off the state's field: a witness read there would be true of a change no
+/// client can observe, and *observable* is the whole claim the table makes.
+fn witness(state: &std::rc::Rc<ShellState>, slot: &str) -> String {
+    let mut oracle = ShellOracle::new();
+    oracle.attach_state(std::rc::Rc::clone(state));
+    match oracle.query(slot) {
+        Ok(value) => format!("{value:?}"),
+        Err(why) => panic!("the witness {slot:?} is not a slot this screen answers: {why:?}"),
+    }
+}
+
+/// Bring the screen to the state an operation needs before it can be caused.
+///
+/// Reached the way a person reaches it — by causing the earlier operation the
+/// table names, preferring its gesture — so a precondition can never be a state
+/// no session produces. Panics rather than skipping: an unsatisfiable
+/// precondition would silently stop exercising the operation that declared it,
+/// which is a gate quietly covering less than it says.
+fn reach_precondition(op: &spec::OperationSpec, state: &std::rc::Rc<ShellState>) {
+    let Some(earlier) = op.needs else { return };
+    let earlier = spec::OPERATIONS
+        .iter()
+        .find(|o| o.name == earlier)
+        .unwrap_or_else(|| {
+            panic!(
+                "{:?} needs {earlier:?}, which this table does not hold",
+                op.name
+            )
+        });
+    if let Some((_, drive)) = OPERATION_GESTURES.iter().find(|(n, _)| *n == earlier.name) {
+        let shot = painted();
+        drive(state, &shot);
+        return;
+    }
+    let (verb, arg) = earlier.verb.unwrap_or_else(|| {
+        panic!(
+            "{:?} needs {:?}, which has no way in at all",
+            op.name, earlier.name
+        )
+    });
+    let mut oracle = ShellOracle::new();
+    oracle.attach_state(std::rc::Rc::clone(state));
+    oracle
+        .invoke(verb, IntrospectValue::Text(arg.to_owned()))
+        .unwrap_or_else(|why| panic!("{:?}'s precondition refused: {why:?}", op.name));
+}
+
+/// The scene as it stands, indexed.
+fn painted() -> Painted {
+    painted_at((WIN_W, WIN_H)).0
+}
+
+/// Drive one operation's wire column, collecting what it failed to do.
+fn drive_verb(op: &spec::OperationSpec, verb: &str, arg: &str, inert: &mut Vec<String>) {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        reach_precondition(op, &state);
+        let before = witness(&state, op.witness);
+        let mut oracle = ShellOracle::new();
+        oracle.attach_state(std::rc::Rc::clone(&state));
+        let answer = oracle.invoke(verb, IntrospectValue::Text(arg.to_owned()));
+        let after = witness(&state, op.witness);
+        if answer.is_err() {
+            inert.push(format!(
+                "{:?}: the wire refused `{verb} {arg}` ({answer:?})",
+                op.name
+            ));
+        } else if before == after {
+            inert.push(format!(
+                "{:?}: `{verb} {arg}` was accepted and `{}` did not move",
+                op.name, op.witness
+            ));
+        }
+    });
+}
+
+/// Drive one operation's pointer column, collecting what it failed to do.
+fn drive_gesture(
+    op: &spec::OperationSpec,
+    drive: fn(&std::rc::Rc<ShellState>, &Painted),
+    inert: &mut Vec<String>,
+) {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        reach_precondition(op, &state);
+        let shot = painted();
+        let before = witness(&state, op.witness);
+        drive(&state, &shot);
+        let after = witness(&state, op.witness);
+        if before == after {
+            inert.push(format!(
+                "{:?}: the gesture ran and `{}` did not move — this is the \
+                 column a wire-driven test cannot see",
+                op.name, op.witness
+            ));
+        }
+    });
+}
+
+/// Tear a card off and answer with the panel it became.
+fn detached(state: &std::rc::Rc<ShellState>, card: &str) -> super::Float {
+    let shot = painted();
+    press_tag(state, &shot, &format!("card.{card}.tear_off"));
+    state
+        .float(card)
+        .unwrap_or_else(|| panic!("{card} was torn off, so it is a panel"))
+}
+
+/// ★★★★★ R1697 — **a panel stops at its floor**, which "the slot moved" cannot
+/// say.
+///
+/// The operations gate proves a resize changes something; it is satisfied by a
+/// resize with no floor at all, and a panel dragged to nothing is a panel a
+/// person cannot get back. The floor is the reference's own — `Math.max(320,
+/// …)` and `Math.max(220, …)` in its source, read rather than guessed — and
+/// this asserts the exact numbers, because a clamp that is merely "some floor"
+/// is a clamp nobody can reproduce.
+#[test]
+fn r1697_a_panel_cannot_be_sized_below_its_floor() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let panel = detached(&state, "packet#0");
+        assert_eq!(
+            (panel.w, panel.h),
+            (super::FLOAT_W, super::FLOAT_H),
+            "a panel opens at the reference's size"
+        );
+
+        // Pull the corner far up and to the left — past the floor in both axes
+        // at once, and past the panel's own origin, which is what a real drag
+        // to the top-left corner of the window does.
+        let shot = painted();
+        drag_tag(&state, &shot, "float.packet#0.resize", (-2000, -2000));
+        let squashed = state.float("packet#0").expect("the panel is still there");
+        assert_eq!(
+            (squashed.w, squashed.h),
+            (super::FLOAT_MIN_W, super::FLOAT_MIN_H),
+            "the corner clamps at the floor rather than collapsing the panel"
+        );
+
+        // And the floor is a floor, not a fixed size: it grows again.
+        let shot = painted();
+        drag_tag(&state, &shot, "float.packet#0.resize", (90, 60));
+        let grown = state.float("packet#0").expect("the panel is still there");
+        assert_eq!(
+            (grown.w, grown.h),
+            (super::FLOAT_MIN_W + 90, super::FLOAT_MIN_H + 60),
+            "and the drag is exact — each event measured from where the grab opened"
+        );
+    });
+}
+
+/// ★★★★★ R1697 — **a press brings the panel under it to the front**, and the
+/// hit test agrees on the next press.
+///
+/// The half the operations gate cannot see: `floats` moving proves a `z`
+/// changed, not that the *screen* changed. Two overlapping panels are the state
+/// where stacking is a fact rather than a field — the one on top is the one a
+/// press at the shared point reaches, and the one drawn last.
+///
+/// It is also the case that made `z` necessary at all. The order was the
+/// vector's, read backwards; that answers correctly only while nothing
+/// reorders it, and a raise is exactly a reorder.
+#[test]
+fn r1697_a_press_brings_the_panel_under_it_to_the_front() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let first = detached(&state, "packet#0");
+        let second = detached(&state, "decode#1");
+        assert!(second.z > first.z, "the newest panel arrives in front");
+
+        // Put them on top of one another, so a point exists that both cover.
+        state.set_float(
+            "decode#1",
+            &super::Float {
+                id: "decode#1".to_owned(),
+                x: first.x,
+                y: first.y,
+                w: first.w,
+                h: first.h,
+                z: second.z,
+            },
+        );
+        // ★ The point comes from the PAINTED rectangle, never from the state's
+        // own numbers: a panel's coordinates are the canvas's and a hit test
+        // takes the window's, and a test that did the conversion itself would
+        // be asserting against its own arithmetic (R1684's lesson, and the
+        // first draft of this test walked into it).
+        let shot = painted();
+        let shared = aim(&shot, "float.decode#1");
+
+        assert_eq!(
+            super::hit_word(&Hit::at(&state, shared.0, shared.1)),
+            "float.decode#1",
+            "the front panel is the one the shared point reaches"
+        );
+        // The scene agrees: the frontmost panel is painted last.
+        let order = painted_order();
+        assert_eq!(
+            order,
+            vec!["float.packet#0".to_owned(), "float.decode#1".to_owned()],
+            "and it is painted last, so it is the one drawn on top"
+        );
+
+        // Raise the one underneath, the way a person does: slide the front one
+        // partly off and press the strip of the covered panel that is showing.
+        state.set_float(
+            "decode#1",
+            &super::Float {
+                x: first.x + 200,
+                ..state.float("decode#1").expect("present")
+            },
+        );
+        let shot = painted();
+        let back = shot
+            .rect("float.packet#0")
+            .expect("the covered panel is painted");
+        let showing = (back.x + 8, back.y + back.h / 2);
+        // ★ The aim is proved before it is used. Aiming at the covered panel's
+        // CENTRE is what the first draft did, and the centre is still under the
+        // other panel — so the press raised the wrong one and the assertion
+        // below failed for a reason that was about the test.
+        assert_eq!(
+            super::hit_word(&Hit::at(&state, showing.0, showing.1)),
+            "float.packet#0",
+            "this point is on the covered panel and not on the one over it"
+        );
+        ShellOracle::move_cursor(&state, showing.0, showing.1);
+        ShellOracle::press(&state);
+        ShellOracle::release(&state);
+
+        assert!(
+            state.float("packet#0").expect("present").z
+                > state.float("decode#1").expect("present").z,
+            "the pressed panel came forward"
+        );
+        assert_eq!(
+            painted_order(),
+            vec!["float.decode#1".to_owned(), "float.packet#0".to_owned()],
+            "and the paint order followed, because both read one function"
+        );
+
+        // ★★★★★ The assertion a counterfactual demanded. Everything above was
+        // satisfied by the PRE-R1697 hit test — the roster read backwards —
+        // because the raised panel was also the one that roster reached first.
+        // Stacking is only a fact where two panels cover one point, and it is
+        // only tested where they do so AFTER a raise has changed the order.
+        state.set_float(
+            "decode#1",
+            &super::Float {
+                x: state.float("packet#0").expect("present").x,
+                ..state.float("decode#1").expect("present")
+            },
+        );
+        let shot = painted();
+        let shared = aim(&shot, "float.packet#0");
+        assert_eq!(
+            super::hit_word(&Hit::at(&state, shared.0, shared.1)),
+            "float.packet#0",
+            "★ a point both panels cover reaches the RAISED one — the roster's \
+             own order would answer the other, and it is not the order any more"
+        );
+    });
+}
+
+/// ★★★★★ R1697 — **a press that moved nothing does not say it moved.**
+///
+/// Also demanded by a counterfactual: every check above is satisfied by a
+/// release that announces "moved" for an ordinary click, because none of them
+/// reads what the screen SAYS. That is the lie R1695 took out of the rail —
+/// a message describing something that did not happen — and a panel is where
+/// it comes back, since a click on one opens a grab that then carries nothing.
+#[test]
+fn r1697_a_click_on_a_panel_does_not_announce_a_move() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let panel = detached(&state, "packet#0");
+        let opening = state.toast.get();
+
+        let shot = painted();
+        press_tag(&state, &shot, "float.packet#0");
+        assert_eq!(
+            state.toast.get(),
+            opening,
+            "a press and release that moved nothing said nothing new"
+        );
+        assert_eq!(
+            (state.float("packet#0").expect("present").x, panel.y),
+            (panel.x, panel.y),
+            "and moved nothing, which is what makes the assertion above mean something"
+        );
+
+        // The other half: a drag that DOES move must say so, or the check
+        // above is satisfied by a screen that never speaks at all.
+        let shot = painted();
+        drag_tag(&state, &shot, "float.packet#0", (30, 20));
+        assert_ne!(
+            state.toast.get(),
+            opening,
+            "a drag that moved the panel announced it"
+        );
+        assert!(
+            state.toast.get().contains("moved"),
+            "and said what happened: {:?}",
+            state.toast.get()
+        );
+    });
+}
+
+/// How many of `spec::OPERATIONS` this screen cannot perform at all.
+///
+/// Zero, and it is said rather than assumed: every declared row is reachable by
+/// at least one column, so this ratchet's job here is to fail the moment a row
+/// is added that nothing can cause. That is the direction a table like this
+/// rots in — a row written for an operation somebody meant to build. It lives
+/// beside the gate rather than in the specification because it is a fact about
+/// THIS BUILD rather than about the tool, which is where the sibling screen
+/// keeps its own.
+const ABSENT_OPERATIONS: usize = 0;
+
+/// The detached panels in the order the scene paints them, back to front.
+fn painted_order() -> Vec<String> {
+    let (_, scene) = painted_at((WIN_W, WIN_H));
+    let mut order = Vec::new();
+    scene.for_each_node(&mut |visit| {
+        if let Some(tag) = visit.node.tag()
+            && tag.starts_with("float.")
+            && !tag[6..].contains('.')
+        {
+            order.push(tag.to_owned());
+        }
+    });
+    order
+}
+
+/// ★★★★★ R1697 — **for every way this screen says an operation can be caused,
+/// causing it that way changes something observable.**
+///
+/// The gate the dashboard did not have, and the defect it would have caught the
+/// day it was written: a detached panel could be torn off, closed and re-docked
+/// and **could not be moved**. Everything else here was green, each check
+/// correctly — the panel is painted, hit-testable, contained, named and
+/// announced. None of them asks whether grabbing it moves it. A person had to
+/// open the window and pull.
+///
+/// Both columns are driven, never one: the column a test naturally drives is
+/// the wire, and the column that breaks is the pointer. And the witness is read
+/// through the introspection surface rather than off a field, so *changed*
+/// means changed where a client can see it.
+#[test]
+fn r1697_every_declared_way_of_causing_an_operation_causes_it() {
+    // The half a reader of the table alone can check, from the framework.
+    let faults = pinion_core::operation::faults(spec::OPERATIONS);
+    assert!(faults.is_empty(), "the table is inconsistent: {faults:?}");
+    let order = pinion_core::operation::in_order(spec::OPERATIONS)
+        .unwrap_or_else(|stuck| panic!("the preconditions form a cycle: {stuck:?}"));
+    assert_eq!(order.len(), spec::OPERATIONS.len());
+
+    let declared: BTreeSet<&str> = spec::OPERATIONS
+        .iter()
+        .filter(|op| op.gesture)
+        .map(|op| op.name)
+        .collect();
+    let driven: BTreeSet<&str> = OPERATION_GESTURES.iter().map(|(name, _)| *name).collect();
+    assert_eq!(
+        declared, driven,
+        "★ the specification and the drivers name different operations — a \
+         gesture declared with nothing behind it is exactly what nailed a \
+         detached panel where it landed"
+    );
+
+    let mut inert = Vec::new();
+    let mut exercised = 0;
+    for op in spec::OPERATIONS {
+        if let Some((verb, arg)) = op.verb {
+            drive_verb(op, verb, arg, &mut inert);
+            exercised += 1;
+        }
+        if let Some((_, drive)) = OPERATION_GESTURES.iter().find(|(n, _)| *n == op.name) {
+            drive_gesture(op, *drive, &mut inert);
+            exercised += 1;
+        }
+    }
+
+    assert!(
+        inert.is_empty(),
+        "{} of {exercised} declared way(s) of causing an operation caused \
+         nothing:\n  {}",
+        inert.len(),
+        inert.join("\n  ")
+    );
+
+    let absent = pinion_core::operation::absent(spec::OPERATIONS);
+    assert_eq!(
+        absent.len(),
+        ABSENT_OPERATIONS,
+        "★ this screen can cause {} of the {} operations it declares and the \
+         ratchet says {}. Growing is a regression; shrinking means the table \
+         moved and this number has to move with it:\n  {}",
+        spec::OPERATIONS.len() - absent.len(),
+        spec::OPERATIONS.len(),
+        spec::OPERATIONS.len() - ABSENT_OPERATIONS,
+        absent.join("\n  ")
+    );
 }

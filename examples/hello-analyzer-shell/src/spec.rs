@@ -32,6 +32,9 @@
 //! reproduced, and those are what this table holds.
 
 use pinion_core::availability::Unavailable;
+/// R1697 — the operations table's shape, from the framework rather than from a
+/// second copy of the sibling screen's (see [`OPERATIONS`]).
+pub use pinion_core::operation::Operation as OperationSpec;
 use pinion_core::widgets::destination::{Destination, Destinations};
 
 /// The window the screen is specified at.
@@ -655,6 +658,137 @@ pub const BOARD: &[PlacedSpec] = &[
         row: 2,
         cols: 6,
         rows: 2,
+    },
+];
+
+// --- What this screen can be asked to DO -------------------------------------
+
+/// ★★★★★ R1697 — **the operations this screen offers, and the evidence that
+/// each one happens.**
+///
+/// Everything above describes what the dashboard *has*. This is what it *does*,
+/// and its absence is why the defect that opened this round survived: a person
+/// tore a panel off, tried to drag it, and it was nailed where it landed. The
+/// press arm that would have started the gesture read
+/// `Hit::Float(_) | Hit::Nothing => {}` — a panel folded in with hitting
+/// nothing at all — and every gate on this screen stayed green, each of them
+/// correctly. The panel is painted, hit-testable, contained, named and
+/// announced. Not one of them asks whether **grabbing it moves it**, and none
+/// of them could, because there was no table saying it should.
+///
+/// The sibling screen has had this table since R1677 and it caught exactly this
+/// class three times. The shape now lives in the framework
+/// ([`Operation`](pinion_core::operation::Operation)) rather than being copied
+/// here, which is the repair for [[debt-a-shape-two-screens-hand-roll-is-a-substrate-hole-nobody-censuses]].
+///
+/// # Scope: direct manipulation of the board and its panels
+///
+/// This table is the pointer's half of the dashboard — what a person grabs, and
+/// what moves when they do. Deliberately not the whole surface: the rail, the
+/// settings switches and the transport are driven by *writing a slot*, and a
+/// row whose `verb` column had to mean "intervene" for some rows and "invoke"
+/// for others would be a column with two meanings. Those live under their own
+/// gates already ([`RAIL`], [`OPTIONS`]).
+///
+/// # Every row is measured
+///
+/// The `verb` column holds an action the wire actually routes today; `gesture`
+/// says whether a pointer path actually reaches it. The gate drives BOTH and
+/// fails on an optimistic entry — and on a `verb: None` row that turns out to
+/// work, which is what keeps the absences honest as the screen grows.
+pub const OPERATIONS: &[OperationSpec] = &[
+    // ── a card on the board ──────────────────────────────────────
+    OperationSpec {
+        name: "place a widget on the board",
+        verb: Some(("add", "packet")),
+        gesture: true,
+        witness: "layout",
+        needs: None,
+    },
+    // ★ The asymmetry this column exists to show: a person drags a card by its
+    // header and an agent has no verb for it at all. Nothing said so until the
+    // table did.
+    OperationSpec {
+        name: "move a card on the board",
+        verb: None,
+        gesture: true,
+        witness: "layout",
+        needs: None,
+    },
+    OperationSpec {
+        name: "resize a card",
+        verb: Some(("resize", "packet#0,widen")),
+        gesture: true,
+        witness: "layout",
+        needs: None,
+    },
+    OperationSpec {
+        name: "maximise a card",
+        verb: Some(("maximize", "packet#0")),
+        gesture: true,
+        witness: "maximized",
+        needs: None,
+    },
+    OperationSpec {
+        name: "restore a maximised card",
+        verb: Some(("restore", "")),
+        gesture: true,
+        witness: "maximized",
+        needs: Some("maximise a card"),
+    },
+    OperationSpec {
+        name: "close a card",
+        verb: Some(("act", "packet#0,close")),
+        gesture: true,
+        witness: "layout",
+        needs: None,
+    },
+    // ── a card that has left the board ───────────────────────────
+    OperationSpec {
+        name: "detach a card",
+        verb: Some(("act", "packet#0,tear_off")),
+        gesture: true,
+        witness: "floating",
+        needs: None,
+    },
+    // ★★★★★ The three rows this round exists for. All three were absent, all
+    // three are one gesture in the reference's own source — its float drag
+    // calls its raise before reading the panel's origin — and the person who
+    // found the first one found it by opening the window and pulling.
+    OperationSpec {
+        name: "move a detached panel",
+        verb: None,
+        gesture: true,
+        witness: "floats",
+        needs: Some("detach a card"),
+    },
+    OperationSpec {
+        name: "size a detached panel",
+        verb: None,
+        gesture: true,
+        witness: "floats",
+        needs: Some("detach a card"),
+    },
+    OperationSpec {
+        name: "bring a detached panel forward",
+        verb: None,
+        gesture: true,
+        witness: "floats",
+        needs: Some("detach a card"),
+    },
+    OperationSpec {
+        name: "re-dock a detached panel",
+        verb: Some(("redock", "packet#0")),
+        gesture: true,
+        witness: "floating",
+        needs: Some("detach a card"),
+    },
+    OperationSpec {
+        name: "close a detached panel",
+        verb: None,
+        gesture: true,
+        witness: "floating",
+        needs: Some("detach a card"),
     },
 ];
 
