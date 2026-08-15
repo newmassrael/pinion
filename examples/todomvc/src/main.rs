@@ -2505,15 +2505,29 @@ impl WidgetA11y for TodoMvcView {
             .into_iter()
             .filter(|item| current_filter.matches(item))
             .collect();
-        let mut list_node = AccessNode::new(LIST_TAG, AriaRole::List);
-        for item in &entries {
+        // ★★★★★ R1693.2 — the list STATES how many entries it holds, which at
+        // boot is **zero**: this application opens with nothing on the list, and
+        // a filter can empty it at any moment. R1693's structural census reads
+        // an empty collection that says nothing as a collection somebody forgot
+        // to fill — correctly, because the two are indistinguishable from
+        // outside — and the declaration is what separates them. Stated always
+        // rather than only when empty, because "how many are in this list" is a
+        // fact a reader wants at every count, and a number that appears only in
+        // one state is one a caller has to know to ask about twice.
+        let mut list_node = AccessNode::new(LIST_TAG, AriaRole::List)
+            .with_size_of_set(u32::try_from(entries.len()).unwrap_or(u32::MAX));
+        for (n, item) in entries.iter().enumerate() {
             let row_tag = format!("{ITEM_TAG_PREFIX}#{}", item.id);
             let delete_tag = format!("{DELETE_TAG_PREFIX}#{}", item.id);
             let toggle_tag = format!("{TOGGLE_TAG_PREFIX}#{}", item.id);
             list_node = list_node.with_child(row_tag.clone());
             nodes.push(
                 AccessNode::new(row_tag, AriaRole::ListItem)
-                    .with_value(AccessValue::Text(item.text.clone())),
+                    .with_value(AccessValue::Text(item.text.clone()))
+                    // Its place among the entries the ACTIVE FILTER leaves, so
+                    // "two of three" is two of what is on the screen rather
+                    // than of a list only the application can see.
+                    .with_set_position(n, entries.len()),
             );
             // R658 §5.40 — checkbox node carries `aria-checked` via
             // `AccessState::checked = Some(<bool>)`. The
@@ -3664,6 +3678,23 @@ mod tests {
             assert_eq!(nodes[5].role, AriaRole::List);
             assert_eq!(nodes[5].tag, LIST_TAG);
             assert!(nodes[5].children.is_empty(), "empty list, no children");
+            // ★★★★★ R1693.2 — and it SAYS it is empty. This application opens
+            // with nothing on the list, so the state R1693's structural census
+            // reads as "a collection somebody forgot to fill" is the state this
+            // screen boots in — the two are indistinguishable from outside, and
+            // the declaration is what separates them. Twelve demos went red in
+            // CI on exactly this line's absence, all of them for this one
+            // screen, because every demo that drives this application boots it
+            // empty.
+            assert_eq!(
+                nodes[5].size_of_set,
+                Some(0),
+                "an empty list is a state; a forgotten one is a defect",
+            );
+            assert!(
+                nodes[5].declares_empty(),
+                "which is the census's own question, asked its way",
+            );
         });
     }
 
