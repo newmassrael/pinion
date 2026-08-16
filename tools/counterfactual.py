@@ -48,6 +48,23 @@ failures of the *round*, for opposite reasons, and both are reported by name.
    `"error:" in output`, and cargo prints `error: test failed` for an ordinary
    assertion failure, so 8 of 10 cases were misreported as compile errors. The
    test here is `error[E` / `could not compile` / `error: could not`.
+
+   **So write the break as a WRONG answer, never an absent one.** The class has
+   been walked into four times and each time the cause was different, which is
+   why this is authoring guidance rather than one rule:
+
+   * an unused binding (`unused variable`) — R1687, R1694;
+   * an unread field (`dead_code`) — R1694;
+   * **deleting a helper's only call site**, which makes the helper itself dead
+     code under `-D warnings` — R1697, and the newest. `Self::open_float_grab`
+     was called from exactly one arm; removing that call did not test the arm,
+     it stopped the crate compiling.
+
+   The repair is the same in all three: keep every name used and make it do the
+   wrong thing. Grab a panel named `"nothing"`; carry to the point the grab
+   opened (a zero delta); raise a name that is not a panel; pass `None` where
+   the real focus went. Each compiles, each is exactly one lie, and each is a
+   thing the gate can actually catch.
 4. **Restoration is verified by hash.** A driver that dies mid-case leaves the
    tree mutated (R1557, R1578). Every file is hashed before and after.
 5. **The driver has its own tests**, in the same place `tools/test_rpc_verify.py`
