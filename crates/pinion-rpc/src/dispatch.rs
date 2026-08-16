@@ -6038,6 +6038,28 @@ fn shadow_to_json(shadow: &pinion_core::style::BoxShadow) -> Value {
 ///
 /// [`Chrome`]: pinion_core::style::Chrome
 /// [`ChromeRole::wire_word`]: pinion_core::style::ChromeRole::wire_word
+/// R1705 §5.49 §2 #7 — wire form for a [`DotLattice`](pinion_core::style::DotLattice):
+/// the generator, not the generated.
+///
+/// `pitch`, `dot` and `phase` are exactly what the painter walks, so a client
+/// reading this can place every dot itself — which is the property that makes
+/// replacing 23,000 published nodes with one an increase in what is knowable
+/// rather than a loss.
+fn lattice_to_json(lattice: &pinion_core::style::DotLattice) -> Value {
+    let mut obj = serde_json::Map::new();
+    obj.insert("pitch".to_string(), Value::Number(lattice.pitch.into()));
+    obj.insert("dot".to_string(), Value::Number(lattice.dot.into()));
+    obj.insert(
+        "phase".to_string(),
+        Value::Array(vec![
+            Value::Number(lattice.phase.0.into()),
+            Value::Number(lattice.phase.1.into()),
+        ]),
+    );
+    obj.insert("color".to_string(), color_to_json(lattice.color));
+    Value::Object(obj)
+}
+
 fn chrome_to_json(band: pinion_core::style::Chrome) -> Value {
     let mut obj = serde_json::Map::new();
     obj.insert(
@@ -6089,6 +6111,14 @@ fn box_style_to_json(style: &pinion_core::style::BoxStyle) -> Value {
             BoxFacet::Chrome => {
                 Value::Array(style.chrome.iter().copied().map(chrome_to_json).collect())
             }
+            // ★★★★★ R1705 — the lattice is published as the four numbers and
+            // the colour that generate it, which is the whole §2 #7 argument
+            // for the type. A consumer without this primitive had to build the
+            // grid out of boxes, and a reader of that scene got 23,000
+            // anonymous 1x1 nodes carrying no tag and no name; a reader of this
+            // one gets "a 1 px dot every 22 px, phased at (-60, -40)" and can
+            // reconstruct every dot from it.
+            BoxFacet::Lattice => style.lattice.as_ref().map_or(Value::Null, lattice_to_json),
         };
         obj.insert(facet.name().to_string(), value);
     }

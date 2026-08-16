@@ -51,8 +51,8 @@ use pinion_core::scene::{
     TextGridNode, TextNode,
 };
 use pinion_core::style::{
-    Border, BorderPlacement, BoxStyle, Color, Fit, FontStyle, FontWeight, GenericFontFamily,
-    Gradient, GradientKind, LineHeight, StrokeCap, TextOverflow, TextStyle,
+    Border, BorderPlacement, BoxStyle, Color, DotLattice, Fit, FontStyle, FontWeight,
+    GenericFontFamily, Gradient, GradientKind, LineHeight, StrokeCap, TextOverflow, TextStyle,
 };
 use pinion_core::term_grid::{
     CellWidth, ColorTarget, CursorShape, GridBuffer, Palette, TermCell, TermColor, UnderlineStyle,
@@ -3683,6 +3683,58 @@ fn fill_box_bg(out: &mut VelloScene, r: Rect, style: &BoxStyle, solid: Color, tr
         fill_rect_gradient(out, r, gradient, style.corner_radius, transform);
     } else {
         fill_rect(out, r, solid, style.corner_radius, transform);
+    }
+    // R1705 — the lattice goes ON the ground, so it is painted after whichever
+    // of the two above laid one down. Unlike a gradient it does not supersede
+    // the fill: a canvas grid is dots on a surface and both are wanted.
+    if let Some(lattice) = &style.lattice {
+        fill_rect_lattice(out, r, lattice, transform);
+    }
+}
+
+/// ★★★★★ R1705 §5.32 §5.50 — paint a [`DotLattice`] across `r`.
+///
+/// This is the whole point of the type, and it is worth saying what it costs
+/// against what it replaces. The dots are emitted here, at paint time, over the
+/// BOX's own rectangle — never materialised as scene nodes, so nothing about
+/// them is laid out, hit-tested, cached per-node or published. The consumer
+/// that had to build this lattice out of boxes paid 95,131 painted nodes and
+/// 155 ms a zoom step for exactly this picture; the reference toolkit pays
+/// 0.6–0.8 ms with a tiled brush and 1.8 ms drawing 27,448 pips by hand,
+/// both measured, and this is the second of those shapes.
+///
+/// The walk is bounded by the box, so a lattice can no more run off its own
+/// surface than a fill can — which is the other half of what the consumer could
+/// not do: an enumerated lattice has to stop somewhere and a declared one stops
+/// where the box does.
+fn fill_rect_lattice(out: &mut VelloScene, r: Rect, lattice: &DotLattice, transform: Affine) {
+    if r.w == 0 || r.h == 0 {
+        return;
+    }
+    if lattice.color == Color::TRANSPARENT {
+        return;
+    }
+    let brush = to_peniko(lattice.color);
+    let pitch = lattice.pitch.max(1);
+    let dot = f64::from(lattice.dot.max(1));
+    let (fx, fy) = (
+        lattice.first(lattice.phase.0),
+        lattice.first(lattice.phase.1),
+    );
+    let (x0, y0) = (f64::from(r.x), f64::from(r.y));
+    let (x1, y1) = (x0 + f64::from(r.w), y0 + f64::from(r.h));
+    let mut gy = f64::from(fy) + y0;
+    while gy < y1 {
+        let mut gx = f64::from(fx) + x0;
+        while gx < x1 {
+            // Clipped to the box on the far edges, so a dot straddling the
+            // boundary is trimmed rather than escaping — the containment rule
+            // every other mark on this box obeys.
+            let rect = KurboRect::new(gx, gy, (gx + dot).min(x1), (gy + dot).min(y1));
+            out.fill(Fill::NonZero, transform, brush, None, &rect);
+            gx += f64::from(pitch);
+        }
+        gy += f64::from(pitch);
     }
 }
 

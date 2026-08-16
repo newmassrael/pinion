@@ -51,7 +51,7 @@ from rpc_verify import (  # noqa: E402
 # agree with itself would pass just as happily if every box on the wire lost
 # the same key. An independent restatement is the only shape that can fail when
 # the projection and the type drift apart together.
-CENSUS = ["border", "chrome", "corner_radius", "fill", "gradient", "shadows"]
+CENSUS = ["border", "chrome", "corner_radius", "fill", "gradient", "lattice", "shadows"]
 
 # Which binding declares which facet. Chosen because the union is the census —
 # see the module docstring.
@@ -65,6 +65,12 @@ BINDINGS = {
     # A group box is where a band of a box reserved for the box's own chrome is
     # actually declared in production: its caption sits in one.
     "hello-group-box": ["fill", "border", "chrome"],
+    # ★ R1705 — the fourth binding, for the same reason the third exists: a new
+    # facet whose key reaches the wire with nothing in production declaring it
+    # is exactly what (G) catches. The node canvas is where a repeating dot
+    # lattice is actually declared — it is the canvas grid, and before this
+    # facet the screen had to build it out of 23,000 boxes.
+    "hello-node-lab": ["fill", "lattice"],
 }
 
 BOX_NODES = ("Box", "Container")
@@ -75,7 +81,7 @@ def is_declared(facet: str, style: dict) -> bool:
     the documented empty form. Mirrors `BoxFacet::is_declared`'s meaning
     (differs from the default) at the wire's vocabulary."""
     value = style.get(facet)
-    if facet in ("border", "gradient"):
+    if facet in ("border", "gradient", "lattice"):
         return value is not None
     if facet in ("shadows", "chrome"):
         return bool(value)

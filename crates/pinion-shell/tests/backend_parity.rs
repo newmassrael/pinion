@@ -99,8 +99,8 @@ use pinion_core::scene::{
     BoxNode, ContainerNode, Rect, Scene, SceneNodeKind, ScrollNode, TextNode,
 };
 use pinion_core::style::{
-    Border, BoxFacet, BoxShadow, BoxStyle, Chrome, Color, Gradient, LayoutStyle, Overflow,
-    TextStyle,
+    Border, BoxFacet, BoxShadow, BoxStyle, Chrome, Color, DotLattice, Gradient, LayoutStyle,
+    Overflow, TextStyle,
 };
 use pinion_runtime::paint_adapter::to_vello;
 use pinion_text::LayoutCache;
@@ -183,11 +183,23 @@ struct Declaration {
     verdicts: &'static [(&'static str, Observation)],
 }
 
-/// The rows, derived from the census. The `match` is exhaustive, so a new
-/// [`BoxFacet`] cannot be added without stating here what each renderer does
-/// with it.
+/// The rows, derived from the census. Both halves `match` exhaustively, so a
+/// new [`BoxFacet`] cannot be added without stating what each renderer does
+/// with it AND how the fixture declares it.
 fn declaration(facet: BoxFacet) -> Declaration {
-    let verdicts: &'static [(&'static str, Observation)] = match facet {
+    Declaration {
+        facet,
+        apply: fixture_for(facet),
+        verdicts: verdicts_for(facet),
+    }
+}
+
+/// What each renderer does with this facet, and why. R1705 split this out of
+/// [`declaration`] when the seventh facet took that function past the
+/// workspace's 100-line ceiling — an extract, never an `#[allow]`, because the
+/// ceiling is what keeps this table readable as it grows one facet at a time.
+fn verdicts_for(facet: BoxFacet) -> &'static [(&'static str, Observation)] {
+    match facet {
         // A colour and an outline are expressible in every medium — a cell
         // background, box-drawing glyphs, a vector fill or stroke — so these
         // two share a row until one of them stops being universal.
@@ -262,8 +274,42 @@ fn declaration(facet: BoxFacet) -> Declaration {
             ("tui", Observation::Declarative(CHROME_PAINTS_NOTHING)),
             ("pdf", Observation::Declarative(CHROME_PAINTS_NOTHING)),
         ],
-    };
-    let apply: fn(BoxStyle) -> BoxStyle = match facet {
+        // R1705 — a repeating dot lattice: the canvas grid, declared instead of
+        // enumerated. Unlike `chrome` this one is entirely about ink, so the
+        // three rows are the ordinary three verdicts.
+        BoxFacet::Lattice => &[
+            ("vello", Observation::Observes),
+            (
+                "tui",
+                Observation::Ignores(
+                    "the lattice declares a one-PIXEL dot, and a terminal's \
+                     smallest piece of ink is a whole cell — so the nearest \
+                     thing this medium can draw is a glyph every few cells, \
+                     which is a different picture at a different weight rather \
+                     than a coarser rendering of this one. Rounding it into \
+                     cells would be inventing a decoration the caller did not \
+                     ask for",
+                ),
+            ),
+            (
+                "pdf",
+                Observation::Gap(
+                    "PDF has tiling patterns (Type 1) and can equally emit the \
+                     dots as filled rectangles, so the medium carries this \
+                     declaration comfortably; the projector simply does not \
+                     read it yet, beside the gradients and drop-shadows it \
+                     already carries under the same deferred-until-a-consumer \
+                     note",
+                ),
+            ),
+        ],
+    }
+}
+
+/// How the fixture declares this facet — the one edit whose presence or absence
+/// the three renderers are compared across.
+fn fixture_for(facet: BoxFacet) -> fn(BoxStyle) -> BoxStyle {
+    match facet {
         BoxFacet::Fill => |s| s.with_fill(Color::rgb(0x00, 0x90, 0xff)),
         BoxFacet::Border => |s| s.with_border(Border::new(STROKE, BORDER_W)),
         BoxFacet::CornerRadius => |s| s.with_corner_radius(12),
@@ -282,11 +328,12 @@ fn declaration(facet: BoxFacet) -> Declaration {
             ])
         },
         BoxFacet::Chrome => |s| s.with_chrome(Chrome::caption(20)),
-    };
-    Declaration {
-        facet,
-        apply,
-        verdicts,
+        // A pitch small enough that the fixture's box holds several dots, so
+        // "the renderer observed it" cannot be satisfied by a single mark that
+        // a rounding error could also produce.
+        BoxFacet::Lattice => {
+            |s| s.with_lattice(DotLattice::new(8, 2, Color::rgb(0xff, 0x00, 0xff)))
+        }
     }
 }
 

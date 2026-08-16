@@ -76,7 +76,8 @@ use pinion_core::scene::{
     ContainerNode, PathCommand, PathNode, PathPoint, Rect, ScrollAxis, ScrollNode, TextNode,
 };
 use pinion_core::style::{
-    Border, BoxStyle, Color, Dash, LayoutStyle, PathStyle, Size, Stroke, TextOverflow, TextStyle,
+    Border, BoxStyle, Color, Dash, DotLattice, LayoutStyle, PathStyle, Size, Stroke, TextOverflow,
+    TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::voice::Silence;
@@ -4573,8 +4574,9 @@ fn toolbar_run_seat(state: &LabState, run: Rect, ink: Ink) -> Vec<Scene> {
 fn canvas_world(state: &LabState, ink: Ink) -> Vec<Scene> {
     let mut children: Vec<Scene> = Vec::new();
 
-    children.extend(canvas_grid(state, ink));
-
+    // ★ R1705 — no grid here any more: the pips were a texture on this surface
+    // and are now a `DotLattice` on the viewport above it, which is what makes
+    // them endless and free. See `canvas_lattice`.
     let dragged_frame = match state.drag.get() {
         Some(Drag::Frame { frame, .. }) => Some(frame),
         _ => None,
@@ -4651,35 +4653,34 @@ fn world_extent(state: &LabState) -> (u32, u32) {
     )
 }
 
-fn canvas_grid(state: &LabState, ink: Ink) -> Vec<Scene> {
-    let rect = canvas_rect();
-    let (world_w, world_h) = world_extent(state);
-    let mut children: Vec<Scene> = Vec::new();
+/// ★★★★★ R1705 — the reference's dot grid, as ONE node.
+///
+/// This function used to emit one `Scene::Container` per pip and cut the walk
+/// to the world surface's extent, because the framework had no repeating fill
+/// and a consumer cannot invent one. Both of the things a person reported about
+/// this canvas came from that, and they were the same fact:
+///
+/// * **"zooming out is slow."** The pitch shrinks with the zoom (down to a 6 px
+///   floor), so zooming out packed more pips into the viewport: the painted
+///   scene went from 12,879 nodes to **95,131** and a zoom step from 23 ms to
+///   **155 ms**. Every one of those pips was laid out, hit-tested, cached and
+///   published, for a 1 px dot.
+/// * **"the dots stop, so it doesn't feel infinite."** An enumerated lattice
+///   has to stop somewhere, and the `.min(world_w)` above is where — pan past
+///   the 6,400-unit surface and the canvas went blank.
+///
+/// [`DotLattice`] answers both by construction. The lattice is a declaration on
+/// the canvas's own box, so it is bounded by the box (never by a world extent),
+/// and the dots are emitted at paint time rather than materialised. The phase
+/// is the world offset, which is what makes the grid travel with the surface
+/// instead of the window — the same parameterisation the behaviour canon uses
+/// (`background-size` from the zoom, `background-position` from the pan).
+fn canvas_lattice(state: &LabState, ink: Ink) -> DotLattice {
     let pitch = scaled(state, 22).max(6);
-    // Only the slice of the surface the viewport is over: the pips are a
-    // texture, and a texture over the whole 6,400-unit world would be a quarter
-    // of a million nodes to lay out for the few thousand anybody can see.
-    let (ox, oy) = world_offset(state, state.pan.get());
-    let first = |offset: i32| {
-        let pitch = i32::try_from(pitch).unwrap_or(1);
-        u32::try_from(offset - offset.rem_euclid(pitch)).unwrap_or(0)
-    };
-    let (from_x, from_y) = (first(ox), first(oy));
-    let mut gy = from_y;
-    while gy < (from_y + rect.h + pitch).min(world_h) {
-        let mut gx = from_x;
-        while gx < (from_x + rect.w + pitch).min(world_w) {
-            children.push(Scene::Container(
-                ContainerNode::new(Vec::new())
-                    .with_style(BoxStyle::filled(ink.grid))
-                    .with_layout(absolute(Rect::new(gx, gy, 1, 1))),
-            ));
-            gx += pitch;
-        }
-        gy += pitch;
-    }
-
-    children
+    // The pan, not the world offset: the lattice sits on the viewport, so its
+    // phase is how far the surface has been dragged under it.
+    let (pan_x, pan_y) = state.pan.get();
+    DotLattice::new(pitch, 1, ink.grid).phased(pan_x, pan_y)
 }
 
 /// Where the picked link's own affordances sit, in the world surface's
@@ -5444,7 +5445,19 @@ fn canvas(state: &LabState, ink: Ink) -> Scene {
     let (world_w, world_h) = world_extent(state);
     let world = Scene::Container(
         ContainerNode::new(canvas_world(state, ink))
-            .with_style(BoxStyle::filled(ink.bg))
+            // ★★★★★ R1705 — TRANSPARENT, and this line is the whole reason the
+            // first draft of the lattice drew nothing. The surface used to
+            // carry the same `ink.bg` the canvas behind it carries, which was
+            // invisible while it was the only ground; once the canvas grew a
+            // lattice, this opaque fill covered every dot of it. The pixels
+            // said so — 1,731 grid-coloured pixels across the canvas before the
+            // change and ZERO after — while the scene, the node count and the
+            // published declaration all looked right, and a glance at the two
+            // screenshots looked right too.
+            //
+            // The surface is a coordinate space, not a colour: the canvas is
+            // what has a ground.
+            .with_style(BoxStyle::filled(Color::TRANSPARENT))
             .with_layout(LayoutStyle::new().with_size(Size::px(world_w, world_h))),
     );
     let (ox, oy) = world_offset(state, state.pan.get());
@@ -5463,7 +5476,14 @@ fn canvas(state: &LabState, ink: Ink) -> Scene {
     Scene::Container(
         ContainerNode::new(children)
             .with_tag("lab.canvas")
-            .with_style(BoxStyle::filled(ink.bg))
+            // ★★★★★ R1705 — the grid rides the VIEWPORT, not the world surface,
+            // which is what makes it endless. A lattice on the world would be
+            // bounded by the world exactly as the enumerated pips were, and
+            // panning past 6,400 units would blank the canvas again. On the
+            // viewport it is always full, and the phase carries the pan so the
+            // surface still reads as a thing being moved. The behaviour canon
+            // puts its background on the viewport element for the same reason.
+            .with_style(BoxStyle::filled(ink.bg).with_lattice(canvas_lattice(state, ink)))
             .with_layout(absolute(rect)),
     )
 }

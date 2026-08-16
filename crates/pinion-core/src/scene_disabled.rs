@@ -292,7 +292,14 @@ fn fade_box_style(style: &mut BoxStyle, backdrop: Color) {
         // does. Nothing to fade, and saying so here is the point of the
         // destructure.
         chrome: _,
+        // R1705 — a lattice is ink on the box and fades with everything else
+        // that is ink: a disabled canvas whose grid stayed at full contrast
+        // would read as the one live thing on a dead surface.
+        lattice,
     } = style;
+    if let Some(lattice) = lattice {
+        lattice.color = fade(lattice.color, backdrop);
+    }
     *fill = fade(*fill, backdrop);
     if let Some(border) = border {
         border.color = fade(border.color, backdrop);
