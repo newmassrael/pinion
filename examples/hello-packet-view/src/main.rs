@@ -54,8 +54,8 @@ use pinion_a11y::{
 };
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaArg,
-    SchemaField, ThreadOwnership,
+    IntrospectSchema, IntrospectValue, InvokeError, PointerTarget, ReadRefusal, RepaintOwner,
+    SchemaArg, SchemaField, ThreadOwnership,
 };
 use pinion_core::focus_state;
 use pinion_core::reactive::Signal;
@@ -222,17 +222,22 @@ const MIN_H: u32 = APP_BAR_H + FILTER_H + CONTEXT_H + HEAD_H + ROW_H * 4 + REASS
 
 /// The live surface, or the design size where no shell has published one.
 ///
-/// `use_viewport_size` is a tracked read, so the view re-runs on a resize; it
-/// is strict about the owner scope, and a bare unit call has none. The declared
-/// design size is the honest fallback there — it is what the specification's
-/// rectangles were measured against.
+/// ★★★★★ R1700 — **the framework's answer, and the same one on both halves of
+/// this screen.** This fell back to `(WIN_W, WIN_H)` off an owner scope, and
+/// every pointer handler and every wire action on this screen runs off one: the
+/// paint reflowed to the live window while the hit test went on resolving
+/// against 1440x900. Measured before the repair, through a real shell at
+/// 2494x1011 — of the 166 painted rectangles that moved, **166** had stopped
+/// being pressable where they were drawn. Reported by a person twice, and green
+/// in every gate both times, because an in-process fixture paints and hit-tests
+/// inside one owner scope where the two halves cannot disagree.
+///
+/// The sibling screens had already met this and answered it two different ways
+/// — one read the framework's record, one kept a `Signal` of its own — so the
+/// policy was lifted into [`pinion_core::external::layout_size`] rather than
+/// spelled here a third time.
 fn window_size() -> (u32, u32) {
-    let live =
-        pinion_core::reactive::Owner::current().map(|_| pinion_core::reactive::use_viewport_size());
-    match live {
-        Some((w, h)) if w >= MIN_W && h >= MIN_H => (w, h),
-        _ => (WIN_W, WIN_H),
-    }
+    pinion_core::external::layout_size(VIEW_TAG, (MIN_W, MIN_H), (WIN_W, WIN_H))
 }
 
 fn body_rect() -> Rect {
@@ -860,6 +865,24 @@ impl Hit {
             }
         }
         Self::None
+    }
+
+    /// ★★★★★ R1700 — the word the wire answers a press with, and therefore the
+    /// word [`External::target_at`] answers with too.
+    ///
+    /// Lifted out of `query("hit.<x>.<y>")`, where it was spelled inline. One
+    /// function rather than two, because the framework's check holds a press's
+    /// word against a tag's word and a second spelling would make it compare
+    /// this screen with a copy of itself.
+    fn word(&self) -> Option<String> {
+        Some(match self {
+            Self::Message(n) => format!("message.{n}"),
+            Self::Field(p) => format!("field.{p}"),
+            Self::Byte(b) => format!("byte.{b}"),
+            Self::Saved(n) => format!("saved.{n}"),
+            Self::Layer(n) => format!("layer.{n}"),
+            Self::None => return None,
+        })
     }
 
     /// What answers at the window point `(px, py)`.
@@ -2000,6 +2023,27 @@ impl External for ViewOracle {
         self.surface = (width.max(1), height.max(1));
     }
 
+    /// ★★★★★ R1700 §5.35 — what a press here addresses, for the framework to
+    /// hold against what this screen painted here.
+    fn target_at(&self, x: u32, y: u32) -> PointerTarget {
+        self.state.as_ref().map_or(PointerTarget::Unanswered, |s| {
+            Hit::at(s, x, y)
+                .word()
+                .map_or(PointerTarget::Nothing, PointerTarget::Word)
+        })
+    }
+
+    /// ★★★★★ R1700 §5.35 — the same question by name. One line over
+    /// [`Hit::of_tag`], which R1699 built for keyboard activation and which is
+    /// therefore not derived from the geometry this is checked against.
+    fn target_of_tag(&self, tag: &str) -> PointerTarget {
+        self.state.as_ref().map_or(PointerTarget::Unanswered, |s| {
+            Hit::of_tag(s, tag)
+                .word()
+                .map_or(PointerTarget::Nothing, PointerTarget::Word)
+        })
+    }
+
     fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
         Some(self)
     }
@@ -2059,14 +2103,11 @@ impl ExternalIntrospect for ViewOracle {
                 x.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?,
                 y.parse().map_err(|_| ReadRefusal::QueryTypeMismatch)?,
             );
-            return Ok(IntrospectValue::Text(match Hit::at(state, px, py) {
-                Hit::Message(n) => format!("message.{n}"),
-                Hit::Field(p) => format!("field.{p}"),
-                Hit::Byte(b) => format!("byte.{b}"),
-                Hit::Saved(n) => format!("saved.{n}"),
-                Hit::Layer(n) => format!("layer.{n}"),
-                Hit::None => "none".to_owned(),
-            }));
+            return Ok(IntrospectValue::Text(
+                Hit::at(state, px, py)
+                    .word()
+                    .unwrap_or_else(|| "none".to_owned()),
+            ));
         }
         match path {
             "spec" => Ok(IntrospectValue::Json(spec_json())),

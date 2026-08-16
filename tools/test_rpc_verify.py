@@ -1102,6 +1102,196 @@ def test_resize_and_settle_waits_for_the_frame_that_is_the_new_size() -> None:
     )
 
 
+def _target_report(rows: list[dict], *, surface: str = "screen") -> dict:
+    """A `scene/pointer_target` result over `rows`, counted the way the
+    framework counts it — so a test cannot pass by disagreeing with the sums."""
+    count = lambda w: sum(1 for r in rows if r["verdict"] == w)  # noqa: E731
+    return {
+        "surfaces": [
+            {
+                "surface": surface,
+                "painted_size": [800, 600],
+                "announced": [800, 600],
+                "answers": True,
+                "painted": len(rows),
+                "deliverable": count("deliverable"),
+                "handle": count("handle"),
+                "inert": count("inert"),
+                "covering": count("covering"),
+                "unreachable": count("unreachable"),
+                "rows": rows,
+            }
+        ],
+        "unanswered": [],
+        "defects": count("unreachable"),
+    }
+
+
+def _row(tag: str, verdict: str, by_name: object, at_centre: object) -> dict:
+    return {
+        "tag": tag,
+        "x": 10,
+        "y": 20,
+        "by_name": by_name,
+        "at_centre": at_centre,
+        "verdict": verdict,
+    }
+
+
+def test_the_pointer_target_gate_fails_only_the_verdict_with_no_benign_reading() -> None:
+    """★★★★★ R1700 — `deliverable`, `handle`, `covering` and `inert` pass and
+    `unreachable` does not, and getting that round the wrong way makes the gate
+    either useless or unadoptable.
+
+    A caption resolves to nothing and is painted over a row that resolves to the
+    row: correct, and the commonest shape on any of these screens. A group whose
+    grip is its tab strip answers away from its centre: also correct, and the
+    first draft of this gate called the node lab's two host frames defective for
+    it. A rectangle addressable by name and at no point inside itself is broken
+    however it got that way — that is exactly what a resize did to 166
+    rectangles on the capture viewer.
+    """
+    tf = RpcSubprocess("fixture-example")
+    tf._proc = None
+    rows = [
+        _row("pv.list.row.0", "deliverable", "message.0", "message.0"),
+        _row("pv.list.title", "inert", None, None),
+        _row("pv.bytes.lit.7", "covering", None, "byte.7"),
+        _row("lab.frame.host-a", "handle", "frame:host-a", "node:R-01"),
+    ]
+    report = _target_report(rows)
+    tf.request = lambda method, params=None, **kw: Response(  # type: ignore[assignment]
+        id=1, result=report
+    )
+    tf._gate_pointer_targets()  # a clean screen: no raise
+    check(
+        report["defects"] == 0,
+        "gate: decoration, captions and a gripped group are not defects",
+    )
+
+    broken = _target_report(rows + [_row("pv.list.row.4", "unreachable", "message.4", None)])
+    tf.request = lambda method, params=None, **kw: Response(id=1, result=broken)  # type: ignore[assignment]
+    raised = None
+    try:
+        tf._gate_pointer_targets()
+    except AssertionError as exc:
+        raised = str(exc)
+    check(raised is not None, "gate: an unreachable rectangle fails the demo")
+    check(
+        raised is not None and "pv.list.row.4" in raised,
+        "gate: the failure names the rectangle",
+    )
+
+
+def test_the_pointer_target_gate_keeps_unanswered_apart_from_clean() -> None:
+    """★★★★★ R1700 — a surface that does not answer is NOT a surface that
+    answered "nothing there".
+
+    R1691's lesson in its pointer form: a total satisfied by declaring
+    everything silent measures nothing. If `unanswered` collapsed into a clean
+    verdict, every screen in the tree that has not implemented the pair would
+    report as checked, and the census would grow while covering nothing.
+    """
+    tf = RpcSubprocess("fixture-example")
+    tf._proc = None
+    report = {
+        "surfaces": [
+            {
+                "surface": "screen",
+                "painted_size": [800, 600],
+                "announced": [800, 600],
+                "answers": False,
+                "painted": 0,
+                "deliverable": 0,
+                "handle": 0,
+                "inert": 0,
+                "covering": 0,
+                "unreachable": 0,
+                "rows": [],
+            }
+        ],
+        "unanswered": ["screen"],
+        "defects": 0,
+    }
+    printed: list[str] = []
+    tf.request = lambda method, params=None, **kw: Response(id=1, result=report)  # type: ignore[assignment]
+    real_print = rpc_verify.print if hasattr(rpc_verify, "print") else print
+    del real_print
+    import builtins
+
+    original = builtins.print
+    builtins.print = lambda *a, **k: printed.append(" ".join(str(x) for x in a))
+    try:
+        tf._gate_pointer_targets()
+    finally:
+        builtins.print = original
+    check(
+        not any("deliverable" in line for line in printed),
+        "gate: a surface that does not answer is not reported as covered",
+    )
+
+
+def test_targets_survive_resize_refuses_a_screen_that_stops_answering() -> None:
+    """★★★★★ R1700 — the helper's own negative control, and the case is the
+    round's own defect.
+
+    The capture viewer answered 166 tags at 1440x900 and `nothing` at every one
+    of them at 2494x1011. Neither reading is a defect ON ITS OWN — `nothing` is
+    a legitimate answer for a caption — so a check that only looked at one size
+    would have passed both. What is not legitimate is a rectangle that is
+    addressable by name and reaches nothing where it is drawn, which is what
+    those 166 became, and this is the assertion that says so.
+
+    The second half of the control is `deliverable > 0`: without it a screen
+    that stops answering ENTIRELY satisfies "nothing disagrees".
+    """
+    good = _target_report([_row("row.0", "deliverable", "message.0", "message.0")])
+    dead = _target_report([_row("row.0", "unreachable", "message.0", None)])
+    silent = _target_report([_row("row.0", "inert", None, None)])
+
+    class Screen:
+        def __init__(self, second: dict) -> None:
+            self.example = "fixture-example"
+            self._second = second
+            self._resizes = 0
+
+        def request(self, method: str, params: object = None, **kw: object) -> Response:
+            if method == "scene/resize":
+                self._resizes += 1
+                return Response(id=1, result={})
+            return Response(id=1, result=good if self._resizes < 2 else self._second)
+
+        def snapshot(self, *, source: str, viewport: tuple) -> dict:
+            return {"rect": {"x": 0, "y": 0, "w": viewport[0], "h": viewport[1]}}
+
+    sizes = [(1440, 900), (2494, 1011)]
+    rpc_verify.assert_targets_survive_resize(Screen(good), sizes)  # type: ignore[arg-type]
+
+    # ★★★★★ The third control, and it is here because a counterfactual PASSED
+    # without it: falsify the size the FRAMEWORK records for a surface and no
+    # rectangle on any of the three analyser screens disagrees, because none of
+    # them is positioned by the window's height. A claimed invariant that
+    # nothing reads is the shape this project keeps recording.
+    misannounced = _target_report([_row("row.0", "deliverable", "message.0", "message.0")])
+    misannounced["surfaces"][0]["announced"] = [800, 900]
+
+    for label, second, expect in (
+        ("unreachable", dead, "not pressable where they are drawn"),
+        ("all silent", silent, "not one painted rectangle is addressable"),
+        ("misannounced", misannounced, "a size it was not painted at"),
+    ):
+        raised = None
+        try:
+            rpc_verify.assert_targets_survive_resize(Screen(second), sizes)  # type: ignore[arg-type]
+        except AssertionError as exc:
+            raised = str(exc)
+        check(raised is not None, f"helper: a screen that goes {label} on a resize fails")
+        check(
+            raised is not None and expect in raised,
+            f"helper: the {label} failure says what went wrong — {raised!r}",
+        )
+
+
 def test_no_demo_resizes_a_window_and_reads_without_waiting() -> None:
     """★★★★★ R1686 — a resize is followed by a WAIT on the new size, never by a
     tick.

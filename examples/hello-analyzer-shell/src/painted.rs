@@ -191,7 +191,14 @@ fn painted_at(size: (u32, u32)) -> (Painted, Scene) {
     pinion_core::reactive::VIEWPORT_SIZE
         .resolve(&owner)
         .set(size);
-    use_shell_state().surface.set(size);
+    // ★★ R1700 — and the FRAMEWORK's record, which is the channel a caller off
+    // a view scope reads. `announce_external_sizes` writes it after every real
+    // paint from the surface's own rectangle; this sweep does not run that
+    // pass, so it announces what the pass would have. R1671 published the size
+    // through a signal on this screen's state instead — a private channel that
+    // only this screen's sweep could drive, and one more thing the harness could
+    // resolve that production could not.
+    pinion_core::external::record_surface_size(super::VIEW_TAG, size.0, size.1);
     let mut scene = super::view((), Frame::default());
     let mut cache = pinion_runtime::LayoutCache::new();
     pinion_runtime::compute_layout(&mut scene, &mut cache, size.0, size.1);

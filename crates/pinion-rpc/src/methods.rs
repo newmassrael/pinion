@@ -238,6 +238,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc, MethodWindow)] = &[
         MethodOcc::Mutate,
         MethodWindow::Scope,
     ),
+    ("scene/pointer_target", MethodOcc::Read, MethodWindow::Scope),
     ("scene/pointer_tilt", MethodOcc::Mutate, MethodWindow::Scope),
     (
         "scene/pointer_twist",

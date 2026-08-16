@@ -104,6 +104,128 @@ pub fn forget_surface_size(tag: &str) {
     });
 }
 
+/// ★★★★★ R1700 — **the size a surface lays itself out against, spelled once.**
+///
+/// # Why the framework owns the whole expression and not just the number
+///
+/// [`surface_size`] gave the *fact* in R1684.4. What it did not give is the
+/// *policy* around it, and the policy is four lines of subtle case analysis:
+/// take a tracked read inside a view so the view re-runs on a resize, take the
+/// recorded announcement outside one, honour the layout's own floor, and fall
+/// back to the design size only where nothing has been painted yet.
+///
+/// Three screens wrote those four lines separately. Measured at R1700, on the
+/// three surfaces of one application:
+///
+/// | screen | what it answered off a view scope |
+/// |---|---|
+/// | node lab | the recorded surface size — correct |
+/// | capture viewer | **the design constant** — wrong at every other size |
+/// | shell | its own `Signal`, kept in the screen's state — correct, and a
+/// |   | second spelling of what this function does |
+///
+/// The capture viewer's copy was the one that was wrong, and it was wrong in
+/// the direction that hurts: its paint reflowed to the live window while its
+/// hit test went on resolving against 1440x900, so **166 of the 166 painted
+/// rectangles that moved under a resize stopped being pressable where they were
+/// drawn**. A person reported it twice, and every gate was green both times,
+/// because an in-process fixture paints and hit-tests inside one owner scope
+/// where the two halves cannot disagree.
+///
+/// A policy re-derived per consumer has as many versions as consumers, and this
+/// one had three versions and one defect. So it is one function.
+///
+/// # The floor is a parameter because it is the caller's fact
+///
+/// `floor` is the smallest size the caller's layout is *defined* at — below it a
+/// layout that stops shrinking paints its design arrangement and clips, so that
+/// is what the hit test must resolve against too. Passing it here rather than
+/// clamping at the call site is the point: the paint half and the gesture half
+/// then apply the same floor by construction, which is the class of defect this
+/// function exists to remove.
+///
+/// # Why the two branches read two different quantities
+///
+/// Inside a view the WINDOW is the live fact and the surface's own rectangle is
+/// not: the shell sets the viewport before the frame, while the rectangle comes
+/// out of the layout this very view is feeding, so [`surface_size`] there is
+/// last frame's answer and would lay the first frame after a resize out at the
+/// old size. The viewport read is also the tracked one, which is what makes the
+/// view re-run on the next resize at all.
+///
+/// Outside a view the viewport signal cannot be read — that is the whole
+/// problem — and the surface's rectangle from the last painted frame is both
+/// available and the *better* answer: it is the very rectangle a pointer
+/// fraction is a fraction of, so a press and the layout it is resolved against
+/// come from one derivation.
+///
+/// ★ Stated limit: for a surface that does not fill its window the in-view
+/// branch answers the window, which is larger. Nothing can do better there —
+/// during its own view a surface's rectangle has not been decided yet — and
+/// none of this project's self-hit-testing screens is in that position. A
+/// surface that is would read its rectangle off the previous frame instead, and
+/// this function is where that would be decided rather than in three screens.
+///
+/// The mature retained-mode toolkits this project is judged against answer a
+/// widget's own size from every callback with no scope attached (measured at
+/// 6.11: a live `1200x700` read inside a press handler after a resize). This is
+/// that property, plus the layout policy those toolkits leave to each widget.
+#[must_use]
+pub fn layout_size(tag: &str, floor: (u32, u32), design: (u32, u32)) -> (u32, u32) {
+    let live = match crate::reactive::Owner::current() {
+        Some(_) => Some(crate::reactive::use_viewport_size()),
+        None => surface_size(tag),
+    };
+    match live {
+        Some((w, h)) if w >= floor.0 && h >= floor.1 => (w, h),
+        _ => design,
+    }
+}
+
+/// ★★★★★ R1700 — what a surface says a press addresses, in the surface's own
+/// vocabulary.
+///
+/// See [`External::target_at`] for the contract and for why the framework asks
+/// the same question twice.
+#[non_exhaustive]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum PointerTarget {
+    /// This surface does not resolve presses to named things.
+    ///
+    /// The default, and deliberately **not** the same as [`Self::Nothing`]: a
+    /// surface that cannot answer is not a surface that answered "nothing
+    /// there". Collapsing the two would let a screen nobody checked read as a
+    /// screen that checked out — the shape R1691 names "a total is satisfied by
+    /// declaring everything silent".
+    Unanswered,
+    /// The surface answered, and nothing addressable is there.
+    Nothing,
+    /// What a press addresses, as the word this surface's own wire answers
+    /// with. It is the surface's vocabulary and not a tag, because the two are
+    /// not the same set: several painted rectangles can address one thing (a
+    /// label inside its row) and one thing can be addressed with no rectangle
+    /// of its own at all.
+    Word(String),
+}
+
+impl PointerTarget {
+    /// The word, where one was named.
+    #[must_use]
+    pub fn word(&self) -> Option<&str> {
+        match self {
+            Self::Word(word) => Some(word.as_str()),
+            Self::Unanswered | Self::Nothing => None,
+        }
+    }
+
+    /// Whether the surface answered at all — the census partition, so that
+    /// "did not answer" and "answered nothing" stay two facts.
+    #[must_use]
+    pub fn answered(&self) -> bool {
+        !matches!(self, Self::Unanswered)
+    }
+}
+
 /// Render backends an `External` may declare support for (§5.15 item 1).
 #[non_exhaustive]
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -2679,6 +2801,96 @@ pub trait External: core::fmt::Debug {
     /// long-press widget that only cares about the dwell time, not
     /// the cursor X).
     fn pointer_move(&mut self, _x_rel: f32, _y_rel: f32) {}
+
+    /// ★★★★★ R1700 §5.15 §5.35 §2 #7 — **what a press at this point
+    /// addresses**, in this surface's own vocabulary. Half of the pair the
+    /// framework needs to check a self-hit-testing surface against its own
+    /// paint; [`target_of_tag`](Self::target_of_tag) is the other half.
+    ///
+    /// `x` / `y` are in this surface's OWN pixels — the space
+    /// [`pointer_move`](Self::pointer_move)'s fractions resolve into, origin at
+    /// the surface's top-left.
+    ///
+    /// # Why the framework asks
+    ///
+    /// §2 #7 makes a screen ONE `External` so an agent can query it, which puts
+    /// the hit test in the screen's own code. The framework therefore knows
+    /// every rectangle the screen painted and nothing about what pressing one
+    /// would do, so its pointer guarantee (`scene/pointer_reach`) stops at the
+    /// surface boundary. Measured at R1700 on the analyser's capture viewer:
+    /// the framework vouched for **1 of the 291 tagged rectangles on screen**,
+    /// and the other 290 were on the screen's honour. That is how a screen
+    /// shipped in which every rectangle that moved under a resize had stopped
+    /// being pressable where it was drawn — reported by a person twice, by a
+    /// gate never.
+    ///
+    /// # Why two questions and not one
+    ///
+    /// A single "what tag is here" would need the surface to keep a map from
+    /// its own vocabulary back to the tags it painted, and an inverse written
+    /// by hand drifts from the thing it inverts (R1699 met exactly that and
+    /// wrote the gate before the function). So the surface answers the SAME
+    /// question two ways it already knows how to answer — geometrically, and by
+    /// name — and the framework holds the two against the paint.
+    /// `scene/pointer_target` runs the comparison over every painted rectangle
+    /// in one pass, and its verdicts are `pointer_reach`'s vocabulary one level
+    /// down: deliverable, inert, unreachable.
+    ///
+    /// # The contract
+    ///
+    /// The word must be the one this surface's wire answers with for the same
+    /// press — the two are the same fact and a second spelling of it would make
+    /// the check compare a surface with itself.
+    ///
+    /// [`PointerTarget::Nothing`] is a real answer: the gap between two
+    /// controls addresses nothing, and that is correct.
+    /// [`PointerTarget::Unanswered`] — the default — means this surface does
+    /// not resolve presses to names at all, and keeps it out of the census
+    /// rather than counting it as clean.
+    ///
+    /// # What the floor does here
+    ///
+    /// Nothing. The mature retained-mode toolkits this project is judged
+    /// against have no equivalent: measured at 6.11, offscreen, a self-painting
+    /// widget's eight painted marks are invisible to the framework's point
+    /// lookup, which answers null; the scene-graph point lookup trusts an
+    /// item's *declared* shape and finds nothing where a paint drew outside it;
+    /// and no member enumerates what a widget painted at all, because the only
+    /// framework-held record of a paint there is pixels, which carry no
+    /// identity. Introspection-from-paint is what makes the comparison possible
+    /// here.
+    ///
+    /// Default [`PointerTarget::Unanswered`]; a surface that hit-tests itself
+    /// overrides.
+    fn target_at(&self, _x: u32, _y: u32) -> PointerTarget {
+        PointerTarget::Unanswered
+    }
+
+    /// ★★★★★ R1700 §5.15 §5.35 — **what the thing this surface painted under
+    /// `tag` addresses**, in the same vocabulary
+    /// [`target_at`](Self::target_at) answers in.
+    ///
+    /// The by-name half of the pair. A surface that already resolves a tag to
+    /// something — for a keyboard activation, which names a thing rather than a
+    /// pixel — implements this in one line over that.
+    ///
+    /// [`PointerTarget::Nothing`] for a rectangle that addresses nothing is the
+    /// right answer and a common one: captions, rules and badges are painted
+    /// and are not pressed. The framework then tolerates
+    /// [`target_at`](Self::target_at) naming whatever the decoration sits on
+    /// top of, which is the honest reading of a label inside its row.
+    ///
+    /// What it must NOT do is answer `Nothing` for something that IS
+    /// addressable, because that turns a rectangle nobody can press into a
+    /// rectangle nobody checks. The census publishes how many of a surface's
+    /// painted rectangles are addressable, so under-answering shows up as a
+    /// number rather than as a pass.
+    ///
+    /// Default [`PointerTarget::Unanswered`]; overridden together with
+    /// [`target_at`](Self::target_at) or not at all.
+    fn target_of_tag(&self, _tag: &str) -> PointerTarget {
+        PointerTarget::Unanswered
+    }
 
     /// R1423 §5.35 §5.15 — the current pointer PRESSURE for this widget, the
     /// W3C `PointerEvent.pressure` / the toolkit `pressure()` peer: a normalised `0.0..=1.0` force, `0.0` when no

@@ -1584,6 +1584,19 @@ pub const WIRE_TYPES: &[WireType] = &[
             ],
         },
     },
+    // ★★★★★ R1700 §5.35 — `pointer_reach` for the things painted INSIDE a
+    // surface. Declared here because a response shape only this crate's source
+    // knows about is one no agent can discover.
+    WireType {
+        name: "PointerTargetReport",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("surfaces", WireTy::Array, Some("SurfaceTargets")),
+                WireField::new("unanswered", WireTy::Array, None),
+                WireField::new("defects", WireTy::Integer, None),
+            ],
+        },
+    },
     WireType {
         name: "PostscriptNameOutcome",
         shape: WireShape::Object {
@@ -1825,6 +1838,45 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("subscriptions", WireTy::Array, Some("SubscriptionView")),
                 WireField::new("published_total", WireTy::Integer, None),
             ],
+        },
+    },
+    WireType {
+        name: "SurfaceTargets",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("surface", WireTy::String, None),
+                // A pair, so the size a surface was painted at and the size it
+                // was TOLD can be compared by a reader without arithmetic.
+                WireField::new("painted_size", WireTy::Array, None),
+                WireField::new("announced", WireTy::Array, None).nullable(),
+                WireField::new("answers", WireTy::Boolean, None),
+                WireField::new("painted", WireTy::Integer, None),
+                WireField::new("deliverable", WireTy::Integer, None),
+                WireField::new("handle", WireTy::Integer, None),
+                WireField::new("inert", WireTy::Integer, None),
+                WireField::new("covering", WireTy::Integer, None),
+                WireField::new("unreachable", WireTy::Integer, None),
+                WireField::new("rows", WireTy::Array, Some("TargetRow")),
+            ],
+        },
+    },
+    WireType {
+        name: "TargetRow",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("tag", WireTy::String, None),
+                WireField::new("x", WireTy::Integer, None),
+                WireField::new("y", WireTy::Integer, None),
+                WireField::new("by_name", WireTy::String, None).nullable(),
+                WireField::new("at_centre", WireTy::String, None).nullable(),
+                WireField::new("verdict", WireTy::String, Some("TargetVerdict")),
+            ],
+        },
+    },
+    WireType {
+        name: "TargetVerdict",
+        shape: WireShape::Enum {
+            values: &["deliverable", "handle", "inert", "covering", "unreachable"],
         },
     },
     WireType {

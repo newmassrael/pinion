@@ -1083,6 +1083,7 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         self._gate_tag_rects_agree()
         self._gate_voice_census()
         self._gate_aria_structure()
+        self._gate_pointer_targets()
         return self
 
     def _gate_pointer_reach(self) -> None:
@@ -1199,6 +1200,103 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             f"[pointer-reach] {self.example}: "
             f"deliverable={reach.get('deliverable', 0)} inert={reach.get('inert', 0)}{note}"
         )
+
+    def _gate_pointer_targets(self) -> None:
+        """★★★★★ R1700 §5.15 §5.35 — refuse a surface that disagrees with its
+        own paint about what is where.
+
+        `_gate_pointer_reach` above covers the REGISTERED widgets, and §2 #7
+        makes a pinion screen ONE `External`, so on the analyser's capture
+        viewer that gate vouches for 1 of the 291 tagged rectangles on screen.
+        The other 290 are resolved by the screen's own hit test, and nothing
+        held that against what the screen actually painted.
+
+        `scene/pointer_target` asks the surface twice — what the rectangle
+        under a tag addresses, and what a press inside that rectangle addresses
+        — and classifies the pair. One of the five verdicts has no benign
+        reading and is refused here:
+
+        * `unreachable` — addressable by name, and addressable at NO point
+          inside its own painted rectangle. This is what a screen looks like
+          when its paint and its hit test have come to read different facts.
+
+        `deliverable` (pressable at its centre), `handle` (a group gripped by
+        its tab strip), `covering` (decoration over what it decorates) and
+        `inert` (a caption) all pass, because all four are correct. ★ `handle`
+        exists because the first draft of this gate probed only the centre and
+        its first run called the node lab's two host frames defective — a group
+        whose grip is its top strip and which holds its members everywhere else
+        is right, and it was the rule that was wrong.
+
+        A surface that does not implement the pair is listed in `unanswered`
+        and printed rather than counted as clean — "did not answer" is not
+        "answered nothing", and collapsing the two would let a screen nobody
+        checked read as a screen that checked out.
+
+        ★ This runs at the size the demo booted at, so on its own it cannot see
+        the defect it was written for: at the design size the capture viewer
+        agreed with itself, and it was a resize that made 166 rectangles
+        unreachable. `assert_targets_survive_resize` is the other half, and it
+        is a helper rather than a gate because resizing a screen is not
+        something every demo should have done to it on the way in.
+
+        A binary too old to answer the method is driven without the gate, the
+        same tolerance the boot baseline gives.
+        """
+        try:
+            resp = self.request("scene/pointer_target")
+        except RpcError as exc:
+            if exc.code == -32601:
+                return  # stale binary, predates the method
+            raise
+        assert resp is not None
+        report = resp.result
+        answered = [s for s in report.get("surfaces", []) if s.get("answers")]
+        if not answered and not report.get("unanswered"):
+            return  # nothing painted yet
+        if report.get("defects"):
+            rows = [
+                f"{row['tag']} says {row['by_name']!r} by name and "
+                f"{row['at_centre']!r} at its centre ({row['x']},{row['y']})"
+                for surface in answered
+                for row in surface["rows"]
+                if row["verdict"] == "unreachable"
+            ]
+            raise AssertionError(
+                f"{self.example}: {report['defects']} painted rectangle(s) where "
+                f"this screen disagrees with its own paint about what is there — "
+                f"{'; '.join(rows[:6])}. A rectangle that is addressable by name "
+                f"and addressable at no point inside itself is dead to a real "
+                f"mouse while every wire-driven assertion below keeps passing, "
+                f"because those address the handler by name and never ask the "
+                f"geometry. The usual cause is the paint and the hit test "
+                f"reading two facts — most often two window sizes; "
+                f"`pinion_core::external::layout_size` is the one spelling of "
+                f"that question."
+            )
+        if not answered:
+            return
+        line = " ".join(
+            f"{s['surface']}={s['deliverable']}+{s['handle']}/{s['painted']}"
+            for s in answered
+        )
+        note = f" unanswered={len(report['unanswered'])}" if report.get("unanswered") else ""
+        # ★ R1700 — reported, not judged, and the distinction is deliberate.
+        # `assert_targets_survive_resize` FAILS on this; here it is printed,
+        # because this gate runs on every demo in the tree and the agreement
+        # between what a surface is painted at and what it is told has been
+        # measured on three of them. A surface that disagrees is named on every
+        # run of every demo that mounts it, which is how the population gets
+        # measured rather than assumed.
+        told = [
+            s["surface"]
+            for s in report.get("surfaces", [])
+            if s.get("announced") is not None
+            and tuple(s["announced"]) != tuple(s["painted_size"])
+        ]
+        if told:
+            note += f" MISANNOUNCED={','.join(told)}"
+        print(f"[pointer-target] {self.example}: {line} deliverable+handle{note}")
 
     def _gate_text_smear(self) -> None:
         """R1654 §5.36 — refuse a screen whose text is painted over itself.
@@ -3662,6 +3760,95 @@ def resize_and_settle(
     return wait_until(
         settled, timeout=timeout, desc=f"the window settles at {size} after resize"
     )
+
+
+def assert_targets_survive_resize(
+    tf: "RpcSubprocess",
+    sizes: "Iterable[tuple[int, int]]",
+    *,
+    label: str = "",
+) -> "dict[tuple[int, int], dict[str, Any]]":
+    """★★★★★ R1700 — what is drawn is what is pressed, at EVERY window size.
+
+    The half `_gate_pointer_targets` cannot reach on its own. That gate runs at
+    the size the demo booted at, and a screen laid out at its design size
+    agrees with itself by construction — the capture viewer did, on every gate,
+    while a person maximised the window and found that nothing responded.
+    Measured before the repair, driving the real shell at 2494x1011: of the 166
+    painted rectangles that moved, **166** had stopped being pressable where
+    they were drawn, and `scene/pointer_target` classifies every one of them
+    `unreachable`.
+
+    So this resizes, waits for the frame to actually land (`resize_and_settle`
+    — a fixed tick after a resize is a bet on the render, R1686), and requires
+    at every size that no painted rectangle disagrees with its own paint.
+
+    ★ It also requires `deliverable > 0` at each size. Without that the check
+    is satisfiable by a screen that answers "nothing is addressable" everywhere
+    — the shape R1691 named, where a total is met by declaring everything
+    silent — and the failure mode this exists to catch turns every addressable
+    rectangle into a silent one.
+
+    Returns the report per size, so a caller can assert on the numbers as well
+    as on their absence of defects.
+    """
+    reports: "dict[tuple[int, int], dict[str, Any]]" = {}
+    for size in sizes:
+        resize_and_settle(tf, size)
+        resp = tf.request("scene/pointer_target")
+        assert resp is not None and resp.result is not None, (
+            f"scene/pointer_target answers at {size}"
+        )
+        report = resp.result
+        reports[size] = report
+        answered = [s for s in report["surfaces"] if s["answers"]]
+        assert answered, (
+            f"{label or tf.example}: no surface resolves presses at {size}, so "
+            f"this check would pass whatever the screen did"
+        )
+        broken = [
+            f"{row['tag']} is {row['verdict']} — {row['by_name']!r} by name, "
+            f"{row['at_centre']!r} at its centre ({row['x']},{row['y']})"
+            for surface in answered
+            for row in surface["rows"]
+            if row["verdict"] == "unreachable"
+        ]
+        assert not broken, (
+            f"{label or tf.example}: at {size[0]}x{size[1]}, "
+            f"{len(broken)} painted rectangle(s) are not pressable where they "
+            f"are drawn — {'; '.join(broken[:6])}"
+        )
+        delivered = sum(s["deliverable"] + s["handle"] for s in answered)
+        assert delivered > 0, (
+            f"{label or tf.example}: at {size[0]}x{size[1]} not one painted "
+            f"rectangle is addressable, so 'no disagreement' means nothing here"
+        )
+        # ★★★★★ R1700 — the framework's own half, and it is here because a
+        # counterfactual PASSED without it. Falsifying the size the framework
+        # RECORDS for a surface left every check on all three analyser screens
+        # green: none of them has an addressable rectangle whose position
+        # depends on the window's height, so the vertical axis of the size
+        # question had no consumer to disagree through. The invariant
+        # `announce_external_sizes` states in its own comment — the size
+        # announced and the size a pointer fraction is a fraction OF are one
+        # derivation — was claimed and checked by nothing.
+        #
+        # Asserted here rather than in the boot gate on purpose: this helper
+        # runs where the agreement has been measured, and the boot gate runs on
+        # every demo in the tree, whose surfaces have not been.
+        misannounced = [
+            f"{s['surface']} was painted {tuple(s['painted_size'])} and is told "
+            f"{s['announced'] and tuple(s['announced'])}"
+            for s in report["surfaces"]
+            if s["announced"] is not None and tuple(s["announced"]) != tuple(s["painted_size"])
+        ]
+        assert not misannounced, (
+            f"{label or tf.example}: at {size[0]}x{size[1]} the framework tells a "
+            f"surface a size it was not painted at — {'; '.join(misannounced)}. "
+            f"Every pointer fraction that surface resolves is a fraction of the "
+            f"rectangle it was painted in, so the two have to be one number."
+        )
+    return reports
 
 
 def wait_query(

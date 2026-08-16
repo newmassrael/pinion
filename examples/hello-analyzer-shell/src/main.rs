@@ -87,8 +87,8 @@ use pinion_chart::{ChartStyle, Sparkline};
 use pinion_core::availability::Unavailable;
 use pinion_core::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
-    SchemaArg, SchemaField, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, PointerTarget, ReadRefusal,
+    RepaintOwner, SchemaArg, SchemaField, ThreadOwnership,
 };
 use pinion_core::focus_state;
 use pinion_core::reactive::{Owner, Signal};
@@ -146,17 +146,16 @@ const WIN_H: u32 = spec::WIN_H;
 /// Below the floor it is also the answer: the shell declares `SizeStrategy::
 /// Fixed`, so a smaller surface is not a state this screen can be dragged into.
 fn window_size() -> (u32, u32) {
-    // ONE fact — `ShellState::surface`, written by `External::on_resize` — read
-    // through whichever route the caller has. A view is inside the scope and
-    // gets a TRACKED read (so it re-runs on a resize); the invoke path is not
-    // and takes the weak handle. Neither one holds a copy.
-    let live = pinion_core::reactive::Owner::current()
-        .map(|_| use_shell_state().surface.get())
-        .or_else(|| shell_state_handle().map(|state| state.surface.get()));
-    match live {
-        Some((w, h)) if w >= WIN_W && h >= WIN_H => (w, h),
-        _ => (WIN_W, WIN_H),
-    }
+    // ★★★★★ R1700 — the framework's policy, not this screen's copy of it.
+    //
+    // R1671 fixed the two-sizes defect here by putting the size in this
+    // screen's own state and reading it through a weak handle off a view scope.
+    // That was correct and it was a SECOND spelling: the node lab read the
+    // framework's record instead, and the capture viewer had a third that was
+    // simply wrong. Three versions of one policy, one of them defective, is
+    // what `layout_size` exists to end — and it also removes the reason
+    // `ShellState::surface` had to be read from two routes.
+    pinion_core::external::layout_size(VIEW_TAG, (WIN_W, WIN_H), (WIN_W, WIN_H))
 }
 
 /// The live surface width, and height.
@@ -586,23 +585,6 @@ struct ShellState {
     /// ([[debt-the-analyzer-canvas-does-not-scroll]]). Held on the state
     /// because the paint and the hit test both read it.
     canvas_scroll: Rc<ScrollState>,
-    /// ★★ R1671 §5.15 — **the one place this screen knows how big it is.**
-    ///
-    /// It was two places, and they answered differently. The paint read
-    /// `use_viewport_size`, which lives in the Owner scope a view runs inside;
-    /// the hit test and the `point` bounds check run on the External's invoke
-    /// path, which has no such scope, so they took the fallback and went on
-    /// answering about a 1440x900 screen while the paint had moved. Measured on
-    /// a maximised window: the paint put a palette row at x=1741 and the invoke
-    /// path refused the press as "outside the 1440x900 shell".
-    ///
-    /// A `Signal` on the state rather than a field on the External because BOTH
-    /// sides hold the state: the view reads it (and so re-runs on a resize) and
-    /// the oracle writes it from `External::on_resize`. That is the general
-    /// form of [[debt-paint-and-gesture-read-two-facts]] — what is drawn and
-    /// what responds must be derived from ONE fact, not from two that are
-    /// usually equal.
-    surface: Signal<(u32, u32)>,
 }
 
 impl ShellState {
@@ -677,7 +659,6 @@ impl ShellState {
             toast: Signal::new(format!("{} loaded", spec::PRESET)),
             next_id: RefCell::new(u(spec::BOARD.len())),
             canvas_scroll: Rc::new(ScrollState::with_tag(CANVAS_SCROLL)),
-            surface: Signal::new((WIN_W, WIN_H)),
         }
     }
 
@@ -922,37 +903,23 @@ impl ShellState {
     }
 }
 
-thread_local! {
-    /// ★★ R1671 — a scope-free route to the SAME state the view caches.
-    ///
-    /// Not a second copy of anything: it is a `Weak` handle, and the fact it
-    /// reaches ([`ShellState::surface`]) has one owner. It exists because the
-    /// two halves of this screen run in different places — a view runs inside
-    /// an `Owner` scope and the `External` invoke path does not — and the
-    /// geometry helpers below are called from both. Without it every helper on
-    /// the gesture side silently took the design size, so a maximised window
-    /// painted its cards at one pitch and hit-tested them at another: measured,
-    /// 20 of 24 probes resolved to the wrong control or to nothing.
-    static SHELL: std::cell::RefCell<std::rc::Weak<ShellState>> =
-        const { std::cell::RefCell::new(std::rc::Weak::new()) };
-}
+// ★★★★★ R1700 — the scope-free `Weak` handle that used to live here is GONE,
+// and the compiler is what found it. R1671 introduced it for one reason: the
+// two halves of this screen run in different places (a view is inside an
+// `Owner` scope, the `External` invoke path is not) and `window_size` had to
+// answer in both. `pinion_core::external::layout_size` answers in both now, so
+// the handle had no remaining reader and `-D dead-code` said so on the first
+// build after the switch.
+//
+// That is the shape of the repayment: the workaround did not have to be
+// argued away, it stopped compiling.
 
 fn use_shell_state() -> Rc<ShellState> {
     let clock = use_transport_clock(TRANSPORT_KEY, REPLAY_SECS);
     let theme = use_theme(THEME_TAG);
-    let state = Owner::current()
+    Owner::current()
         .expect("use_shell_state requires an active Owner scope")
-        .cache(STATE_KEY, move || ShellState::new(clock, theme));
-    SHELL.with(|slot| *slot.borrow_mut() = Rc::downgrade(&state));
-    state
-}
-
-/// The state, from wherever the caller is — no `Owner` scope required.
-///
-/// [`None`] before the first view has run, which is the only moment nothing has
-/// been painted and so the only moment no geometry is being asked about.
-fn shell_state_handle() -> Option<Rc<ShellState>> {
-    SHELL.with(|slot| slot.borrow().upgrade())
+        .cache(STATE_KEY, move || ShellState::new(clock, theme))
 }
 
 // --- Geometry: ONE source, read by the paint and by the gesture --------------
@@ -1620,6 +1587,16 @@ const fn float_grip_rect(float: &Float) -> Rect {
 /// R1614's lesson — a name that has to survive is an address, not a
 /// description — and the demo enforces it by sweeping the window and requiring
 /// every name this returns to be a tag the paint actually emitted.
+/// ★ R1700 — the same word, in the shape the framework's pointer census reads:
+/// `Nothing` where a press addresses nothing, so that "there is nothing here"
+/// and "here is a thing called nothing" cannot be confused.
+fn word_or_nothing(hit: &Hit) -> PointerTarget {
+    match hit {
+        Hit::Nothing => PointerTarget::Nothing,
+        other => PointerTarget::Word(hit_word(other)),
+    }
+}
+
 fn hit_word(hit: &Hit) -> String {
     match hit {
         Hit::Chip(chip) => chip.tag().to_string(),
@@ -3355,14 +3332,32 @@ impl External for ShellOracle {
     /// R1656 §5.15 — the shell's resize notification, which is how this surface
     /// knows what a pointer fraction is a fraction OF.
     fn on_resize(&mut self, width: u32, height: u32) {
-        let live = (width.max(1), height.max(1));
-        self.surface = live;
-        // ★ R1671 — and the STATE, which is what the paint and the hit test
-        // both read. Writing only the External's own field left the two halves
-        // of this screen disagreeing about its size the moment it was resized.
-        if let Some(state) = &self.state {
-            state.surface.set(live);
-        }
+        // ★ R1700 — only this surface's own field, which is what a pointer
+        // fraction is a fraction of. R1671 also wrote the size into the state
+        // because the geometry helpers had no other way to read it off a view
+        // scope; `layout_size` reads the framework's own record instead, so
+        // the copy on the state has gone with the handle that reached it.
+        self.surface = (width.max(1), height.max(1));
+    }
+
+    /// ★★★★★ R1700 §5.35 — what a press here addresses, for the framework to
+    /// hold against what this screen painted here.
+    fn target_at(&self, x: u32, y: u32) -> PointerTarget {
+        self.state.as_ref().map_or(PointerTarget::Unanswered, |s| {
+            word_or_nothing(&Hit::at(s, x, y))
+        })
+    }
+
+    /// ★★★★★ R1700 §5.35 — the same question by name, over [`Hit::of_tag`].
+    ///
+    /// R1699 built that inverse for keyboard activation and gated it against
+    /// the paint, so it is not derived from the geometry this is checked
+    /// against — which is what makes the pair two derivations rather than one
+    /// read twice.
+    fn target_of_tag(&self, tag: &str) -> PointerTarget {
+        self.state.as_ref().map_or(PointerTarget::Unanswered, |s| {
+            word_or_nothing(&Hit::of_tag(s, tag))
+        })
     }
 
     fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {

@@ -45,6 +45,7 @@ pub mod mnemonics;
 pub mod origin;
 pub mod path;
 pub mod pointer_reach;
+pub mod pointer_target;
 pub mod preview;
 pub mod query;
 pub mod render_fidelity;

@@ -2804,6 +2804,15 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                     crate::pointer_reach::handle_scene_pointer_reach(last_paint_scene, scene),
                     HandlerKind::Read,
                 ),
+                // ★★★★★ R1700 §5.15 §5.35 — the half `pointer_reach` cannot
+                // see. That read stops at the surface boundary because §2 #7
+                // makes a screen ONE `External`; this one asks the surface
+                // itself what is at each rectangle it painted, and holds the
+                // answer against the paint.
+                "scene/pointer_target" => (
+                    crate::pointer_target::handle_scene_pointer_target(last_paint_scene, scene),
+                    HandlerKind::Read,
+                ),
                 "scene/dry_run" => (
                     handle_scene_dry_run(scene, request.params.as_ref()),
                     HandlerKind::Read,

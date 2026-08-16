@@ -68,8 +68,8 @@ use pinion_core::availability::Unavailable;
 use pinion_core::containment::line_box;
 use pinion_core::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
-    SchemaArg, SchemaField, ThreadOwnership,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, PointerTarget, ReadRefusal,
+    RepaintOwner, SchemaArg, SchemaField, ThreadOwnership,
 };
 use pinion_core::reactive::{Signal, Tracked};
 use pinion_core::scene::{
@@ -188,39 +188,14 @@ const FONT_TINY: u32 = 9;
 /// test — and the declared design size is the honest fallback there: it is what
 /// the specification's rectangles were measured against.
 fn window_size() -> (u32, u32) {
-    // The hook is strict about the owner scope by design. Off a scope entirely
-    // (a bare unit call) the design size is the answer, and asking politely is
-    // how this stays callable from both.
-    let live =
-        pinion_core::reactive::Owner::current().map(|_| pinion_core::reactive::use_viewport_size());
-    match live {
-        Some((w, h)) if w >= MIN_W && h >= MIN_H => (w, h),
-        // ★★★ R1684.3 — **the size the SHELL last announced, not the size this
-        // screen was designed at.**
-        //
-        // Reported by a person: "maximise the window and the form rows stop
-        // selecting". Measured through the wire — after a resize the paint puts
-        // a form control at x≈2339 and `point` refuses it as "outside the
-        // 1440x900 window". Every pointer handler and every wire action on this
-        // screen runs OUTSIDE an owner scope (the same fact R1662 met with the
-        // scroll offsets and R1683 with the edit buffer), so the hook cannot
-        // answer and the DESIGN size was answering instead. The paint reflows,
-        // the hit test does not, and the error grows with distance from the
-        // origin — which is why the inspector on the far right dies first and
-        // the palette on the left goes on working.
-        //
-        // ★★ R1684.4 — the FRAMEWORK's answer, not a cache of this screen's.
-        // `pinion_core::external::surface_size` is recorded by the same pass
-        // that announces `on_resize`, from the same rectangle the pointer
-        // fractions are fractions of. R1684.3 kept this in a thread-local here
-        // and that was a workaround: the next screen to hit-test its own
-        // surface would have written the same one.
-        //
-        // The design size is the fallback only for a surface that has never
-        // been painted, which is the one case the framework has nothing to say
-        // about.
-        _ => pinion_core::external::surface_size(VIEW_TAG).unwrap_or((WIN_W, WIN_H)),
-    }
+    // ★★★★★ R1700 — the whole expression is the framework's now, not just the
+    // number. This screen had the case analysis right; the capture viewer's
+    // copy of it did not, and the shell had a third version again. See
+    // `layout_size` for what the three spellings were and which one shipped
+    // broken. One further correction comes with the move: the branch below read
+    // the WINDOW inside a view and this SURFACE outside one, two quantities
+    // that agree only because this surface happens to fill its window.
+    pinion_core::external::layout_size(VIEW_TAG, (MIN_W, MIN_H), (WIN_W, WIN_H))
 }
 
 /// The smallest window this screen lays out in.
@@ -2613,6 +2588,103 @@ impl Hit {
         Self::Canvas
     }
 
+    /// ★★★★★ R1700 — what the thing painted under `tag` addresses.
+    ///
+    /// The by-name half of the pair `scene/pointer_target` holds against the
+    /// paint. Written to READ the tables the painter reads rather than to
+    /// invert it: the toolbar comes out of `toolbar_seats`, which already pairs
+    /// each seat's tag with its hit and which the press path resolves in the
+    /// same order, so the two cannot drift. The rail, the palette and the reset
+    /// scopes come out of their own declared rosters for the same reason. Only
+    /// the parametric families — a card, its pins, a frame's tab, a link — are
+    /// parsed here, and each parse is checked against the state that names them
+    /// so an id nothing paints answers nothing.
+    ///
+    /// Answering [`None`] is a real answer for a caption or a rule. What it must
+    /// not be is a shrug for something addressable: the census publishes how
+    /// many painted rectangles a surface says are addressable, so an
+    /// under-answer shows up as a number rather than as a pass.
+    fn of_tag(state: &LabState, tag: &str) -> Self {
+        if let Some(seat) = toolbar_seats(state).into_iter().find(|s| s.tag == tag) {
+            return seat.hit;
+        }
+        if let Some(name) = tag.strip_prefix("lab.rail.")
+            && let Some((name, _)) = spec::RAIL.iter().find(|(n, _)| *n == name)
+        {
+            return Self::Rail(name);
+        }
+        if let Some(name) = tag.strip_prefix("lab.palette.role.")
+            && let Some(role) = Role::ALL.into_iter().find(|r| r.name() == name)
+        {
+            return Self::Role(role);
+        }
+        if tag == "lab.palette.discovery" {
+            return Self::DiscoveryToggle;
+        }
+        if let Some(name) = tag.strip_prefix("lab.node.")
+            && let Some(id) = state.node_of(name)
+        {
+            return Self::Node(id);
+        }
+        if let Some(rest) = tag.strip_prefix("lab.pin.")
+            && let Some((name, side)) = rest.rsplit_once('.')
+            && let Some(node) = state.node_of(name)
+            && let Some(dial) = match side {
+                "dial" => Some(true),
+                "accept" => Some(false),
+                _ => None,
+            }
+        {
+            return Self::Pin { node, dial };
+        }
+        if let Some(name) = tag.strip_prefix("lab.frame.")
+            && let Some((id, _)) = frames_of(state).into_iter().find(|(_, n)| n == name)
+        {
+            return Self::Frame(id);
+        }
+        if tag == "lab.link.act" {
+            return Self::LinkAct;
+        }
+        if let Some(n) = tag
+            .strip_prefix("lab.link.endpoint.")
+            .and_then(|n| n.parse::<usize>().ok())
+        {
+            return Self::Endpoint(n);
+        }
+        if let Some(act) = NodeAct::ALL.into_iter().find(|a| a.tag() == tag)
+            && state.selected.get().is_some()
+        {
+            return Self::NodeAct(act);
+        }
+        if tag == "lab.inspector.rename" {
+            return Self::Rename;
+        }
+        if tag == "lab.inspector.addkey" {
+            return Self::AddKey;
+        }
+        if let Some(key) = tag.strip_prefix("lab.form.row.") {
+            return Self::Field(key.to_owned());
+        }
+        if let Some(key) = tag.strip_prefix("lab.form.remove.") {
+            return Self::RemoveField(key.to_owned());
+        }
+        if tag == "lab.canvas" {
+            return Self::Canvas;
+        }
+        Self::Nothing
+    }
+
+    /// The word the wire answers a press with, in the shape the framework's
+    /// pointer census reads (R1700): `Nothing` where a press addresses nothing,
+    /// so that "there is nothing here" and "here is a thing called nothing"
+    /// cannot be confused.
+    fn target(&self, state: &LabState) -> PointerTarget {
+        match self {
+            Self::Nothing => PointerTarget::Nothing,
+            other => PointerTarget::Word(other.word(state)),
+        }
+    }
+
     /// The word the wire answers a press with.
     fn word(&self, state: &LabState) -> String {
         match self {
@@ -3151,6 +3223,17 @@ fn toolbar_seats(state: &LabState) -> Vec<ToolbarSeat> {
 /// reserved strip is a band of empty panel on the screen a person spends the
 /// most time looking at, and the reference makes the same choice (its reset
 /// affordances are conditional, not disabled).
+/// The left edge of the launch panel — where the canvas's bottom band runs out.
+///
+/// ★ R1700 — its own function because THREE things need it and only its height
+/// depends on the state: the panel itself, the toast that must not run under
+/// it, and the gesture strip, which until this round was a constant that
+/// happened to clear it at one window size.
+fn gate_panel_x() -> u32 {
+    let canvas = canvas_rect();
+    canvas.x + canvas.w - 262
+}
+
 fn gate_rect(state: &LabState) -> Rect {
     let canvas = canvas_rect();
     let (shown, hidden) = gate_shown(state);
@@ -3158,7 +3241,7 @@ fn gate_rect(state: &LabState) -> Rect {
     let resets = u32::from(!changed_scopes(state).is_empty()) * RESET_ROW_H;
     let h = GATE_TOP_H + rows * GATE_LINE_H + resets;
     Rect::new(
-        canvas.x + canvas.w - 262,
+        gate_panel_x(),
         canvas.y + canvas.h - h - GATE_MARGIN,
         250,
         h,
@@ -3371,12 +3454,41 @@ const TOAST_DOT: u32 = 18;
 /// below it the message would be an ellipsis and nothing else.
 const TOAST_MIN_W: u32 = 120;
 
+/// What the strip at the foot of the canvas says a pointer can do — the one
+/// place this screen states its gestures.
+///
+/// ★ R1700 — lifted out of the painter so [`hint_rect`] can be the size of what
+/// it holds. Two readers, one string.
+fn hint_text() -> String {
+    spec::GESTURES
+        .iter()
+        .map(|(gesture, what)| format!("{gesture} = {what}"))
+        .collect::<Vec<_>>()
+        .join(" · ")
+}
+
 fn hint_rect() -> Rect {
     let canvas = canvas_rect();
     // ★ R1656 — clamped to the pane it sits in. It was a flat 470, so on a
     // canvas narrower than that the strip advertising the screen's gestures was
     // painted over the inspector beside it.
-    let w = 470.min(canvas.w.saturating_sub(24)).max(80);
+    //
+    // ★★ R1700 — and it is now the size of the SENTENCE, not a number chosen
+    // at the design size. Found by looking at a maximised window: the strip
+    // read "... drag a pin = author a li…" with sixteen hundred pixels of empty
+    // canvas beside it, because 470 was a constant that had to keep a relation
+    // to a quantity that moves. The toast below already sized itself this way
+    // (`seat_w`); the strip did not, and nothing could see the difference
+    // because both are correct at 1440.
+    //
+    // ★★★ The ROOM is the band left of the launch panel, which is the same
+    // room the toast takes and for the same reason — and the first draft of
+    // this took the whole canvas instead, whereupon the text-smear gate refused
+    // the screen on its next boot with the strip painted over the launch
+    // panel's last finding. A constant replaced by a measurement still needs
+    // the bound the constant was accidentally providing.
+    let room = gate_panel_x().saturating_sub(canvas.x + 24);
+    let w = (seat_w(&hint_text()) + 4).min(room).max(80);
     Rect::new(canvas.x + 12, canvas.y + canvas.h - 34, w, 24)
 }
 
@@ -5232,11 +5344,7 @@ fn canvas_overlays(state: &LabState, ink: Ink) -> Vec<Scene> {
     children.push(quiet(
         tagged_label(
             "lab.hint.text",
-            spec::GESTURES
-                .iter()
-                .map(|(g, what)| format!("{g} = {what}"))
-                .collect::<Vec<_>>()
-                .join(" · "),
+            hint_text(),
             Rect::new(hint.x + 10, hint.y + 6, hint.w - 20, 13),
             9,
             ink.text_3,
@@ -8934,6 +9042,21 @@ impl External for LabOracle {
     /// fact every self-hit-testing screen needs.
     fn on_resize(&mut self, width: u32, height: u32) {
         self.surface = (width.max(1), height.max(1));
+    }
+
+    /// ★★★★★ R1700 §5.35 — what a press here addresses, for the framework to
+    /// hold against what this screen painted here.
+    fn target_at(&self, x: u32, y: u32) -> PointerTarget {
+        self.state
+            .as_ref()
+            .map_or(PointerTarget::Unanswered, |s| Hit::at(s, x, y).target(s))
+    }
+
+    /// ★★★★★ R1700 §5.35 — the same question by name.
+    fn target_of_tag(&self, tag: &str) -> PointerTarget {
+        self.state
+            .as_ref()
+            .map_or(PointerTarget::Unanswered, |s| Hit::of_tag(s, tag).target(s))
     }
 
     fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
