@@ -45,6 +45,7 @@ mod painted;
 mod tests;
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use pinion_a11y::{
@@ -69,7 +70,7 @@ use pinion_core::widgets::field_bytes::{
 };
 use pinion_core::widgets::hex_dump::{ByteSelection, HexLayout};
 use pinion_core::widgets::radio::RadioState;
-use pinion_core::widgets::roving::{Activation, Axis, Landing, Member, Roving, RovingSpec};
+use pinion_core::widgets::roving::{Activation, Axis, Ends, Landing, Member, Roving, RovingSpec};
 use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::{Frame, Scene, WidgetCore};
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
@@ -348,6 +349,22 @@ struct ViewState {
     /// A press writes it too, so the pointer and the keyboard never disagree
     /// about where the cursor is.
     byte: Signal<usize>,
+    /// ★★★★★ R1699 — which **cell** of the selected message row the reader has
+    /// gone into, or `None` while the cursor is still on the row itself.
+    ///
+    /// This screen announces its message list as a `grid`, and WAI-ARIA's grid
+    /// pattern is two axes: the vertical one moves between rows, the horizontal
+    /// one between the cells of the row you are on. R1698 built the first and
+    /// nothing measured the second. R1699 did, by driving the running screen:
+    /// the sixteen rows each report seven cells to the accessibility tree, and
+    /// `ArrowRight` standing on a row moved nothing — so the columns existed
+    /// for a reader and were unreachable by one.
+    ///
+    /// `Option` rather than a plain index because the descent is a fact and not
+    /// a default: a reader who has not gone into a row should hear the row, and
+    /// a grid that always addressed a cell could not say "the whole row", which
+    /// is exactly what this list's selection means.
+    cell: Signal<Option<usize>>,
     /// Which saved filters are on.
     saved: Signal<Vec<bool>>,
     /// Which layers are folded, by index into [`spec::LAYERS`].
@@ -422,6 +439,9 @@ fn use_view_state() -> Rc<ViewState> {
                 .extent_of(spec::OPENING_FIELD)
                 .map_or(0, |(_, extent)| extent.at()),
         ),
+        // R1699 — the screen opens on the row, not inside it. A grid that
+        // started with a cell addressed would announce a column nobody chose.
+        cell: Signal::new(None),
         saved: Signal::new(vec![false; spec::SAVED_FILTERS.len()]),
         folded: Signal::new(vec![false; spec::LAYERS.len()]),
         map,
@@ -774,6 +794,74 @@ enum Hit {
 }
 
 impl Hit {
+    /// ★★★★★ R1699 — what a **key** press at `tag` addresses.
+    ///
+    /// A keyboard activation names a thing, not a pixel, so synthesising a
+    /// press at the middle of the tag's rectangle would be wrong twice over: a
+    /// row scrolled out of the pane has a rectangle and is clipped, and a cell
+    /// inside a scrolled row would be aimed at through a viewport nobody moved.
+    ///
+    /// The danger of a second address space is drift from the first, so the
+    /// gate came before the function:
+    /// `r1699_every_cursor_member_resolves_to_the_hit_its_tag_names` requires,
+    /// for every member of every composite, that this answers exactly what
+    /// [`Hit::at`] answers at the centre of that tag's **painted** rectangle —
+    /// two derivations of one fact, with the paint as the arbiter.
+    fn of_tag(state: &ViewState, tag: &str) -> Self {
+        if let Some(n) = tag
+            .strip_prefix("pv.filter.saved.")
+            .and_then(|n| n.parse::<usize>().ok())
+            && n < spec::SAVED_FILTERS.len()
+        {
+            return Self::Saved(n);
+        }
+        if let Some(n) = tag
+            .strip_prefix("pv.list.row.")
+            .and_then(|n| n.parse::<usize>().ok())
+            && n < spec::ROWS.len()
+        {
+            return Self::Message(n);
+        }
+        // ★★★★★ R1699 — **a cell's press is its row's press**, and that is the
+        // paint's answer rather than a convenience. The cell labels are text
+        // runs, deliberately transparent to the pointer since R1692 (a container
+        // per cell would sit above the row in paint order and take the press the
+        // row needs), so a press anywhere on a cell already reaches the row —
+        // which is what the gate below checks at the centre of every cell's
+        // painted rectangle.
+        //
+        // What this does NOT give is the mirror of the keyboard's new power: a
+        // pointer cannot put the CELL cursor on a particular column, which the
+        // floor's item view does (measured at 6.11.1 — clicking a cell makes it
+        // current). Registered rather than improvised, because this screen has
+        // no behaviour canon for cell selection and inventing one would diverge
+        // from the reference instead of matching it.
+        if let Some((row, _column)) = tag
+            .strip_prefix("pv.list.cell.")
+            .and_then(|rest| rest.split_once('_'))
+            && let Ok(row) = row.parse::<usize>()
+            && row < spec::ROWS.len()
+        {
+            return Self::Message(row);
+        }
+        if let Some(b) = tag
+            .strip_prefix("pv.bytes.cell.")
+            .and_then(|b| b.parse::<usize>().ok())
+            && b < state.frame_bytes().len()
+        {
+            return Self::Byte(b);
+        }
+        if let Some(path) = tag.strip_prefix("pv.tree.field.") {
+            if let Some(layer) = spec::LAYERS.iter().position(|(id, _)| *id == path) {
+                return Self::Layer(layer);
+            }
+            if state.map.map().field(path).is_some() {
+                return Self::Field(path.to_owned());
+            }
+        }
+        Self::None
+    }
+
     /// What answers at the window point `(px, py)`.
     fn at(state: &ViewState, px: u32, py: u32) -> Self {
         for (n, _) in spec::SAVED_FILTERS.iter().enumerate() {
@@ -895,13 +983,37 @@ fn move_cursor(state: &Rc<ViewState>, px: u32, py: u32) {
 
 fn press(state: &Rc<ViewState>) {
     let (px, py) = state.cursor.get();
-    match Hit::at(state, px, py) {
+    act_on_hit(state, Hit::at(state, px, py));
+}
+
+/// ★★★★★ R1699 — what a completed press on one hit target does, whichever
+/// channel produced the target.
+///
+/// Lifted out of [`press`] so a **key** reaches the same arms a pointer does.
+/// Before this the two channels were structurally incapable of agreeing: the
+/// pointer's actions lived inside a function that started by reading a cursor
+/// position, so a keyboard could only have got at them by inventing coordinates
+/// or by writing the arms a second time.
+///
+/// Returns whether the hit did anything, which is what lets the keymap fall
+/// through when a stop names nothing pressable.
+fn act_on_hit(state: &Rc<ViewState>, hit: Hit) -> bool {
+    match hit {
         Hit::Message(n) => select_message(state, n),
         Hit::Field(path) => select_field(state, &path),
         Hit::Byte(b) => select_byte(state, b),
         Hit::Saved(n) => toggle_saved(state, n),
         Hit::Layer(n) => toggle_layer(state, n),
-        Hit::None => {}
+        Hit::None => return false,
+    }
+    true
+}
+
+/// R1699 — choose what a nested cursor is resting on: the innermost tag of the
+/// path, which is the thing the reader actually named.
+fn activate_tag(state: &Rc<ViewState>, path: &[&str]) {
+    if let Some(tag) = path.last() {
+        act_on_hit(state, Hit::of_tag(state, tag));
     }
 }
 
@@ -925,7 +1037,13 @@ fn pane_cursor(state: &Rc<ViewState>, stop: &str) -> Option<Roving> {
         "pv.list" => (
             RovingSpec::new(Axis::Vertical).with_activation(Activation::Follows),
             (0..spec::ROWS.len())
-                .map(|n| Member::new(format!("pv.list.row.{n}")))
+                // ★★★★★ R1699 — a row is a composite of its cells, which is
+                // what `grid` MEANS. Every row carries its inner roster, not
+                // only the selected one: a client is entitled to ask what is
+                // inside a row before moving the selection onto it, and a
+                // roster that appeared when the selection arrived would make
+                // the answer depend on where somebody is standing.
+                .map(|n| Member::new(format!("pv.list.row.{n}")).containing(row_cells_cursor(n)))
                 .collect::<Vec<_>>(),
             format!("pv.list.row.{}", state.row.get()),
         ),
@@ -953,7 +1071,39 @@ fn pane_cursor(state: &Rc<ViewState>, stop: &str) -> Option<Roving> {
     let mut roving = Roving::new(spec);
     roving.seat(members);
     roving.point_at(&at);
+    // ★★★★★ R1699 — the descent is projected too, from the one fact that holds
+    // it. `Some(column)` means the reader went into the selected row, so the
+    // composite is entered and its inner cursor points at that cell.
+    if stop == "pv.list"
+        && let Some(column) = state.cell.get()
+    {
+        roving.enter();
+        if let Some(inner) = roving.inner_at_cursor_mut() {
+            inner.point_at(&list_cell_tag(state.row.get(), column));
+        }
+    }
     Some(roving)
+}
+
+/// ★★★★★ R1699 — the cells of one message row, as the composite that row **is**.
+///
+/// `Stop` at the ends, unlike the tab list beside it: a row has a first and a
+/// last column a reader is meant to feel, and wrapping from the length back to
+/// the timestamp would read as a jump to another row. `Follows`, because
+/// arriving at a cell IS reading it — the same argument the enclosing list
+/// makes about its rows.
+fn row_cells_cursor(row: usize) -> Roving {
+    let mut cells = Roving::new(
+        RovingSpec::new(Axis::Horizontal)
+            .with_ends(Ends::Stop)
+            .with_activation(Activation::Follows),
+    );
+    cells.seat(
+        (0..spec::COLUMNS.len())
+            .map(|c| Member::new(list_cell_tag(row, c)))
+            .collect(),
+    );
+    cells
 }
 
 /// R1698 — put a pane's cursor where a [`Roving`] left it.
@@ -963,7 +1113,23 @@ fn pane_cursor(state: &Rc<ViewState>, stop: &str) -> Option<Roving> {
 fn seat_pane_cursor(state: &Rc<ViewState>, stop: &str, roving: &Roving) {
     let Some(index) = roving.cursor() else { return };
     match stop {
-        "pv.list" => select_message(state, index),
+        "pv.list" => {
+            select_message(state, index);
+            // ★★★★★ R1699 — the descent is written back with the row, in the
+            // same place, so a cursor that went into a cell and a selection
+            // that did not is not a state this screen can be in.
+            let column = roving
+                .entered()
+                .then(|| roving.inner_at_cursor().and_then(Roving::cursor))
+                .flatten();
+            state.cell.set(column);
+            if let Some(column) = column {
+                state.say(format!(
+                    "{} of message {index}",
+                    spec::COLUMNS[column].title
+                ));
+            }
+        }
         "pv.tree" => {
             if let Some((path, ..)) = visible_fields(state).get(index) {
                 select_field(state, &path.clone());
@@ -995,9 +1161,36 @@ fn key_at(state: &Rc<ViewState>, focused: Option<&str>, chord: &str) -> bool {
         && let Some(mut roving) = pane_cursor(state, stop)
         && let Some(landing) = roving.key(chord)
     {
-        if let Landing::Moved { choose: true, .. } = landing {
-            seat_pane_cursor(state, stop, &roving);
+        match landing {
+            // ★★★★★ R1699 — entering and leaving move the projection too, and
+            // they are the same write as an arrow: `seat_pane_cursor` reads the
+            // whole path, so there is one place that turns a cursor into state
+            // whatever key moved it.
+            Landing::Moved { choose: true, .. } | Landing::Entered(_) | Landing::Exited(_) => {
+                seat_pane_cursor(state, stop, &roving);
+            }
+            // Every pane here declares `Follows`, so `choose_keys` is empty and
+            // these cannot arrive; the arms exist because leaving them out
+            // would make a later `Explicit` pane silently do nothing, which is
+            // the defect this round measured on the sibling screen.
+            Landing::Chosen(_) | Landing::Refused(_) => {
+                activate_tag(state, &roving.tag_path());
+            }
+            Landing::Moved { .. } | Landing::Held(_) | Landing::Nowhere => {}
         }
+        return true;
+    }
+    // ★★★★★ R1699 — **a stop that owns no cursor can still be acted on.**
+    //
+    // Measured before this existed, by driving the running screen: the three
+    // saved-filter chips announce `role=button`, a keyboard reaches all three,
+    // and `Enter` and `Space` at every one of them changed nothing painted. A
+    // button a keyboard cannot press is below the floor rather than above it —
+    // measured at 6.11.1, a push button activates on both keys, always.
+    if let Some(stop) = focused
+        && matches!(chord, "Enter" | "Space")
+        && act_on_hit(state, Hit::of_tag(state, stop))
+    {
         return true;
     }
     match chord {
@@ -2168,7 +2361,12 @@ impl WidgetA11y for PacketView {
     fn access_focus_target(_state: &(), focused: Option<&str>) -> Option<AccessFocus> {
         let stop = focused?;
         let state = use_view_state();
-        let cursor = pane_cursor(&state, stop).and_then(|r| r.cursor_tag().map(str::to_owned));
+        // ★★★★★ R1699 — the INNERMOST tag. ARIA's `aria-activedescendant`
+        // addresses any descendant of the element owning the Tab stop, and the
+        // framework's focus ring reads this same hook, so a reader who has gone
+        // into a row is framed on the cell rather than on the row.
+        let cursor =
+            pane_cursor(&state, stop).and_then(|r| r.active_descendant().map(str::to_owned));
         Some(AccessFocus::addressing(stop, cursor))
     }
 
@@ -2205,14 +2403,44 @@ impl WidgetA11y for PacketView {
         // happens to match) while the byte grid's are its ROWS and the cursor
         // walks its cells. A client reading `children` to learn what the arrows
         // reach would be told rows and given cells.
+        //
+        // ★★★★★ R1699 — and a member that is ITSELF a composite publishes its
+        // own roster, so a client can ask what is inside a message row without
+        // first moving the selection onto it. Built once and indexed rather
+        // than asked per node: `pane_cursor` seats sixteen rows of seven cells,
+        // and asking it for each of ~290 nodes would rebuild that roster ~870
+        // times a frame.
+        let cursors: Vec<(&str, Roving)> = PANE_STOPS
+            .iter()
+            .filter_map(|stop| pane_cursor(&state, stop).map(|roving| (*stop, roving)))
+            .collect();
+        let nested: BTreeMap<&str, &Roving> = cursors
+            .iter()
+            .flat_map(|(_, roving)| {
+                roving
+                    .members()
+                    .iter()
+                    .filter_map(|m| m.inner().map(|inner| (m.tag.as_str(), inner)))
+            })
+            .collect();
         for node in &mut nodes {
-            if let Some(roving) = pane_cursor(&state, &node.tag) {
-                *node = node.clone().with_navigation(&roving);
+            if let Some((_, roving)) = cursors.iter().find(|(stop, _)| *stop == node.tag) {
+                *node = node.clone().with_navigation(roving);
+            } else if let Some(inner) = nested.get(node.tag.as_str()) {
+                *node = node.clone().with_navigation(inner);
             }
         }
         nodes
     }
 }
+
+/// The three panes that own a keyboard cursor.
+///
+/// A list rather than three literals because R1699 needed to walk them twice —
+/// once to publish each pane's roster and once to publish the rosters of the
+/// members that are composites — and a second spelling of "which panes have
+/// cursors" is a second thing to keep in step with [`pane_cursor`].
+const PANE_STOPS: [&str; 3] = ["pv.list", "pv.tree", "pv.bytes"];
 
 /// The application bar: what capture is open, how fast it is arriving, and the
 /// running commentary.
@@ -2341,7 +2569,12 @@ fn list_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
                 .map(|(c, text)| GridCell {
                     tag: list_cell_tag(n, c),
                     name: text,
-                    focused: false,
+                    // ★★★★★ R1699 — the cell a reader has gone into. The slot
+                    // existed from R1694 and was hard-coded `false`, which is
+                    // what a grid with no way into its rows looks like from the
+                    // accessibility side: seven cells per row, none of them ever
+                    // current.
+                    focused: n == selected && state.cell.get() == Some(c),
                     selected: None,
                 })
                 .collect(),

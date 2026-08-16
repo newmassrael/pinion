@@ -103,7 +103,7 @@ use pinion_core::widgets::button::ButtonState;
 use pinion_core::widgets::card::{Card, CardAffordance, CardChrome, CardState, Remedy};
 use pinion_core::widgets::destination::{Destinations, Detour, Journey};
 use pinion_core::widgets::radio::RadioState;
-use pinion_core::widgets::roving::{Landing, Member, Roving};
+use pinion_core::widgets::roving::{Activation, Axis, Ends, Landing, Member, Roving, RovingSpec};
 use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::widgets::tile_grid::{
     Maximized, Tile, TileDirection, TileGrid, TileId, TileNudge,
@@ -815,10 +815,13 @@ impl ShellState {
     fn cursor_members(stop: &str) -> Vec<Member> {
         match stop {
             "shell.appbar" => vec![
-                // The two view tabs are a composite of their own, so the bar
-                // reaches them as ONE member — WAI-ARIA's nesting, and the
-                // reason a member is a tag rather than a control.
-                Member::new(APP_BAR_TABS),
+                // ★★★★★ The two view tabs are a composite of their own, so the
+                // bar reaches them as ONE member — WAI-ARIA's nesting, and the
+                // reason a member is a tag rather than a control. R1698 stopped
+                // there and R1699 measured what that cost: the tab list was
+                // reachable and no key went into it, so from a keyboard the two
+                // views could not be switched at all.
+                Member::new(APP_BAR_TABS).containing(Self::view_tabs()),
                 Member::new(BarChip::Source.tag()),
                 Member::new(BarChip::Capture.tag()),
                 Member::new(BarChip::Search.tag()),
@@ -831,7 +834,6 @@ impl ShellState {
                         matches!(seat.seat, spec::Seat::Page),
                     )
                 })
-                .chain(std::iter::once(Member::new("shell.rail.account")))
                 .collect(),
             "shell.subbar" => SubChip::ALL
                 .iter()
@@ -850,6 +852,27 @@ impl ShellState {
         }
     }
 
+    /// ★★★★★ R1699 — the composite the application bar's first member **is**.
+    ///
+    /// A ring of two peers, so it wraps; and `Explicit`, because arriving at a
+    /// view tab must not switch the view a reader is trying to leave — the same
+    /// argument the rail's cursor makes, and the one the floor's tab list has
+    /// no way to express (measured at 6.11.1: its tab bar changes the current
+    /// tab on every arrow and exposes no property that would let an author ask
+    /// for anything else).
+    fn view_tabs() -> Roving {
+        let mut tabs = Roving::new(
+            RovingSpec::new(Axis::Horizontal)
+                .with_ends(Ends::Wrap)
+                .with_activation(Activation::Explicit),
+        );
+        tabs.seat(vec![
+            Member::new(BarChip::Tab0.tag()),
+            Member::new(BarChip::Tab1.tag()),
+        ]);
+        tabs
+    }
+
     /// R1698 — the composite's cursor, re-seated from the live roster first.
     ///
     /// Re-seating rather than rebuilding is what keeps the cursor on the member
@@ -866,6 +889,23 @@ impl ShellState {
     /// R1698 — a read-only snapshot of one composite's cursor, seated.
     fn cursor_of(&self, stop: &str) -> Option<Roving> {
         self.with_cursor(stop, |roving| roving.clone())
+    }
+
+    /// R1699 — a read-only snapshot of the composite one MEMBER is, seated.
+    ///
+    /// By member tag rather than "whatever the cursor rests on", because a
+    /// nested composite publishes its roster whether or not anybody is standing
+    /// on it: the point of publishing is to be askable before pressing a key.
+    fn inner_cursor_of(&self, stop: &str, member: &str) -> Option<Roving> {
+        self.with_cursor(stop, |roving| {
+            roving
+                .members()
+                .iter()
+                .find(|m| m.tag == member)
+                .and_then(Member::inner)
+                .cloned()
+        })
+        .flatten()
     }
 
     fn preset_names(&self) -> String {
@@ -1324,6 +1364,66 @@ impl Hit {
         }
         let canvas = canvas_rect();
         Self::in_canvas(state, px - canvas.x, py - canvas.y)
+    }
+
+    /// ★★★★★ R1699 — what a **key** press at `tag` addresses: the inverse of
+    /// [`hit_word`].
+    ///
+    /// A keyboard activation is semantic, not geometric — the reader named a
+    /// thing, not a pixel — so synthesising a press at the middle of the tag's
+    /// rectangle would be wrong twice over: a member scrolled out of view has a
+    /// rectangle and is covered, and a member with no rectangle at all (the
+    /// tab list, which is anchored by the tabs it composes) has none to aim at.
+    ///
+    /// The risk of an inverse is that it drifts from the thing it inverts, so
+    /// the round wrote the gate before the function:
+    /// `r1699_every_cursor_member_resolves_to_the_hit_its_tag_names` requires,
+    /// for every member of every composite, that `hit_word(of_tag(t)) == t`
+    /// AND that `of_tag(t)` equals what `Hit::at` answers at the centre of that
+    /// tag's painted rectangle. Two independent derivations of the same fact,
+    /// with the paint as the arbiter.
+    fn of_tag(state: &ShellState, tag: &str) -> Self {
+        if let Some(chip) = BarChip::ALL.into_iter().find(|c| c.tag() == tag) {
+            return Self::Chip(chip);
+        }
+        if let Some(chip) = SubChip::ALL.into_iter().find(|c| c.tag() == tag) {
+            return Self::Sub(chip);
+        }
+        if let Some(key) = tag.strip_prefix("shell.rail.")
+            && let Some(seat) = spec::RAIL.iter().find(|seat| seat.key == key)
+        {
+            return Self::Rail(seat.key);
+        }
+        if let Some(kind) = tag.strip_prefix("shell.palette.")
+            && let Some(def) = spec::CATALOGUE.iter().find(|def| def.kind == kind)
+        {
+            return Self::Palette(def.kind);
+        }
+        if let Some(key) = tag.strip_prefix("shell.settings.option.")
+            && let Some(option) = spec::OPTIONS.iter().find(|o| o.key == key)
+        {
+            return Self::Option(option.key);
+        }
+        if let Some(key) = tag.strip_prefix("shell.settings.key.")
+            && let Some(row) = spec::KEY_ROWS.iter().find(|row| row.key == key)
+        {
+            return Self::KeyRow(row.key);
+        }
+        if let Some(n) = tag
+            .strip_prefix("shell.settings.theme.")
+            .and_then(|n| n.parse::<usize>().ok())
+            && n < spec::THEMES.len()
+        {
+            return Self::Theme(n);
+        }
+        if let Some(n) = tag
+            .strip_prefix("shell.preset.item.")
+            .and_then(|n| n.parse::<usize>().ok())
+            && n <= state.presets.borrow().len()
+        {
+            return Self::PresetItem(n);
+        }
+        Self::Nothing
     }
 
     /// ★ R1695 — what is under a point on the Settings page, in the region's own
@@ -2616,7 +2716,7 @@ impl ShellOracle {
     /// R1698 — what a composite's cursor landing somewhere does besides move.
     ///
     /// Every stop here declares
-    /// [`Activation::Explicit`](pinion_core::widgets::roving::Activation::Explicit),
+    /// [`Activation::Explicit`],
     /// so arriving never chooses — and the `choose` bit is read rather than
     /// ignored, because a declaration nothing reads is the "declared and thrown
     /// away" arm R1684 named. If a stop is ever declared `Follows`, this is
@@ -2629,7 +2729,7 @@ impl ShellOracle {
     fn landed(state: &Rc<ShellState>, stop: &str, landing: Landing) {
         let Some(tag) = state
             .cursor_of(stop)
-            .and_then(|r| r.cursor_tag().map(str::to_owned))
+            .and_then(|r| r.active_descendant().map(str::to_owned))
         else {
             return;
         };
@@ -2643,6 +2743,23 @@ impl ShellOracle {
             Landing::Moved { .. } => "cursor moved",
             Landing::Held(_) => "cursor held at the end",
             Landing::Nowhere => return,
+            // ★★★★★ R1699 — the half `Explicit` had always promised and never
+            // delivered. Measured before this arm existed, by driving the
+            // running screen: `Enter` and `Space` at all five stops, twelve
+            // presses, nothing painted changed.
+            //
+            // Both arms reach `act_on_hit`, which is the ONE place that knows
+            // what a tag does and why it might refuse — a second refusal
+            // sentence written here would be the two-spellings defect this
+            // screen has already paid for twice (R1695's rail, R1668's seats).
+            // They stay distinct on the wire, where `enabled` tells a client
+            // that choosing this member refuses *before* it presses anything.
+            Landing::Chosen(_) | Landing::Refused(_) => {
+                Self::act_on_hit(state, Hit::of_tag(state, &tag));
+                return;
+            }
+            Landing::Entered(_) => "entered",
+            Landing::Exited(_) => "left",
         };
         state.say(format!("{tag} \u{00B7} {what}"));
     }
@@ -2845,7 +2962,7 @@ impl ShellOracle {
             Hit::Theme(n) => Self::choose_theme(state, n),
             Hit::Palette(kind) => {
                 if let Err(why) = Self::add(state, kind) {
-                    state.say(format!("refused: {why:?}"));
+                    state.say(refusal_sentence(&why));
                 }
             }
             Hit::Affordance(id, affordance) => {
@@ -2853,18 +2970,18 @@ impl ShellOracle {
                 if let Err(why) = Self::act(state, &call) {
                     // A refusal a person triggered has to be visible to that
                     // person, not only to the wire that would have read it.
-                    state.say(format!("refused: {why:?}"));
+                    state.say(refusal_sentence(&why));
                 }
             }
             Hit::Stepper(id, verb) => {
                 if let Err(why) = Self::step(state, &id, verb) {
-                    state.say(format!("refused: {why:?}"));
+                    state.say(refusal_sentence(&why));
                 }
             }
             Hit::Remedy(id) => Self::apply_remedy(state, &id),
             Hit::FloatRedock(id) => {
                 if let Err(why) = Self::redock(state, &id) {
-                    state.say(format!("refused: {why:?}"));
+                    state.say(refusal_sentence(&why));
                 }
             }
             Hit::FloatClose(id) => {
@@ -3030,7 +3147,7 @@ impl ShellOracle {
     ///
     /// So the composite that owns the focus is asked FIRST, and only a key it
     /// does not navigate by falls through to the screen. A composite declaring
-    /// [`Axis::Horizontal`](pinion_core::widgets::roving::Axis::Horizontal)
+    /// [`Axis::Horizontal`]
     /// returns `None` for `ArrowUp`, which is what lets a vertical enclosing
     /// gesture still work while the reader is inside a horizontal bar.
     fn key_at(state: &Rc<ShellState>, focused: Option<&str>, chord: &str) -> bool {
@@ -4033,7 +4150,7 @@ fn rail_scene(state: &ShellState, palette: Palette) -> Scene {
     }
     entries.push(Scene::Container(
         ContainerNode::new(vec![label(
-            "NE",
+            ACCOUNT_INITIALS,
             Rect::new(8, 9, 24, 14),
             FONT_TINY,
             palette.on_accent,
@@ -6031,7 +6148,12 @@ impl WidgetA11y for AnalyzerShellView {
         let state = use_shell_state();
         let cursor = state
             .cursor_of(stop)
-            .and_then(|roving| roving.cursor_tag().map(str::to_owned))
+            // ★★★★★ R1699 — the INNERMOST tag, not the member at this level.
+            // ARIA's `aria-activedescendant` addresses any descendant of the
+            // element owning the Tab stop, and the framework's focus ring reads
+            // this same hook, so a cursor that has gone into the tab list frames
+            // the tab rather than the list.
+            .and_then(|roving| roving.active_descendant().map(str::to_owned))
             // The board's cursor is its selection: it is spatial rather than a
             // linear roster, so it declares no `Roving` and reports the card it
             // is on. It has had that cursor since R1662 and published it to
@@ -6131,6 +6253,13 @@ fn app_bar_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
     let searching = state.searching.get();
     let search = state.search.get();
     let mut tabs = AccessNode::new(APP_BAR_TABS, AriaRole::TabList).with_name("View");
+    // ★★★★★ R1699 — a nested composite publishes its OWN axis and roster, so a
+    // client learns what the inner arrows reach without descending first. The
+    // roving is the live one the bar holds, not a fresh copy, or the cursor the
+    // wire reports and the cursor the arrows move would be two objects.
+    if let Some(inner) = state.inner_cursor_of("shell.appbar", APP_BAR_TABS) {
+        tabs = tabs.with_navigation(&inner);
+    }
     let mut nodes = Vec::new();
     for (n, name) in TABS.iter().enumerate() {
         let tag = if n == 0 {
@@ -6207,6 +6336,28 @@ fn with_cursor_declared(node: AccessNode, state: &Rc<ShellState>) -> AccessNode 
     }
 }
 
+/// R1699 — the initials the account chip shows, painted and announced from one
+/// place so a reader hears what is drawn.
+const ACCOUNT_INITIALS: &str = "NE";
+
+/// ★★★★★ R1699 — what a person reads when a verb refuses: **the producer's own
+/// sentence**, not the `Debug` spelling of the error that carries it.
+///
+/// Four call sites here wrote `format!("refused: {why:?}")`, which puts
+/// `Rejected(RefusalReason("\"topology\" is reserved for requirement 12 …"))`
+/// on the screen — Rust syntax, escaped quotes and all, in front of somebody
+/// who asked to place a widget. Found by LOOKING at the round's own demo
+/// output, and it is this round's to fix because this round is what made those
+/// paths reachable from a keyboard for the first time.
+///
+/// The rendering itself is `InvokeError`'s `Display`, lifted at the eighth
+/// identical site (four here, four in the node lab) per the R727 / R732
+/// self-grep mandate — a screen that has to remember not to use `Debug` is a
+/// screen that will use `Debug`.
+fn refusal_sentence(why: &InvokeError) -> String {
+    format!("refused: {why}")
+}
+
 /// The tag the two view tabs are announced under. Nothing paints it — the tabs
 /// are painted individually and the list is what a reader descends through — so
 /// it is anchored by the members it composes.
@@ -6243,7 +6394,23 @@ fn rail_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
         rail.children.push("shell.rail.account".to_owned());
         *rail = with_cursor_declared(rail.clone(), state);
     }
-    nodes.push(AccessNode::new("shell.rail.account", AriaRole::Button).with_name("Account"));
+    // ★★★★★ R1699 — a `group`, not a `button`, and NOT a member of the rail's
+    // cursor.
+    //
+    // Both of those were false claims and the round's own gate is what asked.
+    // Nothing presses this seat: no arm of `Hit::at` reaches its rectangle and
+    // none of `Hit::of_tag` names it, so it was a control by announcement only —
+    // the shape R1694 kept finding from the other side. And the canon settles
+    // which direction to repair it in: read out of the reference mockup's own
+    // source, the avatar is a plain styled element with no handler, no link and
+    // no menu. It says whose session this is. Making it press something would
+    // have been inventing a product decision; making it honest costs nothing
+    // and removes two lies.
+    nodes.push(
+        AccessNode::new("shell.rail.account", AriaRole::Group)
+            .with_name("Account")
+            .with_value(AccessValue::Text(ACCOUNT_INITIALS.to_owned())),
+    );
     nodes
 }
 

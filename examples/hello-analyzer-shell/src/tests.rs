@@ -1268,3 +1268,346 @@ fn r1698_no_stop_on_this_screen_chooses_by_arriving() {
         }
     }
 }
+
+// ── R1699: the cursor can act, and it can go inside ──────────────────────────
+
+/// Every tag any composite's cursor can rest on, nested rosters included, each
+/// paired with whether it is itself a composite.
+///
+/// Built from the live cursors rather than written down: a member added to a
+/// roster joins the gates below on the next paint, which is exactly what a
+/// hand-kept list loses (R1687's eighth seat).
+fn all_cursor_members(state: &std::rc::Rc<super::ShellState>) -> Vec<(String, bool)> {
+    let mut out = Vec::new();
+    for stop in spec::FOCUS_RING {
+        let Some(roving) = state.cursor_of(stop.tag) else {
+            continue;
+        };
+        for member in roving.members() {
+            out.push((member.tag.clone(), member.is_composite()));
+            if let Some(inner) = member.inner() {
+                for nested in inner.members() {
+                    out.push((nested.tag.clone(), nested.is_composite()));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// ★★★★★ R1699 — **the tag a cursor names and the tag a press lands on are the
+/// same thing.**
+///
+/// A keyboard activation is semantic — the reader named a member, not a pixel —
+/// so this screen resolves it with `Hit::of_tag`, a second address space beside
+/// `Hit::at`. Two address spaces drift, so the gate came before the function
+/// and checks both directions against a third party: `hit_word` (which the
+/// pointer path already had) must round-trip, and the answer must equal what a
+/// press at the centre of the tag's **painted** rectangle produces.
+///
+/// A member that is itself a composite is exempt from the press half and only
+/// from that half: the tab list paints nothing — it is anchored by the tabs it
+/// composes — so there is no rectangle to press, which is precisely why it is
+/// entered rather than chosen.
+#[test]
+fn r1699_every_cursor_member_resolves_to_the_hit_its_tag_names() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let mut scene = super::view((), pinion_core::Frame::default());
+        let mut cache = pinion_runtime::LayoutCache::new();
+        pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
+        let rects = scene.absolute_rects_by_tag();
+
+        let members = all_cursor_members(&state);
+        assert!(
+            members.len() >= 25,
+            "the ring's rosters are smaller than the screen has: {}",
+            members.len()
+        );
+        let mut wrong = Vec::new();
+        let mut pressed = 0;
+        for (tag, composite) in &members {
+            if *composite {
+                assert_eq!(
+                    super::Hit::of_tag(&state, tag),
+                    super::Hit::Nothing,
+                    "{tag} is a composite; it is entered, not chosen"
+                );
+                continue;
+            }
+            let hit = super::Hit::of_tag(&state, tag);
+            let round_trip = super::hit_word(&hit);
+            if round_trip != *tag {
+                wrong.push(format!("{tag}: of_tag round-trips to {round_trip}"));
+                continue;
+            }
+            let Some(rect) = rects.get(tag).copied() else {
+                wrong.push(format!("{tag}: a cursor rests here and nothing paints it"));
+                continue;
+            };
+            let at = super::Hit::at(&state, rect.x + rect.w / 2, rect.y + rect.h / 2);
+            if at != hit {
+                wrong.push(format!(
+                    "{tag}: a press at its centre answers {}, a key answers {}",
+                    super::hit_word(&at),
+                    round_trip
+                ));
+            }
+            pressed += 1;
+        }
+        assert!(
+            wrong.is_empty(),
+            "{} member(s):\n  {}",
+            wrong.len(),
+            wrong.join("\n  ")
+        );
+        assert!(
+            pressed >= 24,
+            "only {pressed} member(s) were checked against the paint"
+        );
+    });
+}
+
+/// ★★★★★ R1699 — **`Enter` at every cursor position does something.**
+///
+/// The measurement that opened the round, as an assertion. Every composite here
+/// declares `Activation::Explicit`, whose documented meaning is "arriving only
+/// moves the cursor; `Enter` or `Space` chooses" — and until this round nothing
+/// anywhere implemented the second half. Driven on the running screen before
+/// the fix: four composites, three chords each, twelve presses, the destination
+/// unchanged and the toast still reading what the previous *arrow* had put
+/// there.
+///
+/// "Does something" is deliberately the weakest claim that is still false of
+/// the old screen, because the strong version is per-member domain knowledge
+/// this gate must not restate. What it asserts is that the key is CONSUMED and
+/// that **a reader can tell**: either the painted screen changed or the screen
+/// said something new.
+///
+/// ★★★★★ Both halves are load-bearing and the first draft had only the second,
+/// which is R1695's own lesson walked into again — a gate that watches a
+/// VARIABLE rather than the screen. It reported the layout-preset button as
+/// silent: choosing it opens a menu, which paints rows and flips the button's
+/// `aria-expanded`, and that IS the announcement WAI-ARIA specifies for opening
+/// a menu. A toast there would have been a second, weaker one written to
+/// satisfy a test. The other half is equally necessary: a booked palette entry
+/// REFUSES, which changes nothing painted at all, and hearing the reason is the
+/// whole of what happens.
+#[test]
+fn r1699_choosing_a_member_from_the_keyboard_does_something() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let screen = || {
+            let mut scene = super::view((), pinion_core::Frame::default());
+            let mut cache = pinion_runtime::LayoutCache::new();
+            pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
+            let mut tags: Vec<(String, (u32, u32, u32, u32))> = scene
+                .absolute_rects_by_tag()
+                .into_iter()
+                .map(|(tag, r)| (tag, (r.x, r.y, r.w, r.h)))
+                .collect();
+            tags.sort();
+            (tags, state.toast.get())
+        };
+        let mut silent = Vec::new();
+        let mut checked = 0;
+        let mut by_paint = 0;
+        let mut by_word = 0;
+        for stop in spec::FOCUS_RING {
+            // ★ Drive each stop at a destination that SHOWS it. The first draft
+            // did not, and the rail's own members are what moved the journey:
+            // by the time the loop reached the layout bar the screen was at
+            // another destination, where that bar is not painted and choosing
+            // its menu could not paint one either. A gate that drives a control
+            // the screen is not showing is asking a question with no answer.
+            if let spec::Where::At(destination) = stop.at {
+                assert!(
+                    state.go(destination).is_ok(),
+                    "{} lives at {destination}, which the rail must reach",
+                    stop.tag
+                );
+            }
+            let Some(roving) = state.cursor_of(stop.tag) else {
+                continue;
+            };
+            for (index, member) in roving.members().iter().enumerate() {
+                if member.is_composite() {
+                    continue;
+                }
+                // Walk the cursor onto this member through the keyboard rather
+                // than writing it: a cursor a test moves by hand proves nothing
+                // about a key press.
+                assert!(press_key(Some(stop.tag), "Home"));
+                for _ in 0..index {
+                    press_key(Some(stop.tag), roving.spec().axis.keys()[0]);
+                }
+                assert_eq!(
+                    state
+                        .cursor_of(stop.tag)
+                        .and_then(|r| r.active_descendant().map(str::to_owned)),
+                    Some(member.tag.clone()),
+                    "the walk did not reach {}",
+                    member.tag
+                );
+                let (painted_before, said_before) = screen();
+                let consumed = press_key(Some(stop.tag), "Enter");
+                let (painted_after, said_after) = screen();
+                let repainted = painted_after != painted_before;
+                let spoke = said_after != said_before;
+                if !consumed || !(repainted || spoke) {
+                    silent.push(format!(
+                        "{} \u{00B7} {}: consumed={consumed} toast={said_after:?}",
+                        stop.tag, member.tag
+                    ));
+                }
+                by_paint += usize::from(repainted);
+                by_word += usize::from(spoke && !repainted);
+                checked += 1;
+            }
+        }
+        assert!(
+            silent.is_empty(),
+            "{} member(s) did nothing a reader could tell:\n  {}",
+            silent.len(),
+            silent.join("\n  ")
+        );
+        assert!(checked >= 24, "only {checked} member(s) were chosen");
+        // Neither half is decoration: if one of these ever reaches zero the gate
+        // has quietly become half of itself.
+        assert!(by_paint > 0, "no member's choice repainted anything");
+        assert!(by_word > 0, "no member's choice was heard rather than seen");
+    });
+}
+
+/// ★★★★★ R1699 — **the application bar's tab list is entered, walked and left.**
+///
+/// Measured the day the round opened by driving the running window: the bar's
+/// cursor reached `shell.appbar.tabs` in one step (WAI-ARIA's nesting, and
+/// correct) and `ArrowDown`, `ArrowUp`, `Enter` and `Space` there all left the
+/// active descendant exactly where it was. From a keyboard the two views could
+/// not be switched at all.
+///
+/// The floor, measured by building a probe at 6.11.1 and running it offscreen:
+/// the same arrangement is **four** Tab stops rather than one, an arrow from a
+/// bar control moves *focus* into the tab bar while the opposite arrow walks
+/// straight out of the bar entirely, and `Escape` does nothing anywhere.
+#[test]
+fn r1699_the_nested_tab_list_is_entered_walked_and_left() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let descendant = || {
+            AnalyzerShellView::access_focus_target(&(), Some("shell.appbar"))
+                .and_then(|t| t.active_descendant)
+        };
+        assert!(press_key(Some("shell.appbar"), "Home"));
+        assert_eq!(descendant(), Some(super::APP_BAR_TABS.to_owned()));
+
+        // An off-axis arrow enters, because THIS member is a composite.
+        assert!(press_key(Some("shell.appbar"), "ArrowDown"));
+        let inside = descendant().expect("the cursor is on a tab");
+        assert_eq!(
+            inside,
+            BarChip::Tab0.tag(),
+            "\u{2605} entering lands on the tab list's own cursor"
+        );
+        assert_ne!(
+            inside,
+            super::APP_BAR_TABS,
+            "and the active descendant is the innermost tag, not the list"
+        );
+
+        // The inner axis answers and the outer one does not move.
+        assert!(press_key(Some("shell.appbar"), "ArrowRight"));
+        assert_eq!(descendant(), Some(BarChip::Tab1.tag().to_owned()));
+        assert_eq!(
+            state
+                .cursor_of("shell.appbar")
+                .and_then(|r| r.cursor_tag().map(str::to_owned)),
+            Some(super::APP_BAR_TABS.to_owned()),
+            "the bar's own cursor stayed on the tab list while the reader was inside"
+        );
+
+        // Choosing switches the view — the thing a keyboard could not do.
+        let before = state.tab.get();
+        assert!(press_key(Some("shell.appbar"), "Enter"));
+        let after = state.tab.get();
+        assert_ne!(
+            before, after,
+            "\u{2605} Enter inside the tab list switched the view"
+        );
+        assert_eq!(after, TABS[1], "to the tab the cursor was on");
+
+        // Escape leaves ONE level: back onto the tab list, still in the bar.
+        assert!(press_key(Some("shell.appbar"), "Escape"));
+        assert_eq!(descendant(), Some(super::APP_BAR_TABS.to_owned()));
+        assert!(
+            press_key(Some("shell.appbar"), "ArrowRight"),
+            "and the bar's own axis answers again"
+        );
+        assert_eq!(descendant(), Some(BarChip::Source.tag().to_owned()));
+
+        // ★ The narrowing R1699 had to make to R1698's invariant: the off-axis
+        // arrow is consumed ONLY where there is something to enter.
+        assert!(
+            !press_key(Some("shell.appbar"), "ArrowDown"),
+            "the source chip is not a composite, so ArrowDown still falls through"
+        );
+    });
+}
+
+/// ★★★ R1699 — a nested composite publishes its own roster **before** anybody
+/// descends into it.
+///
+/// The point of publishing is to be askable without pressing a key. A roster
+/// that appeared only once the cursor was inside would make a client's answer
+/// depend on where somebody happened to be standing.
+#[test]
+fn r1699_the_nested_composite_publishes_its_roster_unentered() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let _ = use_shell_state();
+        let nodes = AnalyzerShellView::access_node(&(), None);
+        let by_tag: BTreeMap<&str, &pinion_a11y::AccessNode> =
+            nodes.iter().map(|n| (n.tag.as_str(), n)).collect();
+
+        let bar = by_tag["shell.appbar"];
+        let bar_nav = bar.navigation.as_ref().expect("the bar has a cursor");
+        assert!(
+            !bar_nav.entered(),
+            "nobody has descended, and the wire says so"
+        );
+        let nested: Vec<&str> = bar_nav
+            .members()
+            .iter()
+            .filter(|m| m.is_composite())
+            .map(|m| m.tag.as_str())
+            .collect();
+        assert_eq!(
+            nested,
+            vec![super::APP_BAR_TABS],
+            "the bar has exactly one member that is itself a composite"
+        );
+
+        let tabs = by_tag[super::APP_BAR_TABS];
+        let tabs_nav = tabs
+            .navigation
+            .as_ref()
+            .expect("\u{2605} a nested composite publishes what its own arrows reach");
+        assert_eq!(tabs_nav.members().len(), TABS.len());
+        assert_eq!(
+            tabs.orientation,
+            pinion_a11y::Orientation::of(tabs_nav.spec().axis),
+            "and the orientation its axis implies"
+        );
+        for member in tabs_nav.members() {
+            assert!(
+                by_tag.contains_key(member.tag.as_str()),
+                "{} is not a node a reader can be told about",
+                member.tag
+            );
+        }
+    });
+}

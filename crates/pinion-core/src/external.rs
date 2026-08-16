@@ -29,6 +29,7 @@
 use std::borrow::Cow;
 use std::cell::RefCell;
 use std::collections::BTreeMap;
+use std::fmt;
 use std::rc::Rc;
 
 use serde_json::value::RawValue;
@@ -1969,6 +1970,29 @@ impl InvokeError {
         match self {
             Self::Rejected(reason) => Some(reason),
             _ => None,
+        }
+    }
+}
+
+/// ★★★★★ R1699 — **what a person reads when an action refuses.**
+///
+/// `Debug` is what eight call sites across three screens were using to put a
+/// refusal in front of somebody, and `Debug` is Rust syntax: the dashboard's
+/// palette announced
+/// `refused: Rejected(RefusalReason("\"topology\" is reserved for requirement
+/// 12 and this release does not place it"))` to a person who had asked to place
+/// a widget. Found by looking at a demo's own output rather than by any check,
+/// because every check reads the typed value and the typed value was right.
+///
+/// The two anonymous arms render as sentences too rather than as their variant
+/// names, because a consumer that has to special-case them will not: it will
+/// fall back to `Debug` and reintroduce exactly this.
+impl fmt::Display for InvokeError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::UnknownPath => f.write_str("that is not an action this widget offers"),
+            Self::TypeMismatch => f.write_str("that is not the kind of value this action takes"),
+            Self::Rejected(reason) => f.write_str(reason.as_str()),
         }
     }
 }

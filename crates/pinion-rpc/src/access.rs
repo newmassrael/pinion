@@ -27,6 +27,7 @@
 
 use pinion_a11y::{AccessFocus, AccessNode, AccessState, AccessValue};
 use pinion_core::scene::Rect;
+use pinion_core::widgets::roving::Roving;
 use serde_json::{Map, Value};
 
 /// Serialize the enriched access tree (nodes + the AT focus target) to the
@@ -418,6 +419,44 @@ fn cursor_to_json(node: &AccessNode, obj: &mut Map<String, Value>) {
         nav.cursor_tag()
             .map_or(Value::Null, |t| Value::String(t.to_owned())),
     );
+    // ★★★★★ R1699 — the two verbs a roster cannot express: which key **chooses**
+    // the member under the cursor, and which key goes **inside** one that is
+    // itself a composite. Both are derived (from the activation and from the
+    // axis) rather than restated, so a composite cannot publish a key it does
+    // not answer. `entered` is the state those verbs move between: without it a
+    // client reading `cursor_tag` cannot tell a cursor resting ON a tab list
+    // from one that has gone into it, and `active_descendant` is what ARIA
+    // actually addresses — the innermost tag, however deep the nesting goes.
+    out.insert(
+        "choose_keys".to_string(),
+        Value::Array(
+            spec.activation
+                .choose_keys()
+                .iter()
+                .map(|k| Value::String((*k).to_owned()))
+                .collect(),
+        ),
+    );
+    out.insert(
+        "entry_keys".to_string(),
+        Value::Array(
+            spec.axis
+                .entry_keys()
+                .iter()
+                .map(|k| Value::String((*k).to_owned()))
+                .collect(),
+        ),
+    );
+    out.insert(
+        "exit_key".to_string(),
+        Value::String(Roving::EXIT_KEY.to_owned()),
+    );
+    out.insert("entered".to_string(), Value::Bool(nav.entered()));
+    out.insert(
+        "active_descendant".to_string(),
+        nav.active_descendant()
+            .map_or(Value::Null, |t| Value::String(t.to_owned())),
+    );
     out.insert(
         "members".to_string(),
         Value::Array(
@@ -427,6 +466,10 @@ fn cursor_to_json(node: &AccessNode, obj: &mut Map<String, Value>) {
                     let mut member = Map::new();
                     member.insert("tag".to_string(), Value::String(m.tag.clone()));
                     member.insert("enabled".to_string(), Value::Bool(m.enabled));
+                    // R1699 — what a client may go INTO. Not derivable from
+                    // `children`, which is the container's structure rather than
+                    // its navigable roster.
+                    member.insert("composite".to_string(), Value::Bool(m.is_composite()));
                     Value::Object(member)
                 })
                 .collect(),

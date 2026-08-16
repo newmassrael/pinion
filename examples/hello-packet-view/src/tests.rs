@@ -13,8 +13,8 @@ use pinion_core::widgets::field_bytes::{Coverage, FieldSpan, SourceId};
 
 use super::{
     NAME_COLUMN, PacketView, cell_texts, char_count, comma, decode, frame_bytes, lane_reading,
-    pane_cursor, row_cells, select_byte, select_field, select_message, sibling_place, spec,
-    use_view_state,
+    list_cell_tag, pane_cursor, row_cells, select_byte, select_field, select_message,
+    sibling_place, spec, use_view_state,
 };
 use pinion_a11y::WidgetA11y;
 use pinion_core::WidgetCore;
@@ -707,6 +707,222 @@ fn r1698_the_list_cursor_is_the_selection_and_it_is_published() {
             focus.active_descendant,
             Some(format!("pv.list.row.{}", state.row.get())),
             "and the active descendant names the row the cursor is on"
+        );
+    });
+}
+
+// ── R1699: a row is a composite, and a stop can be acted on ──────────────────
+
+/// ★★★★★ R1699 — **a message row is entered and its cells are walked.**
+///
+/// This screen announces its list as a `grid`, and WAI-ARIA's grid pattern is
+/// two axes: the vertical one moves between rows, the horizontal one between
+/// the cells of the row you are on. Measured the day the round opened, by
+/// driving the running window: all sixteen rows report seven cells to the
+/// accessibility tree, and `ArrowRight`, `ArrowLeft`, `Enter` and `Space`
+/// standing on a row moved the active descendant nowhere. The columns existed
+/// for a reader and were unreachable by one.
+///
+/// The floor does this — measured at 6.11.1, an item view is one Tab stop and
+/// both axes move a cell cursor, and its accessibility interface names the
+/// focused cell. What it cannot do is say the row is a unit with an inside:
+/// there is no entering, no leaving, and (measured) `Tab` inside the view moves
+/// between cells instead of leaving the widget at all.
+#[test]
+fn r1699_a_message_row_is_entered_and_its_cells_are_walked() {
+    with_state(|state| {
+        let descendant = || {
+            PacketView::access_focus_target(&(), Some("pv.list")).and_then(|t| t.active_descendant)
+        };
+        let row = state.row.get();
+        assert_eq!(descendant(), Some(format!("pv.list.row.{row}")));
+        assert_eq!(state.cell.get(), None, "the screen opens on the row");
+
+        // The cross-axis arrow descends, because a row IS a composite.
+        assert!(press_key(Some("pv.list"), "ArrowRight"));
+        assert_eq!(
+            descendant(),
+            Some(list_cell_tag(row, 0)),
+            "★ entering a row lands on its first cell"
+        );
+        assert_eq!(state.cell.get(), Some(0));
+
+        assert!(press_key(Some("pv.list"), "ArrowRight"));
+        assert_eq!(descendant(), Some(list_cell_tag(row, 1)));
+        assert!(press_key(Some("pv.list"), "End"));
+        assert_eq!(
+            descendant(),
+            Some(list_cell_tag(row, spec::COLUMNS.len() - 1)),
+            "End reaches the last column"
+        );
+        // ★★★★★ The `Ends::Stop` declaration is tested by an ADVANCE past the
+        // last member, not by pressing `End` twice: `Step::Last` lands on the
+        // last index whatever the ends policy says, so the first draft's second
+        // `End` asserted that `Last` is idempotent and nothing else. A
+        // counterfactual flipping this row's cells to `Ends::Wrap` PASSED
+        // against it — the assertion was in a place it could not fail.
+        assert!(press_key(Some("pv.list"), "ArrowRight"));
+        assert_eq!(
+            descendant(),
+            Some(list_cell_tag(row, spec::COLUMNS.len() - 1)),
+            "and an advance past the last column STOPS — a row is not a ring, \
+             unlike the tab list beside it on the sibling screen"
+        );
+        assert_eq!(
+            state.row.get(),
+            row,
+            "walking the cells did not change which message is decoded"
+        );
+
+        // Escape leaves the row without leaving the pane.
+        assert!(press_key(Some("pv.list"), "Escape"));
+        assert_eq!(descendant(), Some(format!("pv.list.row.{row}")));
+        assert_eq!(state.cell.get(), None);
+        assert!(
+            press_key(Some("pv.list"), "ArrowDown"),
+            "and the pane's own axis answers again"
+        );
+        assert_eq!(state.row.get(), row + 1, "which moves between rows");
+    });
+}
+
+/// ★★★★★ R1699 — **the grid publishes the cell a reader is in.**
+///
+/// `GridCell::focused` has existed since R1694 and this screen hard-coded it
+/// `false` at all 112 cells, which is what a grid with no way into its rows
+/// looks like from the accessibility side: seven cells per row, none of them
+/// ever current.
+#[test]
+fn r1699_the_grid_publishes_the_cell_a_reader_is_in() {
+    with_state(|state| {
+        let focused_cells = || {
+            PacketView::access_node(&(), None)
+                .into_iter()
+                .filter(|n| n.state.focused && n.tag.starts_with("pv.list.cell."))
+                .map(|n| n.tag)
+                .collect::<Vec<_>>()
+        };
+        assert!(
+            focused_cells().is_empty(),
+            "nobody has gone into a row, so no cell is current"
+        );
+
+        let row = state.row.get();
+        assert!(press_key(Some("pv.list"), "ArrowRight"));
+        assert!(press_key(Some("pv.list"), "ArrowRight"));
+        assert_eq!(
+            focused_cells(),
+            vec![list_cell_tag(row, 1)],
+            "★ exactly one cell is current, and it is the one the arrows reached"
+        );
+
+        // And the row it is in still publishes its own roster, which is what
+        // makes "what is inside this row" askable without pressing a key.
+        let nodes = PacketView::access_node(&(), None);
+        let row_node = nodes
+            .iter()
+            .find(|n| n.tag == format!("pv.list.row.{row}"))
+            .expect("the row is in the tree");
+        let nav = row_node
+            .navigation
+            .as_ref()
+            .expect("★ a row is a composite and publishes what its arrows reach");
+        assert_eq!(nav.members().len(), spec::COLUMNS.len());
+        assert!(nav.entered() || nav.cursor().is_some());
+    });
+}
+
+/// ★★★★★ R1699 — **a filter chip is pressed from the keyboard.**
+///
+/// Measured before this existed: the three chips announce `role=button`, a
+/// keyboard reaches all three, and `Enter` and `Space` at every one of them
+/// changed nothing painted. A button a keyboard cannot press is below the floor
+/// rather than above it — measured at 6.11.1, a push button activates on both
+/// keys, always.
+#[test]
+fn r1699_a_filter_chip_is_pressed_from_the_keyboard() {
+    with_state(|state| {
+        for (n, name) in spec::SAVED_FILTERS.iter().enumerate() {
+            let chip = format!("pv.filter.saved.{n}");
+            let before = state.saved.get();
+            assert!(
+                press_key(Some(&chip), "Enter"),
+                "{chip} announces itself a button and must answer Enter"
+            );
+            assert_ne!(state.saved.get(), before, "{name} toggled");
+            assert!(press_key(Some(&chip), "Space"), "{chip} answers Space too");
+            assert_eq!(
+                state.saved.get(),
+                before,
+                "{name} toggled back — both keys are the same verb"
+            );
+        }
+    });
+}
+
+/// ★★★★★ R1699 — **the tag a cursor names and the tag a press lands on are the
+/// same thing.**
+///
+/// `Hit::of_tag` is a second address space beside `Hit::at`, and two address
+/// spaces drift. So every member of every composite — the nested cell rosters
+/// included — must resolve to exactly what a press at the centre of that tag's
+/// **painted** rectangle answers. The paint is the arbiter, which is what makes
+/// this a check rather than a comparison of a table with itself (R1669).
+#[test]
+fn r1699_every_cursor_member_resolves_to_the_hit_its_tag_names() {
+    with_state(|state| {
+        let mut scene = super::view((), pinion_core::Frame::default());
+        let mut cache = pinion_runtime::LayoutCache::new();
+        pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
+        let rects = scene.absolute_rects_by_tag();
+
+        let mut tags: Vec<String> = Vec::new();
+        for (stop, _) in PANE_CURSORS {
+            let roving = pane_cursor(state, stop).expect("a pane cursor");
+            for member in roving.members() {
+                tags.push(member.tag.clone());
+                if let Some(inner) = member.inner() {
+                    tags.extend(inner.members().iter().map(|m| m.tag.clone()));
+                }
+            }
+        }
+        for n in 0..spec::SAVED_FILTERS.len() {
+            tags.push(format!("pv.filter.saved.{n}"));
+        }
+
+        let mut wrong = Vec::new();
+        let mut checked = 0;
+        for tag in &tags {
+            let hit = super::Hit::of_tag(state, tag);
+            if hit == super::Hit::None {
+                wrong.push(format!("{tag}: a cursor rests here and no hit names it"));
+                continue;
+            }
+            // A member the pane has scrolled out of view has no painted
+            // rectangle to press; the address half above still had to hold.
+            let Some(rect) = rects.get(tag).copied() else {
+                continue;
+            };
+            let at = super::Hit::at(state, rect.x + rect.w / 2, rect.y + rect.h / 2);
+            if at != hit {
+                wrong.push(format!("{tag}: a press at its centre answers {at:?}"));
+            }
+            checked += 1;
+        }
+        assert!(
+            wrong.is_empty(),
+            "{} member(s):\n  {}",
+            wrong.len(),
+            wrong.join("\n  ")
+        );
+        assert!(
+            tags.len() >= 150,
+            "the rosters are smaller than the screen has: {}",
+            tags.len()
+        );
+        assert!(
+            checked >= 20,
+            "only {checked} member(s) were checked against the paint"
         );
     });
 }

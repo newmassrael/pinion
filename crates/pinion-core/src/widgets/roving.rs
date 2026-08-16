@@ -107,6 +107,28 @@ impl Axis {
         }
     }
 
+    /// R1699 — the keys that descend into a member which is itself a composite,
+    /// in the order `[arrow…, Enter]`.
+    ///
+    /// The arrow is the **advancing** one of the perpendicular axis, which is
+    /// WAI-ARIA APG's toolbar convention, and [`Axis::Both`] therefore offers
+    /// none: an axis that navigates by all four arrows has no free one left,
+    /// and a key that both moved the cursor and descended would be answering
+    /// two questions at once. Derived here rather than declared per composite
+    /// for the same reason [`Step::from_key`] is — an entry key that was not
+    /// disjoint from [`keys`](Self::keys) is a contradiction the type should
+    /// not be able to express, and
+    /// `r1699_no_axis_navigates_by_a_key_it_also_enters_by` asserts the
+    /// disjointness for every arm.
+    #[must_use]
+    pub const fn entry_keys(self) -> &'static [&'static str] {
+        match self {
+            Self::Horizontal => &["ArrowDown", "Enter"],
+            Self::Vertical => &["ArrowRight", "Enter"],
+            Self::Both => &["Enter"],
+        }
+    }
+
     /// The wire spelling.
     #[must_use]
     pub const fn wire(self) -> &'static str {
@@ -166,6 +188,30 @@ pub enum Activation {
 }
 
 impl Activation {
+    /// R1699 — the W3C `KeyboardEvent.key` names that **choose** the member the
+    /// cursor rests on.
+    ///
+    /// [`Explicit`](Self::Explicit) has always documented that "`Enter` or
+    /// `Space` chooses" and until this round nothing anywhere implemented the
+    /// sentence. Measured by driving both analysis screens: eleven Tab stops,
+    /// `Enter` and `Space` at every one of them, **twenty-two presses that
+    /// changed nothing painted** — a cursor a reader could walk and never act
+    /// on. Publishing the keys from the declaration is what stops the two
+    /// drifting apart again: a composite cannot say `Explicit` and answer a
+    /// different key, because this list is where both the wire and the key
+    /// handler read it.
+    ///
+    /// [`Follows`](Self::Follows) declares **none**, and that is not an
+    /// omission: arriving already chose, so a key that chose again would be a
+    /// second way to do what the arrow just did.
+    #[must_use]
+    pub const fn choose_keys(self) -> &'static [&'static str] {
+        match self {
+            Self::Follows => &[],
+            Self::Explicit => &["Enter", "Space"],
+        }
+    }
+
     /// The wire spelling.
     #[must_use]
     pub const fn wire(self) -> &'static str {
@@ -230,6 +276,13 @@ pub struct Member {
     pub tag: String,
     /// Whether choosing this member does anything.
     pub enabled: bool,
+    /// R1699 — the composite this member **is**, when it is one.
+    ///
+    /// Private because it is the one field with an invariant: a member the
+    /// cursor has descended into must have somewhere to descend to, so it is
+    /// set only through [`containing`](Self::containing) and read through
+    /// [`inner`](Self::inner).
+    inner: Option<Box<Roving>>,
 }
 
 impl Member {
@@ -239,6 +292,7 @@ impl Member {
         Self {
             tag: tag.into(),
             enabled: true,
+            inner: None,
         }
     }
 
@@ -248,7 +302,41 @@ impl Member {
         Self {
             tag: tag.into(),
             enabled,
+            inner: None,
         }
+    }
+
+    /// ★★★★★ R1699 — this member is **itself a composite**, and `inner` is the
+    /// cursor that walks what is inside it.
+    ///
+    /// WAI-ARIA's nesting: the enclosing composite passes over this member in
+    /// one step, because a bar containing a tab list should not make a reader
+    /// arrow through every tab on the way to the control after it. What that
+    /// costs — and what nothing in this module answered before this round — is
+    /// a way **in**: measured on the two analysis screens, the one nested
+    /// member each has was reachable and had no key that entered it, so the
+    /// members inside were unreachable from a keyboard entirely.
+    ///
+    /// The nesting is recursive rather than one level deep because there is no
+    /// non-arbitrary depth to stop at, and because the recursion is what lets
+    /// [`Roving::active_descendant`] answer with one walk instead of the
+    /// caller keeping a stack.
+    #[must_use]
+    pub fn containing(mut self, inner: Roving) -> Self {
+        self.inner = Some(Box::new(inner));
+        self
+    }
+
+    /// R1699 — whether this member is itself a composite.
+    #[must_use]
+    pub const fn is_composite(&self) -> bool {
+        self.inner.is_some()
+    }
+
+    /// R1699 — the composite inside this member, if it is one.
+    #[must_use]
+    pub fn inner(&self) -> Option<&Roving> {
+        self.inner.as_deref()
     }
 }
 
@@ -312,6 +400,33 @@ pub enum Landing {
     Held(usize),
     /// The composite has no members, so it has no cursor.
     Nowhere,
+    /// ★★★★★ R1699 — the reader **chose** the member at this index, which is
+    /// what [`Activation::Explicit`] has always promised `Enter` and `Space`
+    /// would do.
+    ///
+    /// A separate arm from [`Self::Moved`]`{ choose: true }` because the two
+    /// are different events with different repairs: that one is "the arrow
+    /// arrived and the declaration says arriving chooses", this one is "the
+    /// reader asked". A composite whose members do something expensive
+    /// declares `Explicit` precisely so those are not the same key.
+    Chosen(usize),
+    /// R1699 — the reader chose a member that **refuses**, and the composite
+    /// consumed the key.
+    ///
+    /// Its own arm rather than a silent no-op: a screen whose whole subject is
+    /// that a locked seat is heard (R1694) must say why the seat refused, and
+    /// an arm the caller has to match is what makes forgetting to visible. The
+    /// key is still consumed, because a refusal is an answer — letting it fall
+    /// through to whatever encloses the composite would act somewhere else.
+    Refused(usize),
+    /// ★★★★★ R1699 — the cursor **descended into** the member at this index,
+    /// which is itself a composite. The arrows now move that composite's
+    /// cursor, and [`Roving::active_descendant`] names a tag one level deeper.
+    Entered(usize),
+    /// R1699 — the cursor came back **out** to the member at this index.
+    /// `Escape`, which is the key WAI-ARIA APG gives a nested composite for
+    /// leaving without also leaving the enclosing one.
+    Exited(usize),
 }
 
 impl Landing {
@@ -344,9 +459,23 @@ pub struct Roving {
     spec: RovingSpec,
     members: Vec<Member>,
     cursor: Option<usize>,
+    /// R1699 — the cursor has descended into the member it rests on.
+    ///
+    /// State of the **enclosing** composite rather than of the member, because
+    /// it is the enclosing one whose arrows stop applying: exactly one member
+    /// can be entered at a time, and hanging the flag off the member would let
+    /// two of them claim it.
+    entered: bool,
 }
 
 impl Roving {
+    /// R1699 — the key that leaves a nested composite, WAI-ARIA APG's.
+    ///
+    /// A constant rather than a declaration because a composite that could
+    /// choose its own exit key would make leaving unguessable, which is the
+    /// one thing an escape hatch must never be.
+    pub const EXIT_KEY: &'static str = "Escape";
+
     /// An empty composite declaring `spec`. It has no cursor until it is
     /// [`seat`](Self::seat)ed.
     #[must_use]
@@ -355,6 +484,7 @@ impl Roving {
             spec,
             members: Vec::new(),
             cursor: None,
+            entered: false,
         }
     }
 
@@ -376,13 +506,70 @@ impl Roving {
         self.cursor
     }
 
-    /// Where the cursor rests, as the member's tag — the composite's
-    /// `aria-activedescendant`.
+    /// Where the cursor rests **at this level**, as the member's tag.
+    ///
+    /// Not the `aria-activedescendant` since R1699 — that is
+    /// [`active_descendant`](Self::active_descendant), which answers one level
+    /// deeper when the cursor has descended.
     #[must_use]
     pub fn cursor_tag(&self) -> Option<&str> {
         self.cursor
             .and_then(|i| self.members.get(i))
             .map(|m| m.tag.as_str())
+    }
+
+    /// R1699 — whether the cursor has descended into the member it rests on.
+    #[must_use]
+    pub const fn entered(&self) -> bool {
+        self.entered
+    }
+
+    /// R1699 — the composite the cursor rests on, when that member is one.
+    ///
+    /// Published so the accessibility tree can give a nested composite its own
+    /// `aria-orientation` and roster, which is what lets a client learn what
+    /// the inner arrows reach without descending first.
+    #[must_use]
+    pub fn inner_at_cursor(&self) -> Option<&Roving> {
+        self.members.get(self.cursor?)?.inner()
+    }
+
+    /// ★★★★★ R1699 — the composite's `aria-activedescendant`: the **innermost**
+    /// tag the cursor names.
+    ///
+    /// One walk rather than a stack the caller keeps, and the reason the
+    /// nesting is modelled recursively. While the cursor is at this level it is
+    /// [`cursor_tag`](Self::cursor_tag); once it has descended it is whatever
+    /// the entered composite's own cursor names, however deep that goes. ARIA
+    /// permits exactly this — the attribute addresses any descendant of the
+    /// element owning the Tab stop, not only a child.
+    #[must_use]
+    pub fn active_descendant(&self) -> Option<&str> {
+        let member = self.members.get(self.cursor?)?;
+        match (self.entered, member.inner()) {
+            (true, Some(inner)) => inner.active_descendant().or(Some(&member.tag)),
+            _ => Some(&member.tag),
+        }
+    }
+
+    /// R1699 — the tag the cursor rests on at every level, outermost first.
+    ///
+    /// What a screen reads to act on a nested cursor: the last element is the
+    /// thing chosen and the ones before it say which composites it is inside.
+    #[must_use]
+    pub fn tag_path(&self) -> Vec<&str> {
+        let mut path = Vec::new();
+        let mut here = self;
+        loop {
+            let Some(member) = here.cursor.and_then(|i| here.members.get(i)) else {
+                return path;
+            };
+            path.push(member.tag.as_str());
+            match (here.entered, member.inner()) {
+                (true, Some(inner)) => here = inner,
+                _ => return path,
+            }
+        }
     }
 
     /// Replace the roster, **keeping the cursor on the same member**.
@@ -394,11 +581,22 @@ impl Roving {
     /// nearest surviving neighbour, which is what a list does when the selected
     /// row is deleted — and an empty roster clears it.
     pub fn seat(&mut self, members: Vec<Member>) {
+        let previous = core::mem::replace(&mut self.members, members);
         let was = self
             .cursor
-            .and_then(|i| self.members.get(i))
+            .and_then(|i| previous.get(i))
             .map(|m| m.tag.clone());
-        self.members = members;
+        // ★ R1699 — a nested composite's own cursor is state too, and the outer
+        // roster is rebuilt every frame. Without this, descending into a tab
+        // list and moving to its second tab would be undone by the next paint,
+        // which is the same property `seat` already keeps for this level.
+        for fresh in &mut self.members {
+            if let Some(before) = previous.iter().find(|old| old.tag == fresh.tag)
+                && let (Some(now), Some(then)) = (fresh.inner.as_mut(), before.inner())
+            {
+                now.adopt_cursor_of(then);
+            }
+        }
         self.cursor = if self.members.is_empty() {
             None
         } else if let Some(tag) = was
@@ -409,6 +607,49 @@ impl Roving {
         } else {
             Some(self.cursor.unwrap_or(0).min(self.members.len() - 1))
         };
+        // A cursor that had to move to a different member cannot still be
+        // inside the one it left.
+        if self.cursor_tag() != was.as_deref() {
+            self.entered = false;
+        }
+        if !self
+            .members
+            .get(self.cursor.unwrap_or(0))
+            .is_some_and(Member::is_composite)
+        {
+            self.entered = false;
+        }
+    }
+
+    /// R1699 — take `other`'s cursor position and descent, recursively.
+    ///
+    /// The half of [`seat`](Self::seat) that keeps a nested composite's own
+    /// cursor across a re-seat. By tag rather than by index, for the reason
+    /// `seat` itself is: the inner roster can change too.
+    fn adopt_cursor_of(&mut self, other: &Self) {
+        if let Some(tag) = other.cursor_tag() {
+            self.point_at(tag);
+        }
+        self.entered = other.entered
+            && self
+                .members
+                .get(self.cursor.unwrap_or(usize::MAX))
+                .is_some_and(Member::is_composite);
+        if let (Some(mine), Some(theirs)) = (self.inner_at_cursor_mut(), other.inner_at_cursor()) {
+            mine.adopt_cursor_of(theirs);
+        }
+    }
+
+    /// R1699 — the composite the cursor rests on, mutably.
+    ///
+    /// Public because a screen that PROJECTS its cursor rather than owning one
+    /// has to seat the inner cursor from the same state every frame, which is
+    /// what keeps a nested cursor from becoming a second copy of a fact the
+    /// screen already holds.
+    #[must_use]
+    pub fn inner_at_cursor_mut(&mut self) -> Option<&mut Roving> {
+        let index = self.cursor?;
+        self.members.get_mut(index)?.inner.as_deref_mut()
     }
 
     /// Put the cursor on `tag`, reporting whether the roster has it.
@@ -420,6 +661,12 @@ impl Roving {
     pub fn point_at(&mut self, tag: &str) -> bool {
         match self.members.iter().position(|m| m.tag == tag) {
             Some(i) => {
+                // R1699 — a pointer that moves the cursor to a different member
+                // also brings it back out: a descent belongs to the member it
+                // descended into.
+                if self.cursor != Some(i) {
+                    self.entered = false;
+                }
                 self.cursor = Some(i);
                 true
             }
@@ -459,11 +706,85 @@ impl Roving {
         }
     }
 
+    /// ★★★★★ R1699 — descend into the member the cursor rests on, reporting
+    /// whether there was anything to descend into.
+    pub fn enter(&mut self) -> bool {
+        let entering = self
+            .cursor
+            .and_then(|i| self.members.get(i))
+            .is_some_and(Member::is_composite);
+        if entering {
+            self.entered = true;
+        }
+        entering
+    }
+
+    /// R1699 — come back out to the member the cursor rests on, reporting
+    /// whether it was inside anything.
+    pub fn leave(&mut self) -> bool {
+        let leaving = self.entered;
+        self.entered = false;
+        leaving
+    }
+
     /// Deliver a W3C `KeyboardEvent.key` name, returning `None` when this
     /// composite does not navigate by that key — the caller must then let the
     /// key fall through rather than swallowing it.
+    ///
+    /// ★★★★★ R1699 — **innermost first**, which is the whole of the nesting
+    /// rule. A key is offered to the composite the cursor has descended into
+    /// before this one looks at it, so a vertical list inside a horizontal bar
+    /// answers `ArrowDown` while the bar still answers `ArrowRight`, and
+    /// `Escape` leaves one level rather than all of them.
+    ///
+    /// The order after that is not arbitrary either:
+    ///
+    /// 1. **navigate** — an arrow on this composite's own axis;
+    /// 2. **enter** — a key from [`Axis::entry_keys`], and only when the cursor
+    ///    rests on a member that is a composite. This is what keeps R1698's
+    ///    invariant intact: an off-axis arrow still falls through everywhere
+    ///    else, so a vertical gesture enclosing a horizontal bar still works;
+    /// 3. **choose** — a key from [`Activation::choose_keys`], which is where
+    ///    `Explicit` stops being a word and starts being a behaviour.
+    ///
+    /// `Enter` appears in both 2 and 3 and the order settles it: you cannot
+    /// choose a composite, you go into it.
     pub fn key(&mut self, chord: &str) -> Option<Landing> {
-        Step::from_key(self.spec.axis, chord).map(|step| self.step(step))
+        if self.entered {
+            let index = self.cursor?;
+            if let Some(inner) = self.inner_at_cursor_mut() {
+                if let Some(landing) = inner.key(chord) {
+                    return Some(landing);
+                }
+                if chord == Self::EXIT_KEY {
+                    self.entered = false;
+                    return Some(Landing::Exited(index));
+                }
+                return None;
+            }
+            // The roster changed under the cursor and the member it rests on is
+            // no longer a composite. `seat` clears this, so reaching here means
+            // somebody mutated the roster another way; recover rather than
+            // route a key into nothing.
+            self.entered = false;
+        }
+        if let Some(step) = Step::from_key(self.spec.axis, chord) {
+            return Some(self.step(step));
+        }
+        let index = self.cursor?;
+        let member = self.members.get(index)?;
+        if member.is_composite() && self.spec.axis.entry_keys().contains(&chord) {
+            self.entered = true;
+            return Some(Landing::Entered(index));
+        }
+        if self.spec.activation.choose_keys().contains(&chord) {
+            return Some(if member.enabled {
+                Landing::Chosen(index)
+            } else {
+                Landing::Refused(index)
+            });
+        }
+        None
     }
 }
 
@@ -674,6 +995,260 @@ mod tests {
         }
         assert_eq!(Step::from_key(Axis::Horizontal, "ArrowDown"), None);
         assert_eq!(Step::from_key(Axis::Vertical, "ArrowRight"), None);
+    }
+
+    /// The inner composite the nesting tests descend into.
+    fn tabs() -> Roving {
+        let mut inner = Roving::new(RovingSpec::new(Axis::Horizontal).with_ends(Ends::Wrap));
+        inner.seat(vec![Member::new("tab.one"), Member::new("tab.two")]);
+        inner
+    }
+
+    /// A horizontal bar whose middle member is the tab list.
+    fn bar() -> Roving {
+        let mut outer = Roving::new(RovingSpec::new(Axis::Horizontal));
+        outer.seat(vec![
+            Member::new("before"),
+            Member::new("tabs").containing(tabs()),
+            Member::new("after"),
+        ]);
+        outer
+    }
+
+    #[test]
+    fn r1699_no_axis_navigates_by_a_key_it_also_enters_by() {
+        // The property that lets `entry_keys` be derived instead of declared:
+        // a key cannot both move this cursor and descend into a member, or a
+        // press would be answering two questions.
+        for axis in [Axis::Horizontal, Axis::Vertical, Axis::Both] {
+            for key in axis.entry_keys() {
+                assert_eq!(
+                    Step::from_key(axis, key),
+                    None,
+                    "{axis} enters by {key} and must not navigate by it"
+                );
+            }
+            assert!(
+                axis.entry_keys().contains(&"Enter"),
+                "{axis} must always offer a key that does not depend on a free arrow"
+            );
+        }
+        assert_eq!(
+            Axis::Both.entry_keys(),
+            ["Enter"],
+            "an axis that takes all four arrows has none left to enter by"
+        );
+    }
+
+    #[test]
+    fn r1699_the_cross_axis_arrow_enters_a_nested_member_and_escape_leaves() {
+        let mut outer = bar();
+        outer.key("ArrowRight");
+        assert_eq!(outer.cursor_tag(), Some("tabs"));
+        assert!(!outer.entered());
+        assert_eq!(outer.active_descendant(), Some("tabs"));
+
+        assert_eq!(outer.key("ArrowDown"), Some(Landing::Entered(1)));
+        assert!(outer.entered());
+        assert_eq!(
+            outer.active_descendant(),
+            Some("tab.one"),
+            "the active descendant is the innermost tag, which is what ARIA addresses"
+        );
+        assert_eq!(outer.tag_path(), vec!["tabs", "tab.one"]);
+
+        // The inner axis now answers, and the outer one does not.
+        assert!(outer.key("ArrowRight").is_some_and(Landing::moved));
+        assert_eq!(outer.active_descendant(), Some("tab.two"));
+        assert_eq!(
+            outer.cursor_tag(),
+            Some("tabs"),
+            "the enclosing cursor did not move while the reader was inside"
+        );
+
+        assert_eq!(outer.key("Escape"), Some(Landing::Exited(1)));
+        assert!(!outer.entered());
+        assert_eq!(outer.active_descendant(), Some("tabs"));
+        assert!(
+            outer.key("ArrowRight").is_some_and(Landing::moved),
+            "and the outer axis answers again"
+        );
+        assert_eq!(outer.cursor_tag(), Some("after"));
+    }
+
+    #[test]
+    fn r1699_enter_descends_into_a_composite_and_chooses_anything_else() {
+        let mut outer = bar();
+        assert_eq!(
+            outer.key("Enter"),
+            Some(Landing::Chosen(0)),
+            "a plain member is chosen"
+        );
+        outer.key("ArrowRight");
+        assert_eq!(
+            outer.key("Enter"),
+            Some(Landing::Entered(1)),
+            "a composite is entered — you cannot choose one"
+        );
+        assert_eq!(
+            outer.key("Enter"),
+            Some(Landing::Chosen(0)),
+            "and inside, Enter chooses the inner member"
+        );
+    }
+
+    #[test]
+    fn r1699_a_key_neither_composite_navigates_by_falls_all_the_way_through() {
+        let mut outer = bar();
+        outer.key("ArrowRight");
+        outer.key("ArrowDown");
+        assert!(outer.entered());
+        assert_eq!(
+            outer.key("PageDown"),
+            None,
+            "an enclosing gesture must still see a key nobody claimed"
+        );
+        assert!(outer.entered(), "and declining it did not leave");
+    }
+
+    #[test]
+    fn r1699_an_off_axis_arrow_is_consumed_only_where_there_is_something_to_enter() {
+        // R1698's invariant, which this round had to narrow rather than break:
+        // the off-axis arrow still falls through at every member that is not a
+        // composite.
+        let mut outer = bar();
+        assert_eq!(outer.cursor_tag(), Some("before"));
+        assert_eq!(outer.key("ArrowDown"), None, "nothing to enter here");
+        outer.key("ArrowRight");
+        assert_eq!(outer.key("ArrowDown"), Some(Landing::Entered(1)));
+    }
+
+    #[test]
+    fn r1699_explicit_chooses_and_a_refusing_member_says_so() {
+        let mut r = Roving::new(RovingSpec::new(Axis::Vertical));
+        r.seat(vec![Member::new("open"), Member::maybe("booked", false)]);
+        assert_eq!(r.key("Enter"), Some(Landing::Chosen(0)));
+        assert_eq!(r.key("Space"), Some(Landing::Chosen(0)));
+        r.key("ArrowDown");
+        assert_eq!(
+            r.key("Enter"),
+            Some(Landing::Refused(1)),
+            "a locked seat refuses rather than doing nothing quietly"
+        );
+        assert_eq!(
+            r.key("Space"),
+            Some(Landing::Refused(1)),
+            "and the refusal consumes the key, so nothing enclosing acts instead"
+        );
+    }
+
+    #[test]
+    fn r1699_a_cursor_that_follows_does_not_also_choose_on_enter() {
+        let mut r =
+            Roving::new(RovingSpec::new(Axis::Vertical).with_activation(Activation::Follows));
+        r.seat(vec![Member::new("a"), Member::new("b")]);
+        assert!(Activation::Follows.choose_keys().is_empty());
+        assert_eq!(
+            r.key("Enter"),
+            None,
+            "arriving already chose, so Enter belongs to whatever encloses this"
+        );
+        assert_eq!(r.key("Space"), None);
+    }
+
+    #[test]
+    fn r1699_reseating_keeps_the_inner_cursor_and_the_descent() {
+        let mut outer = bar();
+        outer.key("ArrowRight");
+        outer.key("ArrowDown");
+        outer.key("ArrowRight");
+        assert_eq!(outer.tag_path(), vec!["tabs", "tab.two"]);
+
+        // The frame repaints and the roster is rebuilt from scratch.
+        outer.seat(vec![
+            Member::new("before"),
+            Member::new("tabs").containing(tabs()),
+            Member::new("after"),
+        ]);
+        assert_eq!(
+            outer.tag_path(),
+            vec!["tabs", "tab.two"],
+            "a repaint must not undo a descent, the way it does not undo a cursor"
+        );
+        assert!(outer.entered());
+    }
+
+    #[test]
+    fn r1699_a_cursor_dragged_off_the_entered_member_comes_back_out() {
+        let mut outer = bar();
+        outer.key("ArrowRight");
+        outer.key("ArrowDown");
+        assert!(outer.entered());
+        assert!(outer.point_at("after"), "a pointer press elsewhere");
+        assert!(!outer.entered(), "cannot still be inside what it left");
+        assert_eq!(outer.active_descendant(), Some("after"));
+
+        // And the same when the member stops being a composite entirely.
+        let mut again = bar();
+        again.key("ArrowRight");
+        again.key("ArrowDown");
+        again.seat(vec![
+            Member::new("before"),
+            Member::new("tabs"),
+            Member::new("after"),
+        ]);
+        assert!(!again.entered(), "the tab list is gone; there is no inside");
+        assert_eq!(again.active_descendant(), Some("tabs"));
+    }
+
+    #[test]
+    fn r1699_enter_and_leave_report_whether_there_was_anywhere_to_go() {
+        let mut outer = bar();
+        assert!(!outer.enter(), "the first member is not a composite");
+        assert!(!outer.leave(), "and nothing was entered");
+        outer.key("ArrowRight");
+        assert!(outer.enter());
+        assert!(outer.entered());
+        assert!(outer.leave());
+        assert!(!outer.leave(), "leaving twice leaves once");
+    }
+
+    #[test]
+    fn r1699_the_nesting_is_recursive_rather_than_one_level_deep() {
+        let mut innermost = Roving::new(RovingSpec::new(Axis::Vertical));
+        innermost.seat(vec![Member::new("leaf.a"), Member::new("leaf.b")]);
+        let mut middle = Roving::new(RovingSpec::new(Axis::Horizontal));
+        middle.seat(vec![Member::new("mid").containing(innermost)]);
+        let mut outer = Roving::new(RovingSpec::new(Axis::Vertical));
+        outer.seat(vec![Member::new("top").containing(middle)]);
+
+        assert_eq!(outer.key("ArrowRight"), Some(Landing::Entered(0)));
+        assert_eq!(outer.key("ArrowDown"), Some(Landing::Entered(0)));
+        assert_eq!(outer.tag_path(), vec!["top", "mid", "leaf.a"]);
+        assert_eq!(outer.active_descendant(), Some("leaf.a"));
+        assert!(outer.key("ArrowDown").is_some_and(Landing::moved));
+        assert_eq!(outer.active_descendant(), Some("leaf.b"));
+        assert_eq!(outer.key("Escape"), Some(Landing::Exited(0)), "one level");
+        assert_eq!(outer.tag_path(), vec!["top", "mid"]);
+        assert_eq!(outer.key("Escape"), Some(Landing::Exited(0)));
+        assert_eq!(outer.tag_path(), vec!["top"]);
+        assert_eq!(outer.key("Escape"), None, "and then it falls through");
+    }
+
+    #[test]
+    fn r1699_a_composite_publishes_what_is_inside_it_before_anybody_descends() {
+        let outer = bar();
+        assert!(
+            outer.inner_at_cursor().is_none(),
+            "the first member is plain"
+        );
+        let mut at_tabs = bar();
+        at_tabs.key("ArrowRight");
+        let inner = at_tabs.inner_at_cursor().expect("the tab list");
+        assert_eq!(inner.members().len(), 2);
+        assert_eq!(inner.spec().ends, Ends::Wrap);
+        assert!(at_tabs.members()[1].is_composite());
+        assert!(!at_tabs.members()[0].is_composite());
     }
 
     #[test]

@@ -7337,7 +7337,10 @@ fn connect(state: &Rc<LabState>, from: NodeId, to: NodeId) -> Result<String, Inv
         Err(why) => {
             // The slot was opened for a link that did not arrive.
             close_slot(state, to, port);
-            let sentence = format!("{why:?}");
+            // ★ R1699 — `Display`, not `Debug`: this sentence reaches a person
+            // in the toast AND an agent as the refusal's own reason, and `Debug`
+            // puts Rust syntax with escaped quotes in front of both.
+            let sentence = format!("{why}");
             state.say(format!("refused: {sentence}"));
             Err(InvokeError::rejected(sentence))
         }
@@ -7362,7 +7365,10 @@ fn delete_link(state: &Rc<LabState>, link: LinkId) -> Result<String, InvokeError
             Ok(word)
         }
         Err(why) => {
-            let sentence = format!("{why:?}");
+            // ★ R1699 — `Display`, not `Debug`: this sentence reaches a person
+            // in the toast AND an agent as the refusal's own reason, and `Debug`
+            // puts Rust syntax with escaped quotes in front of both.
+            let sentence = format!("{why}");
             state.say(format!("refused: {sentence}"));
             Err(InvokeError::rejected(sentence))
         }
@@ -7844,7 +7850,10 @@ fn adopt_link(state: &Rc<LabState>, from: Socket, to: Socket) -> Result<String, 
             Ok(word)
         }
         Err(why) => {
-            let sentence = format!("{why:?}");
+            // ★ R1699 — `Display`, not `Debug`: this sentence reaches a person
+            // in the toast AND an agent as the refusal's own reason, and `Debug`
+            // puts Rust syntax with escaped quotes in front of both.
+            let sentence = format!("{why}");
             state.say(format!("refused: {sentence}"));
             Err(InvokeError::rejected(sentence))
         }
@@ -7922,7 +7931,10 @@ fn move_end(
         }
         Err(why) => {
             close_slot(state, to, port);
-            let sentence = format!("{why:?}");
+            // ★ R1699 — `Display`, not `Debug`: this sentence reaches a person
+            // in the toast AND an agent as the refusal's own reason, and `Debug`
+            // puts Rust syntax with escaped quotes in front of both.
+            let sentence = format!("{why}");
             state.say(format!("refused: {sentence}"));
             Err(InvokeError::rejected(sentence))
         }

@@ -1295,9 +1295,12 @@ pub const VOICES: &[VoiceSpec] = &[
         population: Population::Rail,
         at: Where::Chrome,
     },
+    // ★ R1699 — a `group`, not a `button`. Nothing presses this seat from either
+    // channel and the reference's avatar has no handler at all, so announcing an
+    // action it does not have was a claim the round's own gate refused.
     VoiceSpec {
         tag: "shell.rail.account",
-        role: "button",
+        role: "group",
         population: Population::One,
         at: Where::Chrome,
     },
