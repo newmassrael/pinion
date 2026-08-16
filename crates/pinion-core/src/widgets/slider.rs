@@ -63,14 +63,13 @@ pub use sm::SliderPolicy;
 // `state_name_derive` + `event_name_derive` on `#[widget(...)]`.
 
 use crate::WidgetStateName;
-use crate::event::WheelStepper;
 use crate::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
     SchemaArg, SchemaField, ThreadOwnership,
 };
-use crate::input::Modifiers;
 use crate::intent::Intent;
+use crate::widgets::wheel::WheelSteps;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
 
 /// R1533 §5.45 §5.38 — one wheel notch on a **continuous** slider, in
@@ -300,7 +299,7 @@ pub struct SliderExternal {
     /// instance, exactly as a toolkit abstract slider owns its own
     /// `offset_accumulated`: two sliders on one screen must not spend each
     /// other's banked motion.
-    wheel: WheelStepper,
+    wheel: WheelSteps,
 }
 
 impl SliderExternal {
@@ -309,7 +308,7 @@ impl SliderExternal {
     fn from_em(em: IntentEmitter<Slider>) -> Self {
         Self {
             em,
-            wheel: WheelStepper::new(),
+            wheel: WheelSteps::new(),
         }
     }
 
@@ -486,7 +485,7 @@ impl External for SliderExternal {
     /// toolkit reaches the same place from the other side: there `singleStep` *is* the
     /// wheel step, and its slider is an integer range whose unit is that step.
     ///
-    /// Sub-notch motion banks in a [`WheelStepper`] rather than rounding to
+    /// Sub-notch motion banks in a [`WheelSteps`] rather than rounding to
     /// nothing, so a trackpad moves the slider at all.
     ///
     /// Deliberately NOT the toolkit's `wheelScrollLines` multiplier (the toolkit travels
@@ -502,18 +501,11 @@ impl External for SliderExternal {
     /// trackpad axis on a horizontal track is a further refinement, not a
     /// different rule.
     ///
-    /// Returns the [`WheelStepper`] verdict — consume while banking or
+    /// Returns the [`WheelSteps`] verdict — consume while banking or
     /// stepping, **decline** once saturated so the wheel this slider cannot
     /// use reaches the scroll container behind it.
-    fn wheel(
-        &mut self,
-        _x_rel: f32,
-        _y_rel: f32,
-        _dx: f32,
-        dy: f32,
-        _modifiers: Modifiers,
-    ) -> bool {
-        let notches = self.wheel.feed(dy);
+    fn wheel(&mut self, reading: &crate::widgets::wheel::WheelReading) -> bool {
+        let notches = self.wheel.feed(reading);
         if notches == 0 {
             return true;
         }
@@ -541,6 +533,14 @@ impl External for SliderExternal {
             IntrospectValue::Float(f64::from(self.em.inner.value())),
         ));
         true
+    }
+
+    /// A wheel over a slider steps its value — always, since a slider is
+    /// nothing but a value with steps.
+    fn wheel_intent(&self, _at: (f32, f32)) -> Option<crate::widgets::wheel::WheelIntent> {
+        Some(crate::widgets::wheel::WheelIntent::Step(
+            crate::widgets::wheel::StepUnit::Value,
+        ))
     }
 
     fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
@@ -1048,7 +1048,15 @@ mod tests {
     const NOTCH_DOWN: f32 = crate::event::LINE_HEIGHT_PX;
 
     fn wheel(sx: &mut SliderExternal, dy: f32) -> bool {
-        External::wheel(sx, 0.5, 0.5, 0.0, dy, Modifiers::empty())
+        External::wheel(
+            sx,
+            &crate::widgets::wheel::WheelReading::new(
+                (0.5, 0.5),
+                (0.0, dy),
+                crate::GesturePhase::Update,
+                crate::input::Modifiers::empty(),
+            ),
+        )
     }
 
     #[test]

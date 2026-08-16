@@ -91,6 +91,7 @@ use pinion_core::input::{
 };
 use pinion_core::scene::{ExternalNode, Rect, Scene};
 use pinion_core::widgets::scroll::ScrollState;
+use pinion_core::widgets::wheel::WheelReading;
 
 /// R664 §5.49 — W3C UI Events `dblclick` time threshold (milliseconds).
 /// Two consecutive `pointer_down` calls within this window on the same
@@ -1837,6 +1838,10 @@ impl InputRouter {
                 cursor: (x, y),
                 delta: (dx, dy),
                 modifiers,
+                // A middle-button pan is a continuous drag, and this arm is
+                // one of its moves: the gesture's end arrives as a release,
+                // not as a wheel event.
+                phase: GesturePhase::Update,
                 frac,
             },
         );
@@ -2640,8 +2645,17 @@ impl InputRouter {
     /// mirrors the [`pointer_up`](Self::pointer_up) /
     /// [`pointer_up_with_modifiers`](Self::pointer_up_with_modifiers)
     /// pair.
+    /// The phase is [`GesturePhase::Update`] — what a notched mouse wheel is:
+    /// an event that neither begins nor ends a continuous gesture, which is
+    /// also the phase winit reports for one.
     pub fn wheel(&mut self, id: PointerId, delta: WheelDelta, state_scene: &mut Scene) -> bool {
-        self.wheel_with_modifiers(id, delta, Modifiers::empty(), state_scene)
+        self.wheel_with_modifiers(
+            id,
+            delta,
+            Modifiers::empty(),
+            GesturePhase::Update,
+            state_scene,
+        )
     }
 
     /// R877 §5.15 §5.49 — wheel dispatch carrying the held keyboard
@@ -2707,6 +2721,7 @@ impl InputRouter {
         id: PointerId,
         delta: WheelDelta,
         modifiers: Modifiers,
+        phase: GesturePhase,
         state_scene: &mut Scene,
     ) -> bool {
         let Some(&(x, y)) = self.cursors.get(&id) else {
@@ -2746,6 +2761,7 @@ impl InputRouter {
                 cursor: (x, y),
                 delta: (dx, dy),
                 modifiers,
+                phase,
                 frac,
             },
         );
@@ -4537,6 +4553,10 @@ struct WheelDispatchArgs<'a> {
     delta: (f32, f32),
     /// Held keyboard modifiers, forwarded to the `External` offer.
     modifiers: Modifiers,
+    /// R1703 — where this event sits in the gesture, forwarded to the offer so
+    /// a stepped consumer can drop its sub-notch remainder when the gesture
+    /// ends. Dropped at the winit boundary until this round.
+    phase: GesturePhase,
     /// Incoming sub-pixel remainder for the stage-2 integer rounding.
     frac: (f32, f32),
 }
@@ -4572,6 +4592,7 @@ fn dispatch_wheel_two_stage(
             args.cursor,
             args.delta,
             args.modifiers,
+            args.phase,
         ) {
             return (true, args.frac);
         }
@@ -4623,10 +4644,19 @@ fn offer_to_hovered_external(
 }
 
 /// R877 / R881 §5.35 §5.49 — the wheel-vocabulary `External` offer, stage 1 of
-/// [`dispatch_wheel_two_stage`]. Offers the pixel delta + modifiers to
+/// [`dispatch_wheel_two_stage`]. Offers the reading to
 /// [`External::wheel`](pinion_core::external::External::wheel) on the widget
 /// under the cursor via [`offer_to_hovered_external`]. `true` = consumed (no
 /// scroll fallback may run).
+///
+/// ★★ R1703 — **the declaration is the precondition.** A widget is offered the
+/// event only when its
+/// [`wheel_intent`](pinion_core::external::External::wheel_intent) is `Some`;
+/// otherwise the wheel falls straight through to the scroll chain as if the
+/// widget were not there. That is what keeps `scene/wheel_intent`'s answer and
+/// the behaviour one fact rather than two that can drift — the wire reads the
+/// same value this line routes by, so a widget cannot claim a wheel it does not
+/// take, nor take one it does not claim.
 fn offer_wheel_to_external(
     paint: &Scene,
     state_scene: &mut Scene,
@@ -4634,10 +4664,44 @@ fn offer_wheel_to_external(
     cursor: (f64, f64),
     delta: (f32, f32),
     modifiers: Modifiers,
+    phase: GesturePhase,
 ) -> bool {
     offer_to_hovered_external(paint, state_scene, target_tag, cursor, |h, x_rel, y_rel| {
-        h.wheel(x_rel, y_rel, delta.0, delta.1, modifiers)
+        if h.wheel_intent((x_rel, y_rel)).is_none() {
+            return false;
+        }
+        h.wheel(&WheelReading::new((x_rel, y_rel), delta, phase, modifiers))
     })
+}
+
+/// R1703 §5.45 §5.15 — **what a wheel at this window point would do**, answered
+/// by the router's own resolution rather than by a second opinion about it.
+///
+/// The whole value of a published wheel intent is that it is the value the
+/// dispatch reads, so this walks the identical path the wheel offer does — the
+/// same pointer-tag resolution for the target, the same widget-selected
+/// [`CaptureNormalize`] basis for the point — and stops one step short of
+/// turning the wheel. `scene/wheel_intent` is its only consumer and holds no
+/// geometry of its own for that reason.
+///
+/// Returns the surface's tag and its answer; the tag comes back even when the
+/// answer is `None`, because "this surface is here and declines" and "nothing
+/// is here" are different facts and a caller auditing a form needs both.
+#[must_use]
+pub fn wheel_intent_at(
+    paint: &Scene,
+    state_scene: &Scene,
+    cursor: (f64, f64),
+) -> Option<(String, Option<pinion_core::widgets::wheel::WheelIntent>)> {
+    let target_tag = resolve_pointer_tag(paint, cursor.0, cursor.1)?;
+    let (primary, _) = split_subindex(&target_tag);
+    let external = state_scene.find_external_with_tag(primary)?;
+    let (x_rel, y_rel) =
+        capture_rel_coords(paint, external, primary, &target_tag, cursor.0, cursor.1)?;
+    Some((
+        primary.to_owned(),
+        external.handle.wheel_intent((x_rel, y_rel)),
+    ))
 }
 
 /// R1432 §5.35 — the External-offer leg for a native PINCH gesture, the
@@ -9127,15 +9191,32 @@ mod tests {
     struct WheelExternal {
         calls: Arc<Mutex<Vec<WheelCall>>>,
         consume: bool,
+        /// R1703 — what this widget says a wheel over it does. `None` is a
+        /// widget that declines the gesture entirely, and the router must then
+        /// never call [`External::wheel`] on it at all.
+        declares: Option<pinion_core::widgets::wheel::WheelIntent>,
     }
 
     impl WheelExternal {
         fn new(consume: bool) -> (Self, Arc<Mutex<Vec<WheelCall>>>) {
+            Self::declaring(
+                consume,
+                Some(pinion_core::widgets::wheel::WheelIntent::Step(
+                    pinion_core::widgets::wheel::StepUnit::Value,
+                )),
+            )
+        }
+
+        fn declaring(
+            consume: bool,
+            declares: Option<pinion_core::widgets::wheel::WheelIntent>,
+        ) -> (Self, Arc<Mutex<Vec<WheelCall>>>) {
             let calls = Arc::new(Mutex::new(Vec::new()));
             (
                 Self {
                     calls: Arc::clone(&calls),
                     consume,
+                    declares,
                 },
                 calls,
             )
@@ -9158,19 +9239,24 @@ mod tests {
         fn thread_ownership(&self) -> ThreadOwnership {
             ThreadOwnership::UiThreadSync
         }
-        fn wheel(
-            &mut self,
-            x_rel: f32,
-            y_rel: f32,
-            dx: f32,
-            dy: f32,
-            modifiers: Modifiers,
-        ) -> bool {
-            self.calls
-                .lock()
-                .expect("mutex poisoned")
-                .push((x_rel, y_rel, dx, dy, modifiers));
+        fn wheel(&mut self, reading: &WheelReading) -> bool {
+            self.calls.lock().expect("mutex poisoned").push((
+                reading.at.0,
+                reading.at.1,
+                reading.dx(),
+                reading.dy(),
+                reading.modifiers,
+            ));
             self.consume
+        }
+
+        /// R1703 — what makes this widget reachable at all: the router offers
+        /// the event only to a widget that declares an intent.
+        fn wheel_intent(
+            &self,
+            _at: (f32, f32),
+        ) -> Option<pinion_core::widgets::wheel::WheelIntent> {
+            self.declares
         }
     }
 
@@ -9250,6 +9336,68 @@ mod tests {
         assert!(mods.is_empty());
     }
 
+    /// ★★★★★ R1703 §5.45 §5.15 — **a widget that declares no wheel is never
+    /// offered one**, and the scroll behind it keeps the gesture.
+    ///
+    /// This exists because a counterfactual PASSED without it. Deleting the
+    /// router's precondition entirely — offering `External::wheel` to every
+    /// hovered widget whatever it declared — left `cargo test -p hello-node-lab`
+    /// and the whole integration demo green, and the reason is that every
+    /// widget the demo drives ALSO re-checks its own condition inside `wheel`:
+    /// the node canvas tests the canvas rectangle, a shut combo box's list is
+    /// not painted, and a slider takes every wheel anyway. So the one
+    /// mechanism this round's central claim rests on — the published answer and
+    /// the dispatch are one fact — was guarded by nothing at all.
+    ///
+    /// It is deliberately NOT guarded twice. Making each widget re-check its
+    /// own declaration inside `wheel` would hide the precondition rather than
+    /// hold it: the rule would still be gone and everything would still pass.
+    /// One mechanism, and a test that drives it.
+    #[test]
+    fn r1703_a_widget_that_declares_no_wheel_is_never_offered_one() {
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        // Consuming AND silent: if the router offers it at all, the wheel is
+        // eaten and the scroll below stays put — so the assertion below fails
+        // in the loudest possible way rather than by a subtle coordinate.
+        let (ext, calls) = WheelExternal::declaring(true, None);
+        let mut state_scene =
+            Scene::External(ExternalNode::new(Box::new(ext)).with_tag("main_btn"));
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_button_over_scroll(Rc::clone(&scroll), None),
+            &mut state_scene,
+        );
+        router.cursor_moved(PointerId::MOUSE, 100.0, 90.0, &mut state_scene);
+        assert!(
+            router.wheel(
+                PointerId::MOUSE,
+                WheelDelta::Lines { dx: 0.0, dy: 2.0 },
+                &mut state_scene,
+            ),
+            "the wheel still dispatched — to the scroll container"
+        );
+        assert!(
+            calls.lock().expect("mutex poisoned").is_empty(),
+            "a widget declaring no wheel was handed one anyway, so what \
+             `scene/wheel_intent` publishes no longer describes what happens"
+        );
+        // Two lines at the framework's own line height, which is what the
+        // scroll fallback rounds a `Lines` delta to.
+        #[allow(
+            clippy::cast_possible_truncation,
+            reason = "LINE_HEIGHT_PX is the integral constant 16; the product \
+                      is an exact scroll offset"
+        )]
+        let two_lines = (2.0 * LINE_HEIGHT_PX) as i32;
+        assert_eq!(
+            scroll.offset(),
+            (0, two_lines),
+            "the wheel reached the scroll chain exactly as if the widget were \
+             not there"
+        );
+    }
+
     #[test]
     fn r877_wheel_offer_declined_falls_through_to_scroll() {
         // The hovered External declines (returns false) → the pre-R877
@@ -9304,6 +9452,7 @@ mod tests {
             PointerId::MOUSE,
             WheelDelta::Pixels { dx: 0.0, dy: -10.0 },
             ctrl,
+            GesturePhase::Update,
             &mut state_scene,
         ));
         let recorded = calls.lock().expect("mutex poisoned").clone();

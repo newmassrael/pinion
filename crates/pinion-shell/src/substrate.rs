@@ -41,6 +41,7 @@ use pinion_a11y::{
     AccessAction, AccessFocus, AccessNode, PinionAccessAction, ROOT_NODE_ID, tag_to_node_id,
     translate_action,
 };
+use pinion_core::GesturePhase;
 use pinion_core::accelerator::Chord;
 use pinion_core::event::WheelDelta;
 use pinion_core::reactive::{FONT_SOURCES, FontSourceReport, SelfHostedFace};
@@ -3623,6 +3624,24 @@ impl<V: WidgetView> ShellCore<V> {
         self.wheel_for_window(pinion_runtime::DEFAULT_WINDOW, pid, delta);
     }
 
+    /// R1703 §5.45 — [`Self::wheel_for_window`] carrying the gesture
+    /// [phase](GesturePhase) winit reports beside the delta.
+    pub fn wheel_phase_for_window(
+        &mut self,
+        window_id: &str,
+        pid: PointerId,
+        delta: WheelDelta,
+        phase: GesturePhase,
+    ) {
+        let (tail, dispatched) =
+            self.core
+                .wheel_with_modifiers_for_window(window_id, pid, delta, self.modifiers, phase);
+        if dispatched {
+            self.request_redraw();
+        }
+        self.handle_tail(&tail);
+    }
+
     /// R672 §5.35 §5.41 — per-window variant of [`Self::wheel`].
     ///
     /// R877 §5.15 §5.49 — forwards the shell's modifier cache (winit
@@ -3630,14 +3649,11 @@ impl<V: WidgetView> ShellCore<V> {
     /// one cache, both producers), so a hovered `External` wheel
     /// consumer (canvas pan / `Ctrl`-zoom) reads the held modifiers
     /// the same way `scene/click` Shift-extend does.
+    /// The phase is [`GesturePhase::Update`] — a notched mouse wheel, which is
+    /// what a caller with no phase to pass has. A producer that HAS one (the
+    /// winit arm) uses [`Self::wheel_phase_for_window`].
     pub fn wheel_for_window(&mut self, window_id: &str, pid: PointerId, delta: WheelDelta) {
-        let (tail, dispatched) =
-            self.core
-                .wheel_with_modifiers_for_window(window_id, pid, delta, self.modifiers);
-        if dispatched {
-            self.request_redraw();
-        }
-        self.handle_tail(&tail);
+        self.wheel_phase_for_window(window_id, pid, delta, GesturePhase::Update);
     }
 
     /// R1432 §5.35 §5.15 — native PINCH (magnify) gesture into the addressed
@@ -3792,9 +3808,9 @@ impl<V: WidgetView> ShellCore<V> {
         // the match.
         for input in inputs {
             match *input {
-                DeferredInput::Wheel { x, y, delta } => {
+                DeferredInput::Wheel { x, y, delta, phase } => {
                     self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
-                    self.wheel_for_window(window_id, PointerId::MOUSE, delta);
+                    self.wheel_phase_for_window(window_id, PointerId::MOUSE, delta, phase);
                 }
                 DeferredInput::Click { x, y } => {
                     self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);

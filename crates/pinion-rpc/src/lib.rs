@@ -72,6 +72,7 @@ pub mod transport;
 pub mod voice;
 pub mod wait_for;
 pub mod waiter;
+pub mod wheel_intent;
 pub mod window_declare;
 pub mod window_move;
 pub mod wire_census;

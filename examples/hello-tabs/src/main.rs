@@ -188,7 +188,11 @@ impl WidgetCore for TabsView {
     type Event = ();
 
     fn create_external() -> Box<dyn External> {
-        let mut group = RadioGroupExternal::new(N);
+        // ★ R1703 §5.45 — a tab STRIP takes the wheel; a form's radio set does
+        // not, and one type serves both, so the role is declared here rather
+        // than guessed from the shape. Measured on the reference toolkit's tab
+        // bar by probe: a wheel down at tab 0 lands on tab 1 and up returns.
+        let mut group = RadioGroupExternal::new(N).with_wheel(true);
         // Form default: tab 0 active (a tab strip always shows one
         // panel). `intervene` is the slot-assignment path — it sets
         // `selected_index` without firing the `selected` intent and
@@ -550,7 +554,10 @@ mod key_tests {
     use pinion_core::scene::ExternalNode;
 
     fn scene() -> Scene {
-        let mut ext = RadioGroupExternal::new(N);
+        // R1703 — `with_wheel` matches `create_external` so this fixture is the
+        // production widget: a fixture that differs from what ships is how a
+        // test comes to pass against a screen nobody has.
+        let mut ext = RadioGroupExternal::new(N).with_wheel(true);
         let _ = ext.intervene("selected_index", IntrospectValue::Int(0));
         Scene::External(ExternalNode::new(Box::new(ext)).with_tag(PRIMARY_TAG))
     }

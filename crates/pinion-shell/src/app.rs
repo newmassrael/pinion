@@ -4161,12 +4161,22 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
             // remembers that position, so this arm only needs to
             // convert the unit-tagged `MouseScrollDelta` into the
             // matching pinion-native [`WheelDelta`] and forward.
-            WindowEvent::MouseWheel { delta, .. } => {
+            // ★ R1703 — the `phase` field is no longer discarded. winit reports
+            // where a wheel event sits in a continuous gesture (a trackpad's
+            // two-finger scroll starts, moves and ends; a notched mouse wheel
+            // only ever moves), and a stepped consumer needs the end: without
+            // it the sub-notch remainder a flick banks is spent by the NEXT
+            // gesture, possibly minutes later and aimed at something else.
+            WindowEvent::MouseWheel { delta, phase, .. } => {
                 // R1027 §5.16 §5.45 — `scale` converts a `PixelDelta`
                 // (physical) to logical, mirroring the `CursorMoved` arm.
                 let pinion_delta = winit_wheel_to_pinion(delta, scale);
-                self.core
-                    .wheel_for_window(spec_id, PointerId::MOUSE, pinion_delta);
+                self.core.wheel_phase_for_window(
+                    spec_id,
+                    PointerId::MOUSE,
+                    pinion_delta,
+                    winit_gesture_phase_to_pinion(phase),
+                );
             }
             // R51.45 §5.35 — winit `WindowEvent::Touch` closes the
             // R51.38 multi-pointer first-design substrate arc.
@@ -4889,6 +4899,12 @@ fn winit_wheel_to_pinion(delta: MouseScrollDelta, scale: f64) -> WheelDelta {
 /// `Started -> Begin`, `Moved -> Update`, `Ended -> End`, `Cancelled -> Cancel`.
 /// Shared by every native-gesture arm (R1432 pinch, R1433 rotation) — the phase
 /// bracket is the gesture-agnostic half, so the name is too.
+///
+/// ★ R1703 — and the **wheel** is now one of them. winit brackets a trackpad
+/// scroll with the same `TouchPhase` it brackets a pinch with, and the arm that
+/// took the wheel discarded it (`MouseWheel { delta, .. }`) for the whole life
+/// of this shell. A second enum for the wheel's copy of these four arms would
+/// have been the second spelling this tree keeps deleting.
 fn winit_gesture_phase_to_pinion(phase: winit::event::TouchPhase) -> pinion_core::GesturePhase {
     match phase {
         winit::event::TouchPhase::Started => pinion_core::GesturePhase::Begin,

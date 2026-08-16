@@ -2251,6 +2251,47 @@ pub const WIRE_TYPES: &[WireType] = &[
             ],
         },
     },
+    // ★★★★★ R1703 §5.45 — what a wheel at a point would do, published so it can
+    // be asked before it is turned. The reference toolkit has no such question:
+    // measured at 6.11.1 across its four wheel-answering widget classes, 309
+    // introspectable properties and 172 introspectable methods name the wheel
+    // zero times.
+    WireType {
+        name: "WheelIntentAt",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("x", WireTy::Number, None),
+                WireField::new("y", WireTy::Number, None),
+                WireField::new("surface", WireTy::String, None).nullable(),
+                WireField::new("intent", WireTy::String, None).nullable(),
+                WireField::new("unit", WireTy::String, None).nullable(),
+                WireField::new("falls_through_to", WireTy::String, None).nullable(),
+            ],
+        },
+    },
+    WireType {
+        name: "WheelIntentReport",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("surfaces", WireTy::Array, Some("WheelIntentRow")),
+                WireField::new("declared", WireTy::Integer, None),
+                WireField::new("at", WireTy::Object, Some("WheelIntentAt")).nullable(),
+            ],
+        },
+    },
+    WireType {
+        name: "WheelIntentRow",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("surface", WireTy::String, None),
+                WireField::new("answered_by", WireTy::String, None).nullable(),
+                WireField::new("asked_x", WireTy::Number, None),
+                WireField::new("asked_y", WireTy::Number, None),
+                WireField::new("intent", WireTy::String, None).nullable(),
+                WireField::new("unit", WireTy::String, None).nullable(),
+            ],
+        },
+    },
     WireType {
         name: "WindowDeclareOutcome",
         shape: WireShape::Object {

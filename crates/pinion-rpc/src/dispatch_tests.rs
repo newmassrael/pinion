@@ -3378,16 +3378,61 @@ fn scene_wheel_enqueues_lines_delta_into_inbox() {
     assert!(resp.error.is_none(), "{:?}", resp.error);
     assert_eq!(resp.result, Some(Value::Null));
     assert_eq!(inbox.len(), 1);
-    let DeferredInput::Wheel { x, y, delta } = inbox[0] else {
+    let DeferredInput::Wheel { x, y, delta, phase } = inbox[0] else {
         panic!("expected Wheel variant, got {:?}", inbox[0]);
     };
     assert!((x - 180.0).abs() < f64::EPSILON);
     assert!((y - 160.0).abs() < f64::EPSILON);
+    // R1703 — a call that states no phase means a notched mouse wheel, which
+    // is neither the start nor the end of a continuous gesture.
+    assert_eq!(phase, pinion_core::GesturePhase::Update);
     let WheelDelta::Lines { dx, dy } = delta else {
         panic!("expected Lines variant, got {delta:?}");
     };
     assert!(dx.abs() < f32::EPSILON);
     assert!((dy - 3.0).abs() < f32::EPSILON);
+}
+
+// ---- R1703 §5.45 — the wheel's gesture phase reaches the inbox ----
+
+#[test]
+fn r1703_scene_wheel_carries_the_stated_gesture_phase() {
+    for (word, want) in [
+        ("begin", pinion_core::GesturePhase::Begin),
+        ("update", pinion_core::GesturePhase::Update),
+        ("end", pinion_core::GesturePhase::End),
+        ("cancel", pinion_core::GesturePhase::Cancel),
+    ] {
+        let mut scene = counted_scene(0);
+        let previews = PreviewLedger::default();
+        let revision = SceneRevision::default();
+        let mut inbox: Vec<DeferredInput> = Vec::new();
+        let mut ctx =
+            DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/wheel","params":{{"at":{{"x":1.0,"y":2.0}},"delta":{{"pixels":{{"dx":0.0,"dy":4.0}}}},"phase":"{word}"}},"id":1}}"#
+        );
+        let resp = parse_response(&dispatch(&mut ctx, &req).unwrap());
+        assert!(resp.error.is_none(), "{word}: {:?}", resp.error);
+        let DeferredInput::Wheel { phase, .. } = inbox[0] else {
+            panic!("expected Wheel variant, got {:?}", inbox[0]);
+        };
+        assert_eq!(phase, want, "phase {word:?}");
+    }
+}
+
+#[test]
+fn r1703_scene_wheel_rejects_a_phase_outside_the_vocabulary() {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let mut ctx =
+        DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+    let req = r#"{"jsonrpc":"2.0","method":"scene/wheel","params":{"at":{"x":1.0,"y":2.0},"delta":{"pixels":{"dx":0.0,"dy":4.0}},"phase":"momentum"},"id":1}"#;
+    let resp = parse_response(&dispatch(&mut ctx, req).unwrap());
+    assert!(resp.error.is_some(), "a typo must surface at the call");
+    assert!(inbox.is_empty(), "nothing enqueued on a rejected phase");
 }
 
 #[test]

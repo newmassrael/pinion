@@ -3463,7 +3463,13 @@ impl<V: WidgetCore> CoreShell<V> {
         pid: PointerId,
         delta: WheelDelta,
     ) -> (DispatchTail<V::State>, bool) {
-        self.wheel_with_modifiers_for_window(window_id, pid, delta, pinion_core::Modifiers::empty())
+        self.wheel_with_modifiers_for_window(
+            window_id,
+            pid,
+            delta,
+            pinion_core::Modifiers::empty(),
+            pinion_core::GesturePhase::Update,
+        )
     }
 
     /// R877 §5.15 §5.49 — per-window wheel dispatch carrying the held
@@ -3474,12 +3480,19 @@ impl<V: WidgetCore> CoreShell<V> {
     /// [`InputRouter::wheel_with_modifiers`](crate::input::InputRouter::wheel_with_modifiers)
     /// — the External offer needs the state scene, hence the borrow
     /// split mirroring [`Self::pointer_down_for_window`].
+    ///
+    /// R1703 — `phase` says where this event sits in a continuous gesture
+    /// (winit `TouchPhase`, discarded at that boundary until this round). A
+    /// stepped consumer drops its banked sub-notch remainder when the gesture
+    /// ends, so a trackpad flick cannot leave a fraction of a notch to be spent
+    /// by the next one.
     pub fn wheel_with_modifiers_for_window(
         &mut self,
         window_id: &str,
         pid: PointerId,
         delta: WheelDelta,
         modifiers: pinion_core::Modifiers,
+        phase: pinion_core::GesturePhase,
     ) -> (DispatchTail<V::State>, bool) {
         // R1045 §5.45 §5.49 §5.38 — stage-0 GUI-side binding wheel seam.
         // Offer the wheel to [`WidgetCore::apply_wheel`] BEFORE the
@@ -3522,7 +3535,7 @@ impl<V: WidgetCore> CoreShell<V> {
         }
         let Self { scene, routers, .. } = self;
         let router = router_for(routers, window_id);
-        let dispatched = router.wheel_with_modifiers(pid, delta, modifiers, scene);
+        let dispatched = router.wheel_with_modifiers(pid, delta, modifiers, phase, scene);
         (self.tail(), dispatched)
     }
 

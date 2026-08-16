@@ -26,14 +26,14 @@
 //! uses, on the *operable* role (Focus + Increment + Decrement AT
 //! actions), the 3rd `Float` consumer after `Slider` + `ProgressBar`.
 
-use crate::event::WheelStepper;
 use crate::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
     ThreadOwnership,
 };
-use crate::input::{AutoRepeat, Modifiers};
+use crate::input::AutoRepeat;
 use crate::widgets::button::{Button, ButtonEvent, ButtonState};
+use crate::widgets::wheel::WheelSteps;
 use crate::{WidgetEventName, WidgetStateName};
 
 /// R734 §5.38 — bounded stepped numeric value holder with two
@@ -72,7 +72,7 @@ pub struct SpinButtonExternal {
     inc: Button,
     /// R1533 §5.45 — sub-notch wheel carry (see the `External::wheel` impl).
     /// Per instance, like the toolkit's per-spinbox `wheelDeltaRemainder`.
-    wheel: WheelStepper,
+    wheel: WheelSteps,
     /// R1549 §5.35 — cadence a held stepper repeats at. The toolkit's spin box
     /// always auto-repeats its arrows (there is no property to turn it off),
     /// so this is a value rather than an `Option`; the binding re-declares it with
@@ -96,7 +96,7 @@ impl SpinButtonExternal {
             page_step: step,
             dec: Button::new(),
             inc: Button::new(),
-            wheel: WheelStepper::new(),
+            wheel: WheelSteps::new(),
             repeat: AutoRepeat::desktop(),
         };
         s.set_value(value);
@@ -297,7 +297,7 @@ impl External for SpinButtonExternal {
     /// means "one step" wherever the cursor is.
     ///
     /// One notch ([`LINE_HEIGHT_PX`](crate::event::LINE_HEIGHT_PX) pixels) is
-    /// one [`Self::step`], sub-notch motion banks in a [`WheelStepper`], and
+    /// one [`Self::step`], sub-notch motion banks in a [`WheelSteps`], and
     /// the verdict is that type's: consume while banking or stepping, decline
     /// once saturated.
     ///
@@ -316,15 +316,8 @@ impl External for SpinButtonExternal {
     /// No intent: a spin button broadcasts none by design (see
     /// [`Self::drain_intents`]), so the AI-visible effect is the `value`
     /// introspect field, exactly as for `intervene` and the stepper buttons.
-    fn wheel(
-        &mut self,
-        _x_rel: f32,
-        _y_rel: f32,
-        _dx: f32,
-        dy: f32,
-        _modifiers: Modifiers,
-    ) -> bool {
-        let notches = self.wheel.feed(dy);
+    fn wheel(&mut self, reading: &crate::widgets::wheel::WheelReading) -> bool {
+        let notches = self.wheel.feed(reading);
         if notches == 0 {
             return true;
         }
@@ -341,6 +334,14 @@ impl External for SpinButtonExternal {
             return false;
         }
         true
+    }
+
+    /// A wheel over a spin button steps its value — always, since a spin button
+    /// is nothing but a value with steps.
+    fn wheel_intent(&self, _at: (f32, f32)) -> Option<crate::widgets::wheel::WheelIntent> {
+        Some(crate::widgets::wheel::WheelIntent::Step(
+            crate::widgets::wheel::StepUnit::Value,
+        ))
     }
 
     /// A spin button emits no §5.20 intents — its value is observed and
@@ -811,7 +812,37 @@ mod tests {
     const NOTCH_DOWN: f32 = crate::event::LINE_HEIGHT_PX;
 
     fn wheel(s: &mut SpinButtonExternal, dy: f32) -> bool {
-        External::wheel(s, 0.5, 0.5, 0.0, dy, Modifiers::empty())
+        wheel_at(s, dy, crate::GesturePhase::Update)
+    }
+
+    fn wheel_at(s: &mut SpinButtonExternal, dy: f32, phase: crate::GesturePhase) -> bool {
+        External::wheel(
+            s,
+            &crate::widgets::wheel::WheelReading::new(
+                (0.5, 0.5),
+                (0.0, dy),
+                phase,
+                crate::input::Modifiers::empty(),
+            ),
+        )
+    }
+
+    #[test]
+    fn r1703_a_finished_flick_leaves_no_part_notch_behind() {
+        // ★ The rule the phase exists for, at the WIDGET rather than in the
+        // accumulator: a trackpad flick that banks most of a notch and then
+        // ends must not leave the widget one nudge from stepping. Before R1703
+        // the phase never reached here, so it did.
+        let mut s = SpinButtonExternal::new(0.0, 0.0, 100.0, 1.0);
+        assert!(wheel_at(&mut s, -14.0, crate::GesturePhase::Begin));
+        assert!(wheel_at(&mut s, 0.0, crate::GesturePhase::End));
+        assert!(s.value() < f32::EPSILON, "the flick was under one notch");
+        assert!(wheel_at(&mut s, -14.0, crate::GesturePhase::Begin));
+        assert!(
+            s.value() < f32::EPSILON,
+            "a fresh flick of the same size stepped, so the first one's \
+             remainder outlived its gesture"
+        );
     }
 
     #[test]

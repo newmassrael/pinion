@@ -441,6 +441,29 @@ impl WidgetTransition for ListBox {
 /// the §5.12 `scene/query` / `scene/rewind` / `scene/invoke` paths
 /// and emits a `"selected"` intent (with the new index as
 /// [`IntrospectValue::Int`] payload) on selection-change transitions.
+/// ★★★★★ R1703 §5.45 — **a list does not answer a wheel, and that is the
+/// measured answer rather than an omission.**
+///
+/// This round gave it one and took it away again, because the tree's own
+/// `hello-listbox` wheel demo went red: a wheel over a scrolling list stopped
+/// scrolling the list and started walking its cursor. The floor was then
+/// measured instead of argued — a probe built at 6.11.1 and run offscreen, a
+/// 40-row list with the current row at 5 — and it settles it:
+///
+/// ```text
+/// listwidget: currentRow 5 -> 5   scrollbar 0 -> 3
+/// ```
+///
+/// A wheel over a list SCROLLS it and leaves the choice alone, which is also
+/// what a person means by it. Here that costs the widget nothing: declining
+/// hands the event to the nearest `Scene::Scroll` ancestor, which is the
+/// framework's own default action, so "a list scrolls under a wheel" was
+/// already true before this round and stays true after it.
+///
+/// What the floor's combo box does — step its VALUE while closed and
+/// unfocused, measured index 1 → 2 — is the thing this catalogue deliberately
+/// does not do, and `hello-combobox`'s own check in the R1703 demo is where
+/// that refusal is asserted rather than assumed.
 pub struct ListBoxExternal {
     em: IntentEmitter<ListBox>,
 }
@@ -572,6 +595,11 @@ impl core::fmt::Debug for ListBoxExternal {
 }
 
 impl External for ListBoxExternal {
+    // R1703 §5.45 — deliberately NO `wheel` / `wheel_intent`. See the type's
+    // own documentation: measured on the floor, a wheel over a list scrolls it
+    // and leaves the choice alone, and declining is how a widget hands the
+    // event to the scroll chain.
+
     fn backends(&self) -> BackendSupport {
         BackendSupport::new(&[Backend::Gui, Backend::Rpc], BackendFallback::Skip)
     }
@@ -834,6 +862,31 @@ mod tests {
         list.send(i, ListboxItemEvent::PointerDown);
         list.send(i, ListboxItemEvent::PointerUp);
         list.send(i, ListboxItemEvent::PointerLeave);
+    }
+
+    /// ★★★★★ R1703 §5.45 — **a list declares no wheel**, so a wheel over one
+    /// reaches whatever scrolls behind it.
+    ///
+    /// This round built the opposite first — a wheel walking the cursor, on the
+    /// reasoning that a combo box does that on the floor — and `hello-listbox`'s
+    /// own wheel demo went red, because a scrolling list stopped scrolling. The
+    /// floor was then measured rather than argued (a 40-row list, current row 5,
+    /// one notch): `currentRow 5 -> 5`, `scrollbar 0 -> 3`. What steps there is
+    /// the CLOSED COMBO BOX's value, unfocused, which is the hazard this
+    /// catalogue refuses on purpose.
+    #[test]
+    fn r1703_a_list_declares_no_wheel_so_the_scroll_behind_it_keeps_one() {
+        for l in [
+            ListBoxExternal::new(4),
+            ListBoxExternal::with_multiselect(4),
+        ] {
+            assert!(
+                External::wheel_intent(&l, (0.5, 0.5)).is_none(),
+                "a list that declared a wheel would take it from the scroll \
+                 container it sits in, which is what a person is actually \
+                 aiming at"
+            );
+        }
     }
 
     #[test]

@@ -6034,23 +6034,46 @@ impl External for NodeGraphExternal {
     /// rect; a wheel routed here from a palette card (composite
     /// `node_graph#palette_*` shares the primary) lands outside `[0, 1]`
     /// and is declined — the R799 bounds-guard discipline.
-    fn wheel(&mut self, x_rel: f32, y_rel: f32, dx: f32, dy: f32, modifiers: Modifiers) -> bool {
+    fn wheel(&mut self, reading: &pinion_core::widgets::wheel::WheelReading) -> bool {
+        let (x_rel, y_rel) = reading.at;
         if !(0.0..=1.0).contains(&x_rel) || !(0.0..=1.0).contains(&y_rel) {
             return false;
         }
-        if modifiers.command_key() {
-            let factor = ZOOM_STEP.powf(-f64::from(dy) / f64::from(LINE_HEIGHT_PX));
+        if reading.modifiers.command_key() {
+            let factor = ZOOM_STEP.powf(-f64::from(reading.dy()) / f64::from(LINE_HEIGHT_PX));
             let sx = f64::from(x_rel) * f64::from(WIN_W);
             let sy = f64::from(y_rel) * f64::from(WIN_H);
             self.set_zoom_anchored(self.zoom.get() * factor, sx, sy);
             return true;
         }
-        if modifiers.shift_key() {
-            self.scroll
-                .scroll_by(round_i32(f64::from(dy) + f64::from(dx)), 0);
+        if reading.modifiers.shift_key() {
+            self.scroll.scroll_by(
+                round_i32(f64::from(reading.dy()) + f64::from(reading.dx())),
+                0,
+            );
             return true;
         }
         false
+    }
+
+    /// R1703 §5.45 §5.15 — this canvas zooms under a wheel, and says so.
+    ///
+    /// ★ The declaration is what makes the hook above reachable at all (the
+    /// router offers it nowhere else), and it is `Zoom` rather than `None`
+    /// even though a PLAIN wheel here declines: what the surface is asked is
+    /// what a wheel at this point can do, and a modified wheel is still a
+    /// wheel. The plain case's decline is the framework's scroll fallback
+    /// doing the two-dimensional pan for free, which is this binding's whole
+    /// reason for declining rather than an absence of intent.
+    ///
+    /// ★★ Found by the workspace doc gate rather than by a search: the round
+    /// that changed this trait method counted `fn wheel` under `crates/` and
+    /// missed the second node canvas in `examples/`. The compiler is what
+    /// enumerates implementors correctly.
+    fn wheel_intent(&self, at: (f32, f32)) -> Option<pinion_core::widgets::wheel::WheelIntent> {
+        let (x_rel, y_rel) = at;
+        ((0.0..=1.0).contains(&x_rel) && (0.0..=1.0).contains(&y_rel))
+            .then_some(pinion_core::widgets::wheel::WheelIntent::Zoom)
     }
 
     /// Arm an edge drag from an output port (the R742 drag substrate). The

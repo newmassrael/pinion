@@ -3176,35 +3176,74 @@ pub trait External: core::fmt::Debug {
     /// ancestor of a deeper `Scroll` (the canvas-hijack pattern), and
     /// declining preserves the inner scroll chain.
     ///
-    /// * `x_rel` / `y_rel` — the cursor normalised over the SAME rect
-    ///   [`capture_normalize`](Self::capture_normalize) selects for
-    ///   [`pointer_move`](Self::pointer_move), so wheel-anchor math (a
-    ///   canvas zoom anchored at the cursor) and drag math share one
-    ///   coordinate basis.
-    /// * `dx` / `dy` — the wheel delta in logical pixels (lines already
-    ///   scaled by the framework's line height), W3C sign convention:
-    ///   positive `dy` scrolls content downward.
-    /// * `modifiers` — the held keyboard modifiers, so one hook covers
-    ///   the canonical wheel vocabulary (plain = pan / scroll,
-    ///   `Shift` = horizontal, `Ctrl` = zoom).
+    /// The whole event arrives as one [`WheelReading`] — where the cursor is
+    /// (normalised over the SAME rect
+    /// [`capture_normalize`](Self::capture_normalize) selects for
+    /// [`pointer_move`](Self::pointer_move), so a zoom anchored under the
+    /// cursor and a drag share one coordinate basis), the delta in logical
+    /// pixels on the W3C sign convention, the gesture
+    /// [phase](crate::input::GesturePhase), and the held modifiers.
     ///
     /// Return `true` to consume the event (the router stops — no scroll
-    /// dispatch); `false` to decline (default), letting the wheel fall
-    /// through to the nearest [`Scene::Scroll`] ancestor exactly as
-    /// before this hook existed. First consumer: the node-editor canvas
-    /// (pan / `Ctrl`-zoom); the same shape serves a spin-box / slider
-    /// wheel-step without another trait change.
+    /// dispatch); `false` to decline, letting the wheel fall through to the
+    /// nearest [`Scene::Scroll`] ancestor exactly as if this widget were not
+    /// there.
+    ///
+    /// ## R1703 — the declaration is the precondition
+    ///
+    /// This hook is **only called on a widget whose
+    /// [`wheel_intent`](Self::wheel_intent) is `Some`**. A widget that answers
+    /// `None` is never offered the event, so "what a wheel does here" cannot
+    /// drift from what a wheel here does: removing the declaration removes the
+    /// behaviour, and the wire's answer (`scene/wheel_intent`) is the same
+    /// value the router routed by.
+    ///
+    /// The default is therefore not "decline" but *unreachable* — a widget
+    /// with no declaration never arrives, and one with a declaration owes an
+    /// implementation.
     ///
     /// [`Scene::Scroll`]: crate::Scene::Scroll
-    fn wheel(
-        &mut self,
-        _x_rel: f32,
-        _y_rel: f32,
-        _dx: f32,
-        _dy: f32,
-        _modifiers: crate::input::Modifiers,
-    ) -> bool {
+    /// [`WheelReading`]: crate::widgets::wheel::WheelReading
+    fn wheel(&mut self, _reading: &crate::widgets::wheel::WheelReading) -> bool {
         false
+    }
+
+    /// R1703 §5.45 §5.15 — **what a wheel at this point over this widget
+    /// does**, or `None` when a wheel there is not this widget's business and
+    /// belongs to whatever scrolls behind it.
+    ///
+    /// `at` is normalised over the same basis
+    /// [`wheel`](Self::wheel) receives, and it is a parameter for a reason this
+    /// round measured rather than anticipated: the first draft asked the
+    /// surface with no point, and on a screen — which §2 #7 makes ONE
+    /// `External` — the wire then answered "a wheel here zooms" over the
+    /// palette, where the screen's own handler declines. The published answer
+    /// was coarser than the behaviour it claimed to be, which is the exact
+    /// drift this method exists to make impossible. A widget whose whole rect
+    /// means one thing ignores the argument; a screen reads it.
+    ///
+    /// The reference toolkit has no such question. Measured at 6.11.1 by
+    /// building a probe and running it: over the four widget classes that
+    /// answer a wheel there, 309 introspectable properties and 172
+    /// introspectable methods contain **zero** naming the wheel, so the only
+    /// way to learn that a control will eat your scroll is to scroll and find
+    /// out. The same probe measured what that costs: a **closed, unfocused**
+    /// combo box in a form changes its value on a wheel aimed at the form.
+    ///
+    /// Declaring it makes three things true that a hand-written `wheelEvent`
+    /// cannot:
+    ///
+    /// * **the router uses it** — no declaration, no offer (see
+    ///   [`wheel`](Self::wheel)), so the answer and the behaviour are one fact;
+    /// * **the wire publishes it** — `scene/wheel_intent` answers for the
+    ///   surface under a point, so an agent, a test or an audit of a form can
+    ///   ask *before* moving anything;
+    /// * **it can change with the widget's state** — a combo box declares a
+    ///   step only while its list is open, which is the form hazard above
+    ///   answered by construction rather than by every consumer installing an
+    ///   event filter.
+    fn wheel_intent(&self, _at: (f32, f32)) -> Option<crate::widgets::wheel::WheelIntent> {
+        None
     }
 
     // --- 5b. Drag-and-drop source / coordinator (R742 §5.51) ---

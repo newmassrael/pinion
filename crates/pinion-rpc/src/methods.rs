@@ -320,6 +320,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc, MethodWindow)] = &[
     ("scene/voice", MethodOcc::Read, MethodWindow::Scope),
     ("scene/waitFor", MethodOcc::Read, MethodWindow::Path),
     ("scene/wheel", MethodOcc::Read, MethodWindow::Scope),
+    ("scene/wheel_intent", MethodOcc::Read, MethodWindow::Scope),
     ("scene/window_declare", MethodOcc::Read, MethodWindow::Scope),
     ("scene/window_focus", MethodOcc::Read, MethodWindow::Scope),
     ("scene/window_move", MethodOcc::Read, MethodWindow::Scope),

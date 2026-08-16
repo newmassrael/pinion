@@ -2,6 +2,7 @@ use super::*;
 use pinion_core::scene::ExternalNode;
 use pinion_core::test_fixtures::assert_out_of_range_saying;
 use pinion_core::test_fixtures::assert_refused_saying;
+use pinion_core::widgets::wheel::WheelReading;
 use pinion_node_graph::Violation;
 
 /// R878 — the idle paint posture (no rename in flight).
@@ -3126,6 +3127,20 @@ fn mods(ctrl: bool, shift: bool) -> Modifiers {
     }
 }
 
+/// R1703 — one wheel event as the router hands it over.
+///
+/// The phase is `Update`, a notched mouse wheel: this canvas transforms
+/// continuously and keeps no sub-notch remainder, so the bracket changes
+/// nothing here and saying so is better than each call site inventing one.
+fn wheel_at(x_rel: f32, y_rel: f32, dx: f32, dy: f32, modifiers: Modifiers) -> WheelReading {
+    WheelReading::new(
+        (x_rel, y_rel),
+        (dx, dy),
+        pinion_core::GesturePhase::Update,
+        modifiers,
+    )
+}
+
 /// A scene with the primary coordinator **and** the [`UndoStackExternal`]
 /// extra, both sharing the one `use_undo()` stack — exactly what
 /// `create_external` + `create_extra_externals` wire, so the keyboard /
@@ -4163,7 +4178,7 @@ fn r877_ctrl_wheel_zooms_anchored_at_the_cursor() {
         let before = coord.cursor_graph(f64::from(ax), f64::from(ay));
         // One notch in: dy = -16 px -> factor ZOOM_STEP.
         assert!(
-            coord.wheel(ax, ay, 0.0, -16.0, mods(true, false)),
+            coord.wheel(&wheel_at(ax, ay, 0.0, -16.0, mods(true, false))),
             "ctrl-wheel consumed"
         );
         let zoom = coord.zoom.get();
@@ -4188,7 +4203,7 @@ fn r877_plain_wheel_is_declined_so_the_scroll_substrate_pans() {
         let mut coord = coordinator();
         // No modifiers: the External declines and the router's native
         // Scroll fallback owns the pan (zero canvas code).
-        assert!(!coord.wheel(0.5, 0.5, 0.0, 32.0, mods(false, false)));
+        assert!(!coord.wheel(&wheel_at(0.5, 0.5, 0.0, 32.0, mods(false, false))));
         assert!(
             (coord.zoom.get() - 1.0).abs() < f64::EPSILON,
             "zoom untouched"
@@ -4205,7 +4220,7 @@ fn r877_shift_wheel_pans_horizontally() {
         // running app; unit tests write the world maxima directly).
         coord.scroll.set_max(WORLD, WORLD);
         assert!(
-            coord.wheel(0.5, 0.5, 0.0, 48.0, mods(false, true)),
+            coord.wheel(&wheel_at(0.5, 0.5, 0.0, 48.0, mods(false, true))),
             "shift-wheel consumed"
         );
         assert_eq!(
@@ -4223,7 +4238,20 @@ fn r877_wheel_outside_the_canvas_rect_is_declined() {
         let mut coord = coordinator();
         // A palette-card wheel routes here via the shared primary but
         // normalises outside [0, 1] (the palette is left of the canvas).
-        assert!(!coord.wheel(-0.2, 0.5, 0.0, -16.0, mods(true, false)));
+        assert!(!coord.wheel(&wheel_at(-0.2, 0.5, 0.0, -16.0, mods(true, false))));
+        // ★ R1703 — and the surface SAYS so at that point, which is what stops
+        // the router offering the event at all. Before this the two facts were
+        // independent: the guard above could be deleted and nothing would have
+        // reported that the published answer no longer matched.
+        assert!(
+            pinion_core::external::External::wheel_intent(&coord, (-0.2, 0.5)).is_none(),
+            "a point outside the canvas declares no wheel"
+        );
+        assert_eq!(
+            pinion_core::external::External::wheel_intent(&coord, (0.5, 0.5)),
+            Some(pinion_core::widgets::wheel::WheelIntent::Zoom),
+            "and a point inside it declares the zoom"
+        );
         assert!(
             (coord.zoom.get() - 1.0).abs() < f64::EPSILON,
             "zoom untouched"

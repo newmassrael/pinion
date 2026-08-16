@@ -1039,7 +1039,20 @@ pub enum DeferredInput {
     /// embedder's drain reads its modifier cache when forwarding, so
     /// `scene/modifiers {ctrl} → scene/wheel` zooms a canvas exactly as
     /// a held physical `Ctrl` would.
-    Wheel { x: f64, y: f64, delta: WheelDelta },
+    ///
+    /// R1703 §5.45 — `phase` is where the event sits in a continuous gesture,
+    /// defaulting to [`GesturePhase::Update`] (a notched mouse wheel, which is
+    /// what winit reports for one). A driver reproducing a TRACKPAD flick sends
+    /// `"begin"` / `"update"` / `"end"`, and the end is not decoration: a
+    /// stepped widget drops its banked sub-notch remainder there, so without it
+    /// the wire cannot express — and therefore cannot test — the gesture a real
+    /// finger makes.
+    Wheel {
+        x: f64,
+        y: f64,
+        delta: WheelDelta,
+        phase: GesturePhase,
+    },
     /// R51.196 §5.49 — `scene/click` v1 injection. Synthesises one
     /// complete press / release cycle (down → up) at `(x, y)`. The
     /// embedder applies `cursor_moved(MOUSE, x, y)`, then
@@ -2813,6 +2826,40 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                     crate::pointer_target::handle_scene_pointer_target(last_paint_scene, scene),
                     HandlerKind::Read,
                 ),
+                // ★★★★★ R1703 §5.45 §5.15 — what a wheel over a point WOULD do,
+                // asked before turning it. The value published is the one the
+                // router routes by (a surface with no declared intent is never
+                // offered the event), so the answer cannot drift from the
+                // behaviour. `at` / `path` are optional here, unlike every
+                // deferred-input method: with neither this is the census a
+                // form audit and the boot gate read.
+                "scene/wheel_intent" => {
+                    let asks_a_point = request
+                        .params
+                        .as_ref()
+                        .is_some_and(|p| p.get("at").is_some() || p.get("path").is_some());
+                    let at = if asks_a_point {
+                        #[allow(
+                            clippy::option_as_ref_deref,
+                            reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                        )]
+                        let producer = paint_producer.as_mut().map(|p| &mut **p);
+                        let params = request.params.as_ref().unwrap_or(&Value::Null);
+                        resolve_at_or_path(params, producer, last_paint_scene).map(Some)
+                    } else {
+                        Ok(None)
+                    };
+                    (
+                        at.and_then(|at| {
+                            crate::wheel_intent::handle_scene_wheel_intent(
+                                last_paint_scene,
+                                scene,
+                                at,
+                            )
+                        }),
+                        HandlerKind::Read,
+                    )
+                }
                 "scene/dry_run" => (
                     handle_scene_dry_run(scene, request.params.as_ref()),
                     HandlerKind::Read,
@@ -5142,10 +5189,19 @@ where
         .and_then(Value::as_object)
         .ok_or_else(|| RpcError::invalid_params("params.delta missing or not an object"))?;
     let delta = parse_wheel_delta(delta_obj)?;
+    // R1703 §5.45 — optional, unlike the native-gesture methods where the
+    // bracket IS the event: a mouse notch has no phase to state, so a caller
+    // that omits it gets the one winit reports for a notch. A caller
+    // reproducing a trackpad flick states all three.
+    let phase = if params.get("phase").is_some() {
+        parse_gesture_phase(params)?
+    } else {
+        GesturePhase::Update
+    };
     // R51.202 §5.49 — wheel target is either an explicit cursor
     // coordinate or a tag lookup via the paint scene.
     let (x, y) = resolve_at_or_path(params, paint_producer, last_paint_scene)?;
-    inbox.push(DeferredInput::Wheel { x, y, delta });
+    inbox.push(DeferredInput::Wheel { x, y, delta, phase });
     Ok(Value::Null)
 }
 

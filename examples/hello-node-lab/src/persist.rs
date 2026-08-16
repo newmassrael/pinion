@@ -181,7 +181,9 @@ fn install(state: &Rc<LabState>, archive: Archive<LabNode, Kept>) {
                       percentage is clamped into the screen's range"
         )]
         let percent = (camera.zoom * 100.0).round() as u32;
-        crate::point_canvas_at(state, percent, camera);
+        // The middle: a restore is not a gesture, so there is no cursor to hold
+        // and the rounding correction belongs where a fit's does.
+        crate::point_canvas_at(state, percent, camera, crate::canvas_middle());
     }
 }
 

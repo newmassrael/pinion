@@ -1073,7 +1073,22 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// terminal does not spuriously redraw on wheel input over a
     /// non-scrollable region.
     pub fn wheel(&mut self, delta: WheelDelta) -> bool {
-        let (tail, dispatched) = self.core.wheel(PointerId::MOUSE, delta);
+        self.wheel_phase(delta, pinion_core::GesturePhase::Update)
+    }
+
+    /// R1703 §5.45 — [`Self::wheel`] carrying the gesture phase. A terminal
+    /// reports notches (crossterm has no scroll bracket at all), so the
+    /// crossterm arm keeps [`GesturePhase::Update`](pinion_core::GesturePhase);
+    /// this exists because the RPC drain CAN carry one, and §2 #6 says a
+    /// backend must not quietly lose what the wire expresses.
+    pub fn wheel_phase(&mut self, delta: WheelDelta, phase: pinion_core::GesturePhase) -> bool {
+        let (tail, dispatched) = self.core.wheel_with_modifiers_for_window(
+            pinion_runtime::DEFAULT_WINDOW,
+            PointerId::MOUSE,
+            delta,
+            pinion_core::Modifiers::empty(),
+            phase,
+        );
         let state_changed = self.handle_tail(&tail);
         dispatched || state_changed
     }
@@ -1205,9 +1220,9 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
                 continue;
             }
             match *input {
-                pinion_rpc::DeferredInput::Wheel { x, y, delta } => {
+                pinion_rpc::DeferredInput::Wheel { x, y, delta, phase } => {
                     state_changed |= self.cursor_moved(x, y);
-                    state_changed |= self.wheel(delta);
+                    state_changed |= self.wheel_phase(delta, phase);
                 }
                 pinion_rpc::DeferredInput::Click { x, y } => {
                     state_changed |= self.cursor_moved(x, y);
@@ -3583,6 +3598,7 @@ mod tests {
             x: 8.0,
             y: 8.0,
             delta: pinion_core::event::WheelDelta::Lines { dx: 0.0, dy: -1.0 },
+            phase: pinion_core::GesturePhase::Update,
         }];
         let _ = core.drain_deferred_inputs(&inputs);
         assert_eq!(*core.cached_state(), ButtonState::Hover);

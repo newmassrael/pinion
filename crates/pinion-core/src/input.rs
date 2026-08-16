@@ -1230,6 +1230,20 @@ impl GesturePhase {
             _ => None,
         }
     }
+
+    /// R1703 — whether this phase **finishes** the gesture, cleanly or not.
+    ///
+    /// The question every accumulating consumer has to ask and which, before
+    /// this round, each answered by matching two arms itself: a surface
+    /// carrying a partial preview, a partial rotation or — the consumer that
+    /// forced it into the type — a stepped widget's banked sub-notch remainder
+    /// ([`WheelSteps`](crate::widgets::wheel::WheelSteps)) must let go when the
+    /// fingers lift, and must not distinguish "lifted" from "taken away" while
+    /// doing so.
+    #[must_use]
+    pub const fn settles(self) -> bool {
+        matches!(self, GesturePhase::End | GesturePhase::Cancel)
+    }
 }
 
 /// R1416 §5.35 — a raw pointer-button transition: the press or the release

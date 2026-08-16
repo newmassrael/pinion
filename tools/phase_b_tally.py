@@ -1354,9 +1354,68 @@ AXES = [
         # weight — the analyzer's rail navigating at all, and the census
         # learning to judge a second destination — belongs to consumers and to
         # the a11y axis, not to catalogue breadth. R1542's rule.
-        "judged_at": 1695,
+        #
+        # ★★ R1703 RE-JUDGMENT — 99 HOLDS, and what changed is the REMAINDER's
+        # composition rather than its size. The tool did not report STALE; this
+        # round touched the axis, and the standing directive is that a round
+        # touching an axis re-judges it.
+        #
+        # THE ITEM THIS AXIS HAS CALLED ITS LARGEST IS SETTLED — and half of it
+        # by MEASUREMENT DECLINING IT, which is the more interesting half. Every
+        # judgment from R1554 to R1695 recorded the same sentence:
+        # `External::wheel` has exactly TWO widget implementors, `slider` and
+        # `spin_button`, so a combo box and a tab bar do not answer a wheel.
+        # Both halves were then measured against the floor by building a probe
+        # and running it offscreen, and they came apart:
+        #
+        #  * THE TAB BAR IS REAL AND IS NOW BUILT. Measured there: a wheel down
+        #    at tab 0 lands on tab 1, up returns. `RadioGroupExternal` (which is
+        #    what a tab strip IS here) declares itself a strip and walks,
+        #    clamping at the ends and DECLINING there so the page keeps the
+        #    wheel it cannot spend.
+        #  * THE COMBO BOX HALF IS A HAZARD, NOT A FEATURE, and is refused on
+        #    purpose. What the floor's combo box does is step its VALUE while
+        #    CLOSED and UNFOCUSED (index 1 -> 2, measured), with nothing among
+        #    its 77 properties and 46 methods to let the form object. What its
+        #    LIST does is scroll and leave the choice alone (`currentRow 5 -> 5`,
+        #    `scrollbar 0 -> 3`) — which this tree already did for free, because
+        #    declining hands the event to the scroll chain.
+        #
+        # ★ This round built the list half the other way round first, and the
+        # tree's own `hello-listbox` wheel demo went red: a scrolling list
+        # stopped scrolling. The probe settled it rather than an argument. So
+        # the count is THREE widget implementors, not four, asserted as a table
+        # in
+        # `widgets::wheel::tests::r1703_every_catalog_wheel_declares_what_it_says_it_declares`
+        # — three declaring and two declining — a test that exists because a
+        # counterfactual PASSED without it.
+        #
+        # WHY THAT DOES NOT MOVE THE NUMBER. The remaining 1% was never the
+        # wheel alone: R1680 wrote it as "four missing widget kinds and one
+        # missing input hook", R1695 struck the paged container, and what is
+        # left after this round is THREE absent widget kinds — dial, font
+        # picker, a canned message box / input dialog. Three absent members of a
+        # 78-example catalogue is a point, and it was a point before the wheel
+        # closed. Saying 100 would be claiming a catalogue that is complete
+        # while three of its named kinds do not exist.
+        #
+        # ★ AND THE ROUND ADDED SOMETHING THIS AXIS'S FLOOR DOES NOT HAVE, which
+        # is why the judgment is worth writing rather than skipping. Measured at
+        # 6.11.1 by building a probe and running it offscreen: across the four
+        # widget classes that answer a wheel there, 309 introspectable
+        # properties and 172 introspectable methods name the wheel ZERO times,
+        # and the cost is in the same measurement — a closed, unfocused combo
+        # box in a form steps its value on a wheel aimed at the form (index
+        # 1 -> 2 with no focus). Here a widget DECLARES what a wheel at a point
+        # does, the router offers the event only where something is declared,
+        # and `scene/wheel_intent` publishes the value the router routed by. A
+        # form can now ask which of its controls will eat a scroll, which is not
+        # a question the floor can be asked. That is depth on a member the
+        # catalogue already had, and depth is not breadth — R1680's own rule,
+        # applied to this round's own work.
+        "judged_at": 1703,
         "completion": 99,
-        "evidence_snapshot": {"example-name": 78, "round-axis": 24},
+        "evidence_snapshot": {"example-name": 78, "round-axis": 27},
     },
     {
         "key": "dataviz",

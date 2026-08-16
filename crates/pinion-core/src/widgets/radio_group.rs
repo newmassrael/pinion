@@ -290,6 +290,20 @@ impl WidgetTransition for RadioGroup {
 /// transitions.
 pub struct RadioGroupExternal {
     em: IntentEmitter<RadioGroup>,
+    /// R1703 §5.45 — the wheel's whole-notch accumulator; see
+    /// [`WheelSteps`](crate::widgets::wheel::WheelSteps).
+    wheel: crate::widgets::wheel::WheelSteps,
+    /// R1703 §5.45 — whether a wheel over this group moves its selection.
+    ///
+    /// `false` by default, and the asymmetry with the listbox is the point: a
+    /// **tab strip** is a strip of destinations a wheel walks (the reference's
+    /// tab bar does exactly that — measured: a wheel down at tab 0 lands on tab
+    /// 1, up returns to 0), whereas a **radio group in a form** is a set of
+    /// mutually exclusive answers, and a wheel that changed the answer while a
+    /// person scrolled past it would be the reference's combo-box hazard in a
+    /// second place. One type serves both roles here, so the role is declared
+    /// by the binding rather than guessed from the shape.
+    takes_the_wheel: bool,
 }
 
 impl RadioGroupExternal {
@@ -298,7 +312,56 @@ impl RadioGroupExternal {
     pub fn new(count: usize) -> Self {
         Self {
             em: IntentEmitter::new(RadioGroup::new(count)),
+            wheel: crate::widgets::wheel::WheelSteps::new(),
+            takes_the_wheel: false,
         }
+    }
+
+    /// R1703 §5.45 — declare that a wheel over this group walks it, which is
+    /// what a **tab strip** wants and what a form's radio set must not have.
+    /// See the [`takes_the_wheel`](Self#structfield.takes_the_wheel) field for
+    /// why the default is the other way.
+    #[must_use]
+    pub fn with_wheel(mut self, takes: bool) -> Self {
+        self.takes_the_wheel = takes;
+        self
+    }
+
+    /// R1703 §5.45 — move the selection by `steps`, clamped and **not
+    /// wrapping**; returns whether it moved.
+    ///
+    /// Not wrapping is what makes the decline below meaningful, and it is the
+    /// reference's own tab-bar rule: at the last tab a further wheel is not the
+    /// strip's, and belongs to whatever scrolls behind it. The keyboard still
+    /// wraps (`ArrowRight` at the end returns to the start, the WAI-ARIA tab
+    /// pattern) because a key press is a request for "the next one" and a wheel
+    /// is a continuous push.
+    pub fn wheel_steps(&mut self, steps: i32) -> bool {
+        let count = self.count();
+        if count == 0 || steps == 0 {
+            return false;
+        }
+        let from = self.selected_index();
+        let target = match from {
+            None => {
+                if steps > 0 {
+                    0
+                } else {
+                    count - 1
+                }
+            }
+            Some(at) => {
+                let moved = i64::try_from(at).unwrap_or(0) + i64::from(steps);
+                let last = i64::try_from(count - 1).unwrap_or(0);
+                usize::try_from(moved.clamp(0, last)).unwrap_or(0)
+            }
+        };
+        if from == Some(target) {
+            return false;
+        }
+        self.em.inner.set_selected(Some(target));
+        self.em.inner.set_focused_index(Some(target));
+        true
     }
 
     /// Drive `event` to the Radio at `index`. Queues a `"selected"`
@@ -367,6 +430,28 @@ impl core::fmt::Debug for RadioGroupExternal {
 }
 
 impl External for RadioGroupExternal {
+    /// R1703 §5.45 — a wheel walks the group when the binding declared that it
+    /// should (a tab strip), by whole items, clamped at the ends.
+    fn wheel(&mut self, reading: &crate::widgets::wheel::WheelReading) -> bool {
+        let notches = self.wheel.feed(reading);
+        if notches == 0 {
+            return true;
+        }
+        if self.wheel_steps(notches) {
+            true
+        } else {
+            self.wheel.reset();
+            false
+        }
+    }
+
+    fn wheel_intent(&self, _at: (f32, f32)) -> Option<crate::widgets::wheel::WheelIntent> {
+        self.takes_the_wheel
+            .then_some(crate::widgets::wheel::WheelIntent::Step(
+                crate::widgets::wheel::StepUnit::Item,
+            ))
+    }
+
     fn backends(&self) -> BackendSupport {
         BackendSupport::new(&[Backend::Gui, Backend::Rpc], BackendFallback::Skip)
     }
@@ -648,6 +733,65 @@ mod tests {
         assert!(!g.is_selected(0));
         assert!(!g.is_selected(1));
         assert!(g.is_selected(2));
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R1703 §5.45 — the wheel a TAB BAR has on the reference toolkit (measured
+    // by probe: a wheel down at tab 0 lands on tab 1, up returns to 0) and a
+    // form's radio set must not have.
+    // ─────────────────────────────────────────────────────────────────
+
+    const NOTCH: f32 = crate::event::LINE_HEIGHT_PX;
+
+    fn wheel(g: &mut RadioGroupExternal, dy: f32) -> bool {
+        External::wheel(
+            g,
+            &crate::widgets::wheel::WheelReading::new(
+                (0.5, 0.5),
+                (0.0, dy),
+                crate::GesturePhase::Update,
+                crate::input::Modifiers::empty(),
+            ),
+        )
+    }
+
+    #[test]
+    fn r1703_a_tab_strip_walks_under_the_wheel() {
+        let mut g = RadioGroupExternal::new(3).with_wheel(true);
+        g.em.inner.set_selected(Some(0));
+        assert!(wheel(&mut g, NOTCH));
+        assert_eq!(
+            g.selected_index(),
+            Some(1),
+            "a notch down took the next tab"
+        );
+        assert!(wheel(&mut g, -NOTCH));
+        assert_eq!(g.selected_index(), Some(0), "and up came back");
+    }
+
+    #[test]
+    fn r1703_a_forms_radio_set_does_not_answer_a_wheel_at_all() {
+        // ★★ The default, and the reason it differs from the listbox: a set of
+        // mutually exclusive ANSWERS must not change because a person scrolled
+        // the page it sits on. The reference has no way to say this — 75
+        // properties and 39 methods on its tab bar, none about the wheel — so
+        // there the two roles share one behaviour and one of them is wrong.
+        let g = RadioGroupExternal::new(3);
+        assert!(
+            External::wheel_intent(&g, (0.5, 0.5)).is_none(),
+            "a radio group takes no wheel unless its binding says it is a strip"
+        );
+    }
+
+    #[test]
+    fn r1703_the_last_tab_gives_the_wheel_back() {
+        let mut g = RadioGroupExternal::new(3).with_wheel(true);
+        g.em.inner.set_selected(Some(2));
+        assert!(
+            !wheel(&mut g, NOTCH),
+            "past the last tab the wheel is the page's"
+        );
+        assert_eq!(g.selected_index(), Some(2), "and nothing wrapped");
     }
 
     #[test]

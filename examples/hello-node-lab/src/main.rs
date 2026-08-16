@@ -87,6 +87,7 @@ use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::scroll::{AutoScroll, ScrollState};
 use pinion_core::widgets::text_edit::{TextEditState, use_text_edit_state};
 use pinion_core::widgets::text_field::TextFieldState;
+use pinion_core::widgets::wheel::WheelDirection;
 use pinion_core::{CellKind, Frame, Modifiers, Scene, WidgetCore, edit_field_keymap};
 use pinion_node_graph::{
     Camera, Document, Extent, Fit, Item, LinkId, LinkLayer, Margin, Node, NodeBody, NodeId, ROOT,
@@ -8486,14 +8487,20 @@ fn camera_now(state: &LabState) -> Camera {
 /// `0.28999999999999998`. Deriving it here made exactly that mistake.
 ///
 /// ★ Re-pinning at the zoom that was actually TAKEN, rather than keeping the
-/// camera's pan, is what keeps the middle of the view still: rounding the scale
-/// and not the offset leaves the graph off centre by half the rounding, and
-/// worse the further from the origin — the R1684.4 error shape in a new place.
-fn point_canvas_at(state: &LabState, percent: u32, camera: Camera) {
+/// camera's pan, is what keeps the anchor still: rounding the scale and not the
+/// offset leaves the graph off by half the rounding, and worse the further from
+/// the origin — the R1684.4 error shape in a new place.
+///
+/// ★★ R1703 — the `anchor` is the CALLER's too, and was the canvas middle
+/// written here twice until a wheel needed the cursor. Baking it in was the
+/// reason a wheel could not reuse this: the substrate's
+/// [`Camera::zoomed_at`] takes an anchor, and this function then threw it away
+/// and re-pinned at the middle, so a cursor-anchored zoom composed of the two
+/// would have silently become a centred one. Both gestures now name the point
+/// they hold, and the arithmetic between them is one path.
+fn point_canvas_at(state: &LabState, percent: u32, camera: Camera, anchor: (f64, f64)) {
     let percent = percent.clamp(ZOOM_MIN, ZOOM_MAX);
-    let canvas = canvas_rect();
-    let mid = (f64::from(canvas.w) / 2.0, f64::from(canvas.h) / 2.0);
-    let settled = Camera::pinned(f64::from(percent) / 100.0, camera.unproject(mid), mid);
+    let settled = Camera::pinned(f64::from(percent) / 100.0, camera.unproject(anchor), anchor);
     // ★ NOT `clamp_to_world`: that bounds a NODE's position in canvas units,
     // and a pan is a window-pixel offset with no such bound — the drag does not
     // clamp it either, and clamping here would move the graph off the centre
@@ -8525,11 +8532,63 @@ fn zoom_stepped(state: &LabState, up: bool) -> u32 {
 }
 
 fn zoom_to(state: &LabState, percent: u32) -> u32 {
+    zoom_to_at(state, percent, canvas_middle())
+}
+
+/// The canvas viewport's middle, in the canvas-local pixels a zoom anchors in.
+fn canvas_middle() -> (f64, f64) {
     let canvas = canvas_rect();
-    let mid = (f64::from(canvas.w) / 2.0, f64::from(canvas.h) / 2.0);
-    let camera = camera_now(state).zoomed_at(f64::from(percent) / 100.0, mid, &zoom_range());
-    point_canvas_at(state, percent, camera);
+    (f64::from(canvas.w) / 2.0, f64::from(canvas.h) / 2.0)
+}
+
+/// ★★★ R1703 — a zoom to `percent` **holding the canvas point under `anchor`
+/// still**, where `anchor` is canvas-local (the pane's own top-left is `0, 0`,
+/// exactly the reference prototype's `clientX - rect.left`).
+///
+/// One function for both gestures, which is the whole point: the seats zoom
+/// about the middle and the wheel zooms about the cursor, and those are the
+/// same operation with a different point. Two copies of it is how a screen ends
+/// up with a wheel that drifts and buttons that do not, or the reverse — and
+/// the arithmetic itself is [`Camera`]'s, not this screen's, so the two
+/// directions of the affine cannot come apart (R1653 found three copies of that
+/// conversion here, and the graph slid under the cursor).
+fn zoom_to_at(state: &LabState, percent: u32, anchor: (f64, f64)) -> u32 {
+    let camera = camera_now(state).zoomed_at(f64::from(percent) / 100.0, anchor, &zoom_range());
+    point_canvas_at(state, percent, camera, anchor);
     state.zoom.get()
+}
+
+/// R1703 — the multiplicative step one wheel event applies to the zoom.
+///
+/// The behaviour canon's own factor, and multiplicative rather than the seats'
+/// additive [`ZOOM_STEP`] for a reason a test states
+/// (`r1703_a_wheel_out_and_back_returns_to_the_same_zoom`): scaling by `k` and
+/// then by `1/k` is the identity, so a person who overshoots and comes back
+/// lands where they were. Adding and subtracting a percentage does not — from
+/// 84 that is 92 and back to 84 only because the step happens to be constant,
+/// and at the range's ends it silently is not.
+const WHEEL_ZOOM_STEP: f64 = 1.12;
+
+/// R1703 §5.45 — one wheel event over the canvas, in canvas-local pixels.
+///
+/// Returns whether the zoom moved. `false` — at the range's ends — is the
+/// **decline**, so the wheel this canvas cannot spend reaches whatever scrolls
+/// behind it, the same verdict the catalog's stepped widgets give.
+fn wheel_zoom(state: &LabState, direction: WheelDirection, anchor: (f64, f64)) -> bool {
+    let now = state.zoom.get();
+    #[allow(
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a percentage scaled by 1.12 and rounded is a percentage; the \
+                  range clamps it either way"
+    )]
+    let wanted = (f64::from(now) * direction.scaled(WHEEL_ZOOM_STEP)).round() as u32;
+    let wanted = wanted.clamp(ZOOM_MIN, ZOOM_MAX);
+    if wanted == now {
+        return false;
+    }
+    zoom_to_at(state, wanted, anchor);
+    true
 }
 
 /// How much clear canvas the fit keeps around the graph, in canvas units.
@@ -8568,7 +8627,7 @@ fn fit_view(state: &LabState) -> String {
         reason = "a zoom the range clamped into ZOOM_MIN..=ZOOM_MAX is a percentage"
     )]
     let percent = (fitted.camera.zoom * 100.0).floor() as u32;
-    point_canvas_at(state, percent, fitted.camera);
+    point_canvas_at(state, percent, fitted.camera, canvas_middle());
     let said = if fitted.complete {
         format!("the whole graph, at {}%", state.zoom.get())
     } else {
@@ -8634,7 +8693,7 @@ fn go_to_problem(state: &Rc<LabState>) -> String {
             ),
             (canvas.w, canvas.h),
         );
-        point_canvas_at(state, state.zoom.get(), camera);
+        point_canvas_at(state, state.zoom.get(), camera, canvas_middle());
     }
     let said = first.sentence.clone();
     state.say(said.clone());
@@ -8992,6 +9051,93 @@ impl External for LabOracle {
     /// The screen tracks the cursor, because a press carries no coordinates.
     fn wants_hover_move(&self) -> bool {
         true
+    }
+
+    /// ★★★★★ R1703 §5.45 — **the wheel the hint strip has been advertising.**
+    ///
+    /// `spec::GESTURES` has said `wheel → zoom` since this screen existed, and
+    /// painted it where a person reads it, and nothing answered: measured at
+    /// the start of this round, eight wheel events and two `Ctrl`-wheel events
+    /// over the canvas left `zoom` at 84 and `pan` at `0,0`. A person reported
+    /// it (R1673); the reason no gate saw it is that the operation table's
+    /// `zoom` row is satisfied by the zoom SEATS, which work, and the hint
+    /// strip's four claims were painted and driven by nothing at all.
+    ///
+    /// The behaviour is the canon's, read off the prototype rather than
+    /// invented: **one event is one step whichever way the platform sizes a
+    /// notch** (the direction is read, the magnitude is not — that is what
+    /// keeps a zoom from leaping on one mouse and crawling on another), the
+    /// step is multiplicative, and the canvas point under the cursor stays
+    /// under the cursor.
+    fn wheel(&mut self, reading: &pinion_core::widgets::wheel::WheelReading) -> bool {
+        let Some(state) = self.state.clone() else {
+            return false;
+        };
+        let Some(direction) = reading.direction() else {
+            // A phase-only marker or a horizontal-only trackpad event: nothing
+            // to zoom by, and consuming it would take a horizontal scroll away
+            // from a pane that could use it.
+            return false;
+        };
+        let canvas = canvas_rect();
+        #[allow(
+            clippy::cast_precision_loss,
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a window fraction times a window size is a pixel inside it"
+        )]
+        let (px, py) = {
+            let (w, h) = self.surface;
+            (
+                (reading.at.0.clamp(0.0, 1.0) * w as f32) as u32,
+                (reading.at.1.clamp(0.0, 1.0) * h as f32) as u32,
+            )
+        };
+        // ★ Outside the canvas the wheel is not this gesture's — the canon
+        // checks the same rectangle before it does anything (`if the cursor is
+        // outside the viewport, return`), and declining here leaves the wheel
+        // to the two side panes, which scroll.
+        if !contains(canvas, px, py) {
+            return false;
+        }
+        wheel_zoom(
+            &state,
+            direction,
+            (
+                f64::from(px) - f64::from(canvas.x),
+                f64::from(py) - f64::from(canvas.y),
+            ),
+        )
+    }
+
+    /// R1703 §5.45 — and the screen SAYS so, which is what makes the router
+    /// offer the event above at all and what `scene/wheel_intent` answers.
+    ///
+    /// ★★★★★ **Over the canvas, and only there.** §2 #7 makes this whole
+    /// screen one `External`, so a declaration that ignored the point would
+    /// have told the wire that a wheel over the palette zooms the graph — and
+    /// the first thing this round's own measurement did, one minute after the
+    /// wheel started working, was catch exactly that: the wire said `"zoom"` at
+    /// `(64, 64)`, which is inside the palette, where [`Self::wheel`] declines
+    /// and the pane behind it scrolls. The published answer was coarser than
+    /// the behaviour, which is the drift this whole mechanism exists to
+    /// prevent, and it took a *parameter on the trait method* to close rather
+    /// than care here.
+    fn wheel_intent(&self, at: (f32, f32)) -> Option<pinion_core::widgets::wheel::WheelIntent> {
+        #[allow(
+            clippy::cast_precision_loss,
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "a window fraction times a window size is a pixel inside it"
+        )]
+        let (px, py) = {
+            let (w, h) = self.surface;
+            (
+                (at.0.clamp(0.0, 1.0) * w as f32) as u32,
+                (at.1.clamp(0.0, 1.0) * h as f32) as u32,
+            )
+        };
+        contains(canvas_rect(), px, py).then_some(pinion_core::widgets::wheel::WheelIntent::Zoom)
     }
 
     #[allow(

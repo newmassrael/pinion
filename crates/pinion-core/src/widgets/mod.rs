@@ -65,6 +65,7 @@ pub mod tree_nav;
 pub mod view_order;
 pub mod virtual_list;
 pub mod virtual_select;
+pub mod wheel;
 pub mod widget;
 pub(crate) mod wire;
 

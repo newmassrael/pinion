@@ -2346,6 +2346,198 @@ fn r1677_every_declared_way_of_causing_an_operation_causes_it() {
     });
 }
 
+/// ★★★★★ R1703 — **the hint strip is a promise, and this is where it is
+/// kept.**
+///
+/// `spec::GESTURES` is what the canvas prints where a person reads it: four
+/// claims about what the mouse does here. Until this round nothing drove any of
+/// them, and the cost was measured rather than imagined — the strip said
+/// `wheel → zoom` for the whole life of this screen, a person reported that it
+/// did not, and eight wheel events over the canvas left `zoom` at 84 and `pan`
+/// at `0,0`.
+///
+/// The reason the operation gate next door could not catch it is worth stating,
+/// because it is the same shape twice: that gate joins on
+/// `spec::OPERATIONS`, whose `zoom` row is satisfied by the zoom SEATS — which
+/// work. A hint strip is a *different population*: it enumerates the gestures,
+/// not the operations, and a gesture with no operation of its own (panning) or
+/// an operation reachable another way (zooming) is invisible to a join over
+/// operations. So the strip gets its own gate, over its own list, driven the
+/// only way that proves the claim: through the screen's own pointer and wheel
+/// entry points, aimed at rectangles read out of the paint.
+///
+/// The two directions both matter. A claim with no driver fails (that is the
+/// wheel), and a driver for a claim the strip does not print fails too (that is
+/// how the strip and the screen stop agreeing about what a person is being
+/// told).
+type HintDriver = (
+    &'static str,
+    &'static str,
+    fn(&std::rc::Rc<LabState>, &Painted),
+);
+
+const HINT_GESTURES: &[HintDriver] = &[
+    // Empty canvas, well clear of every card: a press there is the pan grip.
+    ("drag empty space", "pan", |state, shot| {
+        let canvas = *shot
+            .tags
+            .get("lab.canvas")
+            .expect("the canvas is painted, or there is no screen");
+        let from = (canvas.x + canvas.w - 40, canvas.y + canvas.h - 40);
+        drag_from(state, from, (-30, -20));
+    }),
+    // ★ The one that was a lie. Driven through `External::wheel` — the hook a
+    // real mouse reaches — rather than through the screen's own zoom function,
+    // because a test that called the function would have passed for every one
+    // of the rounds in which no wheel could reach it (R1698's lesson: drive the
+    // door a person's input comes through).
+    ("wheel", "zoom", |state, shot| {
+        let card = *shot
+            .tags
+            .get("lab.node.P-01")
+            .expect("a card is painted, so a wheel has somewhere to be aimed");
+        wheel_at(state, centre(card), -1.0);
+    }),
+    (
+        "drag a node",
+        "place it, hold ctrl to snap",
+        |state, shot| {
+            drag_tag(state, shot, "lab.node.P-03", (40, 24));
+        },
+    ),
+    ("drag a pin", "author a link", |state, shot| {
+        drag_between(state, shot, "lab.pin.Q-01.dial", "lab.pin.P-02.accept");
+    }),
+];
+
+/// One wheel event at a window point, through the widget hook a mouse reaches.
+///
+/// `dy` is in whole notches, W3C-signed: negative is the wheel pushed away.
+fn wheel_at(state: &std::rc::Rc<LabState>, at: (u32, u32), notches: f32) {
+    let mut oracle = super::LabOracle::new();
+    oracle.attach(std::rc::Rc::clone(state));
+    // The surface the fraction is a fraction OF — the same basis the shell
+    // announces and `pointer_move` reads (R1656).
+    let (w, h) = super::window_size();
+    pinion_core::external::External::on_resize(&mut oracle, w, h);
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "a window pixel over a window size is a fraction in [0, 1]"
+    )]
+    let at_rel = (at.0 as f32 / w as f32, at.1 as f32 / h as f32);
+    let reading = pinion_core::widgets::wheel::WheelReading::new(
+        at_rel,
+        (0.0, notches * pinion_core::event::LINE_HEIGHT_PX),
+        pinion_core::GesturePhase::Update,
+        pinion_core::input::Modifiers::empty(),
+    );
+    // ★ The router's own precondition, repeated here rather than skipped: it
+    // offers `wheel` only where `wheel_intent` is `Some`, so a driver that
+    // called `wheel` directly would be exercising a path a mouse cannot take.
+    assert!(
+        pinion_core::external::External::wheel_intent(&oracle, at_rel).is_some(),
+        "the screen declares no wheel at {at:?}, so a real wheel would never \
+         reach the hook this driver is about to call"
+    );
+    pinion_core::external::External::wheel(&mut oracle, &reading);
+}
+
+#[test]
+fn r1703_every_gesture_the_hint_strip_advertises_is_answered() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let printed: BTreeSet<&str> = spec::GESTURES.iter().map(|(g, _)| *g).collect();
+        let driven: BTreeSet<&str> = HINT_GESTURES.iter().map(|(g, _, _)| *g).collect();
+        assert_eq!(
+            printed, driven,
+            "★ the hint strip and the drivers name different gestures — a claim \
+             printed with nothing behind it is exactly how a wheel came to be \
+             advertised for the whole life of this screen without answering"
+        );
+        for (gesture, effect, _) in HINT_GESTURES {
+            assert!(
+                spec::GESTURES.contains(&(gesture, effect)),
+                "{gesture:?} promises {effect:?} here and something else on the strip"
+            );
+        }
+
+        let mut inert = Vec::new();
+        for (gesture, effect, drive) in HINT_GESTURES {
+            super::reset_lab_state();
+            let state = use_lab_state();
+            let shot = painted(&state);
+            // ★ The whole published state, not a slot chosen per gesture: a
+            // hint strip claims an EFFECT in prose ("pan", "author a link"),
+            // and picking the slot to watch would be this test deciding what
+            // the prose meant. Anything moving is the honest reading of "the
+            // gesture does something"; the operation gate next door is where
+            // each effect is pinned to its own witness.
+            let before = published(&state);
+            drive(&state, &shot);
+            let after = published(&state);
+            if before == after {
+                inert.push(format!(
+                    "{gesture:?} claims {effect:?} on the strip and moved nothing"
+                ));
+            }
+        }
+        assert!(
+            inert.is_empty(),
+            "{} of {} advertised gesture(s) do nothing:\n  {}",
+            inert.len(),
+            HINT_GESTURES.len(),
+            inert.join("\n  ")
+        );
+    });
+}
+
+/// ★★★★★ R1703 — the slot a "did anything happen" comparison must NOT read,
+/// and the reason is that it is the input rather than an effect.
+///
+/// Every driver in [`HINT_GESTURES`] moves the pointer, and this screen
+/// publishes where the pointer is. Watching the whole wire including `cursor`
+/// would have made the gate pass for all four gestures the moment it was
+/// written — including the wheel, whose absence is why the gate exists. Caught
+/// before the first run rather than by a counterfactual, but it is the same
+/// class as R1699's "the assertion was in a place it could not fail": a check
+/// that observes its own stimulus observes nothing.
+const NOT_AN_EFFECT: &[&str] = &["cursor"];
+
+/// Everything this screen publishes EXCEPT its own pointer position, as one
+/// comparable string.
+///
+/// Read through the screen's OWN wire surface — the same reader the operation
+/// gate uses for a single slot — so "the screen changed" means what an agent
+/// watching the wire would see, not what a field in a struct did.
+fn published(state: &std::rc::Rc<LabState>) -> String {
+    use std::fmt::Write as _;
+    let mut oracle = super::LabOracle::new();
+    oracle.attach(std::rc::Rc::clone(state));
+    let mut out = String::new();
+    let mut watched = 0;
+    let mut excluded = 0;
+    for field in super::FIELDS {
+        // Scalars only: a parametric family needs an argument this comparison
+        // has no way to choose, and an invoke channel is not readable at all.
+        if !field.args.is_empty() || field.channel != pinion_core::external::SchemaChannel::Read {
+            continue;
+        }
+        if NOT_AN_EFFECT.contains(&field.path) {
+            excluded += 1;
+            continue;
+        }
+        watched += 1;
+        let value = pinion_core::external::ExternalIntrospect::query(&oracle, field.path);
+        let _ = write!(out, "{}={value:?};", field.path);
+    }
+    assert!(
+        excluded == NOT_AN_EFFECT.len() && watched > 0,
+        "the exclusion list names a slot this screen does not publish as a \
+         readable scalar, so the comparison is watching more than it says"
+    );
+    out
+}
+
 /// Run one of this screen's own actions, or say why it refused.
 fn act(state: &std::rc::Rc<LabState>, verb: &str, arg: &str) -> Result<String, String> {
     let mut oracle = super::LabOracle::new();

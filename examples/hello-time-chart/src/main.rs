@@ -47,7 +47,6 @@ use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, IntrospectSchema,
     IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField, ThreadOwnership,
 };
-use pinion_core::input::Modifiers;
 use pinion_core::scene::{ContainerNode, Rect, TextNode, capture_surface};
 use pinion_core::style::{
     AlignItems, BoxStyle, Color, FlexDirection, LayoutStyle, Size, TextStyle,
@@ -335,7 +334,10 @@ impl External for PlotZoomExternal {
         ThreadOwnership::UiThreadSync
     }
 
-    fn wheel(&mut self, x_rel: f32, y_rel: f32, dx: f32, dy: f32, modifiers: Modifiers) -> bool {
+    fn wheel(&mut self, reading: &pinion_core::widgets::wheel::WheelReading) -> bool {
+        let (x_rel, y_rel) = reading.at;
+        let (dx, dy) = (reading.dx(), reading.dy());
+        let modifiers = reading.modifiers;
         // R799 bounds guard, the node-canvas precedent: a wheel routed here
         // from a composite sibling lands outside `[0, 1]` and is not ours.
         if !(0.0..=1.0).contains(&x_rel) || !(0.0..=1.0).contains(&y_rel) {
@@ -358,6 +360,20 @@ impl External for PlotZoomExternal {
             return self.window.pan_by(dx / LINE_HEIGHT_PX * PAN_PER_NOTCH);
         }
         false
+    }
+
+    /// R1703 §5.45 §5.15 — the plot window zooms and pans under a wheel, and
+    /// says so, which is also what makes the hook above reachable: the router
+    /// offers `wheel` only where an intent is declared.
+    ///
+    /// Declared over the SAME bounds the hook guards, so the published answer
+    /// and the behaviour agree at every point rather than only in the middle —
+    /// this node is laid over the plot area inside a larger chart, and a wheel
+    /// routed here from a composite sibling is not this widget's.
+    fn wheel_intent(&self, at: (f32, f32)) -> Option<pinion_core::widgets::wheel::WheelIntent> {
+        let (x_rel, y_rel) = at;
+        ((0.0..=1.0).contains(&x_rel) && (0.0..=1.0).contains(&y_rel))
+            .then_some(pinion_core::widgets::wheel::WheelIntent::Zoom)
     }
 
     fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
