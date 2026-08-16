@@ -1191,6 +1191,27 @@ fn palette_rect() -> Rect {
     )
 }
 
+/// Where the strip that names this screen's gestures sits — the band between
+/// the toast and the palette.
+///
+/// ★★ R1701 — it was a flat `470` at a flat offset, and adding one gesture to
+/// the sentence pushed it past that number: the strip read "… Esc restor…" in a
+/// window with room to spare. That is the third time this project has met a
+/// width chosen at the design size and required to keep a relation to something
+/// that moves (R1687's launch floor, R1700's node-lab hint, this), so it is
+/// derived: the room is what lies between where the strip starts and the panel
+/// on the right, less the gap that keeps them from touching.
+///
+/// Deriving it rather than widening the number is also what keeps the text-smear
+/// gate satisfied — a strip that simply took the whole window would paint over
+/// the palette, which is the failure R1701's node-lab sibling walked into on its
+/// first attempt.
+fn help_strip_rect() -> Rect {
+    let x = canvas_rect().x + 610;
+    let room = palette_rect().x.saturating_sub(x + 16);
+    Rect::new(x, win_h() - 47, room, 14)
+}
+
 /// The palette's rows — section headers interleaved with entries, in the
 /// panel's own space.
 ///
@@ -1636,8 +1657,21 @@ const KEYMAP: [(&str, &str); 12] = [
     ("c / t / s", "capture / theme / source"),
 ];
 
-const HELP_STRIP: &str = "drag a header to move \u{00B7} e edit \u{00B7} o detach \u{00B7} Enter max \u{00B7} \
-     Esc restore \u{00B7} Del close \u{00B7} / search";
+/// ★ R1701 — "double it to max" is in this list because the gesture has NO
+/// AFFORDANCE. Every other way to maximise a card is a thing a person can see:
+/// a button in the header, a key named in the keymap panel. A double-click is
+/// invisible, which is exactly why a screen that offers one has to say so — a
+/// capability built and not announced is the mirror of one announced and not
+/// built, and this screen has been on both sides of that.
+///
+/// ★★ And "Enter max" came OUT to pay for it, because the band this is painted
+/// in is 470 logical pixels and the sentence had already filled it. Measured
+/// rather than guessed: the run reported `ink_w: 468` and the renderer was
+/// eliding at "Esc restor…". The rule that decided which item leaves is the
+/// same one that decided the new item belongs — `Enter` duplicates a button
+/// that is on screen, and the keymap panel names it in full.
+const HELP_STRIP: &str = "drag a header \u{00B7} double it to max \u{00B7} e edit \u{00B7} \
+     o detach \u{00B7} Esc restore \u{00B7} Del close \u{00B7} / search";
 
 // --- The oracle (primary External) ------------------------------------------
 
@@ -2635,6 +2669,13 @@ impl ExternalIntrospect for ShellOracle {
                 match event.trim() {
                     "PointerDown" => Self::press(&state),
                     "PointerUp" => Self::release(&state),
+                    // ★★★★★ R1701 — the desktop convention a person reported
+                    // missing: two clicks on a window's title bar toggle it
+                    // between its size and its maximum. The router has
+                    // synthesised this event since R664 and this screen refused
+                    // it as "not a pointer event", so a card header could be
+                    // double-clicked all day and nothing happened.
+                    "DoubleClick" => Self::double_click(&state),
                     // A cancel drops the latch WITHOUT performing it — the
                     // difference between letting go and being interrupted.
                     "PointerLeave" | "PointerCancel" => {
@@ -2844,6 +2885,51 @@ impl ShellOracle {
         *state.pressed.borrow_mut() = Some(hit);
     }
 
+    /// ★★★★★ R1701 — two clicks on a card's header toggle it between its size
+    /// on the board and the whole board.
+    ///
+    /// Reported by a person: "shouldn't double-clicking a window toggle
+    /// maximise?" — and the behaviour reference cannot settle it, because it is
+    /// a browser prototype with no window chrome at all (measured: zero
+    /// double-click handlers in its 194,828 bytes of application script). So the
+    /// FLOOR settles it, which the standing directive says it may: built and run
+    /// offscreen at 6.11, an in-application sub-window's title-bar double-click
+    /// takes it from 300x200 to its parent's full 900x600, and a docking panel's
+    /// takes it from docked to floating. A card on this board is the first of
+    /// those two shapes.
+    ///
+    /// It goes through [`Self::act`] — the SAME entry the header button's press
+    /// takes, refusal and all — so the two gestures cannot come to mean
+    /// different things, and a card whose header does not OFFER maximise
+    /// refuses the double-click by name rather than silently ignoring it. That
+    /// is R1697's rule, which made that button a toggle in the first place.
+    ///
+    /// A double-click anywhere that is not a header does nothing, which is also
+    /// the floor's answer: a sub-window's body double-click is the content's
+    /// business.
+    fn double_click(state: &Rc<ShellState>) {
+        let (px, py) = state.cursor.get();
+        let Hit::Grip(id) = Hit::at(state, px, py) else {
+            return;
+        };
+        // ★★★★★ The second click's gesture is SUPERSEDED, not carried out
+        // alongside. A grip press opens a board drag (R1697), so without this a
+        // double-click maximised the card and then let the trailing release
+        // commit a move aimed at the board that existed before it grew.
+        // Measured, before this line: double-clicking a header reported "Decode
+        // Inspector moved, displacing Message Stream, Identifier Map, Search &
+        // Filter" and the board never came back to the arrangement it opened
+        // with. The debt this round repays named that risk before it was built
+        // — a move gesture and a double-click share one place, so one of them
+        // has to yield — and driving it is what showed which.
+        state.drag.set(None);
+        state.pressed.borrow_mut().take();
+        let call = IntrospectValue::Text(format!("{id},{}", CardAffordance::Maximize.wire()));
+        if let Err(why) = Self::act(state, &call) {
+            state.say(refusal_sentence(&why));
+        }
+    }
+
     /// A release performs the latched control if the cursor is still on it, and
     /// commits a drag wherever the preview ended up.
     fn release(state: &Rc<ShellState>) {
@@ -2874,6 +2960,21 @@ impl ShellOracle {
         if let Some(drag) = state.drag.get() {
             state.drag.set(None);
             let mut board = state.board.get();
+            // ★★★★★ R1701 — the guard the FLOAT arm ten lines above has had
+            // since R1697, on the arm beside it. R1697 wrote "nothing checked
+            // that a press which moved nothing does not announce a move" and
+            // built the check for a detached panel; a card on the board told the
+            // same lie, and worse — `move_to` is a real edit, so a click that
+            // carried nothing could still reflow the board and displace three
+            // other cards. Measured: a single click on a header said "Decode
+            // Inspector moved" with the layout byte-identical.
+            //
+            // The comparison is against where the tile IS, not against a
+            // remembered origin, because a maximise between the press and the
+            // release moves it without the drag having carried it.
+            if board.tile(&drag.id).map(|t| (t.col, t.row)) == Some(drag.snap) {
+                return;
+            }
             if let Ok(reflow) = board.move_to(&drag.id, drag.snap.0, drag.snap.1) {
                 state.board.set(board);
                 state.say(if reflow.is_clean() {
@@ -5970,12 +6071,7 @@ fn view(_state: (), _frame: Frame) -> Scene {
             } else {
                 Scene::Container(ContainerNode::new(Vec::new()))
             },
-            label(
-                HELP_STRIP,
-                Rect::new(canvas_rect().x + 610, win_h() - 47, 470, 14),
-                FONT_SMALL,
-                palette.muted,
-            ),
+            label(HELP_STRIP, help_strip_rect(), FONT_SMALL, palette.muted),
         ])
         .collect::<Vec<_>>();
 

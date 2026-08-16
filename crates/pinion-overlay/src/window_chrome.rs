@@ -158,6 +158,49 @@ pub fn chrome_tag_semantic(tag: &str) -> Option<ChromeTag> {
     }
 }
 
+/// ★★★★★ R1701 §5.16 §5.49 — what a chrome region means for the
+/// `click_count`-th consecutive press on it.
+///
+/// # The gesture this exists for
+///
+/// Double-clicking a title bar toggles the window between its normal size and
+/// its maximum. Every desktop does it, and a window manager provides it for a
+/// window it decorates — but a borderless window has no OS title bar, which is
+/// the whole reason this chrome exists, so the gesture is the application's to
+/// implement and pinion's chrome is where "the application" is.
+///
+/// Measured at R1701, before this existed: double-clicking the move grip opened
+/// the OS move drag twice and did nothing else. The mature retained-mode
+/// toolkits this project is judged against do implement it for the in-application
+/// window kinds they own — built and run offscreen at 6.11, a title-bar
+/// double-click takes a sub-window from 300x200 to 900x600 (maximised), and takes
+/// a docking panel from docked to floating — while leaving a frameless top-level
+/// entirely to its application, with no member that maps the gesture at all.
+///
+/// # Why the count is a parameter rather than a second function
+///
+/// [`chrome_tag_semantic`] answers what a region IS; this answers what a press
+/// on it MEANS, and the two differ only for the grip. Keeping one entry point
+/// with the ordinal as an argument is what stops the shell from growing a
+/// private rule beside the one this crate owns — the drift
+/// [`chrome_tag_semantic`]'s own doc is about.
+///
+/// `click_count` is [`pinion_core::input::DoubleClickWindow`]'s ordinal: `1` for
+/// a first press, `2` for a second inside the framework's shared `dblclick`
+/// window. Anything above 2 reads as 2, because a triple-click on a title bar is
+/// a double-click followed by a press nobody has asked to distinguish.
+#[must_use]
+pub fn chrome_press_intent(tag: &str, click_count: u8) -> Option<ChromeTag> {
+    match (chrome_tag_semantic(tag)?, click_count) {
+        // ★ The grip and only the grip. A resize edge's second press is still a
+        // resize — some window managers maximise an axis on an edge
+        // double-click, and inventing that here would be inventing a product
+        // decision rather than matching a floor that does not offer it either.
+        (ChromeTag::MoveGrip, 2..) => Some(ChromeTag::Control(WindowControl::Maximize)),
+        (semantic, _) => Some(semantic),
+    }
+}
+
 /// (R1188 §5.16 §5.49) Map a hit-test tag to the discrete [`WindowControl`] it
 /// requests, or `None` for every non-control tag. A thin projection of the
 /// [`chrome_tag_semantic`] SSOT for the RPC click drain, which cares only about
@@ -1399,5 +1442,55 @@ mod tests {
         let restore = glyph_path(rect, ButtonKind::Maximize, true, c);
         assert_eq!(maximize.commands.len(), 5, "maximize = one square outline");
         assert_eq!(restore.commands.len(), 10, "restore = two offset squares");
+    }
+
+    #[test]
+    fn r1701_the_grips_second_press_asks_to_maximise_and_its_first_still_moves() {
+        use super::chrome_press_intent;
+        // THE GESTURE. A borderless window has no OS title bar, so the window
+        // manager cannot provide the convention and this chrome is where the
+        // application implements it.
+        assert_eq!(
+            chrome_press_intent(WINDOW_CHROME_GRIP_TAG, 1),
+            Some(ChromeTag::MoveGrip),
+            "one press on a title bar still starts a move"
+        );
+        for count in [2, 3, u8::MAX] {
+            assert_eq!(
+                chrome_press_intent(WINDOW_CHROME_GRIP_TAG, count),
+                Some(ChromeTag::Control(WindowControl::Maximize)),
+                "press {count} on a title bar asks to maximise"
+            );
+        }
+    }
+
+    #[test]
+    fn r1701_only_the_grip_changes_with_the_count() {
+        use super::chrome_press_intent;
+        // ★ The negative control, and it is what stops the ordinal from
+        // becoming a second vocabulary: every other region means the same thing
+        // however many times it is pressed. A resize edge's double-click
+        // maximises an axis on SOME window managers and the floor offers no
+        // such member, so implementing it here would be inventing a product
+        // decision rather than matching anything.
+        for tag in [
+            WINDOW_CHROME_MINIMIZE_TAG,
+            WINDOW_CHROME_MAXIMIZE_TAG,
+            WINDOW_CHROME_CLOSE_TAG,
+            WINDOW_RESIZE_NORTH_TAG,
+            WINDOW_RESIZE_SOUTH_EAST_TAG,
+        ] {
+            assert_eq!(
+                chrome_press_intent(tag, 1),
+                chrome_press_intent(tag, 2),
+                "{tag} means the same on a second press"
+            );
+            assert_eq!(
+                chrome_press_intent(tag, 1),
+                chrome_tag_semantic(tag),
+                "{tag} means what the tag SSOT says it means"
+            );
+        }
+        assert_eq!(chrome_press_intent("not-chrome", 2), None);
     }
 }

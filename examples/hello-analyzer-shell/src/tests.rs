@@ -1611,3 +1611,170 @@ fn r1699_the_nested_composite_publishes_its_roster_unentered() {
         }
     });
 }
+
+/// Drive the screen the way a pointer does — through `invoke`, which is the door
+/// the router's own events come in by.
+///
+/// ★ R1698's lesson, applied: a gate that calls the inner function proves the
+/// inner function. `send` is where a press, a release and a double click all
+/// arrive, so that is what this presses.
+fn send(oracle: &mut super::ShellOracle, event: &str) {
+    use pinion_core::external::{ExternalIntrospect, IntrospectValue};
+    oracle
+        .invoke("send", IntrospectValue::Text(event.to_owned()))
+        .expect("the screen accepts the pointer events its router sends");
+}
+
+fn point(oracle: &mut super::ShellOracle, x: u32, y: u32) {
+    use pinion_core::external::{ExternalIntrospect, IntrospectValue};
+    oracle
+        .invoke("point", IntrospectValue::Text(format!("{x},{y}")))
+        .expect("the cursor can be put where the paint put a control");
+}
+
+/// The middle of the grip a card is dragged by, read out of the PAINT.
+///
+/// ★★ Not computed from `cell_rect`, which the first draft did and which aimed
+/// at the application bar: those rectangles are in the board's own frame and a
+/// press is resolved in the window's. The rule this project has already
+/// recorded twice — take a press point from the painted scene, never from
+/// arithmetic beside the thing under test — is the rule here too.
+fn grip_centre(n: usize) -> (String, u32, u32) {
+    let mut scene = super::view((), pinion_core::Frame::default());
+    let mut cache = pinion_runtime::LayoutCache::new();
+    pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
+    let rects = scene.absolute_rects_by_tag();
+    // The last segment, not a suffix: `ends_with(".grip")` reads to clippy as a
+    // file-extension comparison, and a tag is not a path.
+    let mut grips: Vec<String> = rects
+        .keys()
+        .filter(|t| t.starts_with("card.") && t.split('.').next_back() == Some("grip"))
+        .cloned()
+        .collect();
+    grips.sort();
+    assert!(
+        grips.len() > n,
+        "the board paints at least {} card grip(s), it paints {}",
+        n + 1,
+        grips.len()
+    );
+    let tag = grips.swap_remove(n);
+    let rect = rects[&tag];
+    (tag, rect.x + rect.w / 2, rect.y + rect.h / 2)
+}
+
+/// What the wire answers for `layout` — the arrangement, as a string two
+/// moments can be compared by.
+fn board_layout(state: &std::rc::Rc<super::ShellState>) -> String {
+    serde_json::to_string(&state.board.get()).expect("a board serialises")
+}
+
+/// ★★★★★ R1701 — **two clicks on a card's header toggle it between its size on
+/// the board and the whole board, and carry nothing else with them.**
+///
+/// Reported by a person. The behaviour reference cannot settle it — it is a
+/// browser prototype with no window chrome, and its 194,828 bytes of
+/// application script contain zero double-click handlers — so the floor does:
+/// built and run offscreen at 6.11, an in-application sub-window's title-bar
+/// double-click takes it from 300x200 to its parent's full 900x600.
+///
+/// The second assertion is the one driving found: a grip press OPENS A BOARD
+/// DRAG, so before the repair the trailing release committed a move aimed at
+/// the board that existed before the card grew — "Decode Inspector moved,
+/// displacing Message Stream, Identifier Map, Search & Filter", and a second
+/// double-click never came back to the arrangement the screen opened with.
+#[test]
+fn r1701_a_double_click_on_a_card_header_toggles_maximise_and_moves_nothing() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let mut oracle = super::ShellOracle::new();
+        oracle.attach_state(state.clone());
+
+        let opened = board_layout(&state);
+        let (tag, ax, ay) = grip_centre(1);
+        point(&mut oracle, ax, ay);
+        assert!(
+            matches!(super::Hit::at(&state, ax, ay), super::Hit::Grip(_)),
+            "{tag} at ({ax},{ay}) is the card's header, which is what a title bar is here"
+        );
+
+        // The gesture, as the router delivers it: two press/release pairs with
+        // the `DoubleClick` the router synthesises on the second press.
+        send(&mut oracle, "PointerDown");
+        send(&mut oracle, "PointerUp");
+        send(&mut oracle, "PointerDown");
+        send(&mut oracle, "DoubleClick");
+        send(&mut oracle, "PointerUp");
+
+        assert!(
+            state.maximized.get().is_some(),
+            "\u{2605} a double-click on the header maximises the card"
+        );
+        let grown = board_layout(&state);
+
+        // And back, which is the half a toggle is only half of — and the half
+        // that runs with the board in its maximised arrangement. The aim is
+        // read AGAIN, because a maximised card is not where it was.
+        let (_, bx, by) = grip_centre(0);
+        point(&mut oracle, bx, by);
+        send(&mut oracle, "PointerDown");
+        send(&mut oracle, "PointerUp");
+        send(&mut oracle, "PointerDown");
+        send(&mut oracle, "DoubleClick");
+        send(&mut oracle, "PointerUp");
+
+        assert!(
+            state.maximized.get().is_none(),
+            "\u{2605} and a second double-click restores it"
+        );
+        assert_ne!(
+            grown, opened,
+            "the maximised board is a different arrangement, or nothing was proven"
+        );
+        assert_eq!(
+            board_layout(&state),
+            opened,
+            "\u{2605}\u{2605} and the board is EXACTLY the arrangement it opened with \u{2014} \
+             the trailing release of a double-click carries no move"
+        );
+    });
+}
+
+/// ★★★★★ R1701 — **a press that carried nothing announces nothing**, on the
+/// board arm of the release path.
+///
+/// R1697 wrote this rule and built it for a detached panel: "nothing checked
+/// that a press which moved nothing does not announce a move". The arm ten
+/// lines below it, for a card on the board, told the same lie — measured on the
+/// running screen, a single click on a header said "Decode Inspector moved"
+/// with the layout byte-identical — and worse, `move_to` is a real edit, so a
+/// click carrying nothing could still reflow the board.
+#[test]
+fn r1701_a_click_on_a_header_that_moved_nothing_says_nothing() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let mut oracle = super::ShellOracle::new();
+        oracle.attach_state(state.clone());
+
+        let opened = board_layout(&state);
+        let said = state.toast.get();
+        let (_, ax, ay) = grip_centre(0);
+
+        point(&mut oracle, ax, ay);
+        send(&mut oracle, "PointerDown");
+        send(&mut oracle, "PointerUp");
+
+        assert_eq!(
+            board_layout(&state),
+            opened,
+            "a click that carried nothing leaves the board alone"
+        );
+        assert_eq!(
+            state.toast.get(),
+            said,
+            "\u{2605} and says nothing, because there is nothing to say"
+        );
+    });
+}

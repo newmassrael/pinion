@@ -1479,6 +1479,86 @@ pub struct RawPointerButton {
     pub click_count: u8,
 }
 
+/// ★★★★★ R1701 §5.49 §5.35 §5.16 — **the W3C `dblclick` window, as a value.**
+///
+/// # Why this is a type and not two constants
+///
+/// The rule has always been one rule and never one place. R664 put the time and
+/// distance thresholds beside the widget router's own `last_press` map and R1422
+/// wrote, in [`RawPointerButton::click_count`]'s doc, that the raw stream and
+/// the send wire "share the framework double-click time + distance window so the
+/// two rules cannot drift" — a guarantee resting on a comment and two literals
+/// in one file. That held while there was one detector.
+///
+/// There are two. A press on a window's client-side chrome is consumed by the
+/// shell before the widget router sees it — deliberately, since a title bar is
+/// not a widget — so the router's detector never runs for it, and a title bar
+/// could not tell a second click from a first. Measured at R1701: double-clicking
+/// the chrome's move grip started the OS move drag twice and nothing else, while
+/// the mature retained-mode toolkits this project is judged against maximise an
+/// in-application sub-window on exactly that gesture (built and run offscreen at
+/// 6.11: a title-bar double-click takes a sub-window from 300x200 to 900x600, and
+/// takes a docking panel from docked to floating).
+///
+/// So the second detector reads the same window from here rather than copying
+/// the two numbers, and the comment's promise becomes a type's.
+///
+/// # The rule
+///
+/// A press is the SECOND of a double click when it repeats the same target
+/// within [`Self::TIME_MS`] and inside [`Self::DIST_PX`] on both axes. Answering
+/// `2` CLEARS the window, so three presses read 1, 2, 1 — pinion stops at binary
+/// single/double, which is what the router has always done and what the send
+/// wire's `DoubleClick` event means.
+#[derive(Debug, Clone, Default)]
+pub struct DoubleClickWindow {
+    last: Option<(std::time::Instant, f64, f64, String)>,
+}
+
+impl DoubleClickWindow {
+    /// W3C UI Events `dblclick` time threshold, in milliseconds. 300 ms is the
+    /// canonical default — the Web `UIEvent.detail` definition, the Windows
+    /// system-tunable default, and the macOS double-click interval default.
+    pub const TIME_MS: u128 = 300;
+
+    /// `dblclick` position tolerance, in logical pixels, per axis. A small drag
+    /// between the two presses disqualifies them, which is the "intentional
+    /// gesture" convention shared by Material 3 and Cocoa.
+    pub const DIST_PX: f64 = 5.0;
+
+    /// Record a press and answer its consecutive-click ordinal: `1` for a first
+    /// press, `2` for one that repeats `tag` inside the window.
+    ///
+    /// `now` is passed in rather than read here so a caller can replay a
+    /// recorded sequence — the same reason [`KeyArrival`] carries its arrival.
+    pub fn press(&mut self, now: std::time::Instant, x: f64, y: f64, tag: &str) -> u8 {
+        let repeats = self.last.as_ref().is_some_and(|(at, px, py, prev)| {
+            prev == tag
+                && now.duration_since(*at).as_millis() < Self::TIME_MS
+                && (px - x).abs() < Self::DIST_PX
+                && (py - y).abs() < Self::DIST_PX
+        });
+        if repeats {
+            // Detail=2 fired; the next press starts a fresh cycle. No rolling
+            // triple-click until a second consumer surfaces.
+            self.last = None;
+            2
+        } else {
+            self.last = Some((now, x, y, tag.to_owned()));
+            1
+        }
+    }
+
+    /// Forget the pending press, so the next one cannot pair with it.
+    ///
+    /// The caller does this when something has happened between the two that
+    /// makes them not one gesture — a drag committed, the pointer left, a
+    /// capture was cancelled.
+    pub fn forget(&mut self) {
+        self.last = None;
+    }
+}
+
 /// The keyboard-side activation token: the `send`-payload event name a focused
 /// command widget receives on keyboard activation (Enter / Space), the
 /// keyboard peer of the pointer-release activation edge ([`PointerWireEvent::Up`]).
@@ -2827,6 +2907,87 @@ mod drag_calibration_tests {
 }
 
 /// R1658 §5.13 §5.39 — a keystroke says when it arrived.
+#[cfg(test)]
+mod double_click_window_tests {
+    use super::DoubleClickWindow;
+    use std::time::{Duration, Instant};
+
+    #[test]
+    fn r1701_a_second_press_on_the_same_spot_is_the_second() {
+        let t0 = Instant::now();
+        let mut w = DoubleClickWindow::default();
+        assert_eq!(w.press(t0, 10.0, 10.0, "grip"), 1);
+        assert_eq!(
+            w.press(t0 + Duration::from_millis(50), 11.0, 12.0, "grip"),
+            2
+        );
+        // ★ And the cycle RESETS. Three presses read 1, 2, 1 — a triple-click is
+        // not detail=3 here, which is what the router has always done and what
+        // the send wire's `DoubleClick` event means.
+        assert_eq!(
+            w.press(t0 + Duration::from_millis(80), 11.0, 12.0, "grip"),
+            1
+        );
+    }
+
+    #[test]
+    fn r1701_a_second_press_that_is_late_far_or_elsewhere_is_a_first() {
+        let t0 = Instant::now();
+        for (label, at, x, y, tag) in [
+            (
+                "late",
+                t0 + Duration::from_millis(
+                    u64::try_from(DoubleClickWindow::TIME_MS).expect("300 fits a u64"),
+                ),
+                10.0,
+                10.0,
+                "grip",
+            ),
+            (
+                "far in x",
+                t0 + Duration::from_millis(50),
+                10.0 + DoubleClickWindow::DIST_PX,
+                10.0,
+                "grip",
+            ),
+            (
+                "far in y",
+                t0 + Duration::from_millis(50),
+                10.0,
+                10.0 + DoubleClickWindow::DIST_PX,
+                "grip",
+            ),
+            (
+                "elsewhere",
+                t0 + Duration::from_millis(50),
+                10.0,
+                10.0,
+                "close",
+            ),
+        ] {
+            let mut w = DoubleClickWindow::default();
+            assert_eq!(w.press(t0, 10.0, 10.0, "grip"), 1, "{label}: the first");
+            assert_eq!(w.press(at, x, y, tag), 1, "{label} does not pair");
+        }
+    }
+
+    #[test]
+    fn r1701_forgetting_the_pending_press_unpairs_the_next_one() {
+        // The router calls this when a press has strayed into a drag: a
+        // press-drag-press is two gestures, not a double click. Without it the
+        // second press would pair with a press that has already become
+        // something else.
+        let t0 = Instant::now();
+        let mut w = DoubleClickWindow::default();
+        assert_eq!(w.press(t0, 10.0, 10.0, "grip"), 1);
+        w.forget();
+        assert_eq!(
+            w.press(t0 + Duration::from_millis(50), 10.0, 10.0, "grip"),
+            1
+        );
+    }
+}
+
 #[cfg(test)]
 mod key_arrival_tests {
     use super::{KeyArrival, KeyBatch, KeyPress, Modifiers};

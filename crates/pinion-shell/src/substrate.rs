@@ -956,6 +956,23 @@ impl<V: WidgetView> ShellCore<V> {
         self.core.hover_target_for_window(window_id, pid)
     }
 
+    /// (R1701 §5.16 §5.49) Where the pointer is in the addressed window, in
+    /// logical pixels — the position leg of [`Self::hover_target_for_window`]'s
+    /// tag leg.
+    ///
+    /// The client-side chrome's double-click detector reads it: a title bar's
+    /// press is consumed before the widget router runs, so the shell resolves
+    /// the ordinal itself and has to measure it against the SAME position the
+    /// hit test above resolved with.
+    #[must_use]
+    pub fn cursor_position_for_window(
+        &self,
+        window_id: &str,
+        pid: PointerId,
+    ) -> Option<(f64, f64)> {
+        self.core.cursor_position_for_window(window_id, pid)
+    }
+
     /// R1025 §5.35 — single-window [`Self::hover_target_for_window`]
     /// (the [`pinion_runtime::DEFAULT_WINDOW`] router), symmetric with the
     /// single-window [`Self::cursor_moved`] / [`Self::mouse_pressed`] drivers.

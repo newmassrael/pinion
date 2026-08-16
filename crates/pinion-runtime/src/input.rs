@@ -99,7 +99,11 @@ use pinion_core::widgets::scroll::ScrollState;
 /// `PointerDown`. 300 ms is the W3C-canonical default
 /// (Web `UIEvent.detail` definition, Windows `GetDoubleClickTime`'s
 /// system-tunable default, macOS `NSEvent.doubleClickInterval` default).
-const DOUBLE_CLICK_TIME_MS: u128 = 300;
+/// ★ R1701 — the number is [`pinion_core::input::DoubleClickWindow::TIME_MS`]
+/// now. Kept as a name here because three readers in this file cite it, and
+/// aliased rather than copied because a third reader is exactly how the two
+/// this file already had came to be two.
+const DOUBLE_CLICK_TIME_MS: u128 = pinion_core::input::DoubleClickWindow::TIME_MS;
 
 /// R664 §5.49 — W3C UI Events `dblclick` position tolerance (logical
 /// pixels). Two consecutive presses within [`DOUBLE_CLICK_TIME_MS`] on
@@ -108,7 +112,7 @@ const DOUBLE_CLICK_TIME_MS: u128 = 300;
 /// presses disqualifies (mirrors the Material 3 "intentional gesture"
 /// + Cocoa `NSEvent.mouseLocation` tolerance). 5 logical px is the
 ///   `Material 3` + Cocoa convention.
-const DOUBLE_CLICK_DIST_PX: f64 = 5.0;
+const DOUBLE_CLICK_DIST_PX: f64 = pinion_core::input::DoubleClickWindow::DIST_PX;
 
 /// R794 §5.51 — drag-vs-click distance (logical pixels). A pressed drag source
 /// whose cursor moves more than this from the press point before release is a
@@ -362,17 +366,22 @@ pub struct InputRouter {
     /// snapshot used by [`pointer_down`](Self::pointer_down) to detect
     /// the W3C `UIEvent.detail == 2` double-click pattern: the next
     /// press lands within [`DOUBLE_CLICK_TIME_MS`] on the same target
-    /// with a position delta below [`DOUBLE_CLICK_DIST_PX`] per axis.
-    /// `(instant, x, y, target_tag)` tuple — `instant` is the press
-    /// timestamp, `(x, y)` is the cursor at press time (logical pixels),
-    /// `target_tag` is the resolved hit-test target so a 2nd press on a
-    /// *different* widget never triggers a stale double-click. Cleared
-    /// after a double-click fires so the next 2-click cycle starts
-    /// fresh (a triple-click is *not* the same as detail=2 + detail=3
-    /// in the W3C spec — pinion sticks to the binary single/double
-    /// distinction until a 2nd consumer requests triple, per
-    /// `[[abstraction-needs-second-consumer]]`).
-    last_press: HashMap<PointerId, (Instant, f64, f64, String)>,
+    /// with a position delta below the same window's per-axis tolerance.
+    ///
+    /// ★★ R1701 — the thresholds and the pairing rule are
+    /// [`pinion_core::input::DoubleClickWindow`] now, one per pointer. They
+    /// were two constants and a comment here, and the window chrome needed the
+    /// same rule for a press this router never sees (the shell consumes a title
+    /// bar's press before routing it), so the promise that the two would not
+    /// drift is a type rather than a sentence.
+    ///
+    /// Keyed by the resolved hit-test target inside the window, so a 2nd press
+    /// on a *different* widget never triggers a stale double-click; cleared by
+    /// the window itself after a double-click fires, so the next cycle starts
+    /// fresh (a triple-click is *not* detail=2 + detail=3 in the W3C spec —
+    /// pinion sticks to binary single/double until a 2nd consumer requests
+    /// triple, per `[[abstraction-needs-second-consumer]]`).
+    last_press: HashMap<PointerId, pinion_core::input::DoubleClickWindow>,
     /// R742 §5.51 — per-pointer in-flight drag session. Present between a
     /// [`pointer_down`](Self::pointer_down) whose target returned `Some`
     /// from [`External::begin_drag`](pinion_core::external::External::begin_drag)
@@ -1520,7 +1529,12 @@ impl InputRouter {
         // genuine clicks (no press held) never clears the candidate.
         self.track_press_drag(id, x, y);
         if self.press_became_drag(id) {
-            self.last_press.remove(&id);
+            // R1701 — `forget`, not `remove`: the window is the per-pointer
+            // detector and survives the gesture; what is dropped is the
+            // pending press it would have paired with.
+            if let Some(window) = self.last_press.get_mut(&id) {
+                window.forget();
+            }
         }
         if self.drag_sessions.contains_key(&id) {
             // R742 §5.51 — a drag started on this pointer: resolve the
@@ -2006,19 +2020,23 @@ impl InputRouter {
             // R664 §5.49 — double-click detection. Same target +
             // within W3C `dblclick` time + space window → synthesise
             // a `DoubleClick` named event on top of `PointerDown`.
-            let now = Instant::now();
+            //
+            // ★★ R1701 — the WINDOW is `pinion_core::input::DoubleClickWindow`
+            // now, not two constants and a comment here. The window chrome runs
+            // a second detector (a title-bar press is consumed before this
+            // router ever sees it), and R1422's doc already promised the two
+            // would not drift; this is that promise as a type.
             let cursor = self.cursors.get(&id).copied();
-            let is_double = match (self.last_press.get(&id), cursor) {
-                (Some(prev), Some((cx, cy))) => {
-                    let elapsed = now.duration_since(prev.0).as_millis();
-                    let dx = (prev.1 - cx).abs();
-                    let dy = (prev.2 - cy).abs();
-                    prev.3 == tag
-                        && elapsed < DOUBLE_CLICK_TIME_MS
-                        && dx < DOUBLE_CLICK_DIST_PX
-                        && dy < DOUBLE_CLICK_DIST_PX
+            let is_double = match cursor {
+                Some((cx, cy)) => {
+                    self.last_press
+                        .entry(id)
+                        .or_default()
+                        .press(Instant::now(), cx, cy, &tag)
+                        == 2
                 }
-                _ => false,
+                // No held cursor is no position to compare, so no pairing.
+                None => false,
             };
             if is_double {
                 dispatch_send(
@@ -2028,12 +2046,6 @@ impl InputRouter {
                     self.held_modifiers,
                     self.held_buttons(id),
                 );
-                // Detail=2 fired; the next press starts a fresh cycle
-                // (no rolling triple-click — pinion stops at binary
-                // single/double until a 2nd consumer surfaces).
-                self.last_press.remove(&id);
-            } else if let Some((cx, cy)) = cursor {
-                self.last_press.insert(id, (now, cx, cy, tag));
             }
         }
     }

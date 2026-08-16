@@ -203,12 +203,23 @@ enum ControlProducer {
 /// cross-crate exhaustiveness by the type system. Pure (no `self` / live
 /// `Window`), so unit-tested without a window.
 fn chrome_action_for_tag(tag: &str) -> Option<ChromeAction> {
+    pinion_overlay::chrome_tag_semantic(tag).map(chrome_action_for_semantic)
+}
+
+/// (R1701 §5.16) The winit-typed conversion of a resolved
+/// [`ChromeTag`](pinion_overlay::ChromeTag), split
+/// out of [`chrome_action_for_tag`] so the ordinal-aware resolution
+/// ([`pinion_overlay::chrome_press_intent`]) and the ordinal-free one share it.
+///
+/// Exhaustive on purpose — a ninth chrome region fails to compile here, which is
+/// the cross-crate guarantee `chrome_tag_semantic`'s own doc claims.
+fn chrome_action_for_semantic(semantic: pinion_overlay::ChromeTag) -> ChromeAction {
     use pinion_overlay::ChromeTag;
-    Some(match pinion_overlay::chrome_tag_semantic(tag)? {
+    match semantic {
         ChromeTag::Control(control) => ChromeAction::Control(control),
         ChromeTag::MoveGrip => ChromeAction::Move,
         ChromeTag::Resize(edge) => ChromeAction::Resize(resize_edge_to_direction(edge)),
-    })
+    }
 }
 
 /// (R1190 §5.16 §5.39) The trivial 1:1 lift of the overlay's shell-neutral
@@ -579,6 +590,22 @@ pub struct AppShell<V: WidgetView> {
     /// in [`Self::windows`]. Default single-window bindings carry
     /// exactly `"main" → primary_id`.
     spec_id_to_window_id: HashMap<Cow<'static, str>, WindowId>,
+    /// ★★★★★ R1701 §5.16 §5.49 — the consecutive-click ordinal for presses on
+    /// this window's CLIENT-SIDE CHROME, per window.
+    ///
+    /// The widget router keeps its own such window per pointer, and a chrome
+    /// press never reaches it: [`Self::try_chrome_press`] consumes the press and
+    /// returns before `pointer_button_for_window` runs, deliberately, because a
+    /// title bar is not a widget. So a title bar could not tell a second click
+    /// from a first, and double-clicking it started the OS move drag twice —
+    /// measured at R1701, and below the floor, whose in-application window kinds
+    /// maximise on exactly that gesture.
+    ///
+    /// The RULE is not re-derived here: [`pinion_core::input::DoubleClickWindow`]
+    /// owns the time and distance thresholds that the router reads too, which is
+    /// what keeps a title bar's idea of a double click and a widget's from
+    /// drifting apart.
+    chrome_click_window: HashMap<Cow<'static, str>, pinion_core::input::DoubleClickWindow>,
     /// R670.B §5.16 — primary window's [`WindowId`]. The first spec
     /// in `V::windows()` (canonically `WindowSpec::main(..)`); RPC
     /// frames that omit `{window: "..."}` default-scope to this id.
@@ -723,6 +750,7 @@ impl<V: WidgetView> AppShell<V> {
             ),
             windows: HashMap::new(),
             spec_id_to_window_id: HashMap::new(),
+            chrome_click_window: HashMap::new(),
             primary_window_id: None,
             proxy,
             windows_signal: None,
@@ -2779,10 +2807,29 @@ impl<V: WidgetView + 'static> AppShell<V> {
     /// to end "an unhandled close exits", which stopped being true one round
     /// after it was written.
     fn try_chrome_press(&mut self, spec_id: &str, event_loop: &ActiveEventLoop) -> bool {
-        let Some(action) = self
+        let Some(tag) = self.core.hover_target_for_window(spec_id, PointerId::MOUSE) else {
+            return false;
+        };
+        if pinion_overlay::chrome_tag_semantic(tag).is_none() {
+            return false;
+        }
+        // ★★ R1701 — the chrome's own click ordinal, because this press is about
+        // to be CONSUMED and the widget router's detector will never see it.
+        // The cursor comes from the core rather than from a field of this
+        // struct: the same position the hit test above resolved with, so the
+        // ordinal is measured against the point the press actually landed on.
+        let (cx, cy) = self
             .core
-            .hover_target_for_window(spec_id, PointerId::MOUSE)
-            .and_then(chrome_action_for_tag)
+            .cursor_position_for_window(spec_id, PointerId::MOUSE)
+            .unwrap_or_default();
+        let tag = tag.to_owned();
+        let count = self
+            .chrome_click_window
+            .entry(Cow::Owned(spec_id.to_owned()))
+            .or_default()
+            .press(std::time::Instant::now(), cx, cy, &tag);
+        let Some(action) =
+            pinion_overlay::chrome_press_intent(&tag, count).map(chrome_action_for_semantic)
         else {
             return false;
         };
