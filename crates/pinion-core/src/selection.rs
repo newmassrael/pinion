@@ -115,10 +115,16 @@ impl<T: PartialEq> Change<T> {
 /// assert_eq!(sel.len(), 3);
 ///
 /// // Narrowing to one keeps the invariant and reports the move.
-/// let change = sel.set_one("b");
+/// let change = sel.set_group(["b"]);
 /// assert_eq!(change.removed, ["a", "c"]);
 /// assert!(change.active_moved());
 /// assert_eq!(sel.active(), Some(&"b"));
+///
+/// // And an empty replacement is how a selection becomes nothing.
+/// let change = sel.set_group([]);
+/// assert_eq!(change.removed, ["b"]);
+/// assert!(sel.is_empty());
+/// assert_eq!(sel.active(), None);
 /// ```
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Selection<T> {
@@ -230,25 +236,17 @@ impl<T: Clone + PartialEq> Selection<T> {
         self.active() == Some(item)
     }
 
-    /// Select nothing.
-    pub fn clear(&mut self) -> Change<T> {
-        let before = self.active().cloned();
-        let removed = std::mem::take(&mut self.members);
-        self.active = None;
-        Change {
-            added: Vec::new(),
-            removed,
-            active_before: before,
-            active_after: None,
-        }
-    }
-
-    /// Replace the selection with exactly `item`.
-    pub fn set_one(&mut self, item: T) -> Change<T> {
-        self.set_group([item])
-    }
-
     /// Replace the selection with `items`, the first of them leading.
+    ///
+    /// ★ R1706.1 — the ONE way to replace a selection, and there were three
+    /// for a moment: a `clear` and a `set_one` sat beside this, each with no
+    /// call site anywhere and each producing exactly what this produces for
+    /// `[]` and for `[item]` — the same members, the same leader, the same
+    /// [`Change`]. The reference toolkit names its clear separately and folds
+    /// its replace into a flag, so parity does not decide it; what does is that
+    /// a second spelling of one operation is the thing this project spends
+    /// rounds untangling once two screens have picked different ones. An empty
+    /// selection is a selection of nothing, and there is one way to say it.
     pub fn set_group<I: IntoIterator<Item = T>>(&mut self, items: I) -> Change<T> {
         let next = Self::group(items);
         let before = self.active().cloned();
@@ -463,7 +461,7 @@ mod tests {
                 s.toggle("a");
             }),
             Box::new(|s: &mut Selection<&str>| {
-                s.set_one("z");
+                s.set_group(["z"]);
             }),
             Box::new(|s: &mut Selection<&str>| {
                 s.set_group(["p", "q"]);
@@ -472,7 +470,7 @@ mod tests {
                 s.retain(|m| *m != "p");
             }),
             Box::new(|s: &mut Selection<&str>| {
-                s.clear();
+                s.set_group([]);
             }),
             Box::new(|s: &mut Selection<&str>| {
                 s.toggle("only");
@@ -498,7 +496,7 @@ mod tests {
     #[test]
     fn narrowing_to_one_reports_both_halves_of_the_move() {
         let mut sel = Selection::group([1_u32, 2, 3]);
-        let change = sel.set_one(2);
+        let change = sel.set_group([2]);
         assert_eq!(change.added, Vec::<u32>::new());
         assert_eq!(change.removed, [1, 3]);
         assert_eq!(change.active_before, Some(1));
@@ -604,10 +602,12 @@ mod tests {
         assert_eq!(change.removed, [1, 2]);
     }
 
+    /// R1706.1 — replacing with nothing is how a selection is cleared, and it
+    /// reports the whole set it took.
     #[test]
     fn clearing_reports_everything_it_took() {
         let mut sel = Selection::group(["a", "b"]);
-        let change = sel.clear();
+        let change = sel.set_group([]);
         assert_eq!(change.removed, ["a", "b"]);
         assert_eq!(change.active_before, Some("a"));
         assert_eq!(change.active_after, None);
