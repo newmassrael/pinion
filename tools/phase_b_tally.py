@@ -762,9 +762,39 @@ AXES = [
         # the document AND here is what would not go in it", which is the shape
         # its READ half has always had. ~98 is not a figure that can absorb a
         # small addition honestly, so it is recorded here and not spent.
-        "judged_at": 1687,
+        # ---- R1706 re-judgment, 88 -> 88, demanded by `round-axis` going
+        # 37 -> 47 (+27%). **It holds still again, and this time the reason is
+        # sharper than "nothing moved".**
+        #
+        # RE-MEASURED rather than carried forward
+        # (`tools/reference_census.py`, this round): the DCC 58/76 = 76%, the
+        # engine 132/211 = 62%, equal weight 69 — the same reading R1687,
+        # R1663 and R1644 got. Composition unchanged in method: property grid
+        # ~98, data grid ~98, node graph 69, averaging 88.3.
+        #
+        # ★★ AND THIS ROUND BUILT ON THE NODE GRAPH, which the two before it
+        # did not — so the meter holding still is a statement about the meter.
+        # R1706 gave the framework a SELECTION VALUE: members with one of them
+        # leading (`pinion_core::selection`), and the node canvas's frame
+        # gesture now selects a host's cards before carrying them. The census
+        # cannot see it, and the reason is structural rather than an omission:
+        # it counts OPERATORS, and this is a property of the value an operator
+        # acts on. The DCC's selection operators were already judged `have` —
+        # R1590 built the questions they ask (`select::grow`) — and none of the
+        # eighteen the pin lists as absent is a selection operator.
+        #
+        # ★ What DID change is a caveat rather than a count, and it is worth
+        # naming because it is the honest half: `select.rs` recorded that
+        # `select_grouped(TYPE)` is "keyed on the whole selection rather than on
+        # one ACTIVE node, because this crate has no notion of an active node".
+        # That sentence is now false — the notion exists, one layer up, where a
+        # selection is the editor's rather than the document's. A `have` got
+        # more faithful without getting more numerous, which is precisely the
+        # disagreement [[debt-the-dcc-axis-measures-three-of-its-four-families]]
+        # already registers, seen from a third side.
+        "judged_at": 1706,
         "completion": 88,
-        "evidence_snapshot": {"example-name": 34, "round-axis": 37},
+        "evidence_snapshot": {"example-name": 34, "round-axis": 47},
     },
     {
         "key": "modelview",
