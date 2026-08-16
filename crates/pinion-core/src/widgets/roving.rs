@@ -719,14 +719,6 @@ impl Roving {
         entering
     }
 
-    /// R1699 — come back out to the member the cursor rests on, reporting
-    /// whether it was inside anything.
-    pub fn leave(&mut self) -> bool {
-        let leaving = self.entered;
-        self.entered = false;
-        leaving
-    }
-
     /// Deliver a W3C `KeyboardEvent.key` name, returning `None` when this
     /// composite does not navigate by that key — the caller must then let the
     /// key fall through rather than swallowing it.
@@ -1202,15 +1194,22 @@ mod tests {
     }
 
     #[test]
-    fn r1699_enter_and_leave_report_whether_there_was_anywhere_to_go() {
+    fn r1699_entering_reports_whether_there_was_anywhere_to_go() {
+        // `enter` exists for a screen that PROJECTS its descent from state it
+        // already holds rather than keeping a `Roving` between frames — the
+        // capture viewer, whose row cursor is rebuilt every paint. Leaving has
+        // no such caller: `key` clears the descent on `Escape` and `point_at`
+        // clears it when the cursor moves off the member, so a public `leave`
+        // would be an API whose only user is the test of itself (R1698.1).
         let mut outer = bar();
         assert!(!outer.enter(), "the first member is not a composite");
-        assert!(!outer.leave(), "and nothing was entered");
+        assert!(!outer.entered());
         outer.key("ArrowRight");
         assert!(outer.enter());
         assert!(outer.entered());
-        assert!(outer.leave());
-        assert!(!outer.leave(), "leaving twice leaves once");
+        assert!(outer.enter(), "entering twice is entering once");
+        assert_eq!(outer.key("Escape"), Some(Landing::Exited(1)));
+        assert!(!outer.entered(), "and Escape is what comes back out");
     }
 
     #[test]
