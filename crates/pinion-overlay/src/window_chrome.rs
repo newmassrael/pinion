@@ -201,6 +201,34 @@ pub fn chrome_press_intent(tag: &str, click_count: u8) -> Option<ChromeTag> {
     }
 }
 
+/// ★★★★★ R1701 §5.16 §5.49 §2 #2 — the discrete [`WindowControl`] the
+/// `click_count`-th press on `tag` requests, or `None` when that press is not a
+/// control at all.
+///
+/// The ordinal-aware sibling of [`window_control_for_tag`], and the projection
+/// **both** press drains resolve through — the winit one and the RPC one.
+///
+/// # Why this exists rather than each drain asking its own way
+///
+/// R1188 already paid for this once. The winit path consumed a press on a
+/// control tag before widget routing and the RPC replay did not, so
+/// `scene/click` on a control "held for observation only" — the AI-first
+/// contract was true of the screen and false of the wire. R1701 then added the
+/// title bar's double-click to the winit path alone and reproduced it exactly:
+/// measured on a display WITH a window manager, the maximize button toggled the
+/// window (640x420 -> 2494x1568 -> 640x420) and a double-click on the bar did
+/// nothing, because the RPC drain's double-click arm never asked about chrome.
+///
+/// One projection, called with the ordinal each drain knows, is what stops a
+/// third gesture from arriving on one channel again.
+#[must_use]
+pub fn window_control_for_press(tag: &str, click_count: u8) -> Option<WindowControl> {
+    match chrome_press_intent(tag, click_count) {
+        Some(ChromeTag::Control(control)) => Some(control),
+        _ => None,
+    }
+}
+
 /// (R1188 §5.16 §5.49) Map a hit-test tag to the discrete [`WindowControl`] it
 /// requests, or `None` for every non-control tag. A thin projection of the
 /// [`chrome_tag_semantic`] SSOT for the RPC click drain, which cares only about

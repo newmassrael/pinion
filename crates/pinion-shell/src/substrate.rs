@@ -3813,9 +3813,12 @@ impl<V: WidgetView> ShellCore<V> {
                     // Grip / resize tags are NOT intercepted — pointer-session
                     // gestures whose RPC peers are `scene/window_move` /
                     // `scene/resize` — so those clicks keep today's fall-through.
+                    // ★ R1701 — through `window_control_for_press` with the
+                    // ordinal, which is the projection the winit drain resolves
+                    // through too. A single click still means what it meant.
                     let control = self
                         .hover_target_for_window(window_id, PointerId::MOUSE)
-                        .and_then(pinion_overlay::window_control_for_tag);
+                        .and_then(|tag| pinion_overlay::window_control_for_press(tag, 1));
                     let consumed = match control {
                         Some(control) => match self.resolve_window_spec(scope) {
                             Some((spec_id, _)) => {
@@ -4013,6 +4016,26 @@ impl<V: WidgetView> ShellCore<V> {
                 // cursor-frozen window.
                 DeferredInput::DoubleClick { x, y } => {
                     self.cursor_moved_for_window(window_id, PointerId::MOUSE, x, y);
+                    // ★★★★★ R1701 §5.16 §2 #2 — the chrome interception the
+                    // `Click` arm above has had since R1188, on the arm beside
+                    // it. Without it a title bar's double-click fell straight
+                    // into widget routing, where no widget carries the overlay
+                    // tag, so the gesture existed for a real mouse and not for
+                    // an agent. Measured on a display WITH a window manager: the
+                    // maximize button took the window 640x420 -> 2494x1568 and a
+                    // double-click on the bar did nothing at all.
+                    //
+                    // R1188 paid for this exact asymmetry once, on the single
+                    // click. Adding a gesture to one drain and not the other is
+                    // how it comes back.
+                    if let Some(control) = self
+                        .hover_target_for_window(window_id, PointerId::MOUSE)
+                        .and_then(|tag| pinion_overlay::window_control_for_press(tag, 2))
+                        && let Some((spec_id, _)) = self.resolve_window_spec(scope)
+                    {
+                        self.pending_window_controls.push((spec_id, control));
+                        continue;
+                    }
                     // R1416 — both press/release pairs through the unified seam
                     // (a raw sink sees two down/up cycles; every non-raw widget
                     // sees the identical `mouse_pressed`/`mouse_released` cadence
@@ -10837,6 +10860,66 @@ mod r1121_window_chrome_tests {
         assert!(
             sc.take_pending_window_controls().is_empty(),
             "neither a content click nor the grip queues a window control",
+        );
+    }
+
+    /// Drive one `scene/double_click {at:{x,y}}` through the REAL headless
+    /// dispatch, the same entry the stdin RPC reader feeds.
+    fn rpc_double_click<V: WidgetView>(sc: &mut ShellCore<V>, x: u32, y: u32) {
+        let req = format!(
+            r#"{{"jsonrpc":"2.0","method":"scene/double_click","params":{{"at":{{"x":{x},"y":{y}}}}},"id":1}}"#
+        );
+        let _ = sc.dispatch_rpc(&req, &mut |_, _| {});
+    }
+
+    /// ★★★★★ R1701 §5.16 §5.49 §2 #2 — **the title bar's double-click reaches
+    /// an agent's channel, not only a mouse's.**
+    ///
+    /// R1701 added the gesture to the winit press path and left this drain
+    /// behind, which is R1188's asymmetry arriving a second time: the gesture
+    /// worked for a hand and not for the wire. Measured on a display WITH a
+    /// window manager, before this arm existed — the maximize BUTTON took the
+    /// window 640x420 -> 2494x1568 (so the witness moves and the measurement is
+    /// meaningful), and a double-click on the bar did nothing at all.
+    #[test]
+    fn rpc_double_click_on_the_grip_queues_maximize_and_a_single_click_does_not() {
+        let mut sc = ShellCore::<Borderless>::new();
+        let boot = sc.compute_paint_scene(400, 300);
+        sc.finalize_frame(boot);
+
+        // The grip: the strip left of the three 46px buttons, 32px tall.
+        rpc_click(&mut sc, 150, 16);
+        assert!(
+            sc.take_pending_window_controls().is_empty(),
+            "one press on a title bar is still a move handle, not a control",
+        );
+
+        rpc_double_click(&mut sc, 150, 16);
+        assert_eq!(
+            sc.take_pending_window_controls(),
+            vec![("main".to_owned(), WindowControl::Maximize)],
+            "★two presses on a title bar ask to maximise, through the wire",
+        );
+    }
+
+    /// ★ The negative control: the ordinal must change what the GRIP means and
+    /// nothing else, or a double-click on the close button would ask to
+    /// maximise instead of closing twice.
+    #[test]
+    fn rpc_double_click_elsewhere_means_what_a_single_click_means() {
+        let mut sc = ShellCore::<Borderless>::new();
+        let boot = sc.compute_paint_scene(400, 300);
+        sc.finalize_frame(boot);
+        rpc_double_click(&mut sc, 377, 16);
+        assert_eq!(
+            sc.take_pending_window_controls(),
+            vec![("main".to_owned(), WindowControl::Close)],
+            "a double-click on the close button still closes",
+        );
+        rpc_double_click(&mut sc, 200, 200);
+        assert!(
+            sc.take_pending_window_controls().is_empty(),
+            "and content is content however many times it is pressed",
         );
     }
 
