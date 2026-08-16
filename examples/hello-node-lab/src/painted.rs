@@ -61,6 +61,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use pinion_core::external::{ExternalIntrospect, IntrospectValue};
 use pinion_core::reactive::Owner;
 use pinion_core::scene::Rect;
+use pinion_core::selection::Selection;
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::{Frame, Scene};
@@ -97,11 +98,11 @@ const STATES: &[SweptState] = &[
     }),
     ("with another node selected", |state| {
         let store = state.node_of("S-01").expect("the opening graph has it");
-        state.selected.set(Some(store));
+        state.selection.set(Selection::one(store));
     }),
     ("with the launch gate closed by a bad value", |state| {
         let router = state.node_of("R-01").expect("the opening graph has it");
-        state.selected.set(Some(router));
+        state.selection.set(Selection::one(router));
         super::set_and_sync(state, "transport.link.tx.batch_size", "70000");
     }),
     ("zoomed out", |state| {
@@ -3481,7 +3482,7 @@ fn r1684_picking_another_card_shuts_the_field() {
             .expect("another card is on the canvas");
         press_at(&state, centre(elsewhere));
         assert_eq!(
-            state.selected.get(),
+            state.active_card(),
             state.node_of("S-01"),
             "the press picked the other card"
         );
@@ -3549,7 +3550,7 @@ fn r1686_taking_a_row_away_shuts_the_field_standing_on_it() {
         // Put the row back and read what came with it: the half-typed text must
         // NOT have been applied on the way out.
         let mut forms = state.forms.borrow_mut();
-        if let Some(form) = forms.get_mut(&state.selected.get().expect("a card")) {
+        if let Some(form) = forms.get_mut(&state.active_card().expect("a card")) {
             form.add(key).expect("the catalogue holds an opening row");
         }
         drop(forms);
@@ -4014,7 +4015,7 @@ fn r1690_the_gate_panel_is_bounded_by_the_canvas_and_counts_what_it_hides() {
         // Every card holding a value its own shape refuses, which is the
         // cheapest way to make many problems at once.
         for node in state.cards() {
-            state.selected.set(Some(node));
+            state.selection.set(Selection::one(node));
             super::set_and_sync(&state, "id", "zz");
         }
         let problems = state.gate_lines().len();
@@ -4176,7 +4177,7 @@ fn r1690_the_reach_meter_says_the_same_thing_on_screen_and_on_the_wire() {
 
         // ★★ And it is painted with nothing selected, because it is a fact
         // about the tool. A meter derived from the selection would vanish here.
-        state.selected.set(None);
+        state.selection.set(Selection::empty());
         let empty = painted(&state);
         assert!(
             empty.tags.contains_key("lab.inspector.reach"),

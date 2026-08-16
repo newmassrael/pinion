@@ -61,7 +61,7 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use pinion_a11y::{
-    AccessLive, AccessNode, AccessState, AccessValue, AriaRole, NavLink, WidgetA11y,
+    AccessLive, AccessNode, AccessState, AccessValue, AriaCurrent, AriaRole, NavLink, WidgetA11y,
     navigation_link_nodes,
 };
 use pinion_core::availability::Unavailable;
@@ -75,6 +75,7 @@ use pinion_core::reactive::{Signal, Tracked};
 use pinion_core::scene::{
     ContainerNode, PathCommand, PathNode, PathPoint, Rect, ScrollAxis, ScrollNode, TextNode,
 };
+use pinion_core::selection::Selection;
 use pinion_core::style::{
     Border, BoxStyle, Color, Dash, DotLattice, LayoutStyle, PathStyle, Size, Stroke, TextOverflow,
     TextStyle,
@@ -581,7 +582,20 @@ struct LabState {
     /// card answer the same question the same way and the scope has ONE
     /// population instead of a rule with an exception in it.
     opened_at: RefCell<BTreeMap<NodeId, Placement>>,
-    selected: Signal<Option<NodeId>>,
+    /// ★★★ R1706 — the selected cards, and which of them the inspector
+    /// follows.
+    ///
+    /// Was `Option<NodeId>` — a leader with no set — and the reference's own
+    /// frame gesture is *select the group, then move it*, so "select this
+    /// host's cards" had nowhere to land. A set with no leader is the other
+    /// half of the same hole and this tree has that one too: the material node
+    /// editor holds a `BTreeSet` and its `selected` slot answers nothing at all
+    /// whenever two cards are selected.
+    ///
+    /// [`Selection`] holds both, with the leader an index into the members so
+    /// that "the inspector follows something that is not selected" is
+    /// unrepresentable rather than merely avoided.
+    selection: Signal<Selection<NodeId>>,
     selected_link: Signal<Option<LinkPick>>,
     zoom: Signal<u32>,
     pan: Signal<(i32, i32)>,
@@ -783,7 +797,10 @@ impl LabState {
 
         let selected_link = seed_links(&mut doc, &forms, &ids).map(LinkPick::Authored);
 
-        let selected = ids.get(spec::SELECTED_NODE).copied();
+        let selection = ids
+            .get(spec::SELECTED_NODE)
+            .copied()
+            .map_or_else(Selection::empty, Selection::one);
         // R1679 — the opening placement of every card the specification
         // describes, recorded from the specification itself so the record and
         // the graph cannot have been built from different numbers.
@@ -811,7 +828,7 @@ impl LabState {
             forms: Tracked::new(forms),
             frames: RefCell::new(frames),
             opened_at: RefCell::new(opened_at),
-            selected: Signal::new(selected),
+            selection: Signal::new(selection),
             selected_link: Signal::new(selected_link),
             zoom: Signal::new(spec::OPENING_ZOOM),
             pan: Signal::new((0, 0)),
@@ -868,6 +885,15 @@ impl LabState {
     /// record and no way to update half of it.
     fn node_of(&self, id: &str) -> Option<NodeId> {
         self.doc.borrow().node_labelled(ROOT, id)
+    }
+
+    /// The card the inspector follows — the leader of whatever is selected.
+    ///
+    /// Named for the question rather than for the field, so the twenty-odd
+    /// readers that only ever wanted "the one card" did not each have to learn
+    /// that a selection is now a set.
+    fn active_card(&self) -> Option<NodeId> {
+        self.selection.get().active().copied()
     }
 
     fn name_of(&self, node: NodeId) -> String {
@@ -1385,8 +1411,18 @@ fn put_node_set_back(state: &Rc<LabState>) {
         // gone.
         rename_card(state, node, &name).ok();
     }
-    if state.selected.get().is_some_and(|n| strays.contains(&n)) {
-        state.selected.set(state.node_of(spec::SELECTED_NODE));
+    // ★ R1706 — a selection is a set, so a stray is PRUNED out of it rather
+    // than the whole selection being thrown away because one of its members
+    // went. The lead only moves when the card holding it is one of the strays,
+    // and a selection emptied that way falls back to the opening card.
+    let mut selection = state.selection.get();
+    if selection.retain(|n| !strays.contains(n)).changed() {
+        if selection.is_empty() {
+            selection = state
+                .node_of(spec::SELECTED_NODE)
+                .map_or_else(Selection::empty, Selection::one);
+        }
+        state.selection.set(selection);
     }
 }
 
@@ -2393,7 +2429,7 @@ impl Hit {
             // the same scrolling body, and the form's own rows begin below
             // them, so the two cannot overlap — but asking in painted order is
             // what keeps that true if either moves.
-            if state.selected.get().is_some() {
+            if state.active_card().is_some() {
                 for act in NodeAct::ALL {
                     if contains(node_act_seat(state, act), px, py) {
                         return Self::NodeAct(act);
@@ -2654,7 +2690,7 @@ impl Hit {
             return Self::Endpoint(n);
         }
         if let Some(act) = NodeAct::ALL.into_iter().find(|a| a.tag() == tag)
-            && state.selected.get().is_some()
+            && state.active_card().is_some()
         {
             return Self::NodeAct(act);
         }
@@ -3497,7 +3533,7 @@ fn hint_rect() -> Rect {
 // ── The inspector ───────────────────────────────────────────────────────────
 
 fn selected_form(state: &LabState) -> Option<ConfigForm> {
-    let node = state.selected.get()?;
+    let node = state.active_card()?;
     selected_form_of(state, node)
 }
 
@@ -3687,7 +3723,11 @@ fn seat_w(word: &str) -> u32 {
 }
 
 /// How far down the inspector's body the text field's row sits.
-const EDIT_ROW_Y: u32 = 134;
+///
+/// ★ R1706 — derived from the node's-life row it sits under. It was `134`,
+/// which was that arithmetic written out, so inserting a row above meant
+/// finding this number and redoing it in one's head.
+const EDIT_ROW_Y: u32 = NODE_ACT_Y + NODE_ACT_H + 2;
 
 /// ★★★ R1684 — **where the one field is, which is wherever it is editing.**
 ///
@@ -3722,9 +3762,26 @@ fn edit_box(state: &LabState) -> Rect {
     }
 }
 
+/// ★★★ R1706 — where the selection-count chip sits, under the degree pill and
+/// over the node's-life row.
+///
+/// The reference puts it in exactly that gap, and the placement is an argument
+/// rather than a copy: everything above it is about ONE card — its identifier,
+/// its role, how many links reach it — and everything below it acts on
+/// something. The chip is what says how many things the acts below are about,
+/// so it belongs at the seam.
+const SEL_COUNT_Y: u32 = 112;
+/// How tall the selection-count chip is.
+const SEL_COUNT_H: u32 = 22;
+
 /// The node's-life row: how far down the inspector it sits, how tall its seats
 /// are, and the gap between them.
-const NODE_ACT_Y: u32 = 112;
+///
+/// ★ R1706 — derived from the chip above rather than restated, which is the
+/// discipline the rest of this column already keeps: three rounds moved this
+/// block down and each one that wrote a fresh number left the next reader to
+/// re-check it by hand.
+const NODE_ACT_Y: u32 = SEL_COUNT_Y + SEL_COUNT_H + 4;
 /// How tall a node's-life seat is.
 ///
 /// ★ R1683 trimmed it from 24 to 20, and the reason is a measurement rather
@@ -5173,7 +5230,7 @@ fn canvas_wires(state: &LabState, ink: Ink) -> Vec<Scene> {
 /// hands out local rectangles for the parts and a window rectangle for the card.
 fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
     let mut children: Vec<Scene> = Vec::new();
-    let selected = state.selected.get();
+    let selection = state.selection.get();
     for node in state.cards() {
         let Some(shape) = card_shape(state, node) else {
             continue;
@@ -5181,7 +5238,14 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
         let name = state.name_of(node);
         let rows = card_rows(state, node);
         let role = state.role_of(node).unwrap_or(Role::Peer);
-        let chosen = selected == Some(node);
+        // ★★ R1706 — three states, not two, which is what a selection of many
+        // needs and what the reference's own canvas paints: the card the
+        // inspector follows takes the accent outright, the rest of the
+        // selection takes it weakened, and everything else keeps the plain
+        // outline. Two states would make a group selection look exactly like
+        // one card selected plus five that are not.
+        let chosen = selection.is_active(&node);
+        let in_selection = selection.contains(&node);
         let mut parts: Vec<Scene> = Vec::new();
         // ★ R1691 — the identifier and the role chip are what the CARD is
         // called and what it is. Its own announcement carries both, so a node
@@ -5225,10 +5289,14 @@ fn canvas_cards(state: &LabState, ink: Ink) -> Vec<Scene> {
             ));
         }
         let mut style = BoxStyle::filled(ink.surface).with_corner_radius(9);
-        style = style.with_border(Border::new(
-            if chosen { ink.accent } else { ink.outline_2 },
-            1,
-        ));
+        let edge = if chosen {
+            ink.accent
+        } else if in_selection {
+            ink.accent_line
+        } else {
+            ink.outline_2
+        };
+        style = style.with_border(Border::new(edge, 1));
         children.push(Scene::Container(
             ContainerNode::new(parts)
                 .with_tag(format!("lab.node.{name}"))
@@ -5497,7 +5565,7 @@ fn inspector(state: &LabState, field: (TextFieldState, u32), theme: &Theme, ink:
         ink.text,
     )];
 
-    let Some(node) = state.selected.get() else {
+    let Some(node) = state.active_card() else {
         children.push(label(
             "no node selected",
             Rect::new(PAD, 48, 200, 14),
@@ -5666,6 +5734,42 @@ fn degree_caption(state: &LabState, node: NodeId) -> String {
     format!("{inbound} inbound · {outbound} outbound")
 }
 
+/// ★★★ R1706 — what the selection-count chip says: how many cards are picked,
+/// and which of them this panel is showing.
+///
+/// # Why it names the leader and not only the count
+///
+/// Because the count alone leaves the reader with the question it raises. Six
+/// cards are outlined on the canvas and one panel is open; "6 selected" invites
+/// "…of which, this one?" and the answer is already on screen a few pixels
+/// above, in the identifier. Naming it here closes the loop in the one place a
+/// person is looking when they wonder.
+///
+/// # The reference's own chip claims more than it does
+///
+/// It reads *N selected · common fields edited together*, and its field-setter
+/// takes the leader's identifier — measured in the behaviour prototype, where
+/// the write goes to the single active node and nothing fans it out. So the
+/// second half of that sentence is a promise the prototype does not keep, and
+/// this screen does not repeat it: every gate here exists because *a screen
+/// that advertises an operation it does not answer* is the defect a person
+/// reported over and over on this tool. The count and the leader are both true.
+/// Editing many at once is a real operation and can have a row in the table on
+/// the day it works.
+fn selection_caption(state: &LabState) -> String {
+    let selection = state.selection.get();
+    let leader = selection
+        .active()
+        .map_or_else(|| "none".to_owned(), |node| state.name_of(*node));
+    if selection.is_empty() {
+        "nothing selected".to_owned()
+    } else if selection.is_multiple() {
+        format!("{} selected · showing {leader}", selection.len())
+    } else {
+        format!("1 selected · {leader}")
+    }
+}
+
 /// Who the inspected node is: its identifier, its role and frame, and how many
 /// links reach it.
 fn inspector_identity(state: &LabState, node: NodeId, ink: Ink) -> Vec<Scene> {
@@ -5701,6 +5805,23 @@ fn inspector_identity(state: &LabState, node: NodeId, ink: Ink) -> Vec<Scene> {
                 ink.accent,
             ),
             Silence::name_of("lab.inspector.degree"),
+        ),
+        box_at(
+            "lab.inspector.selcount",
+            Rect::new(PAD, SEL_COUNT_Y, INSP_W - PAD * 2, SEL_COUNT_H),
+            ink.accent_soft,
+            Some(ink.accent_line),
+            8,
+        ),
+        quiet(
+            tagged_label(
+                "lab.inspector.selcount.text",
+                selection_caption(state),
+                Rect::new(PAD + 10, SEL_COUNT_Y + 5, INSP_W - PAD * 2 - 20, 13),
+                FONT_SMALL,
+                ink.accent,
+            ),
+            Silence::name_of("lab.inspector.selcount"),
         ),
     ];
     // ★★ R1682 — the node's-life row. Painted for a selected card only, which
@@ -6159,11 +6280,29 @@ impl LabOracle {
     }
 }
 
+/// ★★★ R1706 — the hosts an agent may name, built FROM the specification
+/// table rather than listed beside it.
+///
+/// The same discipline `Scope::WIRE_NAMES` keeps a few hundred lines up: a
+/// hand-written copy of a closed vocabulary still compiles when the thing it
+/// copies gains an entry, and then the wire offers a set the canvas does not
+/// draw.
+const HOST_NAMES: [&str; spec::FRAMES.len()] = {
+    let mut out = [""; spec::FRAMES.len()];
+    let mut n = 0;
+    while n < spec::FRAMES.len() {
+        out[n] = spec::FRAMES[n].name;
+        n += 1;
+    }
+    out
+};
+
 const FIELDS: &[SchemaField] = &{
     [
         SchemaField::new("spec", "string"),
         SchemaField::new("graph", "string"),
         SchemaField::new("selected", "string"),
+        SchemaField::new("selected_ids", "string"),
         SchemaField::new("selected_link", "string"),
         SchemaField::new("zoom", "int"),
         SchemaField::new("pan", "string"),
@@ -6319,6 +6458,23 @@ const FIELDS: &[SchemaField] = &{
         ),
         SchemaField::action("collapse", "string"),
         SchemaField::action("disable", "string"),
+        // ★★★ R1706 — the frame gesture's agent half. The host comes from a
+        // closed vocabulary because this screen's hosts ARE closed — the
+        // specification names them and no operation makes another — and it is
+        // built from that table rather than spelled here, so the words an agent
+        // is offered cannot drift from the frames the canvas draws.
+        SchemaField::action_with(
+            "move_frame",
+            "string",
+            ArgForm::Delimited(','),
+            const {
+                &[
+                    SchemaArg::one_of("host", "string", &HOST_NAMES),
+                    SchemaArg::open("dx", "int"),
+                    SchemaArg::open("dy", "int"),
+                ]
+            },
+        ),
         // ★★ R1683 — the one text field's own verbs. `edit` declares the two
         // things this screen types into, so an agent reads the vocabulary
         // rather than discovering it by rejection.
@@ -6391,7 +6547,25 @@ impl ExternalIntrospect for LabOracle {
         match path {
             "spec" => text(spec_json().to_string()),
             "graph" => text(spec::GRAPH_NAME.to_owned()),
-            "selected" => text(state.selected.get().map(|n| state.name_of(n)).unwrap_or_default()),
+            "selected" => text(state.active_card().map(|n| state.name_of(n)).unwrap_or_default()),
+            // ★★★ R1706 — the whole selection, in arrival order, beside the
+            // leader `selected` already answered. Added rather than folded in,
+            // because an agent that reads `selected` to name "the" card is
+            // asking a question that still has an answer when six are picked —
+            // and the sibling node canvas shows what folding costs: its
+            // `selected` slot answers NOTHING once two are selected, so the one
+            // question a reader most often asks became unanswerable in exactly
+            // the case a set exists for.
+            "selected_ids" => text(
+                state
+                    .selection
+                    .get()
+                    .members()
+                    .iter()
+                    .map(|n| state.name_of(*n))
+                    .collect::<Vec<_>>()
+                    .join(","),
+            ),
             // ★ R1681 — a drawn link answers its id and a reported one answers
             // the pair it runs between, which is the only name it has. The two
             // spellings are told apart by the `>`, and `select_link` admits
@@ -6765,6 +6939,33 @@ impl ExternalIntrospect for LabOracle {
                 let node = Self::card(&state, which.trim())?;
                 rename_card(&state, node, to.trim()).map(IntrospectValue::Text)
             }
+            // ★★★ R1706 — the frame gesture's agent half, and it is ONE verb
+            // because the gesture is one act: the reference's frame-drag
+            // handler selects the host's cards on its first line and then
+            // carries them, so a `select_frame` and a `move_frame` here would
+            // be two spellings a person has no way to perform separately.
+            //
+            // ★ It is also what makes this operation's row provable in both
+            // columns. `move a frame and its members` had `verb: None` — a
+            // person could do it and an agent could not, which on a screen
+            // whose whole premise is that an agent drives it is the asymmetry
+            // the table exists to surface.
+            "move_frame" => {
+                let raw = Self::text(&args)?;
+                let (host, delta) = raw.trim().split_once(',').ok_or_else(|| {
+                    InvokeError::rejected(format!("{raw:?} is not <host>,<dx>,<dy>"))
+                })?;
+                let (dx, dy) = delta.split_once(',').ok_or_else(|| {
+                    InvokeError::rejected(format!("{raw:?} is not <host>,<dx>,<dy>"))
+                })?;
+                let dx: i32 = dx.trim().parse().map_err(|_| {
+                    InvokeError::rejected(format!("{:?} is not a whole number", dx.trim()))
+                })?;
+                let dy: i32 = dy.trim().parse().map_err(|_| {
+                    InvokeError::rejected(format!("{:?} is not a whole number", dy.trim()))
+                })?;
+                move_frame(&state, host.trim(), (dx, dy)).map(IntrospectValue::Text)
+            }
             // ★★ R1683 — the field's own three verbs. `edit` opens it on a
             // target, `type` puts text in it, `apply` does the thing. Three and
             // not one, because an agent that could only "rename with this
@@ -6773,8 +6974,7 @@ impl ExternalIntrospect for LabOracle {
             "edit" => {
                 let what = Self::text(&args)?;
                 let node = state
-                    .selected
-                    .get()
+                    .active_card()
                     .ok_or_else(|| InvokeError::rejected("no node is selected"))?;
                 let target = match what.trim() {
                     "name" => Editing::Name(node),
@@ -6828,8 +7028,7 @@ impl ExternalIntrospect for LabOracle {
             "add_key" => {
                 let key = Self::text(&args)?;
                 let node = state
-                    .selected
-                    .get()
+                    .active_card()
                     .ok_or_else(|| InvokeError::rejected("no node is selected"))?;
                 add_key(&state, node, key.trim()).map(IntrospectValue::Text)
             }
@@ -6859,16 +7058,14 @@ impl ExternalIntrospect for LabOracle {
                     InvokeError::rejected(format!("{raw:?} is not <key>=<value>"))
                 })?;
                 let node = state
-                    .selected
-                    .get()
+                    .active_card()
                     .ok_or_else(|| InvokeError::rejected("no node is selected"))?;
                 set_value(&state, node, key.trim(), value.trim()).map(IntrospectValue::Text)
             }
             "add_field" => {
                 let key = Self::text(&args)?;
                 let node = state
-                    .selected
-                    .get()
+                    .active_card()
                     .ok_or_else(|| InvokeError::rejected("no node is selected"))?;
                 let mut forms = state.forms.borrow_mut();
                 let form = forms
@@ -6883,8 +7080,7 @@ impl ExternalIntrospect for LabOracle {
             "remove_field" => {
                 let key = Self::text(&args)?;
                 let node = state
-                    .selected
-                    .get()
+                    .active_card()
                     .ok_or_else(|| InvokeError::rejected("no node is selected"))?;
                 // ★ R1686 — through [`remove_row`], which is now the one way a
                 // row leaves a form. This arm used to be the only caller and
@@ -7569,7 +7765,7 @@ fn delete_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError
     }
     state.forms.borrow_mut().remove(&node);
     state.opened_at.borrow_mut().remove(&node);
-    if state.selected.get() == Some(node) {
+    if state.active_card() == Some(node) {
         select_card(state, state.cards().first().copied());
     }
     // A picked link that ran through this card is a name for something that is
@@ -7651,7 +7847,7 @@ fn begin_edit(state: &Rc<LabState>, what: Editing) -> Result<String, InvokeError
 /// and applies what is in it when it is open, and the key seat always opens on
 /// a path. The reference's own box works the same way.
 fn edit_seat(state: &Rc<LabState>, which: &Hit) {
-    let Some(node) = state.selected.get() else {
+    let Some(node) = state.active_card() else {
         return;
     };
     // A refusal has already reached the toast, which is where a person reads
@@ -7710,11 +7906,101 @@ fn commit_edit(state: &Rc<LabState>) -> Result<String, InvokeError> {
 /// card, so a stale commit would land correctly and the person would still have
 /// typed into the wrong-looking place.
 fn select_card(state: &Rc<LabState>, node: Option<NodeId>) {
-    if state.selected.get() == node {
+    apply_selection(state, node);
+}
+
+/// ★★★ R1706 — select every card a host frame holds, the first of them
+/// leading.
+///
+/// The reference's frame gesture is one gesture with two halves: its frame-drag
+/// handler *selects the group* on its first line and then moves it, so a person
+/// who grabs a host by its tab has both picked it and started to carry it. This
+/// screen had only the second half — the drag moved the cards and the inspector
+/// never noticed, so pressing a host that held six cards left the panel showing
+/// whichever card had been selected before.
+///
+/// The frame itself is not a member. It has no configuration of its own to
+/// inspect, and its rectangle is *derived* from the cards it holds
+/// ([`frame_rect_of`]), so a frame in the set would be a member whose position
+/// is a function of the other members — which the group drag would then move
+/// twice.
+fn select_frame(state: &Rc<LabState>, frame: NodeId) -> Vec<NodeId> {
+    let members = members_of(state, frame);
+    apply_selection(state, members.iter().copied());
+    members
+}
+
+/// ★★★ R1706 — pick a host by name and carry it and its cards by `delta`.
+///
+/// The wire half of the frame gesture, and it goes through
+/// [`select_frame`] and [`shift_cards`] — the same two calls the press and the
+/// drag make — so the two channels cannot come to mean different things. A
+/// host with no cards is refused rather than silently doing nothing: its
+/// rectangle is derived from the cards it holds, so there is nothing on screen
+/// to have moved.
+fn move_frame(state: &Rc<LabState>, host: &str, delta: (i32, i32)) -> Result<String, InvokeError> {
+    let frame = frames_of(state)
+        .into_iter()
+        .find(|(_, name)| name == host)
+        .map(|(id, _)| id)
+        .ok_or_else(|| InvokeError::rejected(format!("no host is called {host:?}")))?;
+    let members = select_frame(state, frame);
+    if members.is_empty() {
+        return Err(InvokeError::rejected(format!(
+            "host {host:?} holds no cards, so there is nothing to move"
+        )));
+    }
+    shift_cards(state, &members, frame, delta);
+    Ok(format!(
+        "moved {host} and its {} card(s) by {},{}",
+        members.len(),
+        delta.0,
+        delta.1
+    ))
+}
+
+/// Move a host's cards, and the host's own stored position with them.
+///
+/// ★ R1706 — lifted out of the drag arm because the wire verb needs the same
+/// arithmetic, and a second copy of "and the frame itself moves too" is exactly
+/// how the two channels drift.
+fn shift_cards(state: &LabState, members: &[NodeId], frame: NodeId, delta: (i32, i32)) {
+    let mut doc = state.doc.borrow_mut();
+    let Some(tree) = doc.tree_mut(ROOT) else {
+        return;
+    };
+    for id in members.iter().copied().chain(std::iter::once(frame)) {
+        if let Some(slot) = tree.node_mut(id) {
+            slot.x = clamp_to_world(slot.x + delta.0);
+            slot.y = clamp_to_world(slot.y + delta.1);
+        }
+    }
+}
+
+/// Move the selection, shutting the open field when the inspected card changes
+/// (R1684).
+///
+/// ★★ One function for every site that moves the selection — the `select`
+/// action, a press on a card, a press on a host frame, the card the palette just
+/// added, and the card a deletion falls back to — because the field is opened
+/// OVER the inspected card's row and a selection that moved without shutting it
+/// would leave a box standing on a form that is no longer underneath it. The
+/// target names its own card, so a stale commit would land correctly and the
+/// person would still have typed into the wrong-looking place.
+///
+/// ★ R1706 — the field is shut on
+/// [`active_moved`](pinion_core::selection::Change::active_moved), not on "the
+/// selection changed". Growing a selection that keeps its leader leaves the
+/// inspector showing the same card, so shutting the box there would take a
+/// person's half-typed value away for a reason nothing on screen explains.
+fn apply_selection<I: IntoIterator<Item = NodeId>>(state: &Rc<LabState>, cards: I) {
+    let mut selection = state.selection.get();
+    let change = selection.set_group(cards);
+    if !change.changed() {
         return;
     }
-    state.selected.set(node);
-    if state.editing.get().is_some() {
+    state.selection.set(selection);
+    if change.active_moved() && state.editing.get().is_some() {
         // ★ Applied, then shut — the same rule as opening the field somewhere
         // else, with the one difference the situation forces: a refusal cannot
         // keep the box open, because the card it was opened over is not the
@@ -8121,16 +8407,7 @@ fn move_cursor(state: &Rc<LabState>, px: u32, py: u32) {
             let (dx, dy) = (ux - from.0, uy - from.1);
             if dx != 0 || dy != 0 {
                 let members = members_of(state, frame);
-                let mut doc = state.doc.borrow_mut();
-                if let Some(tree) = doc.tree_mut(ROOT) {
-                    for id in members.iter().copied().chain(std::iter::once(frame)) {
-                        if let Some(slot) = tree.node_mut(id) {
-                            slot.x = clamp_to_world(slot.x + dx);
-                            slot.y = clamp_to_world(slot.y + dy);
-                        }
-                    }
-                }
-                drop(doc);
+                shift_cards(state, &members, frame, (dx, dy));
                 state.drag.set(Some(Drag::Frame {
                     frame,
                     from: (ux, uy),
@@ -8211,7 +8488,12 @@ fn press(state: &Rc<LabState>) {
                 }
             }
         }
+        // ★★★ R1706 — SELECT the host's cards, then start carrying them. One
+        // gesture with two halves, which is what the reference does and what
+        // this arm was missing: the drag moved six cards and the inspector went
+        // on showing whichever card had been selected before.
         Hit::Frame(frame) => {
+            select_frame(state, *frame);
             state.drag.set(Some(Drag::Frame {
                 frame: *frame,
                 from: to_canvas(state, px, py),
@@ -8341,7 +8623,7 @@ fn release(state: &Rc<LabState>) {
         // the wire calls. A refusal (the last card) has already said so on the
         // toast, which is where a person reads it.
         Hit::NodeAct(act) => {
-            if let Some(node) = state.selected.get() {
+            if let Some(node) = state.active_card() {
                 let _ = match act {
                     NodeAct::Collapse => collapse_card(state, node),
                     NodeAct::Disable => disable_card(state, node),
@@ -8438,7 +8720,7 @@ fn release(state: &Rc<LabState>) {
 fn act_on_form(state: &Rc<LabState>, hit: Hit) {
     match hit {
         Hit::AddField(key) => {
-            if let Some(node) = state.selected.get() {
+            if let Some(node) = state.active_card() {
                 let mut forms = state.forms.borrow_mut();
                 if let Some(form) = forms.get_mut(&node) {
                     form.add(&key).ok();
@@ -8458,7 +8740,7 @@ fn act_on_form(state: &Rc<LabState>, hit: Hit) {
         // ★★ R1686 — the seat, through the one function the wire also calls.
         // A refusal has already reached the toast through `say`.
         Hit::RemoveField(key) => {
-            if let Some(node) = state.selected.get() {
+            if let Some(node) = state.active_card() {
                 remove_row(state, node, &key).ok();
             }
         }
@@ -8782,7 +9064,7 @@ fn go_to_problem(state: &Rc<LabState>) -> String {
 ///
 /// [`ConfigDefect::OutOfRange`]: pinion_core::widgets::config_form::ConfigDefect::OutOfRange
 fn press_row(state: &Rc<LabState>, key: &str) {
-    let Some(node) = state.selected.get() else {
+    let Some(node) = state.active_card() else {
         return;
     };
     let Some(shape) = selected_form_of(state, node)
@@ -8812,7 +9094,7 @@ fn press_row(state: &Rc<LabState>, key: &str) {
 /// left a person with an invented address they could not change. Pressing the
 /// element is how they change it.
 fn press_element(state: &Rc<LabState>, key: &str, at: usize) {
-    let Some(node) = state.selected.get() else {
+    let Some(node) = state.active_card() else {
         return;
     };
     let _ = begin_edit(
@@ -8862,7 +9144,7 @@ fn flip_boolean(state: &Rc<LabState>, key: &str) {
     let now = state
         .forms
         .borrow()
-        .get(&state.selected.get().unwrap_or(NodeId(0)))
+        .get(&state.active_card().unwrap_or(NodeId(0)))
         .and_then(|f| f.field(key).map(|v| v.value().trim() == "true"));
     let Some(now) = now else { return };
     set_and_sync(state, key, if now { "false" } else { "true" });
@@ -8873,7 +9155,7 @@ fn flip_boolean(state: &Rc<LabState>, key: &str) {
 /// The reason a stepper is worth painting: the field knows its range, so the
 /// control can refuse to leave it instead of the gate reporting it afterwards.
 fn step_number(state: &Rc<LabState>, key: &str, up: bool) {
-    let Some(node) = state.selected.get() else {
+    let Some(node) = state.active_card() else {
         return;
     };
     let next = {
@@ -8893,7 +9175,7 @@ fn step_number(state: &Rc<LabState>, key: &str, up: bool) {
 
 /// Append an empty element to a list field, which is what its `+` row does.
 fn add_element(state: &Rc<LabState>, key: &str) {
-    let Some(node) = state.selected.get() else {
+    let Some(node) = state.active_card() else {
         return;
     };
     let next = {
@@ -8912,7 +9194,7 @@ fn add_element(state: &Rc<LabState>, key: &str) {
 
 /// Write a field and re-derive what the canvas shows from it.
 fn set_and_sync(state: &Rc<LabState>, key: &str, value: impl Into<String>) {
-    let Some(node) = state.selected.get() else {
+    let Some(node) = state.active_card() else {
         return;
     };
     // ★ R1684 — through [`set_value`], which is now the ONE way a value gets
@@ -8925,7 +9207,7 @@ fn set_and_sync(state: &Rc<LabState>, key: &str, value: impl Into<String>) {
 
 /// Turn one option of a choice or flags field on or off.
 fn toggle_option(state: &Rc<LabState>, key: &str, word: &str) {
-    let Some(node) = state.selected.get() else {
+    let Some(node) = state.active_card() else {
         return;
     };
     let mut forms = state.forms.borrow_mut();
@@ -9504,10 +9786,15 @@ fn palette_access(state: &LabState) -> Vec<AccessNode> {
 /// The canvas: the surface itself, the cards, the host frames, the wires, and
 /// the pins a link is drawn between.
 fn canvas_access(state: &LabState) -> Vec<AccessNode> {
-    let selected = state.selected.get();
+    let selection = state.selection.get();
     let mut nodes = vec![
         AccessNode::new("lab.canvas", AriaRole::Group)
             .with_name("canvas")
+            // ★★ R1706 — a canvas whose frame gesture selects six cards at once
+            // is multi-selectable, and saying so is what makes the per-card
+            // `aria-selected="false"` audible rather than noise: an assistive
+            // technology announces "not selected" only where a set is possible.
+            .with_multiselectable()
             .with_value(AccessValue::Text(format!(
                 "{} cards, {} links, zoom {}%",
                 state.cards().len(),
@@ -9520,20 +9807,34 @@ fn canvas_access(state: &LabState) -> Vec<AccessNode> {
         let role = state.role_of(node).unwrap_or(Role::Peer);
         let (inbound, outbound) = state.degree(node);
         let (collapsed, disabled) = card_switches(state, node);
-        nodes.push(
-            AccessNode::new(format!("lab.node.{name}"), AriaRole::Group)
-                .with_name(name.clone())
-                .with_selected(selected == Some(node))
-                .with_state(AccessState {
-                    disabled,
-                    ..AccessState::default()
-                })
-                .with_expanded(!collapsed)
-                .with_value(AccessValue::Text(format!(
-                    "{}, {inbound} inbound, {outbound} outbound",
-                    role.name()
-                ))),
-        );
+        let mut card = AccessNode::new(format!("lab.node.{name}"), AriaRole::Group)
+            .with_name(name.clone())
+            // ★★ R1706 — `aria-selected` is MEMBERSHIP, and which member LEADS
+            // is a second fact this row also has to carry: with six cards
+            // outlined and one inspector open, a reader told only "selected"
+            // six times cannot tell which card the panel is about.
+            .with_selected(selection.contains(&node))
+            .with_state(AccessState {
+                disabled,
+                ..AccessState::default()
+            })
+            .with_expanded(!collapsed);
+        // ★★★ `aria-current`, and NOT `aria-focused` — which is a correction
+        // the framework made rather than a preference. The first draft spelled
+        // the leader with [`AccessNode::with_focused`], and the assembler
+        // silently cleared it on every card: R1518 derives that flag from the
+        // focus target the shell actually granted, precisely so a binding
+        // cannot claim a focus nobody gave it. It was right to. Focus is where
+        // the keyboard is; the leader of a selection is *the current item
+        // within a set of related items*, which is what `aria-current` is for
+        // and what stays true while the keyboard is somewhere else entirely.
+        if selection.is_active(&node) {
+            card = card.with_current(AriaCurrent::True);
+        }
+        nodes.push(card.with_value(AccessValue::Text(format!(
+            "{}, {inbound} inbound, {outbound} outbound",
+            role.name()
+        ))));
     }
     for (frame, name) in frames_of(state) {
         let gist = spec::FRAMES
@@ -9708,7 +10009,7 @@ fn toolbar_access(state: &LabState) -> Vec<AccessNode> {
 fn inspector_access(state: &LabState) -> Vec<AccessNode> {
     let mut nodes =
         vec![AccessNode::new("lab.inspector", AriaRole::Group).with_name(spec::PANES[3].title)];
-    if let Some(node) = state.selected.get() {
+    if let Some(node) = state.active_card() {
         let name = state.name_of(node);
         nodes.push(
             AccessNode::new("lab.inspector.id", AriaRole::Heading)
@@ -9722,6 +10023,14 @@ fn inspector_access(state: &LabState) -> Vec<AccessNode> {
         nodes.push(
             AccessNode::new("lab.inspector.degree", AriaRole::Status)
                 .with_name(degree_caption(state, node)),
+        );
+        // ★★ R1706 — the same sentence the chip paints, from the same call.
+        // A reader who cannot see six outlined cards has no other way to learn
+        // that the panel is one of six, and the count is the only place the
+        // screen says so in words.
+        nodes.push(
+            AccessNode::new("lab.inspector.selcount", AriaRole::Status)
+                .with_name(selection_caption(state)),
         );
         // ★ The seat's name is the word it PAINTS, from the same call — a
         // toggle whose button reads "expand" and whose announcement reads

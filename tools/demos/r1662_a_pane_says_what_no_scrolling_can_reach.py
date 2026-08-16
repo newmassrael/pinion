@@ -65,6 +65,17 @@ WIN: tuple[int, int] = (0, 0)  # derived from the floor at start-up
 #: How far above the floor this demo judges — the relation, which is what was
 #: actually meant. 58 px is what the pair had when this demo was written.
 ABOVE_FLOOR = 58
+#: How many marks this screen has to have examined before an empty `lost` list
+#: means anything.
+#:
+#: ★★ R1706 — was `500`, and R1705 made that false: the canvas used to draw its
+#: grid as a box per pip, so any floor was comfortable, and `BoxStyle::lattice`
+#: replaced the enumeration with a declaration. Measured 348 on R1705's binary
+#: (its CI sweep went red here and at `r1656` for exactly this) and 350 with the
+#: selection chip R1706 added. The floor's job is to keep an empty list on a
+#: surface that painted nothing from reading as coverage, so it has to sit well
+#: above a blank screen and well below this one.
+MARK_FLOOR = 300
 #: `MIN_W` x `MIN_H` as the screen derives them: the rail, the palette, the
 #: toolbar's two clusters and the inspector across; the two bars plus what the
 #: canvas chrome needs down. Below this the screen DECLARES it cannot paint, and
@@ -106,7 +117,7 @@ def run(tf: RpcSubprocess) -> None:
     out = reach(tf)
     for key in ("window", "marks", "scrollable", "lost", "out_of_sight"):
         assert key in out, f"scene/scroll_reach must report {key}: {out.keys()}"
-    assert out["marks"] > 500, (
+    assert out["marks"] > MARK_FLOOR, (
         f"only {out['marks']} mark(s) examined — the count rides beside the list "
         f"so an empty list on a surface that painted nothing cannot read as "
         f"coverage"

@@ -45,6 +45,7 @@
 use std::rc::Rc;
 
 use pinion_core::Storage;
+use pinion_core::selection::Selection;
 use pinion_core::widgets::config_form::ConfigForm;
 use pinion_node_graph::{Archive, Document, NodeId};
 use serde::{Deserialize, Serialize};
@@ -110,10 +111,10 @@ pub struct Kept {
 /// The archive this screen would write right now.
 pub fn archive_of(state: &LabState) -> Archive<LabNode, Kept> {
     let document: Document<LabNode> = state.doc.borrow().clone();
-    let selected = state.selected.get().map(|node| state.name_of(node));
+    let selected = state.active_card().map(|node| state.name_of(node));
     Archive::of(document)
         .with_camera(crate::camera_now(state))
-        .with_selection(state.selected.get())
+        .with_selection(state.active_card())
         .with_companion(Kept {
             forms: state
                 .forms
@@ -157,9 +158,19 @@ fn install(state: &Rc<LabState>, archive: Archive<LabNode, Kept>) {
         *state.frames.borrow_mut() = kept.frames.into_iter().collect();
         *state.opened_at.borrow_mut() = kept.opened_at.into_iter().collect();
         state.discovery.set(kept.discovery);
-        state
-            .selected
-            .set(kept.selected.and_then(|name| state.node_of(&name)));
+        // ★★ R1706 — a save carries the LEADER and a restore collapses the
+        // selection to it. Not an omission: the behaviour canon marks its own
+        // member list volatile and rebuilds it as `[leader]` on restore, for a
+        // reason this screen shares — a group selection is something a person
+        // is holding *right now*, and handing it back with a file they opened
+        // an hour later would put six highlighted cards on screen that nobody
+        // picked. The leader is what the inspector shows, so restoring it is
+        // what makes the panel look the way it was left.
+        state.selection.set(
+            kept.selected
+                .and_then(|name| state.node_of(&name))
+                .map_or_else(Selection::empty, Selection::one),
+        );
     }
     // Everything below is declared VOLATILE, and a load is where that has to be
     // acted on rather than merely written down: a link picked in the graph that

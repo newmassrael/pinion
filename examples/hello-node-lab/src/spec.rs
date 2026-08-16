@@ -615,9 +615,18 @@ pub const OPERATIONS: &[OperationSpec] = &[
         witness: "frames",
         needs: None,
     },
+    // ★★★ R1706 — this row gained its verb, and it is the same act on both
+    // channels because the reference's is: its frame-drag handler SELECTS the
+    // host's cards on its first line and then carries them, so a
+    // `select_frame` beside a `move_frame` would be two spellings of a gesture
+    // a person cannot perform in halves.
+    //
+    // ★ It also stopped being one of the rows a person could cause and an
+    // agent could not — the asymmetry this table's two cause columns exist to
+    // surface, on a screen whose premise is that an agent drives it.
     OperationSpec {
         name: "move a frame and its members",
-        verb: None,
+        verb: Some(("move_frame", "host-b,40,30")),
         gesture: true,
         witness: "layout",
         needs: None,
@@ -1042,6 +1051,14 @@ pub const VOICES: &[VoiceSpec] = &[
         role: "status",
         population: Population::One,
     },
+    // ★★★ R1706 — how many cards are picked and which one the panel is
+    // showing. A `status`, like the two pills beside it: it is a fact the
+    // screen keeps up to date rather than something a reader operates.
+    VoiceSpec {
+        tag: "lab.inspector.selcount",
+        role: "status",
+        population: Population::One,
+    },
     VoiceSpec {
         tag: "lab.inspector.reach",
         role: "status",
@@ -1114,6 +1131,7 @@ pub const SILENCES: &[(&str, Population, &str)] = &[
     ("lab.gate.verdict", Population::One, "part_of"),
     ("lab.hint.text", Population::One, "name_of"),
     ("lab.inspector.degree.text", Population::One, "name_of"),
+    ("lab.inspector.selcount.text", Population::One, "name_of"),
     ("lab.inspector.reach.text", Population::One, "name_of"),
     ("lab.inspector.note.text", Population::One, "name_of"),
     // The applies badge: its words are already the row's description.

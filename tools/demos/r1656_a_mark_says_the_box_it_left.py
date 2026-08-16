@@ -44,6 +44,24 @@ EXT = "/external"
 WIN = (1440, 900)
 BIG = (2494, 1531)
 
+#: How many marks this screen has to have examined before an empty escape list
+#: means anything.
+#:
+#: ★★ R1706 — was `500`, and R1705 made that number false without anybody
+#: noticing: the canvas used to draw its grid as a box per pip, so this screen
+#: painted tens of thousands of marks and any floor was comfortable. `BoxStyle::
+#: lattice` replaced the enumeration with a declaration and the population fell
+#: to **348** — measured on that round's own binary, and its CI sweep went red
+#: here and at `r1662` for exactly this.
+#:
+#: The floor is not the point; what it exists for is. An empty `escapes` list is
+#: proof of containment only if the surface painted a lot, so the number has to
+#: sit well above what a blank or half-drawn screen would produce and well below
+#: what this one does. 300 does both: this screen paints 350 with the selection
+#: chip R1706 added, and a screen that failed to paint its panels would not come
+#: near it.
+MARK_FLOOR = 300
+
 
 def containment(tf):
     return call(tf, "scene/containment")
@@ -58,7 +76,7 @@ def run(tf: RpcSubprocess) -> None:
     out = containment(tf)
     for key in ("escapes", "smeared", "clipped", "marks"):
         assert key in out, f"scene/containment must report {key}: {out.keys()}"
-    assert out["marks"] > 500, (
+    assert out["marks"] > MARK_FLOOR, (
         f"only {out['marks']} mark(s) examined — the count is beside the list so "
         f"an empty list on a surface that painted nothing cannot read as coverage"
     )
@@ -201,7 +219,7 @@ def run(tf: RpcSubprocess) -> None:
     after = containment(tf)
     assert_eq(len(after["escapes"]), 0,
               "and it is still contained at the grown size")
-    assert after["marks"] > 500, after["marks"]
+    assert after["marks"] > MARK_FLOOR, after["marks"]
 
     # ── 9. an unavailable answer is not a clean one. A host that cannot shape
     #      must say so rather than report an empty list.

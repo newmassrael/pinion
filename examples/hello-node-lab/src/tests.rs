@@ -7,6 +7,7 @@
 //! screen agree about what a node is.
 
 use pinion_core::reactive::Owner;
+use pinion_core::selection::Selection;
 use pinion_core::widgets::config_form::Applies;
 
 use super::{
@@ -36,7 +37,7 @@ fn r1651_the_opening_graph_is_the_specification() {
             "and every declared link was accepted by the model"
         );
         assert_eq!(
-            state.selected.get().map(|n| state.name_of(n)).as_deref(),
+            state.active_card().map(|n| state.name_of(n)).as_deref(),
             Some(spec::SELECTED_NODE),
             "the screen opens on the node the reference opens on"
         );
@@ -758,7 +759,7 @@ fn r1682_a_rename_carries_nothing_because_nothing_is_keyed_by_a_name() {
     owner.run(|| {
         let state = std::rc::Rc::new(state());
         let node = state.node_of("P-03").expect("the specification has it");
-        state.selected.set(Some(node));
+        state.selection.set(Selection::one(node));
 
         let form_before = state.forms.borrow().get(&node).cloned();
         let placed_before = state.opened_at.borrow().get(&node).cloned();
@@ -779,7 +780,7 @@ fn r1682_a_rename_carries_nothing_because_nothing_is_keyed_by_a_name() {
         assert_eq!(state.node_of("P-03"), None, "and not to the old one");
         assert_eq!(state.name_of(node), "edge-01");
         assert_eq!(
-            state.selected.get(),
+            state.active_card(),
             Some(node),
             "the selection is the thing that moved, so nothing had to repair it"
         );
@@ -971,7 +972,7 @@ fn r1682_the_last_card_cannot_be_deleted() {
         super::delete_card(&state, keep).expect_err("★ the last one stays");
         assert_eq!(state.cards(), vec![keep], "and it really is still there");
         assert_eq!(
-            state.selected.get(),
+            state.active_card(),
             Some(keep),
             "so something is still selected and the inspector still has a \
              subject"
@@ -1605,12 +1606,12 @@ fn r1688_the_jump_lands_on_the_card_the_first_finding_is_on() {
         let target = first.node.expect("the finding names a card");
         assert_ne!(
             Some(target),
-            state.selected.get(),
+            state.active_card(),
             "and it is not the card the screen opens on"
         );
 
         let said = super::go_to_problem(&state);
-        assert_eq!(state.selected.get(), Some(target));
+        assert_eq!(state.active_card(), Some(target));
         assert_eq!(said, first.sentence);
         assert_eq!(
             state.toast.get(),

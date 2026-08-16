@@ -378,7 +378,12 @@ def body() -> None:
             # a read-out, not an affordance, so the press census legitimately
             # passes over it and this pin is the only thing that would notice if
             # it disappeared.
-            "lab.inspector": 16,
+            # ★★ R1706 — 18, not 16: the selection-count chip is a pill and the
+            # run inside it, in the reference's own place between the degree
+            # pill and the node's-life row. Same kind as the reach meter — a
+            # read-out rather than an affordance — so again the press census
+            # passes over it and this pin is what would miss it.
+            "lab.inspector": 18,
             "lab.palette.discovery": 3,
         }
         undeclared = [
