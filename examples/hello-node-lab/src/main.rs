@@ -4975,11 +4975,31 @@ fn chrome_covers(state: &LabState, px: u32, py: u32) -> bool {
 }
 
 /// Where the picked link's column goes, as an offset from the wire's middle
-/// (R1681, narrowed R1681.3).
+/// (R1681, narrowed R1681.3, bounded R1704).
 ///
 /// One rule: it must be inside what the canvas is showing. Answers `(0, 0)`
 /// whenever the reference's own placement — on the wire — already fits, which
 /// is nearly always.
+///
+/// ★★★★★ R1704 — **and `(0, 0)` when the link has left the view entirely**,
+/// which is the condition this nudge was missing and a person reported.
+///
+/// The nudge exists because R1681's first draft of the card-avoidance search
+/// pushed both endpoint seats out of the visible world — it keeps a column that
+/// is being moved AROUND SOMETHING from being moved out of sight. It was never
+/// meant to fetch a column back that the PAN carried away, and unbounded that
+/// is what it did: dragged far enough, `dx` pinned the caption and the `delete`
+/// chip to the canvas edge and held them there while the link itself clipped
+/// away. Measured before the fix, panning until neither endpoint was painted:
+/// the chip stayed at x=316 through pans of -949, -1898, -2847 and -3796 — and
+/// **pressing it deleted the link**, 7 links to 6, with nothing on screen to
+/// say which one had gone.
+///
+/// The behaviour canon settles the shape rather than this being a judgement
+/// call: it places the caption at the wire's own midpoint (`abs(mx, my - 24)`)
+/// with no clamp of any kind, and lets the viewport clip. So a column whose
+/// natural place is off the canvas is simply left there, and R1653's clipping
+/// takes it away with the link it belongs to.
 fn placement(state: &LabState, parts: &[Rect], step: u32) -> (i32, i32) {
     let canvas = canvas_rect();
     let (ox, oy) = world_offset(state, state.pan.get());
@@ -4989,6 +5009,18 @@ fn placement(state: &LabState, parts: &[Rect], step: u32) -> (i32, i32) {
         canvas.w,
         canvas.h,
     );
+    // ★ R1704 — nothing to keep in view, so nothing to move. `any` rather than
+    // `all`: a column with one part still showing is the case the nudge is FOR,
+    // and only a column entirely gone is the case it must keep its hands off.
+    let touches = |r: &Rect| {
+        r.x < shown.x.saturating_add(shown.w)
+            && shown.x < r.x.saturating_add(r.w)
+            && r.y < shown.y.saturating_add(shown.h)
+            && shown.y < r.y.saturating_add(r.h)
+    };
+    if !parts.iter().any(touches) {
+        return (0, 0);
+    }
     let moved = |part: &Rect, by: (i32, i32)| -> Rect {
         Rect::new(
             part.x.saturating_add_signed(by.0),

@@ -2538,6 +2538,215 @@ fn published(state: &std::rc::Rc<LabState>) -> String {
     out
 }
 
+/// ★★★★★ R1704 — **an affordance leaves with the thing it is attached to.**
+///
+/// Reported by a person driving the running application: pan the canvas and the
+/// picked link's caption and its `delete` chip come along, pinned to the edge,
+/// while the link itself slides out of sight. Measured before the fix — panning
+/// left until neither endpoint was painted — the chip held station at x=316
+/// across pans of -949, -1898, -2847 and -3796, and **pressing it deleted the
+/// link**: seven links became six, with nothing on screen to say which had gone.
+///
+/// Why nothing saw it, and it is the same shape twice in this file's history:
+/// every check panned ONCE. At one pan the column tracks the graph exactly (the
+/// deltas match a card's to the pixel, at four window sizes), because the clamp
+/// only engages once the column's natural place has left the visible world. A
+/// gate that drives a gesture a little cannot see a rule that only fires when
+/// the gesture is driven a lot.
+///
+/// Two assertions, and the second is the one with consequences: the chrome is
+/// GONE from the paint, and the link is still there afterwards — because a chip
+/// that is merely invisible but still pressable is the worse of the two states.
+#[test]
+fn r1704_a_link_that_has_left_the_canvas_takes_its_affordances_with_it() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+        let shot = painted(&state);
+        let canvas = *shot
+            .tags
+            .get("lab.canvas")
+            .expect("the canvas is painted, or there is no screen");
+
+        // Pick the link the way a person does — on the wire between two cards.
+        press_wire(&state, &shot, "P-01", "R-01");
+        let picked = painted(&state);
+        assert!(
+            picked.tags.contains_key("lab.link.act"),
+            "the picked link offers its `delete`, or this test is about nothing"
+        );
+        let link_count = |s: &std::rc::Rc<LabState>| -> usize {
+            s.doc
+                .borrow()
+                .tree(super::ROOT)
+                .map_or(0, |t| t.links().len())
+        };
+        let links_before = link_count(&state);
+
+        // Pan far enough that the link's own cards are no longer painted. Two
+        // full-width drags: one is not enough, which is exactly the reason the
+        // defect survived every gate that panned once.
+        for _ in 0..2 {
+            drag_from(
+                &state,
+                (canvas.x + canvas.w - 40, canvas.y + canvas.h - 40),
+                (-i32::try_from(canvas.w).unwrap_or(0) + 80, 0),
+            );
+        }
+        let gone = painted(&state);
+        for card in ["lab.node.P-01", "lab.node.R-01"] {
+            assert!(
+                !gone.tags.contains_key(card),
+                "{card} is still painted, so the pan did not carry the link away \
+                 and this test is not exercising what it says"
+            );
+        }
+        let stranded: Vec<&str> = COLUMN
+            .into_iter()
+            .filter(|t| gone.tags.contains_key(*t))
+            .collect();
+        assert!(
+            stranded.is_empty(),
+            "the link left the canvas and {stranded:?} stayed behind — pinned to \
+             an edge with nothing under them"
+        );
+
+        // ★ And the half that has consequences: whatever is at that place now,
+        // pressing it must not delete a link nobody can see.
+        press_tag(&state, &gone, "lab.canvas");
+        assert_eq!(
+            link_count(&state),
+            links_before,
+            "a press where the stranded `delete` used to be removed a link"
+        );
+    });
+}
+
+/// ★★★★★ R1704 — **the column is all there or not there at all**, swept across
+/// the pan rather than asserted at one.
+///
+/// This exists because a counterfactual PASSED without it. R1704 bounds R1681's
+/// nudge with "leave it alone once it is entirely off the canvas", and the
+/// boundary is `any` versus `all`: with `all`, the nudge switches off the moment
+/// ONE part of the column crosses the edge — which is precisely the case R1681
+/// built it for, so a caption that should be pulled fully into view is left
+/// half clipped instead. The test above only drives the far end, where both
+/// spellings agree, so it could not tell them apart.
+///
+/// The invariant a sweep can state: at every pan, the picked link's column is
+/// either **wholly absent** (the link has left) or **wholly present at its full
+/// size** (the nudge did its job). Never partly.
+///
+/// ★★★★★ And the observable is the column's SIZE, not its position, which the
+/// first draft of this test got wrong and the counterfactual said so. "Every
+/// part lies inside the canvas rectangle" cannot fail: the canvas CLIPS, so a
+/// part that is half out is reported already trimmed to the edge and passes the
+/// containment check trivially. It is the width that gives it away — a nudged
+/// column keeps the size it has in open view (108x19 for the caption, 45x19 for
+/// the chip, measured), a clipped one is narrower. The assertion has to be in a
+/// place where it can fail, which is R1699's lesson arriving in a new shape.
+/// The four tags the picked link's column paints, in the order the sizes below
+/// are taken in.
+const COLUMN: [&str; 4] = [
+    "lab.link.label",
+    "lab.link.label.text",
+    "lab.link.act",
+    "lab.link.act.text",
+];
+
+#[test]
+fn r1704_the_picked_links_column_is_never_half_out_of_the_canvas() {
+    let owner = Owner::new();
+    owner.run(|| {
+        super::reset_lab_state();
+        let state = use_lab_state();
+        let shot = painted(&state);
+        let canvas = *shot
+            .tags
+            .get("lab.canvas")
+            .expect("the canvas is painted, or there is no screen");
+        press_wire(&state, &shot, "P-01", "R-01");
+
+        // The size each part has while the column sits in open view, taken from
+        // the screen rather than written down.
+        let opened = painted(&state);
+        let full: Vec<(u32, u32)> = COLUMN
+            .into_iter()
+            .map(|t| {
+                let r = opened.tags[t];
+                (r.w, r.h)
+            })
+            .collect();
+
+        // ★★★★★ EIGHT PIXELS A STEP, and the coarse first draft is why. The two
+        // spellings of the guard — "leave it alone once the whole column is off
+        // the canvas" and "…once any PART of it is" — differ only while the
+        // canvas edge falls BETWEEN two parts of the column, and the parts are
+        // clustered: measured, the caption spans 108 px and the chip sits
+        // inside that span 32 px in and 45 px wide, so the window where one
+        // intersects and the other does not is about 26 px. A sweep striding
+        // 90 px steps straight over it, which is exactly what the first draft
+        // did — and the counterfactual for the wrong spelling PASSED twice
+        // before the stride was measured against the geometry it samples.
+        let mut saw_all = 0;
+        let mut saw_none = 0;
+        for step in 0..300 {
+            if step > 0 {
+                drag_from(
+                    &state,
+                    (canvas.x + canvas.w - 40, canvas.y + canvas.h - 40),
+                    (-8, 0),
+                );
+            }
+            if saw_none >= 2 {
+                break;
+            }
+            let now = painted(&state);
+            let present: Vec<&str> = COLUMN
+                .into_iter()
+                .filter(|t| now.tags.contains_key(*t))
+                .collect();
+            if present.is_empty() {
+                saw_none += 1;
+                continue;
+            }
+            assert_eq!(
+                present.len(),
+                COLUMN.len(),
+                "at pan {:?} the column is half painted ({present:?}) — the \
+                 nudge stopped keeping it whole before the link had left",
+                state.pan.get()
+            );
+            for (tag, want) in COLUMN.into_iter().zip(full.iter().copied()) {
+                let r = now.tags[tag];
+                assert_eq!(
+                    (r.w, r.h),
+                    want,
+                    "at pan {:?} {tag} is painted {}x{} instead of {}x{} — it \
+                     is being CLIPPED by the canvas edge rather than nudged \
+                     clear of it, so a column that is shown at all is not \
+                     being shown whole",
+                    state.pan.get(),
+                    r.w,
+                    r.h,
+                    want.0,
+                    want.1
+                );
+            }
+            saw_all += 1;
+        }
+        // ★ Both arms non-empty, or the sweep proved one thing twenty-four
+        // times: it has to reach the pans where the nudge WORKS and the pans
+        // where the link is gone, or it is not a sweep across the boundary.
+        assert!(
+            saw_all > 0 && saw_none > 0,
+            "the sweep never crossed the boundary (whole at {saw_all} pan(s), \
+             absent at {saw_none})"
+        );
+    });
+}
+
 /// Run one of this screen's own actions, or say why it refused.
 fn act(state: &std::rc::Rc<LabState>, verb: &str, arg: &str) -> Result<String, String> {
     let mut oracle = super::LabOracle::new();
