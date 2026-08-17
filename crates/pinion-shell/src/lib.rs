@@ -706,6 +706,25 @@ pub enum SizeStrategy {
 }
 
 impl SizeStrategy {
+    /// R1712 §5.16 §5.32 — the window a
+    /// [`ShrinkPolicy`](pinion_core::shrink::ShrinkPolicy) describes, opened at
+    /// `size`.
+    ///
+    /// The only spelling that keeps a screen's two floors one fact: the layout
+    /// clamp reads the policy's `comfortable` and this reads its `floor`, so
+    /// there is nowhere for a binding to write a second number. Measured before
+    /// this existed, all three screens of the analysis tool passed **one**
+    /// constant to both places — not as a tidy coincidence but because a single
+    /// number cannot say "the window may go below the size the layout stops at,
+    /// and here is what that costs".
+    #[must_use]
+    pub const fn shrinking(policy: pinion_core::shrink::ShrinkPolicy, size: (u32, u32)) -> Self {
+        Self::OpenResizable {
+            size,
+            min: Some(policy.floor()),
+        }
+    }
+
     /// The logical-pixel size the window is created at. `Fixed`
     /// returns its declared pair; `IntrinsicAfterFirstPaint` returns
     /// `min` (the first-paint pass widens up to `max`);
@@ -1431,6 +1450,28 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
     /// (settings panels with section-dependent layout, popovers,
     /// dialogs) return [`SizeStrategy::IntrinsicAfterFirstPaint`].
     fn initial_size_strategy() -> SizeStrategy;
+
+    /// R1712 §5.16 §5.32 — what this binding gives up to let its window get
+    /// smaller than the size it lays out at, or `None` when it makes no such
+    /// decision.
+    ///
+    /// `None` is **not** "concedes nothing" — that is
+    /// [`ShrinkPolicy::rigid`](pinion_core::shrink::ShrinkPolicy::rigid), a
+    /// declaration somebody made. `None` is a binding that has never been asked
+    /// the question, which is the state 178 of this tree's 225 bindings are in,
+    /// and keeping the two apart is what lets `scene/size_floor` report
+    /// `undeclared` instead of crediting a default as a decision.
+    ///
+    /// A binding that returns `Some` should build
+    /// [`SizeStrategy`] from the same value through
+    /// [`SizeStrategy::shrinking`], so the window floor and the layout clamp
+    /// are one constant read twice rather than two that can drift — which is
+    /// the whole point of the type. `pinion_rpc::size_floor` reports
+    /// `declaration_split` when they do not agree.
+    #[must_use]
+    fn shrink_policy() -> Option<pinion_core::shrink::ShrinkPolicy> {
+        None
+    }
 
     /// R56.2.c §5.13 §5.38 — IME candidate window positioning hint.
     /// Returns the caret rect in **window-local logical-pixel

@@ -572,6 +572,35 @@ pub const WIRE_TYPES: &[WireType] = &[
             ],
         },
     },
+    // R1712 §5.16 §5.32 — what a binding gives up to let its window get smaller
+    // than the size it lays out at, beside what the screen actually does at
+    // that floor.
+    WireType {
+        name: "ConcessionReport",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("comfortable", WireTy::Object, Some("SizeReport")),
+                WireField::new("floor", WireTy::Object, Some("SizeReport")),
+                // Per-axis, and zero on an axis that concedes nothing.
+                WireField::new("band", WireTy::Object, Some("SizeReport")),
+                WireField::new("gives_up", WireTy::Array, None),
+                WireField::new("cut_at_floor", WireTy::Array, Some("CutReport")),
+                WireField::new("covered", WireTy::Integer, None),
+                // The three audit lists. `unreachable` is the one a concession
+                // can never excuse: clipping is a decision, losing is a defect.
+                WireField::new("unreachable", WireTy::Array, None),
+                WireField::new("unnamed", WireTy::Array, None),
+                WireField::new("stale", WireTy::Array, None),
+                WireField::new("declaration_split", WireTy::Boolean, None),
+                WireField::new("verdict", WireTy::String, None).accepting(&[
+                    "honoured",
+                    "stale",
+                    "surprised",
+                    "unreachable",
+                ]),
+            ],
+        },
+    },
     // R1693 §5.40 — `scene/conform`: whether the announced tree is one a reader
     // can walk. A collection that owns none of what its role promises, and a
     // member outside the collection its role requires.
@@ -1939,8 +1968,12 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("refused", WireTy::Object, Some("RefusedReport")).optional(),
                 WireField::new("ceiling", WireTy::Object, Some("SizeReport")),
                 WireField::new("declared", WireTy::Object, Some("DeclaredReport")),
+                // R1712 — absent on a binding that declares no policy, which is
+                // a different statement from one whose policy concedes nothing.
+                WireField::new("concession", WireTy::Object, Some("ConcessionReport")).optional(),
                 WireField::new("verdict", WireTy::String, None).accepting(&[
                     "short",
+                    "conceded",
                     "exact",
                     "roomier",
                     "undeclared",

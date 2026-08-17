@@ -65,6 +65,7 @@ pub mod revision;
 pub mod scene;
 pub mod scene_disabled;
 pub mod selection;
+pub mod shrink;
 pub mod size_floor;
 pub mod size_grant;
 pub mod storage;

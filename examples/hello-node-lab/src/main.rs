@@ -76,6 +76,7 @@ use pinion_core::scene::{
     ContainerNode, PathCommand, PathNode, PathPoint, Rect, ScrollAxis, ScrollNode, TextNode,
 };
 use pinion_core::selection::Selection;
+use pinion_core::shrink::ShrinkPolicy;
 use pinion_core::style::{
     Border, BoxStyle, Color, Dash, DotLattice, LayoutStyle, PathStyle, Size, Stroke, TextOverflow,
     TextStyle,
@@ -198,7 +199,11 @@ fn window_size() -> (u32, u32) {
     // broken. One further correction comes with the move: the branch below read
     // the WINDOW inside a view and this SURFACE outside one, two quantities
     // that agree only because this surface happens to fill its window.
-    pinion_core::external::layout_size(VIEW_TAG, (MIN_W, MIN_H), (WIN_W, WIN_H))
+    // ★ R1712 — the clamp is the POLICY's comfortable size, not a constant
+    // repeated here. The window may now be smaller than this (see [`SHRINK`]),
+    // which is exactly what the two branches below have always meant: below its
+    // floor the layout stops shrinking and the window clips.
+    pinion_core::external::layout_size(VIEW_TAG, SHRINK.comfortable(), (WIN_W, WIN_H))
 }
 
 /// The smallest window this screen lays out in.
@@ -284,6 +289,49 @@ const CANVAS_FLOOR: u32 = 260;
 /// scroll to is a window a person cannot make small, and it was 420 pixels of
 /// it ([[debt-the-node-lab-panes-do-not-scroll]]).
 const MIN_H: u32 = APP_BAR_H + TOOLBAR_H + CANVAS_FLOOR;
+
+/// ★★★★★ R1712 — the width the WINDOW stops at, which is no longer the width
+/// the LAYOUT stops at.
+///
+/// [`MIN_W`] is 1625 and R1689 wrote down what that costs: *"a 1600-wide
+/// display no longer holds this screen. That is a real loss."* It was a real
+/// loss and nothing could be done about it, because one constant was doing two
+/// jobs — the size the layout stops reflowing at, and the size the window
+/// refuses to shrink past — and lowering it would have moved both.
+///
+/// [`ShrinkPolicy`] separates them, so this is the second number: below it the
+/// app bar's right end and the inspector are **clipped**, and above it nothing
+/// is. That is a decision, and [`SHRINK`] is where it is written down so
+/// `scene/size_floor` can check it against the screen every time it is asked.
+///
+/// ★ Measured, not chosen: at 1506 the reader can still reach everything on
+/// this screen, and at 1505 the app bar's state chip goes off the window
+/// entirely with no scroll that brings it back. The demo asserts the boundary
+/// in **both** directions rather than trusting this comment, because a floor
+/// nobody drives is a number, and R1711 is the round that learned it.
+const FLOOR_W: u32 = 1506;
+
+/// What the band between [`FLOOR_W`] and [`MIN_W`] clips, by the name a reader
+/// addresses it with.
+///
+/// Regions, not the individual runs inside them: `lab.inspector` covers its
+/// body, and `lab.appbar` covers the state chip whose right end goes first.
+/// The audit publishes how many marks each name accounted for, so the coarser
+/// spelling does not hide its own reach — measured, these two cover four.
+///
+/// Nothing on the HEIGHT axis, deliberately: the floor concedes width only.
+/// A 27-pixel height concession was measured too and rejected — every
+/// full-height pane is clipped by it, so its honest declaration is *every pane
+/// on the screen*, which buys a reader almost nothing and costs the list all of
+/// its meaning.
+const GIVES_UP: &[&str] = &["lab.appbar", "lab.inspector"];
+
+/// The two floors, declared once so they cannot drift apart.
+///
+/// [`window_size`] clamps the layout at [`ShrinkPolicy::comfortable`] and
+/// [`NodeLabView::initial_size_strategy`] floors the window at
+/// [`ShrinkPolicy::floor`]; neither writes a number of its own.
+const SHRINK: ShrinkPolicy = ShrinkPolicy::conceding((MIN_W, MIN_H), (FLOOR_W, MIN_H), GIVES_UP);
 
 fn canvas_rect() -> Rect {
     let (w, h) = window_size();
@@ -10159,18 +10207,27 @@ impl WidgetView for NodeLabView {
 
     /// The window OPENS at the design size — the one the specification's
     /// rectangles were measured against — and can be dragged to any size from
-    /// there, down to [`MIN_W`] x [`MIN_H`].
+    /// there, down to the floor [`SHRINK`] declares.
     ///
     /// ★ R1654 — it was `Fixed`, which pins the OS-resize FLOOR at the open
     /// size: the window could be enlarged and never shrunk. Together with the
     /// pane rectangles being constants, that made the screen the one size it
     /// was written at. Both halves had to move — a layout that follows the
     /// window is no use if the window cannot be resized.
+    ///
+    /// ★★★★★ R1712 — and the floor is no longer [`MIN_W`] x [`MIN_H`]. It is
+    /// derived from [`SHRINK`], the same value [`window_size`] clamps against,
+    /// so this binding has nowhere to write a second minimum. What changed for
+    /// a reader: the window goes 119 pixels narrower than the layout does, so a
+    /// 1600-pixel display holds this screen — with the app bar's right end and
+    /// the inspector clipped, which is what [`GIVES_UP`] declares and what
+    /// `scene/size_floor` checks.
     fn initial_size_strategy() -> SizeStrategy {
-        SizeStrategy::OpenResizable {
-            size: (WIN_W, WIN_H),
-            min: Some((MIN_W, MIN_H)),
-        }
+        SizeStrategy::shrinking(SHRINK, (WIN_W, WIN_H))
+    }
+
+    fn shrink_policy() -> Option<ShrinkPolicy> {
+        Some(SHRINK)
     }
 }
 

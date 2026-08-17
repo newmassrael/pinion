@@ -191,3 +191,22 @@ pub use window_declare::{
     WindowDeclareError, WindowDeclareOutcome, WindowDeclareParams, window_declare,
 };
 pub use window_move::{WindowMoveError, WindowMoveOutcome, WindowMoveParams, window_move};
+
+/// R1712 — how wide and tall a text run's glyphs are, for the reach walks.
+///
+/// Lifted when a third caller wanted it. Every reach question this crate
+/// answers — what is off screen, what a size cannot show whole, what a
+/// concession gives up — has to measure the same ink the same way, and three
+/// copies of the rule is three places for one of them to start measuring the
+/// unwrapped width.
+///
+/// `max_width` is the mark's own box where it has one, and `None` at zero
+/// width, which is what makes a run wrap the way the painter wrapped it.
+pub(crate) fn ink_of(
+    cache: &mut pinion_text::LayoutCache,
+) -> impl FnMut(&pinion_core::scene::TextNode) -> (u32, u32) + '_ {
+    |t| {
+        let max_width = if t.rect.w > 0 { Some(t.rect.w) } else { None };
+        cache.ink_size(&t.content, &t.style, &t.runs, max_width)
+    }
+}

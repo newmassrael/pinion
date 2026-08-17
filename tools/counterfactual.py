@@ -50,18 +50,26 @@ failures of the *round*, for opposite reasons, and both are reported by name.
    test here is `error[E` / `could not compile` / `error: could not`.
 
    **So write the break as a WRONG answer, never an absent one.** The class has
-   been walked into four times and each time the cause was different, which is
+   been walked into five times and each time the cause was different, which is
    why this is authoring guidance rather than one rule:
 
    * an unused binding (`unused variable`) — R1687, R1694;
    * an unread field (`dead_code`) — R1694;
    * **deleting a helper's only call site**, which makes the helper itself dead
-     code under `-D warnings` — R1697, and the newest. `Self::open_float_grab`
-     was called from exactly one arm; removing that call did not test the arm,
-     it stopped the crate compiling.
+     code under `-D warnings` — R1697. `Self::open_float_grab` was called from
+     exactly one arm; removing that call did not test the arm, it stopped the
+     crate compiling;
+   * **a PARAMETER whose only use was the line you replaced** — R1712, and the
+     newest, walked into TWICE in one round. Replacing
+     `declared.floor() != Some(policy.floor())` with `false` and
+     `…(window_id, floor.0, floor.1)` with the ceiling each left an argument
+     nothing read. A parameter is easy to miss here because the eye is on the
+     expression, not on the signature above it: **before writing a case, look at
+     what the replaced text is the last reader OF.**
 
-   The repair is the same in all three: keep every name used and make it do the
-   wrong thing. Grab a panel named `"nothing"`; carry to the point the grab
+   The repair is the same in all of them: keep every name used and make it do
+   the wrong thing — invert the comparison, swap the two sizes, clamp with the
+   value instead of using it. Grab a panel named `"nothing"`; carry to the point the grab
    opened (a zero delta); raise a name that is not a panel; pass `None` where
    the real focus went. Each compiles, each is exactly one lie, and each is a
    thing the gate can actually catch.

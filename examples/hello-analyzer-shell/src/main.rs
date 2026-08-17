@@ -93,6 +93,7 @@ use pinion_core::external::{
 use pinion_core::focus_state;
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect, TextNode};
+use pinion_core::shrink::ShrinkPolicy;
 use pinion_core::style::{
     Border, BoxStyle, Chrome, ChromeEdge, ChromeRole, Color, LayoutStyle, PathStyle, Size, Stroke,
     TextOverflow, TextStyle,
@@ -131,6 +132,12 @@ vello_renderer_impl!(HelloAnalyzerShellRenderer, HelloAnalyzerShellRendererError
 const WIN_W: u32 = spec::WIN_W;
 const WIN_H: u32 = spec::WIN_H;
 
+/// R1712 — this screen's two floors, which are one size.
+///
+/// [`ShrinkPolicy::rigid`] says so as a declaration rather than as the absence
+/// of one: the window stops where the layout stops, deliberately.
+const SHRINK: ShrinkPolicy = ShrinkPolicy::rigid((WIN_W, WIN_H));
+
 /// The live surface, or the design size where no shell has published one.
 ///
 /// ★ R1671 — reported by a person maximising the window: the content stayed
@@ -143,8 +150,8 @@ const WIN_H: u32 = spec::WIN_H;
 /// `use_viewport_size` is a tracked read, so the view re-runs on a resize; it
 /// is strict about the owner scope and a bare unit call has none. The design
 /// size is the honest fallback there — it is what the specification measured.
-/// Below the floor it is also the answer: the shell declares `SizeStrategy::
-/// Fixed`, so a smaller surface is not a state this screen can be dragged into.
+/// Below the floor it is also the answer: [`SHRINK`] concedes nothing, so a
+/// smaller surface is not a state this screen can be dragged into.
 fn window_size() -> (u32, u32) {
     // ★★★★★ R1700 — the framework's policy, not this screen's copy of it.
     //
@@ -155,7 +162,7 @@ fn window_size() -> (u32, u32) {
     // simply wrong. Three versions of one policy, one of them defective, is
     // what `layout_size` exists to end — and it also removes the reason
     // `ShellState::surface` had to be read from two routes.
-    pinion_core::external::layout_size(VIEW_TAG, (WIN_W, WIN_H), (WIN_W, WIN_H))
+    pinion_core::external::layout_size(VIEW_TAG, SHRINK.comfortable(), (WIN_W, WIN_H))
 }
 
 /// The live surface width, and height.
@@ -7047,11 +7054,22 @@ fn palette_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
 impl WidgetView for AnalyzerShellView {
     type Renderer = HelloAnalyzerShellRenderer;
 
+    /// ★ R1712 — [`SHRINK`] is the whole declaration, and it is rigid: this
+    /// window stops exactly where its layout does. Behaviour is unchanged (a
+    /// floor pinned at the open size is what `SizeStrategy::Fixed` meant); what
+    /// changed is that the floor is now a *decision on the wire* rather than a
+    /// default nobody examined, and `scene/size_floor` can tell those apart.
+    ///
+    /// Measured, this screen could take 49 pixels narrower and 29 shorter with
+    /// everything still reachable. Left unmade for the reason its sibling
+    /// records: the band clips the rail, the canvas and the palette together,
+    /// so its honest declaration is most of the screen.
     fn initial_size_strategy() -> SizeStrategy {
-        SizeStrategy::Fixed {
-            width: WIN_W,
-            height: WIN_H,
-        }
+        SizeStrategy::shrinking(SHRINK, (WIN_W, WIN_H))
+    }
+
+    fn shrink_policy() -> Option<ShrinkPolicy> {
+        Some(SHRINK)
     }
 }
 

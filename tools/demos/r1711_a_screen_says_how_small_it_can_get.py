@@ -149,12 +149,30 @@ def the_floor_is_measured_and_the_declaration_agrees(
     ok(f"A/{name}: the floor was measured rather than refused", needed is not None)
     declared = report["declared"]["floor"]
     ok(f"A/{name}: the binding declares a floor at all", declared is not None)
+    # ★★★★★ R1712 — this asserted `needed == declared` and `verdict == exact`,
+    # and that was right while a screen had ONE minimum. It has two now: the
+    # size its layout stops reflowing at, and the size its window stops
+    # shrinking at. What the measurement is about is the first, so that is what
+    # it is checked against; the window floor is checked separately, against
+    # what the concession says it costs.
+    concession = report.get("concession")
+    ok(f"A/{name}: the binding declares a shrink policy", concession is not None)
+    comfortable = concession["comfortable"]
     assert_eq(
         (needed["width"], needed["height"]),
-        (declared["width"], declared["height"]),
-        f"A/{name}: what the screen NEEDS is what its binding DECLARES",
+        (comfortable["width"], comfortable["height"]),
+        f"A/{name}: what the screen needs WHOLE is what its policy calls comfortable",
     )
-    assert_eq(report["verdict"], "exact", f"A/{name}: the verdict says so in one word")
+    assert_eq(
+        (declared["width"], declared["height"]),
+        (concession["floor"]["width"], concession["floor"]["height"]),
+        f"A/{name}: and the floor the window system was told is the policy's",
+    )
+    assert_eq(
+        report["verdict"],
+        "conceded" if concession["band"] != {"width": 0, "height": 0} else "exact",
+        f"A/{name}: the verdict says which of the two cases this screen is in",
+    )
     ok(
         f"A/{name}: the floor is not degenerate "
         f"({needed['width']}x{needed['height']} of a "

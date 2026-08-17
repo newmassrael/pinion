@@ -7739,7 +7739,16 @@ impl<V: WidgetView> ShellCore<V> {
             let scene = self.compute_paint_scene_pure_internal(window_id, w, h);
             pinion_rpc::size_floor::cut_at(&scene, &mut self.text_cache)
         });
-        pinion_rpc::size_floor::report(&result, ceiling, declared, &<[_]>::to_vec)
+        // R1712 — the concession is audited at the floor the POLICY names, not
+        // at the one the search found: the question is whether the binding's
+        // declaration is honest about the size it lets the reader reach, and
+        // the measured floor is the other half of that comparison.
+        let concession = V::shrink_policy().map(|policy| {
+            let floor = policy.floor();
+            let scene = self.compute_paint_scene_pure_internal(window_id, floor.0, floor.1);
+            pinion_rpc::size_floor::audit_at(&scene, &mut self.text_cache, policy, declared)
+        });
+        pinion_rpc::size_floor::report(&result, ceiling, declared, concession, &<[_]>::to_vec)
     }
 
     /// R1710 §5.16 §5.12 §2 #2 — the size bounds the **primary** window
@@ -10274,6 +10283,29 @@ mod r1072_text_engine_wiring_tests {
     use pinion_text_font::Font;
 
     const NOTO: &[u8] = include_bytes!("../../pinion-text-font/tests/fonts/NotoSans-Regular.ttf");
+    const NANUM: &[u8] =
+        include_bytes!("../../pinion-text-font/tests/fonts/NanumGothic-Regular.ttf");
+
+    /// ★★★★★ R1712.1 — the fixtures this test may inject, in order of
+    /// preference, and it **picks the one that actually discriminates**.
+    ///
+    /// Step (0) below requires the injected §5.37 measure to differ from what
+    /// parley answers off-path, or assertion (1) is vacuous. That is a property
+    /// of the pair *(fixture, whatever this host resolves `sans-serif` to)*, and
+    /// it stopped holding: measured on a build host whose resolved sans-serif is
+    /// Noto Sans, the label came out **74 pixels on both arms** and the test
+    /// refused the run — doing exactly what it was written to do, and its
+    /// comment said what to do about it ("swap the fixture, do not weaken the
+    /// proof").
+    ///
+    /// Swapping by hand would have moved the collision to the next host rather
+    /// than removing it, so the swap is the test's own job now. What is being
+    /// proven — the shell's measure pass routes eligible text through the
+    /// injected engine — does not care *which* font is injected, only that its
+    /// metrics are distinguishable from the host's. Picking by measurement is
+    /// therefore the same proof with the host taken out of it, and a host where
+    /// **no** fixture discriminates is reported by name rather than passed.
+    const FIXTURES: [(&str, &[u8]); 2] = [("NotoSans", NOTO), ("NanumGothic", NANUM)];
     const LABEL: &str = "Measure";
     const FIELD: &str = "Editable";
     const PX: u32 = 18;
@@ -10342,21 +10374,41 @@ mod r1072_text_engine_wiring_tests {
 
     #[test]
     fn shell_threads_engine_into_measure_and_excludes_caret_bearing() {
-        let font = Font::from_bytes(NOTO.to_vec()).expect("parse NotoSans fixture");
-        let engine = SelfHostedTextEngine::from_font(font);
-        // The exact §5.37 box width the shell measure should size the eligible
-        // label to (its own measure arm, computed before the engine is moved in).
-        let measured = engine
-            .measure_text(LABEL, &TextStyle::new().with_size_px(PX), &[], None, false)
-            .expect("the eligible label is measurable via §5.37");
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let expected_label_w = measured.width.ceil() as u32;
-
         let mut sc = ShellCore::<TextEngineFixture>::new();
         // Engine OFF (PINION_TEXT_ENGINE unset in the test process): parley measure.
         let off = sc.compute_paint_scene(800, 200);
         let off_label_w = text_width(&off, LABEL).expect("label text node present");
         let off_field_w = text_width(&off, FIELD).expect("field text node present");
+
+        // R1712.1 — the fixture is CHOSEN, against what this host resolved above:
+        // the first whose §5.37 measure of the label is distinguishable from
+        // parley's. See [`FIXTURES`] for why that choice is the test's job.
+        let style = TextStyle::new().with_size_px(PX);
+        let mut tried = Vec::new();
+        let picked = FIXTURES.iter().find_map(|(name, bytes)| {
+            let font = Font::from_bytes(bytes.to_vec()).expect("parse the fixture font");
+            let engine = SelfHostedTextEngine::from_font(font);
+            // The exact §5.37 box width the shell measure should size the
+            // eligible label to (the engine's own measure arm, computed before
+            // the engine is moved into the shell).
+            let measured = engine
+                .measure_text(LABEL, &style, &[], None, false)
+                .expect("the eligible label is measurable via §5.37");
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let width = measured.width.ceil() as u32;
+            tried.push(format!("{name} measures {width}"));
+            (width != off_label_w).then_some((*name, engine, width))
+        });
+        let (fixture, engine, expected_label_w) = picked.unwrap_or_else(|| {
+            panic!(
+                "no fixture font is distinguishable from what this host resolves \
+                 `sans-serif` to (parley measured {off_label_w} for {LABEL:?} at \
+                 {PX}px; {}). Assertion (1) below would be vacuous, so this is a \
+                 refusal rather than a pass — add a metrically distinct fixture, \
+                 do not weaken the proof.",
+                tried.join(", ")
+            )
+        });
 
         // Inject the §5.37 engine via the test-only construction seam.
         sc.set_text_engine(Some(engine));
@@ -10364,15 +10416,14 @@ mod r1072_text_engine_wiring_tests {
         let on_label_w = text_width(&on, LABEL).expect("label text node present");
         let on_field_w = text_width(&on, FIELD).expect("field text node present");
 
-        // (0) R1072.1 — self-validate that this test is DISCRIMINATING: the §5.37
-        // measure must differ from the off-path parley measure, else assertion (1)
-        // below would pass vacuously. NotoSans (the injected fixture) differs
-        // metrically from the host's resolved sans-serif, so on != off. A failure
-        // here means this host's sans-serif IS the fixture font — swap the fixture,
-        // do not weaken the proof.
+        // (0) R1072.1 — the test is DISCRIMINATING: the §5.37 measure differs
+        // from the off-path parley measure, so assertion (1) below cannot pass
+        // vacuously. R1712.1 — this now follows from how `fixture` was chosen,
+        // and is still asserted because it is the property, not the mechanism.
         assert_ne!(
             on_label_w, off_label_w,
-            "§5.37 width must differ from parley's, or assertion (1) is vacuous"
+            "§5.37 width must differ from parley's ({fixture} injected), or \
+             assertion (1) is vacuous"
         );
         // (1) The engine reached the shell's MEASURE pass: the eligible label is
         // sized to the §5.37 box width, not parley's.

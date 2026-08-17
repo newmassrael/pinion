@@ -27,16 +27,29 @@
 //!
 //! | verdict | meaning |
 //! |---|---|
-//! | `short` | the declared floor is **below** what was measured — a reader can shrink this window until content is unreachable. A defect. |
+//! | `short` | the declared floor is **below** what was measured, and nothing accounts for the difference — a reader can shrink this window until content is sliced. A defect. |
+//! | `conceded` | ★ R1712 — the same relation, **declared**: the binding carries a [`ShrinkPolicy`] naming what the band gives up, and the screen honours it. A decision. |
 //! | `exact` | the two agree. |
 //! | `roomier` | the declared floor is above what was measured — the window refuses sizes it could take. A decision, and this read is how anyone can tell it was made. |
 //! | `undeclared` | the binding declares no floor at all. |
+//!
+//! # The concession
+//!
+//! R1712 — a screen has two minimums (the size its layout stops reflowing at,
+//! and the size its window stops shrinking at) and every binding in this tree
+//! spelled them as one number, which meant the decision *"let the reader make
+//! this window smaller than it lays out at, and here is what that costs"* could
+//! not be written down. `concession` is that decision, put beside what the
+//! screen actually does at the floor it names: what is clipped there, what the
+//! declaration covered, and — the part a concession can never excuse — whether
+//! anything is out of reach altogether.
 //!
 //! ```json
 //! { "jsonrpc": "2.0", "method": "scene/size_floor", "id": 1 }
 //! ```
 
 use pinion_core::reach::Cut;
+use pinion_core::shrink::ShrinkPolicy;
 use pinion_core::size_floor::{Axis, Floor, PairFit, Refused};
 use pinion_core::size_grant::SizeBounds;
 use pinion_text::LayoutCache;
@@ -117,11 +130,50 @@ pub fn cut_rows(cuts: &[Cut]) -> Vec<CutReport> {
 #[must_use]
 pub fn cut_at(scene: &pinion_core::scene::Scene, cache: &mut LayoutCache) -> Vec<CutReport> {
     let root = scene.rect();
-    let cuts = pinion_core::reach::cut(scene, (root.w, root.h), &mut |t| {
-        let max_width = if t.rect.w > 0 { Some(t.rect.w) } else { None };
-        cache.ink_size(&t.content, &t.style, &t.runs, max_width)
-    });
+    let cuts = pinion_core::reach::cut(scene, (root.w, root.h), &mut crate::ink_of(cache));
     cut_rows(&cuts)
+}
+
+/// R1712 — check a binding's declared concession against the screen at the
+/// floor that concession names.
+///
+/// `scene` must be the mirror paint laid out at [`ShrinkPolicy::floor`]; the
+/// two predicates are read here rather than by the embedder for the reason
+/// [`cut_at`] states, and this one needs **both** — what the size cannot show
+/// whole, and what it puts out of reach altogether. A concession is allowed to
+/// clip and is never allowed to lose.
+///
+/// `declared` is what the window system was actually told, so the report can
+/// say whether the binding built its `SizeStrategy` from this same policy.
+#[must_use]
+pub fn audit_at(
+    scene: &pinion_core::scene::Scene,
+    cache: &mut LayoutCache,
+    policy: ShrinkPolicy,
+    declared: SizeBounds,
+) -> ConcessionReport {
+    let root = scene.rect();
+    let cuts = pinion_core::reach::cut(scene, (root.w, root.h), &mut crate::ink_of(cache));
+    let sightings =
+        pinion_core::reach::out_of_sight(scene, (root.w, root.h), &mut crate::ink_of(cache));
+    let audit = pinion_core::shrink::audit(policy, &cuts, &sightings);
+    ConcessionReport {
+        comfortable: policy.comfortable().into(),
+        floor: policy.floor().into(),
+        band: policy.band().into(),
+        gives_up: policy
+            .gives_up()
+            .iter()
+            .map(|name| (*name).to_owned())
+            .collect(),
+        cut_at_floor: cut_rows(&cuts),
+        covered: audit.covered(),
+        unreachable: audit.unreachable().to_vec(),
+        unnamed: audit.unnamed().to_vec(),
+        stale: audit.stale().to_vec(),
+        declaration_split: declared.floor() != Some(policy.floor()),
+        verdict: audit.wire_word(),
+    }
 }
 
 /// One axis' measured boundary.
@@ -201,6 +253,52 @@ pub struct DeclaredReport {
     pub ceiling: Option<SizeReport>,
 }
 
+/// R1712 — what the binding decided to give up to let its window get smaller
+/// than the size it lays out at, and whether the screen honours that.
+///
+/// Absent entirely on a binding that declares no
+/// [`ShrinkPolicy`] — which is a different
+/// statement from a policy conceding nothing, and the difference is the whole
+/// reason `undeclared` exists as a verdict.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct ConcessionReport {
+    /// The size below which the layout stops reflowing and the window clips.
+    pub comfortable: SizeReport,
+    /// The size below which the window refuses to shrink.
+    pub floor: SizeReport,
+    /// How much smaller than its layout minimum the window may go, per axis.
+    /// `0` on an axis that concedes nothing.
+    pub band: SizeReport,
+    /// The regions the binding declares the band clips, by the name a reader
+    /// addresses them with. Empty exactly when there is no band.
+    pub gives_up: Vec<String>,
+    /// What the floor actually cuts — measured, in the same rows every other
+    /// list here uses.
+    pub cut_at_floor: Vec<CutReport>,
+    /// How many of those rows a declared name accounted for. Published because
+    /// a declaration made of region names covers many marks with few words, and
+    /// a reader judging whether that is too coarse needs the number it bought.
+    pub covered: usize,
+    /// ★ Marks nothing can bring into view at the floor. A concession may clip;
+    /// it may never make something unreachable, so this list being non-empty is
+    /// a broken floor rather than a stale list.
+    pub unreachable: Vec<String>,
+    /// Cut at the floor and covered by no declared name — the screen giving up
+    /// more than it admits to.
+    pub unnamed: Vec<String>,
+    /// Declared and covering nothing — a declaration that outlived its screen.
+    pub stale: Vec<String>,
+    /// ★ Whether the floor this policy declares is the floor the window system
+    /// was actually told. `true` is a binding that wrote its minimum twice and
+    /// they disagree — the drift [`ShrinkPolicy`]
+    /// exists to make unrepresentable, reported because a binding can still
+    /// reach around the type by spelling `SizeStrategy` by hand.
+    pub declaration_split: bool,
+    /// `honoured` / `stale` / `surprised` / `unreachable`, worst first. See
+    /// [`pinion_core::shrink::Audit::wire_word`].
+    pub verdict: &'static str,
+}
+
 /// The `scene/size_floor` result.
 ///
 /// `needed` and `refused` are mutually exclusive: exactly one is present, so a
@@ -229,10 +327,20 @@ pub struct SizeFloorOutcome {
     pub ceiling: SizeReport,
     /// What the binding declares for this window.
     pub declared: DeclaredReport,
-    /// `short` / `exact` / `roomier` / `undeclared`, or `unmeasured` when the
-    /// search was refused. See the module header for what each means.
+    /// R1712 — the concession the binding declared, absent when it declares
+    /// none.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub concession: Option<ConcessionReport>,
+    /// `short` / `exact` / `roomier` / `conceded` / `undeclared`, or
+    /// `unmeasured` when the search was refused. See the module header for what
+    /// each means.
     pub verdict: &'static str,
-    /// What the whole search cost.
+    /// What the whole search cost, in full mirror paints.
+    ///
+    /// ★ R1712 — the search's own probes. A binding that declares a policy
+    /// costs **one more** than this, for the audit paint at its floor, and that
+    /// one is not counted here because it is not part of the search: a caller
+    /// comparing this number across screens is comparing searches.
     pub probes: usize,
 }
 
@@ -272,13 +380,31 @@ fn axis_verdict(declared: Option<u32>, needed: u32) -> &'static str {
 /// what it can show is a defect, an undeclared floor is unknown territory, and
 /// a roomier one is a decision somebody made. Folding to the worst is what
 /// stops one honest axis from hiding the other.
+///
+/// ★ R1712 — `short` and `conceded` are the same arithmetic and different
+/// facts. A floor below what the screen needs whole is a defect **when nothing
+/// accounts for it**; when the binding declared a
+/// [`ShrinkPolicy`] and the screen honours
+/// it, the same relation is a decision, and this is where the two stop reading
+/// alike. Before R1712 there was no way to declare it, so `short` was the only
+/// available word and the node lab's 1625-pixel floor had to stay where a
+/// 1600-pixel display could not open it.
 #[must_use]
-pub fn verdict(declared: SizeBounds, needed: (u32, u32)) -> &'static str {
+pub fn verdict(
+    declared: SizeBounds,
+    needed: (u32, u32),
+    concession: Option<&ConcessionReport>,
+) -> &'static str {
     let floor = declared.floor();
     let width = axis_verdict(floor.map(|f| f.0), needed.0);
     let height = axis_verdict(floor.map(|f| f.1), needed.1);
     for rank in ["short", "undeclared", "roomier"] {
         if width == rank || height == rank {
+            if rank == "short"
+                && concession.is_some_and(|c| c.verdict == "honoured" && !c.declaration_split)
+            {
+                return "conceded";
+            }
             return rank;
         }
     }
@@ -295,6 +421,7 @@ pub fn report<T>(
     result: &Result<Floor<T>, Refused<T>>,
     ceiling: (u32, u32),
     declared: SizeBounds,
+    concession: Option<ConcessionReport>,
     into_rows: &dyn Fn(&[T]) -> Vec<CutReport>,
 ) -> SizeFloorOutcome {
     let declared_report = DeclaredReport {
@@ -328,7 +455,8 @@ pub fn report<T>(
                 refused: None,
                 ceiling: ceiling.into(),
                 declared: declared_report,
-                verdict: verdict(declared, needed),
+                verdict: verdict(declared, needed, concession.as_ref()),
+                concession,
                 probes: floor.probes(),
             }
         }
@@ -347,6 +475,7 @@ pub fn report<T>(
             }),
             ceiling: ceiling.into(),
             declared: declared_report,
+            concession,
             verdict: "unmeasured",
             probes: 0,
         },
@@ -377,7 +506,142 @@ pub fn handle_scene_size_floor(outcome: Option<&SizeFloorOutcome>) -> Result<Val
 #[cfg(test)]
 mod tests {
     use super::*;
+    use pinion_core::scene::{ContainerNode, Rect, Scene, TextNode};
     use pinion_core::size_floor::{Measured, measure};
+    use pinion_text::LayoutCache;
+
+    /// The analysis tool's own shape at the node lab's conceded floor, small
+    /// enough to read: a 1625-wide bar in a 1506-wide window, with a chip whose
+    /// tail and a pane whose right third are past the edge.
+    ///
+    /// ★ R1712.1 — this fixture exists because a counterfactual PASSED.
+    /// [`audit_at`] assembles the entire concession report and had no test at
+    /// this layer at all: the tests below build a `ConcessionReport` by hand, so
+    /// inverting `declaration_split` inside `audit_at` left every one of them
+    /// green. The gate was living a layer above the defect, in the integration
+    /// demo — the shape R1710 recorded and this round repeated.
+    fn screen() -> Scene {
+        // The root is the SURFACE and carries no tag, exactly as the real
+        // screens are shaped: a mark's path runs through the panes above it, so
+        // `lab.appbar` is what covers the chip and the root covers nothing.
+        let mut bar = ContainerNode::new(vec![
+            Scene::Text(
+                TextNode::new("state", Rect::new(1505, 10, 100, 12)).with_tag("lab.appbar.state"),
+            ),
+            Scene::Text(
+                TextNode::new("ok", Rect::new(10, 10, 16, 12)).with_tag("lab.appbar.title"),
+            ),
+        ]);
+        bar.rect = Rect::new(0, 0, 1625, 40);
+        bar.tag = Some("lab.appbar".into());
+        let mut pane = ContainerNode::new(Vec::new());
+        pane.rect = Rect::new(1313, 40, 312, 60);
+        pane.tag = Some("lab.inspector".into());
+        let mut root = ContainerNode::new(vec![Scene::Container(bar), Scene::Container(pane)]);
+        root.rect = Rect::new(0, 0, 1506, 100);
+        Scene::Container(root)
+    }
+
+    fn audit_screen(policy: ShrinkPolicy, declared: SizeBounds) -> ConcessionReport {
+        audit_at(&screen(), &mut LayoutCache::new(), policy, declared)
+    }
+
+    /// The honest case, end to end through the real predicates — and the
+    /// declaration is the node lab's own, so this fixture is that screen shrunk
+    /// to something a reader can hold in their head.
+    #[test]
+    fn r1712_a_declaration_that_names_what_the_floor_clips_is_honoured() {
+        let policy =
+            ShrinkPolicy::conceding((1625, 100), (1506, 100), &["lab.appbar", "lab.inspector"]);
+        let report = audit_screen(policy, SizeBounds::floored((1506, 100)));
+        assert_eq!(report.verdict, "honoured");
+        assert_eq!(report.band, SizeReport::from((119, 0)));
+        assert!(
+            report.unreachable.is_empty(),
+            "nothing is out of reach here"
+        );
+        assert!(report.unnamed.is_empty(), "every clipped mark is declared");
+        // ★ Two names, THREE marks — the app bar is clipped, so is the chip
+        // inside it, and the pane is the third. That third one is the ancestry
+        // rule doing its job, and the number is what publishes it.
+        assert_eq!(report.covered, 3);
+    }
+
+    /// The partial case, kept separate: naming only the pane leaves the app bar
+    /// and its chip undeclared, and the report says WHICH by name.
+    #[test]
+    fn r1712_a_declaration_that_names_half_of_it_says_which_half() {
+        let policy = ShrinkPolicy::conceding((1625, 100), (1506, 100), &["lab.inspector"]);
+        let report = audit_screen(policy, SizeBounds::floored((1506, 100)));
+        assert_eq!(report.verdict, "surprised");
+        assert_eq!(report.unnamed, ["lab.appbar", "lab.appbar.state"]);
+        assert_eq!(report.covered, 1);
+        assert!(
+            report.stale.is_empty(),
+            "the pane it named really is clipped"
+        );
+    }
+
+    /// ★★★★★ The counterfactual's own case: the two declared floors are
+    /// COMPARED, and a binding that told the window system a different number
+    /// reads `declaration_split`. Nothing at this layer checked it before.
+    #[test]
+    fn r1712_a_floor_the_window_system_was_not_told_reads_as_split() {
+        let policy = ShrinkPolicy::conceding((1625, 100), (1506, 100), &["lab.inspector"]);
+        let agreed = audit_screen(policy, SizeBounds::floored((1506, 100)));
+        assert!(
+            !agreed.declaration_split,
+            "the window system was told exactly what the policy declares"
+        );
+        let split = audit_screen(policy, SizeBounds::floored((1625, 100)));
+        assert!(
+            split.declaration_split,
+            "a binding that wrote its minimum twice and disagreed says so"
+        );
+        let undeclared = audit_screen(policy, SizeBounds::UNBOUNDED);
+        assert!(
+            undeclared.declaration_split,
+            "and declaring no floor at all is not agreement either"
+        );
+    }
+
+    /// The report carries the marks themselves, in the same rows every other
+    /// list here uses, so a caller reading `unnamed` can find out how far past
+    /// the window each one reaches.
+    #[test]
+    fn r1712_the_concession_carries_the_marks_it_is_about() {
+        let policy = ShrinkPolicy::conceding((1625, 100), (1506, 100), &["lab.inspector"]);
+        let report = audit_screen(policy, SizeBounds::floored((1506, 100)));
+        let mut tags: Vec<_> = report
+            .cut_at_floor
+            .iter()
+            .filter_map(|row| row.tag.clone())
+            .collect();
+        tags.sort();
+        assert_eq!(tags, ["lab.appbar", "lab.appbar.state", "lab.inspector"]);
+        for row in &report.cut_at_floor {
+            assert!(
+                row.short_by.iter().any(|edge| *edge > 0),
+                "a row that overhangs nothing is not a cut"
+            );
+        }
+    }
+
+    /// A rigid policy over the same screen names everything, because it claims
+    /// nothing is clipped at its floor and three things are.
+    #[test]
+    fn r1712_a_rigid_policy_over_a_clipping_floor_is_surprised() {
+        let report = audit_screen(
+            ShrinkPolicy::rigid((1506, 100)),
+            SizeBounds::floored((1506, 100)),
+        );
+        assert_eq!(report.verdict, "surprised");
+        assert_eq!(report.covered, 0);
+        assert_eq!(
+            report.unnamed,
+            ["lab.appbar", "lab.appbar.state", "lab.inspector"]
+        );
+    }
 
     fn rows(items: &[&'static str]) -> Vec<CutReport> {
         items
@@ -428,7 +692,7 @@ mod tests {
     fn r1711_a_declared_floor_below_the_measured_one_is_short() {
         let result = measure((1600, 900), needs((1200, 500)));
         let declared = SizeBounds::floored((1200, 400));
-        let out = report(&result, (1600, 900), declared, &|t| rows(t));
+        let out = report(&result, (1600, 900), declared, None, &|t| rows(t));
         assert_eq!(out.verdict, "short");
         assert_eq!(out.needed, Some(SizeReport::from((1200, 500))));
         assert_eq!(out.declared.floor, Some(SizeReport::from((1200, 400))));
@@ -441,6 +705,7 @@ mod tests {
             &result,
             (1600, 900),
             SizeBounds::floored((1200, 500)),
+            None,
             &|t| rows(t),
         );
         assert_eq!(exact.verdict, "exact");
@@ -448,10 +713,13 @@ mod tests {
             &result,
             (1600, 900),
             SizeBounds::floored((1400, 600)),
+            None,
             &|t| rows(t),
         );
         assert_eq!(roomier.verdict, "roomier");
-        let none = report(&result, (1600, 900), SizeBounds::UNBOUNDED, &|t| rows(t));
+        let none = report(&result, (1600, 900), SizeBounds::UNBOUNDED, None, &|t| {
+            rows(t)
+        });
         assert_eq!(none.verdict, "undeclared");
         assert_eq!(none.declared.floor, None);
     }
@@ -466,6 +734,7 @@ mod tests {
             &result,
             (1600, 900),
             SizeBounds::floored((1200, 400)),
+            None,
             &|t| rows(t),
         );
         assert_eq!(out.verdict, "short");
@@ -478,6 +747,7 @@ mod tests {
             &result,
             (1600, 900),
             SizeBounds::floored((1200, 500)),
+            None,
             &|t| rows(t),
         );
         let width = out.width.expect("a measured width");
@@ -517,6 +787,7 @@ mod tests {
             &result,
             (1600, 900),
             SizeBounds::floored((1481, 340)),
+            None,
             &|t| rows(t),
         );
         let pair = out.pair.expect("a measured pair");
@@ -536,9 +807,13 @@ mod tests {
     #[test]
     fn r1711_a_refusal_carries_no_number_at_all() {
         let result = measure((800, 600), needs((1200, 500)));
-        let out = report(&result, (800, 600), SizeBounds::floored((400, 300)), &|t| {
-            rows(t)
-        });
+        let out = report(
+            &result,
+            (800, 600),
+            SizeBounds::floored((400, 300)),
+            None,
+            &|t| rows(t),
+        );
         assert_eq!(out.verdict, "unmeasured");
         assert_eq!(out.needed, None);
         assert_eq!(out.width, None);
@@ -558,6 +833,102 @@ mod tests {
     fn r1711_an_absent_outcome_is_a_different_answer_from_an_empty_one() {
         let err = handle_scene_size_floor(None).expect_err("no outcome installed");
         assert!(format!("{err:?}").contains("SizeFloorUnavailable"));
+    }
+
+    /// A concession report shaped like the node lab's, parameterised on the
+    /// three things the verdict rule reads.
+    fn concession(verdict: &'static str, split: bool) -> ConcessionReport {
+        ConcessionReport {
+            comfortable: (1200, 500).into(),
+            floor: (1100, 400).into(),
+            band: (100, 100).into(),
+            gives_up: vec!["lab.inspector".to_string()],
+            cut_at_floor: rows(&["lab.inspector"]),
+            covered: 1,
+            unreachable: Vec::new(),
+            unnamed: Vec::new(),
+            stale: Vec::new(),
+            declaration_split: split,
+            verdict,
+        }
+    }
+
+    /// ★★★★★ R1712 — the same arithmetic that reads `short` reads `conceded`
+    /// once the binding has declared what the band costs and the screen honours
+    /// it. Before this the word did not exist, so a screen that wanted to let
+    /// its window get smaller had no way to say so and stay green.
+    #[test]
+    fn r1712_a_declared_and_honoured_shortfall_reads_conceded() {
+        let result = measure((1600, 900), needs((1200, 500)));
+        let out = report(
+            &result,
+            (1600, 900),
+            SizeBounds::floored((1100, 400)),
+            Some(concession("honoured", false)),
+            &|t| rows(t),
+        );
+        assert_eq!(out.verdict, "conceded");
+        assert_eq!(out.needed, Some(SizeReport::from((1200, 500))));
+        let published = out.concession.expect("the concession rides along");
+        assert_eq!(published.floor, SizeReport::from((1100, 400)));
+        assert_eq!(published.comfortable, SizeReport::from((1200, 500)));
+    }
+
+    /// A declaration that does not match the screen buys nothing: the window is
+    /// still shrinkable past what it can show, and the reason it is allowed to
+    /// be has stopped being true.
+    #[test]
+    fn r1712_a_shortfall_whose_concession_is_not_honoured_stays_short() {
+        let result = measure((1600, 900), needs((1200, 500)));
+        for verdict in ["surprised", "stale", "unreachable"] {
+            let out = report(
+                &result,
+                (1600, 900),
+                SizeBounds::floored((1100, 400)),
+                Some(concession(verdict, false)),
+                &|t| rows(t),
+            );
+            assert_eq!(out.verdict, "short", "concession verdict {verdict}");
+        }
+    }
+
+    /// ★ And a binding that declared a policy but told the window system a
+    /// different floor is not credited either — the concession describes a
+    /// floor nobody is standing at.
+    #[test]
+    fn r1712_a_split_declaration_is_not_credited_as_a_concession() {
+        let result = measure((1600, 900), needs((1200, 500)));
+        let out = report(
+            &result,
+            (1600, 900),
+            SizeBounds::floored((1050, 400)),
+            Some(concession("honoured", true)),
+            &|t| rows(t),
+        );
+        assert_eq!(out.verdict, "short");
+    }
+
+    /// The other verdicts are untouched by a concession riding along — only the
+    /// `short` relation has a second reading.
+    #[test]
+    fn r1712_a_concession_does_not_change_an_exact_or_roomier_verdict() {
+        let result = measure((1600, 900), needs((1200, 500)));
+        let exact = report(
+            &result,
+            (1600, 900),
+            SizeBounds::floored((1200, 500)),
+            Some(concession("honoured", false)),
+            &|t| rows(t),
+        );
+        assert_eq!(exact.verdict, "exact");
+        let roomier = report(
+            &result,
+            (1600, 900),
+            SizeBounds::floored((1400, 600)),
+            Some(concession("honoured", false)),
+            &|t| rows(t),
+        );
+        assert_eq!(roomier.verdict, "roomier");
     }
 
     #[test]

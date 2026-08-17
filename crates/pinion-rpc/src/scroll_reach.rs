@@ -257,10 +257,7 @@ pub fn collect(scene: &Scene, cache: &mut LayoutCache) -> ScrollReachOutcome {
     let root = scene.rect();
     let mut marks = 0usize;
     scene.for_each_node(&mut |_| marks += 1);
-    let out = pinion_core::reach::out_of_sight(scene, (root.w, root.h), &mut |t| {
-        let max_width = if t.rect.w > 0 { Some(t.rect.w) } else { None };
-        cache.ink_size(&t.content, &t.style, &t.runs, max_width)
-    });
+    let out = pinion_core::reach::out_of_sight(scene, (root.w, root.h), &mut crate::ink_of(cache));
     report((root.w, root.h), &out, marks)
 }
 

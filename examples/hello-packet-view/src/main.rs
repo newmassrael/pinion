@@ -60,6 +60,7 @@ use pinion_core::external::{
 use pinion_core::focus_state;
 use pinion_core::reactive::Signal;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
+use pinion_core::shrink::ShrinkPolicy;
 use pinion_core::style::{Border, BoxStyle, Color, LayoutStyle, Size, TextOverflow, TextStyle};
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::voice::Silence;
@@ -235,6 +236,13 @@ const MIN_W: u32 = LIST_FLOOR + TREE_W + BYTES_W;
 /// four message rows, plus the reassembly strip.
 const MIN_H: u32 = APP_BAR_H + FILTER_H + CONTEXT_H + HEAD_H + ROW_H * 4 + REASSEMBLY_H;
 
+/// R1712 — this screen's two floors, which are one size.
+///
+/// [`ShrinkPolicy::rigid`] is the honest spelling of "the window stops where
+/// the layout stops": a declaration somebody made, not a default nobody
+/// examined. Both readers below take their number from here.
+const SHRINK: ShrinkPolicy = ShrinkPolicy::rigid((MIN_W, MIN_H));
+
 /// The live surface, or the design size where no shell has published one.
 ///
 /// ★★★★★ R1700 — **the framework's answer, and the same one on both halves of
@@ -252,7 +260,7 @@ const MIN_H: u32 = APP_BAR_H + FILTER_H + CONTEXT_H + HEAD_H + ROW_H * 4 + REASS
 /// policy was lifted into [`pinion_core::external::layout_size`] rather than
 /// spelled here a third time.
 fn window_size() -> (u32, u32) {
-    pinion_core::external::layout_size(VIEW_TAG, (MIN_W, MIN_H), (WIN_W, WIN_H))
+    pinion_core::external::layout_size(VIEW_TAG, SHRINK.comfortable(), (WIN_W, WIN_H))
 }
 
 fn body_rect() -> Rect {
@@ -3311,11 +3319,21 @@ impl WidgetView for PacketView {
     /// what was MEASURED (verdict `exact`), so a change that makes the screen
     /// need more room fails there rather than shipping a window a reader can
     /// shrink past its own content.
+    /// ★ R1712 — and the two numbers now come out of one declaration. This
+    /// screen concedes nothing: [`SHRINK`] is rigid, so its window stops
+    /// exactly where its layout does. That is a decision — measured, this
+    /// screen could go 195 pixels narrower and 37 shorter with everything still
+    /// reachable — and it is left unmade here because the band's honest
+    /// declaration is *every pane*: the reassembly lanes, the byte pane and the
+    /// filter count all clip at once, which buys a reader little and would cost
+    /// the concession list its meaning. The node lab is where the band earns
+    /// itself, because one display width sits inside it.
     fn initial_size_strategy() -> SizeStrategy {
-        SizeStrategy::OpenResizable {
-            size: (WIN_W, WIN_H),
-            min: Some((MIN_W, MIN_H)),
-        }
+        SizeStrategy::shrinking(SHRINK, (WIN_W, WIN_H))
+    }
+
+    fn shrink_policy() -> Option<ShrinkPolicy> {
+        Some(SHRINK)
     }
 }
 

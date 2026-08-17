@@ -1359,7 +1359,20 @@ fn r1687_the_toolbars_declared_width_covers_what_it_paints() {
              a window cannot open smaller than its own minimum, so one of the \
              two is a claim nothing can honour"
         );
-        assert_eq!(min, (MIN_W, super::MIN_H));
+        // ★★★★★ R1712 — the floor is no longer `MIN_W`, and that is the round's
+        // point: `MIN_W` is where the LAYOUT stops and this is where the WINDOW
+        // stops, 119 pixels lower, which is what puts this screen back on a
+        // 1600-pixel display. Asserted against the policy rather than against
+        // either constant, because the policy is the one place both are
+        // written — an assertion on a repeated literal here would be checking
+        // this test's copy against the binding's.
+        assert_eq!(min, super::SHRINK.floor());
+        assert_eq!(super::SHRINK.comfortable(), (MIN_W, super::MIN_H));
+        assert!(
+            super::SHRINK.concedes(),
+            "this screen concedes width, and the gate for what that costs is \
+             `tools/demos/r1712_a_window_says_what_it_gives_up.py`"
+        );
     });
 }
 
