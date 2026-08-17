@@ -278,10 +278,19 @@ impl WidgetA11y for OverflowClipView {
 impl WidgetView for OverflowClipView {
     type Renderer = HelloOverflowClipRenderer;
 
+    /// R1710 §5.16 — `OpenResizable` with **no declared floor**, not `Fixed`.
+    ///
+    /// `Fixed` pins the OS-resize floor AT the open size, and this screen exists
+    /// to show what a body yields when it runs out of room — it is driven
+    /// smaller on purpose. The declaration was the default rather than a
+    /// decision, and it went unnoticed until R1710 made the framework resolve a
+    /// resize against it (a window manager had been enforcing it all along; the
+    /// bare display CI runs on never did). `min: None` declares the absence of a
+    /// floor rather than inventing a number nobody measured.
     fn initial_size_strategy() -> SizeStrategy {
-        SizeStrategy::Fixed {
-            width: WIN_W,
-            height: WIN_H,
+        SizeStrategy::OpenResizable {
+            size: (WIN_W, WIN_H),
+            min: None,
         }
     }
 }

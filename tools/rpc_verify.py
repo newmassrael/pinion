@@ -3744,6 +3744,20 @@ def resize_and_settle(
     Waits on the ROOT's own width and height, because those are the two numbers
     a resize is about — an outcome, not an elapsed interval.
 
+    ★★★★★ R1710 — it waits for the size the response says was **GRANTED**, not
+    for the size that was asked. A window declares a floor; an ask below it is
+    resolved up to that floor and the window will never take the asked size, so
+    a wait for the ask is a wait for something that cannot happen. Measured: on
+    a display with a window manager, `r1708_a_drag_is_answered_once.py` asked
+    the dashboard (floor 1440x900) for 880 of height and timed out here after 8
+    seconds, reporting "the window settles at (1637, 880)" — a sentence about
+    the framework for a size the framework had been told to refuse. On the bare
+    display CI runs on, nothing enforced the floor and the same call passed.
+
+    It also asserts the response's granted size against the PAINTED rectangle,
+    so the wire and the window cannot disagree — the divergence R1710 measured
+    was invisible precisely because no caller ever compared them.
+
     Returns the settled `from=paint` snapshot, so a caller reads the frame it
     waited for rather than taking another one that could be a frame later.
     """
@@ -3751,14 +3765,25 @@ def resize_and_settle(
     assert resp is not None and resp.result is not None, (
         f"scene/resize to {size} was accepted"
     )
+    outcome = resp.result
+    granted = (outcome["width"], outcome["height"]) if isinstance(outcome, dict) else size
+    if granted != size:
+        # Loud rather than silent: a caller asked for a size its own window
+        # declared it will not take, and the round's record should say so.
+        print(
+            f"[harness] scene/resize {size} -> granted {granted} "
+            f"(width {outcome['width_bound']}, height {outcome['height_bound']})"
+        )
 
     def settled() -> Any:
-        shot = tf.snapshot(source="paint", viewport=size)
+        shot = tf.snapshot(source="paint", viewport=granted)
         rect = shot.get("rect", {}) if isinstance(shot, dict) else {}
-        return shot if (rect.get("w"), rect.get("h")) == size else None
+        return shot if (rect.get("w"), rect.get("h")) == granted else None
 
     return wait_until(
-        settled, timeout=timeout, desc=f"the window settles at {size} after resize"
+        settled,
+        timeout=timeout,
+        desc=f"the window settles at {granted} after a resize asking {size}",
     )
 
 

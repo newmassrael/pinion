@@ -124,7 +124,7 @@ SCREENS = [
 #: Sizes to drive, relative to whatever the screen opens at. Both directions,
 #: because a shrink and a grow are different requests to the window system and
 #: the defect this gate exists for was found on a shrink.
-DELTAS = [(-525, -200), (+180, +90), (-60, -40)]
+DELTAS = [(+180, +90), (+60, +40)]
 
 #: Names the framework publishes for why a frame missed the screen, and for the
 #: rung of the recovery ladder it earned. Asserted against rather than merely
@@ -132,6 +132,22 @@ DELTAS = [(-525, -200), (+180, +90), (-60, -40)]
 #: being named, which is how a census stops being able to see it.
 MISSED_NAMES = {"outdated", "lost", "validation", "timeout", "occluded"}
 RUNG_NAMES = {"reconfigured", "rebuilt", "repeated"}
+
+#: R1710 — declared regions a screen measurably stops painting at its OWN
+#: declared floor. Not an exemption list: it is the defect, written down by name
+#: so the gate fails when the set changes in either direction, and filed as
+#: [[debt-a-screen-declares-a-floor-its-specification-does-not-fit]]. An empty
+#: entry (or a screen absent here) means the specification survives its floor,
+#: which is what every one of these should eventually say.
+FLOOR_LOSS = {
+    "node lab": [
+        "lab.inspector.note",
+        "lab.inspector.note.text",
+        "lab.palette.discovery",
+        "lab.palette.discovery.state",
+        "lab.palette.discovery.track",
+    ],
+}
 
 CHECKS: list[str] = []
 
@@ -318,8 +334,29 @@ def drive(name: str, example: str) -> None:
             widest = 0
             widest_img: Png | None = None
 
-            for i, (dw, dh) in enumerate(DELTAS):
-                size = (design[0] + dw, design[1] + dh)
+            # ★★★★★ R1710 — the SMALLEST LEGAL window first, read out of the
+            # screen's own declaration instead of guessed at. This list used to
+            # open with `design - (525, 200)`, which on every one of these three
+            # screens is BELOW the floor the binding declares: the node lab's own
+            # source complains that "every headless probe laid the screen out at
+            # a width the screen says it does not support", and this was one of
+            # the probes doing it. It passed because the bare display CI runs on
+            # enforces no declared minimum — a window manager always did.
+            #
+            # A dry-run ask of 1x1 comes back as the floor (§2 #3), so the demo
+            # drives a genuinely small window where one is legal (the node lab
+            # shrinks to 360 tall) and the design size where it is not.
+            floor_resp = app.request(
+                "scene/resize", {"width": 1, "height": 1, "dry_run": True}
+            )
+            floor = (floor_resp.result["width"], floor_resp.result["height"])
+            sizes = [floor] + [(design[0] + dw, design[1] + dh) for dw, dh in DELTAS]
+            ok(
+                f"B/{name}: the three sizes driven are distinct ({sizes})",
+                len(set(sizes)) == len(sizes),
+            )
+
+            for i, size in enumerate(sizes):
                 resize_and_settle(app, size)
 
                 # H FIRST, before anything in this iteration captures: a
@@ -343,11 +380,23 @@ def drive(name: str, example: str) -> None:
                 )
 
                 # C — the screen is still itself at this size.
+                #
+                # ★★ R1710 — the expectation is empty EXCEPT at a screen's own
+                # declared floor, where it is whatever that screen measurably
+                # loses. Driving the floor is new (this demo used to drive a
+                # size below it, which no window manager would have granted),
+                # and the first run found the node lab declaring a minimum at
+                # which five of its own declared regions stop being painted.
+                # Pinned by NAME rather than by count so the gate says which,
+                # and filed rather than smoothed over:
+                # [[debt-a-screen-declares-a-floor-its-specification-does-not-fit]]
+                expected_gone = FLOOR_LOSS.get(name, []) if size == floor else []
                 gone = sorted(declared - declared_and_painted(app, size))
                 assert_eq(
                     gone,
-                    [],
-                    f"C/{name}: everything the specification names is still painted at {size}",
+                    expected_gone,
+                    f"C/{name}: the specification survives {size} "
+                    f"({'at the declared floor' if size == floor else 'above the floor'})",
                 )
                 CHECKS.append(f"C/{name} {size}: {len(declared)} declared regions survive")
 

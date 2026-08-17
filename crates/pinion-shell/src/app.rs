@@ -2479,8 +2479,13 @@ impl<V: WidgetView + 'static> AppShell<V> {
             return;
         };
         let (content_w, content_h) = paint_scene.intrinsic_content_size();
-        let target_w = content_w.clamp(min.0, max.0);
-        let target_h = content_h.clamp(min.1, max.1);
+        // R1710 §5.16 — resolved through the ONE home for a declared
+        // `(min, max)` pair (`SizeStrategy::content_bounds`), which the
+        // headless screenshot walk also calls. Pre-R1710 both sites clamped by
+        // hand and nothing checked they agreed.
+        let (target_w, target_h) = crate::SizeStrategy::content_bounds(min, max)
+            .resolve((content_w, content_h))
+            .size();
         if (target_w, target_h) != (w.get(), h.get()) {
             let _ = window
                 .request_inner_size(LogicalSize::new(f64::from(target_w), f64::from(target_h)));
@@ -7056,8 +7061,13 @@ fn try_headless_screenshot<V: WidgetView>() -> bool {
         crate::SizeStrategy::IntrinsicAfterFirstPaint { min, max } => {
             let measure = core.compute_paint_scene(max.0.max(1), max.1.max(1));
             let (cw, ch) = measure.intrinsic_content_size();
-            let target_w = cw.clamp(min.0, max.0).max(1);
-            let target_h = ch.clamp(min.1, max.1).max(1);
+            // R1710 §5.16 — the same resolution the live walk runs, through the
+            // one home (`SizeStrategy::content_bounds`). The `max(1)` stays: a
+            // zero-extent surface is a wgpu refusal, not a size question.
+            let (bw, bh) = crate::SizeStrategy::content_bounds(min, max)
+                .resolve((cw, ch))
+                .size();
+            let (target_w, target_h) = (bw.max(1), bh.max(1));
             let scene = core.compute_paint_scene(target_w, target_h);
             (target_w, target_h, scene)
         }

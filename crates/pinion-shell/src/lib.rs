@@ -57,6 +57,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use pinion_core::display::{Anchor, Anchored, DisplayId, DisplayTopology};
+use pinion_core::size_grant::SizeBounds;
 use pinion_core::window_level::WindowLevel;
 use pinion_core::{Intent, Scene, Signal, WidgetCore};
 use vello::Scene as VelloScene;
@@ -735,6 +736,50 @@ impl SizeStrategy {
             Self::IntrinsicAfterFirstPaint { min, .. } => Some(min),
             Self::OpenResizable { min, .. } => min,
         }
+    }
+
+    /// R1710 §5.16 §5.12 §2 #2 — the bounds a programmatic resize of this
+    /// window resolves against, as a [`SizeBounds`] value.
+    ///
+    /// Derived from [`Self::min_inner_floor`], which is the SAME floor the
+    /// shell declares to the window system at create — so "what the window
+    /// system was told" and "what `scene/resize` enforces" are one fact read
+    /// twice rather than two that can drift.
+    ///
+    /// **No ceiling, deliberately.** The shell never calls winit's
+    /// `with_max_inner_size`, so no ceiling is declared to the window system
+    /// and a user drag is not capped by one. Capping only the RPC path would
+    /// give one question two answers depending on which path asked it — the
+    /// exact shape of defect R1710 exists to remove. The `max` an
+    /// [`Self::IntrinsicAfterFirstPaint`] binding declares bounds the CONTENT
+    /// walk ([`Self::content_bounds`]), a different question; making it a
+    /// window ceiling as well is a decision that needs its own consumer.
+    #[must_use]
+    pub const fn window_bounds(self) -> SizeBounds {
+        match self.min_inner_floor() {
+            Some(floor) => SizeBounds::floored(floor),
+            None => SizeBounds::UNBOUNDED,
+        }
+    }
+
+    /// R1710 §5.16 — the bounds the post-first-paint content walk resolves the
+    /// measured content bbox against.
+    ///
+    /// The one home for a `(min, max)` pair that three sites used to clamp by
+    /// hand (the live walk, the headless screenshot walk, and — before R1710 —
+    /// nothing checked they agreed). Takes the pair rather than `self` because
+    /// the live site reads it from the window slot's pending request, not from
+    /// the strategy.
+    ///
+    /// A pair whose `max` is below its `min` is resolved **in favour of the
+    /// floor**, because `min` is documented as the invariant ("window never
+    /// opens smaller than this") while `max` is documented as a clamp on the
+    /// walk. Pre-R1710 that declaration reached `u32::clamp`, whose own
+    /// assertion panics — a contradictory declaration crashed the render pass
+    /// with a message about integers.
+    #[must_use]
+    pub fn content_bounds(min: (u32, u32), max: (u32, u32)) -> SizeBounds {
+        SizeBounds::new(Some(min), Some(max)).unwrap_or_else(|| SizeBounds::floored(min))
     }
 
     /// R1092 §5.16 §5.41 §2 #7 — the window's **declared** logical-pixel
@@ -2060,6 +2105,90 @@ mod tests {
         };
         assert_eq!(s.initial_logical_size(), (1000, 700));
         assert_eq!(s.min_inner_floor(), None);
+    }
+
+    // ── R1710 — the two bound projections ───────────────────────────────
+    //
+    // ★★★★★ These exist because two counterfactuals PASSED. The only gate
+    // over `content_bounds` was `r670a_carry_clearance.py`, which drives the
+    // one binding that declares a ceiling and asserts its window ends up
+    // strictly inside `[min, max]` — and that binding's content bbox sits
+    // strictly inside them already, so NEITHER bound binds. Measured: the
+    // demo stayed green with the declared ceiling quadrupled AND with the
+    // declared floor replaced by 1x1. A gate that drives the layer above a
+    // pure function cannot see the function being wrong; this is the layer.
+
+    #[test]
+    fn r1710_window_bounds_is_the_floor_the_window_system_was_told() {
+        assert_eq!(
+            SizeStrategy::Fixed {
+                width: 1440,
+                height: 900,
+            }
+            .window_bounds()
+            .floor(),
+            Some((1440, 900)),
+        );
+        assert_eq!(
+            SizeStrategy::OpenResizable {
+                size: (1625, 900),
+                min: Some((1625, 360)),
+            }
+            .window_bounds()
+            .floor(),
+            Some((1625, 360)),
+            "the open size is NOT the floor on this variant, and a shell that \
+             confused them was self-consistently green",
+        );
+        // No ceiling is declared to the window system, so none is enforced —
+        // see the method's own doc for why capping only the RPC path would
+        // give one question two answers.
+        assert_eq!(
+            SizeStrategy::Fixed {
+                width: 1440,
+                height: 900,
+            }
+            .window_bounds()
+            .ceiling(),
+            None,
+        );
+        let free = SizeStrategy::OpenResizable {
+            size: (1000, 700),
+            min: None,
+        };
+        assert_eq!(free.window_bounds(), SizeBounds::UNBOUNDED);
+    }
+
+    #[test]
+    fn r1710_content_bounds_binds_at_both_ends() {
+        let b = SizeStrategy::content_bounds((240, 100), (480, 400));
+        assert_eq!(b.floor(), Some((240, 100)));
+        assert_eq!(b.ceiling(), Some((480, 400)));
+        // A bbox inside the pair — the only case the popover gate exercises.
+        assert_eq!(b.resolve((300, 220)).size(), (300, 220));
+        // And the two the gate could not: content larger than the ceiling, and
+        // content smaller than the floor.
+        assert_eq!(b.resolve((900, 900)).size(), (480, 400));
+        assert_eq!(b.resolve((10, 10)).size(), (240, 100));
+        assert_eq!(
+            b.resolve((900, 10)).width(),
+            pinion_core::size_grant::Bound::Ceiling { at: 480 },
+        );
+        assert_eq!(
+            b.resolve((900, 10)).height(),
+            pinion_core::size_grant::Bound::Floor { at: 100 },
+        );
+    }
+
+    #[test]
+    fn r1710_a_contradictory_declaration_resolves_in_favour_of_the_floor() {
+        // Pre-R1710 this pair reached `u32::clamp`, whose own assertion panics
+        // — a contradictory declaration crashed the render pass with a message
+        // about integers. `min` is the documented invariant, so it wins.
+        let b = SizeStrategy::content_bounds((800, 600), (400, 300));
+        assert_eq!(b.floor(), Some((800, 600)));
+        assert_eq!(b.ceiling(), None);
+        assert_eq!(b.resolve((100, 100)).size(), (800, 600));
     }
 
     // R1092 §5.16 §5.41 §2 #7 — `declared_size` is the AI-introspection

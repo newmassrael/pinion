@@ -471,10 +471,23 @@ impl WidgetA11y for VirtualColumnsView {
 impl WidgetView for VirtualColumnsView {
     type Renderer = HelloVirtualColumnsRenderer;
 
+    /// R1710 §5.16 — `OpenResizable` with **no declared floor**, not `Fixed`.
+    ///
+    /// `Fixed` pins the OS-resize floor AT the open size ("fixed-size dialog"
+    /// semantics), and this screen is a virtualised grid whose whole subject is
+    /// what it re-measures when the viewport gets smaller. The declaration was
+    /// the default rather than a decision, and nothing could see the difference
+    /// until R1710 made the framework resolve a resize against it: `scene/resize`
+    /// to a shorter viewport was then granted at the floor, and two demos that
+    /// had passed for rounds went red at once.
+    ///
+    /// `min: None` declares the ABSENCE of a floor rather than inventing a
+    /// number nobody measured — which is a different statement from a floor at
+    /// zero, and the one that is true here.
     fn initial_size_strategy() -> pinion_shell::SizeStrategy {
-        pinion_shell::SizeStrategy::Fixed {
-            width: WIN_W,
-            height: WIN_H,
+        pinion_shell::SizeStrategy::OpenResizable {
+            size: (WIN_W, WIN_H),
+            min: None,
         }
     }
 }

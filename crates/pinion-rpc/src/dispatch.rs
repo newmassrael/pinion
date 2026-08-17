@@ -36,6 +36,7 @@ use pinion_core::event::WheelDelta;
 use pinion_core::external::{IntrospectValue, RawJson, ReadRefusal};
 use pinion_core::input::{GesturePhase, PointerButton, PointerEdge, PointerKind};
 use pinion_core::intent::Intent;
+use pinion_core::size_grant::SizeBounds;
 use pinion_core::style::{Border, BoxStyle, Color};
 use pinion_core::{Owner, Scene, SceneRevision};
 use serde::{Deserialize, Serialize};
@@ -354,6 +355,16 @@ pub struct DispatchContext<'a> {
     /// iteration. Asynchronous — AI clients pair with
     /// `scene/wait_for_frame` for stable observation.
     pub resize_request: Option<&'a mut (dyn FnMut(u32, u32) + 'a)>,
+    /// R1710 §5.16 §5.12 §2 #2 — the bounds the addressed window DECLARES for
+    /// its own inner size, which `scene/resize` resolves the ask against before
+    /// forwarding it through [`Self::resize_request`].
+    ///
+    /// Absent is [`SizeBounds::UNBOUNDED`] — every ask granted as asked, which
+    /// is the pre-R1710 behaviour a surface that declares no floor still has.
+    /// The shell stamps it from the same `SizeStrategy::min_inner_floor` it
+    /// declares to the window system at create, so the enforcement and the
+    /// declaration are one fact rather than two that can drift.
+    pub window_bounds: Option<SizeBounds>,
     /// (R1088 §5.16 §5.41 §2 #7 PR-31, generalised R1610) The WRITE peer of
     /// the `scene/windows` read: the application writes the patched axes into
     /// its `Signal<Vec<WindowSpec>>` and the reconcile passes drive the live
@@ -1691,6 +1702,7 @@ impl<'a> DispatchContext<'a> {
             containment: None,
             scroll_reach: None,
             resize_request: None,
+            window_bounds: None,
             declare_request: None,
             accelerators: Vec::new(),
             accelerator_focus: None,
@@ -1762,6 +1774,15 @@ impl<'a> DispatchContext<'a> {
     #[must_use]
     pub fn with_resize_request(mut self, request: &'a mut (dyn FnMut(u32, u32) + 'a)) -> Self {
         self.resize_request = Some(request);
+        self
+    }
+
+    /// Builder: declare the addressed window's own size bounds (R1710 §5.16
+    /// §5.12), which `scene/resize` resolves an ask against before forwarding
+    /// it. Un-set means [`SizeBounds::UNBOUNDED`].
+    #[must_use]
+    pub const fn with_window_bounds(mut self, bounds: SizeBounds) -> Self {
+        self.window_bounds = Some(bounds);
         self
     }
 
@@ -2273,6 +2294,10 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     // `scene/access` invokes it once to dump the AccessKit projection.
     let mut access_producer = ctx.access_producer.take();
     let mut resize_request = ctx.resize_request.take();
+    // R1710 §5.16 §5.12 — the addressed window's declared size bounds. Copied
+    // rather than taken (it is a value, not a hook), and `None` resolves to
+    // `UNBOUNDED` at the one arm that reads it.
+    let window_bounds = ctx.window_bounds;
     let mut declare_request = ctx.declare_request.take();
     let mut window_focus_request = ctx.window_focus_request.take();
     // R51.73 §5.40 — same split-borrow pattern for the focus manager:
@@ -3204,7 +3229,11 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                     )]
                     let req = resize_request.as_mut().map(|p| &mut **p);
                     (
-                        handle_scene_resize(req, request.params.as_ref()),
+                        handle_scene_resize(
+                            req,
+                            window_bounds.unwrap_or(SizeBounds::UNBOUNDED),
+                            request.params.as_ref(),
+                        ),
                         // Async — actual scene mutation lands when the
                         // embedder repaints. No immediate OCC bump.
                         HandlerKind::Read,
@@ -8649,11 +8678,13 @@ fn layout_query_error_to_rpc(err: LayoutQueryError) -> RpcError {
     RpcError::invalid_params(variant)
 }
 
-/// R47.7.4 §5.12 — `scene/resize` dispatch entry. Invokes the
-/// application's `resize_request` closure with the requested logical
-/// `(width, height)`.
+/// R47.7.4 §5.12 — `scene/resize` dispatch entry. R1710: resolves the ask
+/// against the window's declared `bounds` and invokes the application's
+/// `resize_request` closure with the **granted** logical `(width, height)`, so
+/// the closure never forwards a size the window declared it will not take.
 fn handle_scene_resize<F>(
     resize_request: Option<&mut F>,
+    bounds: SizeBounds,
     params: Option<&Value>,
 ) -> Result<Value, RpcError>
 where
@@ -8662,7 +8693,7 @@ where
     let params = require_params(params)?;
     let typed: ResizeParams = serde_json::from_value(params.clone())
         .map_err(|e| RpcError::invalid_params(format!("params shape: {e}")))?;
-    match resize(typed, resize_request) {
+    match resize(typed, bounds, resize_request) {
         Ok(outcome) => serde_json::to_value(outcome)
             .map_err(|e| RpcError::invalid_params(format!("serialize: {e}"))),
         Err(err) => Err(resize_error_to_rpc(err)),

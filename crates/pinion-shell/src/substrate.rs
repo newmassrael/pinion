@@ -45,6 +45,7 @@ use pinion_core::GesturePhase;
 use pinion_core::accelerator::Chord;
 use pinion_core::event::WheelDelta;
 use pinion_core::reactive::{FONT_SOURCES, FontSourceReport, SelfHostedFace};
+use pinion_core::size_grant::SizeBounds;
 use pinion_core::{Frame, Intent, KeyPress, Scene, SceneRevision};
 use pinion_rpc::{
     DeferredInput, DispatchContext, DragButton, DragPhase, KeyWireState, LayoutNode, PreviewLedger,
@@ -6309,6 +6310,13 @@ impl<V: WidgetView> ShellCore<V> {
         // nothing.
         let declared_windows =
             (request.method == "scene/windows").then(|| self.declared_window_specs());
+        // R1710 §5.16 §5.12 §2 #2 — the bounds the resized window DECLARES, for
+        // `scene/resize` only. Same reason as the line above: it reads the
+        // window signal under `root_owner`, so it is resolved before the
+        // disjoint-field borrow split and gated on the method so every other
+        // dispatch pays nothing.
+        let resize_bounds =
+            (request.method == "scene/resize").then(|| self.primary_window_bounds());
         // R1576 §5.16 §5.41 §2 #7 — the desk, for the two methods that resolve
         // a placement against it. Gated on the method so every other dispatch
         // pays nothing, exactly as the declared-window set is.
@@ -6728,6 +6736,12 @@ impl<V: WidgetView> ShellCore<V> {
             // never-painted `None` surfaces `NoLastPaintLayout`).
             if let Some(paint) = last_paint_scene_ref {
                 ctx = ctx.with_last_paint_scene(paint);
+            }
+            // R1710 §5.16 §5.12 — the declared bounds `scene/resize` resolves
+            // an ask against. Absent for every other method, which is why the
+            // dispatcher's default is `UNBOUNDED` rather than a guess.
+            if let Some(bounds) = resize_bounds {
+                ctx = ctx.with_window_bounds(bounds);
             }
             // R1546 §5.36 §5.12 — the bands collected above, for
             // `scene/text_backgrounds` only.
@@ -7646,6 +7660,33 @@ impl<V: WidgetView> ShellCore<V> {
     /// declared intent. Resolved only
     /// for the `scene/windows` method (gated at the dispatch call site), so
     /// every other dispatch pays nothing.
+    /// R1710 §5.16 §5.12 §2 #2 — the size bounds the **primary** window
+    /// declares, for `scene/resize` to resolve an ask against.
+    ///
+    /// Primary, not the addressed scope, because the resize hook itself targets
+    /// the primary window (`AppShell` documents that at the closure: per-window
+    /// `scene/resize` is a follow-up axis awaiting a real consumer). Reporting
+    /// another window's floor while resizing this one would be a second fact
+    /// disagreeing with the first — the defect class this round is closing.
+    ///
+    /// Reads the same declared-window list [`Self::declared_window_specs`]
+    /// projects, so the floor enforced here is the floor
+    /// `SizeStrategy::min_inner_floor` declared to the window system at create.
+    /// A binding declaring no window at all resolves to
+    /// [`SizeBounds::UNBOUNDED`] — nothing declared, nothing enforced.
+    fn primary_window_bounds(&self) -> SizeBounds {
+        let core = &self.core;
+        let specs = core.root_owner().run(|| match V::windows_signal() {
+            Some(sig) => sig.get(),
+            None => V::windows(),
+        });
+        specs
+            .iter()
+            .find(|spec| spec.id.as_ref() == pinion_runtime::DEFAULT_WINDOW)
+            .or_else(|| specs.first())
+            .map_or(SizeBounds::UNBOUNDED, |spec| spec.strategy.window_bounds())
+    }
+
     fn declared_window_specs(&self) -> Vec<pinion_rpc::DeclaredWindow> {
         let core = &self.core;
         let specs = core.root_owner().run(|| match V::windows_signal() {

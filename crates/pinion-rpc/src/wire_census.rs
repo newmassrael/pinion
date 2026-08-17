@@ -1695,7 +1695,11 @@ pub const WIRE_TYPES: &[WireType] = &[
             fields: &[
                 WireField::new("width", WireTy::Integer, None),
                 WireField::new("height", WireTy::Integer, None),
-                WireField::new("requested", WireTy::Boolean, None),
+                WireField::new("asked", WireTy::Array, None),
+                WireField::new("width_bound", WireTy::Object, Some("SizeBound")),
+                WireField::new("height_bound", WireTy::Object, Some("SizeBound")),
+                WireField::new("as_asked", WireTy::Boolean, None),
+                WireField::new("applied", WireTy::Boolean, None),
             ],
         },
     },
@@ -1705,6 +1709,7 @@ pub const WIRE_TYPES: &[WireType] = &[
             fields: &[
                 WireField::new("width", WireTy::Integer, None),
                 WireField::new("height", WireTy::Integer, None),
+                WireField::new("dry_run", WireTy::Boolean, None).optional(),
             ],
         },
     },
@@ -1843,6 +1848,19 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("tag", WireTy::String, None),
                 WireField::new("path", WireTy::String, None),
                 WireField::new("shadowed", WireTy::String, None),
+            ],
+        },
+    },
+    WireType {
+        name: "SizeBound",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("kind", WireTy::String, None)
+                    .accepting(pinion_core::size_grant::Bound::KINDS),
+                // Absent, not null, on the arm that names no bound: the enum has
+                // no `at` to serialize there, and declaring it nullable would
+                // promise a key the wire does not carry.
+                WireField::new("at", WireTy::Integer, None).optional(),
             ],
         },
     },
