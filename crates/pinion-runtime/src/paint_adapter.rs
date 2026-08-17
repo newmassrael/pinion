@@ -937,20 +937,22 @@ fn clip_shape_of(scene: &Scene) -> Option<KurboRect> {
 /// (R1520 §5.16) The overlap of two rects; empty (`w == 0 || h == 0`) when
 /// they do not meet.
 ///
-/// A local peer of [`pinion_core::scene::Rect::union`] rather than an addition
-/// to `Rect`'s surface: the damage accumulator is the only caller, and
-/// `pinion-core` already carries the intersection *predicate*
-/// (`rects_intersect`) that hit-testing wants. A second consumer is what would
-/// make this a `Rect` method.
+/// ★ R1713.1 — this used to spell the arithmetic out, above a comment saying "a
+/// second consumer is what would make this a `Rect` method". R1713 needed the
+/// same fold twice more (a clip chain in `pinion_core::reach`, and the scroll
+/// query translation in `Scene`), so the method exists and this is the caller
+/// that asked for it.
+///
+/// What stays here is the *empty answer*: the damage accumulator carries a clip
+/// that met nothing down the walk as a box that paints nothing, so `None` is
+/// turned back into a zero-extent rect at the corner the two boxes reached
+/// towards — the same position the hand-written version produced.
 fn intersection(
     a: pinion_core::scene::Rect,
     b: pinion_core::scene::Rect,
 ) -> pinion_core::scene::Rect {
-    let lx = a.x.max(b.x);
-    let ty = a.y.max(b.y);
-    let rx = a.x.saturating_add(a.w).min(b.x.saturating_add(b.w));
-    let by = a.y.saturating_add(a.h).min(b.y.saturating_add(b.h));
-    pinion_core::scene::Rect::new(lx, ty, rx.saturating_sub(lx), by.saturating_sub(ty))
+    a.intersect(b)
+        .unwrap_or_else(|| pinion_core::scene::Rect::new(a.x.max(b.x), a.y.max(b.y), 0, 0))
 }
 
 /// (R1520 §5.16) `rect`'s axis-aligned bounding box after `transform`,

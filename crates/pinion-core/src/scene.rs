@@ -4602,23 +4602,19 @@ impl ScrollNode {
     /// negative-offset edges (R51.181).
     fn translate_query_into_content(&self, query: Rect) -> Option<Rect> {
         let vp = self.viewport;
-        let vp_right = vp.x.saturating_add(vp.w);
-        let vp_bottom = vp.y.saturating_add(vp.h);
-        let q_right = query.x.saturating_add(query.w);
-        let q_bottom = query.y.saturating_add(query.h);
         // Step 1: clip the query against the viewport in root-local
-        // coords. Zero-extent intersection means the query never
-        // reaches inside the scroll container.
-        let lx = query.x.max(vp.x);
-        let ty = query.y.max(vp.y);
-        let rx = q_right.min(vp_right);
-        let by = q_bottom.min(vp_bottom);
-        if lx >= rx || ty >= by {
-            return None;
-        }
+        // coords. No overlap means the query never reaches inside the
+        // scroll container.
+        //
+        // ★ R1713.1 — through [`Rect::intersect`], which R1713 added for the
+        // clip-chain fold. This step spelled the same four `max`/`min` lines by
+        // hand, including the strict `lx >= rx` guard that IS that method's
+        // half-open rule; the paint adapter's damage accumulator had a third
+        // copy. One fold, three callers.
+        let visible = query.intersect(vp)?;
         // Step 2: shift root-local → viewport-local (origin at vp).
-        let v_lx = lx - vp.x;
-        let v_ty = ty - vp.y;
+        let v_lx = visible.x - vp.x;
+        let v_ty = visible.y - vp.y;
         // Step 3: shift viewport-local → content-intrinsic by
         // adding the scroll offset. `i64` promotion prevents wrap
         // on negative-offset edges (mirrors R51.181 hit_test).
@@ -4631,7 +4627,7 @@ impl ScrollNode {
         let c_ty_u = u32::try_from(c_ty).ok()?;
         // Width / height stay rigid — the translation is a pure
         // shift in both x and y.
-        Some(Rect::new(c_lx_u, c_ty_u, rx - lx, by - ty))
+        Some(Rect::new(c_lx_u, c_ty_u, visible.w, visible.h))
     }
 }
 
