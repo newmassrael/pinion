@@ -255,6 +255,45 @@ pub struct OutOfSight {
 /// rectangles, and the paint is the one a reader sees.
 #[must_use]
 pub fn out_of_sight(scene: &Scene, window: (u32, u32), ink_of: InkOf<'_>) -> Vec<OutOfSight> {
+    let mut found = Vec::new();
+    walk_marks(scene, window, ink_of, &mut |mark| {
+        if intersects(mark.rect, mark.viewport.shown()) {
+            return; // some of it is on screen: the reader has it
+        }
+        let short_by = Overhang::of(mark.rect, mark.viewport.reachable());
+        let reach = if short_by.is_contained() {
+            Reach::Scrollable {
+                to: least_move(mark.rect, &mark.viewport),
+            }
+        } else {
+            Reach::Lost { short_by }
+        };
+        found.push(OutOfSight {
+            tag: mark.tag,
+            path: mark.path,
+            content: mark.content,
+            rect: mark.rect,
+            viewport: mark.viewport,
+            reach,
+        });
+    });
+    found
+}
+
+/// Every mark with the viewport it is judged against, handed to `visit` in
+/// paint order.
+///
+/// ★ R1711 — lifted out of [`out_of_sight`] when [`cut`] became its second
+/// caller. What the two share is not a convenience: it is the definition of a
+/// mark's rectangle (shaped ink for a run, the promised box otherwise) and of
+/// its innermost enclosing viewport, and two copies of those would be two
+/// answers to "where is this" for one screen.
+fn walk_marks(
+    scene: &Scene,
+    window: (u32, u32),
+    ink_of: InkOf<'_>,
+    visit_mark: &mut dyn FnMut(Mark),
+) {
     // Pass 1 — every node's window-absolute rectangle, so a scroll node's
     // viewport can be named without re-folding the walk by hand. Same shape as
     // `containment::escapes`, and for the same reason: the second draft of that
@@ -290,8 +329,8 @@ pub fn out_of_sight(scene: &Scene, window: (u32, u32), ink_of: InkOf<'_>) -> Vec
         max: (0, 0),
     };
 
-    let mut found = Vec::new();
-    scene.for_each_node(&mut |visit| {
+    scene.for_each_node(&mut |node_visit| {
+        let visit = &node_visit;
         if visit.ancestors.is_empty() {
             return; // the root is the surface; it is not shown inside anything
         }
@@ -323,27 +362,92 @@ pub fn out_of_sight(scene: &Scene, window: (u32, u32), ink_of: InkOf<'_>) -> Vec
         if rect.w == 0 || rect.h == 0 {
             return; // nothing was drawn, so nothing is being missed
         }
-        if intersects(rect, viewport.shown()) {
-            return; // some of it is on screen: the reader has it
-        }
-        let short_by = Overhang::of(rect, viewport.reachable());
-        let reach = if short_by.is_contained() {
-            Reach::Scrollable {
-                to: least_move(rect, &viewport),
-            }
-        } else {
-            Reach::Lost { short_by }
-        };
-        found.push(OutOfSight {
+        visit_mark(Mark {
             tag: visit.node.tag().map(str::to_owned),
             path: visit.path.to_vec(),
             content,
             rect,
             viewport,
-            reach,
+        });
+    });
+}
+
+/// One mark that cannot be seen WHOLE at this size, however the reader scrolls.
+///
+/// The sibling of [`OutOfSight`], and the difference between them is the
+/// difference between two questions:
+///
+/// * [`out_of_sight`] asks *what is the reader not looking at right now* — a
+///   question about the current offsets, whose answer changes when they scroll.
+/// * [`cut`] asks *what can this size never show in full* — a question about
+///   the size alone, which is what a window's floor is made of.
+///
+/// ★★★★★ R1711 measured why the second cannot be spelled with the first. At
+/// 1506 pixels wide the analysis tool's node lab reports **nothing** out of
+/// sight, because one pixel of a 100-pixel status chip is still on screen and
+/// its 312-pixel inspector pane still starts at 1313. A floor derived from that
+/// answer is a floor at which the inspector is sliced and the chip is a line.
+/// "Some of it is visible" is the right answer to the first question and the
+/// wrong one to the second.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Cut {
+    /// The mark's own tag, when it has one.
+    pub tag: Option<String>,
+    /// The mark's address, as `scene/locate` reports it.
+    pub path: Vec<String>,
+    /// What the mark holds, for a text run.
+    pub content: Option<String>,
+    /// Where the mark sits in its viewport's content coordinates, using the
+    /// shaped ink for a text run and the promised box for anything else.
+    pub rect: Rect,
+    /// The viewport it was judged against.
+    pub viewport: Viewport,
+    /// How far past everything that viewport can EVER show it reaches, per
+    /// edge. Never fully zero — that is what makes it a cut.
+    pub short_by: Overhang,
+}
+
+/// Every mark this size can never show whole, at any scroll offset.
+///
+/// The same walk and the same viewport arithmetic [`out_of_sight`] uses, with
+/// one predicate changed: a mark is judged against what its viewport's range
+/// can bring into view, and it has to fit **entirely**. Scrolling is not a
+/// defect, so a row inside a pane that can reach it is not reported; a row past
+/// the end of that pane's content is, and so is a pane sliced by the window.
+///
+/// # Precondition
+///
+/// [`out_of_sight`]'s, unchanged: the scene has been through
+/// `pinion_runtime::compute_layout`.
+#[must_use]
+pub fn cut(scene: &Scene, window: (u32, u32), ink_of: InkOf<'_>) -> Vec<Cut> {
+    let mut found = Vec::new();
+    walk_marks(scene, window, ink_of, &mut |mark| {
+        let short_by = Overhang::of(mark.rect, mark.viewport.reachable());
+        if short_by.is_contained() {
+            return;
+        }
+        found.push(Cut {
+            tag: mark.tag,
+            path: mark.path,
+            content: mark.content,
+            rect: mark.rect,
+            viewport: mark.viewport,
+            short_by,
         });
     });
     found
+}
+
+/// One mark, with the viewport it is judged against — the shared input of both
+/// public derivations here, so the two cannot come to disagree about what a
+/// mark's rectangle or its enclosing viewport is.
+struct Mark {
+    tag: Option<String>,
+    path: Vec<String>,
+    content: Option<String>,
+    rect: Rect,
+    viewport: Viewport,
 }
 
 /// Read a scroll node as a viewport.
@@ -509,6 +613,83 @@ mod tests {
 
     fn by_tag<'r>(found: &'r [OutOfSight], tag: &str) -> Option<&'r OutOfSight> {
         found.iter().find(|o| o.tag.as_deref() == Some(tag))
+    }
+
+    fn cut_tags(found: &[Cut]) -> Vec<String> {
+        let mut v: Vec<String> = found.iter().filter_map(|c| c.tag.clone()).collect();
+        v.sort();
+        v
+    }
+
+    /// ★★★★★ R1711 — the case that made [`cut`] a separate derivation, taken
+    /// from the screen that produced it.
+    ///
+    /// A 100-wide status chip whose last pixel is inside the window, and a
+    /// 312-wide pane sliced by 119: [`out_of_sight`] reports **neither**, and
+    /// it is right not to — the reader is looking at part of both. A floor
+    /// derived from that answer is a floor at which the chip is a line.
+    #[test]
+    fn r1711_a_mark_the_window_slices_is_cut_though_it_is_not_out_of_sight() {
+        let screen = boxed(
+            Rect::new(0, 0, 1625, 100),
+            "appbar",
+            vec![
+                text("state", Rect::new(1505, 10, 100, 12), "appbar.state"),
+                boxed(Rect::new(1313, 20, 312, 60), "inspector", vec![]),
+                text("ok", Rect::new(10, 10, 16, 12), "appbar.title"),
+            ],
+        );
+        let window = (1506, 100);
+        assert_eq!(
+            out_of_sight(&screen, window, &mut stub_ink),
+            Vec::new(),
+            "nothing is out of SIGHT: a pixel of each is on screen",
+        );
+        let cuts = cut(&screen, window, &mut stub_ink);
+        // The appbar itself is the root here, and the root is the surface —
+        // it is not shown inside anything, so it is not judged (the rule
+        // `out_of_sight` states and shares).
+        assert_eq!(cut_tags(&cuts), ["appbar.state", "inspector"]);
+        let chip = cuts
+            .iter()
+            .find(|c| c.tag.as_deref() == Some("appbar.state"))
+            .expect("the chip is cut");
+        assert_eq!(chip.short_by.right, 39, "5 characters of ink past 1506");
+        assert_eq!((chip.short_by.left, chip.short_by.top), (0, 0));
+    }
+
+    /// ★★ R1711 — and scrolling is not a defect: a row the pane's range can
+    /// bring fully into view is NOT cut, while the row past the end of the
+    /// content is. Same fixture as the R1685 pair above, so the two
+    /// derivations are read against one geometry.
+    #[test]
+    fn r1711_a_row_a_pane_can_reach_is_not_cut_and_one_past_its_content_is() {
+        assert_eq!(
+            cut_tags(&cut(&pane(0), (400, 400), &mut stub_ink)),
+            ["row.c"]
+        );
+        // The hidden box publishes no range, so both overflowing rows are cut
+        // — the same split R1685 pinned for the other question — and so is the
+        // 300-tall content block itself, which the scrolling twin can reach.
+        assert_eq!(
+            cut_tags(&cut(&hidden_pane(), (400, 400), &mut stub_ink)),
+            ["pane.content", "row.b", "row.c"]
+        );
+    }
+
+    /// ★★ R1711 — the answer does not move when the reader does. A floor is a
+    /// property of the size, so scrolling the pane changes what is out of sight
+    /// and must change nothing here.
+    #[test]
+    fn r1711_what_is_cut_does_not_depend_on_where_the_reader_scrolled_to() {
+        let parked = cut(&pane(0), (400, 400), &mut stub_ink);
+        let scrolled = cut(&pane(200), (400, 400), &mut stub_ink);
+        assert_eq!(cut_tags(&parked), cut_tags(&scrolled));
+        assert_ne!(
+            out_of_sight(&pane(0), (400, 400), &mut stub_ink),
+            out_of_sight(&pane(200), (400, 400), &mut stub_ink),
+            "while the other question's answer moves with the offset",
+        );
     }
 
     /// (R1685) The same three rows behind a box that clips because it says so

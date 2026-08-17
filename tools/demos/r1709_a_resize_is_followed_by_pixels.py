@@ -133,21 +133,18 @@ DELTAS = [(+180, +90), (+60, +40)]
 MISSED_NAMES = {"outdated", "lost", "validation", "timeout", "occluded"}
 RUNG_NAMES = {"reconfigured", "rebuilt", "repeated"}
 
-#: R1710 — declared regions a screen measurably stops painting at its OWN
-#: declared floor. Not an exemption list: it is the defect, written down by name
-#: so the gate fails when the set changes in either direction, and filed as
-#: [[debt-a-screen-declares-a-floor-its-specification-does-not-fit]]. An empty
-#: entry (or a screen absent here) means the specification survives its floor,
-#: which is what every one of these should eventually say.
-FLOOR_LOSS = {
-    "node lab": [
-        "lab.inspector.note",
-        "lab.inspector.note.text",
-        "lab.palette.discovery",
-        "lab.palette.discovery.state",
-        "lab.palette.discovery.track",
-    ],
-}
+#: ★★★★★ R1711 — R1710's `FLOOR_LOSS` table lived here, naming five regions of
+#: the node lab as measurably lost at its own declared floor. Measured again
+#: through `scene/scroll_reach`: **all five are `scrollable`**, each with the
+#: offset that shows it, and the screen's `lost` count at that size is zero. The
+#: five were not lost; they were below the fold of two scrolling panes, and the
+#: question "is it painted right now" cannot tell those apart.
+#:
+#: So the table is gone and the check below asks the question that has an
+#: answer: a declared region that is not painted at this size must be one the
+#: reader can SCROLL to, and nothing may be lost. That is strictly stronger — it
+#: fails on a region that vanishes for any other reason — and it needs no
+#: per-screen exemptions at all.
 
 CHECKS: list[str] = []
 
@@ -381,24 +378,34 @@ def drive(name: str, example: str) -> None:
 
                 # C — the screen is still itself at this size.
                 #
-                # ★★ R1710 — the expectation is empty EXCEPT at a screen's own
-                # declared floor, where it is whatever that screen measurably
-                # loses. Driving the floor is new (this demo used to drive a
-                # size below it, which no window manager would have granted),
-                # and the first run found the node lab declaring a minimum at
-                # which five of its own declared regions stop being painted.
-                # Pinned by NAME rather than by count so the gate says which,
-                # and filed rather than smoothed over:
-                # [[debt-a-screen-declares-a-floor-its-specification-does-not-fit]]
-                expected_gone = FLOOR_LOSS.get(name, []) if size == floor else []
+                # ★★★★★ R1711 — the predicate, corrected. R1710 asked whether
+                # every declared region was still PAINTED and read five regions
+                # of the node lab as lost at its own floor. They are not lost:
+                # they are below the fold of two scrolling panes, and the read
+                # that can tell those apart says so. So the question here is now
+                # "is anything unreachable", which needs no exemption table.
                 gone = sorted(declared - declared_and_painted(app, size))
+                reach = app.request("scene/scroll_reach")
+                assert reach is not None and reach.result is not None
+                rows = reach.result["out_of_sight"]
+                scrollable = {
+                    row["tag"] for row in rows if row["reach"] == "scrollable" and row["tag"]
+                }
                 assert_eq(
-                    gone,
-                    expected_gone,
-                    f"C/{name}: the specification survives {size} "
-                    f"({'at the declared floor' if size == floor else 'above the floor'})",
+                    [g for g in gone if g not in scrollable],
+                    [],
+                    f"C/{name}: every declared region {size} does not paint is one "
+                    f"the reader can scroll to",
                 )
-                CHECKS.append(f"C/{name} {size}: {len(declared)} declared regions survive")
+                assert_eq(
+                    reach.result["lost"],
+                    0,
+                    f"C/{name}: nothing on this screen is out of reach at {size}",
+                )
+                CHECKS.append(
+                    f"C/{name} {size}: {len(declared)} declared regions survive "
+                    f"({len(gone)} of them by scrolling)"
+                )
 
                 health = the_ladder_is_coherent(app, name, f"at {size}")
                 print(

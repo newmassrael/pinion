@@ -3296,10 +3296,25 @@ impl WidgetView for PacketView {
         before != (edit.caret(), edit.selection_anchor())
     }
 
+    /// ★★★★★ R1711 — this screen told its own layout it lays out down to
+    /// [`MIN_W`] x [`MIN_H`] and told the window system, through
+    /// `SizeStrategy::Fixed`, that it can never be smaller than the size it
+    /// opens at. Two declarations about one screen, contradicting each other,
+    /// and nothing compared them until `scene/size_floor` measured the screen
+    /// and answered `roomier`: the window refused **554 pixels of height** the
+    /// screen can actually take.
+    ///
+    /// `Fixed` here was never a decision — the sibling screens are resizable,
+    /// this one is a three-pane capture viewer whose whole point is being sized
+    /// to the reader's display, and the floor it declares to the layout is the
+    /// floor it now declares to the window. The gate asserts the two agree with
+    /// what was MEASURED (verdict `exact`), so a change that makes the screen
+    /// need more room fails there rather than shipping a window a reader can
+    /// shrink past its own content.
     fn initial_size_strategy() -> SizeStrategy {
-        SizeStrategy::Fixed {
-            width: WIN_W,
-            height: WIN_H,
+        SizeStrategy::OpenResizable {
+            size: (WIN_W, WIN_H),
+            min: Some((MIN_W, MIN_H)),
         }
     }
 }

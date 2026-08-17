@@ -204,11 +204,15 @@ fn push_field(out: &mut Vec<RawField>, decl: &str, attrs: &str, require_pub: boo
          ({attrs}) — teach the parser and the census before using it"
     );
     let wire = attr_value(attrs, "rename").unwrap_or(name).to_owned();
-    out.push((
-        wire,
-        attrs.contains("skip_serializing_if"),
-        ty.trim().to_owned(),
-    ));
+    // ★ R1711 — `serde(default)` is the OTHER spelling of "this key may be
+    // absent", and it is the one a request type uses: `skip_serializing_if`
+    // governs what we write, `default` governs what a caller may leave out.
+    // Both make the field optional on the wire, so both are read here. R1710's
+    // `ResizeParams::dry_run` is the case: censused optional (correctly — every
+    // pre-R1710 caller omits it) and read here as required, which left this
+    // test red for a round.
+    let optional = attrs.contains("skip_serializing_if") || attrs.contains("serde(default)");
+    out.push((wire, optional, ty.trim().to_owned()));
 }
 
 /// Variant identifiers at an enum body's base depth, with payload text.
@@ -457,6 +461,17 @@ fn classify(
     if let Some(p) = types.get(&t) {
         return (optional, json_ty_of(p).to_owned(), Some(t));
     }
+    // ★ R1711 — a FOREIGN shape: a type another crate owns that this crate
+    // serializes inline. Without this it classifies as `any`, and a field the
+    // census describes as an object would read as untyped — which is how
+    // R1710's `width_bound` left this test red. The match is on the type's last
+    // path segment, which is how the field spells it.
+    if let Some((name, _)) = FOREIGN
+        .iter()
+        .find(|(_, path)| path.rsplit("::").next() == Some(t.as_str()))
+    {
+        return (optional, "object".to_owned(), Some((*name).to_owned()));
+    }
     let ty = primitive(&t).unwrap_or("any").to_owned();
     (optional, ty, None)
 }
@@ -640,24 +655,61 @@ fn demo_consumers(fields: &BTreeSet<String>) -> Vec<(usize, String)> {
 
 // ── the gates ───────────────────────────────────────────────────────────────
 
+/// Censused names whose Rust type is **not declared in this crate**, and where
+/// it comes from.
+///
+/// ★★★★★ R1711 — this list exists because R1710 added `SizeBound` for
+/// `pinion_core::size_grant::Bound`, a shape `ResizeOutcome` genuinely
+/// serializes inline, and left this test red: the set equality below demanded a
+/// local `Serialize` type of that name. **It stayed red for a whole round**,
+/// because the local gate runs `--lib` and this is an integration test — the
+/// same structural blind spot the tree has now paid for several times.
+///
+/// A foreign entry is not exempt from checking; it is checked *differently*, by
+/// [`foreign_shapes_are_what_their_type_serializes`], against JSON a real value
+/// produces. That is a stronger check than parsing source, which is why the
+/// list is allowed to exist at all — and it is spelled with the Rust path so a
+/// reader can find the type the census is describing.
+const FOREIGN: &[(&str, &str)] = &[("SizeBound", "pinion_core::size_grant::Bound")];
+
 #[test]
 fn census_matches_the_types() {
     let (parsed, aliases) = parse_crate();
 
     let declared_names: BTreeSet<&str> = WIRE_TYPES.iter().map(|t| t.name).collect();
-    let parsed_names: BTreeSet<&str> = parsed.keys().map(String::as_str).collect();
+    let foreign: BTreeSet<&str> = FOREIGN.iter().map(|(name, _)| *name).collect();
+    let parsed_names: BTreeSet<&str> = parsed
+        .keys()
+        .map(String::as_str)
+        .chain(foreign.iter().copied())
+        .collect();
     assert_eq!(
         parsed_names, declared_names,
-        "WIRE_TYPES must list EVERY Serialize type this crate declares and no \
-         others. A type only this crate's source knows about is a response \
-         shape no agent can discover; a type only WIRE_TYPES knows about is a \
-         promise nothing keeps."
+        "WIRE_TYPES must list EVERY Serialize type this crate declares, plus \
+         the FOREIGN shapes it serializes inline, and no others. A type only \
+         this crate's source knows about is a response shape no agent can \
+         discover; a type only WIRE_TYPES knows about is a promise nothing \
+         keeps."
     );
+    for (name, path) in FOREIGN {
+        assert!(
+            WIRE_TYPES.iter().any(|t| {
+                matches!(t.shape, WireShape::Object { fields }
+                    if fields.iter().any(|f| f.of == Some(*name)))
+            }),
+            "`{name}` ({path}) is censused as a foreign shape but no field \
+             carries it — a foreign entry nothing references is a promise \
+             nothing keeps, in the other direction"
+        );
+    }
 
     let mut wrong: Vec<(&str, Vec<String>, Vec<String>)> = Vec::new();
     let mut changed: BTreeSet<String> = BTreeSet::new();
     for t in WIRE_TYPES {
-        let from_source = render_parsed(t.name, &parsed[t.name], &parsed, &aliases);
+        let Some(source) = parsed.get(t.name) else {
+            continue; // foreign — checked against a real value below
+        };
+        let from_source = render_parsed(t.name, source, &parsed, &aliases);
         let from_census = render_declared(t);
         if from_source != from_census {
             for line in from_source.iter().chain(from_census.iter()) {
@@ -671,6 +723,73 @@ fn census_matches_the_types() {
         }
     }
     assert!(wrong.is_empty(), "{}", report(&wrong, &changed));
+}
+
+/// ★★ R1711 — a foreign shape is checked against what its type actually
+/// serializes to, which is a stronger claim than the source-parse the local
+/// types get: it compares against JSON rather than against a declaration.
+///
+/// Every arm of the foreign type must be sampled here, because the census
+/// describes the union of the keys they produce and a missing arm would leave
+/// a key unchecked.
+#[test]
+fn foreign_shapes_are_what_their_type_serializes() {
+    use pinion_core::size_grant::Bound;
+
+    let samples: &[(&str, &[serde_json::Value])] = &[(
+        "SizeBound",
+        &[
+            serde_json::to_value(Bound::AsAsked).expect("a bound serializes"),
+            serde_json::to_value(Bound::Floor { at: 900 }).expect("a bound serializes"),
+            serde_json::to_value(Bound::Ceiling { at: 1440 }).expect("a bound serializes"),
+        ],
+    )];
+    assert_eq!(
+        samples.len(),
+        FOREIGN.len(),
+        "every FOREIGN entry needs a sample here, or its census is unchecked"
+    );
+    for (name, values) in samples {
+        let censused = WIRE_TYPES
+            .iter()
+            .find(|t| t.name == *name)
+            .unwrap_or_else(|| panic!("`{name}` is censused"));
+        let WireShape::Object { fields } = censused.shape else {
+            panic!("`{name}` is censused as an object");
+        };
+        let declared: BTreeSet<&str> = fields.iter().map(|f| f.name).collect();
+        let optional: BTreeSet<&str> = fields
+            .iter()
+            .filter(|f| f.optional || f.nullable)
+            .map(|f| f.name)
+            .collect();
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        for value in *values {
+            let obj = value
+                .as_object()
+                .unwrap_or_else(|| panic!("`{name}` serializes to an object; got {value}"));
+            for key in obj.keys() {
+                assert!(
+                    declared.contains(key.as_str()),
+                    "`{name}` serializes a key `{key}` the census does not declare"
+                );
+                seen.insert(key.clone());
+            }
+            for field in &declared {
+                assert!(
+                    obj.contains_key(*field) || optional.contains(field),
+                    "`{name}` declares `{field}` as always present, and this value \
+                     does not carry it: {value}"
+                );
+            }
+        }
+        for field in &declared {
+            assert!(
+                seen.contains(*field),
+                "`{name}` declares `{field}` and no sampled value produces it"
+            );
+        }
+    }
 }
 
 fn report(wrong: &[(&str, Vec<String>, Vec<String>)], changed: &BTreeSet<String>) -> String {

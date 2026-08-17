@@ -289,6 +289,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc, MethodWindow)] = &[
         MethodWindow::Scope,
     ),
     ("scene/simulate", MethodOcc::Read, MethodWindow::Path),
+    ("scene/size_floor", MethodOcc::Read, MethodWindow::Scope),
     (
         "scene/smart_zoom_gesture",
         MethodOcc::Read,

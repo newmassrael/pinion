@@ -373,6 +373,19 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "AxisReport",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("extent", WireTy::Integer, None),
+                WireField::new("short_extent", WireTy::Integer, None),
+                WireField::new("probes", WireTy::Integer, None),
+                // Never empty: it is the evidence for `extent`, and the type
+                // that carries it cannot be built without it.
+                WireField::new("forced_by", WireTy::Array, Some("CutReport")),
+            ],
+        },
+    },
+    WireType {
         name: "BlockFormatWire",
         shape: WireShape::Object {
             fields: &[
@@ -631,6 +644,30 @@ pub const WIRE_TYPES: &[WireType] = &[
             fields: &[
                 WireField::new("x", WireTy::Number, None),
                 WireField::new("y", WireTy::Number, None),
+            ],
+        },
+    },
+    WireType {
+        name: "CutReport",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("tag", WireTy::String, None).nullable(),
+                WireField::new("path", WireTy::String, None),
+                WireField::new("content", WireTy::String, None).nullable(),
+                WireField::new("rect", WireTy::Object, Some("RectReport")),
+                WireField::new("viewport", WireTy::Object, Some("ViewportReport")),
+                // `left, top, right, bottom`, and never all zero — a row that
+                // overhangs nothing is not a cut and is not reported.
+                WireField::new("short_by", WireTy::Array, None),
+            ],
+        },
+    },
+    WireType {
+        name: "DeclaredReport",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("floor", WireTy::Object, Some("SizeReport")).nullable(),
+                WireField::new("ceiling", WireTy::Object, Some("SizeReport")).nullable(),
             ],
         },
     },
@@ -1554,6 +1591,15 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "PairReport",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("verdict", WireTy::String, None).accepting(&["fits", "loses"]),
+                WireField::new("out_of_reach", WireTy::Array, Some("CutReport")),
+            ],
+        },
+    },
+    WireType {
         name: "PaletteCatalogue",
         shape: WireShape::Object {
             fields: &[
@@ -1652,6 +1698,17 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("y", WireTy::Integer, None),
                 WireField::new("w", WireTy::Integer, None),
                 WireField::new("h", WireTy::Integer, None),
+            ],
+        },
+    },
+    WireType {
+        name: "RefusedReport",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("axis", WireTy::String, None).accepting(&["width", "height"]),
+                WireField::new("reason", WireTy::String, None)
+                    .accepting(&["ceiling_is_short", "nothing_is_ever_lost"]),
+                WireField::new("out_of_reach", WireTy::Array, Some("CutReport")),
             ],
         },
     },
@@ -1861,6 +1918,40 @@ pub const WIRE_TYPES: &[WireType] = &[
                 // no `at` to serialize there, and declaring it nullable would
                 // promise a key the wire does not carry.
                 WireField::new("at", WireTy::Integer, None).optional(),
+            ],
+        },
+    },
+    WireType {
+        name: "SizeFloorOutcome",
+        shape: WireShape::Object {
+            fields: &[
+                // `needed` / `width` / `height` / `pair` are absent together on
+                // a refusal, and `refused` is absent whenever they are present:
+                // a caller cannot read a number that was never measured.
+                WireField::new("needed", WireTy::Object, Some("SizeReport")).optional(),
+                WireField::new("width", WireTy::Object, Some("AxisReport")).optional(),
+                WireField::new("height", WireTy::Object, Some("AxisReport")).optional(),
+                WireField::new("pair", WireTy::Object, Some("PairReport")).optional(),
+                WireField::new("refused", WireTy::Object, Some("RefusedReport")).optional(),
+                WireField::new("ceiling", WireTy::Object, Some("SizeReport")),
+                WireField::new("declared", WireTy::Object, Some("DeclaredReport")),
+                WireField::new("verdict", WireTy::String, None).accepting(&[
+                    "short",
+                    "exact",
+                    "roomier",
+                    "undeclared",
+                    "unmeasured",
+                ]),
+                WireField::new("probes", WireTy::Integer, None),
+            ],
+        },
+    },
+    WireType {
+        name: "SizeReport",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("width", WireTy::Integer, None),
+                WireField::new("height", WireTy::Integer, None),
             ],
         },
     },

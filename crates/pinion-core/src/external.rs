@@ -170,6 +170,29 @@ pub fn forget_surface_size(tag: &str) {
 /// widget's own size from every callback with no scope attached (measured at
 /// 6.11: a live `1200x700` read inside a press handler after a resize). This is
 /// that property, plus the layout policy those toolkits leave to each widget.
+///
+/// # ★★★★★ R1711 — the floor is applied per AXIS, and it used not to be
+///
+/// The rule was "if either axis is under its floor, lay out at the design
+/// size", which throws away the live extent of the axis that was *fine*. It is
+/// not a corner case: measured on the node lab through the new
+/// [`size_floor`](crate::size_floor) read, a window 1506 wide and 360 tall —
+/// both extents individually reachable — lost **nine** marks, because dropping
+/// under the floor on WIDTH also un-shortened the layout to its 900-pixel
+/// design height and pushed the launch-gate panel out of a 360-tall window.
+/// Narrowing a window made it lose content vertically.
+///
+/// Clamping each axis on its own is both simpler and the rule the shell already
+/// applies to a window's own size
+/// ([`SizeBounds`](crate::size_grant::SizeBounds), whose floor and ceiling are
+/// per-axis for the same reason). What the two branches mean is unchanged:
+/// below its floor a layout stops shrinking and the window clips, and the hit
+/// test resolves against the same clamped extent because it calls this same
+/// function.
+///
+/// "Nothing has painted yet" stays the one case that answers the design size,
+/// and a zero on either axis is that case — R1006's `(0, 0)` is "viewport
+/// unknown", and a window of no extent is not a size to lay anything out in.
 #[must_use]
 pub fn layout_size(tag: &str, floor: (u32, u32), design: (u32, u32)) -> (u32, u32) {
     let live = match crate::reactive::Owner::current() {
@@ -177,7 +200,7 @@ pub fn layout_size(tag: &str, floor: (u32, u32), design: (u32, u32)) -> (u32, u3
         None => surface_size(tag),
     };
     match live {
-        Some((w, h)) if w >= floor.0 && h >= floor.1 => (w, h),
+        Some((w, h)) if w > 0 && h > 0 => (w.max(floor.0), h.max(floor.1)),
         _ => design,
     }
 }
@@ -3889,6 +3912,62 @@ impl ExternalIntrospect for CountedExternal {
 mod tests {
     use super::*;
     use crate::event::WindowEvent;
+
+    /// ★★★★★ R1711 — the policy [`layout_size`] exists to spell once had, until
+    /// this round, **no test at all**: three screens were the only thing
+    /// exercising it, and the case that mattered needs a window under the floor
+    /// on one axis and over it on the other, which none of them drove.
+    ///
+    /// The no-scope branch is the one under test because it is the one a unit
+    /// test can drive honestly — the in-view branch reads the same value from
+    /// the viewport signal and applies the same clamp below it.
+    #[test]
+    fn r1711_a_floor_is_applied_per_axis_and_not_all_or_nothing() {
+        let tag = "r1711.layout_size";
+        let floor = (1625, 360);
+        let design = (1625, 900);
+        record_surface_size(tag, 1900, 1200);
+        assert_eq!(
+            layout_size(tag, floor, design),
+            (1900, 1200),
+            "a window above the floor on both axes lays out at its own size",
+        );
+        record_surface_size(tag, 1506, 360);
+        assert_eq!(
+            layout_size(tag, floor, design),
+            (1625, 360),
+            "under the floor on WIDTH only: the height stays live. Before R1711 \
+             this answered the design size (1625, 900) and pushed 900 pixels of \
+             content into a 360-pixel window — nine marks out of reach, measured",
+        );
+        record_surface_size(tag, 1900, 200);
+        assert_eq!(
+            layout_size(tag, floor, design),
+            (1900, 360),
+            "and the mirror image: under the floor on height only",
+        );
+        record_surface_size(tag, 100, 100);
+        assert_eq!(
+            layout_size(tag, floor, design),
+            floor,
+            "under both floors, the layout stops shrinking and the window clips",
+        );
+        forget_surface_size(tag);
+        assert_eq!(
+            layout_size(tag, floor, design),
+            design,
+            "a surface nothing has painted answers the design size",
+        );
+        // The other spelling of "nothing has painted": inside a view scope the
+        // viewport signal answers R1006's `(0, 0)` until the shell seeds it,
+        // and a window of no extent is not a size to lay anything out in.
+        let owner = crate::reactive::Owner::new();
+        assert_eq!(
+            owner.run(|| layout_size(tag, floor, design)),
+            design,
+            "R1006's `(0, 0)` is 'viewport unknown', which is the design size",
+        );
+    }
 
     /// R1353 §2 #2 — a declared arity that does not match the `query` impl is
     /// worse than no declaration: it is a confident lie on the one surface an

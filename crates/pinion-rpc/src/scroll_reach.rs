@@ -127,6 +127,16 @@ pub struct ScrollReachOutcome {
 #[non_exhaustive]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScrollReachError {
+    /// R1711 — `params.at` is present but is not a `{width, height}` pair of
+    /// non-zero unsigned integers.
+    ///
+    /// A separate arm rather than a silently ignored key: measured before this
+    /// existed, this method accepted `at`, `viewport`, `width`/`height` and
+    /// `dry_run` alike and answered about the live window every time, so a
+    /// caller asking about a size it was not at was told a number that looked
+    /// like an answer. A parameter a method does not implement has to be an
+    /// error, or the method is lying by omission.
+    InvalidAt,
     /// The embedder installed no report.
     ///
     /// Distinct from an empty list for the reason its sibling states: empty
@@ -139,9 +149,41 @@ impl ScrollReachError {
     #[must_use]
     pub const fn wire_tag(&self) -> &'static str {
         match self {
+            Self::InvalidAt => "InvalidAt",
             Self::ScrollReachUnavailable => "ScrollReachUnavailable",
         }
     }
+}
+
+/// R1711 §2 #3 — the size this request is about, or `None` for the live window.
+///
+/// One rule with two callers: the embedder reads it to decide which scene to
+/// measure, and the dispatcher reads it to refuse a malformed one. Writing the
+/// parse twice is how the two would come to disagree about what `at: {}` means.
+///
+/// # Errors
+///
+/// [`ScrollReachError::InvalidAt`] for anything other than an object carrying
+/// two non-zero unsigned integers. Zero is refused rather than clamped: a
+/// window of no extent puts every mark out of reach, so answering it would hand
+/// back a confident list of losses for a size no screen can be at.
+pub fn parse_at(params: Option<&Value>) -> Result<Option<(u32, u32)>, ScrollReachError> {
+    let Some(at) = params.and_then(|p| p.get("at")) else {
+        return Ok(None);
+    };
+    let obj = at.as_object().ok_or(ScrollReachError::InvalidAt)?;
+    let read = |key: &str| -> Result<u32, ScrollReachError> {
+        let raw = obj
+            .get(key)
+            .and_then(Value::as_u64)
+            .ok_or(ScrollReachError::InvalidAt)?;
+        let value = u32::try_from(raw).map_err(|_| ScrollReachError::InvalidAt)?;
+        if value == 0 {
+            return Err(ScrollReachError::InvalidAt);
+        }
+        Ok(value)
+    };
+    Ok(Some((read("width")?, read("height")?)))
 }
 
 /// Turn the core report into its wire form.
@@ -226,9 +268,18 @@ pub fn collect(scene: &Scene, cache: &mut LayoutCache) -> ScrollReachOutcome {
 ///
 /// # Errors
 ///
+/// [`ScrollReachError::InvalidAt`] for a malformed `params.at`, and
 /// [`ScrollReachError::ScrollReachUnavailable`] when the embedder installed no
-/// report.
-pub fn handle_scene_scroll_reach(outcome: Option<&ScrollReachOutcome>) -> Result<Value, RpcError> {
+/// report. The `at` check runs FIRST: a host that cannot lay out a hypothetical
+/// size and a request that named an impossible one are different faults, and
+/// reporting the second as the first would send a caller to fix the wrong end.
+pub fn handle_scene_scroll_reach(
+    outcome: Option<&ScrollReachOutcome>,
+    params: Option<&Value>,
+) -> Result<Value, RpcError> {
+    if let Err(err) = parse_at(params) {
+        return Err(RpcError::invalid_params(err.wire_tag()));
+    }
     let Some(outcome) = outcome else {
         return Err(RpcError::invalid_params(
             ScrollReachError::ScrollReachUnavailable.wire_tag(),
@@ -333,13 +384,13 @@ mod tests {
     /// says which.
     #[test]
     fn r1662_an_unavailable_report_is_not_a_screen_in_view() {
-        let err = handle_scene_scroll_reach(None).expect_err("no report installed");
+        let err = handle_scene_scroll_reach(None, None).expect_err("no report installed");
         assert!(
             format!("{err:?}").contains("ScrollReachUnavailable"),
             "{err:?}"
         );
-        let clean =
-            handle_scene_scroll_reach(Some(&report((800, 600), &[], 12))).expect("empty is answer");
+        let clean = handle_scene_scroll_reach(Some(&report((800, 600), &[], 12)), None)
+            .expect("empty is answer");
         assert_eq!(clean["out_of_sight"].as_array().map(Vec::len), Some(0));
         assert_eq!(clean["lost"], 0);
         assert_eq!(clean["marks"], 12);
@@ -351,5 +402,48 @@ mod tests {
     fn r1662_the_path_is_the_address_the_other_reads_accept() {
         let out = report((800, 600), &[entry(Reach::Scrollable { to: (0, 1) })], 1);
         assert_eq!(out.out_of_sight[0].path, "4/0");
+    }
+
+    /// ★★ R1711 — the size a caller asks about is read once, here, and
+    /// anything that is not a size is a refusal rather than a shrug.
+    #[test]
+    fn r1711_a_size_to_ask_about_is_parsed_or_refused() {
+        let at = |v: serde_json::Value| parse_at(Some(&serde_json::json!({ "at": v })));
+        assert_eq!(
+            at(serde_json::json!({"width": 1625, "height": 360})),
+            Ok(Some((1625, 360)))
+        );
+        assert_eq!(parse_at(None), Ok(None));
+        assert_eq!(parse_at(Some(&serde_json::json!({}))), Ok(None));
+        for bad in [
+            serde_json::json!({"width": 1625}),
+            serde_json::json!({"w": 1625, "h": 360}),
+            serde_json::json!({"width": 0, "height": 360}),
+            serde_json::json!({"width": 1625, "height": 0}),
+            serde_json::json!({"width": -3, "height": 360}),
+            serde_json::json!([1625, 360]),
+        ] {
+            assert_eq!(at(bad.clone()), Err(ScrollReachError::InvalidAt), "{bad}");
+        }
+    }
+
+    /// ★★★★★ R1711 — the defect this parameter closes: before it, THIS method
+    /// took `at`, `viewport`, `width`/`height` and `dry_run` without complaint
+    /// and answered about the live window every time. A caller asking about a
+    /// size the window is not at was handed a number that read like an answer.
+    #[test]
+    fn r1711_a_size_this_host_cannot_answer_is_an_error_and_not_the_live_window() {
+        let live = report((1625, 900), &[], 12);
+        let err = handle_scene_scroll_reach(
+            Some(&live),
+            Some(&serde_json::json!({"at": {"width": 0, "height": 360}})),
+        )
+        .expect_err("a zero extent is not a window");
+        assert!(format!("{err:?}").contains("InvalidAt"), "{err:?}");
+        // And the check runs before the availability one, so the two faults
+        // stay distinguishable.
+        let err = handle_scene_scroll_reach(None, Some(&serde_json::json!({"at": 7})))
+            .expect_err("a malformed ask is not a missing host");
+        assert!(format!("{err:?}").contains("InvalidAt"), "{err:?}");
     }
 }

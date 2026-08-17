@@ -6317,6 +6317,19 @@ impl<V: WidgetView> ShellCore<V> {
         // dispatch pays nothing.
         let resize_bounds =
             (request.method == "scene/resize").then(|| self.primary_window_bounds());
+        // R1711 §5.16 §5.32 §2 #3 — the two reads that judge the screen at a
+        // size the window is NOT at. Both live here for the reason the block
+        // above does: they need `&mut self` whole (a mirror paint AND the shape
+        // cache), which the disjoint-field split below takes apart, and they
+        // are gated on the method so every other dispatch pays two string
+        // comparisons.
+        let hypothetical_reach = pinion_rpc::scroll_reach::parse_at(request.params.as_ref())
+            .ok()
+            .flatten()
+            .filter(|_| request.method == "scene/scroll_reach")
+            .map(|(w, h)| self.reach_at(window_id, w, h));
+        let size_floor = (request.method == "scene/size_floor")
+            .then(|| self.measure_size_floor(window_id, request.params.as_ref()));
         // R1576 §5.16 §5.41 §2 #7 — the desk, for the two methods that resolve
         // a placement against it. Gated on the method so every other dispatch
         // pays nothing, exactly as the declared-window set is.
@@ -6759,9 +6772,16 @@ impl<V: WidgetView> ShellCore<V> {
                 ctx = ctx.with_containment(report);
             }
             // R1662 §5.32 — the out-of-sight report collected above, for
-            // `scene/scroll_reach` only.
-            if let Some(report) = scroll_reach {
+            // `scene/scroll_reach` only. R1711 — unless the caller asked about
+            // a size this window is not at, in which case the mirror's report
+            // for THAT size is the answer and the live one would be a different
+            // question quietly substituted for the one asked.
+            if let Some(report) = hypothetical_reach.or(scroll_reach) {
                 ctx = ctx.with_scroll_reach(report);
+            }
+            // R1711 §5.16 §5.32 — the measured floor, for `scene/size_floor`.
+            if let Some(report) = size_floor {
+                ctx = ctx.with_size_floor(report);
             }
             if let Some(blocks) = text_blocks {
                 ctx = ctx.with_text_blocks(blocks);
@@ -7660,6 +7680,68 @@ impl<V: WidgetView> ShellCore<V> {
     /// declared intent. Resolved only
     /// for the `scene/windows` method (gated at the dispatch call site), so
     /// every other dispatch pays nothing.
+    /// R1711 §5.16 §5.32 §2 #3 §2 #7 — what a reader could not get to if this
+    /// window were `(w, h)`, **without the window becoming that size**.
+    ///
+    /// The mirror lays the screen out at the asked extent (the R1468
+    /// containment scope, so no side effect escapes a paint nobody is looking
+    /// at) and the same collector `scene/scroll_reach` runs judges it. One rule
+    /// for the live question and the hypothetical one: a dry answer that came
+    /// from a second derivation could disagree with the wet one, which is the
+    /// failure §2 #3 exists to make impossible.
+    fn reach_at(
+        &mut self,
+        window_id: Option<&str>,
+        w: u32,
+        h: u32,
+    ) -> pinion_rpc::scroll_reach::ScrollReachOutcome {
+        let scene = self.compute_paint_scene_pure_internal(window_id, w, h);
+        pinion_rpc::scroll_reach::collect(&scene, &mut self.text_cache)
+    }
+
+    /// R1711 §5.16 §5.32 §2 #3 §2 #7 — the smallest window this screen was
+    /// measured to work in, and what one pixel less puts out of reach.
+    ///
+    /// The search is [`pinion_core::size_floor::measure`]; this method is only
+    /// the probe it drives, which is why the arithmetic has one home and the
+    /// embedder has none. Each probe is a full mirror paint, so the answer
+    /// costs roughly two dozen of them and says so on the wire.
+    ///
+    /// The ceiling defaults to the window's own current extent — the size the
+    /// screen is expected to fit in, read off the mirror rather than from a
+    /// stored number so it cannot disagree with what the screen was laid out
+    /// against. `params.at` overrides it, which is what lets a caller ask "and
+    /// how small could it be on a display this size".
+    fn measure_size_floor(
+        &mut self,
+        window_id: Option<&str>,
+        params: Option<&serde_json::Value>,
+    ) -> pinion_rpc::size_floor::SizeFloorOutcome {
+        let declared = self.primary_window_bounds();
+        let live = self
+            .core
+            .last_paint_scene_for_window(window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW))
+            .map(|paint| {
+                let rect = paint.rect();
+                (rect.w, rect.h)
+            });
+        // A window that has never painted has no extent of its own to be
+        // measured against; its declared floor is the next most honest ceiling,
+        // and a screen that does not fit even there is exactly the
+        // `ceiling_is_short` finding rather than a special case.
+        let ceiling = pinion_rpc::scroll_reach::parse_at(params)
+            .ok()
+            .flatten()
+            .or(live)
+            .or_else(|| declared.floor())
+            .unwrap_or_default();
+        let result = pinion_core::size_floor::measure(ceiling, |w, h| {
+            let scene = self.compute_paint_scene_pure_internal(window_id, w, h);
+            pinion_rpc::size_floor::cut_at(&scene, &mut self.text_cache)
+        });
+        pinion_rpc::size_floor::report(&result, ceiling, declared, &<[_]>::to_vec)
+    }
+
     /// R1710 §5.16 §5.12 §2 #2 — the size bounds the **primary** window
     /// declares, for `scene/resize` to resolve an ask against.
     ///

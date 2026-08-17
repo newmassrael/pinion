@@ -604,6 +604,10 @@ pub struct DispatchContext<'a> {
     /// R1662 §5.32 §5.36 — every mark this frame did not show, and whether a
     /// scroll offset reaches it. `scene/scroll_reach` reads it.
     pub scroll_reach: Option<crate::scroll_reach::ScrollReachOutcome>,
+    /// R1711 §5.16 §5.32 §2 #3 — the smallest window this screen was measured
+    /// to work in, searched by the embedder because only it can lay the screen
+    /// out at a size the window is not at. `scene/size_floor` reads it.
+    pub size_floor: Option<crate::size_floor::SizeFloorOutcome>,
 
     /// R907 §5.16 §5.7 — per-window frame-timing profiler snapshot.
     /// Resolved by the embedder before dispatch (the
@@ -1701,6 +1705,7 @@ impl<'a> DispatchContext<'a> {
             access_producer: None,
             containment: None,
             scroll_reach: None,
+            size_floor: None,
             resize_request: None,
             window_bounds: None,
             declare_request: None,
@@ -2036,6 +2041,13 @@ impl<'a> DispatchContext<'a> {
         self
     }
 
+    /// R1711 §5.16 §5.32 — install the measured floor `scene/size_floor` reads.
+    #[must_use]
+    pub fn with_size_floor(mut self, report: crate::size_floor::SizeFloorOutcome) -> Self {
+        self.size_floor = Some(report);
+        self
+    }
+
     /// R907 §5.16 §5.7 — builder: attach the per-window frame-timing
     /// profiler snapshot the embedder pre-resolved from
     /// `pinion-shell::ShellCore::frame_timings_for_window`.
@@ -2351,6 +2363,9 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     let containment = ctx.containment.take();
     // R1662 §5.32 — the same shape: `scene/scroll_reach` reads it.
     let scroll_reach = ctx.scroll_reach.take();
+    // R1711 §5.16 — and again: `scene/size_floor` reads the search the embedder
+    // ran, because the probe is a view and a layout the dispatcher cannot run.
+    let size_floor = ctx.size_floor.take();
     // R907 §5.16 — per-window frame-timing profiler snapshot the
     // embedder pre-resolved from `ShellCore::frame_timings_for_window`.
     // Copy out for the dispatch lifetime; `scene/frame_timings` reads
@@ -2982,8 +2997,15 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                     crate::containment::handle_scene_containment(containment.as_ref()),
                     HandlerKind::Read,
                 ),
+                "scene/size_floor" => (
+                    crate::size_floor::handle_scene_size_floor(size_floor.as_ref()),
+                    HandlerKind::Read,
+                ),
                 "scene/scroll_reach" => (
-                    crate::scroll_reach::handle_scene_scroll_reach(scroll_reach.as_ref()),
+                    crate::scroll_reach::handle_scene_scroll_reach(
+                        scroll_reach.as_ref(),
+                        request.params.as_ref(),
+                    ),
                     HandlerKind::Read,
                 ),
                 "scene/text_backgrounds" => (
