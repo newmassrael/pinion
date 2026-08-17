@@ -384,18 +384,29 @@ def drive(name: str, example: str) -> None:
                 # they are below the fold of two scrolling panes, and the read
                 # that can tell those apart says so. So the question here is now
                 # "is anything unreachable", which needs no exemption table.
+                #
+                # ★ R1713 — `scrollable` is no longer the only answer that means
+                # "the reader can get to this". A region the range brings all but
+                # an edge of now answers `clipped`, which is what a conceded floor
+                # buys and is not what this section is looking for; `lost` below
+                # is the bar, and it is unchanged. Measured when the arm landed:
+                # the node lab's inspector note is `clipped` at its conceded
+                # floor and was `scrollable` before, so this read failed on a
+                # region the reader can still scroll to.
                 gone = sorted(declared - declared_and_painted(app, size))
                 reach = app.request("scene/scroll_reach")
                 assert reach is not None and reach.result is not None
                 rows = reach.result["out_of_sight"]
-                scrollable = {
-                    row["tag"] for row in rows if row["reach"] == "scrollable" and row["tag"]
+                reachable = {
+                    row["tag"]
+                    for row in rows
+                    if row["reach"] in ("scrollable", "clipped") and row["tag"]
                 }
                 assert_eq(
-                    [g for g in gone if g not in scrollable],
+                    [g for g in gone if g not in reachable],
                     [],
                     f"C/{name}: every declared region {size} does not paint is one "
-                    f"the reader can scroll to",
+                    f"the reader can bring into view",
                 )
                 assert_eq(
                     reach.result["lost"],
