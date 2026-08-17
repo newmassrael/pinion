@@ -29,9 +29,9 @@ policies genuinely differ (one concedes, two are rigid).
 * **C** — ★★ the floor is a **boundary in the reach predicate**, driven in both
   directions: at the floor nothing is out of the reader's reach, and one pixel
   below something is, by name. A floor nobody drives is a number somebody typed.
-* **D** — ★★★ the payoff, in the window: the node lab really opens and resizes
-  at 1506 wide, so a 1600-pixel display holds it. The granted size, the painted
-  rectangle and the specification all agree there.
+* **D** — ★★★ the payoff, in the window: the node lab really opens and resizes at
+  its conceded floor. The granted size, the painted rectangle and the
+  specification all agree there.
 * **E** — a concession clips and never loses: at the floor `scene/scroll_reach`
   reports zero `lost`, and every region the policy gives up is still *painted*
   and still *addressable by a pointer*. Content behind a concession is content
@@ -42,8 +42,8 @@ policies genuinely differ (one concedes, two are rigid).
   declaration that disagrees with what the window system was told would say so
   (`declaration_split`).
 * **H** — ★ pixels. At its conceded floor the node lab is photographed and
-  scanned, and the scan looks *where the concession is*: the right 119 pixels of
-  the app bar are gone and the left of the screen is still a screen.
+  scanned, and the scan looks *where the concession is*: the right end of the app
+  bar is gone and the left of the screen is still a screen.
 """
 
 from __future__ import annotations
@@ -79,7 +79,11 @@ SCREENS = [
 #: binding currently says — an audit that reads its expectation out of the
 #: thing under test passes for a screen that changed its mind quietly.
 CONCEDING = "hello-node-lab"
-CONCEDED_FLOOR = (1595, 360)
+#: ★ R1713 re-measured this: 1506 (R1712) and 1595 (R1712.1) were both taken with
+#: a predicate that could not see a mark inside a pane the window slices. With the
+#: clip chain folded and `clipped` split from `lost`, the boundary is 1601 — the
+#: width at which nothing is `lost`, with five row `×` glyphs lost at 1600.
+CONCEDED_FLOOR = (1601, 360)
 GIVES_UP = ["lab.appbar", "lab.inspector"]
 
 CHECKS: list[str] = []
@@ -123,22 +127,27 @@ def cut_names(rows: list[dict]) -> list[str]:
 
 
 def beyond_the_window(app: RpcSubprocess, size: tuple[int, int]) -> list[str]:
-    """Tagged marks whose whole rectangle is outside the window at `size`, read
-    off the PAINT.
+    """Tagged marks the LIVE paint puts entirely outside a window of `size`.
 
-    ★★★★★ R1712.1 — deliberately not `scene/scroll_reach`. That read composes
-    per viewport: a mark inside a pane is judged against the pane, so content
-    the WINDOW clips out of existence is invisible to it whenever the pane it
-    lives in is only partially clipped. Measured on this screen at 1506 wide, it
-    answered `lost: 0` while nine marks were entirely off — which is how this
-    round shipped a floor 89 pixels too low, and why the boundary check reads
-    the geometry instead of asking a predicate about it.
+    ⚠ R1713 — `viewport` is deliberately not passed. `scene/snapshot
+    {from: "paint"}` prefers the displayed frame and **ignores** `viewport`
+    whenever a frame has been painted (measured: five different asks, two
+    screens, the same live root every time) ⇒
+    `debt-a-snapshot-viewport-is-ignored-once-a-frame-exists`. R1712.1's boundary
+    check passed that parameter and believed it was measuring a hypothetical
+    size; it was measuring the live one, which happens to be the same geometry on
+    this screen (its layout is clamped at its design width) and is NOT on the
+    capture viewer. So the caller's contract here is: drive the window to `size`
+    first, then ask.
+
+    The clip stack folded into `abs_rects_of` is what the tree DECLARES, and the
+    window is not a declared clip, so the intersection with `size` is done here.
     """
-    rects = abs_rects_of(app.snapshot(source="paint", viewport=size))
+    rects = abs_rects_of(app.snapshot(source="paint"))
     return sorted(
         tag
-        for tag, (x, y, _w, _h) in rects.items()
-        if x >= size[0] or y >= size[1]
+        for tag, (x, y, w, h) in rects.items()
+        if x >= size[0] or y >= size[1] or x + w <= 0 or y + h <= 0
     )
 
 
@@ -279,23 +288,31 @@ def the_floor_is_where_reach_actually_ends(
     # Without this a floor of 1 would satisfy every assertion above: nothing is
     # ever lost when there is nothing on screen to lose.
     #
-    # ★★★★★ R1712.1 — the conceded half asks the PAINT, not `scroll_reach`, and
-    # that correction is this round's own defect. `scroll_reach` judges a mark
-    # against its nearest scrolling ancestor, so a mark inside a pane the window
-    # clips fits *the pane* and is never reported: it answered `lost: 0` at 1506,
-    # where nine of this screen's marks — five row remove buttons, two spin
-    # steppers, `+ key` and `delete`, every one of them an ACTION — sit entirely
-    # outside the window with no scroll that reaches them. The floor shipped 89
-    # pixels too low because of it.
+    # ★★★★★ R1713 — the conceded half asks `scroll_reach` again, and that is the
+    # round's payoff rather than a relapse. R1712.1 moved it to a scan of the
+    # PAINT because the predicate was blind: it judged each mark against its
+    # nearest scrolling ancestor, so a mark inside a pane the window slices fitted
+    # *the pane* and was never reported (`lost: 0` at 1506, with nine actions
+    # entirely off the window). The predicate now folds the clip chain, and the
+    # paint scan turned out to be the weaker instrument of the two — it is
+    # tag-keyed, so it cannot see the `×` glyph inside a remove button, and those
+    # glyphs are what goes first here. Section J checks the two against each
+    # other at a size the window can actually take.
     for index, axis in enumerate(("width", "height")):
         short = list(floor)
         short[index] -= 1
         if band[index] > 0:
-            gone = beyond_the_window(app, (short[0], short[1]))
+            below = reach_at(app, (short[0], short[1]))
             ok(
                 f"C/{name}/{axis}: this axis is conceded, and one pixel below its "
-                f"floor {len(gone)} mark(s) leave the window entirely ({gone[:3]})",
-                len(gone) > 0,
+                f"floor {below['lost']} mark(s) are out of the reader's reach "
+                f"altogether ({lost_names(below)[:3]})",
+                below["lost"] > 0,
+            )
+            ok(
+                f"C/{name}/{axis}: and at the floor those same marks are reachable, "
+                f"so the boundary is this pixel and not a smaller one",
+                at_floor["lost"] == 0,
             )
         else:
             resp = app.request(
@@ -353,24 +370,56 @@ def what_is_given_up_is_still_reachable(
     )
     # ★★★★★ R1712.1 — and the same claim read off the GEOMETRY, because the
     # line above cannot establish it. This is the check that would have refused
-    # the floor this round first shipped.
+    # the floor this round first shipped. R1713: the window really is `size` here
+    # (D resized it), so the live paint is the right geometry to ask.
     assert_eq(
         beyond_the_window(app, size),
         [],
         f"E/{name}: and no mark is outside the window altogether at the floor — "
         f"a concession clips, it does not put things out of the reader's reach",
     )
+    # ★★★★★ R1713 — the two channels, compared mark by mark rather than by
+    # number. The predicate folds the clip chain and the paint scan folds the
+    # declared clips; they are two derivations of "can the reader see this", and
+    # the round that separated them found the wire answering `lost: 0` about nine
+    # marks the paint put outside the window. Both directions are asserted, so a
+    # wire that reported everything and a wire that reported nothing both fail.
+    painted = abs_rects_of(app.snapshot(source="paint"))
+    on_screen = {
+        tag
+        for tag, (x, y, w, h) in painted.items()
+        if x < size[0] and y < size[1] and w > 0 and h > 0
+    }
+    unreachable_per_wire = set(lost_names(live.result))
+    ok(
+        f"E/{name}: the paint and the predicate name the same reachable set "
+        f"({len(on_screen)} tagged marks on screen, {len(unreachable_per_wire)} "
+        f"unreachable)",
+        not (on_screen & unreachable_per_wire),
+    )
+    ok(
+        f"E/{name}: and the comparison is not vacuous — the paint puts "
+        f"{len(on_screen)} tagged marks on screen",
+        len(on_screen) > 20,
+    )
     if example != CONCEDING:
         return
+    # ★★ R1713 — a conceded floor is expected to CLIP, and the count says so.
+    # Without this the section passes for a band that gave up nothing, which is
+    # the shape `stale` exists to catch on the other side.
+    ok(
+        f"E/{name}: the band really clips at the floor "
+        f"({live.result['clipped']} mark(s) reachable in part only)",
+        live.result["clipped"] > 0,
+    )
     # ★★ The regions the policy gives up are CLIPPED, which is a different
     # statement from gone: each is still painted at the floor, and each is
     # still where a pointer finds it. A concession that blanked its regions —
-    # or that left them drawn 119 pixels from where they can be pressed —
+    # or that left them drawn a band's width from where they can be pressed —
     # satisfies every structural check above.
-    rects = abs_rects_of(app.snapshot(source="paint", viewport=size))
     for tag in GIVES_UP:
-        ok(f"E/{name}: {tag} is still painted at the conceded floor", tag in rects)
-        x, y, w, h = rects[tag]
+        ok(f"E/{name}: {tag} is still painted at the conceded floor", tag in painted)
+        x, y, w, h = painted[tag]
         ok(
             f"E/{name}: and the part of it the reader keeps is real "
             f"({w}x{h} at {x},{y})",
@@ -439,9 +488,9 @@ def the_concession_is_visible_in_the_pixels(
     )
     inked = inked_samples(img, 0, img.width)
     ok(f"H/{name}: and there is a screen in it ({inked} inked samples)", inked > 150)
-    # ★ Scan where the concession IS. The band is the rightmost 119 pixels of
-    # the layout, which this window does not show; what a reader keeps is
-    # everything left of it, and that is what the two halves compare.
+    # ★ Scan where the concession IS. The band is the rightmost pixels of the
+    # layout, which this window does not show; what a reader keeps is everything
+    # left of it, and that is what the two halves compare.
     left = inked_samples(img, 0, size[0] // 2)
     right = inked_samples(img, size[0] // 2, size[0])
     ok(

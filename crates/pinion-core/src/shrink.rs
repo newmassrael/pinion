@@ -373,6 +373,16 @@ impl Audit {
 /// floor promises, and the sharper one alone would answer neither: `cut` says
 /// what the reader cannot see at once, `lost` says what the reader cannot see
 /// at all.
+///
+/// ★★★★★ R1713 — that last sentence was written here before `lost` meant it.
+/// [`Reach::Lost`](crate::reach::Reach::Lost) used to mean *not fully
+/// containable*, so a form row whose right edge a narrowed pane cuts off came
+/// back `lost` and this rule failed a concession for content nearly all of which
+/// the reader reaches. Measured on the node lab at 1595x360: 19 `lost`, of which
+/// **6** were marks no pixel of which is reachable and **13** were wide rows.
+/// [`Reach::Clipped`](crate::reach::Reach::Clipped) is now the middle answer, in
+/// the word this rule is written in, and this
+/// filter — unchanged — finally reads what it always said it read.
 #[must_use]
 pub fn audit(policy: ShrinkPolicy, cut: &[Cut], out_of_sight: &[OutOfSight]) -> Audit {
     let unreachable = out_of_sight
@@ -420,6 +430,7 @@ mod tests {
             name: "<window>".to_owned(),
             origin: (0, 0),
             size: (100, 100),
+            declared: Rect::new(0, 0, 100, 100),
             content: (100, 100),
             at: (0, 0),
             max: (0, 0),
@@ -691,5 +702,48 @@ mod tests {
         );
         assert_eq!(report.wire_word(), "honoured");
         assert!(report.unreachable().is_empty());
+    }
+
+    /// ★★★★★ R1713 — and a mark whose EDGE is unreachable is what a concession
+    /// buys, not what it may never buy.
+    ///
+    /// This rule's doc always said it read "what the reader cannot see at all",
+    /// and until [`Reach::Clipped`] existed the value it read was "what the reader
+    /// cannot see at once" — so a declared band failed on the wide rows inside
+    /// the very region it declared. Measured on the node lab at 1595x360: of 19
+    /// `lost`, 13 were rows like this one.
+    #[test]
+    fn r1713_a_mark_whose_edge_is_unreachable_is_conceded_not_lost() {
+        let policy = ShrinkPolicy::conceding((1625, 360), (1600, 360), &["lab.inspector"]);
+        let edge = Overhang {
+            left: 0,
+            top: 0,
+            right: 28,
+            bottom: 0,
+        };
+        let report = audit(
+            policy,
+            &[mark(Some("lab.inspector"), &["lab.inspector"])],
+            &[sighting(
+                "lab.form.control.listen",
+                Reach::Clipped { short_by: edge },
+            )],
+        );
+        assert_eq!(report.wire_word(), "honoured");
+        assert!(
+            report.unreachable().is_empty(),
+            "a cut edge is a clip, and clipping is what the band is for"
+        );
+        // ★ The counterfactual that keeps the two apart: the same overhang, on a
+        // mark no pixel of which is reachable, is still the severe verdict.
+        let lost = audit(
+            policy,
+            &[mark(Some("lab.inspector"), &["lab.inspector"])],
+            &[sighting(
+                "lab.form.remove.id.glyph",
+                Reach::Lost { short_by: edge },
+            )],
+        );
+        assert_eq!(lost.wire_word(), "unreachable");
     }
 }

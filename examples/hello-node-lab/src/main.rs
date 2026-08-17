@@ -304,27 +304,30 @@ const MIN_H: u32 = APP_BAR_H + TOOLBAR_H + CANVAS_FLOOR;
 /// is. That is a decision, and [`SHRINK`] is where it is written down so
 /// `scene/size_floor` can check it against the screen every time it is asked.
 ///
-/// ★★★★★ Measured from the PAINT, and R1712 got it wrong once. The first
-/// answer was 1506, taken from `scene/scroll_reach` — the smallest width at
-/// which it reports nothing `lost`. Photographed at that width and scanned, the
-/// inspector's right-hand column was gone: **nine tagged marks sit entirely
-/// beyond the window there**, and every one of them is an action — five row
-/// `remove` buttons, two spin steppers, `+ key` and `delete`. A reader at 1506
-/// cannot reach them at all, and no scroll brings them back (that pane's
-/// horizontal range is zero).
+/// ★★★★★ Measured, three times, and the first two answers were wrong.
 ///
-/// `scroll_reach` did not see them because it judges each mark against its
-/// nearest scrolling ancestor: those marks are inside the inspector pane and
-/// fit *the pane*, while the pane is what the window clips. A mark inside a
-/// clipped pane is invisible to that predicate ⇒
-/// [[debt-a-reach-walk-cannot-see-a-mark-inside-a-clipped-pane]].
+/// | round | answer | how it was measured | why it was wrong |
+/// |---|--:|---|---|
+/// | R1712 | 1506 | `scene/scroll_reach`'s `lost` | that predicate judged each mark against its nearest scrolling ancestor, so the nine actions the window had removed **fit the inspector pane** and were never reported |
+/// | R1712.1 | 1595 | tagged marks in the paint whose whole box is past the window | the tag map cannot see an untagged mark, and the marks that go first here are the `×` **glyphs inside** the remove buttons |
+/// | R1713 | **1601** | `scroll_reach`'s `lost` again, with the clip chain folded and `clipped` split from `lost` | — |
 ///
-/// So this number is measured directly: **1595 is the width at which no painted
-/// mark lies entirely outside the window, and at 1594 five do** — the same
-/// boundary at 360 tall and at 900. It still buys what R1689 asked for, because
-/// 1595 fits a 1600-pixel display; the band is 30 pixels rather than 119, and
-/// all 30 of them are clipping rather than loss.
-const FLOOR_W: u32 = 1595;
+/// R1713 fixed the predicate rather than working around it: reachability now
+/// composes down the clip chain, so a mark inside a pane the window slices is
+/// judged against the slice, and `lost` (no pixel is ever reachable) is a
+/// different answer from `clipped` (the reader reaches all but an edge). Driven
+/// across the whole band, **1601 is the width at which nothing is `lost`, and at
+/// 1600 five marks are** — the five row `×` glyphs, whose ink starts 286 pixels
+/// into a pane that is offered 286 at that width. The same boundary at 360 tall
+/// and at 900.
+///
+/// ⚠ R1689 asked for a screen a 1600-pixel display holds, and this **misses by
+/// one pixel**. The band is 24 pixels of honest clipping, and the last pixel
+/// cannot be bought by moving a glyph: below `comfortable` this layout stops
+/// reflowing, so what the window cuts is simply gone. The fix that would buy it —
+/// and buy far more than one pixel — is a window that PANS below `comfortable`
+/// instead of clipping ⇒ `debt-a-window-below-its-layout-cannot-be-panned`.
+const FLOOR_W: u32 = 1601;
 
 /// What the band between [`FLOOR_W`] and [`MIN_W`] clips, by the name a reader
 /// addresses it with.
@@ -10233,10 +10236,13 @@ impl WidgetView for NodeLabView {
     /// ★★★★★ R1712 — and the floor is no longer [`MIN_W`] x [`MIN_H`]. It is
     /// derived from [`SHRINK`], the same value [`window_size`] clamps against,
     /// so this binding has nowhere to write a second minimum. What changed for
-    /// a reader: the window goes 119 pixels narrower than the layout does, so a
-    /// 1600-pixel display holds this screen — with the app bar's right end and
-    /// the inspector clipped, which is what [`GIVES_UP`] declares and what
-    /// `scene/size_floor` checks.
+    /// a reader: the window goes narrower than the layout does, with the app
+    /// bar's right end and the inspector clipped — which is what [`GIVES_UP`]
+    /// declares and what `scene/size_floor` checks.
+    ///
+    /// ★ R1713 re-measured the band with a predicate that can see a mark inside
+    /// a sliced pane: **24 pixels**, not 119 and not 30. See [`FLOOR_W`] for the
+    /// three answers and why the first two were wrong.
     fn initial_size_strategy() -> SizeStrategy {
         SizeStrategy::shrinking(SHRINK, (WIN_W, WIN_H))
     }

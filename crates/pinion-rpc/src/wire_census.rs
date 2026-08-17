@@ -1893,6 +1893,8 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("window", WireTy::Object, Some("RectReport")),
                 WireField::new("marks", WireTy::Integer, None),
                 WireField::new("scrollable", WireTy::Integer, None),
+                // R1713 — a third answer: reachable in part, never whole.
+                WireField::new("clipped", WireTy::Integer, None),
                 WireField::new("lost", WireTy::Integer, None),
                 WireField::new("out_of_sight", WireTy::Array, Some("OutOfSightReport")),
             ],
@@ -2371,6 +2373,9 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("origin_y", WireTy::Integer, None),
                 WireField::new("w", WireTy::Integer, None),
                 WireField::new("h", WireTy::Integer, None),
+                // R1713 — the box the node asked for, so `w`/`h` being the
+                // APERTURE the clip chain leaves is a subtraction a reader can do.
+                WireField::new("declared", WireTy::Object, Some("RectReport")),
                 WireField::new("content_w", WireTy::Integer, None),
                 WireField::new("content_h", WireTy::Integer, None),
                 WireField::new("at_x", WireTy::Integer, None),

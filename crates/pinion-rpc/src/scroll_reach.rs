@@ -60,10 +60,22 @@ pub struct ViewportReport {
     pub origin_x: u32,
     /// The vertical half of [`Self::origin_x`].
     pub origin_y: u32,
-    /// The viewport's width.
+    /// The viewport's width — the aperture's, after everything above it has had
+    /// its say. See [`Self::declared`].
     pub w: u32,
-    /// The viewport's height.
+    /// The viewport's height, likewise.
     pub h: u32,
+    /// ★★★★★ R1713 — the box this viewport's own node asked for, in the frame
+    /// `rect` uses, so `declared` minus `[origin, w, h]` is what the clip chain
+    /// above it took away.
+    ///
+    /// The two differ exactly when something above narrows it, and until R1713
+    /// only the declared box existed here: a pane 312 wide whose right 119 pixels
+    /// the window cuts off was published as offering its children 312, so content
+    /// the window had removed from existence read as perfectly placed. Measured on
+    /// the analysis tool's node lab at 1506 wide, `lost` was **zero** with nine
+    /// marks entirely off the window, every one of them an action.
+    pub declared: RectReport,
     /// The content's width, as the laid-out subtree reports it.
     pub content_w: u32,
     /// The content's height.
@@ -96,14 +108,16 @@ pub struct OutOfSightReport {
     pub rect: RectReport,
     /// The viewport it was judged against.
     pub viewport: ViewportReport,
-    /// `scrollable` (the range covers it) or `lost` (nothing does).
+    /// `scrollable` (the range covers it whole), `clipped` (R1713 — the range
+    /// covers part of it and no offset covers all of it) or `lost` (nothing
+    /// covers any of it).
     pub reach: &'static str,
     /// For `scrollable`: the horizontal offset that shows it.
     pub to_x: Option<i32>,
     /// For `scrollable`: the vertical offset that shows it.
     pub to_y: Option<i32>,
-    /// For `lost`: how far past the reachable box it reaches, per edge, in
-    /// `left, top, right, bottom` order.
+    /// For `clipped` and `lost`: how far past the reachable box it reaches, per
+    /// edge, in `left, top, right, bottom` order.
     pub short_by: Option<[u32; 4]>,
 }
 
@@ -117,7 +131,15 @@ pub struct ScrollReachOutcome {
     pub marks: usize,
     /// How many are off screen but within some viewport's range.
     pub scrollable: usize,
-    /// How many nothing can bring into view. The number a gate fails on.
+    /// ★ R1713 — how many some offset shows part of and no offset shows whole.
+    ///
+    /// What a window below its layout's comfortable size does to the pane at its
+    /// edge: the reader reaches the row, minus its right edge. Counted apart from
+    /// [`Self::lost`] because a concession may buy this and may never buy that,
+    /// and one number could not tell a rule which it was looking at.
+    pub clipped: usize,
+    /// How many nothing can bring any part of into view. The number a gate
+    /// fails on.
     pub lost: usize,
     /// Every mark that is off screen, in paint order.
     pub out_of_sight: Vec<OutOfSightReport>,
@@ -200,19 +222,26 @@ pub fn report(window: (u32, u32), out: &[OutOfSight], marks: usize) -> ScrollRea
             h: window.1,
         },
         marks,
-        scrollable: out.iter().filter(|o| !o.reach.is_lost()).count(),
+        scrollable: out
+            .iter()
+            .filter(|o| matches!(o.reach, Reach::Scrollable { .. }))
+            .count(),
+        clipped: out
+            .iter()
+            .filter(|o| matches!(o.reach, Reach::Clipped { .. }))
+            .count(),
         lost: out.iter().filter(|o| o.reach.is_lost()).count(),
         out_of_sight: out
             .iter()
             .map(|o| {
-                let (to_x, to_y, short_by) = match o.reach {
-                    Reach::Scrollable { to } => (Some(to.0), Some(to.1), None),
-                    Reach::Lost { short_by } => (
-                        None,
-                        None,
-                        Some([short_by.left, short_by.top, short_by.right, short_by.bottom]),
-                    ),
+                let (to_x, to_y) = match o.reach {
+                    Reach::Scrollable { to } => (Some(to.0), Some(to.1)),
+                    Reach::Clipped { .. } | Reach::Lost { .. } => (None, None),
                 };
+                let short_by = o
+                    .reach
+                    .short_by()
+                    .map(|s| [s.left, s.top, s.right, s.bottom]);
                 OutOfSightReport {
                     tag: o.tag.clone(),
                     path: o.path.join("/"),
@@ -224,6 +253,7 @@ pub fn report(window: (u32, u32), out: &[OutOfSight], marks: usize) -> ScrollRea
                         origin_y: o.viewport.origin.1,
                         w: o.viewport.size.0,
                         h: o.viewport.size.1,
+                        declared: o.viewport.declared.into(),
                         content_w: o.viewport.content.0,
                         content_h: o.viewport.content.1,
                         at_x: o.viewport.at.0,
@@ -297,6 +327,7 @@ mod tests {
             name: "pane".into(),
             origin: (0, 0),
             size: (100, 100),
+            declared: Rect::new(0, 0, 100, 100),
             content: (100, 300),
             at: (0, 0),
             max: (0, 200),
@@ -339,6 +370,53 @@ mod tests {
         assert_eq!(out.window.w, 800);
         assert_eq!(out.out_of_sight[0].reach, "scrollable");
         assert_eq!(out.out_of_sight[1].reach, "lost");
+    }
+
+    /// ★★★ R1713 — three counts, and they partition the list.
+    ///
+    /// The middle one is the round's subject: a mark the reader reaches all but
+    /// an edge of is a different fact from one nothing reaches, and a caller
+    /// (here `pinion_core::shrink`) that has to tell a clip from a loss cannot do
+    /// it from a single number. Both directions are pinned — a `clipped` row must
+    /// not be counted as `lost`, and it must not vanish from the total either.
+    ///
+    /// ★★★★★ The three arms have DIFFERENT counts on purpose, and the first
+    /// draft did not: with one row each, a counter that reads the wrong arm still
+    /// answers 1, and the counterfactual that swapped `clipped` for `lost` passed
+    /// the whole suite. An assertion whose fixture cannot tell two answers apart
+    /// is an assertion in a place it cannot fail.
+    #[test]
+    fn r1713_the_three_counts_partition_the_list() {
+        let edge = Overhang {
+            left: 0,
+            top: 0,
+            right: 28,
+            bottom: 0,
+        };
+        let out = report(
+            (800, 600),
+            &[
+                entry(Reach::Scrollable { to: (0, 152) }),
+                entry(Reach::Clipped { short_by: edge }),
+                entry(Reach::Clipped { short_by: edge }),
+                entry(Reach::Lost { short_by: edge }),
+                entry(Reach::Scrollable { to: (0, 8) }),
+                entry(Reach::Scrollable { to: (0, 9) }),
+                entry(Reach::Scrollable { to: (0, 10) }),
+            ],
+            331,
+        );
+        assert_eq!((out.scrollable, out.clipped, out.lost), (4, 2, 1));
+        assert_eq!(
+            out.scrollable + out.clipped + out.lost,
+            out.out_of_sight.len(),
+            "every row is counted exactly once"
+        );
+        assert_eq!(out.out_of_sight[1].reach, "clipped");
+        // ★ A `clipped` row carries the shortfall and no offset — the same rule
+        // `lost` follows, because both are answers about what cannot be reached.
+        assert_eq!(out.out_of_sight[1].short_by, Some([0, 0, 28, 0]));
+        assert_eq!(out.out_of_sight[1].to_x, None);
     }
 
     /// ★ Each arm carries only its own payload: an offset for the one that has

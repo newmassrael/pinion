@@ -1630,12 +1630,18 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
     def _gate_scroll_reach(self) -> None:
         """R1662 — nothing on the opening screen is out of the reader's reach.
 
-        For every painted mark the framework answers one of three things: it is
-        on screen, some offset of an enclosing viewport brings it there, or
-        nothing does. Only the third is a defect, and until this gate existed
-        it was indistinguishable from the second — a control below the fold of
-        a pane that scrolls and a control below the fold of a pane that does
-        not both simply stopped being painted.
+        For every painted mark the framework answers one of four things: it is
+        on screen, some offset of an enclosing viewport brings it there, some
+        offset brings PART of it there (R1713 `clipped`), or nothing brings any
+        of it. Only the last is a defect, and until this gate existed it was
+        indistinguishable from the second — a control below the fold of a pane
+        that scrolls and a control below the fold of a pane that does not both
+        simply stopped being painted.
+
+        ★ R1713 — the third answer is why the count this gate reads moved. A
+        row whose right edge a narrowed pane cuts off used to be `lost`; it is
+        `clipped` now, and a glyph nothing reaches at all is still `lost`. The
+        budget therefore counts a strictly sharper thing than it did.
 
         The window is a viewport whose range is zero, so a screen with no
         scrolling panes is judged too: anything it paints past the window edge
@@ -1679,9 +1685,10 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
                 f"silence this is the one use that turns the ratchet back into "
                 f"a suggestion."
             )
-        if lost or allowed or out.get("scrollable"):
+        if lost or allowed or out.get("scrollable") or out.get("clipped"):
             print(
                 f"[scroll-reach] {self.example}: {len(lost)} lost, "
+                f"{out.get('clipped', 0)} reachable in part, "
                 f"{out.get('scrollable', 0)} one scroll away, of "
                 f"{out.get('marks', 0)} marks, budget {allowed}"
             )

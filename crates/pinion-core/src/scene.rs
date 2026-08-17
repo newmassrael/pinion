@@ -396,7 +396,26 @@ impl NodeVisit<'_, '_> {
     /// rather than only the tagged ones.
     #[must_use]
     pub fn absolute_rect(&self) -> Option<Rect> {
-        translate_rect_into_clip(self.node.rect(), self.offset.0, self.offset.1, self.clip)
+        self.absolute_rect_of(self.node.rect())
+    }
+
+    /// (R1713) [`absolute_rect`](Self::absolute_rect) for a rectangle the caller
+    /// measured itself, expressed in this node's own frame.
+    ///
+    /// A node's promised box is not always the box it paints in: a text run's
+    /// shaped ink is wider or taller than the rect the view asked for, and
+    /// [`crate::reach`] judges runs by their ink because the ink is what a reader
+    /// sees. Before this, that module could not ask the walk where its own
+    /// measurement landed — so it re-derived the placement from the innermost
+    /// viewport alone and answered that a mark inside a sliced pane was on
+    /// screen. Nine of them, measured (R1712.1).
+    ///
+    /// The fold is the same one and in one place, which is the point: *reported*
+    /// and *visible* stay one fact for a measured rectangle exactly as they
+    /// already were for a promised one.
+    #[must_use]
+    pub fn absolute_rect_of(&self, rect: Rect) -> Option<Rect> {
+        translate_rect_into_clip(rect, self.offset.0, self.offset.1, self.clip)
     }
 }
 
@@ -2585,6 +2604,29 @@ impl Rect {
         );
         let (px, py) = (f64::from(px), f64::from(py));
         px >= x && px < x + w && py >= y && py < y + h
+    }
+
+    /// R1713 — the rectangle both cover, or `None` when they share no pixel.
+    ///
+    /// The other half of [`union`](Self::union), and `None` rather than a
+    /// zero-area rect for the reason [`NodeVisit::absolute_rect`] gives about
+    /// the same choice: an empty rect still carries a position, so a caller that
+    /// forgets to check the extent goes on to compare against a box nothing is
+    /// in. Folding a clip chain is a chain of these, and one empty link means
+    /// *nothing below here can be seen* — a fact worth being unable to ignore.
+    ///
+    /// Half-open on the right and bottom edges, the convention every predicate
+    /// on this type uses, so two boxes that merely touch do not intersect.
+    #[must_use]
+    pub fn intersect(self, other: Rect) -> Option<Rect> {
+        let x = self.x.max(other.x);
+        let y = self.y.max(other.y);
+        let right = (self.x.saturating_add(self.w)).min(other.x.saturating_add(other.w));
+        let bottom = (self.y.saturating_add(self.h)).min(other.y.saturating_add(other.h));
+        if right <= x || bottom <= y {
+            return None;
+        }
+        Some(Rect::new(x, y, right - x, bottom - y))
     }
 
     /// R682 §5.16 — smallest axis-aligned rectangle that contains
@@ -9280,6 +9322,85 @@ mod tests {
         let mut seen = 0;
         hidden.for_each_node(&mut |_| seen += 1);
         assert_eq!(seen, 3, "parent and both children");
+    }
+
+    /// ★★★ R1713 — the walk folds a rectangle the CALLER measured, through the
+    /// same arithmetic it folds the node's own.
+    ///
+    /// A text run's shaped ink is not the box the view asked for, and
+    /// [`crate::reach`] judges runs by their ink because the ink is what a reader
+    /// sees. Without this it could not ask the walk where its own measurement
+    /// landed, so it re-derived the placement from the innermost viewport and
+    /// answered that a mark inside a sliced pane was on screen — nine of them, on
+    /// a real screen (R1712.1).
+    #[test]
+    fn r1713_the_walk_places_a_rectangle_the_caller_measured() {
+        let mut node = ContainerNode::new(vec![tagged_box_at(30, 10, 20, 10, "run")]);
+        node.rect = Rect::new(0, 0, 50, 50);
+        node.layout =
+            crate::style::LayoutStyle::new().with_overflow(crate::style::Overflow::Hidden);
+        let scene = Scene::Container(node);
+
+        let mut answers = Vec::new();
+        scene.for_each_node(&mut |visit| {
+            if visit.node.tag() == Some("run") {
+                let promised = visit.node.rect();
+                answers.push((
+                    visit.absolute_rect(),
+                    // The same run, measured wider than it promised — 40 of ink
+                    // where 20 was asked for, which runs 10 past the clip.
+                    visit.absolute_rect_of(Rect::new(promised.x, promised.y, 40, 10)),
+                    // And a measurement that lands wholly outside it.
+                    visit.absolute_rect_of(Rect::new(60, 10, 8, 10)),
+                ));
+            }
+        });
+        assert_eq!(
+            answers,
+            [(
+                Some(Rect::new(30, 10, 20, 10)),
+                Some(Rect::new(30, 10, 20, 10)),
+                None,
+            )],
+            "the promised box fits; the ink is cut to the clip; ink past it is \
+             nowhere on screen — one fold, three inputs"
+        );
+    }
+
+    /// ★★ R1713 — [`Rect::intersect`], the other half of [`Rect::union`].
+    ///
+    /// `None` and not a zero-area rect: an empty rect still carries a position,
+    /// so a caller that forgets to check the extent goes on comparing against a
+    /// box nothing is in. Folding a clip chain is a chain of these.
+    #[test]
+    fn r1713_two_boxes_intersect_in_the_part_they_share_or_in_nothing() {
+        let a = Rect::new(10, 10, 100, 100);
+        assert_eq!(
+            a.intersect(Rect::new(60, 0, 100, 40)),
+            Some(Rect::new(60, 10, 50, 30))
+        );
+        assert_eq!(a.intersect(a), Some(a), "with itself, itself");
+        assert_eq!(
+            a.intersect(Rect::new(0, 0, 500, 500)),
+            Some(a),
+            "inside a larger box, the smaller box"
+        );
+        assert_eq!(a.intersect(Rect::new(200, 10, 10, 10)), None, "disjoint");
+        assert_eq!(
+            a.intersect(Rect::new(110, 10, 10, 10)),
+            None,
+            "half-open on the right, so boxes that merely touch share no pixel"
+        );
+        assert_eq!(
+            a.intersect(Rect::new(10, 110, 10, 10)),
+            None,
+            "and on the bottom"
+        );
+        assert_eq!(
+            Rect::new(0, 0, u32::MAX, u32::MAX).intersect(a),
+            Some(a),
+            "the extents are added, so a box at the top of the range must not wrap"
+        );
     }
 
     /// ★★ R1685 — what the pointer does with the cut half, measured rather

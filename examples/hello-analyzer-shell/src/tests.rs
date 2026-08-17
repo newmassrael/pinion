@@ -725,7 +725,10 @@ fn r1662_a_board_taller_than_the_canvas_is_reachable_by_scrolling() {
                 }
                 match o.reach {
                     pinion_core::reach::Reach::Scrollable { to } => Some((tag.clone(), to)),
-                    pinion_core::reach::Reach::Lost { .. } => None,
+                    // R1713 — a card the range reaches only part of has no single
+                    // offset that shows it, so there is nothing to press towards.
+                    pinion_core::reach::Reach::Clipped { .. }
+                    | pinion_core::reach::Reach::Lost { .. } => None,
                 }
             })
             .collect();

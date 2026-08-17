@@ -1640,7 +1640,13 @@ fn r1662_every_mark_is_shown_or_reachable_in_every_state_and_size() {
                 for out in pinion_core::reach::out_of_sight(&scene, *size, &mut stand_in_ink) {
                     match out.reach {
                         pinion_core::reach::Reach::Scrollable { .. } => scrollable += 1,
-                        pinion_core::reach::Reach::Lost { short_by } => lost.push(format!(
+                        // ★ R1713 — a mark the range reaches all but an edge of is
+                        // what a conceded width buys, and these sizes are all at or
+                        // above this screen's layout minimum, so it must not happen
+                        // here either: counted with the losses rather than waved
+                        // through, because a size that fits should clip nothing.
+                        pinion_core::reach::Reach::Clipped { short_by }
+                        | pinion_core::reach::Reach::Lost { short_by } => lost.push(format!(
                             "{when} {how}: {} is past {} by {short_by:?} \
                              (viewport {}x{}, content {}x{}, range {:?})",
                             out.tag
