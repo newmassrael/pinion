@@ -62,8 +62,9 @@ repeated a pending size, and whether those four account for every one.
 * **E** — nothing is hidden from a reader. Every resize the window system
   delivered is counted, including the ones no frame answered — the property the
   reference has at its window layer and never publishes.
-* **F** — a repeat is not a supersede. Re-announcing the size already pending
-  discards nothing, and does not inflate the drag count.
+* **F** — deleted, and the comment where it stood says why: it could not fail.
+  A resize to the size a window already has never reaches the shell, so the two
+  counters it compared were equal for a reason unrelated to the arm.
 * **A2 / G2** — the general half of A and G, and the one that reaches the
   screen whose specification is not a list of panes: everything the
   specification NAMES and the paint draws at the opening size is still drawn
@@ -229,30 +230,32 @@ def spec_is_on_screen(app: RpcSubprocess, name: str, size: tuple[int, int], when
 # ── B..F: the drag ──────────────────────────────────────────────────────────
 
 
-def flood(app: RpcSubprocess, start: tuple[int, int], n: int) -> tuple[int, int]:
-    """Fire `n` resizes without waiting for any of them, and return the last.
+def flood_and_settle(app: RpcSubprocess, start: tuple[int, int], n: int) -> tuple[int, int]:
+    """Fire `n` resizes without waiting between them, then wait for the LAST.
 
-    Notifications rather than requests, because the whole point is that they
-    arrive faster than frames are produced: a caller that waits for each one
-    has hand-serialised the very thing being measured, and would measure one
-    frame per event no matter what the shell does.
+    Notifications rather than requests for the sends, because the whole point is
+    that they arrive faster than frames are produced: a caller that waits for
+    each one has hand-serialised the very thing being measured, and would
+    measure one frame per event no matter what the shell does.
+
+    ★ The wait is in THIS function, not a sibling helper, and that is the
+    harness's rule rather than a style choice: `test_no_demo_resizes_a_window_-
+    and_reads_without_waiting` is per-function precisely because "the resize is
+    here and the wait is over there" is a shape it cannot verify. The first
+    draft of this file split them and the push gate refused it, correctly.
     """
     last = start
     for i in range(n):
         last = (start[0] + i * 3, start[1])
         app.request("scene/resize", {"width": last[0], "height": last[1]}, notify=True)
-    return last
-
-
-def settled_at(app: RpcSubprocess, size: tuple[int, int]) -> None:
-    """Wait for the painted root to BE `size` — an outcome, not an interval."""
 
     def done():
-        shot = app.snapshot(source="paint", viewport=size)
+        shot = app.snapshot(source="paint", viewport=last)
         rect = shot.get("rect", {}) if isinstance(shot, dict) else {}
-        return shot if (rect.get("w"), rect.get("h")) == size else None
+        return shot if (rect.get("w"), rect.get("h")) == last else None
 
-    wait_until(done, timeout=15.0, desc=f"the window settles at {size}")
+    wait_until(done, timeout=15.0, desc=f"the window settles at {last}")
+    return last
 
 
 def drag_is_answered_once(app: RpcSubprocess, name: str) -> tuple[int, int]:
@@ -261,8 +264,7 @@ def drag_is_answered_once(app: RpcSubprocess, name: str) -> tuple[int, int]:
     base_frames = start_t["frame_count"]
 
     start = (design[0], design[1])
-    last = flood(app, start, FLOOD)
-    settled_at(app, last)
+    last = flood_and_settle(app, start, FLOOD)
 
     after = resize_tally(app)
     frames = timings(app)["frame_count"] - base_frames
@@ -326,24 +328,22 @@ def drag_is_answered_once(app: RpcSubprocess, name: str) -> tuple[int, int]:
     return last
 
 
-def a_repeat_is_not_a_supersede(app: RpcSubprocess, name: str, at: tuple[int, int]) -> None:
-    """F — re-announcing the size already on screen discards nothing.
-
-    Distinguishing the two is what keeps an idle window that re-states its size
-    from reading like a drag. The reference cannot express the difference: its
-    widget layer never hears either one.
-    """
-    before = resize_tally(app)
-    for _ in range(4):
-        app.request("scene/resize", {"width": at[0], "height": at[1]}, notify=True)
-    settled_at(app, at)
-    after = resize_tally(app)
-    ok(
-        f"F/{name}: resizing to the size already on screen superseded nothing "
-        f"({after['superseded_total'] - before['superseded_total']} superseded)",
-        after["superseded_total"] == before["superseded_total"],
-    )
-    ok(f"F/{name}: the account still balances", after["balanced"] is True)
+# ── F was here, and was deleted rather than kept green ──────────────────────
+#
+# ★★★★★ It asserted that "re-announcing the size already on screen supersedes
+# nothing", by sending four `scene/resize` calls at the size the window was
+# already at and reading the account back. It passed, and it COULD NOT FAIL:
+# measured, a resize to the size a window already has never reaches the shell at
+# all — `events_total` does not move, so the two counters it compared were
+# always equal for a reason that had nothing to do with the arm being tested.
+#
+# The distinction (`Noted::Repeated` discards nothing; `Noted::Superseded`
+# discards a paint) is a real guarantee and it IS tested, in
+# `pinion_core::resize_batch`'s unit tests, where the arm can be driven. What
+# has no measured production path is the arm itself: nothing in this tree has
+# been shown to deliver the same size twice while a fold is pending. That is
+# recorded as a carry rather than papered over with a check that cannot fail —
+# the shape R1699 named and this round walked into anyway.
 
 
 # ── H: pixels ───────────────────────────────────────────────────────────────
@@ -576,7 +576,6 @@ def drive(name: str, example: str, resizer: Path | None) -> None:
             f"after the fold, at {landed}",
         )
         CHECKS.append(f"G2/{name}: {len(declared)} declared regions survive the fold")
-        a_repeat_is_not_a_supersede(app, name, landed)
         the_pixels_are_the_folded_size(app, name, landed, design[0])
         # And the screen still answers at the size the drag landed on, through
         # the ordinary path a later resize takes.
