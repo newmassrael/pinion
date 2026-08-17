@@ -221,6 +221,16 @@ struct WindowState {
     /// meaningless for a backend that has no clock, which the enum makes
     /// unrepresentable rather than merely unlikely.
     gpu_timing: WindowGpuTiming,
+    /// R1708 — resizes the window system has delivered for THIS window but
+    /// which no frame has answered yet, plus the lifetime accounting of what
+    /// folding them cost.
+    ///
+    /// Homed here rather than on the surface's own window slot because it is
+    /// the same class as [`Self::frame_timings`]: a fact about the window that
+    /// the wire reads and more than one surface writes. A resize arrives at
+    /// pointer rate and a frame does not, so the value that reconciles the two
+    /// rates has to outlive both.
+    resize_batch: pinion_core::resize_batch::ResizeBatch,
     /// R1036 — last presented-frame render-fidelity record (PR-17); `None`
     /// before the first present.
     render_fidelity: Option<pinion_runtime::RenderFidelity>,
@@ -2041,6 +2051,86 @@ impl<V: WidgetView> ShellCore<V> {
         };
     }
 
+    /// R1708 §5.16 §5.41 — record a resize the window system just delivered for
+    /// `window_id`, WITHOUT painting it.
+    ///
+    /// Every event reaches this call: the fold happens at the paint, never at
+    /// the report, so no size is ever lost to a reader (the reference toolkit
+    /// splits it the same way — measured, its window layer delivers all forty
+    /// of forty queued resizes while its widget layer sees one). The returned
+    /// [`Noted`](pinion_core::resize_batch::Noted) says what this event did to
+    /// the pending fold, so a caller that wants to log or trace the drop has
+    /// the reason in hand rather than a count to diff.
+    pub fn note_window_resize(
+        &mut self,
+        window_id: &str,
+        size: (u32, u32),
+    ) -> pinion_core::resize_batch::Noted {
+        self.window_state_mut(window_id).resize_batch.note(size)
+    }
+
+    /// R1708 §5.16 §5.41 — take `window_id`'s pending resize fold, if any.
+    ///
+    /// The caller MUST paint exactly one frame per returned fold and then say
+    /// so with [`Self::note_resize_painted`]. Between the two calls the
+    /// window's books are UNBALANCED on purpose — it is owed a frame it has not
+    /// had — and [`Self::resize_tally_for_window`]'s balance identity is what
+    /// says so. A caller that takes and never paints is exactly the break a
+    /// counterfactual walked through untouched when the count lived here.
+    pub fn take_pending_resize(
+        &mut self,
+        window_id: &str,
+    ) -> Option<pinion_core::resize_batch::Fold> {
+        self.window_states
+            .get_mut(window_id)
+            .and_then(|s| s.resize_batch.take())
+    }
+
+    /// R1708 §5.16 — `window_id`'s pending resize fold WITHOUT draining it.
+    ///
+    /// The event loop peeks before taking so it can decline a fold it cannot
+    /// answer (a zero dimension — a minimize) and leave it pending, rather than
+    /// draining one and counting a frame nothing drew.
+    #[must_use]
+    pub fn pending_resize(&self, window_id: &str) -> Option<pinion_core::resize_batch::Fold> {
+        self.window_state(window_id)
+            .and_then(|s| s.resize_batch.pending().copied())
+    }
+
+    /// R1708 §5.16 §5.41 — record that a frame answering `fold` was painted for
+    /// `window_id`. The second half of [`Self::take_pending_resize`].
+    pub fn note_resize_painted(&mut self, window_id: &str, fold: pinion_core::resize_batch::Fold) {
+        self.window_state_mut(window_id).resize_batch.painted(fold);
+    }
+
+    /// R1708 §5.16 — the ids of every window with a resize waiting to be
+    /// painted, in the map's iteration order.
+    ///
+    /// Returned owned so the event loop can drain and paint each one without
+    /// holding a borrow of the state map across the paint.
+    #[must_use]
+    pub fn windows_with_pending_resize(&self) -> Vec<String> {
+        self.window_states
+            .iter()
+            .filter(|(_, s)| s.resize_batch.is_pending())
+            .map(|(id, _)| id.clone())
+            .collect()
+    }
+
+    /// R1708 §5.16 §2 #7 — what `window_id`'s resizes have cost since boot.
+    ///
+    /// All-zero for a window that has never been resized, which is the honest
+    /// reading rather than a gap.
+    #[must_use]
+    pub fn resize_tally_for_window(
+        &self,
+        window_id: &str,
+    ) -> pinion_core::resize_batch::ResizeTally {
+        self.window_state(window_id)
+            .map(|s| *s.resize_batch.tally())
+            .unwrap_or_default()
+    }
+
     /// R1036 §5.16 §5.7 §2 #7 — record the render-fidelity fingerprint of the
     /// frame `AppShell::render_window` just ENCODED + presented for `window_id`
     /// (PR-17). `present_ok` is the `renderer.render` outcome; `viewport` is the
@@ -2230,6 +2320,10 @@ impl<V: WidgetView> ShellCore<V> {
                     snap.gpu_timing_supported = true;
                     snap.gpu_dropped_total = dropped;
                 }
+                // R1708 §5.16 §2 #7 — same rule again: a resize folded into a
+                // later one never became a frame, so it cannot live in the
+                // ring, and it is exactly the work a drag's cost is made of.
+                snap.resize = self.resize_tally_for_window(window_id);
                 snap
             })
     }

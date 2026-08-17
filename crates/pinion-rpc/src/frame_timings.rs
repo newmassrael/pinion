@@ -73,6 +73,15 @@
 //!         "layers": 3, "glyph_runs": 42, "glyphs": 318
 //!       }
 //!     },
+//!     "resize": {
+//!       "events_total": 80, "painted_total": 2, "superseded_total": 78,
+//!       "repeated_total": 0, "pending": 0, "balanced": true,
+//!       "last": {
+//!         "width": 1453, "height": 800,
+//!         "opened_width": 1216, "opened_height": 800,
+//!         "superseded": 79, "repeated": 0
+//!       }
+//!     },
 //!     "mean_fps": 116.3,
 //!     "budget_us": 8333,
 //!     "over_budget_frames": 3,
@@ -81,6 +90,20 @@
 //!   }
 //! }
 //! ```
+//! - **`resize`** (R1708) answers the one question a frame-shaped record cannot:
+//!   **what did a drag cost?** Resizes arrive at pointer rate and frames do not,
+//!   so the shell folds a batch of them into one paint — and the folded ones
+//!   never enter the ring, because they never became frames. `events_total` is
+//!   every resize the window system delivered (none are dropped at the report,
+//!   only at the paint); `superseded_total` is the ones a later size replaced
+//!   before they could be painted, which is what a drag is made of;
+//!   `repeated_total` is re-announcements of the size already pending, kept
+//!   separate so an idle window does not read as a drag. `balanced` is
+//!   `events_total == painted_total + superseded_total + repeated_total +
+//!   pending`, published rather than left to be re-derived: `false` means a
+//!   resize went somewhere none of the buckets names, which is a shell defect
+//!   and not a property of the drag. `last` is the most recent fold — the size
+//!   painted, the size the batch opened at, and how many it stood in for.
 //!
 //! - `frame_count` is cumulative across the window's whole lifetime;
 //!   `window_len` is the rolling-window size the `window` aggregates
@@ -649,6 +672,95 @@ pub struct FrameTimingsOutcome {
     /// R1465 — work done re-rendering the stored mirror a `from: paint` read
     /// answers from. All-zero on a backend that keeps no mirror.
     pub mirror: FrameTimingsMirror,
+    /// R1708 — what this window's resizes cost, including the ones that never
+    /// became a frame. All-zero for a window that was never resized.
+    pub resize: FrameTimingsResize,
+}
+
+/// R1708 §5.16 §5.41 §2 #7 — what a window's resizes cost, including the ones
+/// no frame ever answered.
+///
+/// A window edge dragged for a second delivers on the order of a hundred size
+/// changes and can honestly be answered by a handful of frames — the
+/// intermediate shapes were superseded before anything could present them. A
+/// frame-shaped record cannot show that: the frames it holds are the ones that
+/// happened, and the whole cost of a drag is the ones that did not.
+///
+/// Measured on the reference toolkit at 6.11.1 (a probe built and run
+/// offscreen, not headers read): it folds the same way — forty queued resizes
+/// reach its window layer and one reaches its widget layer — and publishes no
+/// count of the fold anywhere. A consumer there can only learn it by
+/// instrumenting both layers and subtracting. These fields are that
+/// subtraction, done once, by the layer that knows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct FrameTimingsResize {
+    /// Resizes the window system delivered, cumulative since boot. Every one
+    /// is counted here — the fold happens at the paint, never at the report.
+    pub events_total: u64,
+    /// Folds drained, each answered by exactly one frame.
+    pub painted_total: u64,
+    /// Resizes discarded because a later size arrived before they could be
+    /// painted. **The number a drag is made of.**
+    pub superseded_total: u64,
+    /// Resizes that repeated the size already pending, and so discarded
+    /// nothing. Kept apart from [`Self::superseded_total`] so a window
+    /// re-announcing an unchanged size does not read as a drag.
+    pub repeated_total: u64,
+    /// Resizes delivered but not yet answered by a frame — `0` or `1`.
+    ///
+    /// On the wire because it is a term of the identity below, and a reader
+    /// here cannot otherwise know which phase of a drag the read caught.
+    pub pending: u64,
+    /// `events_total == painted_total + superseded_total + repeated_total +
+    /// pending`. False means a resize went somewhere none of these buckets
+    /// names, which is a defect in the shell rather than a property of the
+    /// drag.
+    pub balanced: bool,
+    /// The most recent drained fold, or `null` before the first resize.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last: Option<FrameTimingsResizeFold>,
+}
+
+/// R1708 — one drained resize fold: the frame it produced, and the span of
+/// sizes that frame answered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+pub struct FrameTimingsResizeFold {
+    /// Width painted, in physical pixels — the last size noted before the
+    /// drain.
+    pub width: u32,
+    /// Height painted, in physical pixels.
+    pub height: u32,
+    /// Width the batch opened at. Equal to [`Self::width`] when the fold
+    /// discarded nothing.
+    pub opened_width: u32,
+    /// Height the batch opened at.
+    pub opened_height: u32,
+    /// Sizes this one frame superseded.
+    pub superseded: u32,
+    /// Repeats of the pending size folded in, which discarded nothing.
+    pub repeated: u32,
+}
+
+impl FrameTimingsResize {
+    /// Project the core tally onto the wire.
+    fn of(t: pinion_core::resize_batch::ResizeTally) -> Self {
+        Self {
+            events_total: t.events,
+            painted_total: t.painted,
+            superseded_total: t.superseded,
+            repeated_total: t.repeated,
+            pending: t.pending,
+            balanced: t.is_balanced(),
+            last: t.last.map(|f| FrameTimingsResizeFold {
+                width: f.size.0,
+                height: f.size.1,
+                opened_width: f.opened_at.0,
+                opened_height: f.opened_at.1,
+                superseded: f.superseded,
+                repeated: f.repeated,
+            }),
+        }
+    }
 }
 
 /// Project a per-window [`FrameTimingsSnapshot`] onto the wire-shaped
@@ -701,6 +813,7 @@ pub fn frame_timings(
             unsettled_total: s.mirror.unsettled,
             nodes_total: s.mirror.nodes,
         },
+        resize: FrameTimingsResize::of(s.resize),
         window: FrameTimingsWindow {
             min_total_us: s.min_total_us,
             mean_total_us: s.mean_total_us,

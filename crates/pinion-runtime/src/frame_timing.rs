@@ -794,10 +794,11 @@ impl FrameTimingStats {
         };
         Some(FrameTimingsSnapshot {
             // Filled by the backend after projection: this ring holds FRAMES,
-            // and none of the producer's work, the focus enumeration's, or the
-            // stored mirror's is one.
+            // and none of the producer's work, the focus enumeration's, the
+            // stored mirror's, or a resize folded into a later one is one.
             produce: ProduceWork::default(),
             focus: FocusWork::default(),
+            resize: pinion_core::resize_batch::ResizeTally::default(),
             mirror: MirrorWork::default(),
             frame_count: self.frame_count,
             window_len: u32::try_from(self.samples.len()).unwrap_or(u32::MAX),
@@ -1238,6 +1239,20 @@ pub struct FrameTimingsSnapshot {
     /// that missed budget, in `[0.0, 1.0]`. `0.0` when no budget is
     /// set. Echoed so a client need not re-derive the ratio.
     pub jank_ratio: f32,
+    /// (R1708 §5.16 §5.41 §2 #7) What this window's resizes cost, cumulative
+    /// since boot — see [`pinion_core::resize_batch::ResizeTally`].
+    ///
+    /// **Filled by the backend after projection**, like [`Self::produce`] /
+    /// [`Self::focus`] / [`Self::mirror`], and for the same reason: the ring
+    /// holds frames, and a resize that was folded into a later one never
+    /// became one. That is precisely why it has to be published — a drag whose
+    /// eighty size changes collapse into three frames is invisible in a
+    /// frame-shaped record, and "eighty events, three frames" is the whole
+    /// account of what the drag cost.
+    ///
+    /// All-zero on a backend whose windows are never resized, and on
+    /// `pinion-tui` (a terminal resize arrives as a different fact).
+    pub resize: pinion_core::resize_batch::ResizeTally,
 }
 
 // ── R1361 §5.16 §5.22 — the in-app read seam ─────────────────────────

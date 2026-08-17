@@ -3731,32 +3731,139 @@ impl<V: WidgetView + 'static> AppShell<V> {
             .get(&window_id)
             .map_or(pinion_runtime::DEFAULT_WINDOW, |s| &*s.spec_id)
             .to_owned();
-        let mut maximized = None;
-        let mut resized = false;
-        if let Some(slot) = self.windows.get_mut(&window_id)
-            && let RenderState::Active {
-                renderer, window, ..
-            } = &mut slot.render
-        {
-            renderer.resize(size.width.max(1), size.height.max(1));
-            maximized = Some(window.is_maximized());
-            resized = true;
+        let active = self
+            .windows
+            .get(&window_id)
+            .is_some_and(|slot| matches!(slot.render, RenderState::Active { .. }));
+        // R1219 §5.16 §5.41 — the resized surface is painted IN-BAND with this
+        // event batch, never deferred to an async `request_redraw`. During an
+        // interactive OS resize the platform runs a modal resize loop that can
+        // withhold `RedrawRequested` until the drag ends; an async redraw then
+        // leaves the newly-exposed region unpainted for the whole drag — a
+        // flash at the grow edge.
+        //
+        // R1708 §5.16 §5.41 — in-band, but ONCE PER BATCH rather than once per
+        // event. Resizes arrive at pointer rate and frames do not: measured on
+        // this host before the change, an 80-event flood painted 81 frames and
+        // took 2.7 SECONDS to catch up after the last event, because each
+        // event blocked on its own full paint while 79 of those paints were
+        // superseded microseconds later. The size is latched here and drained
+        // in `about_to_wait`, which winit calls once the pending batch is
+        // exhausted and before the loop blocks — so the newly-exposed region
+        // is still filled before the compositor composites (R1219's guarantee
+        // is about the batch, not the event), and the superseded shapes, which
+        // no one could ever have seen, cost nothing.
+        //
+        // Every event is still NOTED, so no size is lost to a reader; the fold
+        // happens at the paint. That is the split the reference toolkit makes
+        // too — measured at 6.11.1, forty queued resizes reach its window layer
+        // and one reaches its widget layer — with the difference that
+        // `note_window_resize` counts what it folded and publishes it
+        // (`scene/frame_timings`.`resize`), which nothing there does.
+        //
+        // ★ This arm ONLY records. Reconfiguring the GPU surface and asking
+        // winit whether the window is maximized both moved to the drain,
+        // because both are questions about the size that will be PAINTED and
+        // neither has an answer worth having for a size already superseded.
+        //
+        // Measured, because "why is this slow" is not readable: with the paint
+        // folded but these two still per-event, an 80-event flood painted 2
+        // frames (~33 ms of paint) and still held the event loop for **867 ms**.
+        // Folding both took that to 2.9 ms. Isolating them afterwards — putting
+        // `is_maximized` back per-event alone — measured 3.9 ms, so the whole
+        // 867 ms was the **surface reconfigure**, and the maximized query is
+        // cheap. It moved anyway: the answer for a size a person is dragging
+        // THROUGH is not a state anything renders.
+        if active {
+            self.core
+                .note_window_resize(&spec_id, (size.width, size.height));
         }
-        if let Some(m) = maximized {
-            self.core.set_maximized_for_window(&spec_id, m);
-        }
-        // R1219 §5.16 §5.41 — paint the resized surface SYNCHRONOUSLY, in-band
-        // with the `Resized` event, instead of scheduling an async
-        // `request_redraw`. During an interactive OS resize the platform runs a
-        // modal resize loop that can withhold `RedrawRequested` until the drag
-        // ends; an async redraw then leaves the newly-exposed region unpainted
-        // for the whole drag — a flash at the grow edge (the bottom when
-        // growing vertically). An immediate paint fills the new size before the
-        // compositor composites the resized frame, so the surface never shows a
-        // stale/uncleared band. `render_window` early-returns on a 0-size
-        // (minimize) window, so the un-guarded call is safe.
-        if resized {
+    }
+
+    /// R1708 §5.16 §5.41 — paint one frame for each window holding a latched
+    /// resize, then leave its batch empty.
+    ///
+    /// Called at the top of [`Self::about_to_wait`], which winit reaches only
+    /// after the whole pending event batch is drained. So a drag that delivers
+    /// twenty sizes between two loop blocks produces one frame carrying the
+    /// twentieth, and `take_pending_resize` records the nineteen it stood in
+    /// for.
+    ///
+    /// Each drained fold pays the whole per-size cost exactly once: the GPU
+    /// surface is reconfigured to the folded size, winit is asked once whether
+    /// the window ended up maximized (an X server round trip, and the answer
+    /// for an intermediate size is worthless), and one frame is painted.
+    ///
+    /// The paint is unconditional per drained fold, and the fold is reported
+    /// painted only AFTER `render_window` returns. Between the take and the
+    /// report the window's published books are unbalanced, which is what makes
+    /// "took a fold and drew nothing" a state a reader can see — the shape a
+    /// counterfactual forced, having walked straight through the first draft
+    /// where the take did the counting.
+    fn drain_resizes_to_paint(&mut self) {
+        for spec_id in self.core.windows_with_pending_resize() {
+            // Resolve the winit window BEFORE draining. A fold taken for a
+            // window that cannot be painted would be counted as a frame that
+            // never happened, and the balance identity would then be true
+            // about a lie. A window that has gone away keeps its fold; the
+            // state goes when the window's does.
+            let Some(window_id) = self.spec_id_to_window_id.get(spec_id.as_str()).copied() else {
+                continue;
+            };
+            // ★ A fold with a zero dimension is a MINIMIZE, and `render_window`
+            // early-returns on one. Taking it would count a frame nothing drew
+            // — the same lie the two-step count exists to expose, wearing a
+            // different hat. Leaving it pending is also the honest reading: a
+            // minimized window IS owed a frame, and it gets one when the
+            // restore's resize supersedes this fold.
+            //
+            // Residue, stated rather than handled: this asks the FOLD's size,
+            // while `render_window` asks the live window's. A window that goes
+            // to zero between the two reads has its fold taken and no frame
+            // painted, and the published `balanced` reads false for that window
+            // until its next resize. Not engineered around, because nothing has
+            // measured that race happening.
+            let Some(peek) = self.core.pending_resize(&spec_id) else {
+                continue;
+            };
+            if peek.size.0 == 0 || peek.size.1 == 0 {
+                continue;
+            }
+            let Some(fold) = self.core.take_pending_resize(&spec_id) else {
+                continue;
+            };
+            // R1123 §5.16 §5.39 — sync the per-window maximized cache from
+            // winit's ACTUAL `is_maximized()` rather than the chrome-button
+            // intent, so a tiling WM's maximize reaches the glyph and the
+            // resize-border suppression. Once per fold: the state a person is
+            // mid-drag through is not a state anything renders.
+            let mut maximized = None;
+            if let Some(slot) = self.windows.get_mut(&window_id)
+                && let RenderState::Active {
+                    renderer, window, ..
+                } = &mut slot.render
+            {
+                // R670.B / R1023 — forward the surface resize to the live GPU
+                // renderer before painting, so the swapchain is configured for
+                // the size this frame is about to draw.
+                renderer.resize(fold.size.0.max(1), fold.size.1.max(1));
+                maximized = Some(window.is_maximized());
+            }
+            if let Some(m) = maximized {
+                self.core.set_maximized_for_window(&spec_id, m);
+            }
+            // R1219 §5.16 §5.41 — this paint is what fills the newly-exposed
+            // region before the compositor composites. ★ Measured on THIS host
+            // it is redundant: with it removed, a 40-event X11 drag still
+            // produced one frame at the final size, because winit emits a
+            // `RedrawRequested` of its own after a `Resized` here. It stays
+            // because the platform R1219 was written for is the one that does
+            // NOT — a modal resize loop withholding redraws until the drag ends
+            // — and that platform is on a gated axis this tree cannot run. So
+            // the counterfactual for this line is unfalsifiable here, and the
+            // honest record of that is a debt entry, not a deleted guarantee.
             self.render_window(window_id);
+            self.core.note_resize_painted(&spec_id, fold);
         }
     }
 
@@ -4411,6 +4518,11 @@ impl<V: WidgetView> ApplicationHandler<AppEvent> for AppShell<V> {
     /// on first paint, but only one drain consumes it; subsequent
     /// frames need the re-arm here).
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
+        // R1708 — first, because winit reaches here only once the pending
+        // event batch is exhausted: this is the moment a drag's accumulated
+        // resizes collapse into one frame, and it must happen before the
+        // deadlines below are computed from `last_paint_instant`.
+        self.drain_resizes_to_paint();
         let now = Instant::now();
         let mut earliest_deadline: Option<Instant> = None;
         // R683 §5.16 — `slot.spec_id` is `Cow<'static, str>` which

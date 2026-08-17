@@ -1036,6 +1036,7 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("produce", WireTy::Object, Some("FrameTimingsProduce")),
                 WireField::new("focus", WireTy::Object, Some("FrameTimingsFocus")),
                 WireField::new("mirror", WireTy::Object, Some("FrameTimingsMirror")),
+                WireField::new("resize", WireTy::Object, Some("FrameTimingsResize")),
             ],
         },
     },
@@ -1046,6 +1047,33 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("passes_total", WireTy::Integer, None),
                 WireField::new("shape_misses_total", WireTy::Integer, None),
                 WireField::new("nodes_total", WireTy::Integer, None),
+            ],
+        },
+    },
+    WireType {
+        name: "FrameTimingsResize",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("events_total", WireTy::Integer, None),
+                WireField::new("painted_total", WireTy::Integer, None),
+                WireField::new("superseded_total", WireTy::Integer, None),
+                WireField::new("repeated_total", WireTy::Integer, None),
+                WireField::new("pending", WireTy::Integer, None),
+                WireField::new("balanced", WireTy::Boolean, None),
+                WireField::new("last", WireTy::Object, Some("FrameTimingsResizeFold")).optional(),
+            ],
+        },
+    },
+    WireType {
+        name: "FrameTimingsResizeFold",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("width", WireTy::Integer, None),
+                WireField::new("height", WireTy::Integer, None),
+                WireField::new("opened_width", WireTy::Integer, None),
+                WireField::new("opened_height", WireTy::Integer, None),
+                WireField::new("superseded", WireTy::Integer, None),
+                WireField::new("repeated", WireTy::Integer, None),
             ],
         },
     },

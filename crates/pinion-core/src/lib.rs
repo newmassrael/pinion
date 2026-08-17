@@ -60,6 +60,7 @@ pub mod reach;
 pub mod reactive;
 pub mod region;
 pub mod renderer;
+pub mod resize_batch;
 pub mod revision;
 pub mod scene;
 pub mod scene_disabled;
