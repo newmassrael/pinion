@@ -67,6 +67,14 @@ failures of the *round*, for opposite reasons, and both are reported by name.
    thing the gate can actually catch.
 4. **Restoration is verified by hash.** A driver that dies mid-case leaves the
    tree mutated (R1557, R1578). Every file is hashed before and after.
+
+   ⚠ **DO NOT EDIT A FILE THIS PLAN NAMES WHILE THE RUN IS IN FLIGHT.**
+   Restoration writes back the snapshot taken at the start of the case, so an
+   edit made in between is silently discarded — and `git status` says nothing,
+   because the file was already modified. R1709 lost three doc edits to
+   `vello_capture.rs` that way and only noticed because the harness reprinted
+   the file. The restore is CORRECT; what is wrong is editing underneath it.
+   Wait for the run, or work in a file the plan does not touch.
 5. **The driver has its own tests**, in the same place `tools/test_rpc_verify.py`
    sits, and `pre-push` runs them.
 6. **The baseline must be green.** R1619 killed a run mid-case, which left one
