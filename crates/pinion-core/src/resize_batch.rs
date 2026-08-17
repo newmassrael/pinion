@@ -117,17 +117,6 @@ pub struct Fold {
     pub repeated: u32,
 }
 
-impl Fold {
-    /// Did this fold discard any paint?
-    ///
-    /// False for the ordinary single resize (a window snapped to a new size
-    /// once), true for a drag.
-    #[must_use]
-    pub fn folded(&self) -> bool {
-        self.superseded > 0
-    }
-}
-
 /// Lifetime accounting for one window's resizes.
 ///
 /// Every resize ever noted lands in exactly one of the four buckets, and
@@ -299,7 +288,7 @@ mod tests {
         let fold = b.pending().copied().expect("a resize is pending");
         assert_eq!(fold.size, (800, 600));
         assert_eq!(fold.opened_at, (800, 600));
-        assert!(!fold.folded(), "one resize folded nothing");
+        assert_eq!(fold.superseded, 0, "one resize folded nothing");
         assert!(b.is_balanced());
     }
 
@@ -315,7 +304,6 @@ mod tests {
         assert_eq!(fold.size, (808, 600));
         assert_eq!(fold.opened_at, (800, 600));
         assert_eq!(fold.superseded, 2);
-        assert!(fold.folded());
         assert!(b.is_balanced());
     }
 
@@ -330,7 +318,6 @@ mod tests {
         let fold = b.pending().copied().expect("a resize is pending");
         assert_eq!(fold.superseded, 0);
         assert_eq!(fold.repeated, 1);
-        assert!(!fold.folded());
         assert!(b.is_balanced());
     }
 
