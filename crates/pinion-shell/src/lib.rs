@@ -440,6 +440,19 @@ pub trait VelloRenderer:
     /// `pinion_gpu::FrameTimer`.
     fn gpu_clock(&mut self) -> pinion_gpu::GpuFrameClock;
 
+    /// R1709 §5.16 — whether this backend is putting frames on the screen,
+    /// and what has been tried when it is not.
+    ///
+    /// **On this trait, not [`WidgetRenderer`], and with no default** — the
+    /// rule [`Self::last_acquire_us`] and [`Self::capture_rgba8`] already
+    /// state: a swapchain is GPU-specific, and a TUI cell backend has no
+    /// surface that can go stale. A default would document a falsehood
+    /// ("this backend always presents") for whichever impl forgot it, and
+    /// the whole point of the type is that a window which stopped
+    /// presenting says so.
+    #[must_use]
+    fn surface_health(&self) -> pinion_gpu::SurfaceHealth;
+
     /// R1537 §5.16 — GPU measurements this backend took and then
     /// discarded, cumulative since boot. `0` for a backend that cannot
     /// time the GPU at all.
@@ -472,7 +485,12 @@ pub trait VelloRenderer:
         height: u32,
     ) -> impl core::future::Future<Output = Result<Self, Self::Error>>
     where
-        W: Into<vello::wgpu::SurfaceTarget<'static>>;
+        // R1709 — `Clone + 'static` because a surface must be
+        // **re-creatable**: the recovery ladder's heavy rung makes another
+        // one for the same window, and a target consumable once would put
+        // that rung out of reach. `Arc<Window>` — what the shell passes —
+        // already satisfies both.
+        W: Into<vello::wgpu::SurfaceTarget<'static>> + Clone + 'static;
 
     /// R1060 §5.16 — render `scene` to the live surface and read back
     /// the **exact swapchain texture the window presents** as
@@ -552,13 +570,21 @@ macro_rules! vello_renderer_impl {
                 <$name>::gpu_dropped_samples(self)
             }
 
+            // R1709 §5.16 — forward the template's recovery-ladder state so
+            // `scene/render_fidelity` can publish why a window is dark.
+            fn surface_health(&self) -> ::pinion_gpu::SurfaceHealth {
+                <$name>::surface_health(self)
+            }
+
             async fn new<W>(
                 target: W,
                 width: u32,
                 height: u32,
             ) -> ::core::result::Result<Self, $err>
             where
-                W: ::core::convert::Into<::vello::wgpu::SurfaceTarget<'static>>,
+                W: ::core::convert::Into<::vello::wgpu::SurfaceTarget<'static>>
+                    + ::core::clone::Clone
+                    + 'static,
             {
                 <$name>::new(target, width, height).await
             }

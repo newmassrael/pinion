@@ -293,7 +293,9 @@ impl __NAME__ {
     /// init fails.
     pub async fn new<W>(target: W, width: u32, height: u32) -> ::std::result::Result<Self, __ERR_NAME__>
     where
-        W: ::std::convert::Into<::vello::wgpu::SurfaceTarget<'static>>,
+        W: ::std::convert::Into<::vello::wgpu::SurfaceTarget<'static>>
+            + ::std::clone::Clone
+            + 'static,
     {
         // R1537 §5.16 — pinion owns the device. `vello::util::RenderContext`
         // creates one behind a private constructor with a fixed feature
@@ -439,18 +441,30 @@ impl __NAME__ {
         //
         // R1049 §5.16 — recover the swapchain, don't just skip. A surface
         // that comes back Outdated / Lost / Validation stays broken until
-        // it is reconfigured: every later frame re-fails the same way and,
-        // worse, a stale-but-"Success" texture makes `create_view` raise a
-        // wgpu validation error that the default handler turns into a hard
-        // process panic. `configure_surface` (the Vello-blessed
-        // `surface.configure(device, &config)`) re-establishes the
-        // swapchain to the current config so the NEXT frame acquires a
-        // fresh texture; this frame is still skipped (returns the labelled
-        // `Surface` error the shell logs). Timeout (transient, retry) and
-        // Occluded (window hidden) are not surface invalidations — a
-        // reconfigure neither helps nor is needed, so they only skip.
+        // something is done about it: every later frame re-fails the same
+        // way and, worse, a stale-but-"Success" texture makes `create_view`
+        // raise a wgpu validation error that the default handler turns into
+        // a hard process panic. This frame is skipped either way (it
+        // returns the labelled `Surface` error the shell logs).
+        //
+        // R1709 §5.16 — what "recover" means is no longer written here, and
+        // the reason is that what was written here was FALSE. It said a
+        // reconfigure "re-establishes the swapchain so the NEXT frame
+        // acquires a fresh texture" — measured on a never-mapped X11 window
+        // on this host's driver, it does not: every subsequent acquire came
+        // back outdated, forever, and the window never presented again.
+        // `GpuContext::recover` runs a ladder whose rung is chosen by how
+        // many attempts in a row have already failed, so "did the previous
+        // response work?" is structural rather than assumed. It also owns
+        // the classification: Timeout and Occluded are the window WAITING,
+        // not the surface breaking, and take no rung.
+        //
+        // The five arms this replaced are gone on purpose. Spelling the
+        // status match out here and again in the shell's capture path was
+        // two chances to classify one status two ways on two routes to the
+        // same screen.
         let __acquire_start = ::std::time::Instant::now();
-        let __acquired = self.surface.acquire();
+        let mut __acquired = self.surface.acquire();
         // Record BEFORE the error arms below return: a timeout/outdated
         // frame is exactly the case whose block IS worth reporting (it is
         // the longest block there is), so the value must land before the
@@ -460,26 +474,40 @@ impl __NAME__ {
             __acquire_start.elapsed().as_micros(),
         )
         .unwrap_or(u64::MAX);
-        let surface_texture = match __acquired {
-            ::vello::wgpu::CurrentSurfaceTexture::Success(t)
-            | ::vello::wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
-            ::vello::wgpu::CurrentSurfaceTexture::Timeout => {
-                return ::std::result::Result::Err(__ERR_NAME__::Surface("timeout"));
+        let surface_texture = loop {
+            if let ::std::option::Option::Some(__missed) =
+                ::pinion_gpu::Missed::of(&__acquired)
+            {
+                // A rung was earned: take it and try THIS frame again. Give
+                // up only when the ladder answers `Repeated` (everything
+                // known has been tried) or `None` (the window is waiting,
+                // not broken — retrying a tight loop on an occluded window
+                // is not a recovery).
+                match self.context.recover(&mut self.surface, __missed) {
+                    ::std::option::Option::Some(__rung)
+                        if __rung != ::pinion_gpu::Rung::Repeated =>
+                    {
+                        __acquired = self.surface.acquire();
+                        continue;
+                    }
+                    _ => {
+                        return ::std::result::Result::Err(
+                            __ERR_NAME__::Surface(__missed.as_str()),
+                        );
+                    }
+                }
             }
-            ::vello::wgpu::CurrentSurfaceTexture::Occluded => {
-                return ::std::result::Result::Err(__ERR_NAME__::Surface("occluded"));
-            }
-            ::vello::wgpu::CurrentSurfaceTexture::Outdated => {
-                self.context.configure_surface(&self.surface);
-                return ::std::result::Result::Err(__ERR_NAME__::Surface("outdated"));
-            }
-            ::vello::wgpu::CurrentSurfaceTexture::Lost => {
-                self.context.configure_surface(&self.surface);
-                return ::std::result::Result::Err(__ERR_NAME__::Surface("lost"));
-            }
-            ::vello::wgpu::CurrentSurfaceTexture::Validation => {
-                self.context.configure_surface(&self.surface);
-                return ::std::result::Result::Err(__ERR_NAME__::Surface("validation"));
+            match __acquired {
+                ::vello::wgpu::CurrentSurfaceTexture::Success(t)
+                | ::vello::wgpu::CurrentSurfaceTexture::Suboptimal(t) => break t,
+                // Unreachable: `Missed::of` returned `None`, which it does
+                // for exactly the two arms above. Spelled as an error rather
+                // than a panic because a template that can abort a
+                // consumer's process on a status it mis-classified is worse
+                // than one that skips a frame and says so.
+                _ => {
+                    return ::std::result::Result::Err(__ERR_NAME__::Surface("unclassified"));
+                }
             }
         };
         let mut encoder = self.context.device().create_command_encoder(
@@ -505,7 +533,21 @@ impl __NAME__ {
             timer.after_submit();
         }
         surface_texture.present();
+        // R1709 §5.16 — the frame reached the screen, so the recovery
+        // ladder is done. Without this the ladder would never come back
+        // down and the next resize of this window's life would rebuild the
+        // surface instead of reconfiguring it.
+        self.surface.note_presented();
         ::std::result::Result::Ok(())
+    }
+
+    /// R1709 §5.16 — what this window can say about putting frames on the
+    /// screen: how many attempts in a row have missed it, why the last one
+    /// did, which rung of the recovery ladder that earned, and how many
+    /// times the surface has had to be remade.
+    #[must_use]
+    pub fn surface_health(&self) -> ::pinion_gpu::SurfaceHealth {
+        self.surface.health()
     }
 
     /// Resize the wgpu surface to match a new window dimension.

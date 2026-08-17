@@ -2143,12 +2143,17 @@ impl<V: WidgetView> ShellCore<V> {
     /// `last_paint_scene` the RPC dispatch overwrites is deliberately NOT
     /// consulted here, so the record cannot be contaminated by a query-time
     /// recompute.
+    /// R1709 — `health` is the backend's recovery-ladder state, projected by
+    /// the caller (which is the layer that holds the renderer). Passed in
+    /// rather than read here so this stays the one place a frame's record is
+    /// assembled.
     pub fn record_presented_frame(
         &mut self,
         window_id: &str,
         present_ok: bool,
         viewport: (u32, u32),
         scene: &pinion_core::Scene,
+        health: pinion_runtime::PresentHealth,
     ) {
         let paint_seq = self
             .window_state(window_id)
@@ -2161,6 +2166,7 @@ impl<V: WidgetView> ShellCore<V> {
             viewport_w: viewport.0,
             viewport_h: viewport.1,
             grids: pinion_runtime::render_fidelity::grid_fidelity(scene),
+            health,
         });
     }
 

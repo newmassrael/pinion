@@ -1,5 +1,6 @@
 //! R1537 §5.16 — the wgpu instance / adapter / device / queue pinion owns.
 
+use crate::health::{Missed, Rung};
 use crate::surface::GpuSurface;
 
 /// Why a [`GpuContext`] could not be built.
@@ -77,7 +78,10 @@ pub struct GpuContext {
     /// Held because dropping the instance invalidates every surface
     /// created from it, and because a future multi-window path creates
     /// further surfaces from this same instance.
-    _instance: wgpu::Instance,
+    ///
+    /// R1709 — it is also what [`GpuContext::recover`]'s heavy rung asks
+    /// for a replacement surface, so this field stopped being inert.
+    instance: wgpu::Instance,
     /// Kept for [`GpuContext`]'s `Debug`, which answers the one question a
     /// log line about a GPU wants: WHICH one. `wgpu` keeps the adapter
     /// alive behind the device regardless, so this is not a lifetime prop.
@@ -123,6 +127,10 @@ impl GpuContext {
     ///
     /// See [`GpuError`]. A failure here is fatal to the window — there is
     /// no rendering without a device.
+    /// `W: Clone` (R1709) because the surface has to be **re-creatable**:
+    /// the recovery ladder's heavy rung remakes it from the same target,
+    /// and a target that could only be consumed once would make that rung
+    /// unreachable. `Arc<Window>` — the canonical input — already is.
     pub async fn new<W>(
         target: W,
         width: u32,
@@ -130,7 +138,7 @@ impl GpuContext {
         present_mode: wgpu::PresentMode,
     ) -> Result<(Self, GpuSurface), GpuError>
     where
-        W: Into<wgpu::SurfaceTarget<'static>>,
+        W: Into<wgpu::SurfaceTarget<'static>> + Clone + 'static,
     {
         // Mirrors `vello::util::RenderContext::new` exactly — the env-var
         // backend/flag overrides are how `WGPU_BACKEND=gl` and friends are
@@ -143,9 +151,14 @@ impl GpuContext {
             memory_budget_thresholds: wgpu::MemoryBudgetThresholds::default(),
             backend_options: wgpu::BackendOptions::from_env_or_default(),
         });
-        let surface = instance
-            .create_surface(target.into())
-            .map_err(|e| GpuError::SurfaceCreation(format!("{e}")))?;
+        // R1709 — one closure makes the surface now AND makes it again
+        // later, so the two can never drift into asking for different
+        // things. It is the only place the target type is named.
+        let source = {
+            let target = target.clone();
+            move |instance: &wgpu::Instance| instance.create_surface(target.clone().into())
+        };
+        let surface = source(&instance).map_err(|e| GpuError::SurfaceCreation(format!("{e}")))?;
         let adapter = wgpu::util::initialize_adapter_from_env_or_default(&instance, Some(&surface))
             .await
             .map_err(|_| GpuError::NoAdapter)?;
@@ -173,10 +186,18 @@ impl GpuContext {
             .await
             .map_err(|e| GpuError::NoDevice(format!("{e}")))?;
 
-        let surface = GpuSurface::new(&adapter, &device, surface, width, height, present_mode)?;
+        let surface = GpuSurface::new(
+            &adapter,
+            &device,
+            surface,
+            Box::new(source),
+            width,
+            height,
+            present_mode,
+        )?;
         Ok((
             Self {
-                _instance: instance,
+                instance,
                 adapter,
                 device,
                 queue,
@@ -217,15 +238,48 @@ impl GpuContext {
             .on_uncaptured_error(std::sync::Arc::new(handler));
     }
 
-    /// Re-establish the swapchain from the surface's current
-    /// configuration.
+    /// R1709 §5.16 — answer a frame that did not reach the screen: record
+    /// it, and take the rung of the recovery ladder it earns.
     ///
-    /// Called after an `Outdated` / `Lost` / `Validation` acquisition so
-    /// the *next* frame gets a fresh texture. The peer of vello's
-    /// `RenderContext::configure_surface`, which needed the context only
-    /// to look the device up by `dev_id`.
-    pub fn configure_surface(&self, surface: &GpuSurface) {
-        surface.configure(&self.device);
+    /// Returns the rung taken, or `None` when the miss was a *wait*
+    /// (occluded, timed out) rather than the surface breaking — nothing is
+    /// rebuilt for a window that is merely not being looked at.
+    ///
+    /// # What this replaced, and why it had to
+    ///
+    /// Until R1709 this was `configure_surface`: one line, called on every
+    /// non-presentable acquisition, whose doc asserted that it
+    /// "re-establishes the swapchain so the NEXT frame acquires a fresh
+    /// texture". Nothing verified that claim, and it is measurably false
+    /// on at least one real window — a never-mapped X11 window on this
+    /// host's driver, where after a resize *every* acquire comes back
+    /// outdated, the reconfigure runs again, and the window never presents
+    /// again. Isolated in a standalone reproducer: it is `configure`
+    /// itself that poisons that swapchain, and making a **new surface** is
+    /// what restores it.
+    ///
+    /// The ladder makes "did the previous response work?" structural. A
+    /// rung is only reached when the cheaper one was already taken and the
+    /// very next frame failed anyway; a frame that presents resets it. So
+    /// the ordinary case (a resized, mapped window) still costs exactly one
+    /// reconfigure, and the case a reconfigure cannot fix is no longer
+    /// silent — [`GpuSurface::health`] says how long the window has been
+    /// dark, why, and what has been tried.
+    pub fn recover(&self, surface: &mut GpuSurface, missed: Missed) -> Option<Rung> {
+        let rung = surface.note_missed(missed)?;
+        match rung {
+            Rung::Reconfigured | Rung::Repeated => surface.configure(&self.device),
+            Rung::Rebuilt => {
+                if !surface.rebuild(&self.instance, &self.device) {
+                    // The replacement could not be made. Fall back to the
+                    // cheap rung rather than leaving the frame unanswered:
+                    // the ladder has already recorded that the heavy one
+                    // was owed, so this is visible rather than silent.
+                    surface.configure(&self.device);
+                }
+            }
+        }
+        Some(rung)
     }
 
     /// Resize the swapchain and the intermediate target to a new window

@@ -2098,6 +2098,9 @@ impl<V: WidgetView> AppShell<V> {
         // the per-window render-fidelity record so `scene/render_fidelity`
         // surfaces a failed present (the present-staleness signature).
         let present_ok;
+        // R1709 §5.16 — and, unlike that flag, how long this window has been
+        // failing to present and what has been tried about it.
+        let present_health;
         // Re-acquire the slot mutable borrow now that the substrate
         // borrow released, then bind window + renderer for the
         // intrinsic-resize hook + vello submit. Scope the borrow
@@ -2223,6 +2226,11 @@ impl<V: WidgetView> AppShell<V> {
             // Read HERE because this is the only scope that holds a
             // renderer, which is also why the capability rides along.
             gpu = GpuFrameReport::read(&mut **renderer);
+            // R1709 §5.16 — read the recovery ladder from the SAME scope
+            // that holds the renderer, in the same frame that just tried to
+            // present. Read one scope later it would answer about a
+            // different frame.
+            present_health = present_health_of(renderer.surface_health());
         };
         // R1036 PR-17 §2 #7 — record the uncontaminated fidelity fingerprint of
         // the frame just ENCODED + presented for this window (per-TextGrid
@@ -2230,8 +2238,13 @@ impl<V: WidgetView> AppShell<V> {
         // the winit paint path, never by an RPC recompute, so
         // `scene/render_fidelity` can answer "what is actually displayed"
         // without the `last_paint_scene` post-dispatch-finalize contamination.
-        self.core
-            .record_presented_frame(&spec_id, present_ok, (w.get(), h.get()), &paint_scene);
+        self.core.record_presented_frame(
+            &spec_id,
+            present_ok,
+            (w.get(), h.get()),
+            &paint_scene,
+            present_health,
+        );
         // The post-paint helpers (`emit_accesskit_for_window`,
         // `publish_ime_for_window`) each re-acquire their own slot
         // borrow internally and take `&mut self.core` — the scope
@@ -4853,6 +4866,23 @@ impl GpuFrameReport {
             supported: clock.is_supported(),
             dropped: renderer.gpu_dropped_samples(),
         }
+    }
+}
+
+/// R1709 §5.16 — project the backend's recovery-ladder state onto the
+/// wire-facing record.
+///
+/// The names come from `pinion_gpu`'s own spellings rather than being
+/// re-spelled here: the vocabulary has one definition, and this function
+/// only moves it across the crate boundary `pinion-runtime` cannot cross
+/// (it is backend-agnostic and must not depend on `wgpu`).
+fn present_health_of(health: pinion_gpu::SurfaceHealth) -> pinion_runtime::PresentHealth {
+    pinion_runtime::PresentHealth {
+        missed_in_a_row: health.missed_in_a_row(),
+        broken_in_a_row: health.broken_in_a_row(),
+        last_missed: health.last_missed().map(pinion_gpu::Missed::as_str),
+        last_rung: health.last_rung().map(pinion_gpu::Rung::as_str),
+        rebuilds: health.rebuilds(),
     }
 }
 

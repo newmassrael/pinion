@@ -65,6 +65,39 @@ pub struct GridFidelity {
     pub content_hash: u64,
 }
 
+/// R1709 §5.16 — what the window could say about putting frames on the screen
+/// at the moment this frame was recorded.
+///
+/// # Why the names are strings here
+///
+/// The vocabulary — which statuses exist, which of them are the surface
+/// breaking rather than the window waiting, and which rung of the recovery
+/// ladder each earns — is defined exactly once, in `pinion_gpu`. This crate
+/// is backend-agnostic (a TUI backend has no swapchain, and pinion-runtime
+/// must not grow a `wgpu` dependency to say so), so it carries that
+/// vocabulary's own spellings rather than a second enum that could drift.
+///
+/// `None` means "nothing is currently wrong", not "unknown": a window whose
+/// last attempt reached the screen has no missed reason and owes no rung.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub struct PresentHealth {
+    /// Frames that did not reach the screen since the last one that did,
+    /// counting waits as well as breakages. `0` ⟺ the last attempt
+    /// presented.
+    pub missed_in_a_row: u32,
+    /// Of those, how many were the surface breaking rather than waiting.
+    pub broken_in_a_row: u32,
+    /// Why the most recent missed frame missed.
+    pub last_missed: Option<&'static str>,
+    /// Which rung of the recovery ladder the most recent breakage earned.
+    pub last_rung: Option<&'static str>,
+    /// How many times this window's surface has had to be remade, over the
+    /// window's whole life. Cumulative — it survives recovery, because a
+    /// window that is healthy now having needed four rebuilds to get there
+    /// is a different fact from one that has needed none.
+    pub rebuilds: u32,
+}
+
 /// Uncontaminated fingerprint of the frame a window last PRESENTED. Written only
 /// by the winit paint path, so it answers "what is actually displayed" without
 /// the RPC-recompute contamination that `last_paint_scene` carries.
@@ -86,6 +119,15 @@ pub struct RenderFidelity {
     pub viewport_h: u32,
     /// Per-`TextGrid` fingerprints of the encoded frame.
     pub grids: Vec<GridFidelity>,
+    /// R1709 — what the window could say about presenting when this frame
+    /// was recorded.
+    ///
+    /// The companion [`Self::present_ok`] needs: that flag is one frame's
+    /// outcome, and one frame's outcome cannot distinguish a blip from a
+    /// window that has been dark for a hundred frames. It could not, and a
+    /// permanently unpresentable surface went unnoticed for the life of the
+    /// tree because of it.
+    pub health: PresentHealth,
 }
 
 /// Process-relative millisecond clock, shared by every recorded present so the

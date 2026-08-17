@@ -1632,6 +1632,19 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "PresentHealthView",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("missed_in_a_row", WireTy::Integer, None),
+                WireField::new("broken_in_a_row", WireTy::Integer, None),
+                WireField::new("last_missed", WireTy::String, None).optional(),
+                WireField::new("last_rung", WireTy::String, None).optional(),
+                WireField::new("rebuilds", WireTy::Integer, None),
+                WireField::new("presenting", WireTy::Boolean, None),
+            ],
+        },
+    },
+    WireType {
         name: "RectReport",
         shape: WireShape::Object {
             fields: &[
@@ -1655,6 +1668,7 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("state", WireTy::Array, Some("GridFidelityView")).optional(),
                 WireField::new("diverged", WireTy::Boolean, None).optional(),
                 WireField::new("divergences", WireTy::Array, Some("GridDivergence")),
+                WireField::new("health", WireTy::Object, Some("PresentHealthView")),
             ],
         },
     },

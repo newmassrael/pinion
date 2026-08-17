@@ -46,6 +46,10 @@
 //!   ownership.
 //! - [`FrameTimer`] — two timestamps around one frame's GPU work, resolved
 //!   and read back **without blocking the frame that wrote them**.
+//! - [`SurfaceHealth`] — R1709: whether the window is putting frames on the
+//!   screen, why not when it is not, and which rung of the recovery ladder
+//!   ([`Rung`]) that earned. The ladder replaces a single reconfigure that
+//!   was repeated forever without anyone checking whether it worked.
 //!
 //! ## Absence is a value here
 //!
@@ -57,8 +61,10 @@
 
 mod context;
 mod frame_timer;
+mod health;
 mod surface;
 
 pub use context::{GpuContext, GpuError};
 pub use frame_timer::{FrameTimer, GpuFrameClock};
+pub use health::{Missed, Rung, SurfaceHealth};
 pub use surface::GpuSurface;

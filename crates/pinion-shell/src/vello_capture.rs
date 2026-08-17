@@ -37,6 +37,29 @@
 //! standing obligation is therefore mirror-not-lift: any present-pattern
 //! change (e.g. a future R1049-class surface-recovery fix) MUST land in
 //! BOTH `codegen.rs::render` and `capture_surface_rgba8` or they drift.
+//!
+//! ## R1709 — one place where they DELIBERATELY differ, and why
+//!
+//! The recovery ladder itself is shared ([`pinion_gpu::GpuContext::recover`],
+//! one call on both sides, so a status cannot be classified two ways on two
+//! routes to one screen). What differs is how far each CLIMBS it.
+//!
+//! `render` retries the acquire IN-FRAME while a new rung is earned. This
+//! path takes one rung and fails the capture. That is not drift and it is
+//! not an oversight — it is a measurement. A capture cannot tell a broken
+//! surface from a window that is merely MID-RESIZE: asking for a picture
+//! right after `scene/resize` finds the swapchain legitimately stale, and a
+//! climb answers that ordinary transient by REMAKING the surface, spending
+//! the ladder's heavy rung on a window that was about to be fine. The heavy
+//! rung is a response to persistence, and persistence is a fact about
+//! successive frames, which one request cannot observe. `render` can: it
+//! runs every frame and has just reconfigured the surface for the size the
+//! window actually has.
+//!
+//! So a capture arriving mid-outage reports it, and the next frame's ladder
+//! is what restores the window. Anyone tempted to "fix" this asymmetry
+//! should re-run that measurement first — the symmetric version was
+//! written, and it is what produced the spurious rebuilds.
 
 use pinion_gpu::{FrameTimer, GpuContext, GpuSurface};
 use vello::peniko::Color as PenikoColor;
@@ -61,10 +84,13 @@ pub enum SurfaceCaptureError {
     ZeroDimension,
     /// `surface.get_current_texture()` returned a non-presentable
     /// status (`timeout` / `occluded` / `outdated` / `lost` /
-    /// `validation`). Carries the status label. `outdated` / `lost` /
-    /// `validation` trigger a surface reconfigure exactly like the
-    /// forge template `render()` recovery (R1049); the capture itself
-    /// still fails so the caller does not return a stale frame.
+    /// `validation`). Carries the status label, which is
+    /// [`pinion_gpu::Missed`]'s own spelling rather than a second one.
+    ///
+    /// R1709 — an invalidation also takes one rung of the recovery ladder
+    /// (see the module doc for why one and not more); the capture itself
+    /// still fails, so the caller never receives a stale frame, and
+    /// `scene/render_fidelity` says what was tried.
     SurfaceUnavailable(&'static str),
     /// `vello::Renderer::render_to_texture` failed.
     VelloRender(String),
@@ -234,9 +260,13 @@ pub struct CapturedFrame {
 ///
 /// # Errors
 ///
-/// See [`SurfaceCaptureError`]. `outdated` / `lost` / `validation`
-/// reconfigure the surface (R1049) and fail this capture; the next
-/// frame acquires a fresh texture.
+/// See [`SurfaceCaptureError`]. An invalidation (`outdated` / `lost` /
+/// `validation`) takes one rung of the recovery ladder and fails this
+/// capture. R1709 — the older wording here promised that "the next frame
+/// acquires a fresh texture", which is the exact claim this round measured
+/// to be false on a real window; what a caller is owed is that the failure
+/// is REPORTED, with `scene/render_fidelity` saying how long the window has
+/// been dark and what has been tried about it.
 pub fn capture_surface_rgba8(
     context: &GpuContext,
     surface: &mut GpuSurface,
@@ -287,37 +317,49 @@ pub fn capture_surface_rgba8(
         )
         .map_err(|e| SurfaceCaptureError::VelloRender(format!("{e}")))?;
 
-    // Acquire the swapchain texture, mirroring the template `render()`
-    // recovery (R1049): outdated / lost / validation reconfigure the
-    // surface and fail this capture rather than reading a stale frame.
+    // Acquire the swapchain texture, running the same recovery ladder the
+    // render path runs, through the same call — these are two routes to one
+    // screen, and a status classified differently on the two would be a
+    // divergence no test could see.
     // R1361.5 §5.16 — this path performs its own swapchain acquire; time it
     // so the shell can attribute the block instead of billing it to render
     // work (or, worse, inheriting a stale block from the last `render` call,
     // which this path never makes). Bound at the acquire itself, so every
     // path that reaches the `Ok` below carries THIS frame's block.
+    //
+    // R1709 §5.16 — ONE rung, then fail this capture. Deliberately NOT the
+    // in-frame climb `render` does, and the reason is a measurement rather
+    // than a preference.
+    //
+    // A capture cannot tell a broken surface from a window that is merely
+    // MID-RESIZE: measured on a healthy display, asking for a picture right
+    // after `scene/resize` finds the swapchain stale (the window has not
+    // taken the new size yet), and a climb answers that ordinary transient
+    // by REBUILDING the surface — spending the heavy rung on a window that
+    // was about to be fine. The heavy rung is a response to persistence,
+    // and persistence is a fact about successive frames, which one request
+    // cannot observe. `render` can, because it runs every frame and has
+    // just reconfigured the surface for the size the window actually has.
+    //
+    // So a capture that arrives mid-outage reports it, and the next frame's
+    // ladder is what restores the window. `scene/render_fidelity` says
+    // which rung that was.
     let __acquire_start = std::time::Instant::now();
     let __acquired = surface.acquire();
     let acquire_us = u64::try_from(__acquire_start.elapsed().as_micros()).unwrap_or(u64::MAX);
-    let surface_texture = match __acquired {
-        wgpu::CurrentSurfaceTexture::Success(t) | wgpu::CurrentSurfaceTexture::Suboptimal(t) => t,
-        wgpu::CurrentSurfaceTexture::Timeout => {
-            return Err(SurfaceCaptureError::SurfaceUnavailable("timeout"));
-        }
-        wgpu::CurrentSurfaceTexture::Occluded => {
-            return Err(SurfaceCaptureError::SurfaceUnavailable("occluded"));
-        }
-        wgpu::CurrentSurfaceTexture::Outdated => {
-            context.configure_surface(surface);
-            return Err(SurfaceCaptureError::SurfaceUnavailable("outdated"));
-        }
-        wgpu::CurrentSurfaceTexture::Lost => {
-            context.configure_surface(surface);
-            return Err(SurfaceCaptureError::SurfaceUnavailable("lost"));
-        }
-        wgpu::CurrentSurfaceTexture::Validation => {
-            context.configure_surface(surface);
-            return Err(SurfaceCaptureError::SurfaceUnavailable("validation"));
-        }
+    if let Some(missed) = pinion_gpu::Missed::of(&__acquired) {
+        context.recover(surface, missed);
+        return Err(SurfaceCaptureError::SurfaceUnavailable(missed.as_str()));
+    }
+    // Unreachable `else`: `Missed::of` answers `None` for exactly the two
+    // arms bound here, so reaching it would mean the mapping and this
+    // destructuring disagree — which is why it is an error rather than a
+    // panic. A template that can abort a consumer's process over a status it
+    // mis-classified is worse than one that skips a frame and says so.
+    let (wgpu::CurrentSurfaceTexture::Success(surface_texture)
+    | wgpu::CurrentSurfaceTexture::Suboptimal(surface_texture)) = __acquired
+    else {
+        return Err(SurfaceCaptureError::SurfaceUnavailable("unclassified"));
     };
 
     // Blit the intermediate target into the swapchain texture (same as
@@ -354,6 +396,12 @@ pub fn capture_surface_rgba8(
         surface.format(),
     )?;
     surface_texture.present();
+    // R1709 §5.16 — a captured frame IS a presented frame (it rasterizes,
+    // blits and presents exactly as `render` does), so it settles the
+    // recovery ladder exactly as `render` does. Leaving it out would let a
+    // window driven entirely over `scene/screenshot` — which is how an
+    // agent drives one — climb the ladder forever while presenting fine.
+    surface.note_presented();
 
     Ok(CapturedFrame {
         width,

@@ -126,6 +126,62 @@ pub struct GridDivergence {
     pub state_content_hash: String,
 }
 
+/// R1709 §5.16 §2 #7 — the window's presentability, on the wire.
+///
+/// `present_ok` says whether ONE frame reached the screen. This says whether
+/// the window is reaching it at all, why not, and what has been tried — the
+/// difference between "a frame was dropped" and "this window has been dark
+/// since the resize forty frames ago and nothing anyone knows how to do has
+/// brought it back".
+///
+/// That distinction is not decoration. A window whose surface could never
+/// present again reported `present_ok: false` and nothing else, on every
+/// frame, for the rest of its life, and every other introspection surface
+/// went on answering as though the screen were fine — `scene/snapshot
+/// {from:"paint"}` reads the ENCODED scene, which is built before the
+/// acquire and so is perfectly healthy on a window nobody can see.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct PresentHealthView {
+    /// Frames that did not reach the screen since the last one that did.
+    /// `0` ⟺ the last attempt presented.
+    pub missed_in_a_row: u32,
+    /// Of those, how many were the surface breaking rather than the window
+    /// waiting (occluded / timed out). Only these move the recovery ladder.
+    pub broken_in_a_row: u32,
+    /// Why the most recent missed frame missed: `outdated` / `lost` /
+    /// `validation` / `timeout` / `occluded`. Omitted when the last attempt
+    /// presented.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_missed: Option<&'static str>,
+    /// Which rung of the recovery ladder that breakage earned:
+    /// `reconfigured` (re-establish the swapchain) / `rebuilt` (make a new
+    /// surface for the window) / `repeated` (everything known has been
+    /// tried). Omitted when nothing is currently broken.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub last_rung: Option<&'static str>,
+    /// How many times this window's surface has had to be remade, over the
+    /// window's whole life. Cumulative — it survives recovery.
+    pub rebuilds: u32,
+    /// `true` ⟺ the last attempt reached the screen. Published rather than
+    /// left to the reader because "is this window alive" is the question
+    /// this object exists to answer, and a client deriving it from a count
+    /// is a client that can derive it wrongly.
+    pub presenting: bool,
+}
+
+impl From<pinion_runtime::PresentHealth> for PresentHealthView {
+    fn from(health: pinion_runtime::PresentHealth) -> Self {
+        Self {
+            missed_in_a_row: health.missed_in_a_row,
+            broken_in_a_row: health.broken_in_a_row,
+            last_missed: health.last_missed,
+            last_rung: health.last_rung,
+            rebuilds: health.rebuilds,
+            presenting: health.missed_in_a_row == 0,
+        }
+    }
+}
+
 /// Snapshot returned by [`render_fidelity`].
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RenderFidelityOutcome {
@@ -153,6 +209,8 @@ pub struct RenderFidelityOutcome {
     pub diverged: Option<bool>,
     /// Per-grid detail for every divergence (empty when none / no producer).
     pub divergences: Vec<GridDivergence>,
+    /// R1709 — whether the window is putting frames on the screen at all.
+    pub health: PresentHealthView,
 }
 
 /// Project a presented-frame [`RenderFidelity`] record (and optional current
@@ -204,6 +262,7 @@ pub fn render_fidelity(
         state,
         diverged,
         divergences,
+        health: record.health.into(),
     })
 }
 
@@ -244,6 +303,7 @@ mod tests {
             viewport_w: 960,
             viewport_h: 600,
             grids,
+            health: pinion_runtime::PresentHealth::default(),
         }
     }
 
@@ -251,6 +311,78 @@ mod tests {
     fn missing_record_errors() {
         let err = render_fidelity(None, None).unwrap_err();
         assert_eq!(err, RenderFidelityError::RenderFidelityUnavailable);
+    }
+
+    #[test]
+    fn r1709_a_presenting_window_publishes_no_reason_and_no_rung() {
+        let out = render_fidelity(Some(&record(vec![])), None).unwrap();
+        assert!(
+            out.health.presenting,
+            "a window that presented is presenting"
+        );
+        assert_eq!(out.health.missed_in_a_row, 0);
+        assert_eq!(out.health.last_missed, None);
+        assert_eq!(out.health.last_rung, None);
+        assert_eq!(out.health.rebuilds, 0);
+    }
+
+    #[test]
+    fn r1709_a_dark_window_publishes_why_and_what_was_tried() {
+        // ★ The assertion that could not be made from a demo. A window is dark
+        // only when the surface actually breaks, which on most hosts never
+        // happens — so a check that waits to observe one is a check that
+        // passes by never firing. Built here from a health record instead, so
+        // the projection is falsifiable everywhere.
+        let mut rec = record(vec![]);
+        rec.present_ok = false;
+        rec.health = pinion_runtime::PresentHealth {
+            missed_in_a_row: 5,
+            broken_in_a_row: 3,
+            last_missed: Some("outdated"),
+            last_rung: Some("rebuilt"),
+            rebuilds: 2,
+        };
+        let out = render_fidelity(Some(&rec), None).unwrap();
+        assert!(
+            !out.health.presenting,
+            "five missed frames is not presenting"
+        );
+        assert_eq!(out.health.missed_in_a_row, 5);
+        assert_eq!(out.health.broken_in_a_row, 3);
+        assert_eq!(out.health.last_missed, Some("outdated"));
+        assert_eq!(out.health.last_rung, Some("rebuilt"));
+        assert_eq!(out.health.rebuilds, 2);
+    }
+
+    #[test]
+    fn r1709_the_published_names_are_the_frameworks_own() {
+        // The wire's vocabulary is not re-spelled anywhere: what reaches a
+        // client is exactly what `pinion_gpu` named. Asserted against the
+        // roster rather than against literals written twice — a new arm
+        // reaching the wire unnamed is the failure this prevents, and the
+        // reason a demo cannot check it is that a demo only sees the arms its
+        // host happens to produce.
+        let serialized =
+            serde_json::to_value(PresentHealthView::from(pinion_runtime::PresentHealth {
+                missed_in_a_row: 1,
+                broken_in_a_row: 1,
+                last_missed: Some("validation"),
+                last_rung: Some("reconfigured"),
+                rebuilds: 0,
+            }))
+            .expect("serializes");
+        assert_eq!(serialized["last_missed"], "validation");
+        assert_eq!(serialized["last_rung"], "reconfigured");
+        assert_eq!(serialized["presenting"], false);
+        // ...and the absent case omits the keys rather than publishing nulls a
+        // client would have to distinguish from a name.
+        let quiet = serde_json::to_value(PresentHealthView::from(
+            pinion_runtime::PresentHealth::default(),
+        ))
+        .expect("serializes");
+        assert!(quiet.get("last_missed").is_none());
+        assert!(quiet.get("last_rung").is_none());
+        assert_eq!(quiet["presenting"], true);
     }
 
     #[test]

@@ -1272,8 +1272,12 @@ mod tests {
         );
         // The block must be measured around the acquire ALONE — if the call
         // moved back inside the match scrutinee the span would be lost.
+        // R1709 — `mut`, because the recovery ladder re-acquires in place
+        // when a rung is taken; the FIRST acquire is still the one timed,
+        // which is the honest reading (a retry's block belongs to the
+        // recovery, not to the frame's wait for an image).
         assert!(
-            render_body.contains("let __acquired = self.surface.acquire();"),
+            render_body.contains("let mut __acquired = self.surface.acquire();"),
             "the acquire is called on its own line inside the timed span",
         );
         // And the accessor the shell reads it through exists.
@@ -1390,31 +1394,67 @@ mod tests {
 
     #[test]
     fn emits_renderer_vello_recovers_invalidated_surface() {
-        // R1049 §5.16 (PR-21) — a non-presentable surface status
-        // (outdated / lost / validation) must RECONFIGURE the swapchain,
-        // not merely skip the frame: a surface stays broken until
-        // reconfigured, and a stale-but-"Success" texture then panics the
+        // R1049 §5.16 (PR-21) — a non-presentable surface status must not
+        // merely skip the frame: a surface stays broken until something is
+        // done about it, and a stale-but-"Success" texture then panics the
         // process at `create_view`. The device also installs an
         // uncaptured-error handler so a transient validation error is
         // absorbed rather than hard-panicking via wgpu's default.
+        //
+        // R1709 — the response is no longer a bare reconfigure spelled out
+        // three times. It is ONE call into the recovery ladder, which picks
+        // the rung from how many attempts in a row have already failed, and
+        // whose vocabulary decides which statuses are breakages at all. So
+        // this asserts the CALL and the classification, and no longer
+        // counts reconfigures: counting them here is what let the tree
+        // believe for six hundred rounds that reconfiguring was a recovery.
         let xml = r#"<pinion xmlns="https://pinion.dev/dsl/v1" kind="renderer" name="Scene" backend="vello"/>"#;
         let rust = compile_str(xml, "scene.pinion.xml").expect("compile");
-        // Exactly the three recoverable statuses reconfigure (Timeout /
-        // Occluded are not surface losses → they skip without reconfigure).
         assert_eq!(
-            rust.matches("self.context.configure_surface(&self.surface);")
+            rust.matches("self.context.recover(&mut self.surface, __missed)")
                 .count(),
-            3,
-            "outdated / lost / validation each reconfigure the surface",
+            1,
+            "every non-presentable status goes through the one recovery ladder",
         );
-        // ...and still surface a labelled error so the shell logs + skips
-        // THIS frame (recovery lands on the next acquisition).
-        for reason in ["outdated", "lost", "validation"] {
-            assert!(
-                rust.contains(&format!("Surface(\"{reason}\")")),
-                "recoverable status {reason} still returns its labelled Surface error",
-            );
-        }
+        assert!(
+            !rust.contains("configure_surface"),
+            "the un-verified single-rung recovery is gone from the template",
+        );
+        // ★ And the frame RETRIES rather than waiting for a frame nobody
+        // will ask for. Measured in R1709: with the retry absent, a window
+        // that took a rung sat unpresented for 3.2 s with no frame following
+        // — an idle event loop is not its own retry, which is what the first
+        // design assumed.
+        assert!(
+            rust.contains("__acquired = self.surface.acquire();\n") && rust.contains("continue;"),
+            "a rung taken is followed by another acquire in the same frame",
+        );
+        // ...and the retry STOPS: `Repeated` is the ladder saying everything
+        // known has been tried, and a loop that ignored it would spin a dark
+        // window at 100% CPU.
+        assert!(
+            rust.contains("__rung != ::pinion_gpu::Rung::Repeated"),
+            "the in-frame retry is bounded by the ladder rather than by a count",
+        );
+        // ...and the frame still surfaces a labelled error so the shell logs
+        // + skips THIS frame, with the label coming from the same vocabulary
+        // the ladder classified with rather than a literal written here.
+        assert!(
+            rust.contains("__ERR_NAME__::Surface(__missed.as_str())")
+                || rust.contains("Surface(__missed.as_str())"),
+            "the skipped frame is labelled with the miss the ladder recorded",
+        );
+        // A frame that DID reach the screen settles the ladder — without
+        // this, one outage would leave every later resize rebuilding the
+        // surface for the rest of the window's life.
+        assert!(
+            rust.contains("self.surface.note_presented();"),
+            "a presented frame resets the recovery ladder",
+        );
+        assert!(
+            rust.contains("pub fn surface_health(&self)"),
+            "the renderer publishes what it can say about presenting",
+        );
         // Uncaptured-error handler installed at device creation (wgpu 29
         // takes an Arc).
         assert!(

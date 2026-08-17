@@ -4828,6 +4828,102 @@ def abs_rects_of(snap: Any) -> dict[str, tuple[int, int, int, int]]:
     return _walk_tag_rects(snap, clipped=True)
 
 
+def screen_spec(app: "RpcSubprocess", external: str = "/external") -> Any:
+    """The specification a screen publishes about itself, as data.
+
+    ★ Two spellings, and both are read: one screen publishes `spec` as JSON and
+    another as a string holding JSON. Which a screen chose is not what any
+    caller of this is about, and a demo that knows is a demo that breaks when
+    the other screen is added.
+
+    R1709 lifted this out of `r1708_a_drag_is_answered_once.py` on its second
+    consumer, per the standing rule that what a demo re-derives belongs in the
+    harness before a third one derives it differently.
+    """
+    spec = app.query(f"{external}/spec")
+    if isinstance(spec, str):
+        spec = json.loads(spec)
+    return spec
+
+
+def declared_panes(app: "RpcSubprocess", external: str = "/external") -> list[dict]:
+    """The panes this screen DECLARES, or `[]` if it is not organised in panes."""
+    spec = screen_spec(app, external)
+    panes = spec.get("panes") if isinstance(spec, dict) else None
+    return panes or []
+
+
+def design_size(app: "RpcSubprocess") -> tuple[int, int]:
+    """This screen's own opening size, ASKED FOR rather than written down."""
+    rect = app.snapshot(source="paint")["rect"]
+    return (rect["w"], rect["h"])
+
+
+def names_in_spec(spec: Any) -> set[str]:
+    """Every string anywhere in a published specification.
+
+    Screens organise their specifications differently — panes and columns here,
+    a rail roster and a catalogue there — so the general form reads all of it
+    rather than knowing any of it. It is what lets a screen whose specification
+    is not a list of panes be checked at all.
+    """
+    if isinstance(spec, str):
+        return {spec}
+    if isinstance(spec, dict):
+        return set().union(*(names_in_spec(v) for v in spec.values())) if spec else set()
+    if isinstance(spec, list):
+        return set().union(*(names_in_spec(v) for v in spec)) if spec else set()
+    return set()
+
+
+def declared_and_painted(
+    app: "RpcSubprocess", size: tuple[int, int], external: str = "/external"
+) -> set[str]:
+    """What this screen's specification NAMES and its paint actually draws."""
+    return names_in_spec(screen_spec(app, external)) & set(
+        abs_rects_of(app.snapshot(source="paint", viewport=size))
+    )
+
+
+def assert_declared_panes_on_screen(
+    app: "RpcSubprocess", size: tuple[int, int], *, label: str
+) -> list[str]:
+    """Every pane the screen declares is painted, at its declared width, tiling
+    the body — asserted at `size`.
+
+    Returns one description per check made, so a caller can count what it
+    proved; `[]` for a screen that is not organised in panes, which the caller
+    prints rather than reading as a pass.
+
+    The tiling clause is not decoration: three rectangles of the right widths
+    that OVERLAP satisfy every width check and are a broken screen.
+    """
+    panes = declared_panes(app)
+    if not panes:
+        return []
+    made: list[str] = []
+    painted = abs_rects_of(app.snapshot(source="paint", viewport=size))
+    missing = [p["tag"] for p in panes if p["tag"] not in painted]
+    assert_eq(missing, [], f"{label} {size}: every declared pane is painted")
+    made.append(f"{label}: panes painted")
+    wrong = [
+        f"{p['tag']} declares {p['width']} and is painted {painted[p['tag']][2]}"
+        for p in panes
+        if p["width"] and painted[p["tag"]][2] != p["width"]
+    ]
+    assert_eq(wrong, [], f"{label} {size}: a declared pane width is the width it gets")
+    made.append(f"{label}: declared widths held")
+    row = sorted((painted[p["tag"]] for p in panes), key=lambda r: r[0])
+    gaps = [
+        f"{b[0]} does not begin where the pane before it ended ({a[0] + a[2]})"
+        for a, b in zip(row, row[1:])
+        if a[0] + a[2] != b[0]
+    ]
+    assert_eq(gaps, [], f"{label} {size}: the panes tile the body")
+    made.append(f"{label}: panes tile")
+    return made
+
+
 def _walk_tag_rects(snap: Any, *, clipped: bool) -> dict[str, tuple[int, int, int, int]]:
     """One walk behind both readers, so they cannot disagree about the offsets
     they share — only about the clip, which is the whole difference between the

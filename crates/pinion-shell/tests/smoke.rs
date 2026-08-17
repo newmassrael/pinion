@@ -74,7 +74,7 @@ impl SmokeRenderer {
     #[allow(clippy::unused_async)]
     async fn new<W>(_target: W, _width: u32, _height: u32) -> Result<Self, SmokeRendererError>
     where
-        W: Into<vello::wgpu::SurfaceTarget<'static>>,
+        W: Into<vello::wgpu::SurfaceTarget<'static>> + Clone + 'static,
     {
         Ok(Self)
     }
@@ -155,9 +155,16 @@ impl VelloRenderer for SmokeRenderer {
         0
     }
 
+    /// R1709 — no swapchain, so no frame has ever failed to reach a screen
+    /// and no recovery has ever been owed. The default IS the measurement
+    /// for a surface-less backend.
+    fn surface_health(&self) -> pinion_gpu::SurfaceHealth {
+        pinion_gpu::SurfaceHealth::default()
+    }
+
     async fn new<W>(target: W, width: u32, height: u32) -> Result<Self, SmokeRendererError>
     where
-        W: Into<vello::wgpu::SurfaceTarget<'static>>,
+        W: Into<vello::wgpu::SurfaceTarget<'static>> + Clone + 'static,
     {
         SmokeRenderer::new(target, width, height).await
     }

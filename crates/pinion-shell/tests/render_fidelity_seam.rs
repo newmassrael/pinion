@@ -139,6 +139,14 @@ fn render_fidelity(core: &mut ShellCore<TermView>) -> serde_json::Value {
         .clone()
 }
 
+/// R1709 — a window that is presenting normally. These tests are about the
+/// displayed-vs-state divergence, so the recovery ladder is at rest for all
+/// of them; the presentability axis has its own coverage in `pinion-gpu`
+/// and in the round's demo.
+fn healthy() -> pinion_runtime::PresentHealth {
+    pinion_runtime::PresentHealth::default()
+}
+
 /// The single grid's `used_rows` in a `displayed` / `state` array.
 fn used_rows(arr: &serde_json::Value) -> u64 {
     let grids = arr.as_array().expect("grid array");
@@ -160,7 +168,7 @@ fn render_fidelity_detects_stale_displayed_vs_settled_state() {
     PROMPT_ROWS.store(3, Ordering::SeqCst);
     let mut core = ShellCore::<TermView>::new();
     let stale = core.compute_paint_scene(400, 200);
-    core.record_presented_frame(MAIN_WINDOW, true, (400, 200), &stale);
+    core.record_presented_frame(MAIN_WINDOW, true, (400, 200), &stale, healthy());
 
     // (2) The producer SETTLES to 1 row, but no repaint happens (the missed
     //     settle-paint / stale-present condition).
@@ -206,7 +214,7 @@ fn render_fidelity_reports_no_divergence_when_settled() {
     PROMPT_ROWS.store(2, Ordering::SeqCst);
     let mut core = ShellCore::<TermView>::new();
     let scene = core.compute_paint_scene(400, 200);
-    core.record_presented_frame(MAIN_WINDOW, true, (400, 200), &scene);
+    core.record_presented_frame(MAIN_WINDOW, true, (400, 200), &scene, healthy());
 
     let result = render_fidelity(&mut core);
     assert_eq!(used_rows(result.get("displayed").expect("displayed")), 2);
@@ -228,7 +236,7 @@ fn paint_seq_advances_once_per_recorded_present() {
     let mut core = ShellCore::<TermView>::new();
     let scene = core.compute_paint_scene(400, 200);
 
-    core.record_presented_frame(MAIN_WINDOW, true, (400, 200), &scene);
+    core.record_presented_frame(MAIN_WINDOW, true, (400, 200), &scene, healthy());
     let first = render_fidelity(&mut core);
     assert_eq!(
         first.get("paint_seq").and_then(serde_json::Value::as_u64),
@@ -240,7 +248,7 @@ fn paint_seq_advances_once_per_recorded_present() {
         Some(true),
     );
 
-    core.record_presented_frame(MAIN_WINDOW, true, (400, 200), &scene);
+    core.record_presented_frame(MAIN_WINDOW, true, (400, 200), &scene, healthy());
     let second = render_fidelity(&mut core);
     assert_eq!(
         second.get("paint_seq").and_then(serde_json::Value::as_u64),

@@ -83,7 +83,6 @@ Run from the workspace root:
 
 from __future__ import annotations
 
-import json
 import os
 import shutil
 import subprocess
@@ -96,16 +95,18 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     Png,
     RpcSubprocess,
+    assert_declared_panes_on_screen,
     assert_eq,
     abs_rects_of,
+    declared_and_painted,
+    declared_panes,
+    design_size,
     png_pixel,
     read_png_rgba8,
     resize_and_settle,
     run_demo,
     wait_until,
 )
-
-EXT = "/external"
 
 #: The three screens of the tool, in the order the specification names them.
 SCREENS = [
@@ -127,6 +128,13 @@ FLOOD = 80
 MOST_FRAMES = 10
 
 CHECKS: list[str] = []
+
+#: R1709 — screens whose real window-system path actually ran, and screens
+#: where the display's window manager refused to resize the window at all.
+#: Printed at the end: a section that could not run must not be indistinguishable
+#: from one that ran and passed.
+REAL_PATH_RAN: list[str] = []
+REFUSED: list[str] = []
 
 
 def banner(text: str) -> None:
@@ -150,81 +158,21 @@ def resize_tally(app: RpcSubprocess) -> dict:
     return t["resize"]
 
 
-def panes_of(app: RpcSubprocess) -> list[dict]:
-    """The panes this screen DECLARES, or `[]` if it is not organised in panes.
-
-    ★ Two spellings: one screen declares `spec` as json and another as a string
-    holding json. Read both — which a screen chose is not what this is about.
-    """
-    spec = app.query(f"{EXT}/spec")
-    if isinstance(spec, str):
-        spec = json.loads(spec)
-    panes = spec.get("panes") if isinstance(spec, dict) else None
-    return panes or []
-
-
-def design_size(app: RpcSubprocess) -> tuple[int, int]:
-    """This screen's own opening size, ASKED FOR rather than written down."""
-    rect = app.snapshot(source="paint")["rect"]
-    return (rect["w"], rect["h"])
-
-
-def named_in_the_spec(spec: object) -> set[str]:
-    """Every string anywhere in a published specification.
-
-    The three screens organise their specifications differently — panes and
-    columns here, a rail roster and a catalogue there — so the general form
-    reads all of it rather than knowing any of it. It is what lets the screen
-    whose specification is not a list of panes be checked at all.
-    """
-    if isinstance(spec, str):
-        return {spec}
-    if isinstance(spec, dict):
-        return set().union(*(named_in_the_spec(v) for v in spec.values())) if spec else set()
-    if isinstance(spec, list):
-        return set().union(*(named_in_the_spec(v) for v in spec)) if spec else set()
-    return set()
-
-
-def declared_and_painted(app: RpcSubprocess, size: tuple[int, int]) -> set[str]:
-    """What this screen's specification NAMES and its paint actually draws."""
-    spec = app.query(f"{EXT}/spec")
-    if isinstance(spec, str):
-        spec = json.loads(spec)
-    return named_in_the_spec(spec) & set(abs_rects_of(app.snapshot(source="paint", viewport=size)))
-
-
 # ── A / G: the published specification is on screen at a given size ─────────
+#
+# R1709 lifted the readers this used to hold locally — `panes_of`,
+# `design_size`, `named_in_the_spec`, `declared_and_painted` and the pane
+# assertions — into the harness, on their second consumer. What is left here is
+# the round's own framing of them.
 
 
 def spec_is_on_screen(app: RpcSubprocess, name: str, size: tuple[int, int], when: str) -> None:
-    panes = panes_of(app)
-    if not panes:
+    made = assert_declared_panes_on_screen(app, size, label=f"{when}/{name}")
+    if not made:
         print(f"[demo] {when}/{name}: the specification is not organised in panes")
         return
-    painted = abs_rects_of(app.snapshot(source="paint", viewport=size))
-    missing = [p["tag"] for p in panes if p["tag"] not in painted]
-    assert_eq(missing, [], f"{when}/{name} {size}: every declared pane is painted")
-    CHECKS.append(f"{when}/{name}: panes painted")
-    wrong = [
-        f"{p['tag']} declares {p['width']} and is painted {painted[p['tag']][2]}"
-        for p in panes
-        if p["width"] and painted[p["tag"]][2] != p["width"]
-    ]
-    assert_eq(wrong, [], f"{when}/{name} {size}: a declared pane width is the width it gets")
-    CHECKS.append(f"{when}/{name}: declared widths held")
-    # The panes TILE: each begins where the last ended. Three rectangles of the
-    # right size that overlap would satisfy the width check and be a broken
-    # screen.
-    row = sorted((painted[p["tag"]] for p in panes), key=lambda r: r[0])
-    gaps = [
-        f"{b[0]} does not begin where the pane before it ended ({a[0] + a[2]})"
-        for a, b in zip(row, row[1:])
-        if a[0] + a[2] != b[0]
-    ]
-    assert_eq(gaps, [], f"{when}/{name} {size}: the panes tile the body")
-    CHECKS.append(f"{when}/{name}: panes tile")
-    print(f"[demo] {when}/{name}: {len(panes)} declared pane(s) checked at {size}")
+    CHECKS.extend(made)
+    print(f"[demo] {when}/{name}: {len(declared_panes(app))} declared pane(s) checked at {size}")
 
 
 # ── B..F: the drag ──────────────────────────────────────────────────────────
@@ -458,18 +406,57 @@ def build_resizer(tmp: Path) -> Path | None:
 
 
 def x_window_id(app: RpcSubprocess) -> str | None:
-    """The mapped X window's id, read with the tooling CI already installs."""
+    """The APPLICATION's own X window, read with the tooling CI already installs.
+
+    ★ R1709 — by class (`app.example`), and out of the whole tree rather than
+    root's direct children. Under a window manager the direct child of root is
+    the manager's DECORATION FRAME, which carries the application's title and
+    so passed the old name test: measured under mutter, the frame is 1653x966
+    with class `mutter-x11-frames` while the application's window is 1625x900.
+    Resizing the frame is asking the manager for something, not resizing the
+    window, and this section's whole subject is the event stream a window
+    receives. The bare offscreen server CI runs has no frames, which is why the
+    difference was invisible for a round.
+    """
     if not shutil.which("xwininfo"):
         return None
     for _ in range(40):
-        r = subprocess.run(["xwininfo", "-root", "-children"],
+        r = subprocess.run(["xwininfo", "-root", "-tree"],
                            capture_output=True, text=True, check=False)
-        ids = [ln.split()[0] for ln in r.stdout.splitlines()
-               if ln.strip().startswith("0x") and "pinion" in ln.lower()]
-        if ids:
-            return ids[-1]
+        rows = [ln.strip() for ln in r.stdout.splitlines() if ln.strip().startswith("0x")]
+        mine = [ln.split()[0] for ln in rows if f'("{app.example}"' in ln]
+        if mine:
+            return mine[-1]
+        # No class match: an unmanaged display, where the application's window
+        # IS root's child and the name test is the only handle there is.
+        named = [ln.split()[0] for ln in rows if "pinion" in ln.lower()]
+        if named:
+            return named[-1]
         time.sleep(0.25)
     return None
+
+
+def x_window_size(wid: str) -> tuple[int, int] | None:
+    """What the X server says that window's geometry actually IS.
+
+    R1709 — added because this section used to PREDICT it (`base + (n-1)*step`)
+    and a prediction about the window system is an assumption that a window
+    manager falsifies. Measured on a display that runs one: the client window
+    never reached the requested size, so the wait timed out and the demo
+    reported "the drag was not painted" — a sentence about the framework, for
+    an event that happened entirely outside it. The same demo passes on the
+    bare offscreen server CI uses, which is exactly how an environment-shaped
+    failure gets mistaken for a regression.
+    """
+    r = subprocess.run(["xwininfo", "-id", wid], capture_output=True, text=True, check=False)
+    w = h = None
+    for line in r.stdout.splitlines():
+        s = line.strip()
+        if s.startswith("Width:"):
+            w = int(s.split()[1])
+        elif s.startswith("Height:"):
+            h = int(s.split()[1])
+    return (w, h) if w is not None and h is not None else None
 
 
 def a_real_drag_is_answered_once(app: RpcSubprocess, name: str, exe: Path) -> None:
@@ -484,7 +471,37 @@ def a_real_drag_is_answered_once(app: RpcSubprocess, name: str, exe: Path) -> No
     n, step = FLOOD, 3
     subprocess.run([str(exe), wid, str(base[0]), str(base[1]), str(n), str(step)],
                    check=False, timeout=60)
-    last = (base[0] + (n - 1) * step, base[1])
+    # ★ ASK the window system what it granted rather than assuming it granted
+    # what was asked. Every assertion below is unchanged in strength — the fold
+    # count, the accounting, and "the frame carries the size the drag ended at"
+    # are all still checked, and now against the size the drag ACTUALLY ended
+    # at. What is gone is a claim about the window manager that this file has
+    # no business making.
+    granted = x_window_size(wid)
+    last = granted if granted else (base[0] + (n - 1) * step, base[1])
+    if last == base:
+        # ★★ R1709 — the window system REFUSED, and that is a fact about the
+        # display, not about this tree. Measured under mutter: eighty
+        # `XResizeWindow` calls on a managed client leave it at exactly the
+        # size it started, because a reparenting window manager owns a managed
+        # window's geometry and re-applies its own. The bare offscreen server
+        # CI runs manages nothing and grants every one.
+        #
+        # Reported rather than asserted away: this is a MEASUREMENT (we asked,
+        # we read the geometry back, it did not move), the line is loud, and
+        # `main` prints how many screens the section really ran on — so a
+        # display where it never runs cannot read as a display where it passed.
+        # Before R1709 this arrived as "the real drag's last size was not
+        # painted", a sentence about the framework for an event outside it.
+        print(
+            f"[demo] ★ I/{name}: THE WINDOW SYSTEM REFUSED THE RESIZE "
+            f"(still {base[0]}x{base[1]}) — a reparenting window manager owns "
+            f"this window's geometry, so the real-path section cannot run here"
+        )
+        REFUSED.append(name)
+        return
+    REAL_PATH_RAN.append(name)
+    ok(f"I/{name}: the window system granted a resize (now {last[0]}x{last[1]})", last != base)
 
     def landed():
         shot = app.snapshot(source="paint", viewport=last)
@@ -522,24 +539,24 @@ def a_real_drag_is_answered_once(app: RpcSubprocess, name: str, exe: Path) -> No
 
 def drive(name: str, example: str, resizer: Path | None) -> None:
     banner(f"{name} ({example})")
-    # ★★ MAPPED, not the harness's default hidden window, and the reason is a
-    # defect this round measured rather than a preference.
+    # ★★ MAPPED, not the harness's default hidden window. R1708 had to do this
+    # to work around a defect; R1709 fixed the defect, so it is now a CHOICE —
+    # section I resizes the real X window, which is what a person drags, and a
+    # window manager only manages a mapped one.
     #
-    # Resizing an UNMAPPED window leaves the GPU surface configured for a size
-    # the X drawable never took, so every subsequent swapchain acquire returns
-    # `Outdated` — for ever. Measured on the stashed pre-round binary, so it is
-    # not this round's doing: one resize takes `present_ok` from `true` to
-    # `false` and three ordinary ticks afterwards are `false` too, while
-    # `scene/screenshot` answers `RenderBackendUnavailable` on every attempt
-    # including the third. The same drive against a MAPPED window on the same
-    # host presents fine, twice, with zero warnings.
+    # What R1708 measured, kept because it is why the fix exists: resizing an
+    # unmapped window left every subsequent swapchain acquire `Outdated` for
+    # ever — one resize took `present_ok` from `true` to `false`, and
+    # `scene/screenshot` answered `RenderBackendUnavailable` on every attempt
+    # afterwards. R1709 isolated it (it is `configure` that poisons that
+    # swapchain, not the resize) and gave the shell a recovery ladder that
+    # rebuilds the surface when a reconfigure does not take.
     #
-    # Nothing had seen it because no demo in the tree both resizes and looks at
-    # pixels — the paint snapshot reads the ENCODED scene, which is built before
-    # the acquire, so every introspection surface reports a healthy window while
-    # nothing reaches the screen. Registered as its own debt; this demo maps the
-    # window so that section H is a real pixel check rather than a check of a
-    # path that cannot work.
+    # Nothing had seen it because no demo in the tree both resized and looked
+    # at pixels — the paint snapshot reads the ENCODED scene, built before the
+    # acquire, so every introspection surface reports a healthy window while
+    # nothing reaches the screen. `r1709_a_resize_is_followed_by_pixels.py` is
+    # the gate that now asks, in the hidden mode all of CI runs in.
     with RpcSubprocess(example, visible_window=True) as app:
         design = design_size(app)
         # ★ The real path FIRST, while the window is still at its opening size:
@@ -594,6 +611,14 @@ def main() -> None:
         for name, example in SCREENS:
             drive(name, example, resizer)
     print(f"\n{len(CHECKS)} assertions across {len(SCREENS)} screens")
+    # R1709 — say, every run, on how many screens the real window-system path
+    # actually ran. A section that a display prevented from running has to be
+    # legible as that, not as a section that ran and passed.
+    print(
+        f"[demo] I: the real window-system path ran on {len(REAL_PATH_RAN)}/"
+        f"{len(SCREENS)} screen(s)"
+        + (f"; refused by the window manager on {', '.join(REFUSED)}" if REFUSED else "")
+    )
     assert len(CHECKS) >= 40, f"only {len(CHECKS)} assertions"
     assert resizer is not None, "the real-path section did not run"
 

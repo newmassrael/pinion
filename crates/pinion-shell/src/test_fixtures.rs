@@ -75,7 +75,7 @@ impl TestRenderer {
     #[allow(clippy::unused_async)]
     pub async fn new<W>(_target: W, _width: u32, _height: u32) -> Result<Self, TestRendererError>
     where
-        W: Into<vello::wgpu::SurfaceTarget<'static>>,
+        W: Into<vello::wgpu::SurfaceTarget<'static>> + Clone + 'static,
     {
         Ok(Self)
     }
@@ -166,9 +166,19 @@ impl VelloRenderer for TestRenderer {
         0
     }
 
+    /// R1709 — the default is the literal truth here rather than a
+    /// convenience: this fixture holds no swapchain, so no frame of its has
+    /// ever failed to reach a screen and no recovery has ever been owed.
+    /// Stated per-impl for the reason the two above are — a trait default
+    /// would make "this backend always presents" the silent assumption for
+    /// every implementor, including the one that cannot.
+    fn surface_health(&self) -> pinion_gpu::SurfaceHealth {
+        pinion_gpu::SurfaceHealth::default()
+    }
+
     async fn new<W>(target: W, width: u32, height: u32) -> Result<Self, TestRendererError>
     where
-        W: Into<vello::wgpu::SurfaceTarget<'static>>,
+        W: Into<vello::wgpu::SurfaceTarget<'static>> + Clone + 'static,
     {
         TestRenderer::new(target, width, height).await
     }
