@@ -304,12 +304,27 @@ const MIN_H: u32 = APP_BAR_H + TOOLBAR_H + CANVAS_FLOOR;
 /// is. That is a decision, and [`SHRINK`] is where it is written down so
 /// `scene/size_floor` can check it against the screen every time it is asked.
 ///
-/// ★ Measured, not chosen: at 1506 the reader can still reach everything on
-/// this screen, and at 1505 the app bar's state chip goes off the window
-/// entirely with no scroll that brings it back. The demo asserts the boundary
-/// in **both** directions rather than trusting this comment, because a floor
-/// nobody drives is a number, and R1711 is the round that learned it.
-const FLOOR_W: u32 = 1506;
+/// ★★★★★ Measured from the PAINT, and R1712 got it wrong once. The first
+/// answer was 1506, taken from `scene/scroll_reach` — the smallest width at
+/// which it reports nothing `lost`. Photographed at that width and scanned, the
+/// inspector's right-hand column was gone: **nine tagged marks sit entirely
+/// beyond the window there**, and every one of them is an action — five row
+/// `remove` buttons, two spin steppers, `+ key` and `delete`. A reader at 1506
+/// cannot reach them at all, and no scroll brings them back (that pane's
+/// horizontal range is zero).
+///
+/// `scroll_reach` did not see them because it judges each mark against its
+/// nearest scrolling ancestor: those marks are inside the inspector pane and
+/// fit *the pane*, while the pane is what the window clips. A mark inside a
+/// clipped pane is invisible to that predicate ⇒
+/// [[debt-a-reach-walk-cannot-see-a-mark-inside-a-clipped-pane]].
+///
+/// So this number is measured directly: **1595 is the width at which no painted
+/// mark lies entirely outside the window, and at 1594 five do** — the same
+/// boundary at 360 tall and at 900. It still buys what R1689 asked for, because
+/// 1595 fits a 1600-pixel display; the band is 30 pixels rather than 119, and
+/// all 30 of them are clipping rather than loss.
+const FLOOR_W: u32 = 1595;
 
 /// What the band between [`FLOOR_W`] and [`MIN_W`] clips, by the name a reader
 /// addresses it with.

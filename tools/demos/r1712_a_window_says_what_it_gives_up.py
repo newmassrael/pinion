@@ -79,7 +79,7 @@ SCREENS = [
 #: binding currently says — an audit that reads its expectation out of the
 #: thing under test passes for a screen that changed its mind quietly.
 CONCEDING = "hello-node-lab"
-CONCEDED_FLOOR = (1506, 360)
+CONCEDED_FLOOR = (1595, 360)
 GIVES_UP = ["lab.appbar", "lab.inspector"]
 
 CHECKS: list[str] = []
@@ -120,6 +120,26 @@ def lost_names(reach: dict) -> list[str]:
 
 def cut_names(rows: list[dict]) -> list[str]:
     return sorted({row["tag"] or row["path"] for row in rows})
+
+
+def beyond_the_window(app: RpcSubprocess, size: tuple[int, int]) -> list[str]:
+    """Tagged marks whose whole rectangle is outside the window at `size`, read
+    off the PAINT.
+
+    ★★★★★ R1712.1 — deliberately not `scene/scroll_reach`. That read composes
+    per viewport: a mark inside a pane is judged against the pane, so content
+    the WINDOW clips out of existence is invisible to it whenever the pane it
+    lives in is only partially clipped. Measured on this screen at 1506 wide, it
+    answered `lost: 0` while nine marks were entirely off — which is how this
+    round shipped a floor 89 pixels too low, and why the boundary check reads
+    the geometry instead of asking a predicate about it.
+    """
+    rects = abs_rects_of(app.snapshot(source="paint", viewport=size))
+    return sorted(
+        tag
+        for tag, (x, y, _w, _h) in rects.items()
+        if x >= size[0] or y >= size[1]
+    )
 
 
 # ── A: a decision, and how it differs from a default ────────────────────────
@@ -258,15 +278,24 @@ def the_floor_is_where_reach_actually_ends(
     # stops it is the reader no longer being able to **reach** something.
     # Without this a floor of 1 would satisfy every assertion above: nothing is
     # ever lost when there is nothing on screen to lose.
+    #
+    # ★★★★★ R1712.1 — the conceded half asks the PAINT, not `scroll_reach`, and
+    # that correction is this round's own defect. `scroll_reach` judges a mark
+    # against its nearest scrolling ancestor, so a mark inside a pane the window
+    # clips fits *the pane* and is never reported: it answered `lost: 0` at 1506,
+    # where nine of this screen's marks — five row remove buttons, two spin
+    # steppers, `+ key` and `delete`, every one of them an ACTION — sit entirely
+    # outside the window with no scroll that reaches them. The floor shipped 89
+    # pixels too low because of it.
     for index, axis in enumerate(("width", "height")):
         short = list(floor)
         short[index] -= 1
         if band[index] > 0:
-            below = reach_at(app, (short[0], short[1]))
+            gone = beyond_the_window(app, (short[0], short[1]))
             ok(
                 f"C/{name}/{axis}: this axis is conceded, and one pixel below its "
-                f"floor the reader loses {lost_names(below)}",
-                below["lost"] > 0,
+                f"floor {len(gone)} mark(s) leave the window entirely ({gone[:3]})",
+                len(gone) > 0,
             )
         else:
             resp = app.request(
@@ -321,6 +350,15 @@ def what_is_given_up_is_still_reachable(
         live.result["lost"],
         0,
         f"E/{name}: nothing is out of reach in the live window at its floor",
+    )
+    # ★★★★★ R1712.1 — and the same claim read off the GEOMETRY, because the
+    # line above cannot establish it. This is the check that would have refused
+    # the floor this round first shipped.
+    assert_eq(
+        beyond_the_window(app, size),
+        [],
+        f"E/{name}: and no mark is outside the window altogether at the floor — "
+        f"a concession clips, it does not put things out of the reader's reach",
     )
     if example != CONCEDING:
         return
@@ -448,7 +486,12 @@ def main() -> None:
         for name, example in SCREENS:
             drive(name, example, Path(d))
     print(f"\n{len(CHECKS)} assertions across {len(SCREENS)} screens")
-    assert len(CHECKS) >= 30, f"only {len(CHECKS)} assertions"
+    # A tripwire for "this file ran at all", not a coverage claim — the named
+    # assertions above are the coverage. Kept low on purpose: it moved from 30
+    # to 29 when the corrected floor stopped clipping the app bar's state chip,
+    # and a tripwire that has to be re-tuned every time the screen changes is
+    # one that will eventually be tuned instead of read.
+    assert len(CHECKS) >= 20, f"only {len(CHECKS)} assertions"
 
 
 if __name__ == "__main__":
