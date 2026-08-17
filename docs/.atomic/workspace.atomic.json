@@ -99822,6 +99822,48 @@
         "The frame floor is still unattacked. A resize frame costs 11.6 ms and an idle tick 20.2 ms on this host; the drag path no longer pays that eighty times, but one frame's floor cost is where the remaining latency lives and no round has measured why."
       ]
     },
+    "Round 1708.1": {
+      "decision_summary": "R1708.1 — the closing audit, and a correction the audit itself found. Two things. First, `Fold::folded()` is deleted: its only callers were three of its own tests and it was a pure alias for `superseded > 0`, which is the same shape R1706.1 deleted (`set_one` / `clear` were pure aliases for `set_group`). `Noted` is KEPT on the opposite half of that precedent — R1706.1 kept `Selection::group` at zero call sites because its degenerate cases had consumers, and `Noted` is the return of a function that IS called, with three arms that ARE this type's headline guarantee (\"a drop names its reason\"); reducing it to the one arm anyone reads would degenerate the other two into counting. Second, and more important: Round 1708's own verification bullet says \"COUNTERFACTUALS 14 of 14 caught\", and that is WRONG. The measured result is 13 of 14. CF-13 — delete the drain's paint, keep the report — passed, and it passed for a reason the same entry states two sentences later: on this host winit emits a `RedrawRequested` of its own after a `Resized`, so the drain's paint is redundant HERE, and the platform R1219 wrote it for (a modal resize loop that withholds redraws until the drag ends) is Mac/Windows, which this tree's gated OS-native axis cannot run. So that line is not a defect and not a wrong counterfactual: it is a guarantee that cannot be falsified on the only platform available, registered as its own debt. The entry should have said 13 of 14 with one unfalsifiable, and this entry is the correction, because the audit half of Round 1708 is frozen.",
+      "changes_bullets": [
+        "REMOVED pinion_core::resize_batch::Fold::folded — a pure alias for `superseded > 0` whose only callers were three of its own tests. Those three now assert `superseded` directly, which is the field the alias was standing in front of.",
+        "KEPT Noted, deliberately, at zero production readers: it is the return of a function that is called on every window-system resize, and its three arms are the guarantee this module is named for. R1706.1's precedent cuts both ways and this is the half that keeps.",
+        "CORRECTED Round 1708's verification: the counterfactual result is 13 of 14 caught, not 14 of 14. CF-13 passed and is unfalsifiable on this platform, which is registered rather than repaired.",
+        "DOCUMENTED the demo's own section list: sections A2 / G2 (what the specification NAMES survives the fold, which is how the screen whose specification is not a list of panes gets checked) and I (the real X path) were running and not listed."
+      ],
+      "verification_bullets": [
+        "COUNTERFACTUALS, restated correctly and read off the driver's own output rather than from memory: core plan 7 caught / 0 passed; shell plan 6 caught / 1 passed. Total 13 of 14. The one that passed is CF-13, and the hand reproduction that settled why is in the record: with the drain's paint deleted, a 40-event real X11 drag still produced one frame at the final size, with no RPC in between and the snapshot read adding none, so the property is genuinely unfalsifiable here.",
+        "pinion-core / pinion-shell / pinion-rpc / pinion-runtime green after the deletion.",
+        "The three tests that called the deleted alias assert `superseded` directly and still pass, which is what makes the deletion a rename of the assertion rather than a loss of one."
+      ],
+      "impact_refs": [
+        "5.16",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "The lesson this correction records is about the ROUND, not the code: a counterfactual tally was written into the ledger from memory while the driver's output said otherwise, and the same entry contradicted itself two sentences later. Read the tool's output when writing the number.",
+        "Nobody has counted how many guarantees in this tree are unfalsifiable for the same reason CF-13 is — a platform the gated OS-native axis cannot run. One is now named; the census is not done."
+      ],
+      "publishable_decision_summary": "R1708.1 — the closing audit, and a correction the audit itself found. Two things. First, `Fold::folded()` is deleted: its only callers were three of its own tests and it was a pure alias for `superseded > 0`, which is the same shape R1706.1 deleted (`set_one` / `clear` were pure aliases for `set_group`). `Noted` is KEPT on the opposite half of that precedent — R1706.1 kept `Selection::group` at zero call sites because its degenerate cases had consumers, and `Noted` is the return of a function that IS called, with three arms that ARE this type's headline guarantee (\"a drop names its reason\"); reducing it to the one arm anyone reads would degenerate the other two into counting. Second, and more important: Round 1708's own verification bullet says \"COUNTERFACTUALS 14 of 14 caught\", and that is WRONG. The measured result is 13 of 14. CF-13 — delete the drain's paint, keep the report — passed, and it passed for a reason the same entry states two sentences later: on this host winit emits a `RedrawRequested` of its own after a `Resized`, so the drain's paint is redundant HERE, and the platform R1219 wrote it for (a modal resize loop that withholds redraws until the drag ends) is Mac/Windows, which this tree's gated OS-native axis cannot run. So that line is not a defect and not a wrong counterfactual: it is a guarantee that cannot be falsified on the only platform available, registered as its own debt. The entry should have said 13 of 14 with one unfalsifiable, and this entry is the correction, because the audit half of Round 1708 is frozen.",
+      "publishable_changes_bullets": [
+        "REMOVED pinion_core::resize_batch::Fold::folded — a pure alias for `superseded > 0` whose only callers were three of its own tests. Those three now assert `superseded` directly, which is the field the alias was standing in front of.",
+        "KEPT Noted, deliberately, at zero production readers: it is the return of a function that is called on every window-system resize, and its three arms are the guarantee this module is named for. R1706.1's precedent cuts both ways and this is the half that keeps.",
+        "CORRECTED Round 1708's verification: the counterfactual result is 13 of 14 caught, not 14 of 14. CF-13 passed and is unfalsifiable on this platform, which is registered rather than repaired.",
+        "DOCUMENTED the demo's own section list: sections A2 / G2 (what the specification NAMES survives the fold, which is how the screen whose specification is not a list of panes gets checked) and I (the real X path) were running and not listed."
+      ],
+      "publishable_verification_bullets": [
+        "COUNTERFACTUALS, restated correctly and read off the driver's own output rather than from memory: core plan 7 caught / 0 passed; shell plan 6 caught / 1 passed. Total 13 of 14. The one that passed is CF-13, and the hand reproduction that settled why is in the record: with the drain's paint deleted, a 40-event real X11 drag still produced one frame at the final size, with no RPC in between and the snapshot read adding none, so the property is genuinely unfalsifiable here.",
+        "pinion-core / pinion-shell / pinion-rpc / pinion-runtime green after the deletion.",
+        "The three tests that called the deleted alias assert `superseded` directly and still pass, which is what makes the deletion a rename of the assertion rather than a loss of one."
+      ],
+      "publishable_impact_refs": [
+        "5.16",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The lesson this correction records is about the ROUND, not the code: a counterfactual tally was written into the ledger from memory while the driver's output said otherwise, and the same entry contradicted itself two sentences later. Read the tool's output when writing the number.",
+        "Nobody has counted how many guarantees in this tree are unfalsifiable for the same reason CF-13 is — a platform the gated OS-native axis cannot run. One is now named; the census is not done."
+      ]
+    },
     "Round 18": {
       "decision_summary": "Round 18 — R17 round close: §5.11 v0 schema 5/5 + §5.15 widget bridging + §5.12 scene/invoke bidirectional RPC + live hello-button dogfood (8 slices)",
       "changes_bullets": [

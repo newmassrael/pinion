@@ -44,6 +44,12 @@ repeated a pending size, and whether those four account for every one.
 
 # What it asserts
 
+* **I** — ★★ the REAL path, and the only section that can see the fold's frame
+  being load-bearing. Everything else drives `scene/resize`, which also writes
+  the windows signal and so arms a redraw of its own; a counterfactual that
+  deleted the drain's paint left every other section green because something
+  else repainted the window anyway. This one resizes the mapped X window
+  directly, through a libX11 helper compiled on the spot.
 * **A** — the analyser's published specification is on screen before the drag:
   every pane each screen DECLARES is painted, at the width it declares, tiling
   the body. Read out of the screen's own spec, never written down here.
@@ -58,6 +64,11 @@ repeated a pending size, and whether those four account for every one.
   reference has at its window layer and never publishes.
 * **F** — a repeat is not a supersede. Re-announcing the size already pending
   discards nothing, and does not inflate the drag count.
+* **A2 / G2** — the general half of A and G, and the one that reaches the
+  screen whose specification is not a list of panes: everything the
+  specification NAMES and the paint draws at the opening size is still drawn
+  after the fold. The population is asserted non-empty, so it cannot become the
+  reason nothing was checked.
 * **G** — the specification is still on screen AFTER the fold: the same panes,
   at the same declared widths, tiling the same body, at the size the drag
   landed on.
