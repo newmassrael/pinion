@@ -55,12 +55,16 @@ this gate drives the hidden path — the one three of the four cells cannot see.
   with `missed_in_a_row`, breakages never outnumber misses, and a reason and a
   rung are present exactly when something is broken.
 * **E** — every `last_missed` and `last_rung` this run produces is a member of
-  the declared roster. ★ Reported, not counted on: on a host where nothing
-  breaks, no reason is ever published and this section observes nothing. That
-  is stated here rather than dressed up, and the assertion that CAN always fire
-  lives in Rust (`pinion_rpc::render_fidelity`'s tests build a dark window's
-  record directly). This section's real value is on the host that does break —
-  where it fires nine times a run.
+  the declared roster. ★★ Reported, NOT counted on, and the honest reading is
+  that it observes nothing at all: a reason is published only while something
+  is broken, and since the ladder now recovers inside the same frame, a reader
+  arriving afterwards finds nothing to name — on the affected host as much as
+  on a healthy one (measured: zero observations on both, while `rebuilds` says
+  the heavy rung ran three times). So the assertion that CAN always fire lives
+  in Rust instead, where `pinion_rpc::render_fidelity`'s tests build a dark
+  window's record directly. This section keeps its clauses because a value
+  outside the roster would still be caught, and `main` prints the observation
+  count so a quiet run cannot be mistaken for a proved one.
 * **F** — ★ the pixels are of THIS window, not a stale one: the screenshot at a
   narrow size and at a wide size differ in the band only the wide one has.
   Without this, a surface that kept presenting the pre-resize image would pass
