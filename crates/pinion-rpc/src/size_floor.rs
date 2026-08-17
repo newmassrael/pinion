@@ -176,8 +176,13 @@ pub struct PairReport {
 /// request — which is why it rides in the result rather than in an error.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct RefusedReport {
-    /// Which axis was being measured.
-    pub axis: &'static str,
+    /// Which axis this is about, or `null` for `ceiling_is_short`.
+    ///
+    /// ★ R1711.1 — nullable because a size that does not fit has no axis to
+    /// name: the evidence says which way it is short, and it can be short in
+    /// both. Before this it always carried one, and named the axis the search
+    /// had reached — `width` for a ceiling one pixel short in height.
+    pub axis: Option<&'static str>,
     /// `ceiling_is_short` (the largest size does not fit either, so there is no
     /// floor to find and the screen needs repairing) or `nothing_is_ever_lost`
     /// (the probe reports nothing at any size, so a number here would have no
@@ -333,7 +338,7 @@ pub fn report<T>(
             height: None,
             pair: None,
             refused: Some(RefusedReport {
-                axis: refused.axis().wire_word(),
+                axis: refused.axis().map(Axis::wire_word),
                 reason: refused.wire_word(),
                 out_of_reach: match refused {
                     Refused::CeilingIsShort { out_of_reach, .. } => into_rows(out_of_reach),
@@ -538,9 +543,12 @@ mod tests {
         assert_eq!(out.needed, None);
         assert_eq!(out.width, None);
         let refused = out.refused.expect("a refusal");
-        assert_eq!(refused.axis, "width");
+        // R1711.1 — no axis: the size does not fit, and the evidence is what
+        // says which way. Here it is short in width only, and the row says so.
+        assert_eq!(refused.axis, None);
         assert_eq!(refused.reason, "ceiling_is_short");
         assert_eq!(refused.out_of_reach.len(), 1);
+        assert_eq!(refused.out_of_reach[0].tag.as_deref(), Some("narrow"));
         // And the declared floor is still published: the refusal is about the
         // screen, so what it declared is exactly what a reader wants to see.
         assert_eq!(out.declared.floor, Some(SizeReport::from((400, 300))));

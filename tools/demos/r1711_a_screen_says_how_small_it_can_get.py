@@ -114,6 +114,20 @@ def floor_of(app: RpcSubprocess) -> dict:
     return resp.result
 
 
+def floor_at(app: RpcSubprocess, size: tuple[int, int]) -> dict:
+    """The floor search run with its ceiling AT `size` — which is how a caller
+    asks "does this screen fit here", in the search's own predicate.
+
+    A size the screen fits in answers a floor; one it does not answers
+    `refused: ceiling_is_short` carrying what is cut there.
+    """
+    resp = app.request(
+        "scene/size_floor", {"at": {"width": size[0], "height": size[1]}}
+    )
+    assert resp is not None and isinstance(resp.result, dict), "scene/size_floor answers"
+    return resp.result
+
+
 def reach_at(app: RpcSubprocess, size: tuple[int, int]) -> dict:
     resp = app.request("scene/scroll_reach", {"at": {"width": size[0], "height": size[1]}})
     assert resp is not None and isinstance(resp.result, dict), "scene/scroll_reach answers"
@@ -214,17 +228,35 @@ def the_number_carries_its_evidence(app: RpcSubprocess, name: str, report: dict)
             else (report["ceiling"]["width"], measured["short_extent"])
         )
         assert other > 0
-        fits = reach_at(app, at_extent)
+        fits = floor_at(app, at_extent)
         assert_eq(
-            fits["lost"],
-            0,
-            f"B/{name}/{axis}: nothing is out of reach at the extent it named",
+            fits.get("refused"),
+            None,
+            f"B/{name}/{axis}: the extent it named is a size this screen fits in",
         )
-        short = reach_at(app, at_short)
+        # ★★★★★ R1711.1 — the negative direction, and it used to be vacuous.
+        # This asked `scene/scroll_reach` at the short extent and asserted
+        # `marks > 0`, which is "the screen painted something" — measured, the
+        # weak read answers `lost: 0` at every one of these sizes, because a
+        # mark with one pixel on screen is not out of sight. So the boundary's
+        # own predicate is what asks: driving the search with its ceiling AT the
+        # short extent refuses, and names the same marks the axis named.
+        short = floor_at(app, at_short)
+        refused = short.get("refused")
         ok(
-            f"B/{name}/{axis}: one pixel less and the named marks are cut "
-            f"(marks {short['marks']})",
-            short["marks"] > 0,
+            f"B/{name}/{axis}: one pixel less is a size this screen does not fit in",
+            refused is not None and refused["reason"] == "ceiling_is_short",
+        )
+        assert_eq(
+            refused["axis"],
+            None,
+            f"B/{name}/{axis}: and a size that does not fit names no axis",
+        )
+        assert_eq(
+            cut_names(refused["out_of_reach"]),
+            cut_names(forced),
+            f"B/{name}/{axis}: the marks it names there are the evidence the "
+            f"answer carried",
         )
     assert_eq(
         design_size(app),

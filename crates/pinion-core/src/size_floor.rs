@@ -215,10 +215,11 @@ impl<T> Floor<T> {
         (self.width.extent, self.height.extent)
     }
 
-    /// What the whole measurement cost, the pair probe included.
+    /// What the whole measurement cost: both axes, plus the shared ceiling
+    /// probe and the pair probe.
     #[must_use]
     pub const fn probes(&self) -> usize {
-        self.width.probes + self.height.probes + 1
+        self.width.probes + self.height.probes + 2
     }
 }
 
@@ -235,14 +236,25 @@ pub enum Refused<T> {
     /// be a floor. The marks are carried because they are the defect: a screen
     /// that cannot show itself at its largest size does not need a floor
     /// measured, it needs repairing.
+    /// ★ R1711.1 — it carries NO axis, and used to.
+    ///
+    /// "Does the ceiling fit" is one question about a size, not two about its
+    /// axes, and asking it per axis produced an answer that reads as a lie:
+    /// measured on the node lab, a ceiling of `1625x359` — short by one pixel
+    /// of HEIGHT — was refused with `axis: width`, because width is the axis
+    /// the search happens to walk first. The field's own doc said "which axis
+    /// was being measured", which is true and is not what a reader takes from
+    /// it. So the probe moved out of the per-axis loop, and the field is gone
+    /// rather than corrected: there is no per-axis fact here to report.
     CeilingIsShort {
-        /// Which axis was being measured when the ceiling failed.
-        axis: Axis,
         /// What was out of reach there.
         out_of_reach: Vec<T>,
     },
     /// Nothing is out of reach even at the smallest extent, so there is no
     /// boundary anywhere and the answer would be a number with no evidence.
+    ///
+    /// This one IS per axis: it is a property of the search along one extent,
+    /// and the other axis can have a perfectly good boundary.
     NothingIsEverLost {
         /// Which axis was being measured.
         axis: Axis,
@@ -250,11 +262,15 @@ pub enum Refused<T> {
 }
 
 impl<T> Refused<T> {
-    /// The axis, whichever arm this is.
+    /// The axis this refusal is about, where it is about one.
+    ///
+    /// `None` for [`Self::CeilingIsShort`] — see that arm for why a size that
+    /// does not fit has no axis to name.
     #[must_use]
-    pub const fn axis(&self) -> Axis {
+    pub const fn axis(&self) -> Option<Axis> {
         match self {
-            Self::CeilingIsShort { axis, .. } | Self::NothingIsEverLost { axis } => *axis,
+            Self::CeilingIsShort { .. } => None,
+            Self::NothingIsEverLost { axis } => Some(*axis),
         }
     }
 
@@ -282,12 +298,22 @@ impl<T> Refused<T> {
 ///
 /// # Cost
 ///
-/// `2 + ceil(log2(ceiling))` probes per axis, each a full view and layout at
-/// the size being tried. The count comes back in [`Measured::probes`].
+/// One probe for the ceiling, then `1 + ceil(log2(ceiling))` per axis, then one
+/// for the pair — each a full view and layout at the size being tried. The
+/// per-axis count comes back in [`Measured::probes`] and the total in
+/// [`Floor::probes`].
 pub fn measure<T, P>(ceiling: (u32, u32), mut probe: P) -> Result<Floor<T>, Refused<T>>
 where
     P: FnMut(u32, u32) -> Vec<T>,
 {
+    // ★ R1711.1 — asked ONCE, before either axis. "Does this size fit" is a
+    // question about the size; asking it inside the per-axis loop made the
+    // refusal name the axis the loop had reached rather than the axis that was
+    // short, which is a field that can be confidently wrong.
+    let out_of_reach = probe(ceiling.0, ceiling.1);
+    if !out_of_reach.is_empty() {
+        return Err(Refused::CeilingIsShort { out_of_reach });
+    }
     let width = measure_axis(Axis::Width, ceiling, &mut probe)?;
     let height = measure_axis(Axis::Height, ceiling, &mut probe)?;
     // The pair is a THIRD question, asked because the first two do not answer
@@ -307,8 +333,9 @@ where
 ///
 /// The bisection maintains "`lo` does not fit, `hi` does" and narrows until
 /// they are adjacent, so the boundary is a pair the search **evaluated** rather
-/// than one it inferred. Both ends of that invariant are established by a probe
-/// before the loop, which is what the two [`Refused`] arms report.
+/// than one it inferred. The upper end of that invariant is [`measure`]'s
+/// ceiling probe, taken once for both axes; the lower end is probed here, and
+/// is what [`Refused::NothingIsEverLost`] reports.
 fn measure_axis<T, P>(
     axis: Axis,
     ceiling: (u32, u32),
@@ -325,16 +352,11 @@ where
         Axis::Width => ceiling.0,
         Axis::Height => ceiling.1,
     };
-    let mut probes = 1;
-    let (w, h) = at(top);
-    let out_of_reach = probe(w, h);
-    if !out_of_reach.is_empty() {
-        return Err(Refused::CeilingIsShort { axis, out_of_reach });
-    }
     // The floor of the search: an extent nothing can be laid out in. A screen
     // that loses nothing even here has no boundary to find, and answering `1`
-    // would be a number with no evidence under it.
-    probes += 1;
+    // would be a number with no evidence under it. (The top of the range was
+    // probed once by `measure`, for both axes.)
+    let mut probes = 1;
     let (w, h) = at(0);
     let mut lost = probe(w, h);
     if lost.is_empty() {
@@ -401,11 +423,40 @@ mod tests {
     fn r1711_a_screen_that_does_not_fit_at_the_ceiling_is_refused() {
         let refused =
             measure((1000, 400), needs((1200, 300))).expect_err("the ceiling is too narrow");
-        assert_eq!(refused.axis(), Axis::Width);
         assert_eq!(refused.wire_word(), "ceiling_is_short");
         match refused {
-            Refused::CeilingIsShort { out_of_reach, .. } => {
+            Refused::CeilingIsShort { out_of_reach } => {
                 assert_eq!(out_of_reach, ["too narrow"]);
+            }
+            Refused::NothingIsEverLost { .. } => panic!("wrong arm"),
+        }
+    }
+
+    /// ★★★★★ R1711.1 — the field that could be confidently wrong, and is gone.
+    ///
+    /// Measured on the analysis tool's node lab: a ceiling of `1625x359` is
+    /// short by one pixel of HEIGHT, and the refusal named `axis: width` —
+    /// because width is the axis the search walks first. Both directions are
+    /// pinned here, so a per-axis field cannot come back without this failing.
+    #[test]
+    fn r1711_1_a_ceiling_that_does_not_fit_names_no_axis() {
+        let short_in_height =
+            measure((1625, 359), needs((1625, 360))).expect_err("one pixel short in height");
+        assert_eq!(short_in_height.axis(), None);
+        assert_eq!(short_in_height.wire_word(), "ceiling_is_short");
+        match &short_in_height {
+            Refused::CeilingIsShort { out_of_reach } => assert_eq!(out_of_reach, &["too short"]),
+            Refused::NothingIsEverLost { .. } => panic!("wrong arm"),
+        }
+        let short_in_width =
+            measure((1624, 900), needs((1625, 360))).expect_err("one pixel short in width");
+        assert_eq!(short_in_width.axis(), None);
+        // The evidence, not the axis, is what says which way it is short — and
+        // it says so for a size that is short in BOTH.
+        let both = measure((100, 100), needs((1625, 360))).expect_err("short in both");
+        match &both {
+            Refused::CeilingIsShort { out_of_reach } => {
+                assert_eq!(out_of_reach, &["too narrow", "too short"]);
             }
             Refused::NothingIsEverLost { .. } => panic!("wrong arm"),
         }
@@ -416,7 +467,9 @@ mod tests {
         let refused = measure((640, 480), |_, _| Vec::<&str>::new())
             .expect_err("a surface that reports nothing has no floor");
         assert_eq!(refused.wire_word(), "nothing_is_ever_lost");
-        assert_eq!(refused.axis(), Axis::Width);
+        // This arm IS per axis: the search along one extent found no boundary,
+        // and the other axis could still have had one.
+        assert_eq!(refused.axis(), Some(Axis::Width));
     }
 
     #[test]
@@ -481,10 +534,11 @@ mod tests {
         })
         .expect("a screen with a floor");
         assert_eq!(floor.extent(), (1000, 1000));
-        // Two guards plus eleven halvings, per axis, plus the pair — and the
-        // published count is the count, not an estimate of it.
+        // One shared ceiling probe, then a guard plus eleven halvings per axis,
+        // then the pair — and the published count is the count, not an
+        // estimate of it.
         assert_eq!(floor.probes(), calls);
-        assert!(floor.probes() <= 2 * (2 + 12) + 1, "{}", floor.probes());
+        assert!(floor.probes() <= 2 + 2 * (1 + 12), "{}", floor.probes());
     }
 
     #[test]
@@ -508,7 +562,12 @@ mod tests {
             Some((400, 200)),
             "the pair is asked about last"
         );
-        let (width_probes, height_probes) = asked.split_at(floor.width.probes());
+        assert_eq!(
+            asked.first(),
+            Some(&(1000, 800)),
+            "and the ceiling is asked about first, once, for both axes"
+        );
+        let (width_probes, height_probes) = asked[1..].split_at(floor.width.probes());
         assert!(
             width_probes.iter().all(|&(_, h)| h == 800),
             "{width_probes:?}"

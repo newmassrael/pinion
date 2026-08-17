@@ -1705,7 +1705,11 @@ pub const WIRE_TYPES: &[WireType] = &[
         name: "RefusedReport",
         shape: WireShape::Object {
             fields: &[
-                WireField::new("axis", WireTy::String, None).accepting(&["width", "height"]),
+                // Null for `ceiling_is_short`: a size that does not fit has no
+                // axis to name, and its evidence says which way it is short.
+                WireField::new("axis", WireTy::String, None)
+                    .nullable()
+                    .accepting(&["width", "height"]),
                 WireField::new("reason", WireTy::String, None)
                     .accepting(&["ceiling_is_short", "nothing_is_ever_lost"]),
                 WireField::new("out_of_reach", WireTy::Array, Some("CutReport")),
