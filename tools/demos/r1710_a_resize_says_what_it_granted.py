@@ -85,6 +85,7 @@ from rpc_verify import (  # noqa: E402
     read_png_rgba8,
     resize_and_settle,
     run_demo,
+    wait_until,
 )
 
 #: The three screens of the tool, in the order the specification names them.
@@ -109,16 +110,25 @@ def banner(text: str) -> None:
 # ── the two reads every section is built out of ─────────────────────────────
 
 
-def ask(app: RpcSubprocess, size: tuple[int, int], *, dry: bool = False) -> dict:
-    """`scene/resize`, returning the outcome the wire published."""
-    params: dict[str, object] = {"width": size[0], "height": size[1]}
-    if dry:
-        params["dry_run"] = True
-    resp = app.request("scene/resize", params)
-    assert resp is not None and resp.result is not None, f"scene/resize {size} answered"
-    outcome = resp.result
-    assert isinstance(outcome, dict), f"the outcome is an object; got {outcome!r}"
-    return outcome
+def outcome_of(resp: object, size: tuple[int, int]) -> dict:
+    result = getattr(resp, "result", None)
+    assert isinstance(result, dict), f"scene/resize {size} answers an object; got {resp!r}"
+    return result
+
+
+def resolve(app: RpcSubprocess, size: tuple[int, int]) -> dict:
+    """What the window WOULD grant, without touching it (§2 #3).
+
+    ★ The params are a literal here rather than built above and passed in,
+    because the harness's own gate reads `dry_run` off the call to know this
+    send is not a resize — an exempting fact belongs where a reader sees it.
+    """
+    return outcome_of(
+        app.request(
+            "scene/resize", {"width": size[0], "height": size[1], "dry_run": True}
+        ),
+        size,
+    )
 
 
 def granted(outcome: dict) -> tuple[int, int]:
@@ -142,7 +152,7 @@ def the_floor_is_readable(app: RpcSubprocess, name: str) -> tuple[int, int]:
     back through the SAME resolution the real path runs — so a client cannot
     learn a floor that the real call would then not honour.
     """
-    outcome = ask(app, (1, 1), dry=True)
+    outcome = resolve(app, (1, 1))
     floor = granted(outcome)
     ok(
         f"A/{name}: a dry-run ask below everything reports the floor ({floor[0]}x{floor[1]})",
@@ -178,7 +188,12 @@ def the_wire_agrees_with_the_window(
         ("exactly the floor", (floor[0], floor[1]), (False, False)),
     ]
     for label, size, (w_raised, h_raised) in cases:
-        outcome = ask(app, size)
+        # The REAL send, and this function waits for it below — the harness's
+        # own gate requires the two to live together, because a resize whose
+        # wait is in a sibling is a bet on the render arriving (R1686).
+        outcome = outcome_of(
+            app.request("scene/resize", {"width": size[0], "height": size[1]}), size
+        )
         want = (max(size[0], floor[0]), max(size[1], floor[1]))
         got = granted(outcome)
         ok(
@@ -186,9 +201,14 @@ def the_wire_agrees_with_the_window(
             got == want,
         )
         # ★ THE assertion of this file: the published grant is the frame's own
-        # size. `resize_and_settle` waits on the GRANTED size (R1710), so a
-        # framework that forwarded the raw ask would hang here rather than pass.
-        resize_and_settle(app, size)
+        # size. The wait is on the GRANTED pair, so a framework that forwarded
+        # the raw ask would hang here rather than pass — and the wait is on an
+        # OUTCOME, never on an elapsed interval.
+        wait_until(
+            lambda want=want: painted_size(app, want) == want,
+            timeout=8.0,
+            desc=f"the window settles at the granted {want}",
+        )
         on_screen = painted_size(app, want)
         ok(
             f"B/{name}/{label}: the window is painted at the granted size "
@@ -222,7 +242,7 @@ def a_dry_run_changes_nothing(app: RpcSubprocess, name: str, floor: tuple[int, i
     before = painted_size(app, settled)
 
     probe = (floor[0] - 60, floor[1] - 30)
-    dry = ask(app, probe, dry=True)
+    dry = resolve(app, probe)
     after = painted_size(app, settled)
     ok(
         f"D/{name}: a dry run leaves the window where it was "
@@ -231,7 +251,9 @@ def a_dry_run_changes_nothing(app: RpcSubprocess, name: str, floor: tuple[int, i
     )
     ok(f"D/{name}: a dry run reports itself unapplied", dry["applied"] is False)
 
-    real = ask(app, probe)
+    real = outcome_of(
+        app.request("scene/resize", {"width": probe[0], "height": probe[1]}), probe
+    )
     ok(
         f"D/{name}: the real call answers what the dry run promised",
         {k: v for k, v in real.items() if k != "applied"}
@@ -276,7 +298,7 @@ def the_specification_survives_a_clamped_resize(
     # A resize the floor RAISES — the case that used to leave the window at a
     # size the caller was never told about.
     probe = (floor[0] - 80, floor[1] - 40)
-    landed = granted(ask(app, probe, dry=True))
+    landed = granted(resolve(app, probe))
     resize_and_settle(app, probe)
     gone = sorted(declared - declared_and_painted(app, landed))
     assert_eq(

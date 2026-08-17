@@ -1083,7 +1083,21 @@ def test_resize_and_settle_waits_for_the_frame_that_is_the_new_size() -> None:
                 (params["width"], params["height"]) == new,
                 f"with the size it was asked for: {params}",
             )
-            return Response(id=1, result={})
+            # R1710 — a server answers the size it GRANTED, per axis. The double
+            # answers as the real one does; a double that answered `{}` would
+            # make this suite pass over a helper reading a field nothing sends.
+            return Response(
+                id=1,
+                result={
+                    "width": new[0],
+                    "height": new[1],
+                    "asked": [new[0], new[1]],
+                    "width_bound": {"kind": "as_asked"},
+                    "height_bound": {"kind": "as_asked"},
+                    "as_asked": True,
+                    "applied": True,
+                },
+            )
 
         def snapshot(self, *, source: str, viewport: tuple[int, int]) -> dict:
             check(source == "paint", f"it reads the RENDERED frame: {source}")
@@ -1258,7 +1272,20 @@ def test_targets_survive_resize_refuses_a_screen_that_stops_answering() -> None:
         def request(self, method: str, params: object = None, **kw: object) -> Response:
             if method == "scene/resize":
                 self._resizes += 1
-                return Response(id=1, result={})
+                # R1710 — grants what it was asked, in the shape a server answers.
+                assert isinstance(params, dict)
+                return Response(
+                    id=1,
+                    result={
+                        "width": params["width"],
+                        "height": params["height"],
+                        "asked": [params["width"], params["height"]],
+                        "width_bound": {"kind": "as_asked"},
+                        "height_bound": {"kind": "as_asked"},
+                        "as_asked": True,
+                        "applied": True,
+                    },
+                )
             return Response(id=1, result=good if self._resizes < 2 else self._second)
 
         def snapshot(self, *, source: str, viewport: tuple) -> dict:
@@ -1355,7 +1382,36 @@ def test_no_demo_resizes_a_window_and_reads_without_waiting() -> None:
             return node.func.attr
         return node.func.id if isinstance(node.func, ast.Name) else ""
 
-    drivers, offenders = 0, []
+    def changes_nothing(node: ast.Call) -> bool:
+        """R1710 — two sends that CANNOT be followed by a new frame, so
+        demanding a wait after them would demand a wait for something that
+        never arrives.
+
+        Both are properties of the call itself, read off a literal dict in the
+        same expression — no context, nothing to get wrong at a distance:
+
+        * `dry_run: True` — the method resolves the ask and touches no window,
+          by contract (§2 #3). It is how a demo reads a window's declared floor.
+        * a zero extent — refused as `InvalidSize` before anything is resolved,
+          on every backend, so the response is an error and the window is
+          untouched.
+
+        A send whose params are built somewhere else stays a resize: the demo
+        has to put the exempting fact at the call, where a reader sees it.
+        """
+        for arg in node.args:
+            if not isinstance(arg, ast.Dict):
+                continue
+            for key, value in zip(arg.keys, arg.values):
+                if not isinstance(key, ast.Constant):
+                    continue
+                if key.value == "dry_run" and getattr(value, "value", None) is True:
+                    return True
+                if key.value in ("width", "height") and getattr(value, "value", 1) == 0:
+                    return True
+        return False
+
+    drivers, offenders, exempt = 0, [], 0
     for path in demos:
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for scope in ast.walk(tree):
@@ -1369,6 +1425,9 @@ def test_no_demo_resizes_a_window_and_reads_without_waiting() -> None:
                     isinstance(arg, ast.Constant) and arg.value == verb
                     for arg in node.args
                 ):
+                    if changes_nothing(node):
+                        exempt += 1
+                        continue
                     sends.append(node.lineno)
             if not sends:
                 continue
@@ -1377,6 +1436,10 @@ def test_no_demo_resizes_a_window_and_reads_without_waiting() -> None:
                 offenders.append(f"{path.name}:{sends[0]} in {scope.name}()")
 
     check(drivers >= 4, f"{drivers} function(s) drive a resize, so this is live")
+    # R1710 — the exemption is USED, so it cannot rot into a clause nobody
+    # exercises: an exemption that never fires and an exemption that fires
+    # wrongly look identical from here, and this tells them apart.
+    check(exempt >= 2, f"{exempt} send(s) took the changes-nothing exemption")
     check(
         not offenders,
         f"a function sends {verb} and never waits for the new size to be "
