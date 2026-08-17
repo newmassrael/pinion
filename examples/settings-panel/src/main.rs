@@ -37,7 +37,7 @@
 use std::cell::Cell;
 use std::rc::Rc;
 
-use pinion_a11y::{AccessNode, NavLink, WidgetA11y, navigation_link_nodes};
+use pinion_a11y::{AccessNode, AriaRole, NavLink, WidgetA11y, navigation_link_nodes};
 use pinion_core::external::{External, ExternalIntrospect, IntrospectValue, ReadRefusal};
 use pinion_core::intent::Intent;
 use pinion_core::reactive::{Effect, Owner, Signal, batch};
@@ -659,6 +659,25 @@ fn toggle_track_fill(theme: &Theme, state: ToggleState, on: bool) -> Color {
 
 const SECTION_LABELS: [&str; NAV_COUNT] =
     ["Theme", "Appearance", "Profile", "Notifications", "Actions"];
+
+/// R1708 §5.40 — which section paints the profile text field, so the a11y node
+/// for that field exists exactly while the field does.
+///
+/// An index with an assertion behind it rather than a derivation: computing it
+/// wants const string comparison, and the byte-pattern trick that stands in for
+/// that is harder to read than the number it replaces. The test below is what
+/// makes reordering the sections a failure instead of a silent mis-announcement.
+const PROFILE_SECTION: usize = 2;
+
+#[cfg(test)]
+mod profile_section_tests {
+    use super::{PROFILE_SECTION, SECTION_LABELS};
+
+    #[test]
+    fn r1708_the_profile_section_index_still_names_the_profile_section() {
+        assert_eq!(SECTION_LABELS[PROFILE_SECTION], "Profile");
+    }
+}
 
 // ─── nav rail view ────────────────────────────────────────────────
 
@@ -1543,7 +1562,39 @@ impl WidgetA11y for SettingsPanelView {
                 unavailable: None,
             })
             .collect();
-        navigation_link_nodes(NAV_TAG, "Settings sections", &links)
+        let mut nodes = navigation_link_nodes(NAV_TAG, "Settings sections", &links);
+        // R1708 §5.40 — the profile field is a node.
+        //
+        // It was not, and the sentence above about the detail pane's ARIA
+        // surface being "still absent" was the whole of its defence. R1707 gave
+        // every `view_field` text run a `Silence::part_of(<field tag>)`
+        // declaration — the run is folded into the field's announcement rather
+        // than read separately — and on this screen that declaration pointed at
+        // a tag NOTHING in the accessibility tree carried, because this builder
+        // returned the rail and nothing else. The voice census called it
+        // dangling, correctly, on the relaunch that opens straight onto this
+        // section.
+        //
+        // The repair is the node, not an exemption: a single-line text input a
+        // screen reader cannot see is the defect, and the framework's
+        // declaration is what made it audible. `with_focused` mirrors the rail
+        // links beside it. The rest of the detail pane's controls are still
+        // absent — narrowed by one, and the sentence above is now true of a
+        // smaller set.
+        //
+        // ★ Gated on the section being SELECTED, because only then is the field
+        // painted. The first draft pushed it unconditionally and the same
+        // census caught that too, one arm over: a name announced for a tag
+        // nothing paints is a `ghost`. The node's lifetime is the paint's, which
+        // is the rule for every conditionally-painted control.
+        if nav.selected == PROFILE_SECTION {
+            nodes.push(
+                AccessNode::new(PROFILE_TF_TAG, AriaRole::TextInput)
+                    .with_name("Your display name")
+                    .with_focused(focused == Some(PROFILE_TF_TAG)),
+            );
+        }
+        nodes
     }
 }
 

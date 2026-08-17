@@ -310,7 +310,22 @@ def dashboard(app: RpcSubprocess) -> None:
 def capture(app: RpcSubprocess) -> None:
     banner("H — ★ a message row is entered and its cells are walked (the grid pattern)")
     walked = stops(app)
-    assert_eq(len(walked), 6, "H: six stops")
+    # R1708 — by name, not by count. See the sibling note in
+    # `r1698_a_composite_has_a_cursor_inside_it.py`: a hand-written `6` reported
+    # R1707's new query field as a regression rather than as the stop it is.
+    assert_eq(
+        walked,
+        [
+            "pv.filter.query",
+            "pv.filter.saved.0",
+            "pv.filter.saved.1",
+            "pv.filter.saved.2",
+            "pv.list",
+            "pv.tree",
+            "pv.bytes",
+        ],
+        "H: the capture viewer's Tab ring, by name",
+    )
     app.request("focus/set", {"tag": "pv.list"})
     app.tick(16)
     row = app.query(f"{EXT}/selected_row")

@@ -99864,6 +99864,50 @@
         "Nobody has counted how many guarantees in this tree are unfalsifiable for the same reason CF-13 is — a platform the gated OS-native axis cannot run. One is now named; the census is not done."
       ]
     },
+    "Round 1708.4": {
+      "decision_summary": "R1708.4 — paying R1707's red, and two of the three repairs are the check rather than the code. The CI run for Round 1707 failed its demo sweep on four demos, in exactly the blast radius that round's own entry predicted and pushed through. Read at the start of R1708 and paid here, at the owner's direction, so that the push carrying R1708 is a push that FIXES the line rather than one that publishes onto a stopped one. First cause: R1707 gave the capture viewer's filter bar a real query field, which is legitimately a seventh keyboard stop. Two demos asserted `len(walked) == 6` — a hand-written count — so an improvement was reported as a regression by a check that could not say WHICH stop had arrived. Both now assert the ring BY NAME, which is the form that can be reviewed: a list says what changed, a count says only that something did. Second cause: R1707 gave every `view_field` text run a `Silence::part_of(<field tag>)` declaration, so the run is folded into the field's announcement instead of read separately. On the settings panel that declaration pointed at a tag NOTHING in the accessibility tree carried — the panel's `access_node` returned the navigation rail and nothing else, under a doc comment stating in as many words that the detail pane's ARIA surface was \"still absent\". The voice census called the silence dangling, correctly, on the relaunch that opens straight onto the profile section. The repair is the node, not an exemption: a single-line text input a screen reader cannot see IS the defect, and the framework's new declaration is the thing that made it audible. The panel's profile field is now a `TextInput` node with a name and a focused state, and the sentence about the detail pane is now true of a smaller set.",
+      "changes_bullets": [
+        "CHANGED r1698_a_composite_has_a_cursor_inside_it.py and r1699_a_keyboard_can_do_what_a_pointer_can.py — the capture viewer's Tab ring is asserted by NAME (`pv.filter.query`, three saved chips, three panes) instead of by a hand-written count of six. R1707 added the query field as a legitimate seventh stop and both checks reported it as a regression.",
+        "CHANGED examples/settings-panel — `access_node` now carries the profile text field as a `TextInput` node with a name and a focused state, beside the navigation rail it already returned. Its own doc comment had recorded the detail pane's absent ARIA surface as a known gap; R1707's `Silence::part_of` declaration turned that gap into a dangling silence on the relaunch that opens onto the profile section.",
+        "NOT an exemption: `_VOICE_DEFECT_EXCEPTIONS` was left alone deliberately. The dangling silence names a real hole — a text input absent from the accessibility tree — and the escape hatch would have silenced the one thing that found it."
+      ],
+      "verification_bullets": [
+        "Reproduced locally first, on this host, before changing anything: r1698 failed \"E: six stops\" and settings_panel_r667 failed with the dangling silence, matching the CI log exactly. A red read from a hosted log and never reproduced is a red nobody has measured.",
+        "r1698 and r1699 green after the by-name assertion. The ring they now pin is `pv.filter.query`, `pv.filter.saved.0..2`, `pv.list`, `pv.tree`, `pv.bytes` — measured by walking it, not written from the screen's source.",
+        "The settings-panel repair took TWO passes and the census caught the first one: pushing the profile node unconditionally turned `dangling` into `ghost` — a name announced for a tag nothing paints, because the field only paints while its section is selected. The node is now gated on that, and its index carries a unit test asserting the label it names.",
+        "All three settings-panel demos green after the second pass."
+      ],
+      "impact_refs": [
+        "5.40",
+        "5.39"
+      ],
+      "carry_forward_bullets": [
+        "The class this round paid twice: a check written as a COUNT reports an improvement as a regression, and names the wrong thing when it fires. Two of the four red demos were that, and R1708's own integration test had to delete a section for the sibling reason (an assertion that could not fail). Nobody has counted how many hand-written counts are left in `tools/demos/`.",
+        "The settings panel's detail pane still has no ARIA surface beyond the profile field this round added. The doc comment says so; nothing measures how many controls that is.",
+        "R1707 predicted this blast radius in its own entry and pushed anyway, per the standing \"do not block a round waiting for the hosted run\" rule. That rule is right and this is its cost, paid one round later as designed — worth restating rather than treating as a surprise."
+      ],
+      "publishable_decision_summary": "R1708.4 — paying R1707's red, and two of the three repairs are the check rather than the code. The CI run for Round 1707 failed its demo sweep on four demos, in exactly the blast radius that round's own entry predicted and pushed through. Read at the start of R1708 and paid here, at the owner's direction, so that the push carrying R1708 is a push that FIXES the line rather than one that publishes onto a stopped one. First cause: R1707 gave the capture viewer's filter bar a real query field, which is legitimately a seventh keyboard stop. Two demos asserted `len(walked) == 6` — a hand-written count — so an improvement was reported as a regression by a check that could not say WHICH stop had arrived. Both now assert the ring BY NAME, which is the form that can be reviewed: a list says what changed, a count says only that something did. Second cause: R1707 gave every `view_field` text run a `Silence::part_of(<field tag>)` declaration, so the run is folded into the field's announcement instead of read separately. On the settings panel that declaration pointed at a tag NOTHING in the accessibility tree carried — the panel's `access_node` returned the navigation rail and nothing else, under a doc comment stating in as many words that the detail pane's ARIA surface was \"still absent\". The voice census called the silence dangling, correctly, on the relaunch that opens straight onto the profile section. The repair is the node, not an exemption: a single-line text input a screen reader cannot see IS the defect, and the framework's new declaration is the thing that made it audible. The panel's profile field is now a `TextInput` node with a name and a focused state, and the sentence about the detail pane is now true of a smaller set.",
+      "publishable_changes_bullets": [
+        "CHANGED r1698_a_composite_has_a_cursor_inside_it.py and r1699_a_keyboard_can_do_what_a_pointer_can.py — the capture viewer's Tab ring is asserted by NAME (`pv.filter.query`, three saved chips, three panes) instead of by a hand-written count of six. R1707 added the query field as a legitimate seventh stop and both checks reported it as a regression.",
+        "CHANGED examples/settings-panel — `access_node` now carries the profile text field as a `TextInput` node with a name and a focused state, beside the navigation rail it already returned. Its own doc comment had recorded the detail pane's absent ARIA surface as a known gap; R1707's `Silence::part_of` declaration turned that gap into a dangling silence on the relaunch that opens onto the profile section.",
+        "NOT an exemption: `_VOICE_DEFECT_EXCEPTIONS` was left alone deliberately. The dangling silence names a real hole — a text input absent from the accessibility tree — and the escape hatch would have silenced the one thing that found it."
+      ],
+      "publishable_verification_bullets": [
+        "Reproduced locally first, on this host, before changing anything: r1698 failed \"E: six stops\" and settings_panel_r667 failed with the dangling silence, matching the CI log exactly. A red read from a hosted log and never reproduced is a red nobody has measured.",
+        "r1698 and r1699 green after the by-name assertion. The ring they now pin is `pv.filter.query`, `pv.filter.saved.0..2`, `pv.list`, `pv.tree`, `pv.bytes` — measured by walking it, not written from the screen's source.",
+        "The settings-panel repair took TWO passes and the census caught the first one: pushing the profile node unconditionally turned `dangling` into `ghost` — a name announced for a tag nothing paints, because the field only paints while its section is selected. The node is now gated on that, and its index carries a unit test asserting the label it names.",
+        "All three settings-panel demos green after the second pass."
+      ],
+      "publishable_impact_refs": [
+        "5.40",
+        "5.39"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The class this round paid twice: a check written as a COUNT reports an improvement as a regression, and names the wrong thing when it fires. Two of the four red demos were that, and R1708's own integration test had to delete a section for the sibling reason (an assertion that could not fail). Nobody has counted how many hand-written counts are left in `tools/demos/`.",
+        "The settings panel's detail pane still has no ARIA surface beyond the profile field this round added. The doc comment says so; nothing measures how many controls that is.",
+        "R1707 predicted this blast radius in its own entry and pushed anyway, per the standing \"do not block a round waiting for the hosted run\" rule. That rule is right and this is its cost, paid one round later as designed — worth restating rather than treating as a surprise."
+      ]
+    },
     "Round 18": {
       "decision_summary": "Round 18 — R17 round close: §5.11 v0 schema 5/5 + §5.15 widget bridging + §5.12 scene/invoke bidirectional RPC + live hello-button dogfood (8 slices)",
       "changes_bullets": [

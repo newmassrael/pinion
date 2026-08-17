@@ -189,7 +189,25 @@ def dashboard(app: RpcSubprocess) -> None:
 def capture(app: RpcSubprocess) -> None:
     banner("E — the capture viewer: each pane's arrows move that pane's cursor")
     walked = stops(app)
-    ok("E: six stops", len(walked) == 6)
+    # R1708 — asserted BY NAME rather than by count. This line was a
+    # hand-written `== 6`, and when R1707 gave the filter bar a real query field
+    # the ring legitimately grew to seven — so the check reported an improvement
+    # as a regression, in CI, one round later. A name list says WHICH stop
+    # arrived; a count says only that the number moved, which is the half that
+    # cannot be reviewed.
+    assert_eq(
+        walked,
+        [
+            "pv.filter.query",
+            "pv.filter.saved.0",
+            "pv.filter.saved.1",
+            "pv.filter.saved.2",
+            "pv.list",
+            "pv.tree",
+            "pv.bytes",
+        ],
+        "E: the capture viewer's Tab ring, by name",
+    )
     panes = [s for s in walked if s in ("pv.list", "pv.tree", "pv.bytes")]
     assert_eq(len(panes), 3, "E: three panes own a cursor")
 
