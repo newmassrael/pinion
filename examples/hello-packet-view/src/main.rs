@@ -68,14 +68,19 @@ use pinion_core::widgets::field_bytes::{
     ByteExtent, ByteMap, ByteMapExternal, ByteMapState, ByteSource, Coverage, FieldSpan, SourceId,
     use_byte_map,
 };
+use pinion_core::widgets::grid_sort::Admission;
 use pinion_core::widgets::hex_dump::{ByteSelection, HexLayout};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::roving::{Activation, Axis, Ends, Landing, Member, Roving, RovingSpec};
+use pinion_core::widgets::row_query::RowQuery;
 use pinion_core::widgets::scroll::ScrollState;
-use pinion_core::{Frame, Scene, WidgetCore};
+use pinion_core::widgets::text_edit::{TextEditState, use_text_edit_state};
+use pinion_core::widgets::text_field::TextFieldState;
+use pinion_core::{CellKind, Frame, Scene, WidgetCore, edit_field_keymap};
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use pinion_widget_paint::pane::{PanePointer, scroll_pane};
 use pinion_widget_paint::run::text_run;
+use pinion_widget_paint::text_field as tf_paint;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 
@@ -87,6 +92,9 @@ const WIN_W: u32 = 1440;
 const WIN_H: u32 = 900;
 const VIEW_TAG: &str = "packet_view";
 const MAP_TAG: &str = "pv.map";
+/// R1707 — the query box: the tag the field's own external is addressed by, the
+/// tag its buffer is keyed on, and the tag it is painted under. One name.
+const QUERY_TAG: &str = "pv.filter.query";
 const THEME_TAG: &str = "app";
 
 const APP_BAR_H: u32 = spec::APP_BAR_H;
@@ -97,6 +105,13 @@ const TREE_W: u32 = spec::PANES[1].width;
 const BYTES_W: u32 = spec::PANES[2].width;
 
 const PAD: u32 = 12;
+
+/// R1707 — how wide the query box is. Wide enough for the reference's own
+/// three-clause query at this face, which is the longest thing the screen ever
+/// puts in it.
+const QUERY_W: u32 = 460;
+/// R1707 — how tall it is, inside the bar's 46.
+const QUERY_H: u32 = 26;
 const ROW_H: u32 = 22;
 const HEAD_H: u32 = 24;
 const FONT_TITLE: u32 = 14;
@@ -372,6 +387,22 @@ struct ViewState {
     cell: Signal<Option<usize>>,
     /// Which saved filters are on.
     saved: Signal<Vec<bool>>,
+    /// ★★★★★ R1707 — the query the list is running, as the person wrote it.
+    ///
+    /// **This is the field's own buffer, not a copy of it.** The alternative —
+    /// a `Signal<String>` beside the text field — is the two-copies shape this
+    /// tree has paid for repeatedly, and here it would fail in the most visible
+    /// way possible: the list would filter on the last committed query while
+    /// the box showed the one being typed. Holding the buffer makes the filter
+    /// live as the reference's is, and makes "what the bar shows" and "what the
+    /// list runs" the same read.
+    ///
+    /// Empty means *keep everything*, which is what the screen opens with. The
+    /// TEXT is what is held rather than a compiled predicate — the thing
+    /// measured missing from the reference floor at 6.11.1, where a wildcard
+    /// handed to the row-filtering proxy reads back as the compiled regular
+    /// expression and the pattern a person typed is gone.
+    query: Rc<TextEditState>,
     /// Which layers are folded, by index into [`spec::LAYERS`].
     folded: Signal<Vec<bool>>,
     /// The dissection of the selected message. **One** value: the tree, the
@@ -390,6 +421,67 @@ struct ViewState {
 impl ViewState {
     fn say(&self, what: impl Into<String>) {
         *self.said.borrow_mut() = what.into();
+    }
+
+    /// ★★★ R1707 — the running query, parsed.
+    ///
+    /// A malformed query keeps everything rather than nothing. The choice is
+    /// not arbitrary: a half-typed query is malformed on nearly every
+    /// keystroke, and a screen that emptied its list while a person typed would
+    /// flash the capture away and back. The refusal is not swallowed — it is
+    /// what [`query_fault`](Self::query_fault) answers and what the bar paints.
+    fn query(&self) -> RowQuery {
+        RowQuery::parse(&self.query.text(), spec::QUERY_COLUMNS).unwrap_or_default()
+    }
+
+    /// Why the running query could not be understood, or `None` when it could.
+    fn query_fault(&self) -> Option<String> {
+        RowQuery::parse(&self.query.text(), spec::QUERY_COLUMNS)
+            .err()
+            .map(|e| e.to_string())
+    }
+
+    /// ★★★ R1707 — the source indices the query keeps, in capture order.
+    ///
+    /// The ONE derivation. The painter, the hit test, the keyboard, the
+    /// accessibility tree and the wire all read this, so the list a person sees
+    /// and the list a press lands in cannot be two lists — the failure this
+    /// tree has paid for under several names.
+    fn kept(&self) -> Vec<usize> {
+        let query = self.query();
+        if query.is_everything() {
+            return (0..spec::ROWS.len()).collect();
+        }
+        (0..spec::ROWS.len())
+            .filter(|&n| {
+                let cells = spec::ROWS[n].attributes();
+                query.admit(|c| cells.get(c).map_or("", String::as_str)) == Admission::Admitted
+            })
+            .collect()
+    }
+
+    /// Which message the list's cursor is on: the selected one when the query
+    /// kept it, else the first it did keep, else the selected one again (an
+    /// empty result has no row to stand on and the roster is empty too).
+    fn cursor_row(&self) -> usize {
+        let selected = self.row.get();
+        let kept = self.kept();
+        if kept.contains(&selected) {
+            return selected;
+        }
+        kept.first().copied().unwrap_or(selected)
+    }
+
+    /// Which clause hid source row `n`, or `None` when the row is shown.
+    ///
+    /// The question the reference floor answers with an invalid index and
+    /// nothing else — the same answer for every reason a row can be absent.
+    fn why_hidden(&self, n: usize) -> Option<String> {
+        let query = self.query();
+        let cells = spec::ROWS.get(n)?.attributes();
+        query
+            .rejecting_clause(|c| cells.get(c).map_or("", String::as_str))
+            .map(|clause| clause.text.clone())
     }
 
     /// The bytes of the frame this screen shows. Deterministic and derived from
@@ -430,6 +522,12 @@ fn use_view_state() -> Rc<ViewState> {
     let list_scroll = pinion_core::widgets::scroll::use_scroll_state("pv.list.body");
     let tree_scroll = pinion_core::widgets::scroll::use_scroll_state("pv.tree.body");
     let bytes_scroll = pinion_core::widgets::scroll::use_scroll_state("pv.bytes.body");
+    // R1707 — the query field's own buffer, resolved out here for the same
+    // reason as the four above. The first draft called the hook inside the
+    // factory and every test in this example failed identically, which is the
+    // rule doing its job: `Owner::cache` refuses to re-enter rather than
+    // handing back a second buffer for the same tag.
+    let query = use_text_edit_state(QUERY_TAG);
     let owner = pinion_core::reactive::Owner::current()
         .expect("use_view_state requires an active Owner scope");
     owner.cache("packet_view.state", || ViewState {
@@ -448,6 +546,10 @@ fn use_view_state() -> Rc<ViewState> {
         // started with a cell addressed would announce a column nobody chose.
         cell: Signal::new(None),
         saved: Signal::new(vec![false; spec::SAVED_FILTERS.len()]),
+        // R1707 — the field's own buffer, resolved above. The screen opens
+        // unfiltered; see `spec::EXAMPLE_QUERY` for why the reference's own
+        // query is a saved filter rather than the opening state.
+        query,
         folded: Signal::new(vec![false; spec::LAYERS.len()]),
         map,
         list_scroll,
@@ -887,6 +989,21 @@ impl Hit {
 
     /// What answers at the window point `(px, py)`.
     fn at(state: &ViewState, px: u32, py: u32) -> Self {
+        // ★★★★★ R1707 — **there is deliberately no stand-aside arm for the
+        // query box here, and that is a measurement rather than an oversight.**
+        //
+        // The sibling screen needs one: its field opens ON TOP of the form, so
+        // without an arm the press resolves to the form row underneath and the
+        // caret never lands. This bar is laid out so that nothing else answers
+        // where the box is — the chips start at x=748 and the box ends at 472 —
+        // so an arm here would return `None` in a case that already returns
+        // `None`.
+        //
+        // A counterfactual proved it: neutering the arm this round first wrote
+        // changed no answer anywhere, and the nine-point test written to guard
+        // it could not fail, because `Hit::None` is what this screen says both
+        // for "standing aside" and for "nothing is there". What IS load-bearing
+        // is `query_byte_at`, and that is where the gate went.
         for (n, _) in spec::SAVED_FILTERS.iter().enumerate() {
             if contains(saved_chip(n), px, py) {
                 return Self::Saved(n);
@@ -895,8 +1012,12 @@ impl Hit {
         let list = list_rect();
         if contains(list, px, py) {
             let (lx, ly) = in_pane(&state.list_scroll, list, px, py);
-            for n in 0..spec::ROWS.len() {
-                if contains(list_row(n), lx, ly) {
+            // R1707 — walk what is DRAWN. A hit test over the source rows would
+            // answer a hidden message under a filtered list, which is the exact
+            // shape of "what is drawn is what is pressed" this tree closed for
+            // the sibling screens.
+            for (visual, &n) in state.kept().iter().enumerate() {
+                if contains(list_row(visual), lx, ly) {
                     return Self::Message(n);
                 }
             }
@@ -977,18 +1098,70 @@ fn select_byte(state: &Rc<ViewState>, byte: usize) {
     }
 }
 
-fn toggle_saved(state: &Rc<ViewState>, n: usize) {
-    let mut saved = state.saved.get();
-    if let Some(slot) = saved.get_mut(n) {
-        *slot = !*slot;
-        let on = *slot;
-        state.saved.set(saved);
-        state.say(format!(
-            "{} {}",
-            if on { "applied" } else { "cleared" },
-            spec::SAVED_FILTERS[n]
-        ));
+/// ★★★ R1707 — set the running query and say what it did.
+///
+/// The one write path. The pointer, the keyboard, the saved chips and the wire
+/// all come through here, so "what the bar shows" and "what the list runs"
+/// cannot become two answers.
+fn set_query(state: &Rc<ViewState>, text: &str) {
+    state.query.set_text(text.to_owned());
+    announce_query(state);
+}
+
+/// ★★★ R1707 — §2 #2: an agent runs the same query a person types, through the
+/// same slot, and gets the same list.
+///
+/// A malformed query is REFUSED here rather than kept, which is the opposite of
+/// what the painted bar does with one — and both are right. A person types a
+/// query one character at a time and is malformed on nearly every keystroke; an
+/// agent sends a whole query, and a silent "that kept everything" would be
+/// indistinguishable from success.
+fn run_filter(state: &Rc<ViewState>, text: &str) -> Result<IntrospectValue, InvokeError> {
+    let query = RowQuery::parse(text, spec::QUERY_COLUMNS)
+        .map_err(|why| InvokeError::rejected(why.to_string()))?;
+    set_query(state, text);
+    Ok(IntrospectValue::Json(serde_json::json!({
+        "kept": state.kept().len(),
+        "of": spec::ROWS.len(),
+        "clauses": query.clauses().len(),
+    })))
+}
+
+/// R1707 — say what the running query did, in the words the bar prints.
+fn announce_query(state: &Rc<ViewState>) {
+    match state.query_fault() {
+        Some(why) => state.say(format!("query refused: {why}")),
+        None if state.query.text().trim().is_empty() => state.say("filter cleared".to_owned()),
+        None => state.say(format!(
+            "{} of {} shown",
+            state.kept().len(),
+            spec::ROWS.len()
+        )),
     }
+}
+
+/// ★★ R1707 — a saved chip applies its own query.
+///
+/// Until this round this flipped a boolean and announced "applied units only"
+/// while the list did not move. The chips are exclusive because the queries are
+/// whole queries rather than clauses: turning two on would mean composing them,
+/// and the reference offers no such composition — pressing a second saved
+/// filter there replaces the first.
+fn toggle_saved(state: &Rc<ViewState>, n: usize) {
+    let was_on = state.saved.get().get(n).copied().unwrap_or(false);
+    let mut saved = vec![false; spec::SAVED_FILTERS.len()];
+    if let Some(slot) = saved.get_mut(n) {
+        *slot = !was_on;
+    }
+    let on = !was_on;
+    state.saved.set(saved);
+    set_query(state, if on { spec::SAVED_FILTERS[n].query } else { "" });
+    state.say(format!(
+        "{} {} — {}",
+        if on { "applied" } else { "cleared" },
+        spec::SAVED_FILTERS[n].name,
+        count_line(state),
+    ));
 }
 
 fn toggle_layer(state: &Rc<ViewState>, n: usize) {
@@ -1059,7 +1232,13 @@ fn pane_cursor(state: &Rc<ViewState>, stop: &str) -> Option<Roving> {
     let (spec, members, at) = match stop {
         "pv.list" => (
             RovingSpec::new(Axis::Vertical).with_activation(Activation::Follows),
-            (0..spec::ROWS.len())
+            // ★★★ R1707 — the roster is what the query KEPT. A cursor that
+            // walked the hidden rows would step onto messages the list does not
+            // draw, which is the keyboard half of the defect the hit test just
+            // stopped having.
+            state
+                .kept()
+                .into_iter()
                 // ★★★★★ R1699 — a row is a composite of its cells, which is
                 // what `grid` MEANS. Every row carries its inner roster, not
                 // only the selected one: a client is entitled to ask what is
@@ -1068,7 +1247,15 @@ fn pane_cursor(state: &Rc<ViewState>, stop: &str) -> Option<Roving> {
                 // the answer depend on where somebody is standing.
                 .map(|n| Member::new(format!("pv.list.row.{n}")).containing(row_cells_cursor(n)))
                 .collect::<Vec<_>>(),
-            format!("pv.list.row.{}", state.row.get()),
+            // ★★★ R1707 — the cursor rests on the selected message when the
+            // query kept it, and otherwise on the first message it did keep.
+            //
+            // DERIVED rather than repaired: a filter that moved the selection
+            // would have to do it from inside the text field's own keystroke
+            // path, and a view is not allowed to mutate (§6.3). The reference
+            // prototype leaves its selection alone too — what would be wrong is
+            // a cursor pointing at a row that is not in its own roster.
+            format!("pv.list.row.{}", state.cursor_row()),
         ),
         "pv.tree" => (
             RovingSpec::new(Axis::Vertical).with_activation(Activation::Follows),
@@ -1259,7 +1446,7 @@ fn key_at(state: &Rc<ViewState>, focused: Option<&str>, chord: &str) -> bool {
 
 // ── The view ────────────────────────────────────────────────────────────────
 
-fn view(_state: (), _frame: Frame) -> Scene {
+fn view(field: (TextFieldState, u32), _frame: Frame) -> Scene {
     let state = use_view_state();
     let theme = use_theme(THEME_TAG).theme_animated();
     let ink = ink(&theme);
@@ -1273,7 +1460,7 @@ fn view(_state: (), _frame: Frame) -> Scene {
                 None,
                 vec![
                     app_bar(&state, ink),
-                    filter_bar(&state, ink),
+                    filter_bar(&state, field, &theme, ink),
                     context_strip(ink),
                     list_pane(&state, ink),
                     tree_pane(&state, ink),
@@ -1345,23 +1532,96 @@ fn app_bar(state: &Rc<ViewState>, ink: Ink) -> Scene {
     )
 }
 
-fn filter_bar(state: &Rc<ViewState>, ink: Ink) -> Scene {
+/// Which byte of the query box a window point is on, or `None` when the box is
+/// unfocused or the point is outside it.
+///
+/// The one hit-test funnel the press hook and the drag hook share: two of them
+/// would let a drag select to a different byte than the press caret landed on.
+/// The rectangle comes from the painted scene, so it is the box a person sees.
+fn query_byte_at(
+    interaction: TextFieldState,
+    scene: &Scene,
+    focused: Option<&str>,
+    x: f32,
+    y: f32,
+) -> Option<usize> {
+    if focused != Some(QUERY_TAG) {
+        return None;
+    }
+    let rect = pinion_shell::rect_for_tag(scene, QUERY_TAG)?;
+    // Compared in the pointer's own units rather than by casting it to the
+    // rectangle's: a cast would round a point just outside the left edge INTO
+    // the box, and a press half a pixel above it out of one it is in.
+    if !rect.contains_point(x, y) {
+        return None;
+    }
+    tf_paint::byte_for_scene_point(
+        QUERY_TAG,
+        interaction,
+        scene,
+        x,
+        y,
+        &use_theme(THEME_TAG).theme_animated(),
+        &query_field_style(),
+    )
+}
+
+/// R1707 — how the query box is drawn, and the SSOT the click-to-caret hit test
+/// resolves against. Two styles here would put the caret on a different letter
+/// from the one under the cursor.
+fn query_field_style() -> tf_paint::TextFieldStyle {
+    tf_paint::TextFieldStyle {
+        field_w: QUERY_W,
+        field_h: QUERY_H,
+        field_pad: 8,
+        font_size_px: FONT_SMALL,
+        ..tf_paint::TextFieldStyle::m3_filled()
+    }
+}
+
+fn filter_bar(
+    state: &Rc<ViewState>,
+    field: (TextFieldState, u32),
+    theme: &Theme,
+    ink: Ink,
+) -> Scene {
     let rect = filter_rect();
     let saved = state.saved.get();
     let mut children = Vec::new();
-    let mut x = PAD;
-    for (n, clause) in spec::QUERY_CLAUSES.iter().enumerate() {
-        let width = u32::try_from(clause.len()).unwrap_or(20) * 7 + 12;
+    // ★★★ R1707 — the query, as a box a person types in.
+    //
+    // Until this round the bar painted three constant strings here and the list
+    // ignored them. What it showed was a filter; what it did was nothing.
+    let fault = state.query_fault();
+    children.push(Scene::Container(
+        ContainerNode::new(vec![tf_paint::view_field(
+            QUERY_TAG,
+            field.0,
+            field.1,
+            theme,
+            &query_field_style(),
+            "Filter query",
+        )])
+        .with_layout(
+            LayoutStyle::new()
+                .with_absolute_position(PAD, 10)
+                .with_size(Size::px(QUERY_W, QUERY_H)),
+        ),
+    ));
+    // The reason, where the reader is looking, and only when there is one. A
+    // query bar that answered a malformed query with an empty list would be
+    // indistinguishable from one that answered a correct query with no matches.
+    if let Some(why) = &fault {
         children.push(tagged_label(
-            &format!("pv.filter.clause.{n}"),
-            *clause,
-            Rect::new(x, 16, width, 14),
+            "pv.filter.fault",
+            why.clone(),
+            Rect::new(PAD + QUERY_W + 12, 17, 300, 13),
             FONT_SMALL,
-            if n == 0 { ink.text } else { ink.text_2 },
+            ink.err,
         ));
-        x += width + 6;
     }
-    for (n, name) in spec::SAVED_FILTERS.iter().enumerate() {
+    for (n, saved_filter) in spec::SAVED_FILTERS.iter().enumerate() {
+        let name = &saved_filter.name;
         let chip = saved_chip(n);
         let on = saved.get(n).copied().unwrap_or(false);
         children.push(
@@ -1376,7 +1636,7 @@ fn filter_bar(state: &Rc<ViewState>, ink: Ink) -> Scene {
             .with_focusable(true),
         );
         children.push(label(
-            *name,
+            (*name).to_owned(),
             Rect::new(chip.x + 10, chip.y - rect.y + 5, chip.w - 20, 12),
             FONT_SMALL,
             if on { ink.accent } else { ink.text_2 },
@@ -1384,12 +1644,26 @@ fn filter_bar(state: &Rc<ViewState>, ink: Ink) -> Scene {
     }
     children.push(tagged_label(
         "pv.filter.count",
-        format!("{} / {}", comma(spec::MATCHED), comma(spec::CAPTURED)),
+        count_line(state),
         Rect::new(rect.w.saturating_sub(196), 16, 180, 14),
         FONT_SMALL,
         ink.text_2,
     ));
     panel("pv.filter", rect, ink.surface, Some(ink.outline), children)
+}
+
+/// ★★★ R1707 — what the bar's right end says.
+///
+/// Unfiltered it is the capture's own scale, which is the fact a reader wants
+/// when nothing is narrowing the list. Filtered it is **derived** — how many of
+/// the messages this screen holds the query kept — because a filter that
+/// reported a constant while the list changed under it is the defect this
+/// round exists to remove, and a number nothing derives is how that survives.
+fn count_line(state: &ViewState) -> String {
+    if state.query().is_everything() {
+        return format!("{} / {}", comma(spec::MATCHED), comma(spec::CAPTURED));
+    }
+    format!("{} of {} shown", state.kept().len(), spec::ROWS.len())
 }
 
 /// A count with thousands separators, the way the reference prints one.
@@ -1467,8 +1741,12 @@ fn list_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
             ink.text_3,
         ));
     }
-    for n in 0..spec::ROWS.len() {
-        children.extend(list_row_paint(n, selected, ink));
+    // ★★★ R1707 — the rows the query KEPT, laid out by their visual position
+    // and tagged by their source index. The tag is the row's identity and the
+    // position is where it currently sits; conflating them is how a filtered
+    // list starts answering a press with the wrong row.
+    for (visual, &n) in state.kept().iter().enumerate() {
+        children.extend(list_row_paint(n, visual, selected, ink));
     }
     // ★ One stop for the whole grid — the WAI-ARIA composite pattern, and the
     // one this screen already behaves like: the arrows move the selection
@@ -1495,11 +1773,15 @@ fn list_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
 }
 
 /// One message row, in the list pane's own coordinates.
-fn list_row_paint(n: usize, selected: usize, ink: Ink) -> Vec<Scene> {
+///
+/// `n` is the row's index in [`spec::ROWS`] — its identity, which is what every
+/// tag carries. `visual` is where it sits in the list right now, which the
+/// query decides.
+fn list_row_paint(n: usize, visual: usize, selected: usize, ink: Ink) -> Vec<Scene> {
     let message = &spec::ROWS[n];
     let mut children = Vec::new();
     {
-        let row = list_row(n);
+        let row = list_row(visual);
         if n == selected {
             children.push(
                 box_at("pv.list.selected", row, ink.lit, Some(ink.accent), 0).silenced(
@@ -2068,6 +2350,16 @@ impl ExternalIntrospect for ViewOracle {
                     SchemaField::new("folded", "json"),
                     SchemaField::new("said", "string"),
                     SchemaField::new("cursor", "json"),
+                    // ★★★ R1707 — the filter's whole surface, declared. The
+                    // declaration is a PRECONDITION of dispatch (R1637), so an
+                    // arm added to `query` and left out here answers
+                    // `UnknownIntrospectPath` — which is exactly what this
+                    // round's demo hit on its first run.
+                    SchemaField::new("query", "string"),
+                    SchemaField::new("query_clauses", "json"),
+                    SchemaField::new("query_fault", "string"),
+                    SchemaField::new("kept_rows", "json"),
+                    SchemaField::new("why_hidden", "json"),
                     SchemaField::parametric(
                         "hit.<x>.<y>",
                         "string",
@@ -2078,6 +2370,7 @@ impl ExternalIntrospect for ViewOracle {
                     SchemaField::action("select_byte", "int"),
                     SchemaField::action("toggle_saved", "int"),
                     SchemaField::action("toggle_layer", "int"),
+                    SchemaField::action("filter", "string"),
                     SchemaField::action("point", "string"),
                     SchemaField::action("press", "string"),
                     // ★ R1664 — declared, not merely handled. The router's press
@@ -2131,6 +2424,46 @@ impl ExternalIntrospect for ViewOracle {
                     .collect(),
             ))),
             "saved" => Ok(IntrospectValue::Json(serde_json::json!(state.saved.get()))),
+            // ★★★ R1707 — the query as the person wrote it, which the reference
+            // floor cannot give back: measured at 6.11.1, handing its
+            // row-filtering proxy `sensors/unit/*` and reading the filter
+            // returns `(?s:sensors/unit/[^/]*)`.
+            "query" => Ok(IntrospectValue::Text(state.query.text())),
+            "query_clauses" => Ok(IntrospectValue::Json(serde_json::Value::Array(
+                state
+                    .query()
+                    .clauses()
+                    .iter()
+                    .map(|c| {
+                        serde_json::json!({
+                            "column": c.column,
+                            "op": c.op.wire_token(),
+                            "operand": c.operand,
+                            "text": c.text,
+                        })
+                    })
+                    .collect(),
+            ))),
+            "query_fault" => Ok(state
+                .query_fault()
+                .map_or(IntrospectValue::Null, IntrospectValue::Text)),
+            "kept_rows" => Ok(IntrospectValue::Json(serde_json::json!(state.kept()))),
+            // ★★★★★ R1707 — **why a message is not in the list.**
+            //
+            // The question a capture viewer's reader actually has, and the one
+            // the reference floor answers with an invalid model index — the
+            // same answer for every reason a row can be absent. Across its
+            // row-filtering proxy's 12 properties and 101 methods, measured,
+            // not one names a reason.
+            "why_hidden" => Ok(IntrospectValue::Json(serde_json::Value::Object(
+                (0..spec::ROWS.len())
+                    .filter_map(|n| {
+                        state
+                            .why_hidden(n)
+                            .map(|clause| (n.to_string(), serde_json::json!(clause)))
+                    })
+                    .collect(),
+            ))),
             "folded" => Ok(IntrospectValue::Json(serde_json::json!(state.folded.get()))),
             "said" => Ok(IntrospectValue::Text(state.said.borrow().clone())),
             "cursor" => {
@@ -2196,6 +2529,7 @@ impl ExternalIntrospect for ViewOracle {
                 toggle_saved(&state, n);
                 Ok(IntrospectValue::Json(serde_json::json!(state.saved.get())))
             }
+            "filter" => run_filter(&state, &Self::text(&args)?),
             "toggle_layer" => {
                 let n = args
                     .as_usize()
@@ -2284,8 +2618,20 @@ fn spec_json() -> serde_json::Value {
         "context": spec::CONTEXT.iter().map(|c| serde_json::json!({
             "key": c.key, "value": c.value, "note": c.note,
         })).collect::<Vec<_>>(),
-        "saved_filters": spec::SAVED_FILTERS,
-        "query_clauses": spec::QUERY_CLAUSES,
+        "saved_filters": spec::SAVED_FILTERS.iter().map(|f| serde_json::json!({
+            "name": f.name, "query": f.query,
+        })).collect::<Vec<_>>(),
+        // ★★★ R1707 — what this screen tells a person the mouse and keyboard
+        // do. Published rather than painted: the sibling screen prints a hint
+        // strip because the reference's node canvas does, and the reference's
+        // capture section does not — but a promise nobody can enumerate is one
+        // no gate can hold the screen to, which is the state this screen was in.
+        "gestures": spec::GESTURES.iter().map(|(g, effect)| serde_json::json!({
+            "gesture": g, "effect": effect,
+        })).collect::<Vec<_>>(),
+        "query_columns": spec::QUERY_COLUMNS,
+        "query_placeholder": spec::QUERY_PLACEHOLDER,
+        "example_query": spec::EXAMPLE_QUERY,
         "layers": spec::LAYERS.iter().map(|(id, title)| serde_json::json!({
             "id": id, "title": title,
         })).collect::<Vec<_>>(),
@@ -2333,7 +2679,14 @@ fn spec_json() -> serde_json::Value {
 struct PacketView;
 
 impl WidgetCore for PacketView {
-    type State = ();
+    /// ★★★ R1707 — the query box's posture and caret, which the shell reads out
+    /// of the painted scene and hands back to the view.
+    ///
+    /// The same contract screen A and the node editor use, so the field's own
+    /// external stays the authority on what it holds and this screen never
+    /// guesses. It was `()` while this screen had no text entry anywhere, and
+    /// that is exactly how long its filter bar was a painted constant.
+    type State = (TextFieldState, u32);
     type Event = ();
 
     fn create_external() -> Box<dyn External> {
@@ -2346,19 +2699,29 @@ impl WidgetCore for PacketView {
     /// the crate's and a consumer that re-published it here would be the second
     /// copy this round removed.
     fn create_extra_externals() -> Vec<ExtraExternal> {
-        vec![ExtraExternal::new(
-            MAP_TAG,
-            Box::new(ByteMapExternal::new(Rc::clone(&use_view_state().map))),
-        )]
+        vec![
+            ExtraExternal::new(
+                MAP_TAG,
+                Box::new(ByteMapExternal::new(Rc::clone(&use_view_state().map))),
+            ),
+            // ★★★ R1707 — the thing that HOLDS the query text, owns focus and
+            // takes a keystroke. Measured on the sibling screen while it was
+            // wired: without this the box paints, the screen reports itself
+            // editing, and every keystroke is refused, because the keymap
+            // forwards to an external that is not there.
+            pinion_core::widgets::text_field::blur_committing_field_extra(QUERY_TAG),
+        ]
     }
 
     fn tag() -> &'static str {
         VIEW_TAG
     }
 
-    fn read_state(_scene: &Scene) {}
+    fn read_state(scene: &Scene) -> (TextFieldState, u32) {
+        tf_paint::read_text_field_state(scene, QUERY_TAG)
+    }
 
-    fn view(state: (), frame: &Frame) -> Scene {
+    fn view(state: (TextFieldState, u32), frame: &Frame) -> Scene {
         view(state, *frame)
     }
 
@@ -2382,11 +2745,32 @@ impl WidgetCore for PacketView {
     /// channel, so the RPC `invoke("key", …)` path and a real key press reach
     /// the same function with the same information.
     fn apply_key(
-        _scene: &mut Scene,
+        scene: &mut Scene,
         focused: Option<&str>,
         chord: &str,
-        _modifiers: pinion_core::Modifiers,
+        modifiers: pinion_core::Modifiers,
     ) -> bool {
+        // ★★★ R1707 — while the query box has focus every key is the box's,
+        // through the framework's own keymap rather than a fifth copy of one.
+        // The screen's own chords are deliberately unreachable here: a person
+        // typing `type in (Data, Query)` has to be able to type a space, and
+        // this screen binds Space.
+        if focused == Some(QUERY_TAG) {
+            let state = use_view_state();
+            return edit_field_keymap(
+                scene,
+                QUERY_TAG,
+                chord,
+                modifiers,
+                CellKind::Text,
+                // The filter is already live — the list re-derives from this
+                // very buffer on every keystroke — so Enter has nothing to
+                // apply. What it does is SAY where the query got to, which is
+                // the one thing typing does not announce.
+                || announce_query(&state),
+                || {},
+            );
+        }
         key_at(&use_view_state(), focused, chord)
     }
 }
@@ -2399,7 +2783,10 @@ impl WidgetA11y for PacketView {
     /// assistive technology can follow. Measured before this existed: the
     /// active descendant was `None` at every stop, so a reader was told the
     /// list had focus and never which row.
-    fn access_focus_target(_state: &(), focused: Option<&str>) -> Option<AccessFocus> {
+    fn access_focus_target(
+        _state: &(TextFieldState, u32),
+        focused: Option<&str>,
+    ) -> Option<AccessFocus> {
         let stop = focused?;
         let state = use_view_state();
         // ★★★★★ R1699 — the INNERMOST tag. ARIA's `aria-activedescendant`
@@ -2429,7 +2816,7 @@ impl WidgetA11y for PacketView {
     /// `spec` table the painter reads — so what a reader hears and what is drawn
     /// cannot drift, and `spec::VOICES` can expand the families and check both
     /// directions.
-    fn access_node(_state: &(), _focused: Option<&str>) -> Vec<AccessNode> {
+    fn access_node(_state: &(TextFieldState, u32), _focused: Option<&str>) -> Vec<AccessNode> {
         let state = use_view_state();
         let mut nodes = app_bar_nodes(&state);
         nodes.extend(filter_nodes(&state));
@@ -2505,18 +2892,33 @@ fn app_bar_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
     ]
 }
 
-/// The filter bar: the query as its clauses, the saved filters as toggles, and
-/// how much of the capture matched.
+/// The filter bar: the query box, the saved filters as toggles, and how much of
+/// the capture matched.
 fn filter_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
     let saved = state.saved.get();
     let mut group = AccessNode::new("pv.filter", AriaRole::Group).with_name("Filter");
     let mut nodes = Vec::new();
-    for n in 0..spec::QUERY_CLAUSES.len() {
-        let tag = format!("pv.filter.clause.{n}");
-        group = group.with_child(tag.clone());
-        nodes.push(AccessNode::new(tag, AriaRole::Status));
+    // ★★★ R1707 — the query is a text box, and it announces what it holds and
+    // what became of it. A screen reader hearing "Filter" and nothing else
+    // would be in the position the sighted reader was in before this round:
+    // told there is a filter and unable to find out what it did.
+    group = group.with_child("pv.filter.query");
+    let typed = state.query.text();
+    nodes.push(
+        AccessNode::new("pv.filter.query", AriaRole::TextInput)
+            .with_name("Filter query")
+            .with_value(pinion_a11y::AccessValue::Text(if typed.is_empty() {
+                spec::QUERY_PLACEHOLDER.to_owned()
+            } else {
+                typed
+            })),
+    );
+    if let Some(why) = state.query_fault() {
+        group = group.with_child("pv.filter.fault");
+        nodes.push(AccessNode::new("pv.filter.fault", AriaRole::Status).with_name(why));
     }
-    for (n, name) in spec::SAVED_FILTERS.iter().enumerate() {
+    for (n, saved_filter) in spec::SAVED_FILTERS.iter().enumerate() {
+        let name = saved_filter.name;
         let tag = format!("pv.filter.saved.{n}");
         group = group.with_child(tag.clone());
         // A toggle button: WAI-ARIA reflects a saved filter's on/off as
@@ -2524,7 +2926,7 @@ fn filter_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
         // so the name comes from the table both readers share.
         nodes.push(
             AccessNode::new(tag, AriaRole::Button)
-                .with_name(*name)
+                .with_name(name)
                 .with_state(AccessState {
                     checked: Some(saved.get(n).copied().unwrap_or(false)),
                     ..AccessState::default()
@@ -2597,9 +2999,13 @@ fn list_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
             sort: None,
         })
         .collect();
-    let grid_rows: Vec<GridRow> = spec::ROWS
-        .iter()
-        .enumerate()
+    // ★★★ R1707 — a reader hears the list the query kept. WAI-ARIA's row count
+    // is what is PRESENTED, so a table announcing the hidden rows would tell a
+    // screen reader there are sixteen messages while the screen draws three.
+    let grid_rows: Vec<GridRow> = state
+        .kept()
+        .into_iter()
+        .map(|n| (n, &spec::ROWS[n]))
         .map(|(n, message)| GridRow {
             tag: format!("pv.list.row.{n}"),
             selected: n == selected,
@@ -2840,6 +3246,55 @@ fn lane_reading(lane: &spec::LaneSpec) -> String {
 
 impl WidgetView for PacketView {
     type Renderer = HelloPacketViewRenderer;
+
+    /// ★★★ R1707 — a press inside the query box puts the caret where the
+    /// pointer landed, through the framework's own hit test.
+    ///
+    /// The sibling screen measured why this is not automatic: every press here
+    /// is routed to the ONE root external that does this screen's own hit test,
+    /// and the field's external is a focus owner and a keystroke sink rather
+    /// than a second pointer target. Without these two hooks the box can be
+    /// typed into and never clicked into — no caret placement and no selection
+    /// sweep on the only text entry this screen has.
+    fn position_caret_for_point(
+        state: &(TextFieldState, u32),
+        scene: &Scene,
+        focused: Option<&str>,
+        _hit_tag: Option<&str>,
+        x: f32,
+        y: f32,
+        extend: bool,
+    ) -> Option<usize> {
+        let byte = query_byte_at(state.0, scene, focused, x, y)?;
+        let edit = use_text_edit_state(QUERY_TAG);
+        if extend {
+            let anchor = edit.selection_anchor().unwrap_or_else(|| edit.caret());
+            edit.set_selection(anchor, byte);
+            Some(anchor)
+        } else {
+            edit.set_caret(byte);
+            Some(byte)
+        }
+    }
+
+    /// The other half of the same hit test: a drag inside the box sweeps a
+    /// selection from the byte the press pinned.
+    fn select_drag_to_point(
+        state: &(TextFieldState, u32),
+        scene: &Scene,
+        focused: Option<&str>,
+        anchor: usize,
+        x: f32,
+        y: f32,
+    ) -> bool {
+        let Some(byte) = query_byte_at(state.0, scene, focused, x, y) else {
+            return false;
+        };
+        let edit = use_text_edit_state(QUERY_TAG);
+        let before = (edit.caret(), edit.selection_anchor());
+        edit.set_selection(anchor, byte);
+        before != (edit.caret(), edit.selection_anchor())
+    }
 
     fn initial_size_strategy() -> SizeStrategy {
         SizeStrategy::Fixed {

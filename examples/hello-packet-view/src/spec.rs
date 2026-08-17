@@ -73,19 +73,88 @@ pub const RATE: &str = "1,284 msg/s";
 
 // ── The filter bar (the reference's search-and-filter requirement) ──────────
 
-/// The query the bar opens with, as its three clauses.
+/// ★★★ R1707 — **the names a query may address**, which is wider than the
+/// columns on purpose.
 ///
-/// Held as clauses rather than as one string because that is what the screen
-/// paints — each clause is a separate run — and because a test that only knew
-/// the joined string could not tell a wrapped clause from a missing one.
-pub const QUERY_CLAUSES: &[&str] = &[
-    "name ~= \"sensors/unit/**\"",
-    "and type in (Data, Declare)",
-    "and node != n3",
+/// [`COLUMNS`] is what the list DRAWS. This is what a reader may ask about, and
+/// the two differ by `note` and `fragment` — facts a row carries and shows
+/// inside itself rather than in a column of its own. The reference floor cannot
+/// express the difference at all: its row-filtering proxy addresses a model
+/// COLUMN by ordinal (`filterKeyColumn` is an `int`, measured on 6.11.1 — there
+/// is no name-taking peer), so anything not laid out as a column is unfilterable
+/// and a saved filter changes meaning the day a column moves.
+///
+/// The order is the roster's own and nothing derives an index from it.
+pub const QUERY_COLUMNS: &[&str] = &[
+    "time", "hop", "channel", "sn", "type", "name", "len", "note", "fragment",
 ];
 
+/// ★★★ R1707 — **what this screen tells a person the mouse does**, which until
+/// now it never said at all.
+///
+/// The sibling screen prints a hint strip and R1703 built a gate over it, after
+/// a gesture it advertised for its whole life turned out to be dead. That gate
+/// found nothing here because this screen declared no gestures — and an empty
+/// population passes every check, so "advertises nothing" and "keeps every
+/// promise" were the same reading.
+///
+/// Taken from the behaviour prototype's capture section rather than invented:
+/// it binds a click on a message row, a click on a decode field, and typing in
+/// the filter box, and those are the three.
+pub const GESTURES: &[(&str, &str)] = &[
+    ("click a message", "decode it"),
+    ("click a decode field", "light its bytes"),
+    ("type in the filter", "narrow the list"),
+];
+
+/// What the query bar says when no query is running.
+///
+/// It shows the shape rather than an instruction, because the grammar is small
+/// enough to demonstrate and a reader who can see one clause can write another.
+pub const QUERY_PLACEHOLDER: &str = "filter — e.g. type in (Data, Query)";
+
+/// The reference's own opening query, kept verbatim in the vocabulary of this
+/// screen's roster.
+///
+/// It is offered as a saved filter rather than applied at boot, and the reason
+/// is written in [`ROWS`]: those sixteen are the *requirement set* — a fragment
+/// run, a dropped piece, a declaration, an out-of-band payload, an unknown
+/// extension — and a screen that opened with thirteen of them hidden could not
+/// show what it exists to show. The behaviour prototype opens with its filter
+/// empty for the same reason.
+pub const EXAMPLE_QUERY: &str =
+    "name ~= \"sensors/**\" and type in (Data, Query) and channel != bg/beff";
+
+/// One saved filter: what the chip is called, and the query pressing it runs.
+pub struct SavedFilter {
+    /// The chip's label.
+    pub name: &'static str,
+    /// The query it applies, in the grammar of
+    /// [`RowQuery`](pinion_core::widgets::row_query::RowQuery).
+    pub query: &'static str,
+}
+
 /// The saved filters offered beside the query, in the order the bar shows them.
-pub const SAVED_FILTERS: &[&str] = &["units only", "out-of-band only", "reassembly failed"];
+///
+/// ★ R1707 — each carries the query it runs. Until this round these were three
+/// labels and a boolean each: pressing one said "applied units only" in the
+/// status line and the list did not move, which is this screen's own instance
+/// of the defect the tool keeps reporting — an affordance that is announced,
+/// named, and does nothing.
+pub const SAVED_FILTERS: &[SavedFilter] = &[
+    SavedFilter {
+        name: "units only",
+        query: "name ~= \"sensors/unit-*/**\"",
+    },
+    SavedFilter {
+        name: "out-of-band only",
+        query: "note = \"out of band\"",
+    },
+    SavedFilter {
+        name: "reassembly failed",
+        query: "fragment = Drop",
+    },
+];
 
 /// How many messages match, and how many were captured.
 pub const MATCHED: u32 = 12_418;
@@ -225,6 +294,33 @@ pub struct RowSpec {
     /// an out-of-band payload descriptor, an unknown extension, a reassembly
     /// result. Empty when the row has none.
     pub note: &'static str,
+}
+
+impl RowSpec {
+    /// ★ R1707 — this row's attributes in [`QUERY_COLUMNS`] order, which is
+    /// what a query reads.
+    ///
+    /// One function rather than a match at each call site, and it is aligned
+    /// with the roster by a test rather than by care: a name added to
+    /// `QUERY_COLUMNS` with no attribute here would otherwise make every query
+    /// mentioning it silently compare against the empty string, which reads as
+    /// "nothing matches" and looks exactly like a correct empty result.
+    #[must_use]
+    pub fn attributes(&self) -> Vec<String> {
+        vec![
+            self.time.to_owned(),
+            self.hop.to_owned(),
+            self.channel.to_owned(),
+            self.sn.to_string(),
+            self.kind.to_owned(),
+            self.name.to_owned(),
+            self.len.to_string(),
+            self.note.to_owned(),
+            self.fragment
+                .as_ref()
+                .map_or_else(String::new, |f| f.marker.to_owned()),
+        ]
+    }
 }
 
 /// The opening capture — the rows the reference screen shows, in the order it
@@ -767,8 +863,6 @@ pub enum Population {
     Context,
     /// One per [`LANES`] entry, keyed by index.
     Lanes,
-    /// One per [`QUERY_CLAUSES`] clause, keyed by index.
-    Clauses,
     /// One per [`SAVED_FILTERS`] entry, keyed by index.
     SavedFilters,
     /// ★ One per message that **carries an annotation**, keyed by index.
@@ -815,7 +909,6 @@ impl Population {
                 .map(|value| value.key.replace(' ', "_"))
                 .collect(),
             Population::Lanes => indexes(LANES.len()),
-            Population::Clauses => indexes(QUERY_CLAUSES.len()),
             Population::SavedFilters => indexes(SAVED_FILTERS.len()),
             Population::Annotated => picked(|row| !row.note.is_empty()),
             Population::Fragmented => picked(|row| row.fragment.is_some()),
@@ -877,9 +970,9 @@ pub const VOICES: &[VoiceSpec] = &[
         population: Population::One,
     },
     VoiceSpec {
-        tag: "pv.filter.clause.{}",
-        role: "status",
-        population: Population::Clauses,
+        tag: "pv.filter.query",
+        role: "textbox",
+        population: Population::One,
     },
     VoiceSpec {
         tag: "pv.filter.saved.{}",
@@ -1003,6 +1096,11 @@ pub const SILENCES: &[(&str, Population, &str)] = &[
     ("pv.list.body", Population::One, "layout"),
     ("pv.tree.body", Population::One, "layout"),
     ("pv.bytes.body", Population::One, "layout"),
+    // ★ R1707 — the query text inside the query box. The framework's text-field
+    // painter tags the run separately from the box so a caret can be placed in
+    // it; a reader is told the box's value once, by the box, and a second stop
+    // reading the same characters back would be the field announced twice.
+    ("pv.filter.query-text", Population::One, "part_of"),
     // Titles painted inside the pane they name.
     ("pv.tree.title", Population::One, "name_of"),
     ("pv.bytes.title", Population::One, "name_of"),

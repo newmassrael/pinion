@@ -2325,19 +2325,6 @@ const fn centre(rect: Rect) -> (u32, u32) {
     (rect.x + rect.w / 2, rect.y + rect.h / 2)
 }
 
-/// The same question as [`contains`] for a point the shell states in logical
-/// pixels rather than whole ones (R1684).
-fn contains_point(rect: Rect, px: f32, py: f32) -> bool {
-    let (x, y, w, h) = (
-        f64::from(rect.x),
-        f64::from(rect.y),
-        f64::from(rect.w),
-        f64::from(rect.h),
-    );
-    let (px, py) = (f64::from(px), f64::from(py));
-    px >= x && px < x + w && py >= y && py < y + h
-}
-
 // ── Hit testing ─────────────────────────────────────────────────────────────
 
 /// What is under the cursor.
@@ -5984,7 +5971,7 @@ fn field_byte_at(
     // ★ The containment question is THIS screen's, not the helper's: every
     // press here is routed to one root external, so "was it in the box" cannot
     // be answered by the tag comparison the sibling bindings use.
-    if !contains_point(rect, x, y) {
+    if !rect.contains_point(x, y) {
         return None;
     }
     tf_paint::byte_for_scene_point(

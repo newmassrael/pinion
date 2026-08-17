@@ -871,6 +871,14 @@ pub fn view_field(
             // R1615 — addressable, so `scene/marks` can ask this node why a
             // byte of the field's text is drawn the way it is.
             .with_tag(field_text_tag(tag));
+    // ★★ R1707 — and it says whose it is. Tagging it (R1615) enrolled it in
+    // every voice census in the tree as a region of its own, with nothing
+    // declaring what it is: a reader would be told the field's value once by
+    // the field and again by this node, which is the field announced twice.
+    // Declared HERE rather than in each consumer's silence table because the
+    // fact is the painter's — every binding that draws a field has exactly this
+    // run, for exactly this reason, and the second screen to grow a field is
+    // what showed the first was carrying an unclassified region.
     // R767 §5.36 — paint the field's styled runs (rich text). The paint
     // adapter emits one Vello glyph run per `StyleRun` (R713); the same
     // `runs` were just shaped into the caret / selection geometry above
@@ -894,7 +902,8 @@ pub fn view_field(
     // shadow, and clicks stopped positioning the caret — measured, by
     // `r762_textfield_click_caret`, which reported every interior click landing
     // at one end of the string or the other.
-    let text_node = Scene::Text(text_node.map_layout(|l| l.with_pointer_transparent(true)));
+    let text_node = Scene::Text(text_node.map_layout(|l| l.with_pointer_transparent(true)))
+        .silenced(pinion_core::voice::Silence::part_of(tag.to_owned()));
 
     // Caret painted only when focused/editing AND blink phase is
     // visible. R56.1.h ties blink's enabled gate to SCXML state, so

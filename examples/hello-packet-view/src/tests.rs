@@ -19,6 +19,10 @@ use super::{
 use pinion_a11y::WidgetA11y;
 use pinion_core::WidgetCore;
 
+/// R1707 — the query box at rest; see the peer in `painted.rs`.
+const IDLE_FIELD: (pinion_core::widgets::text_field::TextFieldState, u32) =
+    (pinion_core::widgets::text_field::TextFieldState::Idle, 0);
+
 /// Run `body` inside a scope with the screen's state.
 fn with_state(body: impl FnOnce(&std::rc::Rc<super::ViewState>)) {
     let owner = Owner::new();
@@ -437,11 +441,17 @@ fn r1693_the_screen_is_a_keyboard_ring_of_its_composites_and_buttons() {
     let owner = Owner::new();
     owner.run(|| {
         let _state = use_view_state();
-        let scene = super::view((), pinion_core::Frame::default());
+        let scene = super::view(
+            (pinion_core::widgets::text_field::TextFieldState::Idle, 0),
+            pinion_core::Frame::default(),
+        );
         let mut want: Vec<String> = vec![
             "pv.list".to_owned(),
             "pv.tree".to_owned(),
             "pv.bytes".to_owned(),
+            // R1707 — the query box. A filter a person cannot Tab to is a
+            // filter only a mouse has.
+            "pv.filter.query".to_owned(),
         ];
         want.extend((0..spec::SAVED_FILTERS.len()).map(|n| format!("pv.filter.saved.{n}")));
         let mut got = scene.collect_focusable_tags();
@@ -567,7 +577,10 @@ fn r1693_every_voice_population_expands_to_what_the_capture_holds() {
 /// message list — left every one of them green, because none went through the
 /// door a person's key comes in by.
 fn press_key(focused: Option<&str>, chord: &str) -> bool {
-    let mut scene = super::view((), pinion_core::Frame::default());
+    let mut scene = super::view(
+        (pinion_core::widgets::text_field::TextFieldState::Idle, 0),
+        pinion_core::Frame::default(),
+    );
     PacketView::apply_key(
         &mut scene,
         focused,
@@ -700,7 +713,7 @@ fn r1698_the_list_cursor_is_the_selection_and_it_is_published() {
             "moving the cursor moved the selection — one fact, not two"
         );
 
-        let focus = PacketView::access_focus_target(&(), Some("pv.list"))
+        let focus = PacketView::access_focus_target(&IDLE_FIELD, Some("pv.list"))
             .expect("a focused pane reports a focus target");
         assert_eq!(focus.focus_tag, "pv.list");
         assert_eq!(
@@ -732,7 +745,8 @@ fn r1698_the_list_cursor_is_the_selection_and_it_is_published() {
 fn r1699_a_message_row_is_entered_and_its_cells_are_walked() {
     with_state(|state| {
         let descendant = || {
-            PacketView::access_focus_target(&(), Some("pv.list")).and_then(|t| t.active_descendant)
+            PacketView::access_focus_target(&IDLE_FIELD, Some("pv.list"))
+                .and_then(|t| t.active_descendant)
         };
         let row = state.row.get();
         assert_eq!(descendant(), Some(format!("pv.list.row.{row}")));
@@ -796,7 +810,7 @@ fn r1699_a_message_row_is_entered_and_its_cells_are_walked() {
 fn r1699_the_grid_publishes_the_cell_a_reader_is_in() {
     with_state(|state| {
         let focused_cells = || {
-            PacketView::access_node(&(), None)
+            PacketView::access_node(&IDLE_FIELD, None)
                 .into_iter()
                 .filter(|n| n.state.focused && n.tag.starts_with("pv.list.cell."))
                 .map(|n| n.tag)
@@ -818,7 +832,7 @@ fn r1699_the_grid_publishes_the_cell_a_reader_is_in() {
 
         // And the row it is in still publishes its own roster, which is what
         // makes "what is inside this row" askable without pressing a key.
-        let nodes = PacketView::access_node(&(), None);
+        let nodes = PacketView::access_node(&IDLE_FIELD, None);
         let row_node = nodes
             .iter()
             .find(|n| n.tag == format!("pv.list.row.{row}"))
@@ -842,7 +856,8 @@ fn r1699_the_grid_publishes_the_cell_a_reader_is_in() {
 #[test]
 fn r1699_a_filter_chip_is_pressed_from_the_keyboard() {
     with_state(|state| {
-        for (n, name) in spec::SAVED_FILTERS.iter().enumerate() {
+        for (n, saved) in spec::SAVED_FILTERS.iter().enumerate() {
+            let name = saved.name;
             let chip = format!("pv.filter.saved.{n}");
             let before = state.saved.get();
             assert!(
@@ -871,7 +886,10 @@ fn r1699_a_filter_chip_is_pressed_from_the_keyboard() {
 #[test]
 fn r1699_every_cursor_member_resolves_to_the_hit_its_tag_names() {
     with_state(|state| {
-        let mut scene = super::view((), pinion_core::Frame::default());
+        let mut scene = super::view(
+            (pinion_core::widgets::text_field::TextFieldState::Idle, 0),
+            pinion_core::Frame::default(),
+        );
         let mut cache = pinion_runtime::LayoutCache::new();
         pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
         let rects = scene.absolute_rects_by_tag();

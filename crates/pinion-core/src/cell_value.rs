@@ -20,7 +20,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::external::{InterveneError, IntrospectValue};
 use crate::style::Color;
-use crate::widgets::grid_sort::FilterOp;
+use crate::widgets::grid_sort::{FilterOp, glob_matches, members_of};
 
 /// A typed editable-cell value. `Signal<T>` requires `Serialize +
 /// DeserializeOwned` (the R36 §5.31 hot-reload bound), so the model derives
@@ -353,6 +353,14 @@ impl CellValue {
             FilterOp::Eq => self.matches_filter(value),
             FilterOp::Ne => !self.matches_filter(value),
             FilterOp::Contains => self.display().contains(value),
+            // R1707 — the two new ops each follow the policy of the op they are
+            // a refinement of. `Glob` is a pattern over the display label, like
+            // `Contains`, because a pattern is inherently textual. `In` is a
+            // disjunction of `Eq`, so it reuses the TYPE-AWARE `matches_filter`
+            // member by member — which is what makes `sn in (024, 25)` match an
+            // `Int(24)` cell exactly as `sn = 024` already does.
+            FilterOp::Glob => glob_matches(value, &self.display()),
+            FilterOp::In => members_of(value).any(|member| self.matches_filter(member)),
             FilterOp::Lt | FilterOp::Le | FilterOp::Gt | FilterOp::Ge => {
                 // The typed comparator (sort_cmp against a same-kind operand);
                 // the op-vs-Ordering truth table is shared with the text path.

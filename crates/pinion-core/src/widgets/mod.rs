@@ -42,6 +42,7 @@ pub mod range_slider;
 pub mod reorder;
 pub mod roving;
 pub mod row_dissect;
+pub mod row_query;
 pub mod row_search;
 pub mod row_style;
 pub mod scroll;

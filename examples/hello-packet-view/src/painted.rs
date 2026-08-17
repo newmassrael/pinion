@@ -36,6 +36,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use pinion_core::reactive::Owner;
 use pinion_core::scene::Rect;
 use pinion_core::widgets::field_bytes::{FieldSpan, SourceId};
+use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::{Frame, Scene};
 
 use super::{
@@ -43,6 +44,12 @@ use super::{
     select_field, select_message, spec, toggle_layer, toggle_saved, tree_rect, use_view_state,
     visible_fields,
 };
+
+/// R1707 — the query box at rest, which is the posture every check here runs
+/// the screen in: the caret and the selection are the field's own business, and
+/// a test that varied them would be testing the framework's text field rather
+/// than this screen.
+const IDLE_FIELD: (TextFieldState, u32) = (TextFieldState::Idle, 0);
 
 /// One swept state: what to call it, and the edit that reaches it.
 type SweptState = (&'static str, fn(&std::rc::Rc<ViewState>));
@@ -176,7 +183,7 @@ fn painted_at(state: &std::rc::Rc<ViewState>, size: (u32, u32)) -> (Painted, Sce
     pinion_core::reactive::VIEWPORT_SIZE
         .resolve(&owner)
         .set(size);
-    let mut scene = super::view((), Frame::default());
+    let mut scene = super::view((TextFieldState::Idle, 0), Frame::default());
     let mut cache = pinion_runtime::LayoutCache::new();
     pinion_runtime::compute_layout(&mut scene, &mut cache, size.0, size.1);
     let shot = Painted::of(&scene, size);
@@ -239,7 +246,11 @@ fn r1663_every_declared_element_of_the_screen_is_painted() {
         // R1693 — every message row, and every CELL of it. The cells were
         // untagged runs until this round, which is why sixteen messages of seven
         // columns reached a reader as nothing at all.
-        for n in 0..spec::ROWS.len() {
+        // ★ R1707 — the messages the running query KEPT, not all sixteen. The
+        // list is filterable now, so "what the specification declares is on
+        // screen" is conditional on the query for exactly this family, and the
+        // sweep drives a state with a saved filter applied.
+        for n in state.kept() {
             wanted.push(format!("pv.list.row.{n}"));
             for c in 0..spec::COLUMNS.len() {
                 wanted.push(crate::list_cell_tag(n, c));
@@ -248,9 +259,10 @@ fn r1663_every_declared_element_of_the_screen_is_painted() {
         for n in 0..spec::SAVED_FILTERS.len() {
             wanted.push(format!("pv.filter.saved.{n}"));
         }
-        for n in 0..spec::QUERY_CLAUSES.len() {
-            wanted.push(format!("pv.filter.clause.{n}"));
-        }
+        // ★ R1707 — the query is a box, not three painted constants. What has
+        // to be there is the box; what is IN it is the person's text and is
+        // judged by the query gate below.
+        wanted.push("pv.filter.query".to_owned());
         for value in spec::CONTEXT {
             wanted.push(format!("pv.context.{}", value.key.replace(' ', "_")));
         }
@@ -397,7 +409,7 @@ fn r1663_every_painted_tag_belongs_to_a_declared_family() {
 /// member is as much a failure as a missing one.
 #[test]
 fn r1663_the_fixed_families_are_the_size_the_specification_gives_them() {
-    sweep(|_, shot, _, _, case| {
+    sweep(|state, shot, _, _, case| {
         assert_eq!(
             shot.family("pv.list.head.").len(),
             spec::COLUMNS.len(),
@@ -408,11 +420,15 @@ fn r1663_the_fixed_families_are_the_size_the_specification_gives_them() {
             spec::SAVED_FILTERS.len(),
             "{case}: saved filters"
         );
-        assert_eq!(
-            shot.family("pv.filter.clause.").len(),
-            spec::QUERY_CLAUSES.len(),
-            "{case}: query clauses"
-        );
+        // ★ R1707 — the list draws what the query kept, and the SAME set at
+        // every window size. A row count that moved with the WIDTH would mean
+        // the list was narrowing for a reason other than the query. Counted by
+        // exact tag rather than by prefix, because a row's note and its cells
+        // live under the same stem.
+        let drawn: Vec<usize> = (0..spec::ROWS.len())
+            .filter(|n| shot.present(&format!("pv.list.row.{n}")))
+            .collect();
+        assert_eq!(drawn, state.kept(), "{case}: the message rows drawn");
         assert_eq!(
             shot.family("pv.reassembly.lane.").len(),
             spec::LANES.len(),
@@ -749,7 +765,7 @@ fn voice_of(state: &std::rc::Rc<ViewState>) -> pinion_core::voice::VoiceCensus {
     use pinion_a11y::WidgetA11y;
 
     let (_, scene) = painted_at(state, (WIN_W, WIN_H));
-    let mut nodes = super::PacketView::access_node(&(), None);
+    let mut nodes = super::PacketView::access_node(&IDLE_FIELD, None);
     // ★ The shell's own enrichment. A widget's `access_node` may leave a name
     // `None`, and the name a reader hears is resolved from the PAINT SCENE after
     // layout on WAI-ARIA 1.2's name-computation precedence — so a gate that read
@@ -793,7 +809,7 @@ fn r1693_the_screen_speaks_and_is_quiet_exactly_where_the_specification_says() {
         let census = voice_of(&state);
         let rows: BTreeMap<&str, &pinion_core::voice::VoiceNode> =
             census.nodes.iter().map(|n| (n.tag.as_str(), n)).collect();
-        let nodes = super::PacketView::access_node(&(), None);
+        let nodes = super::PacketView::access_node(&IDLE_FIELD, None);
         let roles: BTreeMap<&str, &'static str> = nodes
             .iter()
             .map(|n| (n.tag.as_str(), n.role.aria_name()))
@@ -850,10 +866,31 @@ fn r1693_the_screen_speaks_and_is_quiet_exactly_where_the_specification_says() {
         // equality rather than as two floors, because a floor is satisfied by a
         // screen that grew a region nobody classified — which is the defect this
         // whole family of gates exists to end.
+        //
+        // ★ R1707 — and it NAMES them. This said only "290 painted, 289
+        // classified" and left the reader to find the one, which is the
+        // "a census that answers how many cannot answer which" lesson this
+        // tree wrote down two rounds after building this gate.
+        let classified: BTreeSet<String> = spec::VOICES
+            .iter()
+            .flat_map(|v| voice_population(v.tag, v.population))
+            .chain(
+                spec::SILENCES
+                    .iter()
+                    .flat_map(|(tag, population, _)| voice_population(tag, *population)),
+            )
+            .collect();
+        let unclassified: Vec<&str> = census
+            .nodes
+            .iter()
+            .map(|n| n.tag.as_str())
+            .filter(|t| !classified.contains(*t))
+            .collect();
         assert_eq!(
             spoken + quiet,
             census.nodes.len(),
-            "{} region(s) are painted and the specification classifies {}",
+            "{} region(s) are painted and the specification classifies {}; \
+             unclassified: {unclassified:?}",
             census.nodes.len(),
             spoken + quiet,
         );
@@ -878,7 +915,7 @@ fn r1693_every_announced_collection_holds_what_its_role_promises() {
     use pinion_a11y::WidgetA11y;
 
     sweep(|_state, _shot, scene, _size, case| {
-        let mut nodes = super::PacketView::access_node(&(), None);
+        let mut nodes = super::PacketView::access_node(&IDLE_FIELD, None);
         pinion_a11y::enrich_names_from_scene(&mut nodes, scene);
         let census = pinion_a11y::structure_census(&nodes);
         assert!(
@@ -950,11 +987,331 @@ fn r1696_every_composite_pane_and_chip_is_a_keyboard_stop() {
             .map(|(n, _)| format!("pv.filter.saved.{n}"))
             .collect();
         want.extend(spec::PANES.iter().map(|pane| pane.tag.to_owned()));
+        // R1707 — the query box is a stop too, and it is the first one: a
+        // filter a person cannot Tab to is a filter only a mouse has.
+        want.insert(0, "pv.filter.query".to_owned());
         assert_eq!(
             walked, want,
             "{case}: the Tab ring is not the panes and chips this screen \
              declares — a composite announced as operable that no keyboard \
              reaches is the defect R1693 repaired and nothing here checked",
         );
+    });
+}
+
+// ── 8. R1707: the filter filters, and the screen says what it does ─────────
+
+/// ★★★★★ R1707 — **every gesture this screen advertises is answered**, driven
+/// through the entry points a person's hand actually reaches.
+///
+/// The sibling screen learned this the expensive way: its hint strip printed
+/// `wheel → zoom` for the whole life of the screen while eight wheel events
+/// over the canvas moved nothing, and the operation gate next door could not
+/// see it because a hint strip is a *different population* from an operation
+/// table. R1703 built the gate there and registered what it could not do — the
+/// list existed on one screen of three, and a gate over an empty population is
+/// indistinguishable from a gate over a kept promise.
+///
+/// This is that gate on the second screen. Both directions: a claim with no
+/// driver fails, and a driver for a claim the strip does not make fails too.
+#[test]
+fn r1707_every_gesture_this_screen_advertises_is_answered() {
+    // ★ The non-empty population, asserted at COMPILE TIME.
+    //
+    // It was a runtime `assert!` and clippy refused it: the expression is
+    // constant, so the check could never fail while running and the "gate" was
+    // decoration. That is this tree's own recorded rule — an invariant true by
+    // construction belongs to the compiler, and the test is for the values that
+    // actually get passed. Emptying `spec::GESTURES` now fails to BUILD.
+    const _: () = assert!(!spec::GESTURES.is_empty());
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_view_state();
+        let (shot, _) = painted_at(&state, (WIN_W, WIN_H));
+        let mut inert = Vec::new();
+        for (gesture, effect) in spec::GESTURES {
+            let before = witness(&state);
+            match *gesture {
+                "click a message" => {
+                    let rect = shot.tags["pv.list.row.2"];
+                    let (px, py) = centre(rect);
+                    super::move_cursor(&state, px, py);
+                    press(&state);
+                }
+                "click a decode field" => {
+                    let (path, ..) = visible_fields(&state)[4].clone();
+                    let rect = shot.tags[&format!("pv.tree.field.{path}")];
+                    let (px, py) = centre(rect);
+                    super::move_cursor(&state, px, py);
+                    press(&state);
+                }
+                "type in the filter" => {
+                    // Through the buffer the field owns, which is the thing a
+                    // keystroke reaches — not through a setter of our own.
+                    state.query.set_text("type = Query".to_owned());
+                }
+                other => panic!("no driver for the advertised gesture {other:?}"),
+            }
+            if witness(&state) == before {
+                inert.push(format!("{gesture:?} — the strip promises {effect:?}"));
+            }
+        }
+        assert!(
+            inert.is_empty(),
+            "{} advertised gesture(s) did nothing:\n  {}",
+            inert.len(),
+            inert.join("\n  ")
+        );
+    });
+}
+
+/// Everything this screen's advertised gestures can move, as one string.
+fn witness(state: &std::rc::Rc<ViewState>) -> String {
+    format!(
+        "{}|{}|{:?}|{}",
+        state.row.get(),
+        state.field.get(),
+        state.kept(),
+        state.query.text()
+    )
+}
+
+/// ★★★★★ R1707 — **the query narrows the list, on every channel at once.**
+///
+/// The defect this closes was measured on the running binary before the round:
+/// the bar painted a query, three saved-filter chips and a `12,418 / 184,392`
+/// count, and the list held sixteen rows whatever any of them said. Every check
+/// in this example was green throughout, because nothing here had ever asked
+/// what the filter DID — the same blind spot, in the same shape, that the
+/// sibling screen's operation table was built to remove.
+///
+/// The four channels are asserted together on purpose. A filter that narrowed
+/// the paint and not the hit test would answer a press with a message that is
+/// not on screen; one that narrowed the paint and not the roster would let the
+/// keyboard walk onto hidden rows; one that narrowed both and not the count
+/// would tell the reader a number the screen contradicts.
+#[test]
+fn r1707_a_query_narrows_the_paint_the_press_the_cursor_and_the_count() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_view_state();
+        let (opening, _) = painted_at(&state, (WIN_W, WIN_H));
+        let drawn = |shot: &Painted| {
+            (0..spec::ROWS.len())
+                .filter(|n| shot.present(&format!("pv.list.row.{n}")))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(
+            drawn(&opening).len(),
+            spec::ROWS.len(),
+            "the screen opens unfiltered — `spec::ROWS` is the requirement set"
+        );
+
+        // The reference's own query, run through the same slot an agent uses.
+        super::set_query(&state, spec::EXAMPLE_QUERY);
+        let (shot, _) = painted_at(&state, (WIN_W, WIN_H));
+        let kept = state.kept();
+        assert!(
+            kept.len() < spec::ROWS.len() && !kept.is_empty(),
+            "★ the query has to keep SOME and drop SOME, or neither direction \
+             of this gate can fail: kept {kept:?}"
+        );
+        assert_eq!(drawn(&shot), kept, "the paint draws exactly what was kept");
+
+        // The press. Every drawn row answers as itself, and no hidden row is
+        // reachable at any point of the list.
+        for &n in &kept {
+            let (px, py) = centre(shot.tags[&format!("pv.list.row.{n}")]);
+            assert_eq!(
+                Hit::at(&state, px, py),
+                Hit::Message(n),
+                "a kept row must answer at its own rectangle"
+            );
+        }
+        let hidden: Vec<usize> = (0..spec::ROWS.len())
+            .filter(|n| !kept.contains(n))
+            .collect();
+        let list = list_rect();
+        for y in (list.y..list.y + list.h).step_by(3) {
+            if let Hit::Message(n) = Hit::at(&state, list.x + list.w / 2, y) {
+                assert!(
+                    !hidden.contains(&n),
+                    "★ a press inside the list answered hidden message {n} — \
+                     the row is not drawn and the press found it anyway"
+                );
+            }
+        }
+
+        // The cursor's roster is the kept set, and it stands on a member.
+        let cursor = super::pane_cursor(&state, "pv.list").expect("the list has a cursor");
+        let roster: Vec<String> = cursor.members().iter().map(|m| m.tag.clone()).collect();
+        assert_eq!(
+            roster,
+            kept.iter()
+                .map(|n| format!("pv.list.row.{n}"))
+                .collect::<Vec<_>>(),
+            "the keyboard walks the rows the query kept"
+        );
+        assert!(
+            roster
+                .iter()
+                .any(|t| Some(t.as_str()) == cursor.cursor_tag()),
+            "★ the cursor stands on a member of its own roster — a cursor \
+             pointing at a filtered-out row is one no arrow key can leave"
+        );
+
+        // The count, and it is derived rather than stated.
+        assert_eq!(
+            super::count_line(&state),
+            format!("{} of {} shown", kept.len(), spec::ROWS.len())
+        );
+
+        // And the reason each hidden row is hidden names a clause of the query.
+        let clauses: Vec<String> = state
+            .query()
+            .clauses()
+            .iter()
+            .map(|c| c.text.clone())
+            .collect();
+        for &n in &hidden {
+            let why = state
+                .why_hidden(n)
+                .unwrap_or_else(|| panic!("row {n} is hidden and says no reason"));
+            assert!(
+                clauses.contains(&why),
+                "★ row {n} was dropped by {why:?}, which is not a clause of the \
+                 running query {clauses:?}"
+            );
+        }
+        assert!(
+            !hidden.is_empty(),
+            "the attribution loop above must have something to check"
+        );
+
+        // Clearing puts every message back.
+        super::set_query(&state, "");
+        let (cleared, _) = painted_at(&state, (WIN_W, WIN_H));
+        assert_eq!(drawn(&cleared).len(), spec::ROWS.len());
+    });
+}
+
+/// ★★★★★ R1707 — **a press inside the query box resolves to a byte of the
+/// query**, and one outside it resolves to nothing.
+///
+/// This is the second thing this gate was: the first asked whether the screen's
+/// hit test "stands aside" in the box, and a counterfactual proved that
+/// question **could not fail here** — the answer for "standing aside" and the
+/// answer for "nothing is there" are both `Hit::None`, and this bar puts
+/// nothing under the box. So the arm was inert and the test with it, and both
+/// are gone.
+///
+/// What actually carries the click-to-caret is `query_byte_at`, so that is what
+/// is driven — through `WidgetView::position_caret_for_point`, the hook a real
+/// press comes in by, over the box's whole painted area rather than its centre.
+/// It can fail: a wrong rectangle, a dropped containment check or a lost focus
+/// guard each break exactly one of the assertions below.
+#[test]
+fn r1707_a_press_in_the_query_box_lands_on_a_byte_of_the_query() {
+    use pinion_shell::WidgetView;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_view_state();
+        super::set_query(&state, "type = Query");
+        let (shot, scene) = painted_at(&state, (WIN_W, WIN_H));
+        let r = *shot
+            .tags
+            .get("pv.filter.query")
+            .expect("the query box is painted, or there is no filter");
+        // The shell states a pointer in logical pixels, and a window coordinate
+        // is small — so the conversion goes through `u16`, which is lossless
+        // into `f32`, rather than through a cast that discards precision the
+        // lint is right to object to.
+        let px_of = |v: u32| f32::from(u16::try_from(v).expect("a window coordinate"));
+        let caret = |x: u32, y: u32, focused: Option<&str>| {
+            super::PacketView::position_caret_for_point(
+                &IDLE_FIELD,
+                &scene,
+                focused,
+                // `hit_tag` is this screen's own root everywhere — every press
+                // routes to one external — so the hook settles containment by
+                // geometry, and passing it here changes nothing.
+                None,
+                px_of(x),
+                px_of(y),
+                false,
+            )
+        };
+
+        let mut inside = Vec::new();
+        for px in [r.x + 1, r.x + r.w / 2, r.x + r.w - 2] {
+            for py in [r.y + 1, r.y + r.h / 2, r.y + r.h - 2] {
+                let at = caret(px, py, Some("pv.filter.query"));
+                assert!(
+                    at.is_some(),
+                    "({px}, {py}) is inside the painted box and resolved to no \
+                     byte — the box can be typed into and not clicked into"
+                );
+                inside.push(at.expect("just asserted"));
+            }
+        }
+        assert_eq!(inside.len(), 9, "nine points, not one");
+        assert!(
+            inside.iter().collect::<BTreeSet<_>>().len() > 1,
+            "★ every point in the box answered the SAME byte ({inside:?}) — a \
+             caret that lands in one place is not a caret the pointer placed"
+        );
+
+        // Outside the box: nothing. Without this the containment check could be
+        // deleted and the nine assertions above would still pass.
+        assert_eq!(
+            caret(r.x + r.w + 40, r.y + r.h / 2, Some("pv.filter.query")),
+            None,
+            "a point beside the box is not a byte of the query"
+        );
+        // And unfocused: nothing, whatever the coordinates say.
+        assert_eq!(
+            caret(r.x + r.w / 2, r.y + r.h / 2, Some("pv.list")),
+            None,
+            "the box only takes a caret while it has focus"
+        );
+    });
+}
+
+/// ★★★ R1707 — **a saved chip runs its own query**, which is what it says on it.
+///
+/// Measured before the round: pressing one flipped a boolean, announced
+/// "applied units only", and the list did not move. That is this screen's
+/// instance of the class the tool's own reader keeps reporting — an affordance
+/// that is named, announced and inert.
+#[test]
+fn r1707_a_saved_filter_chip_runs_the_query_it_names() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_view_state();
+        for (n, saved) in spec::SAVED_FILTERS.iter().enumerate() {
+            super::set_query(&state, "");
+            toggle_saved(&state, n);
+            assert_eq!(
+                state.query.text(),
+                saved.query,
+                "chip {n} ({}) must run the query it declares",
+                saved.name
+            );
+            let kept = state.kept();
+            assert!(
+                !kept.is_empty() && kept.len() < spec::ROWS.len(),
+                "★ {} kept {} of {} — a saved filter that keeps everything or \
+                 nothing cannot be told from one that does not run",
+                saved.name,
+                kept.len(),
+                spec::ROWS.len()
+            );
+            // Pressing it again clears, rather than leaving the list narrowed
+            // with nothing lit to say why.
+            toggle_saved(&state, n);
+            assert_eq!(state.kept().len(), spec::ROWS.len());
+        }
     });
 }

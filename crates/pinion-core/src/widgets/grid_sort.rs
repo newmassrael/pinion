@@ -159,17 +159,44 @@ pub enum FilterOp {
     Gt,
     /// Numeric-aware greater-than-or-equal.
     Ge,
+    /// R1707 — **glob match against a segmented name**: `?` is one character,
+    /// `*` is any run *within* one `/`-separated segment, and `**` is any run
+    /// across segments. The operator a name-shaped column wants and the one
+    /// [`Contains`](Self::Contains) cannot stand in for — `sensors/*/temp` has
+    /// to reject `sensors/a/b/temp`, and a substring test accepts everything
+    /// that merely mentions the text anywhere.
+    ///
+    /// Measured on the reference toolkit at 6.11.1, its row-filtering proxy
+    /// does offer a wildcard setter — and it is the *whole row's* one filter
+    /// slot, not a per-column predicate, and reading it back answers the
+    /// COMPILED regexp (`sensors/unit/*` reads back `(?s:sensors/unit/[^/]*)`),
+    /// so the pattern a person typed is not recoverable from the model that
+    /// holds it. Here the pattern is the operand and survives verbatim.
+    Glob,
+    /// R1707 — **set membership**: the cell equals one of the operand's
+    /// comma-separated members. Written `in (a, b)` where a person reads it.
+    ///
+    /// The one disjunction a conjunction-of-facets needs in practice, and the
+    /// reference floor has no setter for it at all — there, `type in (Data,
+    /// Declare)` is a regexp the caller hand-builds or a `filterAcceptsRow`
+    /// override. A member may not itself contain a comma, and that is enforced
+    /// rather than merely documented: [`ColumnFacet::any_of`] refuses to build
+    /// an unrepresentable set instead of silently splitting one.
+    In,
 }
 
 impl FilterOp {
-    /// The wire token for this op (`"="`, `"!="`, `"~"`, `"<"`, `"<="`, `">"`,
-    /// `">="`). Read / written by [`ColumnFacet::to_wire`] / [`ColumnFacet::from_wire`].
+    /// The wire token for this op (`"="`, `"!="`, `"~"`, `"~="`, `":"`, `"<"`,
+    /// `"<="`, `">"`, `">="`). Read / written by [`ColumnFacet::to_wire`] /
+    /// [`ColumnFacet::from_wire`].
     #[must_use]
     pub fn wire_token(self) -> &'static str {
         match self {
             FilterOp::Eq => "=",
             FilterOp::Ne => "!=",
             FilterOp::Contains => "~",
+            FilterOp::Glob => "~=",
+            FilterOp::In => ":",
             FilterOp::Lt => "<",
             FilterOp::Le => "<=",
             FilterOp::Gt => ">",
@@ -177,16 +204,36 @@ impl FilterOp {
         }
     }
 
+    /// Every op, so a caller enumerating the vocabulary cannot enumerate a
+    /// stale subset. R1707 — the wire-token round-trip test walks THIS rather
+    /// than a list written beside it, which is what makes adding an arm without
+    /// a token a compile-or-test failure instead of a silent hole.
+    pub const ALL: [FilterOp; 9] = [
+        FilterOp::Eq,
+        FilterOp::Ne,
+        FilterOp::Contains,
+        FilterOp::Glob,
+        FilterOp::In,
+        FilterOp::Lt,
+        FilterOp::Le,
+        FilterOp::Gt,
+        FilterOp::Ge,
+    ];
+
     /// Parse a leading op token off `s`, returning the op and the value slice
-    /// after it. Two-char tokens (`"<="`, `">="`, `"!="`) are tested before
-    /// their single-char prefixes so `">="` never decodes as `">"` + `"="`.
+    /// after it. Two-char tokens (`"<="`, `">="`, `"!="`, `"~="`) are tested
+    /// before their single-char prefixes so `">="` never decodes as `">"` +
+    /// `"="` and `"~="` never decodes as `Contains` of `"=…"`.
     fn parse_prefix(s: &str) -> Option<(FilterOp, &str)> {
-        // Longest tokens first (the two-char ops share a first byte with `<`/`>`).
-        const TOKENS: [(&str, FilterOp); 7] = [
+        // Longest tokens first (the two-char ops share a first byte with
+        // `<` / `>` / `~`).
+        const TOKENS: [(&str, FilterOp); 9] = [
             ("<=", FilterOp::Le),
             (">=", FilterOp::Ge),
             ("!=", FilterOp::Ne),
+            ("~=", FilterOp::Glob),
             ("~", FilterOp::Contains),
+            (":", FilterOp::In),
             ("=", FilterOp::Eq),
             ("<", FilterOp::Lt),
             (">", FilterOp::Gt),
@@ -208,6 +255,8 @@ impl FilterOp {
             FilterOp::Eq => cell == value,
             FilterOp::Ne => cell != value,
             FilterOp::Contains => cell.contains(value),
+            FilterOp::Glob => glob_matches(value, cell),
+            FilterOp::In => members_of(value).any(|member| member == cell),
             FilterOp::Lt | FilterOp::Le | FilterOp::Gt | FilterOp::Ge => {
                 self.ordering_matches(cell_cmp(cell, value))
             }
@@ -231,7 +280,114 @@ impl FilterOp {
             FilterOp::Ge => ord.is_ge(),
             FilterOp::Eq => ord.is_eq(),
             FilterOp::Ne => ord.is_ne(),
-            FilterOp::Contains => false,
+            // The three textual ops are not ordering-decided and are handled
+            // before reaching here.
+            FilterOp::Contains | FilterOp::Glob | FilterOp::In => false,
+        }
+    }
+}
+
+/// R1707 — the members of an [`FilterOp::In`] operand, in the order written.
+///
+/// Split on `,` and trimmed, so `"Data, Declare"` and `"Data,Declare"` are one
+/// set. Empty members are dropped, which makes a trailing comma harmless rather
+/// than a set with a nameless member in it.
+pub fn members_of(value: &str) -> impl Iterator<Item = &str> {
+    value.split(',').map(str::trim).filter(|m| !m.is_empty())
+}
+
+/// R1707 — whether `text` matches the glob `pattern`, with `/` as the segment
+/// separator.
+///
+/// `?` is exactly one character other than `/`; `*` is any run (possibly empty)
+/// within one segment; `**` is any run at all, separators included. Everything
+/// else matches itself. Iterative with a backtrack point rather than recursive,
+/// so a pathological pattern cannot blow the stack — the operand can come off
+/// the wire.
+#[must_use]
+pub fn glob_matches(pattern: &str, text: &str) -> bool {
+    let p: Vec<char> = pattern.chars().collect();
+    let t: Vec<char> = text.chars().collect();
+    // (pattern index, text index) to resume from when the current attempt
+    // fails, and whether the star we would resume into crosses separators.
+    let mut star: Option<(usize, usize, bool)> = None;
+    let (mut pi, mut ti) = (0usize, 0usize);
+    while ti < t.len() {
+        if pi < p.len() {
+            match p[pi] {
+                '*' => {
+                    let deep = p.get(pi + 1) == Some(&'*');
+                    pi += if deep { 2 } else { 1 };
+                    star = Some((pi, ti, deep));
+                    continue;
+                }
+                '?' if t[ti] != '/' => {
+                    pi += 1;
+                    ti += 1;
+                    continue;
+                }
+                c if c == t[ti] => {
+                    pi += 1;
+                    ti += 1;
+                    continue;
+                }
+                _ => {}
+            }
+        }
+        // No literal progress: fall back into the last star and let it consume
+        // one more character, unless that character is a separator a shallow
+        // star may not cross.
+        match star {
+            Some((after_star, consumed, deep)) if deep || t[consumed] != '/' => {
+                pi = after_star;
+                ti = consumed + 1;
+                star = Some((after_star, ti, deep));
+            }
+            _ => return false,
+        }
+    }
+    // Trailing stars may match nothing at all.
+    while pi < p.len() && p[pi] == '*' {
+        pi += 1;
+    }
+    pi == p.len()
+}
+
+/// R1707 — whether a row was kept, and when it was not, **which predicate
+/// dropped it**.
+///
+/// The fact the reference floor cannot produce. Measured on 6.11.1: its
+/// row-filtering proxy publishes 12 properties and 101 methods of which six and
+/// eight respectively name a filter, and **not one of them names a reason**; a
+/// dropped row maps to an invalid index, which is the same answer for every way
+/// a row can be absent. For a capture viewer that is the question a reader
+/// actually has — "why is this message not in the list?" — and a boolean cannot
+/// hold it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Admission {
+    /// Every facet held.
+    Admitted,
+    /// The facet at this index rejected the row. The FIRST that did, so the
+    /// answer is stable under reordering of the facets that follow it.
+    Rejected {
+        /// Index into the [`GridFilter::facets`] that refused.
+        facet: usize,
+    },
+}
+
+impl Admission {
+    /// Whether the row is kept.
+    #[must_use]
+    pub const fn is_admitted(self) -> bool {
+        matches!(self, Admission::Admitted)
+    }
+
+    /// Which facet refused, if one did.
+    #[must_use]
+    pub const fn rejected_by(self) -> Option<usize> {
+        match self {
+            Admission::Admitted => None,
+            Admission::Rejected { facet } => Some(facet),
         }
     }
 }
@@ -260,6 +416,29 @@ impl ColumnFacet {
             op,
             value: value.into(),
         }
+    }
+
+    /// R1707 — a [`FilterOp::In`] facet over `values`, or `None` when a member
+    /// contains the `,` the operand is joined by.
+    ///
+    /// The refusal is the point. `In`'s operand is one string because that is
+    /// what the wire form and every stored filter already hold, and a set whose
+    /// member contains a comma cannot survive that round-trip — so instead of
+    /// documenting the limit and letting a caller build a set that silently
+    /// becomes two members, the only constructor for one refuses. A stated
+    /// limit nothing checks is a limit nobody re-reads.
+    #[must_use]
+    pub fn any_of<S: AsRef<str>>(col: usize, values: &[S]) -> Option<Self> {
+        if values.iter().any(|v| v.as_ref().contains(',')) {
+            return None;
+        }
+        let joined = values
+            .iter()
+            .map(|v| v.as_ref().trim())
+            .filter(|v| !v.is_empty())
+            .collect::<Vec<_>>()
+            .join(",");
+        (!joined.is_empty()).then(|| Self::new(col, FilterOp::In, joined))
     }
 
     /// Render as the wire form `"<col><op><value>"` (e.g. `"1>=500"`,
@@ -341,9 +520,24 @@ impl GridFilter {
     /// the consumer's policy" ruling). An empty conjunction passes vacuously.
     #[must_use]
     pub fn matches<'a, F: Fn(usize) -> &'a str>(&self, cell: F) -> bool {
-        self.facets
-            .iter()
-            .all(|f| f.op.matches(cell(f.col), &f.value))
+        self.admit(cell).is_admitted()
+    }
+
+    /// R1707 — the same judgment as [`matches`](Self::matches), **carrying the
+    /// reason**: which facet was the first to refuse.
+    ///
+    /// `matches` is defined in terms of this one rather than beside it, so the
+    /// boolean and the attributed answer cannot drift into disagreeing — the
+    /// failure this tree has registered under several names, most recently a
+    /// screen holding two cell-selection models.
+    #[must_use]
+    pub fn admit<'a, F: Fn(usize) -> &'a str>(&self, cell: F) -> Admission {
+        for (i, f) in self.facets.iter().enumerate() {
+            if !f.op.matches(cell(f.col), &f.value) {
+                return Admission::Rejected { facet: i };
+            }
+        }
+        Admission::Admitted
     }
 
     /// Drop any facet whose column is out of range for a `col_count`-wide grid;
@@ -1328,6 +1522,38 @@ mod tests {
         assert_eq!(ColumnFacet::from_wire("=x"), None);
         assert_eq!(ColumnFacet::from_wire("12"), None);
         assert_eq!(ColumnFacet::from_wire(""), None);
+    }
+
+    /// ★★★★ R1707 — **a counterfactual found this untested.**
+    ///
+    /// `any_of` exists to make an unrepresentable set impossible rather than
+    /// documented, and nothing asserted the refusal — so the refusal could have
+    /// been deleted and every test in the tree would have stayed green, leaving
+    /// a "limit" that is a comment. That is the exact class this constructor
+    /// was written against.
+    #[test]
+    fn a_set_facet_refuses_a_member_containing_its_own_joiner() {
+        let ok = ColumnFacet::any_of(2, &["Data", "Declare"]).expect("a plain set");
+        assert_eq!(ok.op, FilterOp::In);
+        assert_eq!(ok.value, "Data,Declare");
+        assert!(ok.op.matches("Declare", &ok.value));
+        assert!(!ok.op.matches("Query", &ok.value));
+
+        assert_eq!(
+            ColumnFacet::any_of(2, &["Data", "a,b"]),
+            None,
+            "★ a member with a comma would silently become two members"
+        );
+        assert_eq!(
+            ColumnFacet::any_of(2, &[] as &[&str]),
+            None,
+            "an empty set is not a facet — it is the absence of one"
+        );
+        assert_eq!(
+            ColumnFacet::any_of(2, &["", "  "]),
+            None,
+            "and neither is a set of nothing but blanks"
+        );
     }
 
     #[test]

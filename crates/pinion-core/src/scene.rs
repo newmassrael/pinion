@@ -2563,6 +2563,30 @@ impl Rect {
         Self { x, y, w, h }
     }
 
+    /// R1707 — whether this rectangle contains a point the shell states in
+    /// **logical pixels**, half-open on the right and bottom edges.
+    ///
+    /// The comparison happens in the point's own units rather than by casting
+    /// it to the rectangle's, and that is the whole reason this exists rather
+    /// than each screen writing `px as u32`: a cast rounds a point just outside
+    /// the left edge INTO the box, and one half a pixel above it OUT of a box
+    /// it is in. A screen with a text field needs this for click-to-caret, and
+    /// the second screen to grow one is what moved it here — a geometry
+    /// predicate on a framework type has no business being re-derived per
+    /// consumer, and a divergence between two copies would put the caret in a
+    /// different place from the cursor.
+    #[must_use]
+    pub fn contains_point(self, px: f32, py: f32) -> bool {
+        let (x, y, w, h) = (
+            f64::from(self.x),
+            f64::from(self.y),
+            f64::from(self.w),
+            f64::from(self.h),
+        );
+        let (px, py) = (f64::from(px), f64::from(py));
+        px >= x && px < x + w && py >= y && py < y + h
+    }
+
     /// R682 §5.16 — smallest axis-aligned rectangle that contains
     /// both `self` and `other`. Used by the §5.16 fragment cache
     /// (R682 atomic 2) to compute the per-paint damage region as the
