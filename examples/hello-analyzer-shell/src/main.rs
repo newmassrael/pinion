@@ -1682,34 +1682,31 @@ const HELP_STRIP: &str = "drag a header \u{00B7} double it to max \u{00B7} e edi
 
 // --- The oracle (primary External) ------------------------------------------
 
+/// ★★ R1714.1 — and it no longer keeps a size.
+///
+/// R1656 gave it one because `External::pointer_move` hands a FRACTION of the
+/// widget and not the rectangle, so a consumer wanting pixels had to hold the
+/// basis; R1684.4 made the framework answer that and left the field, because
+/// the multiplication was still written here. `external::layout_point` carries
+/// the whole expression now, so this became a field every resize wrote and
+/// nothing read.
 struct ShellOracle {
     state: Option<Rc<ShellState>>,
-    /// R1656 §5.15 — the size the shell says this surface currently has.
-    ///
-    /// Kept because `External::pointer_move` hands a FRACTION of it and not the
-    /// rectangle itself, so a consumer that wants pixels has to hold the basis.
-    /// Seeded with the opening size and replaced by every
-    /// [`External::on_resize`].
-    surface: (u32, u32),
 }
 
 impl core::fmt::Debug for ShellOracle {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("ShellOracle")
             .field("attached", &self.state.is_some())
-            .field("surface", &self.surface)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
 impl ShellOracle {
     const NO_STATE: &str = "this shell surface is not bound to a model yet";
 
-    fn new() -> Self {
-        Self {
-            state: None,
-            surface: window_size(),
-        }
+    const fn new() -> Self {
+        Self { state: None }
     }
 
     fn attach_state(&mut self, state: Rc<ShellState>) {
@@ -3431,23 +3428,6 @@ impl External for ShellOracle {
         true
     }
 
-    #[allow(
-        clippy::cast_precision_loss,
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "a window fraction times a window size is a pixel inside it"
-    )]
-    /// R1656 §5.15 — the shell's resize notification, which is how this surface
-    /// knows what a pointer fraction is a fraction OF.
-    fn on_resize(&mut self, width: u32, height: u32) {
-        // ★ R1700 — only this surface's own field, which is what a pointer
-        // fraction is a fraction of. R1671 also wrote the size into the state
-        // because the geometry helpers had no other way to read it off a view
-        // scope; `layout_size` reads the framework's own record instead, so
-        // the copy on the state has gone with the handle that reached it.
-        self.surface = (width.max(1), height.max(1));
-    }
-
     /// ★★★★★ R1700 §5.35 — what a press here addresses, for the framework to
     /// hold against what this screen painted here.
     fn target_at(&self, x: u32, y: u32) -> PointerTarget {
@@ -3477,17 +3457,11 @@ impl External for ShellOracle {
         // wrong by opening-size-over-current-size at every other size: a person
         // reported nodes that stop clicking after a maximise, and the
         // coordinates were measured arriving at 0.5775x.
-        let (sw, sh) = self.surface;
-        #[allow(
-            clippy::cast_precision_loss,
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "a clamped 0..=1 fraction times a window size is a pixel inside it"
-        )]
-        let (px, py) = (
-            (x_rel.clamp(0.0, 1.0) * sw as f32) as u32,
-            (y_rel.clamp(0.0, 1.0) * sh as f32) as u32,
-        );
+        // ★★ R1714.1 — through the framework's own expression. R1656 fixed the
+        // BASIS here; R1714 moved the clamp and the multiplication with it, so
+        // every self-hit-testing screen resolves a pointer the same way and a
+        // screen that later declares a pan gets that term for free.
+        let (px, py) = pinion_core::external::layout_point(VIEW_TAG, (x_rel, y_rel));
         Self::move_cursor(&state, px, py);
     }
 

@@ -2547,9 +2547,30 @@ AXES = [
         # slot is WRITABLE. Adding a well-formed field to one method is the work
         # this axis already scores; the eight items above are the work it is
         # waiting on, and none of them moved.
-        "judged_at": 1668,
+        # R1714 re-judged and the number HELD at 72 for the second time running.
+        # Demanded by the tool (round-axis 14 -> 18 = +29%). What R1714 did to
+        # this surface: `scene/size_floor`'s concession gained a `recourse` word
+        # and the verdict vocabulary a sixth entry, and `scene/scroll_reach`
+        # REPLACED a scalar pair with a censused list type — every scrollable row
+        # now carries `moves`, an ordered recipe of viewports.
+        #
+        # ★ That last one is a BREAKING wire change, and it is worth saying what
+        # that means for a stabilisation number: it means nothing, because the
+        # surface is not frozen and this axis is gated precisely so it is not
+        # frozen while it still churns. The change is the right one — a chain
+        # answer that named one level was wrong once a window could pan — and a
+        # round that removes two published fields is direct evidence the freeze
+        # would have been premature.
+        #
+        # Every gap the R1642 judgment listed is untouched again: method-to-type
+        # binding, version negotiation, a deprecation path, the freeze, a
+        # per-method error taxonomy, a census reaching past `pinion-rpc`, a
+        # per-subscription filter, and a `SchemaChannel` that still cannot say a
+        # slot is WRITABLE. Growing a method's response — however well censused —
+        # is the work this axis already scores.
+        "judged_at": 1714,
         "completion": 72,
-        "evidence_snapshot": {"example-name": 9, "round-axis": 14},
+        "evidence_snapshot": {"example-name": 9, "round-axis": 18},
                 # R1565 re-judged 55 -> 62, DEMANDED by the tool (ledger 3 -> 4). It
         # closes BOTH items R1564's own audit left open.
         #

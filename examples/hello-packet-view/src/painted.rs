@@ -111,18 +111,21 @@ struct Painted {
     /// missing; the reader scrolls to it. Kept beside the painted set rather
     /// than folded into it, because a check that wants "on screen" must still
     /// be able to ask for exactly that.
-    reachable: BTreeMap<String, (String, (i32, i32))>,
+    reachable: std::collections::BTreeSet<String>,
 }
 
 impl Painted {
     fn of(scene: &Scene, window: (u32, u32)) -> Self {
         let mut tags = BTreeMap::new();
         let mut runs = Vec::new();
-        let mut reachable = BTreeMap::new();
+        let mut reachable = std::collections::BTreeSet::new();
         for out in pinion_core::reach::out_of_sight(scene, window, &mut stand_in_ink) {
-            if let (Some(tag), pinion_core::reach::Reach::Scrollable { to }) = (out.tag, out.reach)
+            // ★ R1714 — a set: the one question asked of this index is whether a
+            // tag is one gesture away (see `shows`), and the offset beside it
+            // had no reader.
+            if let (Some(tag), pinion_core::reach::Reach::Scrollable { .. }) = (out.tag, &out.reach)
             {
-                reachable.insert(tag, (out.viewport.name, to));
+                reachable.insert(tag);
             }
         }
         scene.for_each_node(&mut |visit| {
@@ -151,7 +154,7 @@ impl Painted {
 
     /// Whether a tag is on screen, or one scroll away in a pane that scrolls.
     fn present(&self, tag: &str) -> bool {
-        self.tags.contains_key(tag) || self.reachable.contains_key(tag)
+        self.tags.contains_key(tag) || self.reachable.contains(tag)
     }
 
     /// Every painted tag beginning with `stem`, which is how a family's size is

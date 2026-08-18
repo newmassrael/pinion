@@ -95,6 +95,18 @@ pub struct ViewportReport {
     pub fits: bool,
 }
 
+/// (R1714) One viewport on the chain, and where it has to go.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct MoveReport {
+    /// The viewport's name — the same string `scene/scroll`'s `path` takes, so
+    /// a caller can perform what it reads.
+    pub viewport: String,
+    /// The horizontal offset to move it to.
+    pub to_x: i32,
+    /// The vertical offset to move it to.
+    pub to_y: i32,
+}
+
 /// One mark the reader cannot currently see.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct OutOfSightReport {
@@ -112,10 +124,15 @@ pub struct OutOfSightReport {
     /// covers part of it and no offset covers all of it) or `lost` (nothing
     /// covers any of it).
     pub reach: &'static str,
-    /// For `scrollable`: the horizontal offset that shows it.
-    pub to_x: Option<i32>,
-    /// For `scrollable`: the vertical offset that shows it.
-    pub to_y: Option<i32>,
+    /// ★★★★★ (R1714) For `scrollable`: every viewport that has to move and the
+    /// offset to move it to, outermost first.
+    ///
+    /// A list because a clip chain is a chain: R1713 published the innermost
+    /// offset alone and recorded that an ancestor might have to move too, and a
+    /// window that pans over its own layout makes that the ordinary case rather
+    /// than the exotic one. Empty for `clipped` and `lost`, which is the shape
+    /// [`Self::short_by`] has the other way round.
+    pub moves: Vec<MoveReport>,
     /// For `clipped` and `lost`: how far past the reachable box it reaches, per
     /// edge, in `left, top, right, bottom` order.
     pub short_by: Option<[u32; 4]>,
@@ -234,10 +251,16 @@ pub fn report(window: (u32, u32), out: &[OutOfSight], marks: usize) -> ScrollRea
         out_of_sight: out
             .iter()
             .map(|o| {
-                let (to_x, to_y) = match o.reach {
-                    Reach::Scrollable { to } => (Some(to.0), Some(to.1)),
-                    Reach::Clipped { .. } | Reach::Lost { .. } => (None, None),
-                };
+                let moves = o
+                    .reach
+                    .moves()
+                    .iter()
+                    .map(|m| MoveReport {
+                        viewport: m.viewport.clone(),
+                        to_x: m.to.0,
+                        to_y: m.to.1,
+                    })
+                    .collect();
                 let short_by = o
                     .reach
                     .short_by()
@@ -263,8 +286,7 @@ pub fn report(window: (u32, u32), out: &[OutOfSight], marks: usize) -> ScrollRea
                         fits: o.viewport.fits(),
                     },
                     reach: o.reach.wire_word(),
-                    to_x,
-                    to_y,
+                    moves,
                     short_by,
                 }
             })
@@ -334,6 +356,17 @@ mod tests {
         }
     }
 
+    /// (R1714) A one-level chain, which is what every fixture here has: the
+    /// row's own pane and nothing above it.
+    fn scrollable(to: (i32, i32)) -> Reach {
+        Reach::Scrollable {
+            moves: vec![pinion_core::reach::Move {
+                viewport: "pane".into(),
+                to,
+            }],
+        }
+    }
+
     fn entry(reach: Reach) -> OutOfSight {
         OutOfSight {
             tag: Some("row".into()),
@@ -352,7 +385,7 @@ mod tests {
         let out = report(
             (800, 600),
             &[
-                entry(Reach::Scrollable { to: (0, 152) }),
+                entry(scrollable((0, 152))),
                 entry(Reach::Lost {
                     short_by: Overhang {
                         left: 0,
@@ -396,13 +429,13 @@ mod tests {
         let out = report(
             (800, 600),
             &[
-                entry(Reach::Scrollable { to: (0, 152) }),
+                entry(scrollable((0, 152))),
                 entry(Reach::Clipped { short_by: edge }),
                 entry(Reach::Clipped { short_by: edge }),
                 entry(Reach::Lost { short_by: edge }),
-                entry(Reach::Scrollable { to: (0, 8) }),
-                entry(Reach::Scrollable { to: (0, 9) }),
-                entry(Reach::Scrollable { to: (0, 10) }),
+                entry(scrollable((0, 8))),
+                entry(scrollable((0, 9))),
+                entry(scrollable((0, 10))),
             ],
             331,
         );
@@ -416,7 +449,7 @@ mod tests {
         // ★ A `clipped` row carries the shortfall and no offset — the same rule
         // `lost` follows, because both are answers about what cannot be reached.
         assert_eq!(out.out_of_sight[1].short_by, Some([0, 0, 28, 0]));
-        assert_eq!(out.out_of_sight[1].to_x, None);
+        assert!(out.out_of_sight[1].moves.is_empty());
     }
 
     /// ★ Each arm carries only its own payload: an offset for the one that has
@@ -424,10 +457,44 @@ mod tests {
     /// would be a row nobody can read.
     #[test]
     fn r1662_each_arm_carries_only_its_own_payload() {
-        let out = report((800, 600), &[entry(Reach::Scrollable { to: (3, 152) })], 1);
-        assert_eq!(out.out_of_sight[0].to_y, Some(152));
-        assert_eq!(out.out_of_sight[0].to_x, Some(3));
+        let out = report((800, 600), &[entry(scrollable((3, 152)))], 1);
+        let moves = &out.out_of_sight[0].moves;
+        assert_eq!(moves.len(), 1, "{moves:?}");
+        assert_eq!((moves[0].to_x, moves[0].to_y), (3, 152));
+        assert_eq!(moves[0].viewport, "pane");
         assert_eq!(out.out_of_sight[0].short_by, None);
+        // ★★★★★ R1714 — and a chain of TWO rides in the order it was given.
+        //
+        // A counterfactual asked for this: reversing the list on the way to the
+        // wire left every test here green, because every fixture had exactly one
+        // move in it. A recipe is an ordered thing — outermost first is what a
+        // reader performs — and a one-element fixture cannot tell an order from
+        // its opposite. The same shape as asserting `(1, 1, 1)` about three
+        // counts, which is this session's other passed counterfactual.
+        let chained = report(
+            (800, 600),
+            &[entry(Reach::Scrollable {
+                moves: vec![
+                    pinion_core::reach::Move {
+                        viewport: "window.pan".into(),
+                        to: (7, 0),
+                    },
+                    pinion_core::reach::Move {
+                        viewport: "pane".into(),
+                        to: (0, 92),
+                    },
+                ],
+            })],
+            1,
+        );
+        assert_eq!(
+            chained.out_of_sight[0]
+                .moves
+                .iter()
+                .map(|m| (m.viewport.as_str(), m.to_x, m.to_y))
+                .collect::<Vec<_>>(),
+            vec![("window.pan", 7, 0), ("pane", 0, 92)],
+        );
 
         let out = report(
             (800, 600),
@@ -442,13 +509,13 @@ mod tests {
             1,
         );
         assert_eq!(out.out_of_sight[0].short_by, Some([1, 2, 3, 4]));
-        assert_eq!(out.out_of_sight[0].to_y, None);
+        assert!(out.out_of_sight[0].moves.is_empty());
     }
 
     /// ★ The predicate the reference makes a consumer infer rides as a field.
     #[test]
     fn r1662_the_viewport_publishes_whether_it_fits() {
-        let out = report((800, 600), &[entry(Reach::Scrollable { to: (0, 152) })], 1);
+        let out = report((800, 600), &[entry(scrollable((0, 152)))], 1);
         let v = &out.out_of_sight[0].viewport;
         assert!(!v.fits);
         assert_eq!((v.content_w, v.content_h), (100, 300));
@@ -475,7 +542,7 @@ mod tests {
     /// so a caller can hand it straight to `scene/snapshot`.
     #[test]
     fn r1662_the_path_is_the_address_the_other_reads_accept() {
-        let out = report((800, 600), &[entry(Reach::Scrollable { to: (0, 1) })], 1);
+        let out = report((800, 600), &[entry(scrollable((0, 1)))], 1);
         assert_eq!(out.out_of_sight[0].path, "4/0");
     }
 

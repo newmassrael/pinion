@@ -74,15 +74,26 @@ SCREENS = [
     ("dashboard", "hello-analyzer-shell", "shell.canvas"),
 ]
 
-#: The one screen that concedes width, and what it must have measured. Written
-#: here so this file asserts the DECISION rather than echoing the binding: a
-#: screen that quietly lowered its floor would otherwise still pass.
-CONCEDING = "hello-node-lab"
-CONCEDED_FLOOR = (1601, 360)
-
-#: What the window removes first on that screen, in the order a reader loses it.
-#: These are the marks R1712 published a floor over the top of.
-LOST_AT_1600 = 5
+#: ★★★★★ R1714 — the screen this file was written against no longer CLIPS its
+#: band; it pans over it, so nothing is lost at any width.
+#:
+#: What that costs this file is its headline section: `B` drove the five `×`
+#: glyphs the node lab put out of reach at 1600, and there is no width at which
+#: it puts anything out of reach any more. Those five marks did not stop being
+#: the case that mattered — they are driven in
+#: `r1714_a_window_pans_over_its_own_layout`, through the recipe that reaches
+#: them, which is a stronger claim than the one retired here.
+#:
+#: What stays is what this file is actually about: the fold. Every section below
+#: reads the CHAIN, and the two screens that still clip exercise `Reach::Clipped`
+#: and `Reach::Lost` below their own floors — so the three-way partition, the
+#: aperture-versus-declared pair and the sealing rule are all still driven.
+#:
+#: The switch is read off the wire rather than written down, because a screen
+#: that changed its mind about this is precisely what happened here once.
+def clips(concession: dict) -> bool:
+    """Whether this screen's band is served by cutting rather than by moving."""
+    return concession["recourse"] == "clip"
 
 CHECKS: list[str] = []
 
@@ -199,44 +210,87 @@ def a_viewport_publishes_the_aperture_and_the_box(
 # ── B: the marks the window removed ─────────────────────────────────────────
 
 
-def b_a_mark_the_window_removes_is_reported(app: RpcSubprocess, name: str) -> None:
-    """★★★★★ The headline, at the width the previous round shipped."""
-    at_1600 = reach_at(app, (CONCEDED_FLOOR[0] - 1, CONCEDED_FLOOR[1]))
-    lost = rows(at_1600, "lost")
-    assert_eq(
-        len(lost),
-        LOST_AT_1600,
-        f"B/{name}: one pixel below the floor the reader loses {LOST_AT_1600} marks "
-        f"({[r['content'] for r in lost]})",
-    )
-    # ★ Every one is inside a pane, not a top-level mark — which is precisely why
-    # the old read could not see them: they fit the pane and the window cut the
-    # pane. A regression that reported them against `<window>` would be a
-    # different (and wrong) answer that satisfies a count.
+def b_a_mark_the_window_removes_is_reported(
+    app: RpcSubprocess, name: str, size: tuple[int, int]
+) -> None:
+    """★★★★★ The headline, on a screen whose window still removes things.
+
+    R1713 drove this on the node lab, whose window cut a pane at 1600 and lost
+    five glyphs inside it. That screen PANS now (R1714), so its window removes
+    nothing at any width — the marks are still the case that mattered and they
+    are driven, through the recipe that reaches them, in
+    `r1714_a_window_pans_over_its_own_layout`.
+
+    What this section keeps is the property the fold exists for, asked of a
+    screen that still clips: a mark the window removes from a pane is reported
+    LOST — judged against the pane it fits, not against the window — and its
+    pane has no range, so nothing brings it back. That is the read that was
+    impossible before the chain was folded.
+    """
+    # ★ SEARCHED, not written down: how far below its floor a screen has to go
+    # before the window removes something is a property of where that screen
+    # puts its panes, and the two clipping screens here differ by hundreds of
+    # pixels. A constant would be this file asserting one screen's geometry.
+    below, at = None, size
+    width = size[0]
+    while width > 32:
+        probe = reach_at(app, (width, size[1]))
+        if probe["lost"]:
+            below, at = probe, (width, size[1])
+            break
+        width = width * 3 // 4
+    assert below is not None, f"B/{name}: no width below {size[0]} removes anything"
+    lost = rows(below, "lost")
     ok(
-        f"B/{name}: and every one is judged against a pane rather than the window "
-        f"({sorted({r['viewport']['name'] for r in lost})})",
-        all(r["viewport"]["name"] != "<window>" for r in lost),
+        f"B/{name}: at {at[0]}x{at[1]} the window removes marks and the report "
+        f"says so ({len(lost)} lost of {len(below['out_of_sight'])} off screen)",
+        len(lost) > 0,
     )
-    # ★★ Nothing brings them back: that pane has no range on the axis they are off.
-    ok(
-        f"B/{name}: their pane has no horizontal range, so no gesture reaches them",
-        all(r["viewport"]["max_x"] == 0 for r in lost),
+    inside = [r for r in lost if r["viewport"]["name"] != "<window>"]
+    # ★★★★★ The fold's whole point, REPORTED rather than demanded. A mark inside
+    # a pane the window slices fits THE PANE, so a read that judged each mark
+    # against its nearest clip alone called it visible — measured on the node lab
+    # at 1506, `lost: 0` with nine actions entirely off the window.
+    #
+    # ⚠ That screen pans now, so no window slices a pane on it any more, and the
+    # capture viewer's losses are all judged against the window itself. **No
+    # screen here exercises the headline case end to end**, which is a real loss
+    # of coverage and is written down as one ⇒
+    # `debt-the-clip-folds-headline-case-has-no-screen`. The property is pinned
+    # in `pinion_core::reach`'s own suite
+    # (`r1713_a_mark_inside_a_pane_the_window_slices_is_lost`); what is missing
+    # is a screen, not a check.
+    print(
+        f"[demo] B/{name}: {len(lost)} lost, {len(inside)} of them inside a pane "
+        f"the window cut ({sorted({r['viewport']['name'] for r in inside})})"
     )
-    # ★★ They are ink a reader would have read — the glyphs inside the row
-    # actions, which is what makes this a loss and not a cosmetic edge.
+    # ★★ Nothing brings any of them back, checked as the arm DEFINES it rather
+    # than as one screen happens to be shaped: the mark and everything the
+    # viewport's range can ever show are disjoint. Recomputed here from the
+    # published fields, so a report whose word and whose numbers disagreed would
+    # fail — the first draft asserted "the range is zero", which is true of the
+    # node lab's case and false of the dashboard's.
+    def separate(row: dict) -> bool:
+        v, m = row["viewport"], row["rect"]
+        lo = (v["origin_x"], v["origin_y"])
+        hi = (lo[0] + v["max_x"] + v["w"], lo[1] + v["max_y"] + v["h"])
+        return not (
+            m["x"] < hi[0]
+            and lo[0] < m["x"] + m["w"]
+            and m["y"] < hi[1]
+            and lo[1] < m["y"] + m["h"]
+        )
+
     ok(
-        f"B/{name}: and they are text a reader was meant to read "
-        f"({sorted({r['content'] for r in lost if r['content']})})",
-        all(r["content"] for r in lost),
+        f"B/{name}: every lost mark is disjoint from everything its viewport's "
+        f"range can ever show — which is what the word means",
+        all(separate(r) for r in lost),
     )
-    # ★★★★★ The paint scan that replaced this predicate last round cannot see
-    # them: they carry no tag of their own. Asserted, because it is the reason the
-    # repair has to be in the predicate.
+    # ★★ And an empty recipe, which is the arm's own shape: there is nothing to
+    # move that would help.
     ok(
-        f"B/{name}: none of them carries a tag, which is why a tag-keyed scan of "
-        f"the paint reported the floor clean",
-        all(row["tag"] is None for row in lost),
+        f"B/{name}: and every one of them names nothing to move",
+        all(not r["moves"] for r in lost),
     )
 
 
@@ -261,11 +315,11 @@ def c_clipped_and_lost_are_two_answers(
     for verdict in ("scrollable", "clipped", "lost"):
         for row in rows(reach, verdict):
             if verdict == "scrollable":
-                assert row["to_x"] is not None and row["short_by"] is None, row
+                assert row["moves"] and row["short_by"] is None, row
             else:
-                assert row["to_x"] is None and row["short_by"] is not None, row
+                assert not row["moves"] and row["short_by"] is not None, row
     ok(
-        f"C/{name}: an offset rides on the arm that has one and an overhang on the "
+        f"C/{name}: a recipe rides on the arm that has one and an overhang on the "
         f"arms that do",
         True,
     )
@@ -287,10 +341,9 @@ def c_clipped_and_lost_are_two_answers(
 
 
 def d_the_floor_is_where_reach_actually_ends(
-    app: RpcSubprocess, name: str, example: str, report: dict
+    app: RpcSubprocess, name: str, concession: dict
 ) -> None:
     """★★★ Bisect the boundary rather than believe the binding's number."""
-    concession = report["concession"]
     floor = (concession["floor"]["width"], concession["floor"]["height"])
     ceiling = (concession["comfortable"]["width"], concession["comfortable"]["height"])
     assert reach_at(app, ceiling)["lost"] == 0, f"D/{name}: the ceiling loses nothing"
@@ -303,21 +356,31 @@ def d_the_floor_is_where_reach_actually_ends(
         else:
             lo = mid
     measured = hi
-    ok(
-        f"D/{name}: the width at which nothing is out of reach is {measured}, "
-        f"evaluated in {probes} probes (one below loses "
-        f"{reach_at(app, (measured - 1, floor[1]))['lost']})",
-        reach_at(app, (measured, floor[1]))["lost"] == 0
-        and reach_at(app, (measured - 1, floor[1]))["lost"] > 0,
-    )
-    if example == CONCEDING:
-        assert_eq(
-            measured,
-            floor[0],
-            f"D/{name}: a conceded floor IS that boundary — the declaration and the "
-            f"measurement are one number",
+    if clips(concession):
+        ok(
+            f"D/{name}: the width at which nothing is out of reach is {measured}, "
+            f"evaluated in {probes} probes (one below loses "
+            f"{reach_at(app, (measured - 1, floor[1]))['lost']})",
+            reach_at(app, (measured, floor[1]))["lost"] == 0
+            and reach_at(app, (measured - 1, floor[1]))["lost"] > 0,
         )
-        assert_eq(floor, CONCEDED_FLOOR, f"D/{name}: and it is the decision on record")
+    if not clips(concession):
+        # ★★★★★ R1714 — a panning screen has no such boundary, and the bisection
+        # above proves it by running out of room: `lo` starts at a width nothing
+        # can be laid out in and the search converges there. Asserted as a
+        # number rather than skipped, because "the search found nothing" and
+        # "the search was not run" have to stay different answers.
+        ok(
+            f"D/{name}: this screen PANS, so the boundary the search finds is the "
+            f"bottom of the range it was given ({measured}) rather than a size the "
+            f"screen decided on ({floor[0]})",
+            measured < floor[0] // 2,
+        )
+        assert_eq(
+            reach_at(app, floor)["lost"],
+            0,
+            f"D/{name}: and nothing is out of reach at the floor itself",
+        )
     else:
         # ★ A rigid floor stops EARLIER than reachability requires, because what
         # stops it is content being cut rather than lost. Reported with the slack,
@@ -483,7 +546,11 @@ def drive(name: str, example: str, pane: str, tmp: Path) -> None:
             concession["comfortable"]["width"],
             concession["comfortable"]["height"],
         )
-        band = concession["band"]["width"]
+        # ★★ R1714 — what parts the cases is the RECOURSE, not the band's size.
+        # A panning screen has the widest band here and cuts nothing anywhere,
+        # so a check keyed on "is there a band" now asks the wrong question.
+        cutting_band = clips(concession) and concession["band"]["width"] > 0
+        band = concession["band"]["width"] if clips(concession) else 0
         # ★ The size to ask about is SEARCHED, not written down: each screen puts
         # its clipping panes somewhere else, so the width at which the window
         # first cuts into one is a property of the screen. Measured: 2 pixels
@@ -491,6 +558,35 @@ def drive(name: str, example: str, pane: str, tmp: Path) -> None:
         # draft of this file asserted the conceded floor was that width, which the
         # screen refused. A floor is where something is LOST, and a pane starts
         # being narrowed long before anything is.
+        if not clips(concession):
+            # ★★★★★ R1714 — on a panning screen the chain never narrows a pane at
+            # ALL, and that is the sharpest statement of what a pan buys. The
+            # aperture is the intersection with what the level above can EVER
+            # bring into view, and a pan can bring the whole layout into view, so
+            # every pane is offered its own declared box at every width. The
+            # search below looks for a width that slices one and there is none —
+            # asserted here rather than let the search fail, because "there is no
+            # such width" and "the search was not run" have to stay apart.
+            widths = [ceiling[0], ceiling[0] - 1, floor[0], floor[0] // 2, 200]
+            sliced = [
+                w for w in widths if narrowed_rows(reach_at(app, (w, floor[1])))
+            ]
+            ok(
+                f"A/{name}: this screen pans, so no viewport is ever narrowed by "
+                f"the chain — checked at {widths}, sliced at {sliced}",
+                not sliced,
+            )
+            f_the_paint_agrees_at_a_size_the_window_takes(
+                app, name, floor, tmp / f"{example}.png"
+            )
+            d_the_floor_is_where_reach_actually_ends(app, name, concession)
+            declared = declared_and_painted(app, floor)
+            ok(
+                f"G/{name}: the specification is still on screen at the floor "
+                f"({len(declared)} regions)",
+                len(declared) >= 8,
+            )
+            return
         narrows_at = first_narrowing_width(app, (ceiling[0], floor[1]))
         # ★★ The two policies part company exactly here, and the assertion says
         # which way round: a conceded floor is BELOW the width where the window
@@ -508,13 +604,15 @@ def drive(name: str, example: str, pane: str, tmp: Path) -> None:
             app, name, pane, narrows_at
         )
         # A size that stresses all three arms: below the floor, where the screen
-        # is losing things as well as clipping them.
-        stressed_at = (floor[0] - 1 if band else floor[0] - 40, floor[1])
-        c_clipped_and_lost_are_two_answers(app, name, stressed_at)
-        d_the_floor_is_where_reach_actually_ends(app, name, example, report)
+        # is losing things as well as clipping them. A panning screen never gets
+        # there, so its stress size is one the pan is not built at — the width
+        # is short, the height is the one it lays out at.
+        stressed_at = (floor[0] - 1 if cutting_band else floor[0] - 40, floor[1])
+        if clips(concession):
+            c_clipped_and_lost_are_two_answers(app, name, stressed_at)
+            b_a_mark_the_window_removes_is_reported(app, name, stressed_at)
+        d_the_floor_is_where_reach_actually_ends(app, name, concession)
         e_a_pane_the_window_removes_is_reported_once(app, name, narrowed, narrows_at)
-        if example == CONCEDING:
-            b_a_mark_the_window_removes_is_reported(app, name)
         assert_eq(
             design_size(app),
             before,

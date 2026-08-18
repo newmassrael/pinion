@@ -212,7 +212,12 @@ struct Painted {
     /// beside the painted set rather than folded into it, because the two are
     /// different facts and a check that wants "on screen" must still be able
     /// to ask for exactly that.
-    reachable: BTreeMap<String, (String, (i32, i32))>,
+    /// ★ R1714 — the whole CHAIN of viewports a control needs moved, not one
+    /// offset. `r1662_a_control_one_scroll_away_is_pressable_after_that_scroll`
+    /// performs what it finds here, so a recipe that named only its innermost
+    /// step would leave that test scrolling one of two things and reporting the
+    /// control missing.
+    reachable: BTreeMap<String, Vec<pinion_core::reach::Move>>,
     /// ★ R1690 — what a run that carries a tag of its OWN says.
     ///
     /// Separate from [`Self::runs`] rather than folded into its owner column,
@@ -232,9 +237,10 @@ impl Painted {
         let mut reachable = BTreeMap::new();
         let mut said = BTreeMap::new();
         for out in pinion_core::reach::out_of_sight(scene, window, &mut stand_in_ink) {
-            if let (Some(tag), pinion_core::reach::Reach::Scrollable { to }) = (out.tag, out.reach)
+            if let (Some(tag), pinion_core::reach::Reach::Scrollable { moves }) =
+                (out.tag, out.reach)
             {
-                reachable.insert(tag, (out.viewport.name, to));
+                reachable.insert(tag, moves);
             }
         }
         scene.for_each_node(&mut |visit| {
@@ -279,7 +285,17 @@ fn painted_at(state: &std::rc::Rc<LabState>, size: (u32, u32)) -> (Painted, Scen
     pinion_core::reactive::VIEWPORT_SIZE
         .resolve(&owner)
         .set(size);
-    let mut scene = super::view((TextFieldState::Idle, 0), Frame::default());
+    // ★★★★★ R1714 — through the framework's pan, exactly as `window_view` does
+    // it. Without this line the in-process suite measures a scene the shell
+    // never paints: below the comfortable size the real window is a viewport
+    // onto the layout, and a check that skipped the wrap would be asking its
+    // questions of the un-panned screen and answering them confidently.
+    let mut scene = pinion_core::shrink::pan(
+        <super::NodeLabView as pinion_shell::WidgetView>::shrink_policy(),
+        super::VIEW_TAG,
+        size,
+        super::view((TextFieldState::Idle, 0), Frame::default()),
+    );
     let mut cache = pinion_runtime::LayoutCache::new();
     pinion_runtime::compute_layout(&mut scene, &mut cache, size.0, size.1);
     let shot = Painted::of(&scene, size);
@@ -1810,26 +1826,38 @@ fn r1662_a_control_one_scroll_away_is_pressable_after_that_scroll() {
         for (when, mutate) in STATES {
             mutate(&state);
             let (shot, _) = painted_and_scene(&state, floor);
-            let away: Vec<(String, String, (i32, i32))> = shot
+            let away: Vec<(String, Vec<pinion_core::reach::Move>)> = shot
                 .reachable
                 .iter()
                 .filter(|(tag, _)| must_answer(tag).is_some())
-                .map(|(tag, (scroller, to))| (tag.clone(), scroller.clone(), *to))
+                .map(|(tag, moves)| (tag.clone(), moves.clone()))
                 .collect();
-            for (tag, scroller, to) in away {
-                let Some(scroll) = super::pane_scroll(&state, &scroller) else {
+            for (tag, moves) in away {
+                // ★★ R1714 — perform the WHOLE recipe. A chain answer whose
+                // outer step is dropped scrolls the pane and leaves the pane
+                // itself off screen, and the failure that produces reads as
+                // "the offset did not deliver" — the wrong diagnosis for a
+                // correct offset half-applied.
+                let scrolls: Vec<_> = moves
+                    .iter()
+                    .filter_map(|m| super::pane_scroll(&state, &m.viewport).map(|s| (s, m.to)))
+                    .collect();
+                if scrolls.len() != moves.len() {
                     // A control off the WINDOW rather than off a pane is the
                     // other property's business; it cannot be scrolled to.
                     continue;
-                };
-                let before = scroll.offset();
-                scroll.scroll_to(to.0, to.1);
+                }
+                let before: Vec<_> = scrolls.iter().map(|(s, _)| s.offset()).collect();
+                for (scroll, to) in &scrolls {
+                    scroll.scroll_to(to.0, to.1);
+                }
+                let recipe = format!("{moves:?}");
                 let (after, _) = painted_and_scene(&state, floor);
                 probed += 1;
                 match after.tags.get(&tag) {
                     None => wrong.push(format!(
-                        "{when}: scrolling {scroller} to {to:?} did not bring \
-                         {tag} onto the screen"
+                        "{when}: performing {recipe} did not bring {tag} onto \
+                         the screen"
                     )),
                     Some(rect) => {
                         let (px, py) = centre(*rect);
@@ -1841,14 +1869,16 @@ fn r1662_a_control_one_scroll_away_is_pressable_after_that_scroll() {
                         // IS an element chip.
                         if got != want && !same_row(&want, &got) {
                             wrong.push(format!(
-                                "{when}: after scrolling {scroller} to {to:?}, \
-                                 pressing {tag} at ({px},{py}) answered {got} \
-                                 and not {want}"
+                                "{when}: after performing {recipe}, pressing \
+                                 {tag} at ({px},{py}) answered {got} and not \
+                                 {want}"
                             ));
                         }
                     }
                 }
-                scroll.scroll_to(before.0, before.1);
+                for ((scroll, _), was) in scrolls.iter().zip(before) {
+                    scroll.scroll_to(was.0, was.1);
+                }
             }
         }
         assert!(
@@ -2423,10 +2453,12 @@ const HINT_GESTURES: &[HintDriver] = &[
 fn wheel_at(state: &std::rc::Rc<LabState>, at: (u32, u32), notches: f32) {
     let mut oracle = super::LabOracle::new();
     oracle.attach(std::rc::Rc::clone(state));
-    // The surface the fraction is a fraction OF — the same basis the shell
-    // announces and `pointer_move` reads (R1656).
+    // ★ R1714 — the basis is the FRAMEWORK's now, so seeding it is a call to
+    // the framework's own recorder rather than to the widget. Announcing it to
+    // the widget alone left `layout_point` reading whatever the last test had
+    // put in the cache, and this test is the one that caught it.
     let (w, h) = super::window_size();
-    pinion_core::external::External::on_resize(&mut oracle, w, h);
+    pinion_core::external::record_surface_size(super::VIEW_TAG, w, h);
     #[allow(
         clippy::cast_precision_loss,
         reason = "a window pixel over a window size is a fraction in [0, 1]"

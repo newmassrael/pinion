@@ -68,8 +68,14 @@
 //! informs it lives in [`size_floor`](crate::size_floor). What this module does
 //! is make the decision writable and then keep it honest.
 
+use std::cell::RefCell;
+use std::collections::BTreeMap;
+use std::rc::Rc;
+
 use crate::reach::{Cut, OutOfSight};
+use crate::scene::{Rect, Scene, ScrollAxis, ScrollNode};
 use crate::size_floor::Axis;
+use crate::widgets::scroll::ScrollState;
 
 /// Why a declaration was refused.
 ///
@@ -104,6 +110,79 @@ pub enum Fault {
     /// The mirror, and the likelier of the two in practice: a screen whose
     /// floor was raised back up to its layout minimum, leaving the list behind.
     NamesWithoutBand,
+    /// (R1714) The band is served by a pan, and something is named as given up
+    /// in it.
+    ///
+    /// A contradiction rather than a redundancy: a pan is the claim that the
+    /// band costs the reader *nothing but simultaneity*, so a list of what it
+    /// takes away is a screen saying both things at once. The likely author
+    /// error is a [`Self::Pan`](Recourse::Pan) written over a clip declaration
+    /// whose list was left behind, and normalising it either way would pick one
+    /// of the two halves at random.
+    PanNamesWhatItKeeps,
+    /// (R1714) A pan is declared and there is no band to pan in.
+    ///
+    /// [`Self::BandNamesNothing`]'s sibling under the other recourse, and the
+    /// same argument: a window that stops exactly where its layout does never
+    /// pans, so a policy saying it does describes a state the screen cannot
+    /// enter. [`ShrinkPolicy::rigid`] is the shorter and true spelling.
+    PanWithoutBand,
+}
+
+/// How a window serves the band between its layout minimum and its own floor.
+///
+/// # ★★★★★ R1714 — the answer this tree could not write down
+///
+/// R1712 gave a screen two floors and a list of what the space between them
+/// costs. What it could not express is *how* the space is served, and there are
+/// two answers, not one:
+///
+/// * [`Self::Clip`] — the window cuts, and what it cuts is **gone**. The reader
+///   reaches it by making the window bigger and by nothing else, which is why
+///   the declaration has to name what goes.
+/// * [`Self::Pan`] — the window becomes a viewport onto the layout, and what it
+///   cuts is **one gesture away**. Nothing is given up, so there is nothing to
+///   name; what the band costs is seeing two things at once.
+///
+/// Until this round every screen here had the first, by construction rather
+/// than by decision: `layout_size` clamps the layout at the comfortable size
+/// and the window clipped the result, with no range anywhere to move it.
+/// Measured on the analysis tool's node lab, that cost the screen its whole
+/// concession — the band bottomed out 24 pixels down, at 1601, one pixel above
+/// the 1600-wide display R1689 asked for, and the last pixel could not be
+/// bought at all because below the comfortable size the layout stops reflowing
+/// and the window simply removes content. With a pan the same screen keeps
+/// **everything reachable at 400 pixels wide** (measured, this round).
+///
+/// The mature retained-mode toolkits this project is judged against reach the
+/// same answer by wrapping a window's central widget in a scrolling area, and
+/// their applications do it by hand, one application at a time. Here it is the
+/// policy's own word, so the screen declares the intent and the framework does
+/// the wrapping — a screen cannot declare a pan and forget to build one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Recourse {
+    /// The window clips, and [`ShrinkPolicy::gives_up`] names what goes.
+    Clip,
+    /// The window pans over the layout: everything stays reachable, and the
+    /// band costs simultaneity rather than content.
+    Pan,
+}
+
+impl Recourse {
+    /// The word that rides on the wire.
+    #[must_use]
+    pub const fn wire_word(self) -> &'static str {
+        match self {
+            Self::Clip => "clip",
+            Self::Pan => "pan",
+        }
+    }
+
+    /// Whether the band is served by moving rather than by cutting.
+    #[must_use]
+    pub const fn pans(self) -> bool {
+        matches!(self, Self::Pan)
+    }
 }
 
 /// A screen's two floors, and what the reader gives up between them.
@@ -116,6 +195,7 @@ pub struct ShrinkPolicy {
     comfortable: (u32, u32),
     floor: (u32, u32),
     gives_up: &'static [&'static str],
+    recourse: Recourse,
 }
 
 impl ShrinkPolicy {
@@ -132,6 +212,7 @@ impl ShrinkPolicy {
             comfortable: size,
             floor: size,
             gives_up: &[],
+            recourse: Recourse::Clip,
         }
     }
 
@@ -150,11 +231,47 @@ impl ShrinkPolicy {
         floor: (u32, u32),
         gives_up: &'static [&'static str],
     ) -> Self {
-        match Self::fault(comfortable, floor, gives_up) {
+        Self::declared(comfortable, floor, gives_up, Recourse::Clip)
+    }
+
+    /// (R1714) A window floor below the layout minimum, served by **panning**
+    /// over the layout rather than cutting into it.
+    ///
+    /// Nothing is given up, so nothing is named — see
+    /// [`Fault::PanNamesWhatItKeeps`]. What the band costs the reader is
+    /// simultaneity: below the comfortable size the screen is bigger than the
+    /// window and the window moves over it.
+    ///
+    /// The declaration is what *causes* the pan: the framework wraps a binding
+    /// whose policy says this in the viewport its window describes, so a screen
+    /// cannot declare a pan and ship a clip. That is the direction this tree
+    /// keeps finding rotted the other way round — R1699's `Activation::Explicit`
+    /// declared a keyboard that was never implemented, and every gate read the
+    /// declaration.
+    ///
+    /// # Panics
+    ///
+    /// On any [`Fault`], which in the `const` context a binding declares its
+    /// policy in is a **compile error**.
+    #[must_use]
+    pub const fn panning(comfortable: (u32, u32), floor: (u32, u32)) -> Self {
+        Self::declared(comfortable, floor, &[], Recourse::Pan)
+    }
+
+    /// The one door the two public constructors go through, so a fault is
+    /// spelled once however a policy was written.
+    const fn declared(
+        comfortable: (u32, u32),
+        floor: (u32, u32),
+        gives_up: &'static [&'static str],
+        recourse: Recourse,
+    ) -> Self {
+        match Self::fault(comfortable, floor, gives_up, recourse) {
             None => Self {
                 comfortable,
                 floor,
                 gives_up,
+                recourse,
             },
             Some(Fault::FloorAboveComfortable { .. }) => {
                 panic!("shrink policy: the window floor is above the layout minimum")
@@ -164,6 +281,12 @@ impl ShrinkPolicy {
             }
             Some(Fault::NamesWithoutBand) => {
                 panic!("shrink policy: names are given up but there is no band")
+            }
+            Some(Fault::PanNamesWhatItKeeps) => {
+                panic!("shrink policy: a pan gives nothing up, so it names nothing")
+            }
+            Some(Fault::PanWithoutBand) => {
+                panic!("shrink policy: a pan is declared and there is no band to pan in")
             }
         }
     }
@@ -183,23 +306,26 @@ impl ShrinkPolicy {
         comfortable: (u32, u32),
         floor: (u32, u32),
         gives_up: &'static [&'static str],
+        recourse: Recourse,
     ) -> Result<Self, Fault> {
-        match Self::fault(comfortable, floor, gives_up) {
+        match Self::fault(comfortable, floor, gives_up, recourse) {
             Some(fault) => Err(fault),
             None => Ok(Self {
                 comfortable,
                 floor,
                 gives_up,
+                recourse,
             }),
         }
     }
 
-    /// The whole rule, in one place, so the two doors above cannot disagree
-    /// about what is legal.
+    /// The whole rule, in one place, so the doors above cannot disagree about
+    /// what is legal.
     const fn fault(
         comfortable: (u32, u32),
         floor: (u32, u32),
         gives_up: &'static [&'static str],
+        recourse: Recourse,
     ) -> Option<Fault> {
         if floor.0 > comfortable.0 {
             return Some(Fault::FloorAboveComfortable {
@@ -216,11 +342,28 @@ impl ShrinkPolicy {
             });
         }
         let band = floor.0 < comfortable.0 || floor.1 < comfortable.1;
-        match (band, gives_up.is_empty()) {
-            (true, true) => Some(Fault::BandNamesNothing),
-            (false, false) => Some(Fault::NamesWithoutBand),
-            _ => None,
+        // ★ R1714 — the recourse decides what the names mean, so it decides
+        // which pairings are contradictions. A pan keeps everything, so a list
+        // beside one is two statements; a clip loses the band, so a band with no
+        // list is an unaudited claim.
+        match recourse {
+            Recourse::Pan => match (band, gives_up.is_empty()) {
+                (_, false) => Some(Fault::PanNamesWhatItKeeps),
+                (false, true) => Some(Fault::PanWithoutBand),
+                (true, true) => None,
+            },
+            Recourse::Clip => match (band, gives_up.is_empty()) {
+                (true, true) => Some(Fault::BandNamesNothing),
+                (false, false) => Some(Fault::NamesWithoutBand),
+                _ => None,
+            },
         }
+    }
+
+    /// (R1714) How the band between the two floors is served.
+    #[must_use]
+    pub const fn recourse(self) -> Recourse {
+        self.recourse
     }
 
     /// The size below which the layout stops reflowing and the window clips.
@@ -282,6 +425,140 @@ impl ShrinkPolicy {
             cut.tag.as_deref() == Some(*name) || cut.path.iter().any(|step| step == name)
         })
     }
+}
+
+/// The tag the window's own pan node carries.
+///
+/// A name rather than an anonymous node because §2 #7 makes every scene fact
+/// addressable: `scene/scroll {path: "window.pan"}` drives it on any screen
+/// that declares one, and `scene/scroll_reach` reports it by this name, so an
+/// agent that finds a mark out of sight can move the thing that reaches it
+/// without knowing which screen it is on.
+pub const PAN_TAG: &str = "window.pan";
+
+thread_local! {
+    /// Surface tag -> the pan its window is using.
+    ///
+    /// Keyed by the surface's tag, the same key
+    /// [`external::surface_size`](crate::external::surface_size) uses and for
+    /// the same reason: the two facts are read together, by a hit test that has
+    /// a tag and no reactive scope. It carries that key's limit too — one
+    /// surface tag is one pan — which is the limit `SURFACE_SIZES` already has
+    /// and not a new one.
+    static PANS: RefCell<BTreeMap<String, Rc<ScrollState>>> =
+        const { RefCell::new(BTreeMap::new()) };
+}
+
+/// The pan a surface's window uses, made on the first ask.
+///
+/// Held outside any [`Owner`](crate::reactive::Owner) rather than through
+/// `use_scroll_state`, because the hit test that reads the offset runs outside
+/// every scope — the same reason `surface_size` is a plain cache. The offsets
+/// inside are still signals, so a view that reads one re-runs when the wire
+/// moves it.
+#[must_use]
+pub fn pan_state(tag: &str) -> Rc<ScrollState> {
+    PANS.with(|pans| {
+        Rc::clone(
+            pans.borrow_mut()
+                .entry(tag.to_owned())
+                .or_insert_with(|| Rc::new(ScrollState::with_tag(PAN_TAG))),
+        )
+    })
+}
+
+/// Where a surface's window is panned to, in the frame the screen's layout is
+/// stated in.
+///
+/// `(0, 0)` for a screen that does not pan and for one that has not been
+/// panned. Never negative: an offset is a distance the content has moved up and
+/// left, which is what a hit test adds back.
+#[must_use]
+pub fn window_pan(tag: &str) -> (u32, u32) {
+    PANS.with(|pans| {
+        pans.borrow().get(tag).map_or((0, 0), |state| {
+            let (x, y) = state.offset();
+            (x.max(0).unsigned_abs(), y.max(0).unsigned_abs())
+        })
+    })
+}
+
+/// Forget a surface's pan, so a screen that is gone cannot hand its offset to
+/// the next one with the same tag.
+pub fn forget_pan(tag: &str) {
+    PANS.with(|pans| {
+        pans.borrow_mut().remove(tag);
+    });
+}
+
+/// (R1714.1) Put an existing pan back to zero, because there is no range to
+/// hold an offset in.
+///
+/// Deliberately does NOT create one: a screen that has never panned has no
+/// offset to clamp, and [`pan_state`] would leave a state behind for every
+/// binding in the tree on every frame.
+fn clamp_existing_pan(tag: &str) {
+    PANS.with(|pans| {
+        if let Some(state) = pans.borrow().get(tag) {
+            state.set_max(0, 0);
+        }
+    });
+}
+
+/// ★★★★★ R1714 — wrap a screen's laid-out root in the pan its policy declares.
+///
+/// The whole behaviour of [`Recourse::Pan`], in one place the framework calls
+/// for every binding, so the declaration is what produces it.
+///
+/// Identity — the very same `Scene` back — for all three cases where there is
+/// no pan to make:
+///
+/// * a binding that declares no policy, or one that clips;
+/// * a window at or above the comfortable size on both axes, where there is
+///   nothing to pan over. A pan with no range is not a pan, the same argument
+///   [`Fault::BandNamesNothing`] makes about a band that costs nothing, and it
+///   is what keeps this round's blast radius to the screens that opted in;
+/// * a window of no extent, which is the "nothing has painted yet" case
+///   [`external::layout_size`](crate::external::layout_size) already names.
+///
+/// The content is the size the layout was actually laid out at —
+/// `max(window, comfortable)` per axis, which is `layout_size`'s own answer, so
+/// the pan's range is exactly what the window is short by and cannot drift from
+/// what the screen painted. The viewport is the window.
+#[must_use]
+pub fn pan(policy: Option<ShrinkPolicy>, tag: &str, window: (u32, u32), root: Scene) -> Scene {
+    let Some(policy) = policy.filter(|p| p.recourse().pans()) else {
+        return root;
+    };
+    if window.0 == 0 || window.1 == 0 {
+        return root;
+    }
+    let comfortable = policy.comfortable();
+    let content = (window.0.max(comfortable.0), window.1.max(comfortable.1));
+    if content == window {
+        // ★★★★★ R1714.1 — a pan with no range is a pan AT ZERO, and saying only
+        // the first half is what the close audit of this round caught.
+        //
+        // The offset outlives the node. A reader pans this screen and then
+        // makes the window big enough again: the pan is not built, so nothing
+        // paints at an offset — and `window_pan` went on answering the offset it
+        // was left at, so `into_layout` added it to every press. Measured:
+        // `scene/pointer_target` went from 61 addressable rectangles to **one**,
+        // with 61 unreachable, on a window at its full comfortable size.
+        //
+        // The runtime does this for every real scroll node — the layout pass
+        // publishes the range and `set_max` clamps the offset into it — so this
+        // is that rule reaching the one viewport the layout pass never sees.
+        // Only for a pan that exists: asking creates one, and a screen that has
+        // never panned has nothing to clamp.
+        clamp_existing_pan(tag);
+        return root;
+    }
+    let state = pan_state(tag);
+    let node = ScrollNode::from_state(state, Rect::new(0, 0, window.0, window.1), root)
+        .with_axis(ScrollAxis::Both);
+    let layout = node.layout.clone().with_absolute_position(0, 0);
+    Scene::Scroll(node.with_layout(layout))
 }
 
 /// What a declaration and a measurement said about each other.
@@ -383,13 +660,33 @@ impl Audit {
 /// [`Reach::Clipped`](crate::reach::Reach::Clipped) is now the middle answer, in
 /// the word this rule is written in, and this
 /// filter — unchanged — finally reads what it always said it read.
+/// ★★★★★ R1714 — and the `cut` half is read only under
+/// [`Recourse::Clip`]. A pan gives nothing up, so there is no list to check a
+/// cut against: what a pan's band costs is seeing two things **at once**, which
+/// is the very thing `cut` reports and the very thing the declaration permits.
+/// Reading it there would fail every panning screen for doing exactly what it
+/// said it would do.
+///
+/// The half that stays is the one that can still fail, and it is the one that
+/// matters: `lost` is empty under a working pan at every size, so a screen that
+/// declares a pan and does not get one — the framework not wrapping it, a pan
+/// whose content is the window rather than the layout — reads `unreachable`
+/// here. That is what keeps this from being a check that cannot fail.
 #[must_use]
 pub fn audit(policy: ShrinkPolicy, cut: &[Cut], out_of_sight: &[OutOfSight]) -> Audit {
-    let unreachable = out_of_sight
+    let unreachable: Vec<String> = out_of_sight
         .iter()
         .filter(|mark| mark.reach.is_lost())
         .map(|mark| mark.tag.clone().unwrap_or_else(|| mark.path.join("/")))
         .collect();
+    if policy.recourse().pans() {
+        return Audit {
+            unreachable,
+            unnamed: Vec::new(),
+            stale: Vec::new(),
+            covered: 0,
+        };
+    }
     let mut unnamed = Vec::new();
     let mut covered = 0;
     for mark in cut {
@@ -419,9 +716,12 @@ pub fn audit(policy: ShrinkPolicy, cut: &[Cut], out_of_sight: &[OutOfSight]) -> 
 
 #[cfg(test)]
 mod tests {
-    use super::{Audit, Fault, ShrinkPolicy, audit};
+    use super::{
+        Audit, Fault, PAN_TAG, PANS, Rc, Recourse, Scene, ShrinkPolicy, audit, forget_pan, pan,
+        pan_state, window_pan,
+    };
     use crate::containment::Overhang;
-    use crate::reach::{Cut, OutOfSight, Reach, Viewport};
+    use crate::reach::{Cut, Move, OutOfSight, Reach, Viewport};
     use crate::scene::Rect;
     use crate::size_floor::Axis;
 
@@ -498,7 +798,7 @@ mod tests {
     #[test]
     fn r1712_a_floor_above_the_layout_minimum_is_refused_by_axis() {
         assert_eq!(
-            ShrinkPolicy::checked((1625, 360), (1700, 333), &["x"]),
+            ShrinkPolicy::checked((1625, 360), (1700, 333), &["x"], Recourse::Clip),
             Err(Fault::FloorAboveComfortable {
                 axis: Axis::Width,
                 floor: 1700,
@@ -506,7 +806,7 @@ mod tests {
             })
         );
         assert_eq!(
-            ShrinkPolicy::checked((1625, 360), (1506, 400), &["x"]),
+            ShrinkPolicy::checked((1625, 360), (1506, 400), &["x"], Recourse::Clip),
             Err(Fault::FloorAboveComfortable {
                 axis: Axis::Height,
                 floor: 400,
@@ -519,9 +819,59 @@ mod tests {
     #[test]
     fn r1712_a_band_that_names_nothing_is_refused() {
         assert_eq!(
-            ShrinkPolicy::checked((1625, 360), (1506, 360), &[]),
+            ShrinkPolicy::checked((1625, 360), (1506, 360), &[], Recourse::Clip),
             Err(Fault::BandNamesNothing)
         );
+    }
+
+    /// ★★★★★ R1714 — a pan keeps everything, so naming what it gives up is a
+    /// screen saying two things at once.
+    #[test]
+    fn r1714_a_pan_that_names_what_it_gives_up_is_refused() {
+        assert_eq!(
+            ShrinkPolicy::checked((1625, 360), (1024, 360), &["lab.inspector"], Recourse::Pan),
+            Err(Fault::PanNamesWhatItKeeps)
+        );
+    }
+
+    /// And the sibling of [`Fault::BandNamesNothing`]: a window that stops where
+    /// its layout does never pans, so a policy saying it does describes a state
+    /// the screen cannot enter.
+    #[test]
+    fn r1714_a_pan_with_no_band_is_refused() {
+        assert_eq!(
+            ShrinkPolicy::checked((1625, 360), (1625, 360), &[], Recourse::Pan),
+            Err(Fault::PanWithoutBand)
+        );
+    }
+
+    /// The legal pan, and the two facts a reader gets from it.
+    #[test]
+    fn r1714_a_pan_declares_a_band_and_gives_nothing_up() {
+        const POLICY: ShrinkPolicy = ShrinkPolicy::panning((1625, 360), (1024, 360));
+        assert_eq!(POLICY.recourse(), Recourse::Pan);
+        assert_eq!(POLICY.recourse().wire_word(), "pan");
+        assert_eq!(POLICY.band(), (601, 0));
+        assert!(POLICY.gives_up().is_empty());
+        assert!(POLICY.concedes());
+        assert_eq!(
+            Ok(POLICY),
+            ShrinkPolicy::checked((1625, 360), (1024, 360), &[], Recourse::Pan)
+        );
+    }
+
+    /// ★★ And the default is still a clip, so the 224 bindings that never heard
+    /// of this round keep the recourse they were written under.
+    #[test]
+    fn r1714_a_policy_written_before_this_round_still_clips() {
+        assert_eq!(ShrinkPolicy::rigid((800, 600)).recourse(), Recourse::Clip);
+        assert_eq!(
+            ShrinkPolicy::conceding((1625, 360), (1506, 360), &["lab.inspector"]).recourse(),
+            Recourse::Clip
+        );
+        assert_eq!(Recourse::Clip.wire_word(), "clip");
+        assert!(!Recourse::Clip.pans());
+        assert!(Recourse::Pan.pans());
     }
 
     /// And the mirror — the shape a screen leaves behind when its floor is
@@ -529,7 +879,7 @@ mod tests {
     #[test]
     fn r1712_names_with_no_band_are_refused() {
         assert_eq!(
-            ShrinkPolicy::checked((1625, 360), (1625, 360), &["lab.inspector"]),
+            ShrinkPolicy::checked((1625, 360), (1625, 360), &["lab.inspector"], Recourse::Clip),
             Err(Fault::NamesWithoutBand)
         );
     }
@@ -537,8 +887,9 @@ mod tests {
     /// One axis conceding and the other not is legal, and is the common shape.
     #[test]
     fn r1712_a_band_on_one_axis_only_is_legal() {
-        let policy = ShrinkPolicy::checked((1625, 360), (1506, 360), &["lab.inspector"])
-            .expect("width-only band is legal");
+        let policy =
+            ShrinkPolicy::checked((1625, 360), (1506, 360), &["lab.inspector"], Recourse::Clip)
+                .expect("width-only band is legal");
         assert_eq!(policy.band(), (119, 0));
         assert!(policy.concedes());
     }
@@ -551,8 +902,153 @@ mod tests {
             ShrinkPolicy::conceding((1625, 360), (1506, 333), &["lab.inspector"]);
         assert_eq!(
             Ok(POLICY),
-            ShrinkPolicy::checked((1625, 360), (1506, 333), &["lab.inspector"])
+            ShrinkPolicy::checked((1625, 360), (1506, 333), &["lab.inspector"], Recourse::Clip)
         );
+    }
+
+    /// A root laid out at `size`, the shape every screen here hands the shell.
+    fn root(size: (u32, u32)) -> Scene {
+        Scene::Container(
+            crate::scene::ContainerNode::new(Vec::new())
+                .with_tag("screen")
+                .with_layout(
+                    crate::style::LayoutStyle::new()
+                        .with_size(crate::style::Size::px(size.0, size.1)),
+                ),
+        )
+    }
+
+    fn pan_node(scene: &Scene) -> Option<&crate::scene::ScrollNode> {
+        match scene {
+            Scene::Scroll(node) => Some(node),
+            _ => None,
+        }
+    }
+
+    /// ★★★★★ R1714 — the declaration is what makes the pan, and the three cases
+    /// where there is nothing to make are the SAME scene back.
+    ///
+    /// Asserted as identity of the root's tag rather than "is not a scroll",
+    /// because a wrap that produced some other container would also not be a
+    /// scroll and would still have moved every rectangle on the screen.
+    #[test]
+    fn r1714_a_screen_with_nothing_to_pan_over_is_handed_back_unchanged() {
+        let clip = ShrinkPolicy::conceding((1625, 360), (1506, 360), &["lab.inspector"]);
+        let pans = ShrinkPolicy::panning((1625, 360), (1024, 360));
+        for (what, policy, window) in [
+            ("no policy at all", None, (800, 300)),
+            ("a policy that clips", Some(clip), (800, 300)),
+            ("a window at the comfortable size", Some(pans), (1625, 360)),
+            ("a window above it", Some(pans), (1920, 1080)),
+            ("nothing painted yet", Some(pans), (0, 0)),
+        ] {
+            let out = pan(policy, "screen", window, root((1625, 360)));
+            assert!(
+                pan_node(&out).is_none() && out.tag() == Some("screen"),
+                "{what}: the root came back wrapped",
+            );
+        }
+    }
+
+    /// ★★★★★ And the case that is the round: the window becomes a viewport onto
+    /// the layout, with the range it is short by.
+    #[test]
+    fn r1714_a_window_below_its_layout_becomes_a_viewport_onto_it() {
+        let policy = ShrinkPolicy::panning((1625, 360), (1024, 360));
+        forget_pan("screen");
+        let out = pan(Some(policy), "screen", (1200, 360), root((1625, 360)));
+        let node = pan_node(&out).expect("the window pans");
+        assert_eq!(
+            node.tag.as_deref(),
+            Some(PAN_TAG),
+            "the pan is addressable by name",
+        );
+        assert_eq!(
+            node.viewport,
+            Rect::new(0, 0, 1200, 360),
+            "the viewport is the window",
+        );
+        assert_eq!(
+            node.content.tag(),
+            Some("screen"),
+            "and the screen is what it looks onto, unchanged",
+        );
+        // ★ The content is what `layout_size` laid out — max(window, comfortable)
+        // per axis — so the range is exactly the shortfall and nothing here
+        // writes a second opinion about the layout's size.
+        assert_eq!(
+            crate::widgets::scroll::max_scroll_offset(1625, 1200),
+            425,
+            "the range the window is short by",
+        );
+    }
+
+    /// ★★ An axis the window is big enough for pans on the other one only, which
+    /// is the common shape on a design whose height fits and whose width does
+    /// not.
+    #[test]
+    fn r1714_a_pan_on_one_axis_still_wraps() {
+        let policy = ShrinkPolicy::panning((1625, 360), (1024, 360));
+        forget_pan("screen");
+        let out = pan(Some(policy), "screen", (1200, 900), root((1625, 900)));
+        let node = pan_node(&out).expect("the width is short, so it pans");
+        assert_eq!(node.viewport, Rect::new(0, 0, 1200, 900));
+    }
+
+    /// ★★★★★ R1714.1 — a window that grows back past its layout leaves no
+    /// offset behind.
+    ///
+    /// Found by the round's own close audit, and it is the round's own defect
+    /// class turned on itself: the pan node is not built once the window can
+    /// show the whole layout, so nothing paints at an offset — and `window_pan`
+    /// went on answering the offset the reader had left it at, which
+    /// `into_layout` then added to every press. Measured on the node lab:
+    /// `scene/pointer_target` fell from 61 addressable rectangles to **one**,
+    /// with 61 unreachable, at the screen's full comfortable size.
+    #[test]
+    fn r1714_1_a_pan_with_no_range_left_holds_no_offset() {
+        let policy = ShrinkPolicy::panning((1625, 360), (1024, 360));
+        forget_pan("screen");
+        // Pan it, the way a reader does, while there is range to pan in.
+        let _ = pan(Some(policy), "screen", (1200, 360), root((1625, 360)));
+        let state = pan_state("screen");
+        state.set_max(425, 0);
+        state.scroll_to(400, 0);
+        assert_eq!(window_pan("screen"), (400, 0));
+        // Then grow the window back past the layout. No pan is built…
+        let out = pan(Some(policy), "screen", (1625, 360), root((1625, 360)));
+        assert!(pan_node(&out).is_none(), "there is nothing to pan over");
+        // …and the offset a hit test reads is gone with it.
+        assert_eq!(window_pan("screen"), (0, 0));
+        // ★ And a screen that has never panned is not given a pan by asking:
+        // this runs for every binding on every frame.
+        forget_pan("never");
+        let _ = pan(Some(policy), "never", (1625, 360), root((1625, 360)));
+        assert!(
+            !PANS.with(|pans| pans.borrow().contains_key("never")),
+            "the identity path must not leave a pan behind for every binding",
+        );
+        forget_pan("screen");
+    }
+
+    /// ★★★ The offset a hit test reads is the offset the pan is at — one fact,
+    /// read by the paint through the scroll node and by the press through here.
+    #[test]
+    fn r1714_the_pan_offset_is_readable_outside_every_scope() {
+        forget_pan("screen");
+        assert_eq!(window_pan("screen"), (0, 0), "nothing has panned");
+        let state = pan_state("screen");
+        state.set_max(425, 0);
+        state.scroll_to(24, 0);
+        assert_eq!(window_pan("screen"), (24, 0));
+        assert_eq!(
+            Rc::as_ptr(&pan_state("screen")),
+            Rc::as_ptr(&state),
+            "asking twice gives the same pan, or the paint and the press would \
+             be reading two",
+        );
+        forget_pan("screen");
+        assert_eq!(window_pan("screen"), (0, 0), "and a screen that is gone");
     }
 
     /// A declared region covers what is inside it, addressed either way.
@@ -697,7 +1193,12 @@ mod tests {
             &[],
             &[sighting(
                 "shell.canvas.row.7",
-                Reach::Scrollable { to: (0, 120) },
+                Reach::Scrollable {
+                    moves: vec![Move {
+                        viewport: "shell.canvas".to_owned(),
+                        to: (0, 120),
+                    }],
+                },
             )],
         );
         assert_eq!(report.wire_word(), "honoured");

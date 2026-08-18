@@ -321,35 +321,63 @@ const MIN_H: u32 = APP_BAR_H + TOOLBAR_H + CANVAS_FLOOR;
 /// into a pane that is offered 286 at that width. The same boundary at 360 tall
 /// and at 900.
 ///
-/// ⚠ R1689 asked for a screen a 1600-pixel display holds, and this **misses by
-/// one pixel**. The band is 24 pixels of honest clipping, and the last pixel
-/// cannot be bought by moving a glyph: below `comfortable` this layout stops
-/// reflowing, so what the window cuts is simply gone. The fix that would buy it —
-/// and buy far more than one pixel — is a window that PANS below `comfortable`
-/// instead of clipping ⇒ `debt-a-window-below-its-layout-cannot-be-panned`.
-const FLOOR_W: u32 = 1601;
+/// ★★★★★ R1714 — and the answer is no longer a number the glyphs decide.
+///
+/// R1713's 1601 was the width at which this screen stopped **losing** things,
+/// and it missed R1689's 1600-pixel display by one pixel that could not be
+/// bought: below `comfortable` the layout stops reflowing, so what the window
+/// cut was simply gone. The window PANS now
+/// ([`ShrinkPolicy::panning`] — measured, nothing is out of reach at 400 pixels
+/// wide), so nothing is lost at any width and the floor stops being a
+/// measurement and becomes what [`pinion_core::shrink`]'s own doc always said
+/// it was: *a product decision — how small is usable is not derivable from
+/// geometry*.
+///
+/// So it is decided, and this is the decision: **the four things this screen is
+/// for, side by side.** The icon rail, the palette, one whole node card and the
+/// inspector — below that the reader is panning to see a single card, which is
+/// the point at which the pan has stopped being a convenience. Everything the
+/// toolbar's two clusters need, which is what set the old floor, is a pan away.
+///
+/// Derived from the specification rather than written down, for the reason
+/// [`MIN_W`] is (R1687: a limit stated in prose is re-derived by whoever is
+/// next). The card term is in CANVAS units, which is the conservative
+/// direction — the canvas opens at 84%, so the card takes fewer window pixels
+/// than this reserves for it.
+const FLOOR_W: u32 = RAIL_W + PALETTE_W + WIDEST_CARD + INSP_W;
 
-/// What the band between [`FLOOR_W`] and [`MIN_W`] clips, by the name a reader
-/// addresses it with.
-///
-/// Regions, not the individual runs inside them: `lab.inspector` covers its
-/// body, and `lab.appbar` covers the state chip whose right end goes first.
-/// The audit publishes how many marks each name accounted for, so the coarser
-/// spelling does not hide its own reach — measured, these two cover four.
-///
-/// Nothing on the HEIGHT axis, deliberately: the floor concedes width only.
-/// A 27-pixel height concession was measured too and rejected — every
-/// full-height pane is clipped by it, so its honest declaration is *every pane
-/// on the screen*, which buys a reader almost nothing and costs the list all of
-/// its meaning.
-const GIVES_UP: &[&str] = &["lab.appbar", "lab.inspector"];
+/// The widest card the opening graph draws, in canvas units.
+const WIDEST_CARD: u32 = {
+    let mut widest = 0;
+    let mut i = 0;
+    while i < spec::NODES.len() {
+        let (_, _, w) = spec::NODES[i].rect;
+        if w > widest {
+            widest = w;
+        }
+        i += 1;
+    }
+    widest
+};
 
 /// The two floors, declared once so they cannot drift apart.
 ///
 /// [`window_size`] clamps the layout at [`ShrinkPolicy::comfortable`] and
 /// [`NodeLabView::initial_size_strategy`] floors the window at
 /// [`ShrinkPolicy::floor`]; neither writes a number of its own.
-const SHRINK: ShrinkPolicy = ShrinkPolicy::conceding((MIN_W, MIN_H), (FLOOR_W, MIN_H), GIVES_UP);
+///
+/// ★★★★★ R1714 — `panning`, not `conceding`, and the difference is what the
+/// band costs a reader: **nothing**. The framework wraps this screen in a
+/// viewport onto its own layout whenever the window is the smaller of the two,
+/// so the app bar's right end and the inspector are one gesture away rather
+/// than gone — which is why there is no list of what is given up any more, and
+/// why declaring one here would not compile.
+///
+/// The HEIGHT axis still concedes nothing, and that stays a decision rather
+/// than an oversight: [`MIN_H`] is 360, which is below every display this
+/// screen opens on, so a height band would buy a reader nothing measurable.
+/// The width was the axis R1689 wrote a real loss against.
+const SHRINK: ShrinkPolicy = ShrinkPolicy::panning((MIN_W, MIN_H), (FLOOR_W, MIN_H));
 
 fn canvas_rect() -> Rect {
     let (w, h) = window_size();
@@ -785,10 +813,16 @@ fn in_pane(scroll: &ScrollState, px: u32, py: u32) -> (u32, u32) {
 }
 
 #[cfg(test)]
-fn pane_scroll<'s>(state: &'s LabState, body: &str) -> Option<&'s Rc<ScrollState>> {
+fn pane_scroll(state: &LabState, body: &str) -> Option<Rc<ScrollState>> {
     match body {
-        PALETTE_SCROLL => Some(&state.palette_scroll),
-        INSPECTOR_SCROLL => Some(&state.inspector_scroll),
+        PALETTE_SCROLL => Some(Rc::clone(&state.palette_scroll)),
+        INSPECTOR_SCROLL => Some(Rc::clone(&state.inspector_scroll)),
+        // ★★ R1714 — the window's own pan is a viewport a `scroll_reach` row can
+        // name, so it has to resolve here too. It was the one name in that
+        // report this table could not answer, which made every recipe naming it
+        // look like "a mark off the window that cannot be scrolled to" — the
+        // exact reading the pan exists to make false.
+        pinion_core::shrink::PAN_TAG => Some(pinion_core::shrink::pan_state(VIEW_TAG)),
         _ => None,
     }
 }
@@ -6150,6 +6184,10 @@ fn view(field: (TextFieldState, u32), _frame: Frame) -> Scene {
     let ink = ink(&theme);
     let win = window_size();
 
+    // ★ R1714 — the window's own pan is NOT wrapped here. `SHRINK` declares it
+    // and the framework builds it, once, for every binding that says so — see
+    // `pinion_core::shrink::pan`. A screen that wrapped its own would be the
+    // second place the rule lives, and the first one to drift.
     Scene::Container(
         ContainerNode::new(vec![
             app_bar(&state, ink),
@@ -6169,13 +6207,20 @@ fn view(field: (TextFieldState, u32), _frame: Frame) -> Scene {
 
 // ── The wire ────────────────────────────────────────────────────────────────
 
+/// ★★★★★ R1714 — and it no longer keeps a size.
+///
+/// R1656 gave this oracle a `surface` field because `External::pointer_move`
+/// hands a FRACTION of the widget and not the widget's rectangle, so a screen
+/// that wants pixels has to hold the basis itself. R1684.4 made the framework
+/// answer that (`pinion_core::external::surface_size`) and left the field,
+/// because the multiplication was still written here. This round moved the
+/// multiplication too — `layout_point` — and the field became something written by
+/// every resize and read by nobody, which is the shape a close audit deletes.
+///
+/// That is [[debt-an-external-reads-a-fraction-without-its-basis]] closed on
+/// this screen: there is no second copy of the basis left to drift.
 struct LabOracle {
     state: Option<Rc<LabState>>,
-    /// R1656 §5.15 — the size the shell says this widget currently has, kept
-    /// because `External::pointer_move` hands a FRACTION of it and not the
-    /// rectangle itself. Seeded with the opening size and replaced by every
-    /// [`External::on_resize`].
-    surface: (u32, u32),
 }
 
 impl core::fmt::Debug for LabOracle {
@@ -6186,10 +6231,7 @@ impl core::fmt::Debug for LabOracle {
 
 impl LabOracle {
     const fn new() -> Self {
-        Self {
-            state: None,
-            surface: (WIN_W, WIN_H),
-        }
+        Self { state: None }
     }
 
     fn attach(&mut self, state: Rc<LabState>) {
@@ -9467,19 +9509,7 @@ impl External for LabOracle {
             return false;
         };
         let canvas = canvas_rect();
-        #[allow(
-            clippy::cast_precision_loss,
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "a window fraction times a window size is a pixel inside it"
-        )]
-        let (px, py) = {
-            let (w, h) = self.surface;
-            (
-                (reading.at.0.clamp(0.0, 1.0) * w as f32) as u32,
-                (reading.at.1.clamp(0.0, 1.0) * h as f32) as u32,
-            )
-        };
+        let (px, py) = pinion_core::external::layout_point(VIEW_TAG, reading.at);
         // ★ Outside the canvas the wheel is not this gesture's — the canon
         // checks the same rectangle before it does anything (`if the cursor is
         // outside the viewport, return`), and declining here leaves the wheel
@@ -9511,28 +9541,10 @@ impl External for LabOracle {
     /// prevent, and it took a *parameter on the trait method* to close rather
     /// than care here.
     fn wheel_intent(&self, at: (f32, f32)) -> Option<pinion_core::widgets::wheel::WheelIntent> {
-        #[allow(
-            clippy::cast_precision_loss,
-            clippy::cast_possible_truncation,
-            clippy::cast_sign_loss,
-            reason = "a window fraction times a window size is a pixel inside it"
-        )]
-        let (px, py) = {
-            let (w, h) = self.surface;
-            (
-                (at.0.clamp(0.0, 1.0) * w as f32) as u32,
-                (at.1.clamp(0.0, 1.0) * h as f32) as u32,
-            )
-        };
+        let (px, py) = pinion_core::external::layout_point(VIEW_TAG, at);
         contains(canvas_rect(), px, py).then_some(pinion_core::widgets::wheel::WheelIntent::Zoom)
     }
 
-    #[allow(
-        clippy::cast_precision_loss,
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "a window fraction times a window size is a pixel inside it"
-    )]
     fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
         let Some(state) = self.state.clone() else {
             return;
@@ -9553,33 +9565,27 @@ impl External for LabOracle {
         // inspector landed sixty pixels away and nothing under the cursor
         // answered.
         //
-        // `surface` is the size the shell told this widget it has
-        // ([`External::on_resize`]), so the basis and the fraction are now one
-        // fact rather than two — the class fix is
-        // [[debt-an-external-reads-a-fraction-without-its-basis]].
-        let (w, h) = self.surface;
-        let px = (x_rel.clamp(0.0, 1.0) * w as f32) as u32;
-        let py = (y_rel.clamp(0.0, 1.0) * h as f32) as u32;
+        // ★★★★★ R1714 — and the whole expression is the framework's now, not
+        // just the basis. `layout_point` clamps, multiplies AND adds the
+        // window's pan, which this screen has since it declared [`SHRINK`] as a
+        // pan: below the comfortable size the window is a viewport onto a
+        // bigger layout, so the pixel a fraction names in the window and the
+        // pixel it names in the frame these rectangles are stated in differ by
+        // however far the reader has panned. Measured with the offset ignored:
+        // `scene/pointer_target` fell from 46 addressable rectangles to 28 and
+        // eight became addressable at no point inside themselves.
+        let (px, py) = pinion_core::external::layout_point(VIEW_TAG, (x_rel, y_rel));
         move_cursor(&state, px, py);
-    }
-
-    /// R1656 §5.15 — the shell's resize notification, which is how this widget
-    /// knows what a pointer fraction is a fraction OF.
-    /// ★ R1656 — kept because this oracle turns a pointer FRACTION back into
-    /// pixels and needs the basis in hand.
-    ///
-    /// ★★ R1684.4 — it no longer records the size for the LAYOUT's sake: the
-    /// framework does that itself now
-    /// ([`pinion_core::external::surface_size`]), which is what [`window_size`]
-    /// reads. R1684.3 recorded it here, and that was a per-screen cache of a
-    /// fact every self-hit-testing screen needs.
-    fn on_resize(&mut self, width: u32, height: u32) {
-        self.surface = (width.max(1), height.max(1));
     }
 
     /// ★★★★★ R1700 §5.35 — what a press here addresses, for the framework to
     /// hold against what this screen painted here.
     fn target_at(&self, x: u32, y: u32) -> PointerTarget {
+        // ★ R1714 — the framework asks in the frame the PAINT is published in,
+        // and this screen answers in the frame its own rectangles are stated
+        // in. The two are the same window until the window pans over the
+        // layout, and then they differ by exactly the pan.
+        let (x, y) = pinion_core::external::into_layout(VIEW_TAG, (x, y));
         self.state
             .as_ref()
             .map_or(PointerTarget::Unanswered, |s| Hit::at(s, x, y).target(s))
@@ -10235,10 +10241,13 @@ impl WidgetView for NodeLabView {
     ///
     /// ★★★★★ R1712 — and the floor is no longer [`MIN_W`] x [`MIN_H`]. It is
     /// derived from [`SHRINK`], the same value [`window_size`] clamps against,
-    /// so this binding has nowhere to write a second minimum. What changed for
-    /// a reader: the window goes narrower than the layout does, with the app
-    /// bar's right end and the inspector clipped — which is what [`GIVES_UP`]
-    /// declares and what `scene/size_floor` checks.
+    /// so this binding has nowhere to write a second minimum.
+    ///
+    /// ★★★★★ R1714 — and what the window does below that floor is no longer to
+    /// clip. [`SHRINK`] declares a PAN, so the framework wraps this screen in a
+    /// viewport onto its own layout and the app bar's right end and the
+    /// inspector are one gesture away rather than gone. That is why there is no
+    /// list of what the band gives up any more: it gives nothing up.
     ///
     /// ★ R1713 re-measured the band with a predicate that can see a mark inside
     /// a sliced pane: **24 pixels**, not 119 and not 30. See [`FLOOR_W`] for the

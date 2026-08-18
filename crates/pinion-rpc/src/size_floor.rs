@@ -162,6 +162,7 @@ pub fn audit_at(
         comfortable: policy.comfortable().into(),
         floor: policy.floor().into(),
         band: policy.band().into(),
+        recourse: policy.recourse().wire_word(),
         gives_up: policy
             .gives_up()
             .iter()
@@ -270,8 +271,17 @@ pub struct ConcessionReport {
     /// How much smaller than its layout minimum the window may go, per axis.
     /// `0` on an axis that concedes nothing.
     pub band: SizeReport,
+    /// ★★★★★ (R1714) How the band is served: `clip` — the window cuts and what
+    /// it cuts is gone — or `pan` — the window becomes a viewport onto the
+    /// layout and everything stays one gesture away.
+    ///
+    /// The word a reader needs before any other field here means anything:
+    /// [`Self::gives_up`] is a list of losses under one and empty by
+    /// construction under the other.
+    pub recourse: &'static str,
     /// The regions the binding declares the band clips, by the name a reader
-    /// addresses them with. Empty exactly when there is no band.
+    /// addresses them with. Empty exactly when there is no band **that clips** —
+    /// a pan gives nothing up, so it names nothing.
     pub gives_up: Vec<String>,
     /// What the floor actually cuts — measured, in the same rows every other
     /// list here uses.
@@ -399,11 +409,26 @@ pub fn verdict(
     let floor = declared.floor();
     let width = axis_verdict(floor.map(|f| f.0), needed.0);
     let height = axis_verdict(floor.map(|f| f.1), needed.1);
+    let honoured = concession.filter(|c| c.verdict == "honoured" && !c.declaration_split);
+    // ★★★★★ R1714 — a window that PANS gets its own word, and it is read before
+    // the arithmetic rather than inside one of its branches.
+    //
+    // The measurement is why. A panning screen puts nothing beyond reach at any
+    // size, so `needed` bottoms out at one pixel and the arithmetic reads
+    // `roomier` — "the floor is above what the screen needs, so somebody decided
+    // it". True, and it is the wrong headline: `roomier` is also what a clipping
+    // screen reads when its floor is generous, and the two are not the same
+    // fact. `panned` says which decision it was, and the evidence for it —
+    // `needed`, and a `concession` whose `unreachable` list is empty — rides
+    // alongside.
+    if honoured.is_some_and(|c| c.recourse == "pan") {
+        return "panned";
+    }
     for rank in ["short", "undeclared", "roomier"] {
         if width == rank || height == rank {
-            if rank == "short"
-                && concession.is_some_and(|c| c.verdict == "honoured" && !c.declaration_split)
-            {
+            // ★ R1712 — `short` and `conceded` are the same arithmetic and
+            // different facts; the declaration is what parts them.
+            if rank == "short" && honoured.is_some() {
                 return "conceded";
             }
             return rank;
@@ -845,10 +870,19 @@ mod tests {
     /// A concession report shaped like the node lab's, parameterised on the
     /// three things the verdict rule reads.
     fn concession(verdict: &'static str, split: bool) -> ConcessionReport {
+        clipping_concession(verdict, split, "clip")
+    }
+
+    fn clipping_concession(
+        verdict: &'static str,
+        split: bool,
+        recourse: &'static str,
+    ) -> ConcessionReport {
         ConcessionReport {
             comfortable: (1200, 500).into(),
             floor: (1100, 400).into(),
             band: (100, 100).into(),
+            recourse,
             gives_up: vec!["lab.inspector".to_string()],
             cut_at_floor: rows(&["lab.inspector"]),
             covered: 1,
@@ -879,6 +913,72 @@ mod tests {
         let published = out.concession.expect("the concession rides along");
         assert_eq!(published.floor, SizeReport::from((1100, 400)));
         assert_eq!(published.comfortable, SizeReport::from((1200, 500)));
+    }
+
+    /// ★★★★★ R1714 — the same arithmetic again, and a **different word**, for
+    /// the band that moves instead of cutting.
+    ///
+    /// `conceded` says the reader gave something up. A panning window gives
+    /// nothing up, so telling a caller it did would be the one misreading this
+    /// whole round exists to prevent — and the two are indistinguishable from
+    /// the numbers alone, which is why the recourse rides on the report.
+    #[test]
+    fn r1714_a_declared_and_honoured_pan_reads_panned() {
+        let result = measure((1600, 900), needs((1200, 500)));
+        let out = report(
+            &result,
+            (1600, 900),
+            SizeBounds::floored((1100, 400)),
+            Some(clipping_concession("honoured", false, "pan")),
+            &|t| rows(t),
+        );
+        assert_eq!(out.verdict, "panned");
+        assert_eq!(
+            out.concession.expect("it rides along").recourse,
+            "pan",
+            "and a reader can tell which decision it was",
+        );
+    }
+
+    /// ★★ And it is read before the arithmetic, which is the case the real
+    /// screen produces: a pan puts nothing beyond reach at any size, so `needed`
+    /// bottoms out far below the floor and the arithmetic alone would say
+    /// `roomier` — the same word a generously-floored clipping screen gets.
+    #[test]
+    fn r1714_a_pan_reads_panned_even_where_the_arithmetic_says_roomier() {
+        let result = measure((1600, 900), needs((1, 1)));
+        let floored = SizeBounds::floored((748, 360));
+        assert_eq!(
+            report(&result, (1600, 900), floored, None, &|t| rows(t)).verdict,
+            "roomier",
+            "with nothing declared, a floor above what is needed is just roomy",
+        );
+        assert_eq!(
+            report(
+                &result,
+                (1600, 900),
+                floored,
+                Some(clipping_concession("honoured", false, "pan")),
+                &|t| rows(t)
+            )
+            .verdict,
+            "panned",
+        );
+    }
+
+    /// ★★★ A pan the screen does NOT honour keeps the arithmetic's word: the
+    /// new verdict is a claim about a working pan, so it has to be able to fail.
+    #[test]
+    fn r1714_a_pan_that_leaves_something_unreachable_is_not_panned() {
+        let result = measure((1600, 900), needs((1, 1)));
+        let out = report(
+            &result,
+            (1600, 900),
+            SizeBounds::floored((748, 360)),
+            Some(clipping_concession("unreachable", false, "pan")),
+            &|t| rows(t),
+        );
+        assert_eq!(out.verdict, "roomier");
     }
 
     /// A declaration that does not match the screen buys nothing: the window is

@@ -152,11 +152,16 @@ def run(tf: RpcSubprocess) -> None:
             f"`fits` is derived from the range beside it: {v['name']}",
         )
         if o["reach"] == "scrollable":
-            assert o["to_x"] is not None and o["to_y"] is not None, o
+            # ★ R1714 — a recipe, not an offset: every viewport that has to move,
+            # outermost first. A mark off screen with nothing to move would be a
+            # mark on screen, so the list is never empty.
+            assert o["moves"], f"a reachable mark names what to move: {o}"
             assert o["short_by"] is None, "a reachable mark is short by nothing"
-            assert 0 <= o["to_y"] <= v["max_y"], f"the offset is in range: {o}"
+            own = [m for m in o["moves"] if m["viewport"] == v["name"]]
+            for m in own:
+                assert 0 <= m["to_y"] <= v["max_y"], f"the offset is in range: {o}"
         else:
-            assert o["short_by"] is not None and o["to_y"] is None, o
+            assert o["short_by"] is not None and not o["moves"], o
 
     # The two side panes the specification declares as scrolling bodies. That
     # they ARE scroll containers is asserted in step 6, where the window is
@@ -215,7 +220,15 @@ def run(tf: RpcSubprocess) -> None:
         if o["viewport"]["name"] == "lab.palette.body" and o["tag"]
         and o["tag"].startswith("lab.palette.role.")
     )
-    tag, to_y = target["tag"], target["to_y"]
+    # ★ R1714 — the recipe's step for the pane this target is judged against.
+    # At this size the window shows the whole layout, so that step is the whole
+    # recipe; asserting it is one is what would notice if it stopped being.
+    assert_eq(
+        [m["viewport"] for m in target["moves"]],
+        ["lab.palette.body"],
+        "the recipe is this pane alone, because nothing above it has to move",
+    )
+    tag, to_y = target["tag"], target["moves"][0]["to_y"]
     assert to_y > 0, f"the target is below the fold: {target}"
     tf.scroll("lab.palette.body", to=(0, to_y))
     tf.tick(0.05)
@@ -250,11 +263,12 @@ def run(tf: RpcSubprocess) -> None:
     )
     assert again is not None, f"{tag} is off screen again"
     v = again["viewport"]
-    assert_eq(again["to_y"], to_y, "the same offset, from the same place")
-    assert again["to_y"] <= again["rect"]["y"], (
+    again_y = next(m["to_y"] for m in again["moves"] if m["viewport"] == v["name"])
+    assert_eq(again_y, to_y, "the same offset, from the same place")
+    assert again_y <= again["rect"]["y"], (
         f"the offset never scrolls past the mark's own top: {again}"
     )
-    assert again["to_y"] >= again["rect"]["y"] + again["rect"]["h"] - v["h"], (
+    assert again_y >= again["rect"]["y"] + again["rect"]["h"] - v["h"], (
         f"and it moves far enough to end the mark inside the viewport: {again}"
     )
 

@@ -245,6 +245,19 @@ impl Viewport {
     }
 }
 
+/// (R1714) One viewport on a clip chain, and the offset that has to be put on
+/// it for a mark below to come into view.
+///
+/// Named by the same string [`Viewport::name`] carries, so a caller reading a
+/// row can drive `scene/scroll` with it directly.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Move {
+    /// The viewport to move, by the name it is reported under.
+    pub viewport: String,
+    /// The offset to move it to, clamped into that viewport's `0..=max`.
+    pub to: (i32, i32),
+}
+
 /// What it would take to see a mark that is not on screen.
 ///
 /// "It is on screen" is unrepresentable here because [`out_of_sight`] does not
@@ -267,7 +280,7 @@ impl Viewport {
 /// seen (five row `×` glyphs and one `+`) and **13** were wide rows a reader
 /// reaches all but the right edge of. One number, two facts, and the severe
 /// verdict was reading the wrong one.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Reach {
     /// The viewport's range covers it. This offset brings it in, moving as
     /// little as possible — the semantics measured off the reference's
@@ -278,16 +291,29 @@ pub enum Reach {
     /// leading edge; nothing can show all of it at once, and starting at the
     /// beginning is what every scroller does.
     ///
-    /// ⚠ R1713 — the offset belongs to the viewport named in the row. On a clip
-    /// chain deeper than one level an ancestor may have to move as well, and this
-    /// answer does not say which or how far ⇒
-    /// `debt-a-scroll-offset-is-named-for-one-viewport-of-a-chain`, whose
-    /// measurement is that every clip chain on the three analysis-tool screens is
-    /// one level deep. `r1713_a_deeper_chain_names_only_its_own_offset` pins the
-    /// behaviour so the gap stays a known one.
+    /// ★★★★★ R1714 — **every viewport that has to move, and where to**, rather
+    /// than the innermost one's offset.
+    ///
+    /// R1713 published a single offset and wrote the gap down: on a chain
+    /// deeper than one level an ancestor may have to move as well, and the
+    /// answer did not say so. It also measured why nobody had met it — every
+    /// clip chain on the three analysis-tool screens was one level deep.
+    ///
+    /// A window that pans over its own layout makes every chain on those screens
+    /// **two** deep, and the single offset stops being incomplete and starts
+    /// being wrong: measured before the repair, the five `×` glyphs the node lab
+    /// puts out of the window at 1600 came back `scrollable to (0, 0)` — an
+    /// offset their pane is **already at**, which moves nothing. The thing that
+    /// reaches them is the window's pan, and the row never mentioned it.
+    ///
+    /// Ordered outermost first, which is the order a reader performs them, and
+    /// carrying only the viewports whose offset must actually **change** — so a
+    /// non-empty list is the invariant: a mark off screen that nothing has to
+    /// move to reach would be a mark on screen.
     Scrollable {
-        /// The offset to scroll to, clamped into `0..=max`.
-        to: (i32, i32),
+        /// The viewports to move and the offsets to move them to, each clamped
+        /// into that viewport's own `0..=max`.
+        moves: Vec<Move>,
     },
     /// (R1713) Some offset shows part of it and no offset shows all of it: this
     /// much lies outside everything the viewport's range can ever show.
@@ -323,7 +349,7 @@ pub enum Reach {
 impl Reach {
     /// The word that rides on the wire.
     #[must_use]
-    pub const fn wire_word(self) -> &'static str {
+    pub const fn wire_word(&self) -> &'static str {
         match self {
             Self::Scrollable { .. } => "scrollable",
             Self::Clipped { .. } => "clipped",
@@ -334,8 +360,21 @@ impl Reach {
     /// True for the arm a gate fails on: nothing brings any of this mark into
     /// view.
     #[must_use]
-    pub const fn is_lost(self) -> bool {
+    pub const fn is_lost(&self) -> bool {
         matches!(self, Self::Lost { .. })
+    }
+
+    /// (R1714) The viewports to move and where to, for the arm that has them.
+    ///
+    /// Empty for the two arms nothing brings whole into view — the same shape
+    /// [`Self::short_by`] has the other way round, so a caller reading either
+    /// number cannot read it off a row that does not have one.
+    #[must_use]
+    pub fn moves(&self) -> &[Move] {
+        match self {
+            Self::Scrollable { moves } => moves,
+            Self::Clipped { .. } | Self::Lost { .. } => &[],
+        }
     }
 
     /// (R1713) How far past the reachable box the mark reaches, where it does.
@@ -344,10 +383,10 @@ impl Reach {
     /// definition — so a caller reading the number cannot read it off a mark
     /// that fits.
     #[must_use]
-    pub const fn short_by(self) -> Option<Overhang> {
+    pub const fn short_by(&self) -> Option<Overhang> {
         match self {
             Self::Scrollable { .. } => None,
-            Self::Clipped { short_by } | Self::Lost { short_by } => Some(short_by),
+            Self::Clipped { short_by } | Self::Lost { short_by } => Some(*short_by),
         }
     }
 }
@@ -394,7 +433,7 @@ pub fn out_of_sight(scene: &Scene, window: (u32, u32), ink_of: InkOf<'_>) -> Vec
         if mark.on_screen {
             return; // some of it is on screen: the reader has it
         }
-        let reachable = mark.viewport.reachable();
+        let reachable = mark.chain.inner.viewport.reachable();
         let short_by = Overhang::of(mark.rect, reachable);
         // ★★★★★ R1713 — three answers, and the third is the one a safety rule
         // needs: whether ANY pixel of this mark is inside what the viewport's
@@ -403,7 +442,7 @@ pub fn out_of_sight(scene: &Scene, window: (u32, u32), ink_of: InkOf<'_>) -> Vec
         // ever bring back.
         let reach = if short_by.is_contained() {
             Reach::Scrollable {
-                to: least_move(mark.rect, &mark.viewport),
+                moves: chain_moves(mark.rect, &mark.chain),
             }
         } else if mark.rect.intersect(reachable).is_some() {
             Reach::Clipped { short_by }
@@ -415,11 +454,42 @@ pub fn out_of_sight(scene: &Scene, window: (u32, u32), ink_of: InkOf<'_>) -> Vec
             path: mark.path,
             content: mark.content,
             rect: mark.rect,
-            viewport: mark.viewport,
+            viewport: mark.chain.inner.viewport,
             reach,
         });
     });
     found
+}
+
+/// ★★★★★ R1714 — every viewport that has to move for `rect` to come into view,
+/// outermost first.
+///
+/// Worked from the inside out, because that is the order the arithmetic is
+/// available in: a mark's rectangle is stated in its own viewport's frame, and
+/// each level knows how to express a rectangle from the frame below it in the
+/// frame above. So each step asks the same question of one viewport —
+/// [`least_move`], the answer R1713 published on its own — and then carries the
+/// mark up one frame *as the offset just chosen leaves it*, which is what makes
+/// the outer answer account for the inner one rather than contradict it.
+///
+/// A level already at the offset it needs contributes nothing: the list is what
+/// must **change**, so a reader can perform it and an empty one would mean the
+/// mark is already on screen.
+fn chain_moves(rect: Rect, chain: &Chain) -> Vec<Move> {
+    let mut moves = Vec::new();
+    let mut rect = rect;
+    for level in std::iter::once(&chain.inner).chain(chain.outer.iter().rev()) {
+        let to = least_move(rect, &level.viewport);
+        if to != level.viewport.at {
+            moves.push(Move {
+                viewport: level.viewport.name.clone(),
+                to,
+            });
+        }
+        rect = level.lift(rect, to);
+    }
+    moves.reverse();
+    moves
 }
 
 /// Every mark with the viewport it is judged against, handed to `visit` in
@@ -453,11 +523,11 @@ fn walk_marks(
         if visit.ancestors.is_empty() {
             return; // the root is the surface; it is not shown inside anything
         }
-        // ★★★★★ R1713 — the innermost enclosing clip, judged against everything
+        // ★★★★★ R1713 — the enclosing clips, each judged against everything
         // above it. `None` means some level of the chain is sealed, and then the
         // marks below it are NOT this report's business: that level is itself a
         // mark one frame up and carries the one report the break deserves.
-        let Some(viewport) = innermost_viewport(visit.ancestors, &window_viewport) else {
+        let Some(chain) = clip_chain(visit.ancestors, &window_viewport) else {
             return;
         };
 
@@ -488,32 +558,98 @@ fn walk_marks(
                 .and_then(|on| on.intersect(window_rect))
                 .is_some(),
             rect,
-            viewport,
+            chain,
         });
     });
 }
 
-/// The viewport a mark is judged against: the innermost clip in `ancestors`,
-/// with the aperture everything above it leaves — or `None` when some level of
-/// the chain leaves nothing at all.
+/// (R1714) One level of a mark's clip chain: the viewport, and how to carry a
+/// rectangle from the frame below it into the frame above.
+struct Level {
+    viewport: Viewport,
+    /// Where this level's own node sits in the frame ABOVE it, for a level that
+    /// introduces a frame; `(0, 0)` for one that does not.
+    ///
+    /// The two clipping kinds differ exactly here, the same split
+    /// [`viewport_of`] makes: a [`Scene::Scroll`] stores its content in its own
+    /// frame, so carrying a rectangle up means adding the scroll node's
+    /// position; a box that clips by declaration introduces no frame at all and
+    /// its children are already in the frame above.
+    frame: (u32, u32),
+}
+
+impl Level {
+    /// The rectangle `rect` — stated in the frame below this level — as it
+    /// appears in the frame above, once this level has been moved to `to`.
+    ///
+    /// Non-negative by construction: `to` is [`least_move`]'s answer, which puts
+    /// the rectangle inside this level's aperture, and an aperture starts at or
+    /// after its own origin.
+    fn lift(&self, rect: Rect, to: (i32, i32)) -> Rect {
+        // Saturating rather than cast-and-clamp: `to` is `least_move`'s answer,
+        // clamped into `0..=max` there, so the subtraction cannot go negative
+        // for a rectangle that level actually brought into view — and where a
+        // caller hands something else, floor rather than wrap.
+        let axis = |v: u32, frame: u32, to: i32| -> u32 {
+            v.saturating_add(frame)
+                .saturating_sub(to.max(0).unsigned_abs())
+        };
+        Rect::new(
+            axis(rect.x, self.frame.0, to.0),
+            axis(rect.y, self.frame.1, to.1),
+            rect.w,
+            rect.h,
+        )
+    }
+}
+
+/// A mark's clip chain, innermost split out so it cannot be empty.
 ///
-/// Outermost-first, each level intersected with the level above's
-/// [`Viewport::reachable`] rather than with what it is showing now, so a pane
-/// scrolled out of an outer pane still offers its children every row the outer
-/// range covers. `ancestors` excludes the node itself, which is what makes a
-/// scroll node get judged against the viewport ABOVE it rather than its own.
-fn innermost_viewport(ancestors: &[&Scene], window: &Viewport) -> Option<Viewport> {
+/// The window is always a level, so every mark has an innermost viewport even
+/// when nothing in the scene clips it — which is why this is a struct with a
+/// required field rather than a list a reader has to check the length of.
+struct Chain {
+    /// The levels above the innermost, outermost first.
+    outer: Vec<Level>,
+    /// The clip a mark is judged against.
+    inner: Level,
+}
+
+/// The clips a mark is judged against, outermost first, each with the aperture
+/// everything above it leaves — or `None` when some level of the chain leaves
+/// nothing at all.
+///
+/// Each level is intersected with the level above's [`Viewport::reachable`]
+/// rather than with what it is showing now, so a pane scrolled out of an outer
+/// pane still offers its children every row the outer range covers. `ancestors`
+/// excludes the node itself, which is what makes a scroll node get judged
+/// against the viewport ABOVE it rather than its own.
+fn clip_chain(ancestors: &[&Scene], window: &Viewport) -> Option<Chain> {
+    let mut levels = vec![Level {
+        viewport: window.clone(),
+        frame: (0, 0),
+    }];
     let mut from_above = window.reachable();
-    let mut innermost = None;
     for ancestor in ancestors {
         if !ancestor.clips_subtree() {
             continue;
         }
         let viewport = viewport_of(ancestor, from_above)?;
         from_above = viewport.reachable();
-        innermost = Some(viewport);
+        let own = ancestor.clip_window().unwrap_or_default();
+        levels.push(Level {
+            viewport,
+            frame: match ancestor {
+                Scene::Scroll(_) => (own.x, own.y),
+                _ => (0, 0),
+            },
+        });
     }
-    Some(innermost.unwrap_or_else(|| window.clone()))
+    let inner = levels.pop()?;
+    Some(Chain {
+        outer: levels,
+        inner,
+    })
 }
 
 /// One mark that cannot be seen WHOLE at this size, however the reader scrolls.
@@ -523,8 +659,18 @@ fn innermost_viewport(ancestors: &[&Scene], window: &Viewport) -> Option<Viewpor
 ///
 /// * [`out_of_sight`] asks *what is the reader not looking at right now* — a
 ///   question about the current offsets, whose answer changes when they scroll.
-/// * [`cut`] asks *what can this size never show in full* — a question about
-///   the size alone, which is what a window's floor is made of.
+/// * [`cut`] asks *what does this size put beyond what scrolling reaches* — a
+///   question about the size alone, which is what a window's floor is made of.
+///
+/// ★★★★★ R1714 — that second line used to read *what can this size never show
+/// in full*, and it was a stronger claim than the code makes: a mark bigger than
+/// its own scroller's aperture is shown whole by no single offset and is not
+/// reported here. The stronger reading was tried and the screens refused it —
+/// a scrolling canvas's content node is 5376 pixels square by design, so
+/// "cannot be seen whole" made the node lab's floor unmeasurable and its
+/// canvas a permanent defect. A scroller's whole purpose is content larger than
+/// its window; what a floor is made of is content larger than what the scroller
+/// can ever bring back.
 ///
 /// ★★★★★ R1711 measured why the second cannot be spelled with the first. At
 /// 1506 pixels wide the analysis tool's node lab reports **nothing** out of
@@ -567,7 +713,7 @@ pub struct Cut {
 pub fn cut(scene: &Scene, window: (u32, u32), ink_of: InkOf<'_>) -> Vec<Cut> {
     let mut found = Vec::new();
     walk_marks(scene, window, ink_of, &mut |mark| {
-        let short_by = Overhang::of(mark.rect, mark.viewport.reachable());
+        let short_by = Overhang::of(mark.rect, mark.chain.inner.viewport.reachable());
         if short_by.is_contained() {
             return;
         }
@@ -576,7 +722,7 @@ pub fn cut(scene: &Scene, window: (u32, u32), ink_of: InkOf<'_>) -> Vec<Cut> {
             path: mark.path,
             content: mark.content,
             rect: mark.rect,
-            viewport: mark.viewport,
+            viewport: mark.chain.inner.viewport,
             short_by,
         });
     });
@@ -595,7 +741,10 @@ struct Mark {
     /// walk's own clip fold answers it — the question [`out_of_sight`] opens
     /// with, and the one [`cut`] deliberately does not ask.
     on_screen: bool,
-    viewport: Viewport,
+    /// (R1714) Every clip this mark sits inside, not only the nearest — the
+    /// nearest is what it is *judged* against, and the rest is what has to move
+    /// for it to be seen.
+    chain: Chain,
 }
 
 /// Read a clipping node as a viewport, given what the chain above it can ever
@@ -786,6 +935,16 @@ mod tests {
         found.iter().find(|o| o.tag.as_deref() == Some(tag))
     }
 
+    /// (R1714) The chain a row publishes, as pairs, so an assertion reads as the
+    /// sentence "move this one there, then that one there".
+    fn moves_of(reach: &Reach) -> Vec<(&str, (i32, i32))> {
+        reach
+            .moves()
+            .iter()
+            .map(|m| (m.viewport.as_str(), m.to))
+            .collect()
+    }
+
     fn cut_tags(found: &[Cut]) -> Vec<String> {
         let mut v: Vec<String> = found.iter().filter_map(|c| c.tag.clone()).collect();
         v.sort();
@@ -915,7 +1074,7 @@ mod tests {
         );
 
         let b_scrolled = by_tag(&scrolled, "row.b").expect("row.b is off screen");
-        assert_eq!(b_scrolled.reach, Reach::Scrollable { to: (0, 152) });
+        assert_eq!(moves_of(&b_scrolled.reach), vec![("pane", (0, 152))]);
 
         // ★ The invariant that keeps `least_move` sound, asserted rather than
         // reasoned about: a non-scroll window is the only kind with a non-zero
@@ -1018,7 +1177,7 @@ mod tests {
         let b = by_tag(&found, "row.b").expect("row.b is off screen: {found:?}");
         // Content 300, viewport 100 -> max 200. The row's bottom is 252, so the
         // least move that shows all of it is 252 - 100.
-        assert_eq!(b.reach, Reach::Scrollable { to: (0, 152) }, "{b:?}");
+        assert_eq!(moves_of(&b.reach), vec![("pane", (0, 152))], "{b:?}");
         assert_eq!(b.viewport.name, "pane");
         assert_eq!(b.viewport.max, (0, 200));
     }
@@ -1097,7 +1256,7 @@ mod tests {
         );
         let found = out_of_sight(&scrolled, (100, 100), &mut stub_ink);
         let b = by_tag(&found, "row.b").expect("row.b is still off screen");
-        assert_eq!(b.reach, Reach::Scrollable { to: (0, 152) }, "{b:?}");
+        assert_eq!(moves_of(&b.reach), vec![("pane", (0, 152))], "{b:?}");
     }
 
     /// ★ The offset semantics, pinned against the reference's `ensureVisible`:
@@ -1121,7 +1280,7 @@ mod tests {
         // move that ends it inside a 198-tall window is 912 - 198.
         let found = out_of_sight(&scene, (400, 400), &mut stub_ink);
         let m = by_tag(&found, "mark").expect("off screen");
-        assert_eq!(m.reach, Reach::Scrollable { to: (0, 714) }, "{m:?}");
+        assert_eq!(moves_of(&m.reach), vec![("area", (0, 714))], "{m:?}");
     }
 
     /// ★ A mark taller than the viewport shows its leading edge. Bringing its
@@ -1147,7 +1306,7 @@ mod tests {
         );
         let found = out_of_sight(&scene, (400, 400), &mut stub_ink);
         let t = by_tag(&found, "tall").expect("off screen");
-        assert_eq!(t.reach, Reach::Scrollable { to: (0, 100) }, "{t:?}");
+        assert_eq!(moves_of(&t.reach), vec![("area", (0, 100))], "{t:?}");
     }
 
     /// ★ Why [`Viewport::reachable`] is `max + size` and not `content`: with
@@ -1363,20 +1522,21 @@ mod tests {
         Scene::Container(outer)
     }
 
-    /// ⚠ R1713 — what the fold does NOT do, pinned rather than described.
+    /// ★★★★★ R1714 — a deeper chain names **every** viewport that has to move.
     ///
-    /// The offset in [`Reach::Scrollable`] belongs to the row's own viewport. Here
-    /// an inner pane sits past the right edge of an outer scrolling pane, so
-    /// seeing the inner row needs the OUTER pane moved as well — and the answer
-    /// names only the inner offset. It is not a false reachable (some pair of
-    /// offsets does show the row) but it is an incomplete recipe ⇒
-    /// `debt-a-scroll-offset-is-named-for-one-viewport-of-a-chain`.
+    /// R1713 pinned the opposite here and wrote down why it was a pin rather
+    /// than a repair: the answer named only the row's own viewport, and every
+    /// clip chain on all three analysis-tool screens was one level deep, so no
+    /// reader could meet it. A window that pans over its own layout makes each
+    /// of those chains two deep, which is what turned an incomplete recipe into
+    /// a wrong one — measured on the node lab, five glyphs the window had
+    /// removed came back `scrollable` to the offset their pane was already at.
     ///
-    /// Measured, and the reason this is a pin rather than a repair: every clip
-    /// chain on all three analysis-tool screens is **one** level deep, so no
-    /// reader can meet this today.
+    /// The fixture is the shape that made the gap visible: an inner pane past
+    /// the right edge of an outer scrolling pane, where seeing the inner row
+    /// needs both moved and neither move alone shows anything.
     #[test]
-    fn r1713_a_deeper_chain_names_only_its_own_offset() {
+    fn r1714_a_deeper_chain_names_every_viewport_that_must_move() {
         let inner = Scene::Scroll(
             ScrollNode::new(
                 // Starts past the outer pane's 100-wide window, inside its
@@ -1399,11 +1559,25 @@ mod tests {
         );
         let found = out_of_sight(&outer, (400, 400), &mut stub_ink);
         let row = by_tag(&found, "inner.row").expect("the row is off screen");
+        // ★ Outermost first, which is the order a reader performs them.
+        //
+        // The inner pane moves to 152: the row's ink sits at y 240..252 in a
+        // 100-tall window. That puts it at y 88 inside the inner pane, and the
+        // inner pane starts at x 150 in the outer's 300-wide content, so in the
+        // OUTER's frame the row is at x 150..158 — which a 100-wide window shows
+        // whole at any offset from 58 to 150.
+        //
+        // ★★★ 58, and R1713 wrote **150** in this test's prose. Nobody had
+        // computed it: `least_move` moves as little as possible (its own doc,
+        // and the reference's `ensureVisible` semantics it was measured
+        // against), so it brings the row's far edge to the near edge rather than
+        // left-aligning the pane. A number that is only ever written in a
+        // sentence is a number nothing checks — which is exactly what an
+        // unimplemented chain answer let this be.
         assert_eq!(
-            row.reach,
-            Reach::Scrollable { to: (0, 152) },
-            "the inner offset — and the outer pane also has to move to 150, \
-             which this answer does not say: {row:?}"
+            moves_of(&row.reach),
+            vec![("outer", (58, 0)), ("inner", (0, 152))],
+            "{row:?}"
         );
         assert_eq!(row.viewport.name, "inner");
         // The chain is folded, though: the inner pane is offered only the part of
@@ -1411,6 +1585,63 @@ mod tests {
         // inside the outer's reachable 0..300) — so nothing is falsely lost.
         assert_eq!(row.viewport.size, (100, 100));
         assert_eq!(row.viewport.declared, Rect::new(0, 0, 100, 100));
+    }
+
+    /// ★★★★★ R1714 — the outer offset accounts for what the INNER one just did,
+    /// on the same axis.
+    ///
+    /// A counterfactual is what asked for this test. Making `chain_moves` lift
+    /// the mark with a zero offset instead of the one it had just chosen — the
+    /// single subtlest line in the chain arithmetic — left the whole suite
+    /// green, because the fixture above moves the inner pane on **y** and the
+    /// outer pane on **x**. Two answers, disjoint axes, and no way to tell them
+    /// apart.
+    ///
+    /// Here both ranges are horizontal and both must move, so the outer answer
+    /// is only right if it was solved against where the inner offset leaves the
+    /// mark. The row sits at x 260..276 in a 300-wide inner content whose window
+    /// is 100 wide, so the inner moves to 176; that leaves the row at x 84
+    /// inside the inner pane, which starts at x 400 in the outer's content, so
+    /// the outer sees it at 484..500 and a 200-wide window brings it whole into
+    /// view at 300. Lifting with a zero offset would put the row at 660 and
+    /// answer 476.
+    #[test]
+    fn r1714_the_outer_offset_accounts_for_the_inner_one_on_the_same_axis() {
+        let inner = Scene::Scroll(
+            ScrollNode::new(
+                Rect::new(400, 0, 100, 60),
+                boxed(
+                    Rect::new(0, 0, 300, 60),
+                    "inner.content",
+                    vec![text("bb", Rect::new(260, 10, 60, 12), "inner.row")],
+                ),
+            )
+            .with_tag("inner"),
+        );
+        let outer = Scene::Scroll(
+            ScrollNode::new(
+                Rect::new(0, 0, 200, 60),
+                boxed(Rect::new(0, 0, 700, 60), "outer.content", vec![inner]),
+            )
+            .with_tag("outer"),
+        );
+        let found = out_of_sight(&outer, (400, 400), &mut stub_ink);
+        let row = by_tag(&found, "inner.row").expect("the row is off screen");
+        assert_eq!(
+            moves_of(&row.reach),
+            vec![("outer", (300, 0)), ("inner", (176, 0))],
+            "{row:?}"
+        );
+        // ★★ And the recipe really works: performed, the row lands inside the
+        // window. Checked here in arithmetic the test does itself, so the claim
+        // does not rest on the same fold that produced it.
+        let (outer_to, inner_to) = (300_i64, 176_i64);
+        let in_inner = 260 - inner_to; // where the row sits inside the inner pane
+        let in_outer = 400 + in_inner - outer_to; // and in the outer's window
+        assert!(
+            (0..200).contains(&in_outer) && (0..100).contains(&in_inner),
+            "the two offsets put the row at {in_outer} in a 200-wide window",
+        );
     }
 
     /// ★★★ R1713 — the offset is solved in the APERTURE's coordinates, not the
@@ -1466,7 +1697,7 @@ mod tests {
         // offset solved against the DECLARED box answers — it is drawn at
         // 50..66, also visible, so the wrong answer is a WORSE answer rather
         // than an absurd one: it scrolls more than twice as far as it needs to.
-        assert_eq!(row.reach, Reach::Scrollable { to: (66, 0) }, "{row:?}");
+        assert_eq!(moves_of(&row.reach), vec![("pane", (66, 0))], "{row:?}");
     }
 
     /// ★★★ R1713 — a scrolling viewport is offered what the level above can
@@ -1527,7 +1758,7 @@ mod tests {
         let found = out_of_sight(&pane(200), (400, 400), &mut stub_ink);
         assert!(by_tag(&found, "row.b").is_none(), "240..252 is in 200..300");
         let a = by_tag(&found, "row.a").expect("row.a is above the viewport now");
-        assert_eq!(a.reach, Reach::Scrollable { to: (0, 0) }, "{a:?}");
+        assert_eq!(moves_of(&a.reach), vec![("pane", (0, 0))], "{a:?}");
         // The lost row stays lost whatever the offset is.
         assert!(by_tag(&found, "row.c").is_some_and(|c| c.reach.is_lost()));
     }

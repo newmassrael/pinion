@@ -158,27 +158,66 @@ def the_floor_is_measured_and_the_declaration_agrees(
     concession = report.get("concession")
     ok(f"A/{name}: the binding declares a shrink policy", concession is not None)
     comfortable = concession["comfortable"]
-    assert_eq(
-        (needed["width"], needed["height"]),
-        (comfortable["width"], comfortable["height"]),
-        f"A/{name}: what the screen needs WHOLE is what its policy calls comfortable",
-    )
+    if concession["recourse"] == "pan":
+        # ★★★★★ R1714 — and a screen that PANS has no such size, which the
+        # measurement says by bottoming out. `needed` is "the smallest size at
+        # which nothing is beyond reach"; a window that is a viewport onto its
+        # own layout puts nothing beyond reach at any size, so the search runs
+        # to the bottom of its range. That is not a broken measurement — it is
+        # the pan's whole claim, arrived at by bisection rather than by
+        # declaration, and the verdict beside it says which decision it was.
+        ok(
+            f"A/{name}: this screen pans, so the size at which it loses nothing "
+            f"is the bottom of the search ({needed['width']}x{needed['height']}), "
+            f"far below the layout it draws at ({comfortable['width']})",
+            needed["width"] * 4 < comfortable["width"],
+        )
+        assert_eq(
+            report["verdict"],
+            "panned",
+            f"A/{name}: and the verdict names that decision rather than calling a "
+            f"floor above what is `needed` merely roomy",
+        )
+    else:
+        assert_eq(
+            (needed["width"], needed["height"]),
+            (comfortable["width"], comfortable["height"]),
+            f"A/{name}: what the screen needs WHOLE is what its policy calls "
+            f"comfortable",
+        )
     assert_eq(
         (declared["width"], declared["height"]),
         (concession["floor"]["width"], concession["floor"]["height"]),
         f"A/{name}: and the floor the window system was told is the policy's",
     )
-    assert_eq(
-        report["verdict"],
-        "conceded" if concession["band"] != {"width": 0, "height": 0} else "exact",
-        f"A/{name}: the verdict says which of the two cases this screen is in",
-    )
-    ok(
-        f"A/{name}: the floor is not degenerate "
-        f"({needed['width']}x{needed['height']} of a "
-        f"{report['ceiling']['width']}x{report['ceiling']['height']} ceiling)",
-        needed["width"] > 100 and needed["height"] > 100,
-    )
+    # ★ R1714 — three cases now, and the recourse is the third axis of the
+    # answer: a band that CUTS reads `conceded`, one that MOVES reads `panned`,
+    # and no band at all reads `exact`. The pan case is asserted above, beside
+    # the measurement it is the explanation for.
+    if concession["band"] == {"width": 0, "height": 0}:
+        assert_eq(
+            report["verdict"],
+            "exact",
+            f"A/{name}: a screen with no band needs exactly what it declares",
+        )
+    elif concession["recourse"] == "clip":
+        assert_eq(
+            report["verdict"],
+            "conceded",
+            f"A/{name}: a band that cuts is a concession",
+        )
+    # ★ R1714 — "not degenerate" is a claim about a screen the window CUTS: the
+    # answer must be a size the layout needs and not the bottom of the search.
+    # For a screen that pans, the bottom of the search IS the answer, and the
+    # clause above already asserts it lands there rather than somewhere in
+    # between. Asking both of one screen would be asking it to be two.
+    if concession["recourse"] == "clip":
+        ok(
+            f"A/{name}: the floor is not degenerate "
+            f"({needed['width']}x{needed['height']} of a "
+            f"{report['ceiling']['width']}x{report['ceiling']['height']} ceiling)",
+            needed["width"] > 100 and needed["height"] > 100,
+        )
     ok(
         f"A/{name}: the search says what it cost ({report['probes']} probes)",
         10 < report["probes"] < 60,
@@ -213,6 +252,22 @@ def the_floor_is_measured_and_the_declaration_agrees(
 
 def the_number_carries_its_evidence(app: RpcSubprocess, name: str, report: dict) -> None:
     before = design_size(app)
+    # ★★★ R1714 — this whole section is about a BOUNDARY, and a screen that pans
+    # over its own layout has none: nothing is out of reach at any size, so the
+    # search bottoms out and `short_extent` is a window of no extent rather than
+    # a size that loses something. Section A asserts that landing — the claim is
+    # made, just not here — and `r1714_a_window_pans_over_its_own_layout` drives
+    # the band this screen has instead. Printed rather than skipped silently,
+    # because a section that quietly checks nothing is the shape this file's own
+    # R1711.1 note is about.
+    if report["concession"]["recourse"] == "pan":
+        print(
+            f"[demo] B/{name}: skipped — this screen pans, so it has no boundary "
+            f"to drive (needed {report['needed']['width']}x"
+            f"{report['needed']['height']}, floor "
+            f"{report['concession']['floor']['width']})"
+        )
+        return
     for axis in ("width", "height"):
         measured = report[axis]
         forced = measured["forced_by"]
@@ -309,9 +364,21 @@ def the_window_can_actually_be_that_small(
     app: RpcSubprocess, name: str, report: dict
 ) -> tuple[int, int]:
     needed = report["needed"]
-    size = (needed["width"], needed["height"])
+    # ★★★ R1714 — the size to drive is the one the WINDOW is allowed to take,
+    # and for a panning screen that is its declared floor rather than the size
+    # the measurement bottomed out at. The two were the same number for every
+    # screen here until a window could go below what its layout needs: driving
+    # `needed` for the node lab now asks for a 1x1 window, which `SizeBounds`
+    # correctly refuses — the refusal being right is exactly why the demand has
+    # to move.
+    concession = report["concession"]
+    size = (
+        (concession["floor"]["width"], concession["floor"]["height"])
+        if concession["recourse"] == "pan"
+        else (needed["width"], needed["height"])
+    )
     resize_and_settle(app, size)
-    assert_eq(design_size(app), size, f"D/{name}: the window took its measured floor")
+    assert_eq(design_size(app), size, f"D/{name}: the window took its declared floor")
     made = assert_declared_panes_on_screen(app, size, label=f"D/{name}")
     if made:
         CHECKS.extend(made)
@@ -384,19 +451,34 @@ def the_five_are_one_scroll_away_and_the_scroll_works(
             "scrollable",
             f"F/{name}: {tag} is one scroll away, not lost — R1710 read it as lost",
         )
-        pane = row["viewport"]["name"]
-        app.scroll(pane, to=(row["to_x"], row["to_y"]))
+        # ★ R1714 — perform the WHOLE recipe. A window that pans over its own
+        # layout puts a second viewport above these panes, and half a recipe
+        # leaves the mark exactly where it was while reporting that the offset
+        # did not deliver.
+        recipe = row["moves"]
+        assert recipe, f"F/{name}: {tag} is scrollable and names nothing to move"
+        for move in recipe:
+            app.scroll(move["viewport"], to=(move["to_x"], move["to_y"]))
         app.tick(0.016)
         reachable = abs_rects_of(app.snapshot(source="paint", viewport=size))
         ok(
-            f"F/{name}: scrolling {pane} to {(row['to_x'], row['to_y'])} makes {tag} "
-            f"reachable in the paint",
+            f"F/{name}: performing {[(m['viewport'], m['to_x'], m['to_y']) for m in recipe]} "
+            f"makes {tag} reachable in the paint",
             tag in reachable,
         )
-    # Put the panes back so the pixel scan photographs the screen as it opens.
-    for pane in {rows[tag]["viewport"]["name"] for tag in R1710_FIVE}:
-        app.scroll(pane, to=(0, 0))
-    app.tick(0.016)
+        # ★★★ R1714 — put every viewport back BETWEEN marks, not once at the end.
+        #
+        # Each recipe was solved against the offsets the screen opens at, so each
+        # has to be performed from there. Leaving them where the previous mark
+        # put them was harmless while every recipe named a pane; with a window
+        # that pans, one mark's recipe moves the WHOLE SCREEN, and the next
+        # mark's pane is then outside the window before its own offset is even
+        # applied. Measured exactly that way: `lab.palette.discovery` scrolled to
+        # the offset it published and was still not painted, because an earlier
+        # inspector mark had left the window panned 24 pixels.
+        for move in recipe:
+            app.scroll(move["viewport"], to=(0, 0))
+        app.tick(0.016)
 
 
 # ── G: a malformed ask is refused by name ───────────────────────────────────

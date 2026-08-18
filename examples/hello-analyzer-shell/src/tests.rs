@@ -655,6 +655,36 @@ fn r1653_no_two_text_runs_of_one_widget_are_painted_on_top_of_each_other() {
 /// ★ The end of it is driven rather than derived — the offset the report
 /// publishes is scrolled to and the card is pressed at the centre it lands in,
 /// so the claim is settled by the screen and not by the arithmetic behind it.
+///
+/// ★★ R1714 — a card below the fold and the offset that shows it, or `None` for
+/// a row that is not a whole card or that no single offset shows.
+///
+/// The answer is a CHAIN of viewports to move now, and this screen is one clip
+/// deep. The assertion says so rather than taking the first entry and hoping: a
+/// round that puts a second clip above this canvas makes the recipe below
+/// incomplete, and this fails loudly instead of scrolling one of two things.
+fn card_to_scroll_to(o: &pinion_core::reach::OutOfSight) -> Option<(String, (i32, i32))> {
+    let tag = o.tag.clone()?;
+    let card = tag.strip_prefix("card.")?;
+    if card.contains('.') {
+        return None;
+    }
+    match &o.reach {
+        pinion_core::reach::Reach::Scrollable { moves } => {
+            assert_eq!(
+                moves.len(),
+                1,
+                "{tag}: this screen's clip chain is one deep, so one move is the \
+                 whole recipe: {moves:?}"
+            );
+            Some((tag.clone(), moves[0].to))
+        }
+        // R1713 — a card the range reaches only part of has no single offset
+        // that shows it, so there is nothing to press towards.
+        pinion_core::reach::Reach::Clipped { .. } | pinion_core::reach::Reach::Lost { .. } => None,
+    }
+}
+
 #[test]
 fn r1662_a_board_taller_than_the_canvas_is_reachable_by_scrolling() {
     let owner = Owner::new();
@@ -715,23 +745,7 @@ fn r1662_a_board_taller_than_the_canvas_is_reachable_by_scrolling() {
         );
 
         // And a card below the fold answers a press once scrolled to.
-        let below: Vec<(String, (i32, i32))> = out
-            .iter()
-            .filter_map(|o| {
-                let tag = o.tag.clone()?;
-                let card = tag.strip_prefix("card.")?;
-                if card.contains('.') {
-                    return None;
-                }
-                match o.reach {
-                    pinion_core::reach::Reach::Scrollable { to } => Some((tag.clone(), to)),
-                    // R1713 — a card the range reaches only part of has no single
-                    // offset that shows it, so there is nothing to press towards.
-                    pinion_core::reach::Reach::Clipped { .. }
-                    | pinion_core::reach::Reach::Lost { .. } => None,
-                }
-            })
-            .collect();
+        let below: Vec<(String, (i32, i32))> = out.iter().filter_map(card_to_scroll_to).collect();
         assert!(
             !below.is_empty(),
             "no card was below the fold, so the press half checked nothing"

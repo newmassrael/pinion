@@ -205,6 +205,72 @@ pub fn layout_size(tag: &str, floor: (u32, u32), design: (u32, u32)) -> (u32, u3
     }
 }
 
+/// ★★★★★ R1714 — **the pixel a pointer fraction names, in the frame the
+/// screen's layout is stated in.**
+///
+/// # The expression three screens were writing out by hand
+///
+/// [`External::pointer_move`] hands a *fraction* of the surface and not the
+/// surface, so a screen that hit-tests its own rectangles has to find the basis
+/// somewhere else and multiply. R1684.4 gave it the basis ([`surface_size`]);
+/// what it did not give it is the multiplication, so the same three lines —
+/// clamp, multiply, cast — are written at every point a screen turns a pointer
+/// into pixels. Measured on the node lab alone: `pointer_move`, `wheel` and
+/// `wheel_intent`, three copies in one file.
+///
+/// # And why it is no longer only a multiplication
+///
+/// A window whose policy declares [`Recourse::Pan`](crate::shrink::Recourse::Pan)
+/// is a viewport onto a layout that is bigger than it, so the pixel a fraction
+/// names in the WINDOW and the pixel it names in the LAYOUT differ by the pan.
+/// Measured before this function existed: with the node lab panned 24 pixels,
+/// `scene/pointer_target` — which asks the screen what a press inside each
+/// painted rectangle addresses — went from 46 deliverable rectangles to 28, and
+/// eight tagged rectangles became addressable at no point inside themselves.
+/// The screen was hit-testing the layout with a window coordinate.
+///
+/// Adding the pan is one line, and the reason it is *this* line rather than one
+/// in each screen is the reason [`layout_size`] is: a screen that forgets it
+/// has a hit test that is right at one offset and wrong at every other, which
+/// is a defect nothing but a person moving the window would find.
+#[must_use]
+pub fn layout_point(tag: &str, at: (f32, f32)) -> (u32, u32) {
+    let (w, h) = surface_size(tag).unwrap_or((1, 1));
+    #[allow(
+        clippy::cast_precision_loss,
+        clippy::cast_possible_truncation,
+        clippy::cast_sign_loss,
+        reason = "a window fraction times a window size is a pixel inside it"
+    )]
+    let pixel = |frac: f32, extent: u32| -> u32 { (frac.clamp(0.0, 1.0) * extent as f32) as u32 };
+    into_layout(tag, (pixel(at.0, w), pixel(at.1, h)))
+}
+
+/// ★★★★★ R1714 — a point in the **window's** frame, in the frame the screen's
+/// layout is stated in.
+///
+/// The other door to [`layout_point`]'s rule, for the callbacks that are handed
+/// pixels rather than a fraction —
+/// [`External::target_at`] is the one that made this necessary: the framework
+/// asks it what a press at a painted rectangle's centre addresses, in the
+/// coordinates the paint is published in, and a panned screen's paint is
+/// published in the window's frame while its own rectangles are stated in the
+/// layout's.
+///
+/// Measured with this missing while [`layout_point`] was already in place:
+/// with the node lab panned 400 pixels, `scene/pointer_target` answered
+/// **1** deliverable rectangle of 57 and called 26 unreachable — the pointer
+/// path was right and the by-name path was not, which is precisely the split
+/// that gate exists to find.
+///
+/// The identity for a screen that does not pan, so a caller can put it on every
+/// such point without asking whether this screen is one.
+#[must_use]
+pub fn into_layout(tag: &str, at: (u32, u32)) -> (u32, u32) {
+    let (pan_x, pan_y) = crate::shrink::window_pan(tag);
+    (at.0.saturating_add(pan_x), at.1.saturating_add(pan_y))
+}
+
 /// ★★★★★ R1700 — what a surface says a press addresses, in the surface's own
 /// vocabulary.
 ///
@@ -3912,6 +3978,60 @@ impl ExternalIntrospect for CountedExternal {
 mod tests {
     use super::*;
     use crate::event::WindowEvent;
+
+    /// ★★★★★ R1714 — and its sibling had none either, which two counterfactuals
+    /// said before a person did.
+    ///
+    /// [`layout_point`] and [`into_layout`] carry the whole expression a
+    /// self-hit-testing screen used to write out by hand, and the round that
+    /// moved it there checked it through three screens and a demo. Breaking the
+    /// direction of the pan (`+` to `-`) and swapping the two axes both left the
+    /// entire `pinion-core` and `pinion-rpc` suites green — the R1712 shape
+    /// exactly: the function that assembles the answer had no test, only the
+    /// things reading its output did.
+    ///
+    /// The fixture discriminates on purpose. The surface is **not square**, the
+    /// pan is **not symmetric**, and the fraction is **not a half**, so a swap of
+    /// either pair changes the answer. A fixture built from equal numbers is one
+    /// that cannot tell two answers apart, which is this session's other
+    /// recurring finding.
+    #[test]
+    fn r1714_a_pointer_fraction_becomes_a_pixel_in_the_layouts_frame() {
+        let tag = "r1714.layout_point";
+        record_surface_size(tag, 800, 400);
+        crate::shrink::forget_pan(tag);
+        assert_eq!(
+            layout_point(tag, (0.25, 0.75)),
+            (200, 300),
+            "a fraction of each axis times that axis's extent",
+        );
+        assert_eq!(
+            into_layout(tag, (200, 300)),
+            (200, 300),
+            "and a screen with no pan is the identity",
+        );
+
+        let pan = crate::shrink::pan_state(tag);
+        pan.set_max(120, 30);
+        pan.scroll_to(120, 30);
+        assert_eq!(crate::shrink::window_pan(tag), (120, 30));
+        assert_eq!(
+            layout_point(tag, (0.25, 0.75)),
+            (320, 330),
+            "the pan is ADDED — a window pixel is that much further into the layout",
+        );
+        assert_eq!(
+            into_layout(tag, (200, 300)),
+            (320, 330),
+            "and the pixel door says the same thing as the fraction door",
+        );
+        // ★ The clamp is on the fraction, not on the answer: a fraction outside
+        // `0..=1` is a pointer the framework never sends, and rounding it into
+        // range is a smaller lie than multiplying by it.
+        assert_eq!(layout_point(tag, (-1.0, 2.0)), (120, 430));
+        crate::shrink::forget_pan(tag);
+        forget_surface_size(tag);
+    }
 
     /// ★★★★★ R1711 — the policy [`layout_size`] exists to spell once had, until
     /// this round, **no test at all**: three screens were the only thing

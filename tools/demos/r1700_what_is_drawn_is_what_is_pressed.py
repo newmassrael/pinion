@@ -67,6 +67,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
+    assert_declared_panes_on_screen,
     assert_eq,
     assert_targets_survive_resize,
     resize_and_settle,
@@ -166,31 +167,15 @@ def spec_is_on_screen(app: RpcSubprocess, name: str, sizes: list) -> None:
     for size in sizes:
         resize_and_settle(app, size)
         painted = rects(app, size)
-        missing = [p["tag"] for p in panes if p["tag"] not in painted]
-        assert_eq(missing, [], f"A/{name} {size}: every declared pane is painted")
-        # ★ Exactly, at every size, and the first draft of this allowed a
-        # smaller painted width below the layout floor "because the window
-        # clips". Measured: it does not. A painted rectangle is the LAYOUT's,
-        # cut only by the scroll viewports above it, so a pane laid out past
-        # the window edge is still reported at its full declared width. The
-        # guess would have accepted a pane that had genuinely shrunk.
-        wrong = [
-            f"{p['tag']} declares {p['width']} and is painted {painted[p['tag']][2]}"
-            for p in panes
-            if p["width"] and painted[p["tag"]][2] != p["width"]
-        ]
-        assert_eq(wrong, [], f"A/{name} {size}: a declared pane width is the width it gets")
-        # ★ The panes TILE: each begins where the last ended. This is what makes
-        # the fixed widths mean something — three rectangles of the right size
-        # that overlap would satisfy the check above and be a broken screen.
-        row = sorted((painted[p["tag"]] for p in panes), key=lambda r: r[0])
-        gaps = [
-            f"{b[0]} does not begin where the pane before it ended ({a[0] + a[2]})"
-            for a, b in zip(row, row[1:])
-            if a[0] + a[2] != b[0]
-        ]
-        assert_eq(gaps, [], f"A/{name} {size}: the panes tile the body")
-        if len(elastic) == 1:
+        # ★★ R1714 — the per-size half is the SHARED rule now, not a second copy
+        # of it. This file and `assert_declared_panes_on_screen` had been
+        # asserting the same three things about panes since R1700 wrote them
+        # here; when a window that pans made "every declared pane is painted"
+        # too strong, both had to learn the same repair, and writing it twice is
+        # how the two would have parted. What stays here is the claim only this
+        # file makes: what a WIDER window gives its room to.
+        assert_declared_panes_on_screen(app, size, label=f"A/{name}")
+        if len(elastic) == 1 and elastic[0] in painted:
             widths[size] = painted[elastic[0]][2]
     # ★ And the elastic pane is what a wider window gives its room to, which is
     # the claim a fixed-width declaration is only half of.
@@ -246,10 +231,28 @@ def what_the_spec_names_stays_on_screen(app: RpcSubprocess, name: str, sizes: li
     for size in sizes[1:]:
         resize_and_settle(app, size)
         gone = sorted(declared - set(rects(app, size)))
+        # ★★★★★ R1714 — painted, **or one gesture away**, the same repair the
+        # pane check next door took and for the same reason: a window whose
+        # policy declares a pan is a viewport onto a layout bigger than itself,
+        # so at 1200 wide the node lab's whole inspector is off screen and one
+        # scroll from being on it. Measured: 12 declared regions there.
+        #
+        # The class this check exists for is untouched — a declared thing that
+        # is neither drawn nor reachable still fails, by name.
+        if gone:
+            reach = app.request("scene/scroll_reach")
+            assert reach is not None and isinstance(reach.result, dict)
+            reachable = {
+                row["tag"]
+                for row in reach.result["out_of_sight"]
+                if row["reach"] == "scrollable" and row["tag"]
+            }
+            gone = [tag for tag in gone if tag not in reachable]
         assert_eq(
             gone,
             [],
-            f"A2/{name} {size}: everything the specification names is still painted",
+            f"A2/{name} {size}: everything the specification names is still "
+            f"painted or reachable",
         )
     print(f"[demo] A2/{name}: {len(declared)} declared-and-painted tag(s) held at every size")
 

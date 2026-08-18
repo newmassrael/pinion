@@ -213,7 +213,9 @@ def run(tf: RpcSubprocess) -> None:
         assert_eq(v["fits"], True, "so it reports that it fits, by CSS's own rule")
         assert_eq(v["h"], body_height(WIN), "and its size is the body's")
         assert o["short_by"] is not None, f"a lost mark says how far past it sits: {o}"
-        assert o["to_y"] is None, f"and offers no offset, because there is none: {o}"
+        # ★ R1714 — and names nothing to move, because there is nothing that
+        # would help. The empty recipe is the arm's whole point.
+        assert not o["moves"], f"and offers no recipe, because there is none: {o}"
 
     # ── E. the pointer agrees with the picture ───────────────────────────────
     #      A cut entry's coordinates belong to whatever is painted there now.

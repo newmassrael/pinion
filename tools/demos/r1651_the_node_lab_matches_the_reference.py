@@ -133,17 +133,40 @@ def press_after_scrolling_to(tf: RpcSubprocess, tag: str) -> str:
     assert entry["reach"] == "scrollable", (
         f"{tag} is painted where no scrolling brings it into view: {entry}"
     )
-    pane = entry["viewport"]["name"]
-    # The offset the pane is at right now comes back in the same answer, so
-    # putting it back needs no second question and cannot race one.
-    was = (entry["viewport"]["at_x"], entry["viewport"]["at_y"])
-    tf.scroll(pane, to=(entry.get("to_x", 0), entry["to_y"]))
+    # ★ R1714 — the answer is the whole recipe: every viewport that has to move,
+    # outermost first. A window that pans over its own layout is one of them,
+    # and performing half a recipe leaves the mark exactly where it was.
+    recipe = entry["moves"]
+    assert recipe, f"{tag} is reachable and names nothing to move: {entry}"
+    was = [
+        (m["viewport"], offset_of(tf, m["viewport"], entry))
+        for m in recipe
+    ]
+    for m in recipe:
+        tf.scroll(m["viewport"], to=(m["to_x"], m["to_y"]))
     tf.tick(0.05)
     try:
         return inv(tf, "point", at(tf, tag))
     finally:
-        tf.scroll(pane, to=was)
+        for pane, back in was:
+            tf.scroll(pane, to=back)
         tf.tick(0.05)
+
+
+def offset_of(tf: RpcSubprocess, viewport: str, entry: dict) -> tuple[int, int]:
+    """Where `viewport` is right now, so the caller can put it back.
+
+    The row's own viewport publishes its offset in the very answer the recipe
+    came from; anything further out is asked for, once.
+    """
+    if entry["viewport"]["name"] == viewport:
+        return (entry["viewport"]["at_x"], entry["viewport"]["at_y"])
+    reach = tf.request("scene/scroll_reach")
+    assert reach is not None and isinstance(reach.result, dict)
+    for row in reach.result["out_of_sight"]:
+        if row["viewport"]["name"] == viewport:
+            return (row["viewport"]["at_x"], row["viewport"]["at_y"])
+    return (0, 0)
 
 
 def body() -> None:

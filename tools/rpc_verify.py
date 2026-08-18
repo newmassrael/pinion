@@ -4936,7 +4936,34 @@ def assert_declared_panes_on_screen(
     made: list[str] = []
     painted = abs_rects_of(app.snapshot(source="paint", viewport=size))
     missing = [p["tag"] for p in panes if p["tag"] not in painted]
-    assert_eq(missing, [], f"{label} {size}: every declared pane is painted")
+    # ★★★★★ R1714 — painted, **or one gesture away**, and the wire says which.
+    #
+    # A window whose policy declares a pan is a viewport onto a layout bigger
+    # than itself, so at a size below the layout a whole pane can be off screen
+    # — and reachable. Before there was a pan this could not happen, and the
+    # rule was written when it could not: measured, the node lab's inspector at
+    # 748 wide is now entirely outside the window and one scroll from being
+    # inside it.
+    #
+    # The check keeps its teeth. A pane that is neither drawn nor reachable
+    # still fails, and so does one the report cannot name.
+    if missing:
+        reach = app.request("scene/scroll_reach")
+        assert reach is not None and isinstance(reach.result, dict)
+        reachable = {
+            row["tag"]
+            for row in reach.result["out_of_sight"]
+            if row["reach"] == "scrollable" and row["tag"]
+        }
+        gone = [tag for tag in missing if tag not in reachable]
+        assert_eq(
+            gone,
+            [],
+            f"{label} {size}: every declared pane is painted or reachable "
+            f"(off screen and reachable: {sorted(set(missing) & reachable)})",
+        )
+        made.append(f"{label}: {len(missing)} pane(s) off screen and reachable")
+        panes = [p for p in panes if p["tag"] in painted]
     made.append(f"{label}: panes painted")
     wrong = [
         f"{p['tag']} declares {p['width']} and is painted {painted[p['tag']][2]}"

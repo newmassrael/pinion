@@ -2234,9 +2234,16 @@ fn reassembly_strip(ink: Ink) -> Scene {
 
 /// The screen's own oracle: the one `External` every press is delivered to, and
 /// the surface the wire drives the screen through.
+/// ★★ R1714.1 — and it no longer keeps a size.
+///
+/// R1656 gave it one because `External::pointer_move` hands a FRACTION and not
+/// the rectangle, so a consumer wanting pixels had to hold the basis; R1684.4
+/// made the framework answer that and left the field, because the
+/// multiplication was still written here. `external::layout_point` carries the
+/// whole expression now, and a field written by every resize and read by nobody
+/// is what a close audit deletes.
 struct ViewOracle {
     state: Option<Rc<ViewState>>,
-    surface: (u32, u32),
 }
 
 impl core::fmt::Debug for ViewOracle {
@@ -2249,10 +2256,7 @@ impl core::fmt::Debug for ViewOracle {
 
 impl ViewOracle {
     const fn new() -> Self {
-        Self {
-            state: None,
-            surface: (WIN_W, WIN_H),
-        }
+        Self { state: None }
     }
 
     fn attach(&mut self, state: Rc<ViewState>) {
@@ -2289,28 +2293,21 @@ impl External for ViewOracle {
         true
     }
 
-    #[allow(
-        clippy::cast_precision_loss,
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "a window fraction times a window size is a pixel inside it"
-    )]
     fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
         let Some(state) = self.state.clone() else {
             return;
         };
-        // ★ R1656 — the fraction is of the LIVE surface, so the basis is the
-        // size the shell reported rather than the design constants.
-        let (w, h) = self.surface;
-        let px = (x_rel.clamp(0.0, 1.0) * w as f32) as u32;
-        let py = (y_rel.clamp(0.0, 1.0) * h as f32) as u32;
+        // ★★ R1714.1 — the framework's expression, not a third copy of it.
+        //
+        // R1656 gave this the LIVE surface rather than the design constants,
+        // which is the half that was wrong then; R1714 moved the whole
+        // conversion into `external::layout_point`, so the basis, the clamp and
+        // the multiplication are one fact for every self-hit-testing screen.
+        // This screen does not pan, and the pan term is the identity for a
+        // screen that does not — which is why adopting it is free here and why
+        // it will keep being right if this screen ever declares one.
+        let (px, py) = pinion_core::external::layout_point(VIEW_TAG, (x_rel, y_rel));
         move_cursor(&state, px, py);
-    }
-
-    /// §5.15 — the shell's resize notification, which is what a pointer
-    /// fraction is a fraction of.
-    fn on_resize(&mut self, width: u32, height: u32) {
-        self.surface = (width.max(1), height.max(1));
     }
 
     /// ★★★★★ R1700 §5.35 — what a press here addresses, for the framework to

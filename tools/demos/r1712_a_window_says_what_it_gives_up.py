@@ -79,12 +79,21 @@ SCREENS = [
 #: binding currently says — an audit that reads its expectation out of the
 #: thing under test passes for a screen that changed its mind quietly.
 CONCEDING = "hello-node-lab"
-#: ★ R1713 re-measured this: 1506 (R1712) and 1595 (R1712.1) were both taken with
-#: a predicate that could not see a mark inside a pane the window slices. With the
-#: clip chain folded and `clipped` split from `lost`, the boundary is 1601 — the
-#: width at which nothing is `lost`, with five row `×` glyphs lost at 1600.
-CONCEDED_FLOOR = (1601, 360)
-GIVES_UP = ["lab.appbar", "lab.inspector"]
+#: ★★★★★ R1714 — and the screen this file was written against no longer CUTS
+#: what its band costs; it moves over it. The decisions on record are therefore
+#: the floor and the RECOURSE, and the two clauses that were about clipping —
+#: the 1601 boundary and the two region names — are retired here rather than
+#: rewritten, because the thing they described is gone from the screen.
+#:
+#: What survives is what this file is for: a screen declares two floors, the
+#: wire publishes them, the audit checks the declaration against the screen, and
+#: the top-level verdict tells the shapes apart. That last clause got sharper —
+#: there are three words now and section A drives all three.
+#:
+#: The floor is asserted as a DECISION still, just not as a number: below the
+#: layout and at or under the display R1689 wrote its loss against.
+CONCEDED_FLOOR = (748, 360)
+DISPLAY = 1600
 
 CHECKS: list[str] = []
 
@@ -182,11 +191,25 @@ def the_policy_is_declared_and_says_which_kind_it_is(
             [],
             f"A/{name}: and gives nothing up, because there is no band to do it in",
         )
+    # ★★★★★ R1714 — three decisions, three words, and the recourse is what
+    # tells them apart. `conceded` says the reader gave something up between the
+    # two floors; `panned` says the same arithmetic and that the reader gave up
+    # nothing, because the window moves over the layout instead of cutting it.
+    # Folding them would tell a caller that a screen it can reach every corner
+    # of has lost something.
     assert_eq(
         report["verdict"],
-        "conceded" if concedes else "exact",
-        f"A/{name}: the top-level verdict reads the two apart",
+        {"pan": "panned", "clip": "conceded"}[concession["recourse"]]
+        if concedes
+        else "exact",
+        f"A/{name}: the top-level verdict reads the three apart",
     )
+    if concession["recourse"] == "pan":
+        assert_eq(
+            concession["gives_up"],
+            [],
+            f"A/{name}: a pan names nothing, because it keeps everything",
+        )
     print(
         f"[demo] A/{name}: comfortable "
         f"{concession['comfortable']['width']}x{concession['comfortable']['height']}, "
@@ -226,35 +249,26 @@ def what_is_clipped_is_what_was_declared(name: str, example: str, report: dict) 
         f"B/{name}: and nothing is named that is no longer clipped",
     )
     if example == CONCEDING:
-        assert_eq(
-            (concession["floor"]["width"], concession["floor"]["height"]),
-            CONCEDED_FLOOR,
-            f"B/{name}: the floor is the one this round decided on",
-        )
-        assert_eq(
-            sorted(concession["gives_up"]),
-            sorted(GIVES_UP),
-            f"B/{name}: and it gives up the two regions it decided to give up",
-        )
-        # A declaration made of REGION names covers the runs inside them, so the
-        # count it bought is published rather than left for a reader to guess.
-        assert_eq(
-            concession["covered"],
-            len(concession["cut_at_floor"]),
-            f"B/{name}: every clipped mark is accounted for by a declared region",
-        )
+        floor = (concession["floor"]["width"], concession["floor"]["height"])
+        assert_eq(floor, CONCEDED_FLOOR, f"B/{name}: the floor is the decision on record")
         ok(
-            f"B/{name}: and the two names cover more than themselves "
-            f"({concession['covered']} marks from {len(GIVES_UP)} names: "
-            f"{cut_names(concession['cut_at_floor'])})",
-            concession["covered"] > len(GIVES_UP),
+            f"B/{name}: which is below the layout ({concession['comfortable']['width']}) "
+            f"and inside a {DISPLAY}-pixel display, with {DISPLAY - floor[0]} to spare — "
+            f"the loss R1689 wrote down, paid",
+            floor[0] < concession["comfortable"]["width"] and floor[0] <= DISPLAY,
         )
-        for row in concession["cut_at_floor"]:
-            ok(
-                f"B/{name}: {row['tag'] or row['path']} says how far past the "
-                f"window it reaches ({row['short_by']})",
-                any(edge > 0 for edge in row["short_by"]),
-            )
+        assert_eq(
+            concession["recourse"],
+            "pan",
+            f"B/{name}: and the band is served by moving, which is why it can be "
+            f"that far below without a list of what it costs",
+        )
+        assert_eq(
+            concession["cut_at_floor"],
+            [],
+            f"B/{name}: nothing is cut at the floor, because nothing is cut at "
+            f"any size a pan serves",
+        )
 
 
 # ── C: the floor is a boundary, driven both ways ────────────────────────────
@@ -301,7 +315,30 @@ def the_floor_is_where_reach_actually_ends(
     for index, axis in enumerate(("width", "height")):
         short = list(floor)
         short[index] -= 1
-        if band[index] > 0:
+        if concession["recourse"] == "pan":
+            # ★★★★★ R1714 — under a pan there IS no such pixel, and saying so is
+            # the falsifiable half. A pan that had quietly stopped covering the
+            # band would put something out of reach below the floor, exactly the
+            # way a clipping band does — so this drives well past it.
+            #
+            # ★★ Both axes, including one the policy concedes nothing on: the pan
+            # is built whenever the window is the smaller of the two on EITHER
+            # axis, and it moves on both once it is there. So a screen that
+            # concedes width only still reaches everything a pixel under its
+            # height floor — which the window itself refuses to go to, and a
+            # hypothetical ask does not.
+            below = reach_at(app, (short[0], short[1]))
+            far = reach_at(app, (max(1, floor[0] // 2), max(1, floor[1] // 2)))
+            ok(
+                f"C/{name}/{axis}: this axis PANS, so one pixel below its floor "
+                f"nothing is out of reach ({below['lost']} lost) — and nothing is "
+                f"at half the floor either ({far['lost']} lost of "
+                f"{len(far['out_of_sight'])} off screen)",
+                below["lost"] == 0
+                and far["lost"] == 0
+                and len(far["out_of_sight"]) > 20,
+            )
+        elif band[index] > 0:
             below = reach_at(app, (short[0], short[1]))
             ok(
                 f"C/{name}/{axis}: this axis is conceded, and one pixel below its "
@@ -404,27 +441,23 @@ def what_is_given_up_is_still_reachable(
     )
     if example != CONCEDING:
         return
-    # ★★ R1713 — a conceded floor is expected to CLIP, and the count says so.
-    # Without this the section passes for a band that gave up nothing, which is
-    # the shape `stale` exists to catch on the other side.
-    ok(
-        f"E/{name}: the band really clips at the floor "
-        f"({live.result['clipped']} mark(s) reachable in part only)",
-        live.result["clipped"] > 0,
+    # ★★★★★ R1714 — a PANNED floor cuts nothing, and the counts say so. This
+    # clause read `clipped > 0`, because a conceded band is expected to clip and
+    # a section that passed for a band giving up nothing would be the mirror of
+    # what `stale` catches. The band gives up nothing NOW — by decision — so the
+    # falsifiable statement is the opposite one, and it is stronger: not a
+    # single mark on this screen is reachable in part only, or out of reach at
+    # all, at a floor 877 pixels below the layout.
+    assert_eq(
+        (live.result["clipped"], live.result["lost"]),
+        (0, 0),
+        f"E/{name}: at a panned floor nothing is cut and nothing is lost",
     )
-    # ★★ The regions the policy gives up are CLIPPED, which is a different
-    # statement from gone: each is still painted at the floor, and each is
-    # still where a pointer finds it. A concession that blanked its regions —
-    # or that left them drawn a band's width from where they can be pressed —
-    # satisfies every structural check above.
-    for tag in GIVES_UP:
-        ok(f"E/{name}: {tag} is still painted at the conceded floor", tag in painted)
-        x, y, w, h = painted[tag]
-        ok(
-            f"E/{name}: and the part of it the reader keeps is real "
-            f"({w}x{h} at {x},{y})",
-            w > 0 and h > 0 and x < size[0] and y < size[1],
-        )
+    ok(
+        f"E/{name}: and the read is not vacuous — {live.result['scrollable']} "
+        f"mark(s) are off screen and reachable at that floor",
+        live.result["scrollable"] > 20,
+    )
     # ★★★★★ R1700's question, asked at the size this round invented: every
     # painted rectangle is pressable where it is drawn. The band moves the
     # layout past the window's right edge, which is exactly the shape that

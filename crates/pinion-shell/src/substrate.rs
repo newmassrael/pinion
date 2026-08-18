@@ -1271,9 +1271,27 @@ fn window_view<V: WidgetView>(
     chrome_h: Option<u32>,
 ) -> Scene {
     apply_chrome_inset(
-        owner.run(|| match window_id {
-            Some(id) => V::view_for_window(id, state, &frame),
-            None => V::view(state, &frame),
+        owner.run(|| {
+            let scene = match window_id {
+                Some(id) => V::view_for_window(id, state, &frame),
+                None => V::view(state, &frame),
+            };
+            // ★★★★★ R1714 — the pan a binding's policy declares, applied here
+            // because here is where all three paint-scene producers already
+            // agree. A binding that declares no pan gets the very same `Scene`
+            // back, so this costs the 224 bindings that do not one comparison.
+            //
+            // Inside the owner wrap for the reason everything else here is: the
+            // window size is a tracked read, so a resize re-runs the view and
+            // the pan's viewport follows it. Before the chrome inset, because
+            // the pan is a viewport onto the SCREEN and the chrome strip is
+            // window furniture the shell adds around it.
+            pinion_core::shrink::pan(
+                V::shrink_policy(),
+                V::tag(),
+                pinion_core::reactive::use_viewport_size(),
+                scene,
+            )
         }),
         chrome_h,
     )

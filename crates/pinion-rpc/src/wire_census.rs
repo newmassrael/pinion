@@ -583,6 +583,10 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("floor", WireTy::Object, Some("SizeReport")),
                 // Per-axis, and zero on an axis that concedes nothing.
                 WireField::new("band", WireTy::Object, Some("SizeReport")),
+                // ★ R1714 — how the band is served. The word a reader needs
+                // before `gives_up` means anything: a list of losses under one
+                // and empty by construction under the other.
+                WireField::new("recourse", WireTy::String, None).accepting(&["clip", "pan"]),
                 WireField::new("gives_up", WireTy::Array, None),
                 WireField::new("cut_at_floor", WireTy::Array, Some("CutReport")),
                 WireField::new("covered", WireTy::Integer, None),
@@ -1560,6 +1564,16 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "MoveReport",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("viewport", WireTy::String, None),
+                WireField::new("to_x", WireTy::Integer, None),
+                WireField::new("to_y", WireTy::Integer, None),
+            ],
+        },
+    },
+    WireType {
         name: "NormalizeForm",
         shape: WireShape::Enum {
             values: &["NFC", "NFD", "NFKC", "NFKD"],
@@ -1581,8 +1595,7 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("rect", WireTy::Object, Some("RectReport")),
                 WireField::new("viewport", WireTy::Object, Some("ViewportReport")),
                 WireField::new("reach", WireTy::String, None),
-                WireField::new("to_x", WireTy::Integer, None).nullable(),
-                WireField::new("to_y", WireTy::Integer, None).nullable(),
+                WireField::new("moves", WireTy::Array, Some("MoveReport")),
                 WireField::new("short_by", WireTy::Array, None).nullable(),
             ],
         },
@@ -1976,6 +1989,10 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("verdict", WireTy::String, None).accepting(&[
                     "short",
                     "conceded",
+                    // ★ R1714 — the same arithmetic as `conceded` and a
+                    // different fact: the band moves instead of cutting, so the
+                    // reader gave up nothing.
+                    "panned",
                     "exact",
                     "roomier",
                     "undeclared",
