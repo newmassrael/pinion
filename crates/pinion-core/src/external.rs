@@ -1614,8 +1614,18 @@ impl IntrospectValue {
     /// wrapped in a constructor, and the useful half of that sentence is the
     /// kind. A producer that wants to quote the value can, in its own words.
     ///
-    /// The words are the ones [`SchemaField`]'s `type` already publishes, so a
-    /// refusal about a kind and the declaration of that kind read alike.
+    /// ★★★ These are **not** the words [`SchemaField`]'s `type` publishes, and
+    /// the difference is this round's own thesis rather than an oversight. A
+    /// schema type is a TOKEN an agent matches on — `int`, `bool`, `string` —
+    /// and this is a fragment a person reads inside a sentence: "this action
+    /// takes text and was given a whole number". One fact, two renderings, held
+    /// to opposite rules, exactly as a refusal's wire tag and its spoken
+    /// sentence are.
+    ///
+    /// ⚠ The first draft of this comment claimed the opposite — that the words
+    /// were the schema's own — and the closing audit measured it false. The
+    /// schema's tokens are `string` (553), `int` (396), `json` (168), `bool`
+    /// (111), `float` (97), and none of them is a thing to read in a sentence.
     #[must_use]
     pub const fn kind(&self) -> &'static str {
         match self {
