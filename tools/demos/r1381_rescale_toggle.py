@@ -45,7 +45,8 @@ N = 3
 
 
 def entry_tag(i: int) -> str:
-    return f"legend_{i}"
+    # R1722 — derived from the chart's tag prefix, not chosen by the app.
+    return f"chart.legend.{i}"
 
 
 def value(tf, i: int):

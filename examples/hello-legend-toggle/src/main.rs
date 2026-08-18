@@ -1,8 +1,9 @@
 //! `hello-legend-toggle` — R1380 §5.38 §5.39 click-the-chart's-**own**-legend
 //! to show / hide a series.
 //!
-//! The forcing consumer for [`pinion_chart::LineChart::interactive_legend`]:
-//! the chart draws its own legend, and each entry is a focusable, hit-testable
+//! The forcing consumer for a line chart declaring
+//! [`pinion_chart::LegendInteraction::Toggle`]: the
+//! chart draws its own legend, and each entry is a focusable, hit-testable
 //! region — a click / press anywhere on it toggles that series' visibility, and
 //! a hidden series' entry renders muted (grey swatch + dimmed label). This is
 //! the R1379 follow-up it named: `hello-series-toggle` had to draw a *separate*
@@ -17,12 +18,17 @@
 //! own Tab stop under a WAI-ARIA `group`, lowering to `button[aria-pressed]`,
 //! sharing the keyboard model / introspect reader / boot seed / AccessKit tree
 //! verbatim. The only difference from R1379 is WHERE the toggle's hit surface
-//! comes from: the chart's own legend (`interactive_legend`), not a
-//! consumer-drawn chip. The toggle tags the caller passes to the chart ARE the
-//! tags it binds the externals to — the chart stays a pure scene producer.
+//! comes from: the chart's own legend, not a consumer-drawn chip.
+//!
+//! **R1722** — the legend entry tags are now DERIVED from the chart's tag prefix
+//! rather than passed to it, so this file binds its externals to tags it cannot
+//! get wrong, and its accessibility tree is the chart's own answer rather than a
+//! toggle group rebuilt here.
 
-use pinion_a11y::{AccessNode, ToggleSegment, WidgetA11y, toggle_button_group_nodes};
-use pinion_chart::{ChartStyle, DataPoint, LineChart, Series};
+use pinion_a11y::{AccessNode, WidgetA11y};
+use pinion_chart::{
+    ChartLegend, ChartStyle, DataPoint, LegendInteraction, LegendPostures, LineChart, Series,
+};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{BoxStyle, Color, FlexDirection, LayoutStyle, Size, TextStyle};
@@ -43,17 +49,15 @@ const THEME_TAG: &str = "app";
 /// Series (and legend-entry) count.
 const N: usize = 3;
 
-/// Per-entry dispatch + Tab-stop tags. These are BOTH the tags the chart's
-/// interactive legend entries carry AND the tags the `ToggleExternal`s bind to
-/// — the caller owns the namespace, the chart just applies it, so a click on
-/// entry `i` routes straight to toggle `i`. `&'static str` because each is a
-/// scene-derived §5.39 Tab stop.
-const LEGEND_TAGS: [&str; N] = ["legend_0", "legend_1", "legend_2"];
-
-/// The WAI-ARIA §3.6 `group` label for the AccessKit toggle-button group. The
-/// group is virtual (a11y only) — unlike R1379 there is no consumer-drawn row
-/// container, since the chart owns the legend's paint.
-const GROUP_TAG: &str = "chart_legend";
+/// Per-entry dispatch + Tab-stop tags: the tags the chart's toggle legend
+/// entries carry, which the `ToggleExternal`s bind to, so a click on entry `i`
+/// routes straight to toggle `i`.
+///
+/// R1722 — these are **derived from the chart's tag prefix**, not chosen here.
+/// Before that round a caller passed a `Vec<String>` the chart zipped against
+/// its series, so a list of the wrong length silently truncated its own legend.
+/// `&'static str` because each is a scene-derived §5.39 Tab stop.
+const LEGEND_TAGS: [&str; N] = ["chart.legend.0", "chart.legend.1", "chart.legend.2"];
 
 /// Series names — the single source for the chart series name, the legend-entry
 /// label (the chart draws it), and the AccessKit `button` name.
@@ -109,9 +113,13 @@ fn series_with(visible: [bool; N]) -> Vec<Series> {
         .collect()
 }
 
-/// The interactive-legend tags as owned strings (the chart takes `Vec<String>`).
-fn legend_tags() -> Vec<String> {
-    LEGEND_TAGS.iter().map(|t| (*t).to_string()).collect()
+/// The chart this view paints, for the visibility mask `visible`.
+///
+/// One definition, because the paint and the accessibility tree must be built
+/// from the same chart: `access_node` asks it for `legend_access_nodes`, which
+/// seats the row exactly as `build` did (R1722).
+fn chart(visible: [bool; N]) -> LineChart {
+    LineChart::new(series_with(visible)).with_legend(LegendInteraction::Toggle)
 }
 
 /// The themed chart style. `legend: true` and interactive — the legend is the
@@ -171,9 +179,7 @@ fn view(state: LegendState, _frame: &Frame) -> Scene {
         .with_layout(LayoutStyle::new().with_absolute_position(20, 14)),
     );
 
-    let chart = LineChart::new(series_with(state.visibility()))
-        .interactive_legend(legend_tags())
-        .build(CHART_RECT, &chart_style(&theme));
+    let chart = chart(state.visibility()).build(CHART_RECT, &chart_style(&theme));
 
     Scene::Container(
         ContainerNode::new(vec![chart, title])
@@ -247,21 +253,25 @@ impl WidgetCore for LegendToggleView {
 }
 
 impl WidgetA11y for LegendToggleView {
-    /// One [`AriaRole::Group`](pinion_a11y::AriaRole::Group) parent (`"Series"`)
-    /// plus one `button[aria-pressed]` per legend entry, built by the shared
-    /// [`toggle_button_group_nodes`] substrate. The button tags are
-    /// `LEGEND_TAGS` — the same tags the chart's focusable legend entries carry,
-    /// so AccessKit maps each button onto its painted entry.
+    /// **The chart's own answer** (R1722): one `group` parent plus one
+    /// `button[aria-pressed]` per legend entry, derived from the same
+    /// `LegendInteraction::Toggle` that made the entries focusable.
+    ///
+    /// This used to be hand-built here — a `ToggleSegment` per series, a group
+    /// tag chosen by this file, and a roster that would have kept announcing
+    /// three buttons in a pane too narrow to draw three. Asking the chart is
+    /// what makes the announcement and the paint one derivation; the theme is
+    /// irrelevant to the roster, so the default style seats the row.
     fn access_node(state: &LegendState, focused: Option<&str>) -> Vec<AccessNode> {
-        let segments: Vec<ToggleSegment<'_>> = (0..N)
-            .map(|i| ToggleSegment {
-                tag: LEGEND_TAGS[i],
-                label: LABELS[i],
-                state: state.rows[i].0,
-                on: state.rows[i].1,
-            })
-            .collect();
-        toggle_button_group_nodes(GROUP_TAG, "Series", &segments, focused)
+        let postures = (0..N).fold(LegendPostures::at_rest(), |acc, i| {
+            acc.under(i, &state.rows[i].0)
+        });
+        chart(state.visibility()).legend_access_nodes(
+            CHART_RECT,
+            &ChartStyle::default(),
+            &postures,
+            focused,
+        )
     }
 }
 

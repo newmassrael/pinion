@@ -55,12 +55,14 @@
 use pinion_core::Scene;
 use pinion_core::derivation::{DerivationKind, DerivationSet};
 use pinion_core::scene::{ContainerNode, PathNode, Rect};
-use pinion_core::style::{Color, PathStyle, Stroke, TextAlign};
+use pinion_core::style::{PathStyle, Stroke, TextAlign};
 
 use crate::derivations;
+use crate::legend::{ChartLegend, Legend, LegendEntry, LegendInteraction};
+
 use crate::draw::{
-    CalloutRow, absolute, box_node, callout, circle_commands, fill_parent, label_node, legend_row,
-    marker_node, plot_rect, polygon_node, stroke_path, to_f32, to_u32,
+    CalloutRow, absolute, box_node, callout, circle_commands, fill_parent, label_node, marker_node,
+    plot_rect, polygon_node, stroke_path, to_f32, to_u32,
 };
 use crate::palette::CategoricalPalette;
 use crate::plot::{OffScale, axis_domain, axis_format, axis_scale, axis_ticks, kind_extent};
@@ -92,6 +94,8 @@ pub struct PolarChart {
     filled: bool,
     markers: bool,
     inspect: Option<f64>,
+    /// R1722 — what may be done to the legend. See [`crate::Legend`].
+    legend_interaction: LegendInteraction,
     tag_prefix: String,
 }
 
@@ -115,6 +119,7 @@ impl PolarChart {
             filled: false,
             markers: true,
             inspect: None,
+            legend_interaction: LegendInteraction::default(),
             tag_prefix: "chart".to_string(),
         }
     }
@@ -381,7 +386,7 @@ impl PolarChart {
             style,
         ));
         if style.legend {
-            children.extend(self.legend(rect, style));
+            children.extend(self.legend_scene(rect, style));
         }
         children.extend(self.overlay(&plot, radial_ticks.ticks(), style));
 
@@ -553,27 +558,15 @@ impl PolarChart {
         out
     }
 
-    /// The shared legend row in the top margin band.
-    fn legend(&self, rect: Rect, style: &ChartStyle) -> Vec<Scene> {
-        let entries: Vec<(Color, String)> = self
-            .series
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                (
-                    s.color.unwrap_or_else(|| self.palette.color(i)),
-                    s.name.clone(),
-                )
-            })
-            .collect();
-        legend_row(
-            &entries,
-            rect.x + style.margin.left,
-            rect.y + 6,
-            rect.w.saturating_sub(style.margin.left),
-            style,
-            &self.tag_prefix,
-        )
+    /// Declare what may be done to this chart's legend (R1722).
+    ///
+    /// A radar's legend is the natural place to compare one profile against
+    /// another by turning the rest off, and this chart could not offer it until
+    /// the gesture stopped being two charts' private arrangement.
+    #[must_use]
+    pub fn with_legend(mut self, interaction: LegendInteraction) -> Self {
+        self.legend_interaction = interaction;
+        self
     }
 
     /// The inspect overlay: the scrubbed spoke, a ring on each series' sample
@@ -803,6 +796,29 @@ fn series_path(pixels: &[(f32, f32)], closed: bool, stroke: Stroke, tag: String)
         return polygon_node(pixels, PathStyle::stroked(stroke), tag);
     }
     stroke_path(pixels, stroke, tag)
+}
+
+impl ChartLegend for PolarChart {
+    /// One entry per series, coloured as its ring is drawn and on when it is
+    /// visible.
+    fn legend(&self) -> Legend {
+        Legend::new(
+            &self.tag_prefix,
+            "Series",
+            self.series
+                .iter()
+                .enumerate()
+                .map(|(i, s)| {
+                    LegendEntry::new(
+                        s.color.unwrap_or_else(|| self.palette.color(i)),
+                        s.name.clone(),
+                    )
+                    .shown(s.visible)
+                })
+                .collect(),
+        )
+        .with_interaction(self.legend_interaction)
+    }
 }
 
 #[cfg(test)]

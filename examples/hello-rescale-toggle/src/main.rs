@@ -15,8 +15,10 @@
 //! substrate), driving [`pinion_chart::Series::visible`]. The ONE new ingredient
 //! is `.rescale_to_visible(true)`.
 
-use pinion_a11y::{AccessNode, ToggleSegment, WidgetA11y, toggle_button_group_nodes};
-use pinion_chart::{ChartStyle, DataPoint, LineChart, Series};
+use pinion_a11y::{AccessNode, WidgetA11y};
+use pinion_chart::{
+    ChartLegend, ChartStyle, DataPoint, LegendInteraction, LegendPostures, LineChart, Series,
+};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{BoxStyle, Color, FlexDirection, LayoutStyle, Size, TextStyle};
@@ -37,12 +39,11 @@ const THEME_TAG: &str = "app";
 /// Series (and legend-entry) count.
 const N: usize = 3;
 
-/// Per-entry dispatch + Tab-stop tags — both the chart's interactive legend
-/// entry tags AND the tags the `ToggleExternal`s bind to (R1380).
-const LEGEND_TAGS: [&str; N] = ["legend_0", "legend_1", "legend_2"];
-
-/// The WAI-ARIA §3.6 `group` label for the AccessKit toggle-button group.
-const GROUP_TAG: &str = "chart_legend";
+/// Per-entry dispatch + Tab-stop tags — both the chart's toggle legend entry
+/// tags AND the tags the `ToggleExternal`s bind to (R1380).
+///
+/// R1722 — derived from the chart's tag prefix, not chosen here.
+const LEGEND_TAGS: [&str; N] = ["chart.legend.0", "chart.legend.1", "chart.legend.2"];
 
 /// Series names — ordered biggest-magnitude first so entry 0 is the dominant
 /// series a viewer hides to reveal the rest.
@@ -95,9 +96,15 @@ fn series_with(visible: [bool; N]) -> Vec<Series> {
         .collect()
 }
 
-/// The interactive-legend tags as owned strings.
-fn legend_tags() -> Vec<String> {
-    LEGEND_TAGS.iter().map(|t| (*t).to_string()).collect()
+/// The chart this view paints, for the visibility mask `visible`.
+///
+/// One definition, because the paint and the accessibility tree must be built
+/// from the same chart: `access_node` asks it for `legend_access_nodes`, which
+/// seats the row exactly as `build` did (R1722).
+fn chart(visible: [bool; N]) -> LineChart {
+    LineChart::new(series_with(visible))
+        .with_legend(LegendInteraction::Toggle)
+        .rescale_to_visible(true)
 }
 
 /// The themed chart style. Interactive legend on; the rescale opt-in is set on
@@ -157,10 +164,7 @@ fn view(state: LegendState, _frame: &Frame) -> Scene {
         .with_layout(LayoutStyle::new().with_absolute_position(20, 14)),
     );
 
-    let chart = LineChart::new(series_with(state.visibility()))
-        .interactive_legend(legend_tags())
-        .rescale_to_visible(true)
-        .build(CHART_RECT, &chart_style(&theme));
+    let chart = chart(state.visibility()).build(CHART_RECT, &chart_style(&theme));
 
     Scene::Container(
         ContainerNode::new(vec![chart, title])
@@ -232,16 +236,19 @@ impl WidgetCore for RescaleToggleView {
 }
 
 impl WidgetA11y for RescaleToggleView {
+    /// **The chart's own answer** (R1722), derived from the same
+    /// `LegendInteraction::Toggle` that made the entries focusable — so the
+    /// roster a screen reader walks is the roster the row drew.
     fn access_node(state: &LegendState, focused: Option<&str>) -> Vec<AccessNode> {
-        let segments: Vec<ToggleSegment<'_>> = (0..N)
-            .map(|i| ToggleSegment {
-                tag: LEGEND_TAGS[i],
-                label: LABELS[i],
-                state: state.rows[i].0,
-                on: state.rows[i].1,
-            })
-            .collect();
-        toggle_button_group_nodes(GROUP_TAG, "Series", &segments, focused)
+        let postures = (0..N).fold(LegendPostures::at_rest(), |acc, i| {
+            acc.under(i, &state.rows[i].0)
+        });
+        chart(state.visibility()).legend_access_nodes(
+            CHART_RECT,
+            &ChartStyle::default(),
+            &postures,
+            focused,
+        )
     }
 }
 

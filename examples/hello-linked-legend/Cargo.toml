@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1392 §5.38 a scatter's interactive legend cross-filters a companion line chart — forcing consumer of ScatterChart::interactive_legend (arbitrary chart-to-chart cross-filter)"
+description = "R1392 §5.38 a scatter's toggle legend cross-filters a companion line chart — forcing consumer of a scatter declaring LegendInteraction::Toggle (arbitrary chart-to-chart cross-filter)"
 publish = false
 
 [[bin]]

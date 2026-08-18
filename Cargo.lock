@@ -2066,6 +2066,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-chart-legends"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-chart",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-gpu",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-checkbox"
 version = "0.0.1"
 dependencies = [

@@ -75,6 +75,7 @@ use crate::draw::{
     plot_rect, polygon_node, stroke_path, to_f32, to_u32, x_tick_labels,
 };
 use crate::fit::Fitted;
+use crate::legend::{ChartLegend, Legend};
 use crate::plot::{
     axis_domain, axis_format, axis_minor_ticks, axis_scale, axis_ticks, kind_extent, tick_pixels,
 };
@@ -1221,6 +1222,16 @@ struct BodyRect {
 struct CandleInspect {
     highlight: Option<Scene>,
     tooltip: Vec<Scene>,
+}
+
+impl ChartLegend for CandlestickChart {
+    /// **An empty roster**: this chart draws one session series, so there is no
+    /// second named thing for a legend to distinguish. What its two colours mean
+    /// is a direction (up or down) rather than a part that could be hidden, and
+    /// [`CandlestickChart::direction_contrast`] is where that is stated.
+    fn legend(&self) -> Legend {
+        Legend::new(&self.tag_prefix, "Sessions", Vec::new())
+    }
 }
 
 #[cfg(test)]

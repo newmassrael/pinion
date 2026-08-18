@@ -62,6 +62,7 @@ use crate::draw::{
     CalloutRow, absolute, box_node, callout, category_label_node, fill_parent, marker_node,
     outline_box, plot_rect, polygon_node, stroke_path, to_f32, to_u32,
 };
+use crate::legend::{ChartLegend, Legend};
 // R1626 — the crate's one f64 -> f32 narrowing, rather than a third copy of it.
 use crate::fit::Fitted;
 use crate::palette::CategoricalPalette;
@@ -1147,6 +1148,16 @@ struct BoxInspect {
 /// The category indices this geometry draws — the axis's visible window.
 fn visible_indices(g: &BoxGeom) -> impl Iterator<Item = usize> {
     g.x.visible().into_iter().flat_map(|w| w.lo()..=w.hi())
+}
+
+impl ChartLegend for BoxPlotChart {
+    /// **An empty roster**, for the reason [`crate::BarChart`]'s is empty: this
+    /// chart holds one set of distributions over a category axis, so its parts
+    /// are already named by the axis and hiding one is the category window's
+    /// job ([`BoxPlotChart::visible_categories`]).
+    fn legend(&self) -> Legend {
+        Legend::new(&self.tag_prefix, "Distributions", Vec::new())
+    }
 }
 
 #[cfg(test)]

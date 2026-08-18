@@ -54,6 +54,7 @@ use crate::draw::{
     CalloutRow, MUTED_ALPHA, absolute, box_node, callout, circle_commands, fill_parent,
     legend_band_color_bar, marker_node, stroke_path, to_f32, to_u32,
 };
+use crate::legend::{ChartLegend, Legend, LegendEntry, LegendInteraction};
 use crate::palette::CategoricalPalette;
 use crate::plot::{
     AxisKinds, CartesianPlot, OffScale, Rescale, axis_format, axis_minor_ticks, axis_ticks,
@@ -75,7 +76,8 @@ pub struct ScatterChart {
     y_domain: Option<(f64, f64)>,
     inspect: Option<f32>,
     select_x_range: Option<(f64, f64)>,
-    legend_tags: Option<Vec<String>>,
+    /// R1722 — what may be done to the legend. See [`crate::Legend`].
+    legend_interaction: LegendInteraction,
     color: ValueEncoding,
     kinds: AxisKinds,
     tag_prefix: String,
@@ -93,7 +95,7 @@ impl ScatterChart {
             y_domain: None,
             inspect: None,
             select_x_range: None,
-            legend_tags: None,
+            legend_interaction: LegendInteraction::default(),
             color: ValueEncoding::default(),
             kinds: AxisKinds::default(),
             tag_prefix: "chart".to_string(),
@@ -271,23 +273,18 @@ impl ScatterChart {
         self
     }
 
-    /// Make the legend **interactive** (R1392): each entry becomes a focusable,
-    /// hit-testable region tagged with the caller's `tags[i]` (one per series, in
-    /// series order), so a click / press anywhere on entry `i` resolves — through
-    /// the router's deepest-tagged-ancestor hit-test — to the
-    /// [`External`](pinion_core::external::External) the caller binds to `tags[i]`,
-    /// and a hidden series' entry renders muted (grey swatch + dimmed label). The
-    /// scatter counterpart of [`LineChart::interactive_legend`](crate::LineChart::interactive_legend),
-    /// sharing the one lifted `crate::draw::interactive_legend_row`, so a scatter
-    /// can be a cross-filter SELECTOR that drives a DIFFERENT chart type (a
-    /// scatter-legend click filtering a companion line chart — the "arbitrary
-    /// chart-to-chart" cross-filter). The chart stays a pure scene producer: it
-    /// emits the tagged focusable entries; the caller owns the tags and wires the
-    /// toggles to [`Series::visible`](crate::Series::visible). Requires
-    /// [`ChartStyle::legend`](crate::ChartStyle::legend) `= true`.
+    /// Declare what may be done to this chart's legend (R1722).
+    ///
+    /// [`Toggle`](LegendInteraction::Toggle) makes a scatter a cross-filter
+    /// SELECTOR that can drive a DIFFERENT chart type — a scatter-legend press
+    /// filtering a companion line chart — because the entry is a hit target and
+    /// its own `Tab` stop, and [`ScatterChart::legend`] answers what the press
+    /// would do to [`Series::visible`](crate::Series::visible).
+    ///
+    /// Requires [`ChartStyle::legend`](crate::ChartStyle::legend) `= true`.
     #[must_use]
-    pub fn interactive_legend(mut self, tags: Vec<String>) -> Self {
-        self.legend_tags = Some(tags);
+    pub fn with_legend(mut self, interaction: LegendInteraction) -> Self {
+        self.legend_interaction = interaction;
         self
     }
 
@@ -496,7 +493,7 @@ impl ScatterChart {
             if self.color.is_set() {
                 children.extend(self.color_bar_row(rect, style));
             } else {
-                children.extend(self.legend(rect, style));
+                children.extend(self.legend_scene(rect, style));
             }
         }
         children.extend(tooltip);
@@ -633,52 +630,6 @@ impl ScatterChart {
             &self.tag_prefix,
         ));
         out
-    }
-
-    /// The legend row (fixed-width slots) in the top margin band — the shared
-    /// [`crate::draw::legend_row`], resolving each series' colour + name.
-    fn legend(&self, rect: Rect, style: &ChartStyle) -> Vec<Scene> {
-        let start_x = rect.x + style.margin.left;
-        let row_y = rect.y + 6;
-        // (R1396) The row's width from `start_x` to the chart's right edge.
-        let avail = rect.w.saturating_sub(style.margin.left);
-        // R1392 — an interactive legend (focusable tagged entries) when the
-        // caller opts in, else the static swatch+label row.
-        if let Some(tags) = &self.legend_tags {
-            let entries: Vec<(Color, String, bool)> = self
-                .series
-                .iter()
-                .enumerate()
-                .map(|(i, s)| {
-                    (
-                        s.color.unwrap_or_else(|| self.palette.color(i)),
-                        s.name.clone(),
-                        s.visible,
-                    )
-                })
-                .collect();
-            return crate::draw::interactive_legend_row(
-                &entries,
-                tags,
-                start_x,
-                row_y,
-                avail,
-                style,
-                &self.tag_prefix,
-            );
-        }
-        let entries: Vec<(Color, String)> = self
-            .series
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                (
-                    s.color.unwrap_or_else(|| self.palette.color(i)),
-                    s.name.clone(),
-                )
-            })
-            .collect();
-        crate::draw::legend_row(&entries, start_x, row_y, avail, style, &self.tag_prefix)
     }
 
     /// The inspect readout as one line of text — the same focus and values the
@@ -866,6 +817,29 @@ struct Inspect {
     tooltip: Vec<Scene>,
 }
 
+impl ChartLegend for ScatterChart {
+    /// One entry per series, coloured as the series' marks are drawn and on
+    /// when it is visible.
+    fn legend(&self) -> Legend {
+        Legend::new(
+            &self.tag_prefix,
+            "Series",
+            self.series
+                .iter()
+                .enumerate()
+                .map(|(i, s)| {
+                    LegendEntry::new(
+                        s.color.unwrap_or_else(|| self.palette.color(i)),
+                        s.name.clone(),
+                    )
+                    .shown(s.visible)
+                })
+                .collect(),
+        )
+        .with_interaction(self.legend_interaction)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1046,9 +1020,9 @@ mod tests {
 
     #[test]
     fn r1392_interactive_legend_emits_focusable_tagged_entries() {
-        let tags = vec!["sc_0".to_string(), "sc_1".to_string()];
+        let tags = ["chart.legend.0", "chart.legend.1"];
         let scene = ScatterChart::new(two_series())
-            .interactive_legend(tags.clone())
+            .with_legend(LegendInteraction::Toggle)
             .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
         for tag in &tags {
             let Some(Scene::Container(entry)) = find(&scene, tag) else {
@@ -1074,16 +1048,18 @@ mod tests {
             find(&scene, "chart.legend.0.swatch").is_some(),
             "the static legend swatch",
         );
-        assert!(find(&scene, "sc_0").is_none(), "no caller-tagged entry");
+        assert!(
+            find(&scene, "chart.legend.0").is_none(),
+            "a paint legend emits no entry container",
+        );
     }
 
     #[test]
     fn r1392_hidden_series_keeps_its_interactive_entry() {
         let mut series = two_series();
         series[1].visible = false;
-        let tags = vec!["sc_0".to_string(), "sc_1".to_string()];
         let scene = ScatterChart::new(series)
-            .interactive_legend(tags)
+            .with_legend(LegendInteraction::Toggle)
             .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
         // The hidden series draws no point marks...
         assert_eq!(
@@ -1093,7 +1069,7 @@ mod tests {
         );
         // ...but its legend entry stays (it is the toggle back on).
         assert!(
-            find(&scene, "sc_1").is_some(),
+            find(&scene, "chart.legend.1").is_some(),
             "the hidden series keeps its interactive legend entry",
         );
     }

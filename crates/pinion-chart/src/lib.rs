@@ -69,16 +69,17 @@
 //! across the line and scatter markers. On the line chart, R1379-R1381 then
 //! added per-series visibility (`Series::visible` — a hidden series drops its
 //! geometry but keeps its index / legend slot / domain), an interactive legend
-//! ([`LineChart::interactive_legend`] — legend entries emit as focusable,
-//! tagged containers a caller binds to a toggle, so the chart stays a pure scene
-//! producer), and an opt-in [`LineChart::rescale_to_visible`] that re-domains
+//! (legend entries emit as focusable, tagged containers a caller binds to a
+//! toggle, so the chart stays a pure scene producer — R1722 made that a
+//! DECLARATION every chart kind answers, see [`ChartLegend`]), and an opt-in
+//! [`LineChart::rescale_to_visible`] that re-domains
 //! the axes to only the visible series. And (R1382) the [`Treemap`] — the
 //! crate's SECOND part-of-whole form, area-encoded rather than angular: a
 //! squarified (Bruls-Huizing-van Wijk) tile layout with contrast-aware in-tile
 //! labels and the same scrub inspect (ring + `value (percent%)` tooltip). And
 //! (R1384) the first CROSS-FILTER surface — [`BarChart::select`] mutes the bars
 //! outside an active category set, [`BarChart::selectable`] overlays one
-//! focusable, caller-tagged hit region per bar (the `interactive_legend` chip
+//! focusable, caller-tagged hit region per bar (the toggle legend's chip
 //! mechanism applied to the bars), and `examples/hello-cross-filter` wires that
 //! selection to filter a companion line chart: a click in one widget reshapes
 //! another. And (R1385) the [`Sparkline`] — a compact, axis-less trend line (no
@@ -311,6 +312,7 @@ mod donut;
 mod draw;
 mod fit;
 mod interpolate;
+mod legend;
 mod line;
 mod model;
 mod palette;
@@ -345,6 +347,10 @@ pub use distribution::{
 pub use donut::{DonutChart, Slice};
 pub use fit::{Along, FitRule, Fitted, Room};
 pub use interpolate::{CurveSegment, Interpolation, Overshoot, curve, is_graph, overshoot};
+pub use legend::{
+    ChartLegend, Legend, LegendEntry, LegendInteraction, LegendPostures, LegendSeat, LegendSeating,
+    StaticLegend,
+};
 pub use line::LineChart;
 pub use model::{CellTable, Field, Mapped, ModelMapper, Orientation, UnreadableCell, numeric};
 pub use palette::CategoricalPalette;

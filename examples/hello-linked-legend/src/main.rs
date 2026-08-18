@@ -2,10 +2,11 @@
 //! legend cross-filters a companion LINE chart: an ARBITRARY chart-to-chart
 //! cross-filter.
 //!
-//! The forcing consumer for [`pinion_chart::ScatterChart::interactive_legend`]:
-//! the SCATTER draws its own legend, and each entry is a focusable, hit-testable
-//! region (the R1380 chip mechanism, now lifted to
-//! [`pinion_chart`] and shared by the line and scatter charts). Clicking an entry
+//! The forcing consumer for a scatter declaring
+//! [`pinion_chart::LegendInteraction::Toggle`]: the
+//! SCATTER draws its own legend, and each entry is a focusable, hit-testable
+//! region (the R1380 chip mechanism, which R1722 made a declaration every chart
+//! kind answers). Clicking an entry
 //! toggles that series' visibility, and the ONE toggle state drives BOTH the
 //! scatter (its points vanish) AND a companion LINE chart (its polyline vanishes)
 //! — so a selection in one widget reshapes a DIFFERENT chart type. R1384 wired
@@ -24,8 +25,11 @@
 //! its own), so there is no duplicate-tag collision — one selector, one
 //! different-type target.
 
-use pinion_a11y::{AccessNode, ToggleSegment, WidgetA11y, toggle_button_group_nodes};
-use pinion_chart::{ChartStyle, DataPoint, LineChart, ScatterChart, Series};
+use pinion_a11y::{AccessNode, WidgetA11y};
+use pinion_chart::{
+    ChartLegend, ChartStyle, DataPoint, LegendInteraction, LegendPostures, LineChart, ScatterChart,
+    Series,
+};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{BoxStyle, Color, LayoutStyle, Size, TextStyle};
@@ -46,14 +50,13 @@ const THEME_TAG: &str = "app";
 /// Series (and legend-entry) count.
 const N: usize = 3;
 
-/// Per-entry dispatch + Tab-stop tags. These are BOTH the tags the SCATTER's
-/// interactive legend entries carry AND the tags the `ToggleExternal`s bind to,
-/// so a click on entry `i` routes straight to toggle `i`. The line is a pure
-/// target (no legend), so nothing else claims these tags.
-const LEGEND_TAGS: [&str; N] = ["legend_0", "legend_1", "legend_2"];
-
-/// The WAI-ARIA §3.6 `group` label for the AccessKit toggle-button group.
-const GROUP_TAG: &str = "linked_legend";
+/// Per-entry dispatch + Tab-stop tags: the tags the SCATTER's toggle legend
+/// entries carry, which the `ToggleExternal`s bind to, so a click on entry `i`
+/// routes straight to toggle `i`. The line is a pure target (no legend), so
+/// nothing else claims these tags.
+///
+/// R1722 — derived from the selector's `scatter` tag prefix, not chosen here.
+const LEGEND_TAGS: [&str; N] = ["scatter.legend.0", "scatter.legend.1", "scatter.legend.2"];
 
 /// Series names — the single source for the series name, the legend-entry label,
 /// and the AccessKit `button` name.
@@ -110,9 +113,15 @@ fn series_with(visible: [bool; N]) -> Vec<Series> {
         .collect()
 }
 
-/// The interactive-legend tags as owned strings (the chart takes `Vec<String>`).
-fn legend_tags() -> Vec<String> {
-    LEGEND_TAGS.iter().map(|t| (*t).to_string()).collect()
+/// The SELECTOR chart, for the visibility mask `visible`.
+///
+/// One definition, because the paint and the accessibility tree must be built
+/// from the same chart: `access_node` asks it for `legend_access_nodes`, which
+/// seats the row exactly as `build` did (R1722).
+fn selector(visible: [bool; N]) -> ScatterChart {
+    ScatterChart::new(series_with(visible))
+        .with_legend(LegendInteraction::Toggle)
+        .with_tag_prefix("scatter")
 }
 
 /// The themed style shared by both charts. `legend: true` so the SCATTER draws
@@ -180,13 +189,11 @@ fn view(state: LinkedState, _frame: &Frame) -> Scene {
         .with_layout(LayoutStyle::new().with_absolute_position(20, 14)),
     );
 
-    // SELECTOR: the scatter with its own interactive legend (tags = LEGEND_TAGS).
-    // A distinct tag prefix keeps its `scatter.*` nodes apart from the line's, so
-    // the two charts share no ambient tag (bg / axes / grid).
-    let scatter = ScatterChart::new(series_with(mask))
-        .interactive_legend(legend_tags())
-        .with_tag_prefix("scatter")
-        .build(SCATTER_RECT, &style);
+    // SELECTOR: the scatter with its own toggle legend (tags = LEGEND_TAGS,
+    // which R1722 derives from its `scatter` prefix). A distinct tag prefix
+    // keeps its `scatter.*` nodes apart from the line's, so the two charts
+    // share no ambient tag (bg / axes / grid).
+    let scatter = selector(mask).build(SCATTER_RECT, &style);
 
     // TARGET: the line chart of the SAME series, filtered by the same mask.
     let line = LineChart::new(series_with(mask))
@@ -261,21 +268,23 @@ impl WidgetCore for LinkedLegendView {
 }
 
 impl WidgetA11y for LinkedLegendView {
-    /// One [`AriaRole::Group`](pinion_a11y::AriaRole::Group) parent (`"Series"`)
-    /// plus one `button[aria-pressed]` per legend entry, built by the shared
-    /// [`toggle_button_group_nodes`] substrate. The button tags are `LEGEND_TAGS`
-    /// — the same tags the scatter's focusable legend entries carry, so AccessKit
-    /// maps each button onto its painted entry.
+    /// **The selector chart's own answer** (R1722): one `group` parent plus one
+    /// `button[aria-pressed]` per legend entry, derived from the same
+    /// `LegendInteraction::Toggle` that made the entries focusable.
+    ///
+    /// The TARGET line chart contributes nothing here, and could not: it
+    /// declares no legend interaction, so its legend answers with no nodes at
+    /// all rather than this file having to remember not to ask.
     fn access_node(state: &LinkedState, focused: Option<&str>) -> Vec<AccessNode> {
-        let segments: Vec<ToggleSegment<'_>> = (0..N)
-            .map(|i| ToggleSegment {
-                tag: LEGEND_TAGS[i],
-                label: LABELS[i],
-                state: state.rows[i].0,
-                on: state.rows[i].1,
-            })
-            .collect();
-        toggle_button_group_nodes(GROUP_TAG, "Series", &segments, focused)
+        let postures = (0..N).fold(LegendPostures::at_rest(), |acc, i| {
+            acc.under(i, &state.rows[i].0)
+        });
+        selector(state.visibility()).legend_access_nodes(
+            SCATTER_RECT,
+            &ChartStyle::default(),
+            &postures,
+            focused,
+        )
     }
 }
 
@@ -396,9 +405,14 @@ mod tests {
     }
 
     #[test]
-    fn the_line_target_has_no_second_interactive_legend() {
+    fn the_line_target_has_no_second_toggle_legend() {
         // Only the scatter's legend is a selector; the line is a pure target, so
         // no LEGEND_TAG appears twice (no duplicate-tag second selector).
+        //
+        // R1722 makes that structural rather than a convention this file keeps:
+        // the tags are `scatter.legend.{i}`, derived from the SELECTOR's own tag
+        // prefix, and the line declares no legend interaction at all — so it
+        // could not claim one of these tags even if it tried.
         let scene = render([true, true, true]);
         for tag in LEGEND_TAGS {
             assert_eq!(

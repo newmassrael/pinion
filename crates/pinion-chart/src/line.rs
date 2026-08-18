@@ -101,6 +101,7 @@ use crate::draw::{
     curve_stroke_path, fill_parent, legend_band_color_bar, marker_node, stroke_path,
 };
 use crate::interpolate::{Interpolation, Overshoot};
+use crate::legend::{ChartLegend, Legend, LegendEntry, LegendInteraction};
 // R1626 — one narrowing for the crate; R1625 had made a private second copy.
 use crate::scale::to_f32 as narrow_value;
 
@@ -132,7 +133,9 @@ pub struct LineChart {
     /// cumulative total of the visible ones before it.
     stacked: bool,
     inspect: Option<f32>,
-    legend_tags: Option<Vec<String>>,
+    /// R1722 — what may be done to the legend. One word, and the row's roles,
+    /// focus stops, keyboard and refusal are all derived from it.
+    legend_interaction: LegendInteraction,
     rescale_to_visible: bool,
     rescale_y_to_x_window: bool,
     select_x_range: Option<(f64, f64)>,
@@ -157,7 +160,7 @@ impl LineChart {
             stacked: false,
             interpolation: Interpolation::default(),
             inspect: None,
-            legend_tags: None,
+            legend_interaction: LegendInteraction::default(),
             rescale_to_visible: false,
             rescale_y_to_x_window: false,
             select_x_range: None,
@@ -411,25 +414,20 @@ impl LineChart {
         self
     }
 
-    /// Make the legend **interactive** (R1380): each entry becomes a focusable,
-    /// hit-testable region tagged with the caller's `tags[i]` (one tag per
-    /// series, in series order), and a hidden series' entry renders muted (a
-    /// grey swatch + a dimmed label — the "this line is hidden" affordance).
+    /// Declare what may be done to this chart's legend (R1722).
     ///
-    /// This gives the chart-owned legend the hit geometry it lacked (the R1379
-    /// follow-up): a click / press anywhere on entry `i` resolves — through the
-    /// router's deepest-tagged-ancestor hit-test, exactly as a
-    /// [`toggle_group`](pinion_core::widgets::toggle_group) chip does — to the
-    /// [`External`](pinion_core::external::External) the caller binds to
-    /// `tags[i]`, and the entry is its own `Tab` stop. The chart stays a pure
-    /// scene producer: it emits the tagged, focusable entries; the caller owns
-    /// the tag namespace and wires the toggles (so the legend can drive
-    /// [`Series::visible`](crate::Series::visible) without the chart importing
-    /// any widget). Requires [`ChartStyle::legend`](crate::ChartStyle::legend)
-    /// `= true`; entries beyond `tags.len()` fall back to no legend entry.
+    /// [`Toggle`](LegendInteraction::Toggle) makes each entry its own `Tab`
+    /// stop, an announced toggle button carrying its on-state, and a hit target
+    /// a click anywhere on resolves to — so the legend can drive
+    /// [`Series::visible`](crate::Series::visible). The chart stays a pure scene
+    /// producer: [`LineChart::legend`] answers what a press would do, and the
+    /// caller rebuilds the chart with the on-set it gets back.
+    ///
+    /// Requires [`ChartStyle::legend`](crate::ChartStyle::legend) `= true`,
+    /// which is what decides whether a legend is drawn at all.
     #[must_use]
-    pub fn interactive_legend(mut self, tags: Vec<String>) -> Self {
-        self.legend_tags = Some(tags);
+    pub fn with_legend(mut self, interaction: LegendInteraction) -> Self {
+        self.legend_interaction = interaction;
         self
     }
 
@@ -782,7 +780,7 @@ impl LineChart {
                     &self.tag_prefix,
                 ));
             } else {
-                children.extend(self.legend(rect, style));
+                children.extend(self.legend_scene(rect, style));
             }
         }
         children.extend(tooltip);
@@ -1189,74 +1187,6 @@ impl LineChart {
         out
     }
 
-    /// The legend row (fixed-width slots) in the top margin band. When the
-    /// legend is [`interactive`](Self::interactive_legend) each entry is a
-    /// focusable, tagged hit region ([`Self::interactive_legend_entries`]);
-    /// otherwise it is the shared static [`crate::draw::legend_row`] (R1377) —
-    /// a swatch + label per series, positioned at the top-left of the plot.
-    fn legend(&self, rect: Rect, style: &ChartStyle) -> Vec<Scene> {
-        let start_x = rect.x + style.margin.left;
-        let row_y = rect.y + 6;
-        // (R1396) The row's width from `start_x` to the chart's right edge; the
-        // legend shrinks / drops entries to fit it rather than running past.
-        let avail = rect.w.saturating_sub(style.margin.left);
-        if let Some(tags) = &self.legend_tags {
-            return self.interactive_legend_entries(tags, start_x, row_y, avail, style);
-        }
-        let entries: Vec<(Color, String)> = self
-            .series
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                (
-                    s.color.unwrap_or_else(|| self.palette.color(i)),
-                    s.name.clone(),
-                )
-            })
-            .collect();
-        crate::draw::legend_row(&entries, start_x, row_y, avail, style, &self.tag_prefix)
-    }
-
-    /// The interactive legend (R1380): one focusable, hit-testable entry per
-    /// series, on the same `LEGEND_SLOT` grid as the static row, each tagged
-    /// with the caller's `tags[i]`. The entry is a `Container` whose only
-    /// children are an untagged swatch + label, so the router's
-    /// deepest-tagged-ancestor hit-test resolves a click anywhere on it to
-    /// `tags[i]` (the chip structure, chart-authored). A hidden series' entry
-    /// swaps its series-colour swatch for a grey one and dims its label — the
-    /// legend then reads as "this line is off" without the geometry going away
-    /// (the slot, and the toggle back on, stay put).
-    fn interactive_legend_entries(
-        &self,
-        tags: &[String],
-        start_x: u32,
-        row_y: u32,
-        avail: u32,
-        style: &ChartStyle,
-    ) -> Vec<Scene> {
-        let entries: Vec<(Color, String, bool)> = self
-            .series
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                (
-                    s.color.unwrap_or_else(|| self.palette.color(i)),
-                    s.name.clone(),
-                    s.visible,
-                )
-            })
-            .collect();
-        crate::draw::interactive_legend_row(
-            &entries,
-            tags,
-            start_x,
-            row_y,
-            avail,
-            style,
-            &self.tag_prefix,
-        )
-    }
-
     /// Resolve which data point the inspect cursor is focused on — the shared
     /// [`crate::plot::resolve_focus`] (R1377), gated on this chart's `inspect`
     /// fraction. The single source for "what is the inspector pointing at": the
@@ -1391,6 +1321,29 @@ impl LineChart {
             style,
             format!("{}.inspect.tooltip", self.tag_prefix),
         )
+    }
+}
+
+impl ChartLegend for LineChart {
+    /// One entry per series, coloured as the series is drawn and on when it is
+    /// visible.
+    fn legend(&self) -> Legend {
+        Legend::new(
+            &self.tag_prefix,
+            "Series",
+            self.series
+                .iter()
+                .enumerate()
+                .map(|(i, s)| {
+                    LegendEntry::new(
+                        s.color.unwrap_or_else(|| self.palette.color(i)),
+                        s.name.clone(),
+                    )
+                    .shown(s.visible)
+                })
+                .collect(),
+        )
+        .with_interaction(self.legend_interaction)
     }
 }
 
@@ -2300,11 +2253,7 @@ mod tests {
         ]
     }
 
-    fn legend_tags() -> Vec<String> {
-        vec!["leg.0".to_string(), "leg.1".to_string()]
-    }
-
-    /// The swatch fill of interactive legend entry `tag` (its first child Box).
+    /// The swatch fill of a toggle legend entry `tag` (its first child Box).
     fn entry_swatch_fill(scene: &Scene, tag: &str) -> Color {
         let Some(Scene::Container(c)) = find(scene, tag) else {
             panic!("entry {tag} is a container")
@@ -2317,13 +2266,14 @@ mod tests {
 
     #[test]
     fn interactive_legend_entries_are_focusable_and_tagged() {
-        // Each entry carries the CALLER's tag (not the chart prefix), is a Tab
+        // Each entry carries the tag DERIVED from the chart's prefix (R1722 —
+        // a caller can no longer supply a list of the wrong length), is a Tab
         // stop, and wraps exactly a swatch + a label — the chip structure, so a
         // click anywhere on it hit-tests to the entry tag.
         let scene = LineChart::new(coloured_series())
-            .interactive_legend(legend_tags())
+            .with_legend(LegendInteraction::Toggle)
             .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
-        for tag in ["leg.0", "leg.1"] {
+        for tag in ["chart.legend.0", "chart.legend.1"] {
             let Some(Scene::Container(c)) = find(&scene, tag) else {
                 panic!("interactive entry {tag} present as a container")
             };
@@ -2338,11 +2288,12 @@ mod tests {
                 "child 1 is the label"
             );
         }
-        // The interactive path replaces the static per-part legend tags.
+        // The toggle row replaces the paint row's per-PART tags: an entry is
+        // one hit target, not a swatch node beside a label node.
         assert_eq!(
-            count_prefix(&scene, "chart.legend."),
+            count_prefix(&scene, "chart.legend.0."),
             0,
-            "no static .legend.{{i}}.swatch/.label nodes in interactive mode"
+            "no .swatch / .label leaves under a toggle entry"
         );
     }
 
@@ -2355,15 +2306,15 @@ mod tests {
         series[1] = series[1].clone().with_visible(false);
         let style = ChartStyle::default();
         let scene = LineChart::new(series)
-            .interactive_legend(legend_tags())
+            .with_legend(LegendInteraction::Toggle)
             .build(Rect::new(0, 0, 400, 300), &style);
         assert_eq!(
-            entry_swatch_fill(&scene, "leg.0"),
+            entry_swatch_fill(&scene, "chart.legend.0"),
             Color::rgb(0x11, 0x22, 0x33),
             "visible entry keeps its series colour"
         );
         assert_eq!(
-            entry_swatch_fill(&scene, "leg.1"),
+            entry_swatch_fill(&scene, "chart.legend.1"),
             style.label,
             "hidden entry greys to the muted label colour"
         );
@@ -2414,8 +2365,8 @@ mod tests {
             .build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
         assert_eq!(count_prefix(&scene, "chart.legend.0"), 2, "swatch + label");
         assert!(
-            find(&scene, "leg.0").is_none(),
-            "no caller-tagged entries without interactive_legend"
+            find(&scene, "chart.legend.0").is_none(),
+            "a paint legend emits its parts as leaves and no entry container"
         );
         // The static swatch/label are leaves, never a focusable Tab stop.
         let Some(Scene::Box(_)) = find(&scene, "chart.legend.0.swatch") else {

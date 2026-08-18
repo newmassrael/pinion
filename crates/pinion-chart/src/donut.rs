@@ -57,8 +57,10 @@ use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect};
 use pinion_core::style::{Color, PathStyle, Stroke};
 
 use crate::derivations;
+use crate::legend::{ChartLegend, Legend, LegendEntry, LegendInteraction, LegendSeat};
+
 use crate::draw::{
-    CalloutRow, absolute, arc_beziers, box_node, callout, fill_parent, legend_row, to_f32, to_u32,
+    CalloutRow, absolute, arc_beziers, box_node, callout, fill_parent, to_f32, to_u32,
 };
 use crate::palette::CategoricalPalette;
 use crate::style::ChartStyle;
@@ -77,17 +79,32 @@ pub struct Slice {
     pub value: f64,
     /// An optional colour override for THIS slice.
     pub color: Option<Color>,
+    /// Whether this slice is part of the ring (R1722). A hidden slice leaves
+    /// the total, so the ring **re-normalises** around the slices that remain —
+    /// which is what a part-of-whole picture must do, and the difference from
+    /// [`Series::visible`](crate::Series::visible), where hiding a line leaves
+    /// the others' geometry untouched. It keeps its legend slot and its palette
+    /// index either way, so showing it again lands it where it was.
+    pub visible: bool,
 }
 
 impl Slice {
-    /// A slice with the default (palette) colour.
+    /// A slice with the default (palette) colour, in the ring.
     #[must_use]
     pub fn new(label: impl Into<String>, value: f64) -> Self {
         Self {
             label: label.into(),
             value,
             color: None,
+            visible: true,
         }
+    }
+
+    /// Whether this slice is part of the ring. See [`Slice::visible`].
+    #[must_use]
+    pub fn shown(mut self, visible: bool) -> Self {
+        self.visible = visible;
+        self
     }
 
     /// Override this slice's colour.
@@ -107,6 +124,8 @@ pub struct DonutChart {
     palette: CategoricalPalette,
     inner_ratio: f32,
     inspect: Option<f32>,
+    /// R1722 — what may be done to the legend. See [`crate::Legend`].
+    legend_interaction: LegendInteraction,
     tag_prefix: String,
 }
 
@@ -121,6 +140,7 @@ impl DonutChart {
             palette: CategoricalPalette::default(),
             inner_ratio: DEFAULT_INNER_RATIO,
             inspect: None,
+            legend_interaction: LegendInteraction::default(),
             tag_prefix: "chart".to_string(),
         }
     }
@@ -224,8 +244,16 @@ impl DonutChart {
             children.push(box_node(rect, bg, format!("{}.bg", self.tag_prefix)));
         }
 
-        // One filled sector per positive slice, in sweep order.
-        for (i, seg) in geom.segments.iter().enumerate() {
+        // One filled sector per drawn slice, in sweep order, tagged by the
+        // slice's own index rather than by its position among the drawn ones.
+        //
+        // (R1722) The distinction became reachable when a legend could hide a
+        // slice: tagging by draw order renumbers every sector after a dropped
+        // one, so an agent that hid a slice and then read `slice.1` would get a
+        // different slice than before it pressed. The colour was already taken
+        // from `seg.slice` for the same reason, and this is R1379's rule for a
+        // hidden series — its index survives — applied to the other hiding rule.
+        for seg in &geom.segments {
             let color = self.slices[seg.slice]
                 .color
                 .unwrap_or_else(|| self.palette.color(seg.slice));
@@ -234,7 +262,7 @@ impl DonutChart {
                 seg.a0,
                 seg.a1,
                 PathStyle::filled(color),
-                format!("{}.slice.{i}", self.tag_prefix),
+                format!("{}.slice.{}", self.tag_prefix, seg.slice),
             ));
         }
 
@@ -246,7 +274,7 @@ impl DonutChart {
         // Legend: swatch + label per ORIGINAL slice (kept even for a
         // zero/omitted slice, so the reader still sees the category).
         if style.legend {
-            children.extend(self.legend(rect, style));
+            children.extend(self.legend_scene(rect, style));
         }
 
         children.extend(tooltip);
@@ -279,14 +307,14 @@ impl DonutChart {
         let total: f64 = self
             .slices
             .iter()
-            .filter(|s| s.value.is_finite() && s.value > 0.0)
+            .filter(|s| s.visible && s.value.is_finite() && s.value > 0.0)
             .map(|s| s.value)
             .sum();
         let mut segments = Vec::new();
         if total > 0.0 {
             let mut a = 0.0_f32;
             for (i, s) in self.slices.iter().enumerate() {
-                if s.value.is_finite() && s.value > 0.0 {
+                if s.visible && s.value.is_finite() && s.value > 0.0 {
                     #[allow(
                         clippy::cast_possible_truncation,
                         reason = "an angular sweep in 0..2pi narrows to f32 for the pixel geometry; the sub-degree loss is invisible"
@@ -393,35 +421,11 @@ impl DonutChart {
         }
     }
 
-    /// The legend row (fixed-width slots), centred along the reserved bottom
-    /// band beneath the donut.
-    fn legend(&self, rect: Rect, style: &ChartStyle) -> Vec<Scene> {
-        let band = self.legend_band(style);
-        let row_y = rect.y + rect.h.saturating_sub(band).saturating_add(3);
-        // Centre the legend row under the (centred) donut, then hand the entries
-        // to the shared `legend_row` (R1377) — the byte-identical swatch + label
-        // loop the line and scatter charts also emit; only the WHERE (a centred
-        // bottom band, vs their top band) is the donut's own.
-        //
-        // (R1396) The row can use the full width, centred, so `avail = rect.w`;
-        // `legend_row_width` gives the width it actually takes after the shared
-        // fit (shrink / drop-to-`+N`), and centring by THAT keeps a narrow-donut
-        // legend inside the chart instead of overrunning its right edge.
-        let avail = rect.w;
-        let total_w = crate::draw::legend_row_width(avail, self.slices.len());
-        let start_x = rect.x + rect.w.saturating_sub(total_w) / 2;
-        let entries: Vec<(Color, String)> = self
-            .slices
-            .iter()
-            .enumerate()
-            .map(|(i, s)| {
-                (
-                    s.color.unwrap_or_else(|| self.palette.color(i)),
-                    s.label.clone(),
-                )
-            })
-            .collect();
-        legend_row(&entries, start_x, row_y, avail, style, &self.tag_prefix)
+    /// Declare what may be done to this chart's legend (R1722).
+    #[must_use]
+    pub fn with_legend(mut self, interaction: LegendInteraction) -> Self {
+        self.legend_interaction = interaction;
+        self
     }
 }
 
@@ -517,6 +521,49 @@ fn percent_text(value: f64, total: f64) -> String {
     format!("{v} ({pct}%)")
 }
 
+impl ChartLegend for DonutChart {
+    /// A **centred** row in the reserved bottom band, which is the one place a
+    /// chart's legend seat differs in this crate.
+    ///
+    /// (R1396) The row may use the full width, so `avail = rect.w`;
+    /// [`Legend::width`] gives what it actually takes after the shared fit
+    /// (shrink, then drop to `+N`), and centring by THAT keeps a narrow donut's
+    /// legend inside the chart instead of overrunning its right edge.
+    fn legend_seat(&self, rect: Rect, style: &ChartStyle) -> LegendSeat {
+        let band = self.legend_band(style);
+        let avail = rect.w;
+        LegendSeat {
+            x: rect.x + rect.w.saturating_sub(self.legend().width(avail)) / 2,
+            y: rect.y + rect.h.saturating_sub(band).saturating_add(3),
+            avail,
+        }
+    }
+
+    /// One entry per slice, on when the slice is in the ring.
+    ///
+    /// Because a donut is a part-of-whole picture, turning one off
+    /// **re-normalises** the others — see [`Slice::visible`], which is the one
+    /// place this crate's two hiding rules differ.
+    fn legend(&self) -> Legend {
+        Legend::new(
+            &self.tag_prefix,
+            "Slices",
+            self.slices
+                .iter()
+                .enumerate()
+                .map(|(i, s)| {
+                    LegendEntry::new(
+                        s.color.unwrap_or_else(|| self.palette.color(i)),
+                        s.label.clone(),
+                    )
+                    .shown(s.visible)
+                })
+                .collect(),
+        )
+        .with_interaction(self.legend_interaction)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -558,6 +605,101 @@ mod tests {
         assert!(
             find(&scene, "chart.slice.3").is_none(),
             "no phantom 4th sector"
+        );
+    }
+
+    #[test]
+    fn r1722_a_hidden_slice_leaves_the_ring_without_renumbering_the_others() {
+        // The index a sector carries is its SLICE's, not its position among the
+        // drawn ones. Hiding the first slice must therefore remove `slice.0` and
+        // leave `slice.1` / `slice.2` where they were — otherwise an agent that
+        // pressed a legend entry would find every sector after it renamed.
+        let mut slices = three();
+        slices[0] = slices[0].clone().shown(false);
+        let scene =
+            DonutChart::new(slices).build(Rect::new(0, 0, 400, 300), &ChartStyle::default());
+        assert!(
+            find(&scene, "chart.slice.0").is_none(),
+            "the hidden slice draws no sector"
+        );
+        assert!(find(&scene, "chart.slice.1").is_some(), "and 1 is still 1");
+        assert!(find(&scene, "chart.slice.2").is_some(), "and 2 is still 2");
+        // Its legend entry stays — it is the toggle back on.
+        assert!(find(&scene, "chart.legend.0.swatch").is_some());
+    }
+
+    #[test]
+    fn r1722_the_donut_seats_its_legend_centred_in_the_bottom_band() {
+        // The one thing about a legend that IS per-chart. A donut's row is
+        // centred under the ring, not started at a left margin the way the
+        // cartesian charts' rows are, and it is centred by the width the row
+        // actually takes after the shared fit rather than by its ideal width —
+        // otherwise a narrow donut pushes its own legend off its right edge.
+        let rect = Rect::new(0, 0, 400, 300);
+        let style = ChartStyle::default();
+        let chart = DonutChart::new(three());
+        let seat = chart.legend_seat(rect, &style);
+        let row = chart.legend().width(seat.avail);
+        assert_eq!(
+            seat.x,
+            rect.x + (rect.w - row) / 2,
+            "the row is centred by the width it takes"
+        );
+        assert!(
+            seat.x + row <= rect.x + rect.w,
+            "and stays inside the chart"
+        );
+        assert!(seat.y > rect.y + rect.h / 2, "in the BOTTOM band");
+    }
+
+    #[test]
+    fn r1722_a_hidden_slice_leaves_the_total_the_shares_are_taken_of() {
+        // The re-normalisation, stated as a NUMBER rather than as "the geometry
+        // moved". Hiding a 30 out of 30/50/20 must make the 50 read as 50/70,
+        // not 50/100 — and a sweep comparison cannot tell those apart, because
+        // dropping a slice shifts every later start angle either way.
+        let rect = Rect::new(0, 0, 400, 300);
+        let style = ChartStyle::default();
+        let readout = |slices: Vec<Slice>| {
+            DonutChart::new(slices)
+                // Scrub onto the SECOND drawn sector in both builds: with `a`
+                // hidden that is `c`, with everything shown it is `b`.
+                .inspect(Some(0.5))
+                .inspect_readout(rect, &style)
+                .expect("the scrub lands on a drawn sector")
+        };
+        assert_eq!(readout(three()), "b = 50 (50%)", "50 of 100");
+        let mut short = three();
+        short[0] = short[0].clone().shown(false);
+        assert_eq!(
+            readout(short),
+            "c = 20 (29%)",
+            "and 20 of the 70 that is left, not of the 100 that is gone"
+        );
+    }
+
+    #[test]
+    fn r1722_hiding_a_slice_regrows_the_ring_around_what_is_left() {
+        // The part-of-whole rule, and the one place this crate's two hiding
+        // rules differ: a hidden series leaves its neighbours' geometry alone,
+        // a hidden slice does not, because the remaining parts must still sum
+        // to the whole.
+        let rect = Rect::new(0, 0, 400, 300);
+        let style = ChartStyle::default();
+        let sweep_of = |slices: Vec<Slice>| {
+            let scene = DonutChart::new(slices).build(rect, &style);
+            let Some(Scene::Path(p)) = find(&scene, "chart.slice.1") else {
+                panic!("slice 1 is drawn in both")
+            };
+            p.commands.clone()
+        };
+        let whole = sweep_of(three());
+        let mut short = three();
+        short[0] = short[0].clone().shown(false);
+        assert_ne!(
+            whole,
+            sweep_of(short),
+            "the surviving slices take the hidden one's share"
         );
     }
 

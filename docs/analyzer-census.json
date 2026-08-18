@@ -489,8 +489,9 @@
     "plane": "dashboard",
     "tier": "t2",
     "capability": "toggling a series from the legend",
-    "verdict": "gap",
-    "covered_by": "★ CORRECTED R1721 by measuring instead of reading: the prose here said \"there is no legend widget to click\" and that was FALSE — `LineChart::interactive_legend` (R1380) and `ScatterChart::interactive_legend` (R1392) emit focusable, hit-tested entries and share one lifted `interactive_legend_row`, with an overflow marker when the row is narrow. What is actually short is BREADTH and uniformity: exactly TWO of the crate's chart kinds offer it, bar / donut / polar / boxplot / candlestick / density / treemap paint a static legend or none, and nothing declares which kinds support the gesture — so a dashboard cannot ask. This is the wrong-`absent` direction R1602 named as the self-correcting one, and it self-corrected the round somebody reached for it"
+    "verdict": "have",
+    "covered_by": "R1722 closed what R1721's correction left open. `ChartLegend` is a trait EVERY chart kind implements, so a board holding charts of several kinds can ask before it offers the gesture — which is the position a dashboard is in and the reason two-of-seven was not merely a breadth number. `LegendInteraction` is the one word the row's roles, focus stops, keyboard, on-state and refusal all derive from, and `Legend::scene` is the only painter, so a chart cannot paint an interaction it did not declare. Breadth: the four kinds that name more than one part (line, scatter, polar, donut) all offer it — polar and donut for the first time — and the three that hold ONE set over a category axis answer with an empty roster, which is the truthful answer and the one a board previously could not get. Above the floor on every axis but breadth, where the floor was ahead: its markers are not focusable, carry no accessibility node at all (measured: zero accessibility calls in either of its two chart modules), and its click is a bare notification that hides nothing until an application wires it",
+    "proven_by": "pinion-chart::legend::tests::a_paint_legend_emits_no_focus_stop_and_a_toggle_legend_emits_one_per_entry"
   },
   {
     "id": "dashboard.t2.4",

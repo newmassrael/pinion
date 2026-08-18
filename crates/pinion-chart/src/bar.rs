@@ -90,6 +90,8 @@ use pinion_core::scene::{ContainerNode, Rect};
 use pinion_core::style::{Color, LayoutStyle, Size};
 
 use crate::derivations;
+use crate::legend::{ChartLegend, Legend};
+
 use crate::draw::{
     CalloutRow, MUTED_ALPHA, absolute, box_node, callout, category_label_node, fill_parent,
     outline_box, plot_rect, to_f32, to_u32,
@@ -370,9 +372,9 @@ impl BarChart {
     /// `tags[i]` (one per bar, in bar order): a transparent overlay spanning the
     /// bar's whole slot COLUMN, so the router's deepest-tagged-ancestor hit-test
     /// resolves a click anywhere in that category's column to `tags[i]`. This is
-    /// the same chip mechanism
-    /// [`LineChart::interactive_legend`](crate::LineChart::interactive_legend)
-    /// gives its legend entries, now applied to the bars themselves — the caller
+    /// the same chip mechanism a [`crate::Legend`] declaring
+    /// [`crate::LegendInteraction::Toggle`] gives its
+    /// entries, now applied to the bars themselves — the caller
     /// owns the tag namespace and wires each tag to set [`select`](Self::select),
     /// so the chart stays a pure scene producer. Only the first `tags.len()`
     /// bars become clickable; any extra tags past the last bar are ignored, and
@@ -873,6 +875,27 @@ fn value_text(bar: &Bar, y_step: f64) -> String {
         format_axis_tick(bar.value, y_step)
     } else {
         "\u{2014}".to_string()
+    }
+}
+
+impl ChartLegend for BarChart {
+    /// **An empty roster**, and this is the chart's real answer rather than a
+    /// placeholder.
+    ///
+    /// A bar chart here holds ONE set of labelled bars over a category axis, so
+    /// there is no second named thing for a legend to distinguish. The bars'
+    /// names are already on the axis, and repeating them in a legend would
+    /// invite a reader to toggle a category off — which is what the category
+    /// window ([`BarChart::visible_categories`]) does, on the axis, where the
+    /// gesture belongs.
+    ///
+    /// The reference toolkit gives a bar chart legend markers because a bar
+    /// chart there holds several bar *sets*; the difference is in the data
+    /// model, not in the legend. Answering here — rather than having no method
+    /// to call — is what lets a board ask instead of discovering that nothing
+    /// was drawn.
+    fn legend(&self) -> Legend {
+        Legend::new(&self.tag_prefix, "Bars", Vec::new())
     }
 }
 

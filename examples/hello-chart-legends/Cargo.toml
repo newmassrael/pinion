@@ -1,15 +1,15 @@
 [package]
-name = "hello-legend-toggle"
+name = "hello-chart-legends"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "R1380 §5.38 click-the-chart's-own-legend to toggle a series — forcing consumer of a line chart declaring LegendInteraction::Toggle; 5th consumer of the toggle_group substrate"
+description = "R1722 §5.38 a board of four chart kinds that ASKS each chart what its legend can do — the forcing consumer of pinion_chart::ChartLegend, and the screen the analysis tool's reserved chart slots become"
 publish = false
 
 [[bin]]
-name = "hello-legend-toggle"
+name = "hello-chart-legends"
 path = "src/main.rs"
 
 [dependencies]

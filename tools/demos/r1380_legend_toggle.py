@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 """R1380 §5.38 — hello-legend-toggle: click the chart's OWN legend to toggle.
 
-The forcing consumer for `pinion_chart::LineChart::interactive_legend`. Unlike
-R1379 (a separate chip bar), the toggle surface IS the chart's legend: each
-entry is a focusable, hit-testable region carrying the caller's tag, so a click
-at the entry's pixels routes — through the real geometric hit-test — to that
-series' `ToggleExternal`.
+The forcing consumer for a line chart declaring
+`pinion_chart::LegendInteraction::Toggle`. Unlike R1379 (a separate chip bar),
+the toggle surface IS the chart's legend: each entry is a focusable,
+hit-testable region carrying a tag the CHART derives from its own prefix
+(R1722 — it used to be one the caller passed in), so a click at the entry's
+pixels routes — through the real geometric hit-test — to that series'
+`ToggleExternal`.
 
 Atomic verification scope (>=30 assertions):
 
@@ -49,7 +51,9 @@ N = 3
 
 
 def entry_tag(i: int) -> str:
-    return f"legend_{i}"
+    # R1722 — the chart DERIVES its entry tags from its tag prefix, so this is
+    # `{prefix}.legend.{i}` rather than a name the application chose.
+    return f"chart.legend.{i}"
 
 
 def value(tf, i: int):

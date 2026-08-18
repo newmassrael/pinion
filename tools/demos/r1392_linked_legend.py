@@ -12,8 +12,10 @@ BOTH charts — a selection in one widget reshapes a DIFFERENT chart type.
 
 Distinct tag prefixes keep the two charts' nodes apart: the scatter's points are
 `scatter.point.{i}.{j}`, the line's polylines `line.series.{i}`. The legend entry
-`legend_{i}` (a focusable container) is the scatter's; the line is a pure target
-(no legend of its own), so no tag is claimed twice.
+`scatter.legend.{i}` (a focusable container) is the scatter's; the line is a pure
+target (no legend of its own), so no tag is claimed twice — and since R1722 that
+is by construction, because each chart derives its entry tags from its own prefix
+rather than taking a list the application supplies to both.
 
   (A) boot — both charts full: 3 scatter series (points) + 3 line series
       (polylines) + 3 focusable legend entries, every toggle ON.
@@ -50,7 +52,9 @@ N = 3
 
 
 def entry_tag(i: int) -> str:
-    return f"legend_{i}"
+    # R1722 — the SELECTOR's own prefix (`scatter`) derives its entry tags, so
+    # the two charts' namespaces stay apart without the app naming either.
+    return f"scatter.legend.{i}"
 
 
 def value(tf, i: int):
