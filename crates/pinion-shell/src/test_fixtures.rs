@@ -30,7 +30,7 @@
 use core::fmt;
 
 use pinion_core::test_fixtures::{
-    ContextMenuFixture, EchoButtonFixture, ModalTailFixture, RawSinkFocusFixture,
+    ContextMenuFixture, EchoButtonFixture, ModalTailFixture, NoPrimaryFixture, RawSinkFocusFixture,
     RepeatingButtonFixture, ScrollbarMultiFixture,
 };
 
@@ -263,6 +263,21 @@ impl WidgetView for ModalTailFixture {
 /// cross — is driven with a raw sink in the scene. The surface is sized to the
 /// fixture's two 40x40 focus stops so both are hit-testable.
 impl WidgetView for RawSinkFocusFixture {
+    type Renderer = TestRenderer;
+
+    fn initial_size_strategy() -> crate::SizeStrategy {
+        crate::SizeStrategy::Fixed {
+            width: 80,
+            height: 40,
+        }
+    }
+}
+
+/// R1715.1 (R1306 PR-51) §5.16 — Vello-side `WidgetView` impl for the
+/// no-primary topology fixture, so the shell's OWN suite paints a binding
+/// whose `tag()` is `unreachable!`. R1714 reached one from the paint path and
+/// only CI found out, because the topology's dedicated example never paints.
+impl WidgetView for NoPrimaryFixture {
     type Renderer = TestRenderer;
 
     fn initial_size_strategy() -> crate::SizeStrategy {

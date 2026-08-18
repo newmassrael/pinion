@@ -1302,9 +1302,32 @@ fn window_view<V: WidgetView>(
             // the pan's viewport follows it. Before the chrome inset, because
             // the pan is a viewport onto the SCREEN and the chrome strip is
             // window furniture the shell adds around it.
+            //
+            // R1715.1 — the policy is read FIRST and the key only when there is
+            // a pan to key. R1714 passed `V::tag()` as an argument, so it was
+            // evaluated for all 225 bindings including the ones that declare no
+            // pan at all — and a no-primary binding (R1306 PR-51 topology B,
+            // `hello-floating-chart`) has no `tag()`: its own is `unreachable!`,
+            // by design, because `primary_surface()` returns `None`. That is
+            // R1306's standing rule ("every substrate site reads the binding's
+            // identity through the ONE `primary_surface` accessor, never a bare
+            // `V::tag()`") being broken, and it turned a feature 224 bindings
+            // ignore into a panic for the 225th.
+            let Some(policy) = V::shrink_policy() else {
+                return scene;
+            };
+            // A pan IS declared, so the binding needs a key for its offset. The
+            // primary's tag when there is one; the window otherwise, which is
+            // the frame the pan is a viewport onto anyway
+            // ([[debt-a-surface-size-is-keyed-by-tag-and-announced-per-window]]
+            // already records that keying this by tag is the questionable half).
+            let key = V::primary_surface()
+                .map_or(window_id.unwrap_or(pinion_runtime::DEFAULT_WINDOW), |p| {
+                    p.tag
+                });
             pinion_core::shrink::pan(
-                V::shrink_policy(),
-                V::tag(),
+                Some(policy),
+                key,
                 pinion_core::reactive::use_viewport_size(),
                 scene,
             )

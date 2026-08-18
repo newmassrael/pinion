@@ -1343,6 +1343,73 @@ impl External for RawFocusControl {
     }
 }
 
+/// R1715.1 §5.16 §5.41 — the tag of [`NoPrimaryFixture`]'s only surface.
+pub const NO_PRIMARY_PANEL: &str = "no_primary.panel";
+
+/// R1715.1 (R1306 PR-51) §5.16 — a binding with NO primary surface: every
+/// surface is a dynamic extra, the topology `hello-floating-chart` and
+/// `hello-dock-chart` use.
+///
+/// Such a binding's [`WidgetCore::tag`] and [`WidgetCore::create_external`] are
+/// `unreachable!()` BY DESIGN — `primary_surface()` returning `None` is the
+/// declaration that they must never be reached. So any substrate site that
+/// reads the binding's identity with a bare `V::tag()` instead of through
+/// `primary_surface()` panics here and nowhere else.
+///
+/// It exists because R1714 did exactly that in the paint path and no gate saw
+/// it: the topology had a dedicated example (`hello-no-primary`) whose four
+/// tests never paint, so the panic surfaced only in an unrelated example that
+/// happens to be no-primary AND paints — in CI, after the push. A shell gate
+/// that paints this fixture is the layer the defect actually lives at.
+pub struct NoPrimaryFixture;
+
+impl WidgetCore for NoPrimaryFixture {
+    type State = ();
+    type Event = ();
+
+    fn primary_surface() -> Option<crate::widget_core::PrimarySurface> {
+        None
+    }
+
+    fn create_external() -> Box<dyn External> {
+        unreachable!("NoPrimaryFixture has no primary surface — see primary_surface()")
+    }
+
+    fn tag() -> &'static str {
+        unreachable!("NoPrimaryFixture has no primary surface — see primary_surface()")
+    }
+
+    fn create_extra_externals() -> Vec<crate::widget_core::ExtraExternal> {
+        vec![crate::widget_core::ExtraExternal::new(
+            NO_PRIMARY_PANEL,
+            Box::new(StubExternal),
+        )]
+    }
+
+    fn read_state(_scene: &Scene) -> Self::State {}
+
+    fn view((): Self::State, _frame: &Frame) -> Scene {
+        Scene::Container(ContainerNode {
+            tag: Some(Cow::Borrowed(NO_PRIMARY_PANEL)),
+            children: Vec::new(),
+            layout: crate::style::LayoutStyle {
+                size: crate::style::Size::px(80, 40),
+                focusable: true,
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+    }
+
+    fn event_name((): Self::Event) -> &'static str {
+        "__internal__"
+    }
+
+    fn title() -> &'static str {
+        "NoPrimaryFixture"
+    }
+}
+
 /// R1715 §5.39 §5.35 §5.15 — the raw-edge focus fixture: a [`RawFocusSink`]
 /// beside a plain focusable control, both painted as hit-testable rects so a
 /// test can drive a real pointer edge at either one.
