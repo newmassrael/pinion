@@ -67,8 +67,8 @@ use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::{Frame, Scene};
 
 use super::{
-    Hit, LabState, Role, WIN_H, WIN_W, canvas_rect, inspector_rect, palette_rect, rail_rect, spec,
-    toolbar_rect, use_lab_state,
+    Applies, Hit, LabState, Role, WIN_H, WIN_W, canvas_rect, inspector_rect, palette_rect,
+    rail_rect, spec, toolbar_rect, use_lab_state,
 };
 
 /// The states the screen is swept in.
@@ -421,12 +421,33 @@ fn declared_tags(state: &LabState) -> Vec<String> {
                 continue;
             }
             want.push(format!("lab.form.control.{}", field.key()));
-            want.push(format!("lab.form.applies.{}", field.key()));
-            // ★★ R1686 — every row that is shown offers to be taken away, so
-            // the census demands one seat per shown row rather than one
-            // somewhere. The reference draws it on every row it does not
-            // derive, and every row here is authored.
-            want.push(format!("lab.form.remove.{}", field.key()));
+            // ★★★ R1716 — the badges are per-axis now, and this census is
+            // where the screen states which axis each row is on. A restart
+            // badge on a row nobody can edit answers a question that row
+            // cannot be asked, so the painter does not draw one and the
+            // specification must not demand one; the source badge takes its
+            // place, and a row that is not configuration says that too.
+            match field.source().derived_from() {
+                Some(_) => {
+                    want.push(format!("lab.form.source.{}", field.key()));
+                    if field.applies() == Applies::Hot {
+                        want.push(format!("lab.form.applies.{}", field.key()));
+                    }
+                }
+                None => want.push(format!("lab.form.applies.{}", field.key())),
+            }
+            if field.goes().instead().is_some() {
+                want.push(format!("lab.form.aside.{}", field.key()));
+            }
+            // ★★ R1686 — every row that is shown offers ONE seat, so the census
+            // demands one per shown row rather than one somewhere. ★ R1716 —
+            // which seat depends on who owns the row: a row somebody wrote can
+            // be taken away, and a row the screen works out can be taken over.
+            if field.source().authored() {
+                want.push(format!("lab.form.remove.{}", field.key()));
+            } else {
+                want.push(format!("lab.form.author.{}", field.key()));
+            }
         }
         for field in form.addable() {
             want.push(format!("lab.form.add.{}", field.key()));
@@ -455,6 +476,11 @@ fn must_answer(tag: &str) -> Option<String> {
         // affordance inside the control, and the geometry publishes it apart
         // from `parts` for the same reason.
         ("lab.form.remove.", "remove"),
+        // ★★ R1716 — the same seat, the other act. Written here beside its
+        // twin because this function is the one place that says what a tag
+        // MEANS, and two acts sharing one rectangle is exactly the shape that
+        // needs saying out loud.
+        ("lab.form.author.", "author"),
     ] {
         if let Some(rest) = tag.strip_prefix(prefix) {
             return Some(format!("{verb}:{rest}"));
@@ -1996,6 +2022,12 @@ const OPERATION_GESTURES: &[OperationDriver] = &[
     ("remove a field", |state, shot| {
         press_tag(state, shot, "lab.form.remove.control.permissions");
     }),
+    // ★★★ R1716 — the same edge of the same row, on a row nobody wrote: the
+    // seat takes the value OVER. `mode` is worked out from the role on every
+    // card, so it is the row this is always available on.
+    ("take a derived field over", |state, shot| {
+        press_tag(state, shot, "lab.form.author.mode");
+    }),
     // ★★★ R1684 — the launch gate, closed the way a PERSON closes it. The
     // stepper cannot: it clamps at the field's ceiling, which is right, and is
     // why this row read `gesture: false` while the value that closes the gate
@@ -3269,11 +3301,36 @@ fn r1684_the_centre_of_every_control_answers_a_press() {
                     continue;
                 };
                 let at = centre(rect);
+                // ★★★ R1716 — a row nobody wrote answers a press by saying why
+                // it will not take one. That is still an answer, and demanding
+                // it is stronger than exempting the row: the failure this gate
+                // exists for — "the box does not do anything" — is a press that
+                // produces NOTHING, and a refusal a person can read is the
+                // other way out of it. Which rows those are comes from the
+                // form; that the screen SAYS something, and says which row, is
+                // read from the toast the press left behind.
+                let derived = state
+                    .active_card()
+                    .and_then(|node| super::shown_form(&state, node))
+                    .and_then(|form| {
+                        form.field(&key)
+                            .and_then(|f| f.source().derived_from().map(str::to_owned))
+                    });
                 let before = (witness(&state, "form"), witness(&state, "editing"));
+                let said_before = state.toast.get();
                 press_at(&state, at);
                 let after = (witness(&state, "form"), witness(&state, "editing"));
                 checked += 1;
-                if before == after {
+                if let Some(from) = derived {
+                    let said = state.toast.get();
+                    if said == said_before || !said.contains(&key) || !said.contains(&from) {
+                        dead.push(format!(
+                            "{when}: pressing the middle of {key}'s control — worked \
+                             out from the {from} — left the screen saying {said:?}, \
+                             which does not name the row and where its value comes from"
+                        ));
+                    }
+                } else if before == after {
                     dead.push(format!(
                         "{when}: pressing the middle of {key}'s control ({rect:?}, \
                          which the screen resolves to {:?}) changed nothing",
@@ -4381,6 +4438,30 @@ fn voice_population(tag: &str, population: spec::Population) -> Vec<String> {
             .map(|i| fill(&i.to_string()))
             .collect(),
         spec::Population::Fields => spec::FIELDS.iter().map(|f| fill(f.key)).collect(),
+        // ★★★ R1716 — the axis a row is on decides which regions it has, so
+        // the population is the specification's own column rather than a
+        // filter written here. A row that changes axis moves between these
+        // four in one edit, and every gate over them follows.
+        spec::Population::AuthoredFields => spec::FIELDS
+            .iter()
+            .filter(|f| f.source.is_none())
+            .map(|f| fill(f.key))
+            .collect(),
+        spec::Population::DerivedFields => spec::FIELDS
+            .iter()
+            .filter(|f| f.source.is_some())
+            .map(|f| fill(f.key))
+            .collect(),
+        spec::Population::AsideFields => spec::FIELDS
+            .iter()
+            .filter(|f| f.aside.is_some())
+            .map(|f| fill(f.key))
+            .collect(),
+        spec::Population::BadgedFields => spec::FIELDS
+            .iter()
+            .filter(|f| f.source.is_none() || f.applies == "hot")
+            .map(|f| fill(f.key))
+            .collect(),
         spec::Population::Protocols => spec::PROTOCOLS.iter().map(|p| fill(p)).collect(),
         spec::Population::PinKinds => spec::PIN_LEGEND.iter().map(|(k, _)| fill(k)).collect(),
     }
@@ -4537,6 +4618,12 @@ fn r1691_a_rows_control_announces_the_kind_its_shape_is() {
             .collect();
         for field in spec::FIELDS {
             let want = match field.ty {
+                // ★★★ R1716 — a row nobody wrote is a READ-OUT whatever its
+                // type word says, because that is what it paints: no chips, no
+                // stepper, no element boxes. Announcing the shape's control on
+                // a row that has none would tell a reader to do something the
+                // form refuses.
+                _ if field.source.is_some() => "textbox",
                 "int" => "spinbutton",
                 // R1693 — `address[]` is a `group` for the same reason `perm`
                 // is: what both shapes paint is a row of independent controls,

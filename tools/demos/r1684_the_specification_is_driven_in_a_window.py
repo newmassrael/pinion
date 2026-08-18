@@ -200,6 +200,10 @@ GESTURES = {
     # and the screen offered no way to, which the table was written to make
     # impossible to forget.
     "remove a field": lambda tf: press(tf, "lab.form.remove.control.permissions"),
+    # ★★★ R1716 — the same edge of a row nobody wrote: the seat takes the value
+    # OVER. `mode` is worked out from the role on every card, so it is the row
+    # this is always available on.
+    "take a derived field over": lambda tf: press(tf, "lab.form.author.mode"),
     # ★★★ R1684 — the launch gate, closed by a person. The stepper clamps at the
     # field's ceiling, correctly, so the only way past it is to type — which is
     # why this row read `gesture: false` until the form's rows learned to be

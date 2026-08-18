@@ -103,6 +103,17 @@ def expand(spec: dict, tag: str, population: str) -> list[str]:
         "nodes": [n["id"] for n in spec["nodes"]],
         "links": [str(i) for i in range(len(spec["links"]))],
         "fields": [f["key"] for f in spec["fields"]],
+        # ★★★ R1716 — a row's regions depend on the axis it is on, so the
+        # specification's own `source` and `aside` columns are the populations.
+        # Expanded here rather than listed, exactly as the roles and nodes are.
+        "fields.authored": [f["key"] for f in spec["fields"] if not f["source"]],
+        "fields.derived": [f["key"] for f in spec["fields"] if f["source"]],
+        "fields.aside": [f["key"] for f in spec["fields"] if f["aside"]],
+        "fields.badged": [
+            f["key"]
+            for f in spec["fields"]
+            if not f["source"] or f["applies"] == "hot"
+        ],
         "protocols": list(spec["protocols"]),
         "pin_legend": [p["kind"] for p in spec["pin_legend"]],
     }[population]
@@ -281,9 +292,13 @@ def body() -> None:
         for field in spec["fields"]:
             node = access_node_by_tag(access, f"lab.form.control.{field['key']}")
             assert node is not None, f"{field['key']} announces"
+            # ★★★ R1716 — a row nobody wrote is a READ-OUT whatever its type
+            # word says, because that is what it paints: no chips, no stepper,
+            # no element boxes. Announcing the shape's control on a row that has
+            # none would tell a reader to do something the form refuses.
             assert_eq(
                 node["role"],
-                want_role.get(field["ty"], "textbox"),
+                "textbox" if field["source"] else want_role.get(field["ty"], "textbox"),
                 f"★★★ {field['key']} is typed {field['ty']} and announces as "
                 f"the wrong kind",
             )

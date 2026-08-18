@@ -167,6 +167,31 @@ impl Role {
         }
     }
 
+    /// The session mode this role implies, when it implies one.
+    ///
+    /// ★★★ R1716 — the value the inspector's `mode` row is **worked out
+    /// from**, and the reason that row is derived rather than typed: a router
+    /// that ran in client mode would not be the node the canvas draws. The
+    /// behaviour canon holds the same map for the same four roles and treats
+    /// its absence as the definition of a traffic node.
+    ///
+    /// `None` is not "no mode" — it is *this role does not decide one*, and the
+    /// screen then shows the mode a traffic node comes up in, worked out from
+    /// the example programs rather than from the role.
+    #[must_use]
+    pub const fn mode(self) -> Option<&'static str> {
+        match self {
+            Self::Router => Some("router"),
+            Self::Peer | Self::Store => Some("peer"),
+            Self::Client => Some("client"),
+            Self::Publisher | Self::Subscriber | Self::Querier | Self::Responder => None,
+        }
+    }
+
+    /// Every mode a session can be in — the options the `mode` row offers a
+    /// person who takes it over.
+    pub const MODES: [&'static str; 3] = ["router", "peer", "client"];
+
     /// The role by name.
     #[must_use]
     pub fn from_name(name: &str) -> Option<Self> {

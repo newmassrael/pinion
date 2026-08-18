@@ -39,8 +39,6 @@
 //! the reference writes a wait into its own script and calls that the script's
 //! business, and this does the same.
 
-use std::collections::BTreeMap;
-
 use pinion_core::widgets::config_form::{ConfigForm, Unexpressed};
 use pinion_node_graph::{Bringup, NodeId};
 use serde_json::{Map, Value};
@@ -358,15 +356,16 @@ impl Produced {
     }
 }
 
-/// The frame each node sits in, as a lookup that answers for a node with none.
+/// What a node with no host frame runs on.
 ///
 /// A node outside every frame still has to start somewhere, and calling that
 /// somewhere by a name keeps the plan's `hosts` total — a plan with a hole in
 /// it would be one whose script silently skipped a process.
-#[must_use]
-pub fn host_lookup(frames: &BTreeMap<NodeId, String>, node: NodeId) -> String {
-    frames
-        .get(&node)
-        .cloned()
-        .unwrap_or_else(|| "unplaced".to_string())
-}
+///
+/// 🟥 R1716 — this used to be a `host_lookup(frames, node)` beside it, and the
+/// screen's map is keyed by the FRAME's node rather than by the card's, so
+/// asking it about a card could only ever answer this default. Measured: the
+/// exported plan put all eight nodes on `unplaced` while the canvas drew two
+/// host frames. The walk now lives in one place (`LabState::frame_of`), and
+/// what is left here is the word it falls back to.
+pub const UNPLACED: &str = "unplaced";

@@ -230,18 +230,65 @@ pub struct RowBox {
     /// entry into a chip, and the crate's containment gate asserts every entry
     /// stands inside the control's content box. It has its own field instead.
     pub parts: Vec<(String, Rect)>,
-    /// ★★ R1686 — where the seat that **takes this row away** landed.
+    /// ★★ R1686 — where the seat at the row's trailing edge landed, and
+    /// **which act it offers**.
     ///
     /// Cut out of the header's trailing edge, which is where the reference tool
     /// puts it and the only edge that is free under both wrap policies: under
     /// [`RowWrap::Beside`] the row's own trailing edge is inside the control.
     ///
-    /// Always present, because the form holds the row and
-    /// [`ConfigForm::remove`] therefore succeeds — the affordance is derived
-    /// from that and not from a flag a screen sets. A rule that made some rows
-    /// unremovable would turn this into an `Option`, and the type change is
-    /// what would make every consumer handle it.
-    pub remove: Rect,
+    /// ★★★ R1716 — R1686 wrote here that a rule making some rows unremovable
+    /// "would turn this into an `Option`, and the type change is what would
+    /// make every consumer handle it". The rule arrived — a row whose value the
+    /// screen works out is nobody's to take away — and the answer is stronger
+    /// than an `Option`: the seat does not disappear, it offers the **other**
+    /// act. Both are about who owns the row's value, so one seat with two arms
+    /// says that, where a rectangle-or-nothing would have left the reader to
+    /// discover the take-over somewhere else.
+    pub seat: Seat,
+}
+
+/// The one seat at a row's trailing edge, and which act a press there performs.
+///
+/// ★★★★★ R1716 — **which arm this is says who owns the row's value.** The
+/// floor has neither: measured at 6.11, its form layout has no per-row
+/// removability predicate at all, and taking a derived value over is done by
+/// assigning to it, which drops the derivation with no news and no way back.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Seat {
+    /// Somebody wrote this row, so the seat takes it out of the form.
+    Remove(Rect),
+    /// The screen worked this row out, so the seat takes the value **over**:
+    /// the row becomes theirs, holding what it was derived to.
+    TakeOver(Rect),
+}
+
+impl Seat {
+    /// Where it landed, whichever act it offers.
+    #[must_use]
+    pub const fn rect(self) -> Rect {
+        match self {
+            Self::Remove(rect) | Self::TakeOver(rect) => rect,
+        }
+    }
+
+    /// The word this seat's tag and accessible name are built from.
+    #[must_use]
+    pub const fn verb(self) -> &'static str {
+        match self {
+            Self::Remove(_) => "remove",
+            Self::TakeOver(_) => "take over",
+        }
+    }
+
+    /// The same act at another place — what [`FormGeometry::translated`] needs.
+    #[must_use]
+    pub const fn at(self, rect: Rect) -> Self {
+        match self {
+            Self::Remove(_) => Self::Remove(rect),
+            Self::TakeOver(_) => Self::TakeOver(rect),
+        }
+    }
 }
 
 impl RowBox {
@@ -329,7 +376,7 @@ impl FormGeometry {
                             .iter()
                             .filter_map(|(s, r)| Some((s.clone(), moved(*r)?)))
                             .collect(),
-                        remove: moved(row.remove)?,
+                        seat: row.seat.at(moved(row.seat.rect())?),
                     })
                 })
                 .collect(),
@@ -387,6 +434,12 @@ fn measured_key_width(key: &str, text_style: &TextStyle, key_px: u32) -> u32 {
 /// element plus the row that adds one, so its height is a function of its
 /// **value** — which is why this takes the field and not the shape.
 fn control_height(field: &ConfigField, style: &FormStyle) -> u32 {
+    // ★★ R1716 — a derived row shows its value; it does not offer a way to
+    // enter one. A list's height is the height of its editing affordances, and
+    // a row with none of them is one line like any other read-out.
+    if !field.source().authored() {
+        return style.control_h;
+    }
     match field.shape() {
         FieldType::List { .. } => {
             let elements = u32::try_from(FieldType::elements(field.value()).count()).unwrap_or(0);
@@ -401,12 +454,22 @@ fn control_height(field: &ConfigField, style: &FormStyle) -> u32 {
 /// A text box does; a row of option chips does not, and stretching it would put
 /// the chips' own borders in the wrong places. This is the distinction the
 /// middle growth policy exists to make.
-const fn control_is_hungry(shape: &FieldType) -> bool {
-    !matches!(shape, FieldType::Choice { .. } | FieldType::Flags { .. })
+///
+/// R1716 — a derived row is a read-out whatever its shape, so it takes the box
+/// a read-out takes.
+fn control_is_hungry(field: &ConfigField) -> bool {
+    !field.source().authored()
+        || !matches!(
+            field.shape(),
+            FieldType::Choice { .. } | FieldType::Flags { .. }
+        )
 }
 
 /// The natural width of a field's control, before any growth policy.
 fn control_hint(field: &ConfigField, style: &FormStyle) -> u32 {
+    if !field.source().authored() {
+        return style.control_hint_w;
+    }
     match field.shape() {
         FieldType::Choice { of } | FieldType::Flags { of } => {
             let text_style = form_run_style().with_size_px(style.key_px);
@@ -476,7 +539,7 @@ fn lay_row(field: &ConfigField, at: (u32, u32), key_col: u32, style: &FormStyle)
     // and caught the moment `pinion_core::containment` asked per edge.
     let key_line = pinion_core::containment::line_box(style.key_px);
     {
-        let hungry = control_is_hungry(field.shape());
+        let hungry = control_is_hungry(field);
         let hint = control_hint(field, style);
         let wrapped = match style.wrap {
             RowWrap::WrapAll => true,
@@ -530,15 +593,27 @@ fn lay_row(field: &ConfigField, at: (u32, u32), key_col: u32, style: &FormStyle)
         // rather than overlaid: a badge laid out into the full width and a
         // glyph painted on top of its last pixels is the R1656 class exactly,
         // where every box is right and only their sum is wrong.
-        let (header, remove) = split_off_remove(header, key_line);
+        let (header, seat) = split_off_remove(header, key_line);
         RowBox {
             key: field.key().to_string(),
             row: Rect::new(x0, y, style.width, row_h),
             header,
             control,
             wrapped,
-            parts: lay_parts(field, control, style),
-            remove,
+            // ★★ R1716 — a row nobody wrote has no affordances INSIDE its
+            // control either: the chips, the toggle and the stepper are all
+            // ways to write a value, and painting them over one the screen
+            // works out would be an invitation the form refuses.
+            parts: if field.source().authored() {
+                lay_parts(field, control, style)
+            } else {
+                Vec::new()
+            },
+            seat: if field.source().authored() {
+                Seat::Remove(seat)
+            } else {
+                Seat::TakeOver(seat)
+            },
         }
     }
 }
@@ -885,15 +960,61 @@ fn view_header(
             None,
         ));
         let said = format!("{tag_prefix}.said.{}", row.key);
-        header.push(badge(
-            field.applies().wire(),
-            applies_ink(field.applies(), theme),
-            theme,
-            Some((
-                format!("{tag_prefix}.applies.{}", row.key),
-                Silence::name_of(said.clone()),
+        // ★★★ R1716 — a row nobody wrote shows **where its value came from**
+        // where a row somebody wrote shows what an edit would cost. The
+        // restart badge answers "if you change this, when does it land"; on a
+        // row that refuses every change that question has no reader, and the
+        // one they do have — "why can I not type here" — had no answer at all.
+        // The behaviour canon suppresses exactly this badge on exactly these
+        // rows, and keeps the live one, which is the same rule: a hot row's
+        // value still reaches the running node when its SOURCE moves.
+        match field.source().derived_from() {
+            Some(from) => {
+                if field.applies() == Applies::Hot {
+                    header.push(badge(
+                        field.applies().wire(),
+                        applies_ink(field.applies(), theme),
+                        theme,
+                        Some((
+                            format!("{tag_prefix}.applies.{}", row.key),
+                            Silence::name_of(said.clone()),
+                        )),
+                    ));
+                }
+                header.push(badge(
+                    &format!("{DERIVED_GLYPH} {from}"),
+                    theme.resolve(ColorRole::OnSurfaceMuted),
+                    theme,
+                    Some((
+                        format!("{tag_prefix}.source.{}", row.key),
+                        Silence::name_of(said.clone()),
+                    )),
+                ));
+            }
+            None => header.push(badge(
+                field.applies().wire(),
+                applies_ink(field.applies(), theme),
+                theme,
+                Some((
+                    format!("{tag_prefix}.applies.{}", row.key),
+                    Silence::name_of(said.clone()),
+                )),
             )),
-        ));
+        }
+        if let Some(instead) = field.goes().instead() {
+            // ★★ R1716 — and a row that is not configuration says so beside
+            // the source, because "where does this value come from" and "does
+            // this value ship" are two questions and a reader has both.
+            header.push(badge(
+                instead,
+                theme.resolve(ColorRole::OnSurfaceMuted),
+                theme,
+                Some((
+                    format!("{tag_prefix}.aside.{}", row.key),
+                    Silence::name_of(said.clone()),
+                )),
+            ));
+        }
         if let Some(defect) = worst {
             let ink = if defect.blocks() {
                 theme.resolve(ColorRole::Error)
@@ -932,27 +1053,41 @@ fn view_header(
 /// [`pinion_core::text_elide::ELLIPSIS`] from a higher block than this one.
 const REMOVE_GLYPH: &str = "\u{00d7}";
 
-/// The seat that takes a row out of the form.
+/// The glyph a derived row is marked with, and the one its seat is drawn with.
 ///
-/// Painted at the rectangle [`RowBox::remove`] published, not at one computed
+/// U+21AA, a rightwards arrow with a hook — "this came from over there", which
+/// is what the badge says in one character, and on the seat it is the same
+/// arrow pointing at the person: take it. Latin-1 has no such mark, so this is
+/// the one place the form reaches past it; the face this project ships covers
+/// it, and R1697 recorded what a face's gap looks like when it does not.
+const DERIVED_GLYPH: &str = "\u{21aa}";
+
+/// The seat at a row's trailing edge: it takes an authored row **out**, and
+/// takes a derived row **over**.
+///
+/// Painted at the rectangle [`RowBox::seat`] published, not at one computed
 /// here — the property this module has kept since R1651.1, and the reason it
 /// keeps it is that the two copies drift silently and the press lands nowhere.
 fn view_remove_seat(tag_prefix: &str, row: &RowBox, origin: (u32, u32), theme: &Theme) -> Scene {
+    let (glyph, tag) = match row.seat {
+        Seat::Remove(_) => (REMOVE_GLYPH, format!("{tag_prefix}.remove.{}", row.key)),
+        Seat::TakeOver(_) => (DERIVED_GLYPH, format!("{tag_prefix}.author.{}", row.key)),
+    };
     Scene::Container(
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
-            REMOVE_GLYPH.to_owned(),
+            glyph.to_owned(),
             Rect::default(),
             form_run_style()
                 .with_size_px(12)
                 .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
         ))])
-        .with_tag(format!("{tag_prefix}.remove.{}", row.key))
+        .with_tag(tag)
         .with_layout(placed(
             LayoutStyle::new()
                 .flex(FlexDirection::Row)
                 .with_align_items(AlignItems::Center)
                 .with_justify(JustifyContent::Center),
-            row.remove,
+            row.seat.rect(),
             origin,
         )),
     )
@@ -969,6 +1104,16 @@ fn view_control(
     theme: &Theme,
 ) -> Scene {
     {
+        // ★★★★★ R1716 — **the shape decides the control only for a value
+        // somebody owns.** A chip row, a toggle and a stepper are all ways of
+        // writing, and drawing one over a value the screen works out is the
+        // exact lie the badge is there to stop: the form would refuse the press
+        // it just invited. So a derived row is a read-out of its own value, in
+        // the muted ink the canon draws it in, and the seat beside it offers
+        // the act that IS available — taking the row over.
+        if !field.source().authored() {
+            return derived_control(tag_prefix, row, field, origin, theme);
+        }
         match field.shape() {
             FieldType::Choice { .. } | FieldType::Flags { .. } => {
                 let chosen: Vec<&str> = FieldType::elements(field.value()).collect();
@@ -1073,6 +1218,34 @@ fn control_skin(worst: Option<&ConfigDefect>, theme: &Theme) -> BoxStyle {
             },
             // The constant, not a literal: [`control_frame`] answers with this
             // width and the two must be the same number by construction.
+            CONTROL_FRAME,
+        ))
+}
+
+/// The skin a derived row's read-out wears: **no fill at all**, and the muted
+/// outline.
+///
+/// R1716 — the fill is what a person's eye reads as "you may type here", so a
+/// read-out does not wear one. The border stays, because the value is still one
+/// field's worth of text and losing its box would make a list of them
+/// unreadable.
+///
+/// 🟥★★★★★ **The transparency is the decision, and it was reached by
+/// LOOKING.** The first draft asked the theme for `Surface` — the panel's own
+/// tone, which reads as "no fill" in the palette this widget was written
+/// against. Photographed on the analysis tool's node lab and sampled: the panel
+/// is `(22, 24, 29)`, an editable control is `(236, 230, 240)`, and the
+/// read-out came out `(255, 255, 255)` — **brighter than the rows a person may
+/// type into**, so the one box on the panel that refuses every keystroke was
+/// the one that invited them hardest. Every gate was green: nothing here
+/// asserted a skin, and a role name is not a colour. Hence the test below,
+/// which pins the *decision* rather than the pixel: a read-out has no fill,
+/// whatever a theme resolves its roles to.
+fn derived_skin(theme: &Theme) -> BoxStyle {
+    BoxStyle::filled(Color::TRANSPARENT)
+        .with_corner_radius(8)
+        .with_border(Border::new(
+            theme.resolve(ColorRole::Outline),
             CONTROL_FRAME,
         ))
 }
@@ -1327,6 +1500,46 @@ fn text_control(
     )
 }
 
+/// A derived row's read-out: the value, in muted ink, with no way to enter one.
+///
+/// ★★ R1716 — it keeps the control's tag and its focus stop. A reader must
+/// still be able to reach the value with a keyboard and hear it; what they must
+/// not be able to do is type into it, and that is the form's refusal rather
+/// than a missing tab stop. The canon draws the same box with a dashed edge —
+/// this framework has no dashed stroke, so the difference it carries here is
+/// the muted ink and the absence of the surface fill, and the badge beside it
+/// is what actually names the state ([[debt-a-derived-row-is-drawn-without-a-dashed-edge]]).
+fn derived_control(
+    tag_prefix: &str,
+    row: &RowBox,
+    field: &ConfigField,
+    origin: (u32, u32),
+    theme: &Theme,
+) -> Scene {
+    Scene::Container(
+        ContainerNode::new(vec![Scene::Text(TextNode::styled(
+            field.value().to_owned(),
+            Rect::default(),
+            form_run_style()
+                .with_size_px(12)
+                .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+        ))])
+        .with_tag(format!("{tag_prefix}.control.{}", row.key))
+        .with_style(derived_skin(theme))
+        .with_layout(placed(
+            framed(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_align_items(AlignItems::Center)
+                    .with_padding(Rect::new(10, 0, 10, 0))
+                    .with_focusable(true),
+            ),
+            row.control,
+            origin,
+        )),
+    )
+}
+
 /// The chip that adds an offered key.
 fn view_add_chip(
     tag_prefix: &str,
@@ -1394,6 +1607,17 @@ pub fn row_access_nodes(
             continue;
         };
         let mut said = vec![format!("{}, {}", field.ty(), field.applies().wire())];
+        // ★★★ R1716 — a reader who cannot see the badge is the reader who most
+        // needs what it says: without this they meet a control that answers
+        // nothing they type and are told only its type. Measured at 6.11, a
+        // locked cell answers 3 of 256 standard roles and none of them is a
+        // reason, so this sentence has no counterpart there at all.
+        if let Some(from) = field.source().derived_from() {
+            said.push(format!("worked out from the {from}"));
+        }
+        if let Some(instead) = field.goes().instead() {
+            said.push(format!("{instead}, not configuration"));
+        }
         for defect in defects.iter().filter(|d| d.key() == row.key) {
             said.push(defect.sentence());
         }
@@ -1403,7 +1627,7 @@ pub fn row_access_nodes(
         // the accessibility half of a defect a person reported about its ink.
         let control = AccessNode::new(
             format!("{tag_prefix}.control.{}", row.key),
-            control_role(field.shape()),
+            control_role(field),
         )
         .with_name(field.key())
         .with_bounds(row.control)
@@ -1420,10 +1644,18 @@ pub fn row_access_nodes(
         // which row it takes away. A glyph with no accessible name announces as
         // its own character, which for U+00D7 is "multiplication sign" — a
         // reader would be told the row's arithmetic rather than its affordance.
+        //
+        // ★★ R1716 — and WHICH act, from the seat itself. A seat that takes a
+        // row over announced as "remove" would be the same failure one step
+        // later: the name is what a reader decides by.
+        let seat_tag = match row.seat {
+            Seat::Remove(_) => format!("{tag_prefix}.remove.{}", row.key),
+            Seat::TakeOver(_) => format!("{tag_prefix}.author.{}", row.key),
+        };
         nodes.push(
-            AccessNode::new(format!("{tag_prefix}.remove.{}", row.key), AriaRole::Button)
-                .with_name(format!("remove {}", field.key()))
-                .with_bounds(row.remove),
+            AccessNode::new(seat_tag, AriaRole::Button)
+                .with_name(format!("{} {}", row.seat.verb(), field.key()))
+                .with_bounds(row.seat.rect()),
         );
         // ★★★ R1691 — every affordance INSIDE the control, from the list the
         // painter and the hit test already share. A stepper, a checkbox, an
@@ -1453,8 +1685,18 @@ pub fn row_access_nodes(
 /// A control announced as the wrong kind is worse than one announced with a
 /// poor name: a reader is told what they can *do*, and "text box" on a control
 /// that only toggles is an instruction that fails.
-fn control_role(shape: &FieldType) -> AriaRole {
-    match shape {
+fn control_role(field: &ConfigField) -> AriaRole {
+    // ★★★★★ R1716 — a derived row announces what it IS, which is a read-out.
+    // The rule this function was written under says a control announced as the
+    // wrong kind is worse than one with a poor name, because a reader is told
+    // what they can *do* — and "radio group" over a row that paints no options
+    // and refuses every write is exactly that failure, one axis over. The
+    // read-only state on the same node is what says it cannot be typed into;
+    // the role is what says what is there.
+    if !field.source().authored() {
+        return AriaRole::TextInput;
+    }
+    match field.shape() {
         FieldType::Boolean => AriaRole::CheckBox,
         FieldType::Integer { .. } => AriaRole::SpinButton,
         // Exactly one of a fixed set — the radio group's own semantics, which
@@ -1494,6 +1736,12 @@ fn control_state(field: &ConfigField) -> AccessState {
     if matches!(field.shape(), FieldType::Boolean) {
         state.checked = Some(field.value().trim() == "true");
     }
+    // ★★★ R1716 — `read_only` and not `disabled`, which is the distinction
+    // R1544 wrote this field's documentation around: a derived row is fully
+    // reachable, its value is worth hearing and copying, and it simply refuses
+    // to change. Marking it disabled would take it out of a reader's walk
+    // entirely — the value they came for.
+    state.read_only = !field.source().authored();
     state
 }
 
@@ -1608,9 +1856,16 @@ mod tests {
         // one. It is asserted by name because it is the one that is NOT in
         // `parts`, and a field a translation forgets is a press that lands on
         // the row above it.
-        assert_eq!(b.remove.x, a.remove.x + 300);
-        assert_eq!(b.remove.y, a.remove.y - 10);
-        assert_eq!((b.remove.w, b.remove.h), (a.remove.w, a.remove.h));
+        assert_eq!(b.seat.rect().x, a.seat.rect().x + 300);
+        assert_eq!(b.seat.rect().y, a.seat.rect().y - 10);
+        assert_eq!(
+            (b.seat.rect().w, b.seat.rect().h),
+            (a.seat.rect().w, a.seat.rect().h)
+        );
+        // ★ R1716 — and it is still the same ACT after the move. A translation
+        // that answered `Remove` for a row the form will not remove would put
+        // the press back where R1686 took it from.
+        assert_eq!(b.seat.verb(), a.seat.verb());
         assert_eq!(moved.chips.len(), local.chips.len());
         assert_eq!(moved.height, local.height, "height is not a coordinate");
     }
@@ -1782,8 +2037,8 @@ mod tests {
              a difference here IS a press that lands on the wrong key"
         );
         assert_eq!(
-            inside.rows.iter().map(|r| r.remove).collect::<Vec<_>>(),
-            outside.rows.iter().map(|r| r.remove).collect::<Vec<_>>(),
+            inside.rows.iter().map(|r| r.seat).collect::<Vec<_>>(),
+            outside.rows.iter().map(|r| r.seat).collect::<Vec<_>>(),
             "★ and so is the seat that takes a row away"
         );
         assert_eq!(inside.height, outside.height, "and so is the whole form");
@@ -1803,7 +2058,7 @@ mod tests {
             let geometry = form_geometry(&inspector(), (14, 40), &style);
             assert!(!geometry.rows.is_empty());
             for row in &geometry.rows {
-                let seat = row.remove;
+                let seat = row.seat.rect();
                 assert!(seat.w > 0 && seat.h > 0, "{wrap:?} {} has no seat", row.key);
                 let inside = |a: pinion_core::scene::Rect, b: pinion_core::scene::Rect| {
                     a.x >= b.x && a.y >= b.y && a.x + a.w <= b.x + b.w && a.y + a.h <= b.y + b.h
@@ -1859,6 +2114,210 @@ mod tests {
         }
     }
 
+    /// A form whose middle row the screen works out for itself, plus a row that
+    /// is about where the node runs rather than about its configuration.
+    fn with_derived() -> ConfigForm {
+        ConfigForm::new(
+            vec![
+                ConfigField::new("id", "id", Applies::Restart, "a1"),
+                ConfigField::new("mode", "mode", Applies::Restart, "peer")
+                    .with_shape(FieldType::Choice {
+                        of: vec!["peer".into(), "client".into(), "router".into()],
+                    })
+                    .derived_from("role"),
+                ConfigField::new("connect.endpoints", "locator[]", Applies::Hot, "t/2.1:3")
+                    .with_shape(FieldType::List {
+                        of: Box::new(FieldType::Text),
+                    })
+                    .derived_from("wire"),
+                ConfigField::new("host", "text", Applies::Restart, "10.0.0.2")
+                    .derived_from("kind default")
+                    .goes_aside("placement"),
+            ],
+            Vec::new(),
+        )
+    }
+
+    /// Every tag the painter wrote, in paint order.
+    fn painted_tags(scene: &Scene) -> Vec<String> {
+        let mut tags = Vec::new();
+        scene.for_each_node(&mut |visit| {
+            if let Some(tag) = visit.node.tag() {
+                tags.push(tag.to_owned());
+            }
+        });
+        tags
+    }
+
+    /// ★★★★★ R1716 — the seat offers the act that is actually available.
+    #[test]
+    fn r1716_a_derived_rows_seat_takes_it_over_rather_than_away() {
+        let form = with_derived();
+        let geometry = form_geometry(&form, (14, 40), &FormStyle::default());
+        let seats: Vec<(&str, &str)> = geometry
+            .rows
+            .iter()
+            .map(|row| (row.key.as_str(), row.seat.verb()))
+            .collect();
+        assert_eq!(
+            seats,
+            [
+                ("id", "remove"),
+                ("mode", "take over"),
+                ("connect.endpoints", "take over"),
+                ("host", "take over"),
+            ],
+            "★ the seat is derived from who owns the value, not from a flag"
+        );
+        let nodes = row_access_nodes("f", &form, &geometry);
+        let seat = nodes
+            .iter()
+            .find(|n| n.tag == "f.author.mode")
+            .expect("the take-over seat is announced");
+        assert_eq!(seat.role, pinion_a11y::AriaRole::Button);
+        assert_eq!(seat.name.as_deref(), Some("take over mode"));
+        assert!(
+            !nodes.iter().any(|n| n.tag == "f.remove.mode"),
+            "★ and it is NOT announced as a remove — a reader decides by the name"
+        );
+        let painted = painted_tags(&view_config_form(
+            "f",
+            &form,
+            &geometry,
+            &pinion_core::Theme::dark(),
+        ));
+        assert!(painted.contains(&"f.author.mode".to_owned()));
+        assert!(painted.contains(&"f.remove.id".to_owned()));
+        assert!(
+            !painted.contains(&"f.remove.mode".to_owned()),
+            "★★ the press the form would refuse is not painted anywhere: {painted:?}"
+        );
+    }
+
+    /// ★★★★★ R1716 — no way to write into a value nobody owns. The chips, the
+    /// toggle and the stepper are all invitations the form refuses.
+    #[test]
+    fn r1716_a_derived_row_paints_no_way_to_write_into_it() {
+        let form = with_derived();
+        let geometry = form_geometry(&form, (14, 40), &FormStyle::default());
+        let mode = geometry.row("mode").expect("shown");
+        assert!(
+            mode.parts.is_empty(),
+            "★ a Choice row would otherwise paint one chip per option: {:?}",
+            mode.parts
+        );
+        let list = geometry.row("connect.endpoints").expect("shown");
+        assert!(list.parts.is_empty(), "and a list its element boxes");
+        assert_eq!(
+            list.control.h,
+            FormStyle::default().control_h,
+            "★ a read-out is one line, not a column of editing rows"
+        );
+        let nodes = row_access_nodes("f", &form, &geometry);
+        let control = nodes
+            .iter()
+            .find(|n| n.tag == "f.control.mode")
+            .expect("announced");
+        assert!(
+            control.state.read_only,
+            "★★ read-only and not disabled — the value is still worth hearing"
+        );
+        assert!(!control.state.disabled);
+        assert!(
+            nodes
+                .iter()
+                .find(|n| n.tag == "f.control.id")
+                .is_some_and(|n| !n.state.read_only),
+            "and a row somebody wrote says nothing of the kind"
+        );
+    }
+
+    /// ★★★★★ R1716 — **a read-out is not painted as a place to type**, and
+    /// this pins the decision rather than a colour.
+    ///
+    /// The reason it exists is the whole reason it is starred: the first draft
+    /// asked the theme for the panel's own tone and got a box BRIGHTER than the
+    /// editable rows beside it — measured off a photograph of the real screen,
+    /// `(255,255,255)` against `(236,230,240)` on a panel of `(22,24,29)`. Every
+    /// test in this file was green, because none of them had ever looked at a
+    /// fill. A theme is free to resolve its roles however it likes; what must
+    /// not vary is that the row nobody may write into has **no fill at all**.
+    #[test]
+    fn r1716_a_derived_row_is_not_painted_as_a_place_to_type() {
+        let form = with_derived();
+        let geometry = form_geometry(&form, (14, 40), &FormStyle::default());
+        for theme in [pinion_core::Theme::dark(), pinion_core::Theme::light()] {
+            let scene = view_config_form("f", &form, &geometry, &theme);
+            let fill = |tag: &str| -> Option<pinion_core::style::Color> {
+                let mut found = None;
+                scene.for_each_node(&mut |visit| {
+                    if visit.node.tag() == Some(tag) {
+                        if let Scene::Container(node) = visit.node {
+                            found = Some(node.style.fill);
+                        }
+                    }
+                });
+                found
+            };
+            assert_eq!(
+                fill("f.control.mode"),
+                Some(pinion_core::style::Color::TRANSPARENT),
+                "★ a value nobody may write into wears no fill",
+            );
+            let authored = fill("f.control.id").expect("the authored row is painted");
+            assert_ne!(
+                authored,
+                pinion_core::style::Color::TRANSPARENT,
+                "★★ and the row somebody CAN type into does — otherwise the \
+                 distinction is a badge and nothing else",
+            );
+        }
+    }
+
+    /// ★★★ R1716 — the badge says WHERE FROM, and the badge that answers a
+    /// question this row cannot be asked is not painted.
+    #[test]
+    fn r1716_a_derived_row_shows_the_source_where_the_cost_of_an_edit_would_be() {
+        let form = with_derived();
+        let geometry = form_geometry(&form, (14, 40), &FormStyle::default());
+        let painted = painted_tags(&view_config_form(
+            "f",
+            &form,
+            &geometry,
+            &pinion_core::Theme::dark(),
+        ));
+        assert!(painted.contains(&"f.source.mode".to_owned()));
+        assert!(
+            !painted.contains(&"f.applies.mode".to_owned()),
+            "★ a restart-scoped row nobody can edit does not say what an edit \
+             would cost: {painted:?}"
+        );
+        assert!(
+            painted.contains(&"f.applies.connect.endpoints".to_owned()),
+            "★★ but a LIVE one still does — its value reaches the running node \
+             when its source moves, which is the canon's own rule"
+        );
+        assert!(
+            painted.contains(&"f.aside.host".to_owned())
+                && !painted.contains(&"f.aside.mode".to_owned()),
+            "★ and 'this is not configuration' is a separate badge on a \
+             separate axis: {painted:?}"
+        );
+        assert!(
+            !painted.contains(&"f.source.id".to_owned()),
+            "a row somebody wrote has no source badge"
+        );
+        let said = row_description(&row_access_nodes("f", &form, &geometry), "f", "mode")
+            .expect("described");
+        assert!(
+            said.contains("worked out from the role"),
+            "★★★ and a reader who cannot see the badge is told the same thing: {said}"
+        );
+        let aside = row_description(&row_access_nodes("f", &form, &geometry), "f", "host")
+            .expect("described");
+        assert!(aside.contains("placement, not configuration"), "{aside}");
+    }
+
     /// ★ R1686 — the seat is a named button in the tree, not a bare glyph.
     #[test]
     fn r1686_the_remove_seat_announces_which_row_it_takes_away() {
@@ -1873,7 +2332,11 @@ mod tests {
                 .unwrap_or_else(|| panic!("no access node at {tag}"));
             assert_eq!(node.role, pinion_a11y::AriaRole::Button);
             assert_eq!(node.name.as_deref(), Some(&*format!("remove {}", row.key)));
-            assert_eq!(node.bounds, Some(row.remove), "and it says where it is");
+            assert_eq!(
+                node.bounds,
+                Some(row.seat.rect()),
+                "and it says where it is"
+            );
         }
     }
 

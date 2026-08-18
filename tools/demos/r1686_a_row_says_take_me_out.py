@@ -194,17 +194,36 @@ def body() -> None:
         opening = keys(tf)
         assert ROW in opening, f"the opening form holds {ROW}"
         painted = rects(tf)
+        # ★★★ R1716 — every shown row still offers exactly ONE seat, and which
+        # act it is says who owns the row's value: a row somebody wrote can be
+        # taken away, and a row the screen works out can be taken OVER. The
+        # claim this file was written for is unchanged — a seat on some rows and
+        # not others would be a screen deciding for itself which configuration a
+        # person may shrink — and it is now checked over both acts, because a
+        # row with neither seat is the failure and a row with the wrong one is a
+        # press the form refuses.
+        derived = {field["key"] for field in form(tf) if field["source"]}
         for key in opening:
-            assert f"lab.form.remove.{key}" in painted, (
-                f"★★ every shown row offers to be taken away, and {key} does not — "
+            want = "author" if key in derived else "remove"
+            other = "remove" if key in derived else "author"
+            assert f"lab.form.{want}.{key}" in painted, (
+                f"★★ every shown row offers a seat, and {key} has no {want} seat — "
                 "a seat on some rows is a screen that decides for itself which "
                 "configuration a person is allowed to shrink"
             )
+            assert f"lab.form.{other}.{key}" not in painted, (
+                f"★★ and only ONE — {key} offers both acts at the same edge, so "
+                "a press there means whichever the painter drew last"
+            )
         # The other direction, which is the half a count cannot see: a seat for
         # a row that is not there would be a press with nothing behind it.
-        seats = [t for t in painted if t.startswith("lab.form.remove.")]
+        seats = [
+            t.split(".", 3)[3]
+            for t in painted
+            if t.startswith("lab.form.remove.") or t.startswith("lab.form.author.")
+        ]
         assert_eq(
-            sorted(t[len("lab.form.remove.") :] for t in seats),
+            sorted(seats),
             sorted(opening),
             "★ and no seat names a row the form does not hold",
         )

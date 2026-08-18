@@ -57,7 +57,7 @@ mod settings;
 mod spec;
 
 use std::cell::RefCell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::rc::Rc;
 
 use pinion_a11y::{
@@ -84,7 +84,7 @@ use pinion_core::style::{
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::voice::Silence;
 use pinion_core::widgets::config_form::{
-    Applies, ConfigDefect, ConfigField, ConfigForm, FieldType, Verdict,
+    Applies, ConfigDefect, ConfigField, ConfigForm, FieldType, FormError, Verdict,
 };
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::scroll::{AutoScroll, ScrollState};
@@ -99,7 +99,7 @@ use pinion_node_graph::{
 use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use pinion_widget_paint::config_form::{
-    FieldGrowth, FormGeometry, FormStyle, RowWrap, form_geometry, row_access_nodes,
+    FieldGrowth, FormGeometry, FormStyle, RowWrap, Seat, form_geometry, row_access_nodes,
     view_config_form,
 };
 use pinion_widget_paint::pane::{PanePointer, scroll_pane};
@@ -960,12 +960,20 @@ impl LabState {
             .into_iter()
             .map(|placed| (placed.node, placed.name, placed.standing))
             .collect();
-        let frames = self.frames.borrow().clone();
         deploy::plan(
             &order,
-            |node| deploy::host_lookup(&frames, node),
+            |node| self.host_of(node),
             |node| self.role_of(node),
-            |node| self.forms.borrow().get(&node).cloned(),
+            // 🟥★★★★★ R1716 — the form the screen SHOWS, and this line is the
+            // round's own defect caught in its own terms. It read the STORED
+            // form, which is the authored half: the plan a person exports would
+            // have carried neither the mode a node's role implies nor the
+            // addresses its drawn links dial, while the `document` read beside
+            // it carried both. Two answers to "what is this node's
+            // configuration", one of them shipped — which is the exact shape
+            // this round exists to end, made one round later by the round
+            // itself. Found by driving the plan rather than by reading it.
+            |node| shown_form(self, node),
         )
     }
 
@@ -1011,6 +1019,50 @@ impl LabState {
         }
     }
 
+    /// The host frame a card sits in, by name — `None` for a card in none.
+    ///
+    /// 🟥★★★★★ R1716 — **one derivation, where there were two and one of them
+    /// was wrong.** `frames` is keyed by the FRAME's node, so the question
+    /// "which host is this card on" is a walk to the card's parent and then a
+    /// lookup. The wire's `frames` read did that walk; the launch plan handed
+    /// the same map a CARD and asked it directly, which can only ever miss —
+    /// and measured before this round, the exported plan put **all eight
+    /// nodes** on one host called `unplaced` while the canvas drew them across
+    /// two host frames. The script started everything in one place and nothing
+    /// said so.
+    ///
+    /// So the walk lives here, and everything that wants a host asks: the
+    /// plan, the inspector's own placement row, and the address a drawn link
+    /// dials.
+    fn frame_of(&self, node: NodeId) -> Option<String> {
+        let parent = self.doc.borrow().tree(ROOT)?.node(node)?.parent?;
+        self.frames.borrow().get(&parent).cloned()
+    }
+
+    /// Where a card runs, naming the somewhere a card in no frame still runs.
+    ///
+    /// A plan with a hole in it would be one whose script silently skipped a
+    /// process, which is why this is total — see [`Self::frame_of`] for the
+    /// half that says the truth about a card with no frame.
+    fn host_of(&self, node: NodeId) -> String {
+        // ★★ R1716 — a card that has been TOLD where it runs runs there. The
+        // placement row is worked out from the frame until somebody takes it
+        // over, and after that the row is the fact — otherwise taking it over
+        // would produce a value the screen shows and the plan ignores, which is
+        // the two-answers-to-one-question this round exists to end. The canon
+        // reads its own field first for the same reason.
+        //
+        // The STORED form, deliberately: the derived row is built from this, so
+        // reading the shown one would be a loop.
+        self.forms
+            .borrow()
+            .get(&node)
+            .and_then(|form| form.field("host").map(|f| f.value().trim().to_owned()))
+            .filter(|written| !written.is_empty())
+            .or_else(|| self.frame_of(node))
+            .unwrap_or_else(|| deploy::UNPLACED.to_owned())
+    }
+
     /// Every node the canvas draws a card for: the declared ones in
     /// specification order, then anything added since.
     ///
@@ -1047,9 +1099,42 @@ impl LabState {
         let mut found = Vec::new();
         for node in self.cards() {
             let name = self.name_of(node);
-            if let Some(form) = self.forms.borrow().get(&node) {
+            // ★★ R1716 — the form the screen SHOWS. A gate over the stored half
+            // would not look at the rows this screen works out, and those rows
+            // reach the document like any other.
+            if let Some(form) = shown_form(self, node) {
+                let form = &form;
                 for defect in form.defects() {
                     found.push((name.clone(), defect));
+                }
+                // ★★★★★ R1716 — **the canvas draws a link this card does not
+                // dial.** A person may take the connect row over — a node can
+                // be told to reach something this graph does not draw, and the
+                // graph is not the boundary of what may be configured — and the
+                // moment they do, the wires stop writing that row. Silently
+                // that is the defect this round was opened to end, one step
+                // along: the picture and the configuration disagreeing with
+                // nobody saying so. So it is a WARNING, on the card, naming the
+                // row: the drawing stands, the person's value stands, and which
+                // link is not in it is said out loud.
+                if form
+                    .field("connect.endpoints")
+                    .is_some_and(|f| f.source().authored())
+                {
+                    let held: Vec<String> = form
+                        .field("connect.endpoints")
+                        .map(|f| FieldType::elements(f.value()).map(str::to_owned).collect())
+                        .unwrap_or_default();
+                    for drawn in dialled_from(self, node) {
+                        if !held.contains(&drawn) {
+                            found.push((
+                                name.clone(),
+                                ConfigDefect::UnknownKey {
+                                    key: format!("{name} · connect.endpoints · {drawn}"),
+                                },
+                            ));
+                        }
+                    }
                 }
                 let listens = form
                     .field("listen.endpoints")
@@ -1705,13 +1790,14 @@ fn form_for(id: &str, role: Role) -> ConfigForm {
         ConfigField::new("id", "id", Applies::Restart, opening_id(id)).with_shape(shape("id")),
         ConfigField::new("listen.endpoints", "address[]", Applies::Restart, listen)
             .with_shape(shape("listen.endpoints")),
-        ConfigField::new(
-            "connect.endpoints",
-            "address[]",
-            Applies::Hot,
-            opening_connect(id),
-        )
-        .with_shape(shape("connect.endpoints")),
+        // ★★★★★ R1716 — `connect.endpoints` is NOT here any more, and its
+        // absence is the round's screen change. It used to open holding an
+        // address written beside this line, and measured before the change,
+        // `R-01` showed one address nothing in the graph listens on while the
+        // canvas drew three links out of it — so the exported configuration
+        // dialled a node it was not drawn to reach and missed one it was.
+        // The row is worked out from the wires instead ([`dialled_row`]), and
+        // a person who needs an address this canvas does not draw takes it over.
         ConfigField::new(
             "control.permissions",
             "perm",
@@ -1803,14 +1889,6 @@ fn opening_id(id: &str) -> String {
     }
 }
 
-fn opening_connect(id: &str) -> &'static str {
-    match id {
-        "R-01" => "tcp/10.0.0.21:7449",
-        "T-01" | "Q-01" => "tcp/10.0.0.11:7448",
-        _ => "tcp/10.0.0.10:7447",
-    }
-}
-
 /// A key the inspector offers to add, with the shape it will hold.
 ///
 /// ★★★ R1690 — the shape is [`settings::shape_or_free`]'s, so this decides only
@@ -1825,6 +1903,12 @@ fn offered(key: &str) -> ConfigField {
         }
         "qos.priority" => ("int", Applies::Hot, "5"),
         "routing.mode" => ("mode", Applies::Restart, "peer_to_peer"),
+        // ★★ R1716 — offered so a card the canvas draws no link out of can
+        // still be told to dial something: the graph is what this tool draws,
+        // not the boundary of what the configuration may reach. A card that
+        // does have links holds the derived row, so the chip is not offered
+        // there — `addable` takes it out for exactly the right reason.
+        "connect.endpoints" => ("address[]", Applies::Hot, ""),
         _ => ("name[]", Applies::Restart, ""),
     };
     ConfigField::new(key.to_owned(), word, applies, opening)
@@ -2498,6 +2582,13 @@ enum Hit {
     /// it in its own field for the same reason: `parts` means *inside the
     /// control*, and this seat is cut out of the header.
     RemoveField(String),
+    /// ★★ R1716 — the same seat on a row nobody wrote: it takes the value
+    /// **over**, so the row becomes theirs holding what it was worked out to be.
+    ///
+    /// Its own arm because it is its own act. The seat's rectangle is shared
+    /// and its meaning is not, and a press that resolved to `remove` on a row
+    /// the form refuses to remove would report an act that never happened.
+    AuthorField(String),
     /// An affordance inside a control: an option, a stepper, a checkbox, a list
     /// row. `part` is the painter's own tag suffix, so this arm covers every
     /// shape and a seventh needs no new arm here.
@@ -2571,8 +2662,16 @@ impl Hit {
                 // than through `parts`, which means "inside the control" and
                 // is relied on to by the option painter and the containment
                 // gate.
-                if contains(row.remove, px, py) {
-                    return Self::RemoveField(row.key.clone());
+                //
+                // ★★ R1716 — and which act it is comes from the seat itself.
+                // Reading the form again here would be a second answer to
+                // "who owns this row", and the two would part on the day a
+                // derivation was added on one side only.
+                if contains(row.seat.rect(), px, py) {
+                    return match row.seat {
+                        Seat::Remove(_) => Self::RemoveField(row.key.clone()),
+                        Seat::TakeOver(_) => Self::AuthorField(row.key.clone()),
+                    };
                 }
                 // Every affordance inside a control, from the geometry the
                 // painter published — never a second layout.
@@ -2853,6 +2952,7 @@ impl Hit {
             Self::Field(key) => format!("field:{key}"),
             Self::AddField(key) => format!("add:{key}"),
             Self::RemoveField(key) => format!("remove:{key}"),
+            Self::AuthorField(key) => format!("author:{key}"),
             Self::Part { part, .. } => part.clone(),
             Self::Canvas => "canvas".into(),
         }
@@ -3630,7 +3730,210 @@ fn selected_form(state: &LabState) -> Option<ConfigForm> {
 /// selection, so a commit cannot land on a different card than the one the
 /// field was opened over.
 fn selected_form_of(state: &LabState, node: NodeId) -> Option<ConfigForm> {
-    state.forms.borrow().get(&node).cloned()
+    shown_form(state, node)
+}
+
+/// **The form a card SHOWS**: the rows somebody wrote, plus the rows this
+/// screen works out from the graph.
+///
+/// ★★★★★ R1716 — composed on every read and stored nowhere. The three
+/// sources move — a card is dragged into another host frame, a wire is drawn,
+/// a node is deleted — and a stored copy would need somebody to remember to
+/// rebuild it at each of those places. That is the call-site habit the round
+/// before this one took out of the focus path; here it never gets in, because
+/// the derivation IS the read. The behaviour canon does the same thing in the
+/// same place, and its comment says why in one line: values that derive from
+/// values must have exactly one path, or the two recurse.
+///
+/// What is stored is the authored half alone — see [`amend`], which is the one
+/// way anything changes a form.
+fn shown_form(state: &LabState, node: NodeId) -> Option<ConfigForm> {
+    let stored = state.forms.borrow().get(&node).cloned()?;
+    let role = state.role_of(node)?;
+    let mut rows: Vec<ConfigField> = Vec::with_capacity(stored.fields().len() + 3);
+    rows.push(mode_row(role));
+    rows.extend(stored.fields().iter().cloned());
+    if let Some(host) = host_row(state, node, &stored) {
+        rows.push(host);
+    }
+    if let Some(dialled) = dialled_row(state, node, &stored) {
+        rows.push(dialled);
+    }
+    let offered: Vec<ConfigField> = stored.addable().into_iter().cloned().collect();
+    Some(ConfigForm::new(rows, offered))
+}
+
+/// The `mode` row: what session a node of this role comes up as.
+///
+/// ★★ Two sources and not one: a role that decides the mode is named as the
+/// source, and a role that does not gets the mode the example programs start
+/// in — said in those words, because "peer" with no provenance would read as a
+/// setting somebody chose for this node.
+fn mode_row(role: Role) -> ConfigField {
+    let (value, from) = match role.mode() {
+        Some(implied) => (implied, "role"),
+        None => ("peer", "example default"),
+    };
+    ConfigField::new("mode", "mode", Applies::Restart, value)
+        .with_shape(FieldType::Choice {
+            of: Role::MODES.iter().map(|m| (*m).into()).collect(),
+        })
+        .derived_from(from)
+}
+
+/// The `host` row — **only once there is more than one host to be on**.
+///
+/// ★★ The canon's rule, and it is about what a reader can act on: a graph that
+/// runs everywhere in one place has nothing to say here, and a row answering
+/// "the only host" on every card is noise that trains people to skip the panel.
+///
+/// It goes ASIDE. The host is not a key the target has; it is where the process
+/// is started, which the plan already carries per node — so a row that shipped
+/// it inside the configuration would put one fact in two files, one of which
+/// the target would warn about and ignore.
+fn host_row(state: &LabState, node: NodeId, stored: &ConfigForm) -> Option<ConfigField> {
+    if stored.field("host").is_some() {
+        // Somebody owns it — the stored row is the one the screen shows, and
+        // `host_of` already reads it.
+        return None;
+    }
+    let hosts: BTreeSet<String> = state
+        .cards()
+        .into_iter()
+        .map(|card| state.host_of(card))
+        .collect();
+    if hosts.len() < 2 {
+        return None;
+    }
+    let host = state.host_of(node);
+    Some(
+        ConfigField::new("host", "text", Applies::Restart, host)
+            .derived_from("frame")
+            .goes_aside("placement"),
+    )
+}
+
+/// The `connect.endpoints` row, worked out from the wires this canvas draws.
+///
+/// ★★★★★ R1716 — the row the screen was **wrong** about. Measured before this
+/// round: `R-01` showed one address nothing in the graph listens on while the
+/// canvas drew three links out of it, and the exported configuration shipped
+/// that one address — so the plan dialled a node it was not drawn to reach and
+/// missed one it was. Two facts about the same thing, one of them typed in.
+///
+/// A dialled address is the target's listen endpoint read from where the target
+/// actually runs: `0.0.0.0` and `[::]` mean *every* address and cannot be
+/// dialled, so the host frame's name stands in — which is the canon's rule and
+/// the reason the host row above is not decoration.
+///
+/// Reported links are left out. They are what a source SAW, not what this graph
+/// says to do, and a configuration built from them would dial connections
+/// nobody drew.
+///
+/// The row is only derived while nobody has taken it over: an authored value
+/// wins, because a node may be told to dial something this canvas does not draw
+/// at all — an already-running router, say — and a derivation that overwrote
+/// that would make the graph the boundary of what the tool can configure.
+fn dialled_row(state: &LabState, node: NodeId, stored: &ConfigForm) -> Option<ConfigField> {
+    if stored.field("connect.endpoints").is_some() {
+        return None;
+    }
+    let addresses = dialled_from(state, node);
+    if addresses.is_empty() {
+        return None;
+    }
+    Some(
+        ConfigField::new(
+            "connect.endpoints",
+            "address[]",
+            Applies::Hot,
+            addresses.join(", "),
+        )
+        .with_shape(settings::shape_or_free("connect.endpoints"))
+        .derived_from("wire"),
+    )
+}
+
+/// Every address this node's drawn links dial, in link order.
+fn dialled_from(state: &LabState, node: NodeId) -> Vec<String> {
+    let landings: Vec<(NodeId, String)> = {
+        let doc = state.doc.borrow();
+        let Some(tree) = doc.tree(ROOT) else {
+            return Vec::new();
+        };
+        tree.links()
+            .iter()
+            .filter(|link| link.from.node == node)
+            .filter_map(|link| {
+                let endpoint = endpoint_of(&doc, link.to)?;
+                (!endpoint.trim().is_empty()).then_some((link.to.node, endpoint))
+            })
+            .collect()
+    };
+    let mut out: Vec<String> = Vec::new();
+    for (target, endpoint) in landings {
+        // ★ `0.0.0.0` and `[::]` mean EVERY address, so they are not something
+        // to dial: what reaches that node is the host it runs on. A link whose
+        // target sits in no frame therefore dials the word the plan uses for
+        // that, which is honest and is visibly not an address.
+        let host = state.host_of(target);
+        let dialled = endpoint.replace("0.0.0.0", &host).replace("[::]", &host);
+        if !out.contains(&dialled) {
+            out.push(dialled);
+        }
+    }
+    out
+}
+
+/// **Amend a card's form.** The one way anything changes one.
+///
+/// ★★★★★ R1716 — the request is answered against the form the screen SHOWS,
+/// and what is kept is the half somebody authored. Both halves matter:
+///
+/// * Answering from the store would tell a person that `mode` is *no such
+///   field* — true of the store, false of the screen, and unactionable either
+///   way. The framework's own refusal ("worked out from the role") is the one
+///   worth reading, and it can only come from a form that holds the row.
+/// * Keeping the store as the authored half means a row taken over
+///   **materialises** here, in the same act, with the value it was derived to —
+///   and no other code has to know that is what a take-over is.
+///
+/// The reconciliation is total rather than a replay of the operation: every
+/// authored row of the shown form is made to be in the store, and every stored
+/// row the shown form no longer holds goes. One rule covers set, add, remove
+/// and take-over, so a seventh act needs nothing here.
+fn amend<T>(
+    state: &LabState,
+    node: NodeId,
+    op: impl FnOnce(&mut ConfigForm) -> Result<T, FormError>,
+) -> Result<T, FormError> {
+    let mut shown =
+        shown_form(state, node).ok_or_else(|| FormError::NoSuchField("this card".to_owned()))?;
+    let answer = op(&mut shown)?;
+    let mut forms = state.forms.borrow_mut();
+    let stored = forms
+        .get_mut(&node)
+        .ok_or_else(|| FormError::NoSuchField("this card".to_owned()))?;
+    for field in shown.fields() {
+        if !field.source().authored() {
+            continue;
+        }
+        match stored.field(field.key()) {
+            Some(held) if held.value() == field.value() => {}
+            Some(_) => stored.set(field.key(), field.value())?,
+            None => stored.add_typed(field.clone())?,
+        }
+    }
+    let gone: Vec<String> = stored
+        .fields()
+        .iter()
+        .filter(|f| shown.field(f.key()).is_none())
+        .map(|f| f.key().to_owned())
+        .collect();
+    for key in gone {
+        stored.remove(&key)?;
+    }
+    Ok(answer)
 }
 
 /// Where the inspector's form is laid out.
@@ -6477,6 +6780,9 @@ const FIELDS: &[SchemaField] = &{
         ),
         SchemaField::action("add_field", "string"),
         SchemaField::action("remove_field", "string"),
+        // ★★ R1716 — take a row over. Declared beside its twin because they are
+        // the two halves of one question: who owns this row's value.
+        SchemaField::action("author_field", "string"),
         // R1678 — the scope vocabulary is published, so an agent reads the five
         // rather than discovering them by rejection.
         SchemaField::action_with(
@@ -6729,6 +7035,16 @@ impl ExternalIntrospect for LabOracle {
                                     "value": f.value(),
                                     "edited": f.edited(),
                                     "hidden": f.hidden(),
+                                    // ★★★ R1716 — where the value came from and
+                                    // where it goes. An agent reading this is the
+                                    // reader with no badge to look at, and without
+                                    // these two an unwritable row is indistinguishable
+                                    // from a broken one. `null` is the ordinary
+                                    // answer in both, spelled out rather than absent
+                                    // so a reader never has to tell "no source" from
+                                    // "this build does not say".
+                                    "source": f.source().derived_from(),
+                                    "aside": f.goes().instead(),
                                 })
                             })
                             .collect(),
@@ -6943,13 +7259,11 @@ impl ExternalIntrospect for LabOracle {
                         .cards()
                         .into_iter()
                         .map(|node| {
-                            let frame = state
-                                .doc
-                                .borrow()
-                                .tree(ROOT)
-                                .and_then(|t| t.node(node))
-                                .and_then(|slot| slot.parent)
-                                .and_then(|f| state.frames.borrow().get(&f).cloned());
+                            // ★ R1716 — through the one walk, which the launch
+                            // plan now shares. Two copies of this lookup is how
+                            // the plan came to put every node on `unplaced`
+                            // while this read said otherwise.
+                            let frame = state.frame_of(node);
                             (
                                 state.name_of(node),
                                 frame.map_or(serde_json::Value::Null, serde_json::Value::String),
@@ -7162,15 +7476,19 @@ impl ExternalIntrospect for LabOracle {
                 let node = state
                     .active_card()
                     .ok_or_else(|| InvokeError::rejected("no node is selected"))?;
-                let mut forms = state.forms.borrow_mut();
-                let form = forms
-                    .get_mut(&node)
-                    .ok_or_else(|| InvokeError::rejected("the selected node has no form"))?;
-                form.add(key.trim())
+                amend(&state, node, |form| form.add(key.trim()))
                     .map_err(|why| InvokeError::rejected(why.to_string()))?;
-                drop(forms);
                 state.say(format!("added {}", key.trim()));
                 Ok(IntrospectValue::Text(key.trim().to_owned()))
+            }
+            // ★★★ R1716 — take a row over. The act the floor performs by
+            // assigning to the value, with no name, no news and no way back.
+            "author_field" => {
+                let key = Self::text(&args)?;
+                let node = state
+                    .active_card()
+                    .ok_or_else(|| InvokeError::rejected("no node is selected"))?;
+                author_row(&state, node, key.trim()).map(IntrospectValue::Text)
             }
             "remove_field" => {
                 let key = Self::text(&args)?;
@@ -7409,6 +7727,13 @@ const fn population_wire(population: spec::Population) -> &'static str {
         spec::Population::Nodes => "nodes",
         spec::Population::Links => "links",
         spec::Population::Fields => "fields",
+        // ★★ R1716 — the axis a row is on is part of the specification the
+        // wire publishes, so an agent expands these the way the local gate
+        // does: the `source` and `aside` columns of `fields` decide membership.
+        spec::Population::AuthoredFields => "fields.authored",
+        spec::Population::DerivedFields => "fields.derived",
+        spec::Population::AsideFields => "fields.aside",
+        spec::Population::BadgedFields => "fields.badged",
         spec::Population::Protocols => "protocols",
         spec::Population::PinKinds => "pin_legend",
     }
@@ -7454,8 +7779,13 @@ fn spec_json() -> serde_json::Value {
         "links": spec::LINKS.iter().map(|(a, b)| serde_json::json!([a, b])).collect::<Vec<_>>(),
         "selected_link": [spec::SELECTED_LINK.0, spec::SELECTED_LINK.1],
         "selected_node": spec::SELECTED_NODE,
+        // ★★ R1716 — the axis columns travel with the row. An agent expanding
+        // `fields.derived` or `fields.aside` reads them from here, the same way
+        // the local gate does, so the two cannot come to disagree about which
+        // population a voice family stands over.
         "fields": spec::FIELDS.iter().map(|f| serde_json::json!({
             "key": f.key, "ty": f.ty, "applies": f.applies, "value": f.value,
+            "source": f.source, "aside": f.aside,
         })).collect::<Vec<_>>(),
         "addable": spec::ADDABLE,
         "gestures": spec::GESTURES.iter().map(|(g, w)| serde_json::json!([g, w])).collect::<Vec<_>>(),
@@ -8125,10 +8455,6 @@ fn add_key(state: &Rc<LabState>, node: NodeId, key: &str) -> Result<String, Invo
             "a key with nothing in it is not a key",
         ));
     }
-    let mut forms = state.forms.borrow_mut();
-    let form = forms
-        .get_mut(&node)
-        .ok_or_else(|| InvokeError::rejected("the card has no form"))?;
     // ★★ What a typed path IS — its type, its shape, whether it reaches a
     // running node — is this application's knowledge, not the widget's. A path
     // the catalogue already describes keeps that description; anything else
@@ -8141,8 +8467,7 @@ fn add_key(state: &Rc<LabState>, node: NodeId, key: &str) -> Result<String, Invo
             || ConfigField::new(key.to_owned(), "text", Applies::Restart, ""),
             |known| offered(known),
         );
-    let outcome = form.add_typed(described);
-    drop(forms);
+    let outcome = amend(state, node, |form| form.add_typed(described));
     if let Err(why) = outcome {
         let said = why.to_string();
         state.say(said.clone());
@@ -8172,14 +8497,14 @@ fn set_value(
     key: &str,
     value: &str,
 ) -> Result<String, InvokeError> {
-    let mut forms = state.forms.borrow_mut();
-    let form = forms
-        .get_mut(&node)
-        .ok_or_else(|| InvokeError::rejected("the card has no form"))?;
-    form.set(key, value)
-        .map_err(|why| InvokeError::rejected(why.to_string()))?;
-    let held = form.field(key).map(|f| f.value().to_owned());
-    drop(forms);
+    // ★★ R1716 — through [`amend`], so the refusal a person meets on a row
+    // nobody wrote is the framework's own sentence naming the source, rather
+    // than "no such field" from a store that has never heard of it.
+    let held = amend(state, node, |form| {
+        form.set(key, value)?;
+        Ok(form.field(key).map(|f| f.value().to_owned()))
+    })
+    .map_err(|why| InvokeError::rejected(why.to_string()))?;
     // The pins are DERIVED from the form, so a value that changes an endpoint
     // has to reach the canvas in the same act that changed it.
     sync_node(state, node);
@@ -8224,16 +8549,39 @@ fn remove_row(state: &Rc<LabState>, node: NodeId, key: &str) -> Result<String, I
         }
         None => {}
     }
-    let mut forms = state.forms.borrow_mut();
-    let form = forms
-        .get_mut(&node)
-        .ok_or_else(|| InvokeError::rejected("the card has no form"))?;
-    form.remove(key)
-        .map_err(|why| InvokeError::rejected(why.to_string()))?;
-    drop(forms);
+    amend(state, node, |form| form.remove(key)).map_err(|why| {
+        let said = why.to_string();
+        state.say(said.clone());
+        InvokeError::rejected(said)
+    })?;
     sync_node(state, node);
     state.say(format!("removed {key}"));
     Ok(key.to_owned())
+}
+
+/// **Take a row over** — the row stops being worked out and becomes this
+/// person's, holding what it was worked out to be (R1716).
+///
+/// One function for the seat and for the wire, the rule this screen has held
+/// since R1684. What it adds beyond the widget's own act is the sentence: the
+/// floor performs this silently, so a person who pressed it by accident has
+/// nothing to read and nothing to undo by. Here the toast names the source that
+/// was displaced, and the row is then removable like any other — which is the
+/// way back.
+///
+/// # Errors
+///
+/// A card with no form, a key it does not hold, or a row that was already
+/// theirs to write.
+fn author_row(state: &Rc<LabState>, node: NodeId, key: &str) -> Result<String, InvokeError> {
+    let took = amend(state, node, |form| form.author(key)).map_err(|why| {
+        let said = why.to_string();
+        state.say(said.clone());
+        InvokeError::rejected(said)
+    })?;
+    sync_node(state, node);
+    state.say(took.sentence());
+    Ok(took.key)
 }
 
 /// Put one ELEMENT of a list row back, leaving its neighbours alone (R1684).
@@ -8683,6 +9031,28 @@ fn finish_drag(state: &Rc<LabState>, drag: Drag, now: &Hit) {
     }
 }
 
+/// Start the graph, or stop it — and settle every form on the way in.
+///
+/// ★ R1716 — lifted out of [`release`] when that arm's function passed the
+/// hundred-line bound. It is a whole act rather than a fragment: a launch
+/// ACCEPTS the values, which is why the settle is here and not beside the
+/// button, and the refusal it prints is the gate's own sentence.
+fn toggle_running(state: &Rc<LabState>) {
+    let verdict = state.verdict();
+    if state.running.get() {
+        state.running.set(false);
+        state.say("stopped");
+    } else if verdict.may_launch() {
+        state.running.set(true);
+        for form in state.forms.borrow_mut().values_mut() {
+            form.settle();
+        }
+        state.say("running");
+    } else {
+        state.say(verdict.sentence());
+    }
+}
+
 fn release(state: &Rc<LabState>) {
     let (px, py) = state.cursor.get();
     let now = Hit::at(state, px, py);
@@ -8741,21 +9111,7 @@ fn release(state: &Rc<LabState>) {
         Hit::Problem => {
             go_to_problem(state);
         }
-        Hit::Run => {
-            let verdict = state.verdict();
-            if state.running.get() {
-                state.running.set(false);
-                state.say("stopped");
-            } else if verdict.may_launch() {
-                state.running.set(true);
-                for form in state.forms.borrow_mut().values_mut() {
-                    form.settle();
-                }
-                state.say("running");
-            } else {
-                state.say(verdict.sentence());
-            }
-        }
+        Hit::Run => toggle_running(state),
         // ★★ R1687 — the two artifacts, through the same two functions the wire
         // calls. Before this round the `config` seat reported the SELECTED
         // card's key count: a different question, at a different scope, that
@@ -8797,7 +9153,11 @@ fn release(state: &Rc<LabState>) {
         Hit::Endpoint(n) => {
             choose_endpoint(state, n).ok();
         }
-        Hit::AddField(_) | Hit::Field(_) | Hit::RemoveField(_) | Hit::Part { .. } => {
+        Hit::AddField(_)
+        | Hit::Field(_)
+        | Hit::RemoveField(_)
+        | Hit::AuthorField(_)
+        | Hit::Part { .. } => {
             act_on_form(state, now);
         }
         Hit::Rail(name) => state.say(format!("{name} is not this screen")),
@@ -8816,11 +9176,14 @@ fn act_on_form(state: &Rc<LabState>, hit: Hit) {
     match hit {
         Hit::AddField(key) => {
             if let Some(node) = state.active_card() {
-                let mut forms = state.forms.borrow_mut();
-                if let Some(form) = forms.get_mut(&node) {
-                    form.add(&key).ok();
-                }
-                drop(forms);
+                amend(state, node, |form| form.add(&key)).ok();
+            }
+        }
+        // ★★ R1716 — the seat on a row nobody wrote, through the one function
+        // the wire also calls. A refusal has already reached the toast.
+        Hit::AuthorField(key) => {
+            if let Some(node) = state.active_card() {
+                author_row(state, node, &key).ok();
             }
         }
         // ★★★ R1684 — the arm this screen NAMED and then dropped.
@@ -9162,11 +9525,22 @@ fn press_row(state: &Rc<LabState>, key: &str) {
     let Some(node) = state.active_card() else {
         return;
     };
-    let Some(shape) = selected_form_of(state, node)
-        .and_then(|form| form.field(key).map(|field| field.shape().clone()))
+    let Some(field) = selected_form_of(state, node).and_then(|form| form.field(key).cloned())
     else {
         return;
     };
+    // ★★★★★ R1716 — a row nobody wrote does not open a box. It would be a box
+    // that cannot commit: the form refuses the write, so a person would type,
+    // press apply, and watch the old value come back with nothing said. The
+    // refusal is said HERE instead, in the framework's own words, and the seat
+    // beside the row offers the act that does work.
+    if let Some(from) = field.source().derived_from() {
+        state.say(format!(
+            "{key} is worked out from the {from}; take it over to write it"
+        ));
+        return;
+    }
+    let shape = field.shape().clone();
     if shape == FieldType::Boolean {
         flip_boolean(state, key);
         return;

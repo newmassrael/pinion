@@ -241,19 +241,35 @@ def body() -> None:
                 if tag not in painted:
                     missing.append(tag)
         for field in spec["fields"]:
-            for tag in (
-                f"lab.form.control.{field['key']}",
-                f"lab.form.applies.{field['key']}",
-                # ★★ R1686 — the seat that takes the row away. DEMANDED per
-                # row, not permitted per row: the reference draws it on every
-                # row it does not derive and every row here is authored, so a
-                # form that grew one row without a seat is a configuration a
-                # person can only add to.
-                f"lab.form.remove.{field['key']}",
-            ):
+            wanted = [f"lab.form.control.{field['key']}"]
+            # ★★★ R1716 — which regions a row HAS comes from the axis it is on,
+            # and the specification carries that in two columns. A row nobody
+            # wrote shows where its value came from instead of what an edit
+            # would cost, and its seat takes the value OVER; the reference draws
+            # exactly that partition. Demanded per row either way — a form that
+            # grew a row with no seat at all is a configuration a person can
+            # only add to.
+            if field["source"]:
+                wanted.append(f"lab.form.source.{field['key']}")
+                wanted.append(f"lab.form.author.{field['key']}")
+                if field["applies"] == "hot":
+                    wanted.append(f"lab.form.applies.{field['key']}")
+            else:
+                wanted.append(f"lab.form.applies.{field['key']}")
+                wanted.append(f"lab.form.remove.{field['key']}")
+            if field["aside"]:
+                wanted.append(f"lab.form.aside.{field['key']}")
+            for tag in wanted:
                 if tag not in painted:
                     missing.append(tag)
+        held = {field["key"] for field in spec["fields"]}
         for key in spec["addable"]:
+            # ★ R1716 — a key the form already HOLDS is not offered as a chip,
+            # which is `addable`'s own rule: `connect.endpoints` is in the
+            # catalogue for a card the canvas draws no link out of, and the
+            # opening card has two.
+            if key in held:
+                continue
             tag = f"lab.form.add.{key}"
             if tag not in painted:
                 missing.append(tag)
@@ -315,6 +331,14 @@ def body() -> None:
             declared.add(f"lab.form.applies.{field['key']}")
             declared.add(f"lab.form.defect.{field['key']}")
             declared.add(f"lab.form.remove.{field['key']}")
+            # ★★ R1716 — the regions a row nobody wrote has: where its value
+            # came from, whether it is configuration at all, and the seat that
+            # takes it over. Declared per family here for the same reason the
+            # affordances below are — which of them a row has is a fact about
+            # the row, and the forward pass above is what demands the right ones.
+            declared.add(f"lab.form.source.{field['key']}")
+            declared.add(f"lab.form.aside.{field['key']}")
+            declared.add(f"lab.form.author.{field['key']}")
             # Every affordance a shape can put inside its control. Declared per
             # family rather than per instance because how many a row has is a
             # function of its VALUE (a list grows), and the count pin below is
@@ -724,7 +748,13 @@ def body() -> None:
               f"holds {inbound} inbound link(s)")
 
         # ── (K) Adding a key moves it out of the offered set ────────────────
-        offered = spec["addable"][0]
+        # ★ R1716 — the first catalogue key the form does not already HOLD. The
+        # catalogue is a fact about the node's kind and the chips are what is
+        # left of it, so a key the opening card is already showing has no chip —
+        # which is `addable`'s own rule, and `connect.endpoints` is now such a
+        # key on any card the canvas draws a link out of.
+        held = {f["key"] for f in json.loads(q(tf, "form"))}
+        offered = next(key for key in spec["addable"] if key not in held)
         click(tf, at(tf, f"lab.form.add.{offered}"))
         form = json.loads(q(tf, "form"))
         assert offered in [f["key"] for f in form], f"{offered} is now a row"
@@ -762,7 +792,11 @@ def body() -> None:
 
         # ── (N) Running settles the form ────────────────────────────────────
         click(tf, at(tf, "lab.node.R-01"))
-        inv(tf, "set_field", "connect.endpoints=tcp/10.0.0.99:7449")
+        # ★ R1716 — an AUTHORED row. `connect.endpoints` used to be one and is
+        # now worked out from the wires, so writing to it is refused by the row
+        # itself; what this section is about is that a launch settles whatever a
+        # person did change, and the identifier is a row they own.
+        inv(tf, "set_field", "id=a9")
         assert any(f["edited"] for f in json.loads(q(tf, "form"))), "the row is edited"
         assert_eq(inv(tf, "run", True), True, "and the gate is open, so it runs")
         assert not any(f["edited"] for f in json.loads(q(tf, "form"))), (

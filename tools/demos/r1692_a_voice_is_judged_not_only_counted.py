@@ -217,9 +217,25 @@ def body() -> None:
         borrowed = [r for r in rows.values() if r.get("reason") == "name_of"]
         assert len(borrowed) >= 3, f"this screen lends its captions out: {borrowed}"
         checked = 0
+        # ★★ R1716 — a caption inside a pane that SCROLLS may be one gesture
+        # away rather than on screen, and that is not the failure this loop is
+        # about: the inspector grew three rows this round and pushed its closing
+        # note 44 pixels below the fold, where `scene/scroll_reach` reports it
+        # as reachable with `lost` and `clipped` both zero. What still fails is
+        # a caption the screen does not paint AT ALL — which is why absence is
+        # asked of the reach walk rather than assumed from the rectangle.
+        away = {
+            entry["path"].rsplit("/", 1)[-1]
+            for entry in tf.request("scene/scroll_reach").result["out_of_sight"]
+        }
         for row in borrowed:
             box = boxes.get(row["tag"])
-            assert box is not None, f"{row['tag']} paints"
+            if box is None:
+                assert row["tag"] in away, (
+                    f"{row['tag']} neither paints nor is one gesture away — a "
+                    f"caption that is nowhere lends its words to nothing"
+                )
+                continue
             inked = [
                 run["content"]
                 for run in runs

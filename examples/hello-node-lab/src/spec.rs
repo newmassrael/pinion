@@ -339,6 +339,18 @@ pub struct FieldSpec {
     pub applies: &'static str,
     /// What the field holds when the screen opens.
     pub value: &'static str,
+    /// ★★★ R1716 — what the screen worked this row's value out from, or
+    /// `None` when somebody wrote it.
+    ///
+    /// The specification's column rather than a fact discovered from the form,
+    /// because it decides what the screen must PAINT: a row nobody wrote shows
+    /// where its value came from, offers to be taken over rather than removed,
+    /// and — when an edit could not have reached a running node anyway — does
+    /// not say what an edit would cost.
+    pub source: Option<&'static str>,
+    /// ★★ R1716 — what this row is about instead of configuration, when it is
+    /// not configuration at all. `None` means it ships in the document.
+    pub aside: Option<&'static str>,
 }
 
 /// The node the screen opens with selected.
@@ -351,6 +363,18 @@ pub const SELECTED_NODE: &str = "R-01";
 /// keys, and a form that did not say which is which turns a correct tool into
 /// an apparently broken one.
 pub const FIELDS: &[FieldSpec] = &[
+    // ★★★★★ R1716 — first, and worked out from the node's ROLE. A router that
+    // came up in client mode would not be the node the canvas draws, so this is
+    // not a value anybody types; it is a reading of the card, and the row says
+    // so where a writable row says what an edit would cost.
+    FieldSpec {
+        key: "mode",
+        ty: "mode",
+        applies: "restart",
+        value: "router",
+        source: Some("role"),
+        aside: None,
+    },
     // ★★ R1690 — the type words changed with the shapes. `id` said `text`
     // while the target reads it with a parser, which is the defect the option
     // surface exposed: the word a row is labelled with and the shape it is
@@ -361,30 +385,57 @@ pub const FIELDS: &[FieldSpec] = &[
         ty: "id",
         applies: "restart",
         value: "a1",
+        source: None,
+        aside: None,
     },
     FieldSpec {
         key: "listen.endpoints",
         ty: "address[]",
         applies: "restart",
         value: "tcp/0.0.0.0:7447",
-    },
-    FieldSpec {
-        key: "connect.endpoints",
-        ty: "address[]",
-        applies: "hot",
-        value: "tcp/10.0.0.21:7449",
+        source: None,
+        aside: None,
     },
     FieldSpec {
         key: "control.permissions",
         ty: "perm",
         applies: "restart",
         value: "read, write",
+        source: None,
+        aside: None,
     },
     FieldSpec {
         key: "transport.link.tx.batch_size",
         ty: "int",
         applies: "restart",
         value: "65535",
+        source: None,
+        aside: None,
+    },
+    // ★★★ R1716 — where this node runs. It appears because the graph is drawn
+    // across two host frames; on a graph with one it would say nothing a reader
+    // could act on, and the canon leaves it out for that reason. It is NOT
+    // configuration — the plan starts the process there — so it goes aside and
+    // never reaches the document.
+    FieldSpec {
+        key: "host",
+        ty: "text",
+        applies: "restart",
+        value: "host-a",
+        source: Some("frame"),
+        aside: Some("placement"),
+    },
+    // ★★★★★ R1716 — worked out from the WIRES. Before this round the row held
+    // an address typed beside the code while the canvas drew three links out of
+    // this card, and the exported configuration shipped the typed one: a node
+    // dialled where nothing listens and missed one it was drawn to reach.
+    FieldSpec {
+        key: "connect.endpoints",
+        ty: "address[]",
+        applies: "hot",
+        value: "tcp/host-a:7449, tcp/host-a:7451",
+        source: Some("wire"),
+        aside: None,
     },
 ];
 
@@ -401,6 +452,10 @@ pub const FIELDS: &[FieldSpec] = &[
 /// They name the leaf they meant now, and `Reach::unauthorable` is the gate
 /// that fails if one goes back.
 pub const ADDABLE: &[&str] = &[
+    // ★★ R1716 — first because it is the one a person reaches for on a card
+    // with no drawn links: the row is worked out from the wires when there are
+    // any, and offered here when there are none.
+    "connect.endpoints",
     "discovery.multicast",
     "timestamping.enabled",
     "compression.enabled",
@@ -674,6 +729,16 @@ pub const OPERATIONS: &[OperationSpec] = &[
         witness: "form",
         needs: None,
     },
+    // ★★★ R1716 — the act that exists because some rows are NOT somebody's to
+    // write: taking one over. `mode` is worked out from the role on every card,
+    // so it is the row this is always available on.
+    OperationSpec {
+        name: "take a derived field over",
+        verb: Some(("author_field", "mode")),
+        gesture: true,
+        witness: "form",
+        needs: None,
+    },
     OperationSpec {
         name: "reset the fields",
         verb: Some(("reset", "fields")),
@@ -915,6 +980,18 @@ pub enum Population {
     Links,
     /// One per [`FIELDS`] row of the inspector.
     Fields,
+    /// ★★★ R1716 — one per [`FIELDS`] row **somebody wrote**: the rows that
+    /// can be taken away, and the rows that say what an edit would cost.
+    AuthoredFields,
+    /// One per [`FIELDS`] row the screen **worked out**: the rows that name a
+    /// source and offer to be taken over.
+    DerivedFields,
+    /// One per [`FIELDS`] row that is not configuration at all.
+    AsideFields,
+    /// One per [`FIELDS`] row that carries an applies badge — every authored
+    /// row, and a derived row whose value still reaches a running node when its
+    /// source moves.
+    BadgedFields,
     /// One per [`PROTOCOLS`] chip.
     Protocols,
     /// One per [`PIN_LEGEND`] entry.
@@ -1095,7 +1172,15 @@ pub const VOICES: &[VoiceSpec] = &[
     VoiceSpec {
         tag: "lab.form.remove.{}",
         role: "button",
-        population: Population::Fields,
+        population: Population::AuthoredFields,
+    },
+    // ★★★ R1716 — the other seat, on the other population. Two rows here
+    // rather than one with a wildcard, because they are two acts and a reader
+    // is told which one they are on.
+    VoiceSpec {
+        tag: "lab.form.author.{}",
+        role: "button",
+        population: Population::DerivedFields,
     },
 ];
 
@@ -1135,7 +1220,13 @@ pub const SILENCES: &[(&str, Population, &str)] = &[
     ("lab.inspector.reach.text", Population::One, "name_of"),
     ("lab.inspector.note.text", Population::One, "name_of"),
     // The applies badge: its words are already the row's description.
-    ("lab.form.applies.{}", Population::Fields, "name_of"),
+    ("lab.form.applies.{}", Population::BadgedFields, "name_of"),
+    // ★★★ R1716 — and so are these two. A derived row's description says
+    // "worked out from the role" and a row that goes aside says what it is
+    // instead, so the badges are the same words a second time: part of the row
+    // rather than stops of their own.
+    ("lab.form.source.{}", Population::DerivedFields, "name_of"),
+    ("lab.form.aside.{}", Population::AsideFields, "name_of"),
 ];
 
 /// Whether a save carries what an operation moved.

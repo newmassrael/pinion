@@ -248,9 +248,15 @@ def c_the_recipe_names_the_pan_and_works(app: RpcSubprocess, name: str) -> None:
         f"one shipped — nothing is lost ({reach['lost']})",
         reach["lost"] == 0,
     )
-    # The marks that round lost are the `×` glyphs inside the inspector's row
+    # The marks that round lost are the seat glyphs inside the inspector's row
     # actions. They carry no tag, so they are found by their content.
-    glyphs = [r for r in reach["out_of_sight"] if r["content"] == "×"]
+    #
+    # ★★ R1716 — there are two of them now, because a row's seat says who owns
+    # its value: `×` takes an authored row away and `↪` takes a derived one
+    # over. Both words are accepted for the same reason R1713.2 had to accept
+    # two: a predicate that names one spelling of a thing stops measuring the
+    # moment the thing grows a second.
+    glyphs = [r for r in reach["out_of_sight"] if r["content"] in ("×", "↪")]
     ok(
         f"C/{name}: the marks that were lost there are reported, by content "
         f"({len(glyphs)} of them)",

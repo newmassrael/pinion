@@ -166,6 +166,124 @@ impl Applies {
     }
 }
 
+/// Where a row's value came from.
+///
+/// ★★★★★ R1716 — **a row that nobody typed is not the same row with a flag
+/// on it.** A settings form of this kind shows values it worked out for
+/// itself — the mode a node's role implies, the addresses the drawn graph
+/// dials — beside the values a person wrote, and a reader who cannot tell them
+/// apart is left with two wrong beliefs at once: that the tool is waiting for
+/// them to fill something in, and that what they see is what they said.
+///
+/// So the fact is carried as **where it came from**, not as a boolean. The
+/// name goes on the badge verbatim, because "this is derived" answers nothing a
+/// person can act on and "this comes from the role" tells them where to go and
+/// change it.
+///
+/// # What the floor does here, measured rather than read
+///
+/// The mature toolkit at 6.11 was built and **run** for this round. It can
+/// derive a value — a bound property recomputed 20 → 42 when its source moved
+/// 10 → 21 — so the capability is parity and not a gap. Four things it does
+/// not do, and each is why an arm of this type carries what it carries:
+///
+/// * **The answer is a bool.** Asking whether a value is derived returns
+///   yes-or-no; nothing names the source, and the binding object itself only
+///   says whether it is null and what type it holds.
+/// * **Authoring over a derived value drops the derivation silently** —
+///   measured: one ordinary value-changed notification, no separate news, and
+///   afterwards the dropped derivation is unreachable. [`Takeover`] is that
+///   act with an announcement attached.
+/// * **A read-only cell is a view's convention, not the value's guarantee** —
+///   measured: writing to a cell with editing cleared *succeeded* and changed
+///   it. Here the refusal is the value's own, so a screen cannot forget it.
+/// * **Nothing can say why.** A locked cell answers 3 of 256 standard roles and
+///   none of them is a reason; driving its editor logs a line and returns void.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Source {
+    /// Somebody wrote it. The only kind of row a person may edit or take away.
+    Authored,
+    /// This screen worked it out, from the thing this names.
+    ///
+    /// The word is shown to a reader — `role`, `wire`, `kind default` — so it
+    /// is written for them and not for a log.
+    Derived(Cow<'static, str>),
+}
+
+impl Default for Source {
+    fn default() -> Self {
+        Self::Authored
+    }
+}
+
+impl Source {
+    /// Whether somebody wrote this value.
+    #[must_use]
+    pub const fn authored(&self) -> bool {
+        matches!(self, Self::Authored)
+    }
+
+    /// What the value was worked out from, when it was not written.
+    #[must_use]
+    pub fn derived_from(&self) -> Option<&str> {
+        match self {
+            Self::Authored => None,
+            Self::Derived(from) => Some(from),
+        }
+    }
+}
+
+/// Where a row's value goes when the form ships a document.
+///
+/// ★★★ R1716 — the second half of the same question, and a separate axis
+/// because the two answers cross: a row can be derived and still belong in the
+/// document (the mode a role implies is configuration), and a row can be
+/// authored and belong nowhere near it (which machine to start this on is not a
+/// setting of the thing being started).
+///
+/// Without this the only honest thing a form could do with such a row is
+/// refuse to hold it, and then the screen keeps a second list beside the form —
+/// which is the drift this widget exists to end. [`Composed::aside`] is the
+/// rollup, so "did not fit" and "does not belong" stay different pieces of news.
+///
+/// The floor has the *bit* — a property can be marked not-worth-storing, and 6
+/// of one control's 80 properties are — and it has no word for what such a row
+/// is **instead**, which is the half a person reads.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Goes {
+    /// Into the document, at this row's path.
+    Document,
+    /// Not into the document. The word says what the row is about instead —
+    /// `placement`, `run argument` — because "not in the file" is not something
+    /// a person can act on and "this is where it runs" is.
+    Aside(Cow<'static, str>),
+}
+
+impl Default for Goes {
+    fn default() -> Self {
+        Self::Document
+    }
+}
+
+impl Goes {
+    /// Whether this row's value belongs in the document.
+    #[must_use]
+    pub const fn into_document(&self) -> bool {
+        matches!(self, Self::Document)
+    }
+
+    /// What the row is about instead, when it is not configuration.
+    #[must_use]
+    pub fn instead(&self) -> Option<&str> {
+        match self {
+            Self::Document => None,
+            Self::Aside(word) => Some(word),
+        }
+    }
+}
+
 /// What a field's text is supposed to mean.
 ///
 /// R1651. Separate from [`ConfigField::ty`], which is the **word the
@@ -541,6 +659,17 @@ pub struct ConfigField {
     /// goes back.
     #[serde(default)]
     hidden: bool,
+    /// R1716 — where this value came from. See [`Source`].
+    ///
+    /// Skipped when it is the ordinary answer, so a stored form written before
+    /// this existed reads back unchanged and one written now is byte-identical
+    /// to what that reader expects.
+    #[serde(default, skip_serializing_if = "Source::authored")]
+    source: Source,
+    /// R1716 — where this value goes. See [`Goes`]. Skipped for the same
+    /// reason as [`Self::source`].
+    #[serde(default, skip_serializing_if = "Goes::into_document")]
+    goes: Goes,
 }
 
 impl Default for FieldType {
@@ -568,7 +697,43 @@ impl ConfigField {
             shape: FieldType::Text,
             custom: false,
             hidden: false,
+            source: Source::Authored,
+            goes: Goes::Document,
         }
+    }
+
+    /// This row's value is not somebody's writing — it is worked out from the
+    /// thing `from` names, and that word is what the badge shows.
+    ///
+    /// ★★ R1716 — the consequences are the type's, not a screen's: the row
+    /// refuses [`set`](Self::set), the form refuses to
+    /// [`remove`](ConfigForm::remove) it, and the painter draws no control for
+    /// it. A screen that had to remember all three would eventually paint a
+    /// text box over a value nobody can write.
+    #[must_use]
+    pub fn derived_from(mut self, from: impl Into<Cow<'static, str>>) -> Self {
+        self.source = Source::Derived(from.into());
+        self
+    }
+
+    /// This row does not go into the document; it is about `instead` — see
+    /// [`Goes`].
+    #[must_use]
+    pub fn goes_aside(mut self, instead: impl Into<Cow<'static, str>>) -> Self {
+        self.goes = Goes::Aside(instead.into());
+        self
+    }
+
+    /// Where this value came from.
+    #[must_use]
+    pub const fn source(&self) -> &Source {
+        &self.source
+    }
+
+    /// Where this value goes.
+    #[must_use]
+    pub const fn goes(&self) -> &Goes {
+        &self.goes
     }
 
     /// Declare what the text has to mean, so this row's defects are derivable.
@@ -627,7 +792,12 @@ impl ConfigField {
     #[must_use]
     pub fn defects(&self) -> Vec<ConfigDefect> {
         let mut found = Vec::new();
-        if self.custom {
+        // ★ R1716 — a row that goes aside is not a configuration path, so "the
+        // target does not know this key" is not news about it; it is a false
+        // warning the person cannot act on, about a key the target was never
+        // going to be shown. The shape defect below still stands: a placement
+        // that does not parse is as wrong as a setting that does not.
+        if self.custom && self.goes.into_document() {
             found.push(ConfigDefect::UnknownKey {
                 key: self.key.to_string(),
             });
@@ -669,8 +839,54 @@ impl ConfigField {
     }
 
     /// Set the value.
-    pub fn set(&mut self, value: impl Into<String>) {
+    ///
+    /// ★★★★★ R1716 — **the refusal is the value's own.** The floor's
+    /// read-only is a view's manners: measured at 6.11, writing into a cell
+    /// whose editing had been cleared returned success and changed the value,
+    /// so the guarantee holds exactly as long as every writer remembers. Here
+    /// the row that knows where its value came from is the row that answers,
+    /// and a screen cannot forget on its behalf.
+    ///
+    /// # Errors
+    ///
+    /// [`FormError::Derived`] — the value is worked out rather than written,
+    /// and the error names what from. [`ConfigForm::author`] is the way to take
+    /// it over.
+    pub fn set(&mut self, value: impl Into<String>) -> Result<(), FormError> {
+        if let Some(from) = self.source.derived_from() {
+            return Err(FormError::Derived {
+                key: self.key.to_string(),
+                from: from.to_owned(),
+            });
+        }
         self.value = value.into();
+        Ok(())
+    }
+
+    /// Take this row over: it becomes somebody's to write, holding the value it
+    /// was last worked out to be.
+    ///
+    /// ★★★★★ R1716 — **the act the floor performs silently.** Measured at
+    /// 6.11: writing into a derived value drops its derivation with one
+    /// ordinary value-changed notification and no way afterwards to learn what
+    /// was dropped. A person who does that to a mode they meant to read has no
+    /// signal at all. So the act is named, it answers what it displaced, and
+    /// the value it leaves behind is the derived one — taking a value over
+    /// starts from what it *was*, never from empty.
+    ///
+    /// # Errors
+    ///
+    /// [`FormError::NotDerived`] — the row is already somebody's writing, so
+    /// there is nothing to take over.
+    pub fn author(&mut self) -> Result<Takeover, FormError> {
+        let Source::Derived(from) = std::mem::take(&mut self.source) else {
+            return Err(FormError::NotDerived(self.key.to_string()));
+        };
+        Ok(Takeover {
+            key: self.key.to_string(),
+            was: from.into_owned(),
+            seeded: self.value.clone(),
+        })
     }
 
     /// Accept the current value as the settled one — what a successful launch
@@ -842,14 +1058,42 @@ impl ConfigForm {
     /// [`FormError::NoSuchField`] — a path this form does not hold. Named
     /// rather than inserted, because a typo silently becoming a new key is how
     /// an unknown-key warning gets created by the tool itself.
+    ///
+    /// [`FormError::Derived`] — R1716, a row whose value is worked out rather
+    /// than written. The refusal comes from the row, not from a check here, so
+    /// every path into a value passes it.
     pub fn set(&mut self, key: &str, value: impl Into<String>) -> Result<(), FormError> {
         let field = self
             .fields
             .iter_mut()
             .find(|f| f.key() == key)
             .ok_or_else(|| FormError::NoSuchField(key.to_string()))?;
-        field.set(value);
-        Ok(())
+        field.set(value)
+    }
+
+    /// Take the row at that path over — see [`ConfigField::author`].
+    ///
+    /// # Errors
+    ///
+    /// [`FormError::NoSuchField`] or [`FormError::NotDerived`].
+    pub fn author(&mut self, key: &str) -> Result<Takeover, FormError> {
+        self.fields
+            .iter_mut()
+            .find(|f| f.key() == key)
+            .ok_or_else(|| FormError::NoSuchField(key.to_string()))?
+            .author()
+    }
+
+    /// The rows this form worked out for itself, in the order it shows them.
+    ///
+    /// R1716 — the rollup the floor has no shape for: it can be asked, one
+    /// value at a time, whether that value is derived, and there is no list.
+    #[must_use]
+    pub fn derived(&self) -> Vec<&ConfigField> {
+        self.fields
+            .iter()
+            .filter(|f| !f.source().authored())
+            .collect()
     }
 
     /// Move an offered key into the form.
@@ -924,15 +1168,28 @@ impl ConfigForm {
     /// [`addable`](Self::addable) derives. A key the form opened holding, or one
     /// it was offered, comes back as a chip; a path typed in by hand does not.
     ///
+    /// ★★ R1716 — **a row nobody wrote is not a row anybody may take away.**
+    /// Removing it would put the form back in front of the same value one
+    /// render later, because the derivation is still true; the act a person
+    /// actually wants there is [`author`](Self::author), and the seat the
+    /// painter draws on such a row offers exactly that.
+    ///
     /// # Errors
     ///
-    /// [`FormError::NoSuchField`].
+    /// [`FormError::NoSuchField`], or [`FormError::Derived`] naming what the
+    /// value comes from.
     pub fn remove(&mut self, key: &str) -> Result<(), FormError> {
         let at = self
             .fields
             .iter()
             .position(|f| f.key() == key)
             .ok_or_else(|| FormError::NoSuchField(key.to_string()))?;
+        if let Some(from) = self.fields[at].source().derived_from() {
+            return Err(FormError::Derived {
+                key: key.to_string(),
+                from: from.to_owned(),
+            });
+        }
         let mut field = self.fields.remove(at);
         field.revert();
         self.parked.retain(|f| f.key() != key);
@@ -1138,7 +1395,21 @@ impl ConfigForm {
     pub fn compose(&self) -> Composed {
         let mut root = Map::new();
         let mut unexpressed: Vec<Unexpressed> = Vec::new();
+        let mut aside: Vec<Aside> = Vec::new();
         for field in &self.fields {
+            // ★★ R1716 — a row that goes aside is answered BEFORE it is
+            // encoded, because "this is not configuration" is not a failure to
+            // express it: putting it through the same walk would either invent
+            // a path the target does not have or report a defect about a row
+            // that was never headed for the document.
+            if let Some(instead) = field.goes().instead() {
+                aside.push(Aside {
+                    key: field.key().to_string(),
+                    shown: field.value().to_string(),
+                    instead: instead.to_owned(),
+                });
+                continue;
+            }
             let mut refuse = |why| {
                 unexpressed.push(Unexpressed {
                     key: field.key().to_string(),
@@ -1160,6 +1431,7 @@ impl ConfigForm {
         Composed {
             document: Value::Object(root),
             unexpressed,
+            aside,
         }
     }
 
@@ -1219,10 +1491,17 @@ impl ConfigForm {
                 continue;
             };
             match field.shape.decode(&path, value) {
-                Ok(text) => {
-                    field.set(text);
-                    adopted.set.push(path);
-                }
+                Ok(text) => match field.set(text) {
+                    Ok(()) => adopted.set.push(path),
+                    // ★★ R1716 — a file does not get to seize a row from the
+                    // thing it is worked out from. The leaf is reported instead
+                    // of written, which is the same promise this method has
+                    // always made about the keys it cannot place: a document
+                    // whose `mode` differs from what the role implies is news,
+                    // and adopting it silently would make the screen show a
+                    // value its own derivation contradicts.
+                    Err(_) => adopted.derived.push(path),
+                },
                 Err(defect) => adopted.refused.push(defect),
             }
         }
@@ -1256,13 +1535,24 @@ pub struct Adopted {
     pub unplaceable: Vec<String>,
     /// The values a row exists for and cannot hold.
     pub refused: Vec<ConfigDefect>,
+    /// ★★ R1716 — the paths whose row works its value out for itself.
+    ///
+    /// Not written and not dropped. A screen that wants the file's value there
+    /// takes the row over first ([`ConfigForm::author`]) — which is a decision
+    /// somebody makes, not one a load performs on their behalf.
+    #[serde(default)]
+    pub derived: Vec<String>,
 }
 
 impl Adopted {
     /// Whether every leaf of the document reached a row.
+    ///
+    /// R1716 — a derived path counts against it, because the document's value
+    /// for that path is not what the form now shows, and a reader who was told
+    /// "complete" would believe it was.
     #[must_use]
     pub fn complete(&self) -> bool {
-        self.unplaceable.is_empty() && self.refused.is_empty()
+        self.unplaceable.is_empty() && self.refused.is_empty() && self.derived.is_empty()
     }
 }
 
@@ -1278,6 +1568,16 @@ pub struct Composed {
     pub document: Value,
     /// Every row that could not, in the order the form holds them.
     pub unexpressed: Vec<Unexpressed>,
+    /// ★★ R1716 — every row that was never headed there, and what it is
+    /// about instead.
+    ///
+    /// A third bucket rather than a second meaning for the second one: "did not
+    /// fit" is news a person has to act on and "does not belong" is the form
+    /// working correctly, and a reader who cannot tell them apart reads a
+    /// healthy form as a broken one. It is also the list the floor cannot
+    /// produce — it can mark a property not-worth-storing and has no way to
+    /// gather the marked ones, let alone say what they are instead.
+    pub aside: Vec<Aside>,
 }
 
 impl Composed {
@@ -1305,6 +1605,50 @@ pub struct Unexpressed {
     pub shown: String,
     /// Why it could not be carried.
     pub why: Unexpressible,
+}
+
+/// One row that is deliberately not in the document, and what it is instead.
+///
+/// ★★ R1716 — it carries the same two fields a row that *failed* carries, so
+/// a screen listing both reads one shape twice; what differs is the third,
+/// which is a **word for what this row is about** rather than a reason it went
+/// wrong. Nothing here is a defect and nothing here blocks a launch.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Aside {
+    /// The path the row is addressed by.
+    pub key: String,
+    /// The value verbatim, as the row shows it.
+    pub shown: String,
+    /// What the row is about instead of configuration — `placement`,
+    /// `run argument`.
+    pub instead: String,
+}
+
+/// What a row's value was taken over from — see [`ConfigField::author`].
+///
+/// ★★★★★ R1716 — **the news the floor does not send.** Measured at 6.11,
+/// authoring over a derived value produces one ordinary value-changed
+/// notification and leaves the displaced derivation unreachable, so a person
+/// who did it by accident cannot find out what they lost. Every field here is
+/// one of the three things they would need: which row, what it came from, and
+/// what it was holding at the moment they took it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Takeover {
+    /// The row that is now somebody's to write.
+    pub key: String,
+    /// What its value used to be worked out from.
+    pub was: String,
+    /// The value it kept — the derived one, so authoring starts from what the
+    /// screen was already showing rather than from nothing.
+    pub seeded: String,
+}
+
+impl Takeover {
+    /// The one line a person reads when it happens.
+    #[must_use]
+    pub fn sentence(&self) -> String {
+        format!("{} is yours now; it came from {}", self.key, self.was)
+    }
 }
 
 /// Why a row could not go into a document.
@@ -1434,6 +1778,20 @@ pub enum FormError {
     NotAddable(String),
     /// A key the form already holds a row for (R1683).
     AlreadyHeld(String),
+    /// R1716 — a row whose value is worked out rather than written, and what it
+    /// is worked out from.
+    ///
+    /// The source travels with the refusal because a refusal a person cannot
+    /// act on is barely better than a silent one: `mode is worked out from the
+    /// role` tells them where to go.
+    Derived {
+        /// The row that refused.
+        key: String,
+        /// What its value comes from.
+        from: String,
+    },
+    /// R1716 — a row asked to be taken over that nobody was deriving.
+    NotDerived(String),
 }
 
 impl std::fmt::Display for FormError {
@@ -1442,6 +1800,10 @@ impl std::fmt::Display for FormError {
             Self::NoSuchField(key) => write!(f, "this node has no field {key}"),
             Self::NotAddable(key) => write!(f, "{key} is not a key this node kind offers"),
             Self::AlreadyHeld(key) => write!(f, "this node already holds {key}"),
+            Self::Derived { key, from } => {
+                write!(f, "{key} is worked out from the {from}, not written here")
+            }
+            Self::NotDerived(key) => write!(f, "{key} is already yours to write"),
         }
     }
 }
@@ -1454,8 +1816,8 @@ mod tests {
 
     use super::super::text_format::{CharClass, CharSet, Span, TextFormat};
     use super::{
-        Applies, ConfigDefect, ConfigField, ConfigForm, DocumentError, FieldType, FormError,
-        Unexpressible, Verdict,
+        Applies, Aside, ConfigDefect, ConfigField, ConfigForm, DocumentError, FieldType, FormError,
+        Takeover, Unexpressible, Value, Verdict,
     };
 
     /// The five rows the reference tool's node inspector shows, with the shapes
@@ -2330,6 +2692,234 @@ mod tests {
         let after = settled.clone();
         settled.revert();
         assert_eq!(settled, after, "and the settled shape is what revert keeps");
+    }
+
+    /// A form shaped like the one the behaviour canon shows: rows somebody
+    /// wrote, a row the screen works out from the node's role, and a row that
+    /// is about where the node runs rather than about its configuration.
+    fn with_derived() -> ConfigForm {
+        let mut form = form();
+        form.upsert(
+            ConfigField::new("mode", "mode", Applies::Restart, "peer")
+                .with_shape(FieldType::Choice {
+                    of: vec!["peer".into(), "client".into(), "router".into()],
+                })
+                .derived_from("role"),
+        );
+        form.upsert(
+            ConfigField::new("host", "text", Applies::Restart, "127.0.0.1")
+                .derived_from("kind default")
+                .goes_aside("placement"),
+        );
+        form
+    }
+
+    /// ★★★★★ R1716 — the fact is WHERE IT CAME FROM, not a flag.
+    #[test]
+    fn r1716_a_row_says_what_worked_its_value_out() {
+        let form = with_derived();
+        let mode = form.field("mode").expect("held");
+        assert_eq!(mode.source().derived_from(), Some("role"));
+        assert!(!mode.source().authored());
+        assert_eq!(
+            form.field("id").expect("held").source().derived_from(),
+            None,
+            "and a row somebody wrote names nothing, because nobody worked it out"
+        );
+        let worked_out: Vec<&str> = form.derived().iter().map(|f| f.key()).collect();
+        assert_eq!(
+            worked_out,
+            ["mode", "host"],
+            "★ the rollup the floor has no shape for: it answers one value at a \
+             time and cannot gather them"
+        );
+    }
+
+    /// ★★★★★ R1716 — the refusal is the VALUE'S, which is the half the floor
+    /// leaves to a view: measured at 6.11, writing into a cell whose editing
+    /// had been cleared returned success and changed the value.
+    #[test]
+    fn r1716_a_derived_row_refuses_the_write_the_floor_would_have_taken() {
+        let mut form = with_derived();
+        assert_eq!(
+            form.set("mode", "router"),
+            Err(FormError::Derived {
+                key: "mode".to_owned(),
+                from: "role".to_owned(),
+            }),
+            "★ and the refusal NAMES the source, so a person knows where to go"
+        );
+        assert_eq!(
+            form.field("mode").expect("held").value(),
+            "peer",
+            "★ the value did not move — the floor's did"
+        );
+        assert!(
+            FormError::Derived {
+                key: "mode".to_owned(),
+                from: "role".to_owned(),
+            }
+            .to_string()
+            .contains("role"),
+            "and the sentence a person reads carries it too"
+        );
+    }
+
+    /// ★★ R1716 — nor may it be taken away: the derivation is still true, so
+    /// the row would be back one render later.
+    #[test]
+    fn r1716_a_derived_row_cannot_be_taken_away() {
+        let mut form = with_derived();
+        assert_eq!(
+            form.remove("mode"),
+            Err(FormError::Derived {
+                key: "mode".to_owned(),
+                from: "role".to_owned(),
+            })
+        );
+        assert!(form.field("mode").is_some(), "the row is still there");
+        assert_eq!(form.remove("id"), Ok(()), "an authored row still goes");
+    }
+
+    /// ★★★★★ R1716 — the act the floor performs silently, announced.
+    #[test]
+    fn r1716_taking_a_row_over_says_what_it_displaced() {
+        let mut form = with_derived();
+        let took = form.author("mode").expect("derived");
+        assert_eq!(
+            took,
+            Takeover {
+                key: "mode".to_owned(),
+                was: "role".to_owned(),
+                seeded: "peer".to_owned(),
+            },
+            "★ which row, what it came from, and what it was holding — the \
+             three things the floor drops"
+        );
+        assert!(
+            took.sentence().contains("role"),
+            "and the one line a person reads names the source"
+        );
+        assert_eq!(
+            form.field("mode").expect("held").value(),
+            "peer",
+            "★ taking a value over starts from what it WAS, never from empty"
+        );
+        assert_eq!(form.set("mode", "router"), Ok(()), "and now it is theirs");
+        assert_eq!(
+            form.author("mode"),
+            Err(FormError::NotDerived("mode".to_owned())),
+            "★ a second take-over has nothing to take"
+        );
+        assert_eq!(form.remove("mode"), Ok(()), "and it can be taken away now");
+    }
+
+    /// ★★★ R1716 — derived and aside are different axes, and the document is
+    /// where they cross.
+    #[test]
+    fn r1716_a_derived_row_is_configuration_and_an_aside_row_is_not() {
+        let composed = with_derived().compose();
+        let document = composed.document.as_object().expect("object");
+        assert_eq!(
+            document.get("mode").and_then(Value::as_str),
+            Some("peer"),
+            "★ a value the screen worked out is still configuration"
+        );
+        assert!(
+            !document.contains_key("host"),
+            "★ and a row about where the node runs is not, so it is not in the file"
+        );
+        assert_eq!(
+            composed.aside,
+            vec![Aside {
+                key: "host".to_owned(),
+                shown: "127.0.0.1".to_owned(),
+                instead: "placement".to_owned(),
+            }],
+            "★ named rather than dropped, and with a word for what it IS"
+        );
+        assert!(
+            composed.unexpressed.is_empty() && composed.complete(),
+            "★★ 'does not belong' is not 'did not fit' — a healthy form must \
+             not read as a broken one"
+        );
+    }
+
+    /// ★★ R1716 — an unknown-key warning is about a configuration path, and a
+    /// row that goes aside is not one.
+    #[test]
+    fn r1716_an_aside_row_is_not_warned_about_as_a_key_the_target_lacks() {
+        let mut form = form();
+        form.upsert(
+            ConfigField::new("host", "text", Applies::Restart, "10.0.0.2")
+                .as_custom()
+                .goes_aside("placement"),
+        );
+        assert_eq!(
+            form.defects(),
+            vec![],
+            "★ the target was never going to be shown this key"
+        );
+        let mut warned = form.clone();
+        warned.upsert(ConfigField::new("host", "text", Applies::Restart, "10.0.0.2").as_custom());
+        assert_eq!(
+            warned.defects(),
+            vec![ConfigDefect::UnknownKey {
+                key: "host".to_owned()
+            }],
+            "★ the same row headed for the document IS warned about — one \
+             counterfactual apart"
+        );
+    }
+
+    /// ★★ R1716 — a file does not get to seize a row from its source.
+    #[test]
+    fn r1716_adopting_a_document_does_not_seize_a_derived_row() {
+        let mut form = with_derived();
+        let adopted = form.adopt(&json!({ "mode": "router", "id": "b2" }));
+        assert_eq!(adopted.derived, ["mode"], "★ reported, never written");
+        assert_eq!(adopted.set, ["id"], "and the authored row did take it");
+        assert_eq!(
+            form.field("mode").expect("held").value(),
+            "peer",
+            "★ the screen still shows what the role implies"
+        );
+        assert!(
+            !adopted.complete(),
+            "★★ and the load is NOT complete — a reader told otherwise would \
+             believe the file's mode was in front of them"
+        );
+    }
+
+    /// ★★ R1716 — the stored form of a row nobody derived is byte-identical to
+    /// what it was before this round, so no persisted document changed shape.
+    #[test]
+    fn r1716_an_authored_row_stores_exactly_as_it_did_before() {
+        let stored = serde_json::to_string(&form()).expect("serialize");
+        assert!(
+            !stored.contains("source") && !stored.contains("goes"),
+            "★ the ordinary answer is not written down: {stored}"
+        );
+        let mut derived = form();
+        derived.upsert(
+            ConfigField::new("mode", "mode", Applies::Restart, "peer").derived_from("role"),
+        );
+        let text = serde_json::to_string(&derived).expect("serialize");
+        assert!(
+            text.contains("\"derived\""),
+            "and the other answer is: {text}"
+        );
+        let mut back: ConfigForm = serde_json::from_str(&text).expect("deserialize");
+        assert_eq!(back, derived, "★ and it survives the round trip");
+        assert_eq!(
+            back.set("mode", "router"),
+            Err(FormError::Derived {
+                key: "mode".to_owned(),
+                from: "role".to_owned(),
+            }),
+            "★★ including the refusal — a form read back off a wire is not a \
+             form that forgot who owns its values"
+        );
     }
 
     #[test]

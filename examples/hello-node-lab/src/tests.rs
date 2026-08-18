@@ -12,12 +12,64 @@ use pinion_core::widgets::config_form::Applies;
 
 use super::{
     Hit, INSP_W, LabState, MIN_W, PALETTE_W, RAIL_W, TOOLBAR_LEFT_CLUSTER, TOOLBAR_RIGHT_CLUSTER,
-    canvas_rect, card_rect, content_to_window, deploy, form_for, inspector_rect, pin_rect, spec,
+    canvas_rect, card_rect, content_to_window, deploy, inspector_rect, pin_rect, spec,
 };
 use crate::graph::Role;
 
 fn state() -> LabState {
     LabState::opening()
+}
+
+/// ★★★★★ R1716 — **a card told where it runs runs there, in the plan.**
+///
+/// The screen shows the placement row, the row can be taken over, and the
+/// launch plan is a different reader of the same fact — which is exactly the
+/// shape this round was opened by (a plan that answered `unplaced` for every
+/// card while the canvas drew two host frames). A demo caught this pair
+/// disagreeing after the take-over; this pins it one layer down, where the
+/// failure is one function rather than a screen.
+#[test]
+fn r1716_a_card_told_where_it_runs_runs_there_in_the_plan() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = state();
+        let node = state.active_card().expect("the screen opens on a card");
+        assert_eq!(
+            state.host_of(node),
+            "host-a",
+            "it opens in the frame it is drawn in"
+        );
+
+        super::amend(&state, node, |form| form.author("host")).expect("derived");
+        super::amend(&state, node, |form| form.set("host", "host-c")).expect("theirs now");
+
+        let shown = super::shown_form(&state, node).expect("a form");
+        assert_eq!(
+            shown
+                .field("host")
+                .map(pinion_core::widgets::config_form::ConfigField::value),
+            Some("host-c")
+        );
+        assert_eq!(
+            state.host_of(node),
+            "host-c",
+            "★ the one walk everything asks reads the row somebody wrote"
+        );
+        let plan = state.plan();
+        let placed: Vec<(&str, &str)> = plan
+            .nodes
+            .iter()
+            .map(|entry| (entry.name.as_str(), entry.host.as_str()))
+            .collect();
+        assert!(
+            placed.contains(&("R-01", "host-c")),
+            "★★ and the PLAN runs it there: {placed:?}"
+        );
+        assert!(
+            placed.contains(&("P-01", "host-a")),
+            "while a card nobody told still runs where it is drawn: {placed:?}"
+        );
+    });
 }
 
 #[test]
@@ -54,7 +106,14 @@ fn r1651_the_opening_graph_is_the_specification() {
 fn r1651_the_selected_node_shows_the_fields_the_reference_shows() {
     let owner = Owner::new();
     owner.run(|| {
-        let form = form_for(spec::SELECTED_NODE, Role::Router);
+        // ★★★ R1716 — the form the screen SHOWS, not the rows it seeds. Two of
+        // the specification's rows are worked out from the graph (the mode a
+        // router's role implies, and the addresses its drawn links dial) and a
+        // third from where the card runs, so a check that read the seed would
+        // be checking the smaller half and calling it the inspector.
+        let state = state();
+        let node = state.active_card().expect("the screen opens on a card");
+        let form = super::shown_form(&state, node).expect("the card has a form");
         let keys: Vec<&str> = form
             .fields()
             .iter()
