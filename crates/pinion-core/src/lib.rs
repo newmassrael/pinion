@@ -81,6 +81,7 @@ pub mod theme;
 pub mod topology;
 pub mod tray;
 pub mod undo;
+pub mod utterance;
 pub mod voice;
 pub mod widget_core;
 pub mod widget_forward;

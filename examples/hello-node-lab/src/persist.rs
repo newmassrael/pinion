@@ -46,6 +46,7 @@ use std::rc::Rc;
 
 use pinion_core::Storage;
 use pinion_core::selection::Selection;
+use pinion_core::utterance::{Tone, Utterance};
 use pinion_core::widgets::config_form::ConfigForm;
 use pinion_node_graph::{Archive, Document, NodeId};
 use serde::{Deserialize, Serialize};
@@ -201,18 +202,23 @@ fn install(state: &Rc<LabState>, archive: Archive<LabNode, Kept>) {
 /// Write the graph to storage, and say what happened.
 pub fn save(state: &Rc<LabState>) -> String {
     let text = graph_text(state);
+    // ★★★ R1719 — one `if` whose two arms are two KINDS of thing, which is
+    // what this site looked like before the tone was a value: both branches
+    // built a `String` and handed it to the same setter, so a person was told
+    // the save failed in the same voice and the same colour as the save
+    // succeeding.
     let said = if text.is_empty() {
-        "the graph could not be written out".to_owned()
+        Utterance::new(Tone::Refused, "the graph could not be written out")
     } else {
         state.storage.save(STORAGE_KEY, text.as_bytes());
-        format!(
+        Utterance::done(format!(
             "saved · {} cards · {} bytes",
             state.cards().len(),
             text.len()
-        )
+        ))
     };
     state.say(said.clone());
-    said
+    said.sentence()
 }
 
 /// Open a graph: from `text` when there is any, otherwise from storage.
@@ -239,7 +245,7 @@ pub fn open(state: &Rc<LabState>, text: &str) -> Result<String, String> {
     };
     let opening = Archive::<LabNode, Kept>::read(text);
     if let Some(why) = opening.reason() {
-        state.say(why.clone());
+        state.say(Utterance::refused(&why));
         return Err(why);
     }
     // ★ What the archive could not carry is said out loud, because this is the
@@ -253,7 +259,7 @@ pub fn open(state: &Rc<LabState>, text: &str) -> Result<String, String> {
         .collect();
     let archive = opening.take().ok_or_else(|| "unreadable".to_owned())?;
     install(state, archive);
-    let said = if dropped.is_empty() {
+    let said = Utterance::done(if dropped.is_empty() {
         format!("opened · {} cards", state.cards().len())
     } else {
         format!(
@@ -262,9 +268,9 @@ pub fn open(state: &Rc<LabState>, text: &str) -> Result<String, String> {
             dropped.len(),
             dropped.join(" · ")
         )
-    };
+    });
     state.say(said.clone());
-    Ok(said)
+    Ok(said.sentence())
 }
 
 /// Put the whole screen back to the graph it opens with, and forget the save.
@@ -278,9 +284,9 @@ pub fn clear(state: &Rc<LabState>) -> String {
     for scope in crate::ResetScope::ALL {
         scope.apply(state);
     }
-    let said = "back to the graph this screen opens with".to_owned();
+    let said = Utterance::done("back to the graph this screen opens with");
     state.say(said.clone());
-    said
+    said.sentence()
 }
 
 /// What storage holds, or an empty string when nothing has been saved.

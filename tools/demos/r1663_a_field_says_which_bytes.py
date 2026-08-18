@@ -217,9 +217,11 @@ def body() -> None:
             before,
             "pressing an unclaimed byte selects nothing new",
         )
+        # ★ R1719 — `said` answers the VALUE now, not the sentence, on all three
+        # screens of this tool. The words a person reads are `["sentence"]`.
         ok(
             "and the screen says why",
-            "no field" in (q(app, VIEW, "said") or ""),
+            "no field" in ((q(app, VIEW, "said") or {}).get("sentence") or ""),
         )
 
         # ── (F) a derived field is not a missing one ───────────────────────

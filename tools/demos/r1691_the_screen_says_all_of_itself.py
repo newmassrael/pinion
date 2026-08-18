@@ -355,11 +355,20 @@ def body() -> None:
             "confirm happened",
         )
         toast = access_node_by_tag(tf.request("scene/access").result, "lab.toast")
+        # ★★★★★ R1719 — this line used to demand `assertive` for EVERYTHING the
+        # screen says, on the argument written beside it: "a reply to something
+        # the person just did". That argument is right about the half of what
+        # this screen says that a person did NOT get, and R1719 measured what it
+        # cost for the other half — a screen reader interrupted to be told
+        # `selected R-01`, which the person had just asked for. The urgency
+        # comes off the tone now, so the export above (a thing that happened) is
+        # polite and a refusal cuts in. Both halves are driven in
+        # `r1719_what_a_screen_says_knows_its_kind`.
         assert_eq(
             toast.get("live"),
-            "assertive",
-            "and it is announced without waiting to be asked, which is what a "
-            "reply to something the person just did has to be",
+            "polite",
+            "a confirmation is worth saying and not worth cutting anybody off "
+            "for — the urgency is the utterance's, not this region's",
         )
         assert_eq(
             after["counts"]["unvoiced"], 0, "the census is still total after an act"

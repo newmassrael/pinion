@@ -63,6 +63,7 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::shrink::ShrinkPolicy;
 use pinion_core::style::{Border, BoxStyle, Color, LayoutStyle, Size, TextOverflow, TextStyle};
 use pinion_core::theme::{ColorRole, Theme, use_theme};
+use pinion_core::utterance::Utterance;
 use pinion_core::voice::Silence;
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::field_bytes::{
@@ -423,12 +424,30 @@ struct ViewState {
     /// Where the cursor last was, because a press carries no coordinates.
     cursor: Signal<(u32, u32)>,
     /// The last thing the screen did, for the status line and the wire.
-    said: RefCell<String>,
+    ///
+    /// ★★★★★ R1719 — an [`Utterance`], so the one fact downstream needs (was
+    /// this a refusal?) is a value rather than a `"query refused: "` prefix.
+    /// `None` is "has not said anything yet", the only spelling of it now.
+    said: RefCell<Option<Utterance>>,
 }
 
 impl ViewState {
-    fn say(&self, what: impl Into<String>) {
-        *self.said.borrow_mut() = what.into();
+    /// Say something to the person in front of the screen.
+    ///
+    /// ★★★★★ R1719 — takes an utterance, so the live region's urgency comes
+    /// off the tone. This screen was measured announcing everything politely,
+    /// including a query it refused to run.
+    fn say(&self, what: Utterance) {
+        *self.said.borrow_mut() = Some(what);
+    }
+
+    /// What a person reads, or an empty string when nothing has been said.
+    fn said_sentence(&self) -> String {
+        self.said
+            .borrow()
+            .as_ref()
+            .map(Utterance::sentence)
+            .unwrap_or_default()
     }
 
     /// ★★★ R1707 — the running query, parsed.
@@ -564,7 +583,7 @@ fn use_view_state() -> Rc<ViewState> {
         tree_scroll,
         bytes_scroll,
         cursor: Signal::new((0, 0)),
-        said: RefCell::new(String::new()),
+        said: RefCell::new(None),
     })
 }
 
@@ -1074,7 +1093,7 @@ fn select_message(state: &Rc<ViewState>, row: usize) {
     if map.field(&state.field.get()).is_none() {
         state.field.set(spec::LAYERS[0].0.to_owned());
     }
-    state.say(format!("message {row}"));
+    state.say(Utterance::done(format!("message {row}")));
 }
 
 fn select_field(state: &Rc<ViewState>, path: &str) {
@@ -1082,7 +1101,7 @@ fn select_field(state: &Rc<ViewState>, path: &str) {
         return;
     }
     state.field.set(path.to_owned());
-    state.say(format!("field {path}"));
+    state.say(Utterance::done(format!("field {path}")));
 }
 
 /// The inverse direction as a gesture: a press on a byte selects the field that
@@ -1099,10 +1118,17 @@ fn select_byte(state: &Rc<ViewState>, byte: usize) {
         Coverage::Field(span) => {
             let path = span.path().to_owned();
             state.field.set(path.clone());
-            state.say(format!("byte {byte} is {path}"));
+            state.say(Utterance::done(format!("byte {byte} is {path}")));
         }
-        Coverage::Unmapped => state.say(format!("byte {byte} is claimed by no field")),
-        Coverage::OutOfBuffer => state.say(format!("byte {byte} is past the frame")),
+        // ★ R1719 — both of these are answers, not failures: the byte is
+        // genuinely outside anything the dissector claimed. A person asked and
+        // is being told, so they say it in the tone of a thing that happened.
+        Coverage::Unmapped => state.say(Utterance::done(format!(
+            "byte {byte} is claimed by no field"
+        ))),
+        Coverage::OutOfBuffer => {
+            state.say(Utterance::done(format!("byte {byte} is past the frame")));
+        }
     }
 }
 
@@ -1138,13 +1164,19 @@ fn run_filter(state: &Rc<ViewState>, text: &str) -> Result<IntrospectValue, Invo
 /// R1707 — say what the running query did, in the words the bar prints.
 fn announce_query(state: &Rc<ViewState>) {
     match state.query_fault() {
-        Some(why) => state.say(format!("query refused: {why}")),
-        None if state.query.text().trim().is_empty() => state.say("filter cleared".to_owned()),
-        None => state.say(format!(
+        // ★★★★★ R1719 — the frame this line used to write by hand is the
+        // tone's now, so the word "refused" is written once in the workspace
+        // and this screen's refusal reaches a reader interrupting rather than
+        // waiting, like every other screen's.
+        Some(why) => state.say(Utterance::refused(&why)),
+        None if state.query.text().trim().is_empty() => {
+            state.say(Utterance::done("filter cleared"));
+        }
+        None => state.say(Utterance::done(format!(
             "{} of {} shown",
             state.kept().len(),
             spec::ROWS.len()
-        )),
+        ))),
     }
 }
 
@@ -1164,12 +1196,12 @@ fn toggle_saved(state: &Rc<ViewState>, n: usize) {
     let on = !was_on;
     state.saved.set(saved);
     set_query(state, if on { spec::SAVED_FILTERS[n].query } else { "" });
-    state.say(format!(
+    state.say(Utterance::done(format!(
         "{} {} — {}",
         if on { "applied" } else { "cleared" },
         spec::SAVED_FILTERS[n].name,
         count_line(state),
-    ));
+    )));
 }
 
 fn toggle_layer(state: &Rc<ViewState>, n: usize) {
@@ -1177,7 +1209,7 @@ fn toggle_layer(state: &Rc<ViewState>, n: usize) {
     if let Some(slot) = folded.get_mut(n) {
         *slot = !*slot;
         state.folded.set(folded);
-        state.say(format!("layer {}", spec::LAYERS[n].0));
+        state.say(Utterance::done(format!("layer {}", spec::LAYERS[n].0)));
     }
 }
 
@@ -1342,10 +1374,10 @@ fn seat_pane_cursor(state: &Rc<ViewState>, stop: &str, roving: &Roving) {
                 .flatten();
             state.cell.set(column);
             if let Some(column) = column {
-                state.say(format!(
+                state.say(Utterance::done(format!(
                     "{} of message {index}",
                     spec::COLUMNS[column].title
-                ));
+                )));
             }
         }
         "pv.tree" => {
@@ -1531,7 +1563,7 @@ fn app_bar(state: &Rc<ViewState>, ink: Ink) -> Scene {
             ),
             tagged_label(
                 "pv.appbar.said",
-                state.said.borrow().clone(),
+                state.said_sentence(),
                 Rect::new(w.saturating_sub(360), 20, 340, 14),
                 FONT_SMALL,
                 ink.text_3,
@@ -2353,7 +2385,7 @@ impl ExternalIntrospect for ViewOracle {
                     SchemaField::new("visible_fields", "json"),
                     SchemaField::new("saved", "json"),
                     SchemaField::new("folded", "json"),
-                    SchemaField::new("said", "string"),
+                    SchemaField::new("said", "object"),
                     SchemaField::new("cursor", "json"),
                     // ★★★ R1707 — the filter's whole surface, declared. The
                     // declaration is a PRECONDITION of dispatch (R1637), so an
@@ -2470,7 +2502,16 @@ impl ExternalIntrospect for ViewOracle {
                     .collect(),
             ))),
             "folded" => Ok(IntrospectValue::Json(serde_json::json!(state.folded.get()))),
-            "said" => Ok(IntrospectValue::Text(state.said.borrow().clone())),
+            // ★★★★★ R1719 — `said` answers the VALUE now, not the sentence, and
+            // it is spelled `said` on all three screens of this tool. It used
+            // to be a string, and the one reader of it outside this file asked
+            // for `["sentence"]` instead — cheaper than three screens spelling
+            // one concept three ways, which is the defect one level up from the
+            // one this round is about.
+            "said" => Ok(IntrospectValue::Json(match state.said.borrow().as_ref() {
+                Some(said) => serde_json::to_value(said).map_err(|_| ReadRefusal::UnknownPath)?,
+                None => serde_json::Value::Null,
+            })),
             "cursor" => {
                 let (x, y) = state.cursor.get();
                 Ok(IntrospectValue::Json(serde_json::json!({"x": x, "y": y})))
@@ -2564,7 +2605,7 @@ impl ExternalIntrospect for ViewOracle {
             }
             "press" => {
                 press(&state);
-                Ok(IntrospectValue::Text(state.said.borrow().clone()))
+                Ok(IntrospectValue::Text(state.said_sentence()))
             }
             // ★★★★ R1664 — `send` is the verb the §5.35 ROUTER presses with,
             // and it is the second half of this screen's deafness.
@@ -2598,7 +2639,7 @@ impl ExternalIntrospect for ViewOracle {
                         )));
                     }
                 }
-                Ok(IntrospectValue::Text(state.said.borrow().clone()))
+                Ok(IntrospectValue::Text(state.said_sentence()))
             }
             "key" => {
                 let chord = Self::text(&args)?;
@@ -2890,10 +2931,22 @@ fn app_bar_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
         // its name is what the region is and the commentary is its value — a
         // name taken from the contents would be absent at boot, which is the
         // `mumbled` defect and not a naming style.
+        // ★★★★★ R1719 — the urgency is derived. It was `Polite`, flat, so a
+        // query this screen refused to run waited for a pause a person working
+        // the tool does not leave, while every count interrupted nobody — one
+        // constant, right for half of what the screen says.
         AccessNode::new("pv.appbar.said", AriaRole::Status)
             .with_name("activity")
-            .with_value(AccessValue::Text(state.said.borrow().clone()))
-            .with_live(AccessLive::Polite),
+            .with_value(AccessValue::Text(state.said_sentence()))
+            .with_live(
+                state
+                    .said
+                    .borrow()
+                    .as_ref()
+                    .map_or(AccessLive::Polite, |said| {
+                        AccessLive::for_urgency(said.urgency())
+                    }),
+            ),
     ]
 }
 

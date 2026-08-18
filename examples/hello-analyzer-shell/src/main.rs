@@ -99,6 +99,7 @@ use pinion_core::style::{
     TextOverflow, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme, ThemeMode, ThemeProvider, use_theme};
+use pinion_core::utterance::{Tone, Utterance};
 use pinion_core::voice::Silence;
 use pinion_core::widgets::button::ButtonState;
 use pinion_core::widgets::card::{Card, CardAffordance, CardChrome, CardState, Remedy};
@@ -583,7 +584,11 @@ struct ShellState {
     /// numbers are never reused.
     float_z: RefCell<u32>,
     /// The last thing that happened, shown as the reference's toast.
-    toast: Signal<String>,
+    ///
+    /// ★★★★★ R1719 — an [`Utterance`], the same value the other two screens of
+    /// this tool now hold, so "was that a refusal?" is a field and not a prefix
+    /// this file used to write two ways.
+    toast: Signal<Utterance>,
     /// The ordinal the next placed card takes.
     next_id: RefCell<u32>,
     /// R1662 — the board's scroll offset. A board is a grid whose row count is
@@ -663,7 +668,11 @@ impl ShellState {
             ),
             float_grab: Signal::new(None),
             float_z: RefCell::new(0),
-            toast: Signal::new(format!("{} loaded", spec::PRESET)),
+            // ★ R1719 — this screen is the one that opens having ALREADY said
+            // something, so it holds an utterance rather than an option. The
+            // difference is real: the node lab and the packet viewer open
+            // silent and their toast has nothing to paint until an act.
+            toast: Signal::new(Utterance::done(format!("{} loaded", spec::PRESET))),
             next_id: RefCell::new(u(spec::BOARD.len())),
             canvas_scroll: Rc::new(ScrollState::with_tag(CANVAS_SCROLL)),
         }
@@ -690,10 +699,13 @@ impl ShellState {
         self.journey.set(journey);
         match arrival {
             pinion_core::widgets::destination::Arrival::AlreadyHere => {
-                self.say(format!("already in {title}"));
+                // ★ R1719 — the arrival type already draws this distinction;
+                // the toast now carries it too, instead of leaving a reader to
+                // notice the word "already".
+                self.say(Utterance::unchanged(format!("you are in {title}")));
             }
             pinion_core::widgets::destination::Arrival::Moved { .. } => {
-                self.say(format!("{title} section"));
+                self.say(Utterance::done(format!("{title} section")));
             }
         }
         Ok(())
@@ -905,8 +917,16 @@ impl ShellState {
             .join(",")
     }
 
-    fn say(&self, what: impl Into<String>) {
-        self.toast.set(what.into());
+    /// Say something to the person in front of the screen.
+    ///
+    /// ★★★★★ R1719 — takes an utterance. The `refusal_sentence` helper this
+    /// file kept beside it is gone: it existed because four call sites had
+    /// written `format!("refused: {why:?}")` and its own note said a screen
+    /// that has to remember not to use `Debug` is a screen that will use
+    /// `Debug`. The remembering now belongs to the constructor, which takes
+    /// something that can say itself and names a `Debug` spelling as a fault.
+    fn say(&self, what: Utterance) {
+        self.toast.set(what);
     }
 }
 
@@ -1808,11 +1828,11 @@ impl ShellOracle {
                 state
                     .config_open
                     .set(if open { None } else { Some(id.to_string()) });
-                state.say(format!(
+                state.say(Utterance::done(format!(
                     "{} settings {}",
                     label_of(id),
                     if open { "closed" } else { "opened" }
-                ));
+                )));
             }
             CardAffordance::TearOff => return Self::detach(state, id),
             // ★★★★★ R1697 — the header control **toggles**, and it did not.
@@ -1838,7 +1858,7 @@ impl ShellOracle {
             }
             CardAffordance::Close => {
                 Self::remove(state, id);
-                state.say(format!("{} removed", label_of(id)));
+                state.say(Utterance::done(format!("{} removed", label_of(id))));
             }
         }
         Ok(IntrospectValue::Text(format!("{id} {word}")))
@@ -1906,7 +1926,10 @@ impl ShellOracle {
             z,
         });
         state.floats.set(floats);
-        state.say(format!("{} \u{2192} detached window", label_of(id)));
+        state.say(Utterance::done(format!(
+            "{} \u{2192} detached window",
+            label_of(id)
+        )));
         Ok(IntrospectValue::Text(format!("{id} tear_off")))
     }
 
@@ -1935,7 +1958,7 @@ impl ShellOracle {
                 .filter(|f| f.id != id)
                 .collect(),
         );
-        state.say(format!("{} re-docked", label_of(id)));
+        state.say(Utterance::done(format!("{} re-docked", label_of(id))));
         Ok(IntrospectValue::Text(format!("{id} redock")))
     }
 
@@ -1987,7 +2010,7 @@ impl ShellOracle {
         );
         state.cards.set(cards);
         state.selected.set(Some(id.clone()));
-        state.say(format!("{} added", def.label));
+        state.say(Utterance::done(format!("{} added", def.label)));
         Ok(IntrospectValue::Text(id))
     }
 
@@ -2003,7 +2026,7 @@ impl ShellOracle {
             .map_err(|why| InvokeError::rejected(why.to_string()))?;
         state.board.set(board);
         state.maximized.set(Some(token));
-        state.say(format!("{} maximised", label_of(id)));
+        state.say(Utterance::done(format!("{} maximised", label_of(id))));
         Ok(IntrospectValue::Text(format!("{id} maximize")))
     }
 
@@ -2015,7 +2038,7 @@ impl ShellOracle {
         let id = token.id().as_str().to_string();
         state.board.set(token.restore());
         state.maximized.set(None);
-        state.say(format!("{} restored", label_of(&id)));
+        state.say(Utterance::done(format!("{} restored", label_of(&id))));
         Ok(IntrospectValue::Text(id))
     }
 
@@ -2042,7 +2065,10 @@ impl ShellOracle {
             .resize(&tile_id, w, h)
             .map_err(|why| InvokeError::rejected(why.to_string()))?;
         state.board.set(board);
-        state.say(format!("{} \u{2192} {w}\u{00D7}{h}", label_of(id)));
+        state.say(Utterance::done(format!(
+            "{} \u{2192} {w}\u{00D7}{h}",
+            label_of(id)
+        )));
         Ok(IntrospectValue::Text(format!("{w}x{h}")))
     }
 
@@ -2062,7 +2088,11 @@ impl ShellOracle {
         let next = parse_state(word, detail).map_err(InvokeError::rejected)?;
         let remedy = next.remedy();
         state.update_card(id, |card| card.set_state(next.clone()));
-        state.say(format!("{} is {}", label_of(id), next.wire()));
+        state.say(Utterance::done(format!(
+            "{} is {}",
+            label_of(id),
+            next.wire()
+        )));
         Ok(IntrospectValue::Text(format!(
             "{id} {} {}",
             next.wire(),
@@ -2093,13 +2123,16 @@ impl ShellOracle {
                     ))
                 })?;
                 state.source.set((*chosen).to_string());
-                state.say(format!("source {chosen}"));
+                state.say(Utterance::done(format!("source {chosen}")));
                 Ok(())
             }),
             "capturing" => match value {
                 IntrospectValue::Bool(on) => {
                     state.capturing.set(*on);
-                    state.say(format!("capture {}", if *on { "on" } else { "off" }));
+                    state.say(Utterance::done(format!(
+                        "capture {}",
+                        if *on { "on" } else { "off" }
+                    )));
                     Ok(())
                 }
                 _ => Err(InterveneError::TypeMismatch),
@@ -2116,7 +2149,7 @@ impl ShellOracle {
                     }
                 };
                 state.theme.set_mode(mode);
-                state.say(format!("theme {name}"));
+                state.say(Utterance::done(format!("theme {name}")));
                 Ok(())
             }),
             _ => return None,
@@ -2139,7 +2172,7 @@ impl ShellOracle {
         state.cards.set(preset.cards);
         state.preset.set(name.to_string());
         state.preset_open.set(false);
-        state.say(format!("layout \u{201C}{name}\u{201D}"));
+        state.say(Utterance::done(format!("layout \u{201C}{name}\u{201D}")));
         Ok(())
     }
 
@@ -2155,7 +2188,7 @@ impl ShellOracle {
             },
         );
         state.preset.set(name.to_string());
-        state.say(format!("layout saved \u{00B7} {name}"));
+        state.say(Utterance::done(format!("layout saved \u{00B7} {name}")));
         Ok(IntrospectValue::Text(state.preset_names()))
     }
 }
@@ -2261,6 +2294,7 @@ const FIELDS: &[SchemaField] = const {
         SchemaField::new("remedies", "string"),
         SchemaField::new("steppers", "string"),
         SchemaField::new("toast", "string"),
+        SchemaField::new("said", "object"),
         // direct manipulation
         SchemaField::new("cursor", "string"),
         SchemaField::new("selected", "string"),
@@ -2487,7 +2521,13 @@ impl ExternalIntrospect for ShellOracle {
             ),
             "remedies" => text(Remedy::ALL.map(Remedy::wire).join(",")),
             "steppers" => text(STEPPERS.map(|(verb, _)| verb).join(",")),
-            "toast" => text(state.toast.get()),
+            "toast" => text(state.toast.get().sentence()),
+            // ★★★★★ R1719 — the same fact with its KIND on it, spelled `said`
+            // on all three screens of this tool. `toast` stays the sentence a
+            // person reads, because that is what its readers ask for.
+            "said" => Ok(IntrospectValue::Json(
+                serde_json::to_value(state.toast.get()).map_err(|_| ReadRefusal::UnknownPath)?,
+            )),
             "cursor" => {
                 let (x, y) = state.cursor.get();
                 text(format!("{x},{y}"))
@@ -2533,11 +2573,11 @@ impl ExternalIntrospect for ShellOracle {
                     return Err(InterveneError::TypeMismatch);
                 };
                 state.editing.set(on);
-                state.say(if on {
+                state.say(Utterance::done(if on {
                     "layout edit mode"
                 } else {
                     "layout locked"
-                });
+                }));
                 Ok(())
             }
             "preset_open" => {
@@ -2552,7 +2592,7 @@ impl ExternalIntrospect for ShellOracle {
                     return Err(InterveneError::TypeMismatch);
                 };
                 state.search.set(needle.clone());
-                state.say(format!("search {needle:?}"));
+                state.say(Utterance::done(format!("search {needle:?}")));
                 Ok(())
             }
             "tab" => {
@@ -2564,7 +2604,7 @@ impl ExternalIntrospect for ShellOracle {
                     ))
                 })?;
                 state.tab.set((*chosen).to_string());
-                state.say(format!("view {chosen}"));
+                state.say(Utterance::done(format!("view {chosen}")));
                 Ok(())
             }
             // ★ R1695 — the wire drives the SAME verb the pointer does, so the
@@ -2641,7 +2681,7 @@ impl ExternalIntrospect for ShellOracle {
                     .clock
                     .seek(f32::from(i16::try_from(per_mille).unwrap_or(0)) / 1000.0);
                 state.capturing.set(false);
-                state.say(format!("seek {per_mille}"));
+                state.say(Utterance::done(format!("seek {per_mille}")));
                 Ok(IntrospectValue::Int(i64::from(per_mille)))
             }
             "point" => {
@@ -2693,7 +2733,7 @@ impl ExternalIntrospect for ShellOracle {
                         )));
                     }
                 }
-                Ok(IntrospectValue::Text(state.toast.get()))
+                Ok(IntrospectValue::Text(state.toast.get().sentence()))
             }
             "key" => {
                 let chord = Self::text(&args)?;
@@ -2783,7 +2823,7 @@ impl ShellOracle {
             Landing::Entered(_) => "entered",
             Landing::Exited(_) => "left",
         };
-        state.say(format!("{tag} \u{00B7} {what}"));
+        state.say(Utterance::done(format!("{tag} \u{00B7} {what}")));
     }
 
     /// R1697 — bring a detached panel forward and start moving or sizing it.
@@ -2930,7 +2970,7 @@ impl ShellOracle {
         state.pressed.borrow_mut().take();
         let call = IntrospectValue::Text(format!("{id},{}", CardAffordance::Maximize.wire()));
         if let Err(why) = Self::act(state, &call) {
-            state.say(refusal_sentence(&why));
+            state.say(Utterance::refused(&why));
         }
     }
 
@@ -2953,11 +2993,11 @@ impl ShellOracle {
                 .float(&grab.id)
                 .map(|f| if grab.edge { (f.w, f.h) } else { (f.x, f.y) });
             if now.is_some_and(|now| now != grab.origin) {
-                state.say(format!(
+                state.say(Utterance::done(format!(
                     "{} {}",
                     label_of(&grab.id),
                     if grab.edge { "resized" } else { "moved" }
-                ));
+                )));
             }
             return;
         }
@@ -2981,7 +3021,7 @@ impl ShellOracle {
             }
             if let Ok(reflow) = board.move_to(&drag.id, drag.snap.0, drag.snap.1) {
                 state.board.set(board);
-                state.say(if reflow.is_clean() {
+                state.say(Utterance::done(if reflow.is_clean() {
                     format!("{} moved", label_of(drag.id.as_str()))
                 } else {
                     format!(
@@ -2994,7 +3034,7 @@ impl ShellOracle {
                             .collect::<Vec<_>>()
                             .join(", ")
                     )
-                });
+                }));
             }
             return;
         }
@@ -3025,7 +3065,9 @@ impl ShellOracle {
             // nobody derives is a refusal two channels will spell two ways.
             Hit::Rail(key) => {
                 if let Err(detour) = state.go(key) {
-                    state.say(detour.sentence(&state.roster));
+                    // ★ R1719 — a detour is the rail declining to take you
+                    // there, so it is a refusal and now reads as one.
+                    state.say(Utterance::refused(&detour.sentence(&state.roster)));
                 }
             }
             Hit::Option(key) => Self::toggle_option(state, key),
@@ -3034,17 +3076,23 @@ impl ShellOracle {
             Hit::KeyRow(key) => {
                 let row = spec::KEY_ROWS.iter().find(|row| row.key == key);
                 if let Some(row) = row {
-                    state.say(format!(
-                        "{} is {}",
-                        row.title,
-                        Unavailable::reserved(row.reserved_for).sentence()
+                    // ★ R1719 — "you cannot use this, and here is why" is a
+                    // refusal; it was reaching a reader in the voice of an
+                    // acknowledgement.
+                    state.say(Utterance::new(
+                        Tone::Refused,
+                        format!(
+                            "{} is {}",
+                            row.title,
+                            Unavailable::reserved(row.reserved_for).sentence()
+                        ),
                     ));
                 }
             }
             Hit::Theme(n) => Self::choose_theme(state, n),
             Hit::Palette(kind) => {
                 if let Err(why) = Self::add(state, kind) {
-                    state.say(refusal_sentence(&why));
+                    state.say(Utterance::refused(&why));
                 }
             }
             Hit::Affordance(id, affordance) => {
@@ -3052,25 +3100,27 @@ impl ShellOracle {
                 if let Err(why) = Self::act(state, &call) {
                     // A refusal a person triggered has to be visible to that
                     // person, not only to the wire that would have read it.
-                    state.say(refusal_sentence(&why));
+                    state.say(Utterance::refused(&why));
                 }
             }
             Hit::Stepper(id, verb) => {
                 if let Err(why) = Self::step(state, &id, verb) {
-                    state.say(refusal_sentence(&why));
+                    state.say(Utterance::refused(&why));
                 }
             }
             Hit::Remedy(id) => Self::apply_remedy(state, &id),
             Hit::FloatRedock(id) => {
                 if let Err(why) = Self::redock(state, &id) {
-                    state.say(refusal_sentence(&why));
+                    state.say(Utterance::refused(&why));
                 }
             }
             Hit::FloatClose(id) => {
                 Self::remove(state, &id);
-                state.say(format!("{} closed", label_of(&id)));
+                state.say(Utterance::done(format!("{} closed", label_of(&id))));
             }
-            Hit::Card(id) | Hit::Grip(id) => state.say(format!("{} selected", label_of(&id))),
+            Hit::Card(id) | Hit::Grip(id) => {
+                state.say(Utterance::done(format!("{} selected", label_of(&id))));
+            }
             // A press on a panel raised and grabbed it (`open_float_grab`);
             // there is nothing left for the release to do, and the raise is
             // why this is no longer the same arm as hitting nothing.
@@ -3087,23 +3137,26 @@ impl ShellOracle {
                     TABS[1]
                 };
                 state.tab.set(name.to_string());
-                state.say(format!("view {name}"));
+                state.say(Utterance::done(format!("view {name}")));
             }
             BarChip::Source => {
                 let now = state.source.get();
                 let at = SOURCES.iter().position(|s| *s == now).unwrap_or(0);
                 let next = SOURCES[(at + 1) % SOURCES.len()];
                 state.source.set(next.to_string());
-                state.say(format!("source {next}"));
+                state.say(Utterance::done(format!("source {next}")));
             }
             BarChip::Capture => {
                 let on = !state.capturing.get();
                 state.capturing.set(on);
-                state.say(format!("capture {}", if on { "on" } else { "off" }));
+                state.say(Utterance::done(format!(
+                    "capture {}",
+                    if on { "on" } else { "off" }
+                )));
             }
             BarChip::Search => {
                 state.searching.set(true);
-                state.say("searching (Enter or Escape leaves)");
+                state.say(Utterance::done("searching (Enter or Escape leaves)"));
             }
         }
     }
@@ -3117,11 +3170,11 @@ impl ShellOracle {
             SubChip::EditLayout => {
                 let on = !state.editing.get();
                 state.editing.set(on);
-                state.say(if on {
+                state.say(Utterance::done(if on {
                     "layout edit mode"
                 } else {
                     "layout locked"
-                });
+                }));
             }
             SubChip::AddWidget => {
                 // The palette is always open in this shell, so the button is
@@ -3133,7 +3186,7 @@ impl ShellOracle {
                 // rail said you were at a destination the window had not taken
                 // you to. The pointer is what the button aims, and it aims at
                 // the palette on this page.
-                state.say("pick a widget from the palette \u{2192}");
+                state.say(Utterance::done("pick a widget from the palette \u{2192}"));
             }
         }
     }
@@ -3149,11 +3202,11 @@ impl ShellOracle {
         let mut on = state.options.get();
         on[n] = !on[n];
         state.options.set(on);
-        state.say(format!(
+        state.say(Utterance::done(format!(
             "{} {}",
             spec::OPTIONS[n].title,
             if on[n] { "on" } else { "off" }
-        ));
+        )));
     }
 
     /// ★ R1695 — choose a theme from the Settings page's segment.
@@ -3167,7 +3220,10 @@ impl ShellOracle {
         } else {
             ThemeMode::Light
         });
-        state.say(format!("theme {}", spec::THEMES[n].to_lowercase()));
+        state.say(Utterance::done(format!(
+            "theme {}",
+            spec::THEMES[n].to_lowercase()
+        )));
     }
 
     /// The preset menu's rows: every saved layout, then "Save current layout".
@@ -3192,7 +3248,12 @@ impl ShellOracle {
     fn apply_remedy(state: &Rc<ShellState>, id: &str) {
         let Some(card) = state.card(id) else { return };
         let Some(remedy) = card.remedy().filter(|r| r.is_actionable()) else {
-            state.say(format!("{}: nothing to do about this", label_of(id)));
+            // ★ R1719 — a card whose trouble has no remedy is not refusing the
+            // person; there is nothing here to do, which is the third arm.
+            state.say(Utterance::unchanged(format!(
+                "nothing to do about {}",
+                label_of(id)
+            )));
             return;
         };
         let next = match remedy {
@@ -3205,12 +3266,12 @@ impl ShellOracle {
             Remedy::Wait | Remedy::Nothing => return,
         };
         state.update_card(id, |card| card.set_state(next.clone()));
-        state.say(format!(
+        state.say(Utterance::done(format!(
             "{}: {} \u{2192} {}",
             label_of(id),
             remedy.wire(),
             next.wire()
-        ));
+        )));
     }
 
     /// The keymap, as one function so the wire and a real keyboard drive the
@@ -3246,7 +3307,7 @@ impl ShellOracle {
         }
         if chord == "/" {
             state.searching.set(true);
-            state.say("searching (Enter or Escape leaves)");
+            state.say(Utterance::done("searching (Enter or Escape leaves)"));
             return true;
         }
         let selected = state.selected.get();
@@ -3323,7 +3384,10 @@ impl ShellOracle {
                 } else {
                     ThemeMode::Light
                 });
-                state.say(format!("theme {}", if dark { "dark" } else { "light" }));
+                state.say(Utterance::done(format!(
+                    "theme {}",
+                    if dark { "dark" } else { "light" }
+                )));
                 true
             }
             "s" | "S" => {
@@ -3342,7 +3406,7 @@ impl ShellOracle {
         match chord {
             "Enter" | "Escape" => {
                 state.searching.set(false);
-                state.say(format!("search {:?}", state.search.get()));
+                state.say(Utterance::done(format!("search {:?}", state.search.get())));
                 true
             }
             "Backspace" => {
@@ -3380,7 +3444,10 @@ impl ShellOracle {
                 return false;
             };
             state.selected.set(Some(next.as_str().to_string()));
-            state.say(format!("{} selected", label_of(next.as_str())));
+            state.say(Utterance::done(format!(
+                "{} selected",
+                label_of(next.as_str())
+            )));
             return true;
         }
         let nudge = match (shift, alt) {
@@ -3392,11 +3459,11 @@ impl ShellOracle {
         match board.nudge(&tile, nudge) {
             Ok(_) => {
                 state.board.set(board);
-                state.say(format!("{} {nudge:?}", label_of(&id)));
+                state.say(Utterance::done(format!("{} {nudge:?}", label_of(&id))));
                 true
             }
             Err(why) => {
-                state.say(format!("refused: {why}"));
+                state.say(Utterance::refused(&why));
                 false
             }
         }
@@ -3518,6 +3585,8 @@ struct Palette {
     /// A role rather than a literal because a warning has to hold its contrast
     /// in both themes, which a hand-picked amber does in exactly one.
     warn: Color,
+    /// R1719 — the ink the toast's bullet takes when what it says is a refusal.
+    refused: Color,
 }
 
 /// A text run at an exact place in its container.
@@ -5946,11 +6015,15 @@ fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
 fn toast_scene(state: &ShellState, palette: Palette) -> Scene {
     let canvas = canvas_rect();
     let rect = Rect::new(canvas.x + 24, win_h() - 58, 560, 34);
+    let said = state.toast.get();
     Scene::Container(
         ContainerNode::new(vec![
-            dot(14, 13, 8, palette.accent_fg),
+            // ★★★★★ R1719 — the bullet was `accent_fg` whatever had been said.
+            // A refusal and a confirmation were one picture, on the screen and
+            // in a reader's ear both.
+            dot(14, 13, 8, toast_dot(said.tone(), palette)),
             label(
-                &state.toast.get(),
+                &said.sentence(),
                 Rect::new(32, 9, rect.w.saturating_sub(44), 16),
                 FONT_BODY,
                 palette.ink,
@@ -5986,6 +6059,23 @@ fn palette_of(theme: &Theme, dark: bool) -> Palette {
         outline: theme.resolve(ColorRole::Outline),
         grid: grid_ink(dark),
         warn: theme.resolve(ColorRole::Warning),
+        // ★ R1719 — the toast's bullet needs a colour for a refusal, and it is
+        // a role rather than a literal for `warn`'s reason: a red picked by
+        // hand holds its contrast in exactly one of the two themes.
+        refused: theme.resolve(ColorRole::Error),
+    }
+}
+
+/// The toast bullet's colour, which is what a sighted reader learns the tone
+/// from — the seeing half of the pair whose hearing half is the live region's
+/// urgency, both off one [`Tone`].
+const fn toast_dot(tone: Tone, palette: Palette) -> Color {
+    match tone {
+        Tone::Done => palette.accent_fg,
+        Tone::Refused => palette.refused,
+        // Nothing happened. The bullet says "heard you" rather than "did it",
+        // in the ink this screen already uses for present-but-not-the-point.
+        Tone::Unchanged => palette.muted,
     }
 }
 
@@ -6309,10 +6399,13 @@ impl WidgetA11y for AnalyzerShellView {
             nodes.extend(rows);
         }
         nodes.push(
+            // ★★★★★ R1719 — the urgency is derived. `Polite`, flat, meant a
+            // refused widget placement waited for a pause while every theme
+            // change got the same treatment.
             AccessNode::new("shell.toast", AriaRole::Status)
                 .with_name("Activity")
-                .with_value(AccessValue::Text(state.toast.get()))
-                .with_live(AccessLive::Polite),
+                .with_value(AccessValue::Text(state.toast.get().sentence()))
+                .with_live(AccessLive::for_urgency(state.toast.get().urgency())),
         );
         nodes
     }
@@ -6412,23 +6505,18 @@ fn with_cursor_declared(node: AccessNode, state: &Rc<ShellState>) -> AccessNode 
 /// place so a reader hears what is drawn.
 const ACCOUNT_INITIALS: &str = "NE";
 
-/// ★★★★★ R1699 — what a person reads when a verb refuses: **the producer's own
-/// sentence**, not the `Debug` spelling of the error that carries it.
-///
-/// Four call sites here wrote `format!("refused: {why:?}")`, which puts
-/// `Rejected(RefusalReason("\"topology\" is reserved for requirement 12 …"))`
-/// on the screen — Rust syntax, escaped quotes and all, in front of somebody
-/// who asked to place a widget. Found by LOOKING at the round's own demo
-/// output, and it is this round's to fix because this round is what made those
-/// paths reachable from a keyboard for the first time.
-///
-/// The rendering itself is `InvokeError`'s `Display`, lifted at the eighth
-/// identical site (four here, four in the node lab) per the R727 / R732
-/// self-grep mandate — a screen that has to remember not to use `Debug` is a
-/// screen that will use `Debug`.
-fn refusal_sentence(why: &InvokeError) -> String {
-    format!("refused: {why}")
-}
+// ★★★★★ R1719 — `refusal_sentence` used to live here. R1699 wrote it because
+// four call sites in this file (and four in the node lab) had written
+// `format!("refused: {why:?}")`, which put `Rejected(RefusalReason("…"))` on
+// screen — Rust syntax and escaped quotes in front of somebody who asked to
+// place a widget — and its own note said that a screen which has to remember
+// not to use `Debug` is a screen that will use `Debug`.
+//
+// It was right, and a screen-local helper is the wrong place for it: the other
+// two screens of this tool never got one, so one of them was still writing the
+// frame by hand this morning. The rule is `Utterance::refused` now, and the
+// `Debug` spelling it was protecting against is a fault the constructor names
+// rather than a habit each screen has to keep.
 
 /// The tag the two view tabs are announced under. Nothing paints it — the tabs
 /// are painted individually and the list is what a reader descends through — so

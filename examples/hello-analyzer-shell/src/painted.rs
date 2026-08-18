@@ -2261,7 +2261,7 @@ fn r1697_a_click_on_a_panel_does_not_announce_a_move() {
             "a drag that moved the panel announced it"
         );
         assert!(
-            state.toast.get().contains("moved"),
+            state.toast.get().sentence().contains("moved"),
             "and said what happened: {:?}",
             state.toast.get()
         );

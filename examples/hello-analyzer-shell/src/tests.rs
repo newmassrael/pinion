@@ -43,6 +43,7 @@ fn probe_palette() -> super::Palette {
         outline: next(),
         grid: next(),
         warn: next(),
+        refused: next(),
     }
 }
 

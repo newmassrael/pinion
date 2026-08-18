@@ -82,6 +82,7 @@ use pinion_core::style::{
     TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme, use_theme};
+use pinion_core::utterance::{Tone, Utterance};
 use pinion_core::voice::Silence;
 use pinion_core::widgets::config_form::{
     Applies, ConfigDefect, ConfigField, ConfigForm, FieldType, FormError, Source, Verdict,
@@ -701,7 +702,14 @@ struct LabState {
     cursor: Signal<(u32, u32)>,
     drag: Signal<Option<Drag>>,
     pressed: RefCell<Option<Hit>>,
-    toast: Signal<String>,
+    /// ★★★★★ R1719 — the last thing this screen SAID, and what kind of thing
+    /// it was.
+    ///
+    /// `None` is "has not said anything yet", which is now the only way to
+    /// express that: an [`Utterance`] refuses an empty clause, so the empty
+    /// string this field used to hold — a screen announcing, and announcing
+    /// nothing — has no spelling.
+    toast: Signal<Option<Utterance>>,
     /// ★★ R1683 — what the shared field is editing, or `None` while it is shut.
     editing: Signal<Option<Editing>>,
     /// The buffer that field holds.
@@ -937,7 +945,7 @@ impl LabState {
             cursor: Signal::new((0, 0)),
             drag: Signal::new(None),
             pressed: RefCell::new(None),
-            toast: Signal::new(String::new()),
+            toast: Signal::new(None),
             editing: Signal::new(None),
             buffer: use_text_edit_state(EDIT_TAG),
             palette_scroll: Rc::new(ScrollState::with_tag(PALETTE_SCROLL)),
@@ -977,8 +985,18 @@ impl LabState {
         )
     }
 
-    fn say(&self, what: impl Into<String>) {
-        self.toast.set(what.into());
+    /// Say something to the person in front of the screen.
+    ///
+    /// ★★★★★ R1719 — takes an [`Utterance`] and not a string, which is what
+    /// makes the 58 call sites below each answer "what KIND of thing is this".
+    /// Before this round they all handed over a `String`, so the one fact
+    /// downstream needs — is this a refusal? — was carried in a `"refused: "`
+    /// prefix at five of them and nowhere at all at the rest. Both the live
+    /// region's urgency and the toast's colour now derive from the tone, so
+    /// neither can be set to a constant that is right for half of what this
+    /// screen says.
+    fn say(&self, what: Utterance) {
+        self.toast.set(Some(what));
     }
 
     /// The node the canvas labels `id`, or `None`.
@@ -3776,10 +3794,11 @@ const SEAT_INSET: u32 = 6;
 ///   painted over either is a message competing with the two things this screen
 ///   most needs to keep readable. The room it is centred in is what is left.
 fn toast_rect(state: &LabState) -> Option<Rect> {
-    let said = state.toast.get();
-    if said.trim().is_empty() {
-        return None;
-    }
+    // ★ R1719 — `None` is "nothing has been said", and it is now the ONLY
+    // spelling of that: the emptiness test this line used to make could not
+    // tell a screen that had said nothing from one that had announced an empty
+    // sentence, and an `Utterance` cannot be the second thing.
+    let said = state.toast.get()?.sentence();
     let canvas = canvas_rect();
     let hint = hint_rect();
     let gate = gate_rect(state);
@@ -6026,6 +6045,26 @@ fn canvas_overlays(state: &LabState, ink: Ink) -> Vec<Scene> {
     children
 }
 
+/// The bullet's colour, which is what a sighted reader learns the tone from.
+///
+/// ★★★★★ R1719 — this used to be `ink.accent`, unconditionally, so a refusal
+/// and a confirmation were the same picture. It is the seeing half of the pair
+/// whose hearing half is the live region's urgency, and both now come off the
+/// same [`Tone`] rather than off two constants that could disagree.
+///
+/// The mature toolkit gives its dialogs five icons for the same job and never
+/// joins them to what a screen reader is told; here one value decides both.
+const fn toast_ink(tone: Tone, ink: Ink) -> Color {
+    match tone {
+        Tone::Done => ink.accent,
+        Tone::Refused => ink.err,
+        // Not `ok` and not `err`: nothing happened, so the bullet says "heard
+        // you" rather than "did it" — the same grey the screen uses for text
+        // that is present and not the point.
+        Tone::Unchanged => ink.text_3,
+    }
+}
+
 /// ★★★★★ R1688 — **the last thing the screen said**, which nothing painted
 /// until this round. See [`toast_rect`]: four comments in this file already
 /// described a person reading it.
@@ -6034,6 +6073,7 @@ fn canvas_toast(state: &LabState, ink: Ink) -> Option<Scene> {
     let seat = toast_rect(state)?;
     let seat = Rect::new(seat.x - pane.x, seat.y - pane.y, seat.w, seat.h);
     let inner = panel_content(seat);
+    let said = state.toast.get()?;
     let dot = Rect::new(inner.x + TOAST_PAD, inner.y + TOAST_PAD + 3, 7, 7);
     Some(panel(
         "lab.toast",
@@ -6042,13 +6082,13 @@ fn canvas_toast(state: &LabState, ink: Ink) -> Option<Scene> {
         Some(ink.outline_2),
         vec![
             quiet(
-                box_at("lab.toast.dot", dot, ink.accent, None, 4),
+                box_at("lab.toast.dot", dot, toast_ink(said.tone(), ink), None, 4),
                 Silence::decorative("the bullet before the message"),
             ),
             quiet(
                 tagged_label(
                     "lab.toast.text",
-                    state.toast.get(),
+                    said.sentence(),
                     Rect::new(
                         dot.x + TOAST_DOT,
                         inner.y + TOAST_PAD,
@@ -6900,6 +6940,12 @@ const FIELDS: &[SchemaField] = &{
         SchemaField::new("changed", "string"),
         SchemaField::new("roles", "string"),
         SchemaField::new("toast", "string"),
+        // ★★★★★ R1719 — the same fact with its KIND on it. `toast` above is
+        // this projected through `sentence()`, which is what a person reads and
+        // what twenty-four existing readers ask for; this is the value, so an
+        // agent can ask whether the screen refused without matching a prefix.
+        // Two derivations of one record, never two records.
+        SchemaField::new("said", "object"),
         // ★★ R1687 — what this screen has PRODUCED, which is not what it could
         // produce. `document` next to it answers the selected card's own
         // configuration; this answers the whole graph's, once somebody has
@@ -7477,7 +7523,18 @@ impl ExternalIntrospect for LabOracle {
                     .collect::<Vec<_>>()
                     .join(","),
             ),
-            "toast" => text(state.toast.get()),
+            "toast" => text(
+                state
+                    .toast
+                    .get()
+                    .map(|said| said.sentence())
+                    .unwrap_or_default(),
+            ),
+            "said" => Ok(IntrospectValue::Json(match state.toast.get() {
+                Some(said) => serde_json::to_value(&said)
+                    .map_err(|_| ReadRefusal::UnknownPath)?,
+                None => serde_json::Value::Null,
+            })),
             _ => Err(ReadRefusal::UnknownPath),
         }
     }
@@ -7516,7 +7573,7 @@ impl ExternalIntrospect for LabOracle {
                     InvokeError::rejected(format!("no node is called {:?}", name.trim()))
                 })?;
                 select_card(&state, Some(node));
-                state.say(format!("selected {}", name.trim()));
+                state.say(Utterance::done(format!("selected {}", name.trim())));
                 Ok(IntrospectValue::Text(name.trim().to_owned()))
             }
             // ★★ R1682 — the node's own life. Four verbs over one argument,
@@ -7665,7 +7722,7 @@ impl ExternalIntrospect for LabOracle {
                     .ok_or_else(|| InvokeError::rejected("no node is selected"))?;
                 amend(&state, node, |form| form.add(key.trim()))
                     .map_err(|why| InvokeError::rejected(why.to_string()))?;
-                state.say(format!("added {}", key.trim()));
+                state.say(Utterance::done(format!("added {}", key.trim())));
                 Ok(IntrospectValue::Text(key.trim().to_owned()))
             }
             // ★★★ R1716 — take a row over. The act the floor performs by
@@ -7705,7 +7762,10 @@ impl ExternalIntrospect for LabOracle {
                         ))
                     })?;
                 scope.apply(&state);
-                state.say(format!("{} back to how it opened", scope.wire()));
+                state.say(Utterance::done(format!(
+                    "{} back to how it opened",
+                    scope.wire()
+                )));
                 Ok(IntrospectValue::Text(scope.wire().to_owned()))
             }
             "zoom_by" => {
@@ -7774,7 +7834,7 @@ impl ExternalIntrospect for LabOracle {
                         form.settle();
                     }
                 }
-                state.say(if want { "running" } else { "stopped" });
+                state.say(Utterance::done(if want { "running" } else { "stopped" }));
                 Ok(IntrospectValue::Bool(want))
             }
             "connect" => {
@@ -7891,7 +7951,13 @@ impl ExternalIntrospect for LabOracle {
                         )));
                     }
                 }
-                Ok(IntrospectValue::Text(state.toast.get()))
+                Ok(IntrospectValue::Text(
+                    state
+                        .toast
+                        .get()
+                        .map(|said| said.sentence())
+                        .unwrap_or_default(),
+                ))
             }
             "key" => {
                 let chord = Self::text(&args)?;
@@ -8279,15 +8345,23 @@ fn connect(state: &Rc<LabState>, from: NodeId, to: NodeId) -> Result<String, Inv
     let name = state.name_of(to);
     let Ok(endpoint) = landing_endpoint(&state.doc.borrow(), &state.forms.borrow(), from, to)
     else {
-        let said = format!(
+        // ★★★ R1719 — the shape this file carries eight times: one sentence,
+        // said to the person and handed to the agent. The person's copy is
+        // framed (`refused: …`) and the agent's is not, because the agent's
+        // channel is already a refusal — and both come off one value, so they
+        // cannot drift.
+        let said = Utterance::refused(&format!(
             "{} already dials every endpoint of {name}",
             state.name_of(from)
-        );
+        ));
         state.say(said.clone());
-        return Err(InvokeError::rejected(said));
+        return Err(InvokeError::rejected(said.into_clause()));
     };
     let Some(port) = open_slot(state, to, endpoint.as_deref()) else {
-        state.say(format!("{name} has no accept pin"));
+        state.say(Utterance::new(
+            Tone::Refused,
+            format!("{name} has no accept pin"),
+        ));
         return Err(InvokeError::rejected(format!(
             "{name} does not listen, so nothing can dial it"
         )));
@@ -8301,8 +8375,8 @@ fn connect(state: &Rc<LabState>, from: NodeId, to: NodeId) -> Result<String, Inv
             state.selected_link.set(Some(LinkPick::Authored(made.link)));
             let word = format!("{} -> {}", state.name_of(from), state.name_of(to));
             match &endpoint {
-                Some(one) => state.say(format!("linked {word} on {one}")),
-                None => state.say(format!("linked {word}")),
+                Some(one) => state.say(Utterance::done(format!("linked {word} on {one}"))),
+                None => state.say(Utterance::done(format!("linked {word}"))),
             }
             Ok(word)
         }
@@ -8312,9 +8386,13 @@ fn connect(state: &Rc<LabState>, from: NodeId, to: NodeId) -> Result<String, Inv
             // ★ R1699 — `Display`, not `Debug`: this sentence reaches a person
             // in the toast AND an agent as the refusal's own reason, and `Debug`
             // puts Rust syntax with escaped quotes in front of both.
-            let sentence = format!("{why}");
-            state.say(format!("refused: {sentence}"));
-            Err(InvokeError::rejected(sentence))
+            // ★★ R1719 — and that is no longer a thing to remember:
+            // `Utterance::refused` takes something that can say itself, and a
+            // `Debug` spelling handed in anyway is a fault the constructor
+            // names.
+            let said = Utterance::refused(&why);
+            state.say(said.clone());
+            Err(InvokeError::rejected(said.into_clause()))
         }
     }
 }
@@ -8333,16 +8411,13 @@ fn delete_link(state: &Rc<LabState>, link: LinkId) -> Result<String, InvokeError
                 state.name_of(gone.from.node),
                 state.name_of(gone.to.node)
             );
-            state.say(format!("unlinked {word}"));
+            state.say(Utterance::done(format!("unlinked {word}")));
             Ok(word)
         }
         Err(why) => {
-            // ★ R1699 — `Display`, not `Debug`: this sentence reaches a person
-            // in the toast AND an agent as the refusal's own reason, and `Debug`
-            // puts Rust syntax with escaped quotes in front of both.
-            let sentence = format!("{why}");
-            state.say(format!("refused: {sentence}"));
-            Err(InvokeError::rejected(sentence))
+            let said = Utterance::refused(&why);
+            state.say(said.clone());
+            Err(InvokeError::rejected(said.into_clause()))
         }
     }
 }
@@ -8359,9 +8434,9 @@ fn delete_link(state: &Rc<LabState>, link: LinkId) -> Result<String, InvokeError
 fn delete_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError> {
     let name = state.name_of(node);
     if state.cards().len() <= 1 {
-        let said = format!("{name} is the last card, so it stays");
+        let said = Utterance::refused(&format!("{name} is the last card, so it stays"));
         state.say(said.clone());
-        return Err(InvokeError::rejected(said));
+        return Err(InvokeError::rejected(said.into_clause()));
     }
     // The document answers what the removal took with it, which is the half of
     // the edit that is not where the gesture happened.
@@ -8393,7 +8468,10 @@ fn delete_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeError
     if dangling {
         state.selected_link.set(None);
     }
-    state.say(format!("deleted {name}, and {} link(s)", taken.links.len()));
+    state.say(Utterance::done(format!(
+        "deleted {name}, and {} link(s)",
+        taken.links.len()
+    )));
     Ok(name)
 }
 
@@ -8461,7 +8539,7 @@ fn begin_edit(state: &Rc<LabState>, what: Editing) -> Result<String, InvokeError
     let said = what.wire();
     state.editing.set(Some(what));
     pinion_core::focus_request::request(EDIT_TAG);
-    state.say(format!("editing the {said}"));
+    state.say(Utterance::done(format!("editing the {said}")));
     Ok(seed)
 }
 
@@ -8669,12 +8747,12 @@ fn add_key(state: &Rc<LabState>, node: NodeId, key: &str) -> Result<String, Invo
         );
     let outcome = amend(state, node, |form| form.add_typed(described));
     if let Err(why) = outcome {
-        let said = why.to_string();
+        let said = Utterance::refused(&why);
         state.say(said.clone());
-        return Err(InvokeError::rejected(said));
+        return Err(InvokeError::rejected(said.into_clause()));
     }
     sync_node(state, node);
-    state.say(format!("added {key}"));
+    state.say(Utterance::done(format!("added {key}")));
     Ok(key.to_owned())
 }
 
@@ -8708,7 +8786,7 @@ fn set_value(
     // The pins are DERIVED from the form, so a value that changes an endpoint
     // has to reach the canvas in the same act that changed it.
     sync_node(state, node);
-    state.say(format!("{key} = {value}"));
+    state.say(Utterance::done(format!("{key} = {value}")));
     Ok(held.unwrap_or_default())
 }
 
@@ -8762,14 +8840,14 @@ fn remove_row(state: &Rc<LabState>, node: NodeId, key: &str) -> Result<String, I
             Source::Authored | Source::Derived(_) => None,
         });
     amend(state, node, |form| form.remove(key)).map_err(|why| {
-        let said = why.to_string();
+        let said = Utterance::refused(&why);
         state.say(said.clone());
-        InvokeError::rejected(said)
+        InvokeError::rejected(said.into_clause())
     })?;
     sync_node(state, node);
     match gave_back {
-        Some(from) => state.say(format!("{key} is the {from}'s again")),
-        None => state.say(format!("removed {key}")),
+        Some(from) => state.say(Utterance::done(format!("{key} is the {from}'s again"))),
+        None => state.say(Utterance::done(format!("removed {key}"))),
     }
     Ok(key.to_owned())
 }
@@ -8790,12 +8868,12 @@ fn remove_row(state: &Rc<LabState>, node: NodeId, key: &str) -> Result<String, I
 /// theirs to write.
 fn author_row(state: &Rc<LabState>, node: NodeId, key: &str) -> Result<String, InvokeError> {
     let took = amend(state, node, |form| form.author(key)).map_err(|why| {
-        let said = why.to_string();
+        let said = Utterance::refused(&why);
         state.say(said.clone());
-        InvokeError::rejected(said)
+        InvokeError::rejected(said.into_clause())
     })?;
     sync_node(state, node);
-    state.say(took.sentence());
+    state.say(Utterance::done(took.sentence()));
     Ok(took.key)
 }
 
@@ -8828,13 +8906,12 @@ fn set_element(
     // neighbours; the refusal is the value's own, so every door into an
     // element passes it and none of them has to remember.
     if let Some(from) = row.element_source(at).derived_from() {
-        let sentence = FormError::Derived {
+        let said = Utterance::refused(&FormError::Derived {
             key: format!("{key} element {}", at + 1),
             from: from.to_owned(),
-        }
-        .to_string();
-        state.say(sentence.clone());
-        return Err(InvokeError::rejected(sentence));
+        });
+        state.say(said.clone());
+        return Err(InvokeError::rejected(said.into_clause()));
     }
     // Only the WRITTEN half is rewritten; the derivation joins it again on the
     // next read, which is what keeps an edit from freezing the drawing.
@@ -8861,18 +8938,25 @@ fn rename_card(state: &Rc<LabState>, node: NodeId, to: &str) -> Result<String, I
         .borrow_mut()
         .relabel(ROOT, node, Some(to))
         .map_err(|why| {
-            let sentence = why.to_string();
-            state.say(format!("refused: {sentence}"));
-            InvokeError::rejected(sentence)
+            let said = Utterance::refused(&why);
+            state.say(said.clone());
+            InvokeError::rejected(said.into_clause())
         })?;
     // ★ Nothing else to carry, and that is the measurement rather than an
     // omission: every other per-card record on this screen — the form, the
     // placement, the frame, the links — is keyed by the node's IDENTITY, which
     // a rename does not touch. The reference prototype has to move ten side
     // tables here because its rename remakes the node.
-    if done.changed {
-        state.say(format!("{was} -> {to}"));
-    }
+    // ★★★★★ R1719 — the `else` this round is named for. Renaming a card to the
+    // name it already has changed nothing and said NOTHING, so the previous
+    // message — measured: an earlier *refusal* — stayed on screen and a person
+    // read a sentence about a different act. "It was already so" is a thing to
+    // say, not a case to fall out of.
+    state.say(if done.changed {
+        Utterance::done(format!("{was} -> {to}"))
+    } else {
+        Utterance::unchanged(format!("{to} is already its name"))
+    });
     Ok(to.to_owned())
 }
 
@@ -8888,10 +8972,10 @@ fn collapse_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeErr
         slot.appearance.collapsed
     };
     let name = state.name_of(node);
-    state.say(format!(
+    state.say(Utterance::done(format!(
         "{name} {}",
         if now { "collapsed" } else { "expanded" }
-    ));
+    )));
     Ok(now.to_string())
 }
 
@@ -8915,10 +8999,10 @@ fn disable_card(state: &Rc<LabState>, node: NodeId) -> Result<String, InvokeErro
         .set_disabled(ROOT, node, !was)
         .map_err(|why| InvokeError::rejected(why.to_string()))?;
     let name = state.name_of(node);
-    state.say(format!(
+    state.say(Utterance::done(format!(
         "{name} {}",
         if was { "switched on" } else { "switched off" }
-    ));
+    )));
     Ok((!was).to_string())
 }
 
@@ -8942,16 +9026,16 @@ fn relink_to(state: &Rc<LabState>, link: LinkId, to: NodeId) -> Result<String, I
         held.from.node,
         to,
     ) else {
-        let said = format!(
+        let said = Utterance::refused(&format!(
             "{} already dials every endpoint of {name}",
             state.name_of(held.from.node)
-        );
+        ));
         state.say(said.clone());
-        return Err(InvokeError::rejected(said));
+        return Err(InvokeError::rejected(said.into_clause()));
     };
     move_end(state, link, to, endpoint.as_deref()).map(|_| {
         let word = format!("{} -> {name}", state.name_of(held.from.node));
-        state.say(format!("moved {word}"));
+        state.say(Utterance::done(format!("moved {word}")));
         word
     })
 }
@@ -8968,16 +9052,13 @@ fn adopt_link(state: &Rc<LabState>, from: Socket, to: Socket) -> Result<String, 
         Ok(made) => {
             state.selected_link.set(Some(LinkPick::Authored(made.link)));
             let word = format!("{} -> {}", state.name_of(from.node), state.name_of(to.node));
-            state.say(format!("adopted {word}"));
+            state.say(Utterance::done(format!("adopted {word}")));
             Ok(word)
         }
         Err(why) => {
-            // ★ R1699 — `Display`, not `Debug`: this sentence reaches a person
-            // in the toast AND an agent as the refusal's own reason, and `Debug`
-            // puts Rust syntax with escaped quotes in front of both.
-            let sentence = format!("{why}");
-            state.say(format!("refused: {sentence}"));
-            Err(InvokeError::rejected(sentence))
+            let said = Utterance::refused(&why);
+            state.say(said.clone());
+            Err(InvokeError::rejected(said.into_clause()))
         }
     }
 }
@@ -9010,7 +9091,7 @@ fn choose_endpoint(state: &Rc<LabState>, n: usize) -> Result<String, InvokeError
         ))
     })?;
     move_end(state, picked, to, Some(&endpoint)).map(|_| {
-        state.say(format!("on {endpoint}"));
+        state.say(Utterance::done(format!("on {endpoint}")));
         endpoint
     })
 }
@@ -9053,12 +9134,9 @@ fn move_end(
         }
         Err(why) => {
             close_slot(state, to, port);
-            // ★ R1699 — `Display`, not `Debug`: this sentence reaches a person
-            // in the toast AND an agent as the refusal's own reason, and `Debug`
-            // puts Rust syntax with escaped quotes in front of both.
-            let sentence = format!("{why}");
-            state.say(format!("refused: {sentence}"));
-            Err(InvokeError::rejected(sentence))
+            let said = Utterance::refused(&why);
+            state.say(said.clone());
+            Err(InvokeError::rejected(said.into_clause()))
         }
     }
 }
@@ -9210,8 +9288,8 @@ fn apply_frame(state: &Rc<LabState>, node: NodeId) {
     {
         let name = state.name_of(node);
         match landed.and_then(|f| state.frames.borrow().get(&f).cloned()) {
-            Some(frame) => state.say(format!("{name} now starts on {frame}")),
-            None => state.say(format!("{name} is not on any host")),
+            Some(frame) => state.say(Utterance::done(format!("{name} now starts on {frame}"))),
+            None => state.say(Utterance::done(format!("{name} is not on any host"))),
         }
     }
 }
@@ -9230,7 +9308,7 @@ fn finish_drag(state: &Rc<LabState>, drag: Drag, now: &Hit) {
                     connect(state, from, node).ok();
                 }
             } else {
-                state.say("a link needs an accept pin");
+                state.say(Utterance::new(Tone::Refused, "a link needs an accept pin"));
             }
         }
         // ★★ R1681 — a picked-up link commits the same way, except that it
@@ -9249,7 +9327,7 @@ fn finish_drag(state: &Rc<LabState>, drag: Drag, now: &Hit) {
                     // has to restore it; here there is nothing to restore,
                     // because a move that has not happened has taken nothing
                     // out.
-                    state.say("link unchanged");
+                    state.say(Utterance::unchanged("the link is already there"));
                 } else {
                     relink_to(state, link, node).ok();
                 }
@@ -9273,15 +9351,18 @@ fn toggle_running(state: &Rc<LabState>) {
     let verdict = state.verdict();
     if state.running.get() {
         state.running.set(false);
-        state.say("stopped");
+        state.say(Utterance::done("stopped"));
     } else if verdict.may_launch() {
         state.running.set(true);
         for form in state.forms.borrow_mut().values_mut() {
             form.settle();
         }
-        state.say("running");
+        state.say(Utterance::done("running"));
     } else {
-        state.say(verdict.sentence());
+        // ★★★ R1719 — the launch gate's verdict is the reason the graph did
+        // not start, so it is a REFUSAL, and it was reaching the person in the
+        // same voice as `running`.
+        state.say(Utterance::refused(&verdict.sentence()));
     }
 }
 
@@ -9306,15 +9387,18 @@ fn release(state: &Rc<LabState>) {
         Hit::DiscoveryToggle => {
             let next = !state.discovery.get();
             state.discovery.set(next);
-            state.say(if next {
+            state.say(Utterance::done(if next {
                 "discovery on"
             } else {
                 "discovery off"
-            });
+            }));
         }
         Hit::Reset(scope) => {
             scope.apply(state);
-            state.say(format!("{} back to how it opened", scope.wire()));
+            state.say(Utterance::done(format!(
+                "{} back to how it opened",
+                scope.wire()
+            )));
         }
         // ★★ R1682 — the node's-life seats, through the same three functions
         // the wire calls. A refusal (the last card) has already said so on the
@@ -9393,7 +9477,10 @@ fn release(state: &Rc<LabState>) {
         | Hit::Part { .. } => {
             act_on_form(state, now);
         }
-        Hit::Rail(name) => state.say(format!("{name} is not this screen")),
+        Hit::Rail(name) => state.say(Utterance::new(
+            Tone::Refused,
+            format!("{name} is not this screen"),
+        )),
         _ => {}
     }
 }
@@ -9459,25 +9546,25 @@ fn export_configuration(state: &LabState) -> String {
     let plan = state.plan();
     let document = deploy::as_document(&plan);
     let verdict = state.verdict();
-    let said = deploy::export_sentence(
+    let said = Utterance::done(deploy::export_sentence(
         &plan,
         (!verdict.may_launch())
             .then(|| verdict.sentence())
             .as_deref(),
-    );
+    ));
     state.produced.borrow_mut().config = Some(document);
     state.say(said.clone());
-    said
+    said.sentence()
 }
 
 /// The same plan, rendered as the script that starts it.
 fn produce_script(state: &LabState) -> String {
     let plan = state.plan();
     let script = deploy::as_script(&plan);
-    let said = deploy::script_sentence(&plan);
+    let said = Utterance::done(deploy::script_sentence(&plan));
     state.produced.borrow_mut().script = Some(script);
     state.say(said.clone());
-    said
+    said.sentence()
 }
 
 // ── Where the canvas is pointed ─────────────────────────────────────────────
@@ -9646,9 +9733,9 @@ fn fit_view(state: &LabState) -> String {
         // Unreachable while a card exists — and `delete_node` refuses the last
         // one — so this is the honest answer to a state the screen does not
         // have rather than a case it expects.
-        let said = "nothing to frame".to_owned();
+        let said = Utterance::new(Tone::Refused, "nothing to frame");
         state.say(said.clone());
-        return said;
+        return said.into_clause();
     };
     #[allow(
         clippy::cast_possible_truncation,
@@ -9657,7 +9744,7 @@ fn fit_view(state: &LabState) -> String {
     )]
     let percent = (fitted.camera.zoom * 100.0).floor() as u32;
     point_canvas_at(state, percent, fitted.camera, canvas_middle());
-    let said = if fitted.complete {
+    let said = Utterance::done(if fitted.complete {
         format!("the whole graph, at {}%", state.zoom.get())
     } else {
         // ★★ The sentence the reference cannot say. Its fit reports nothing, so
@@ -9667,9 +9754,9 @@ fn fit_view(state: &LabState) -> String {
             "as much as {}% shows — the graph is wider than the view can hold",
             state.zoom.get()
         )
-    };
+    });
     state.say(said.clone());
-    said
+    said.sentence()
 }
 
 /// How much clear canvas a jump keeps around the card it brings into view.
@@ -9690,17 +9777,23 @@ const REVEAL_PAD: i32 = 24;
 fn go_to_problem(state: &Rc<LabState>) -> String {
     let problems = state.problems();
     let Some(first) = problems.first() else {
-        let said = "nothing to go to — the gate is clear".to_owned();
+        // ★ R1719 — "there is nowhere to go" is a state, not a failure: the
+        // gate being clear is the good news. `Unchanged` is the arm for an act
+        // that had nothing to do.
+        let said = Utterance::unchanged("nothing to go to — the gate is clear");
         state.say(said.clone());
-        return said;
+        return said.into_clause();
     };
     let Some(node) = first.node else {
         // The finding is real and no card answers to the name in it. Saying so
         // is the whole of what can be done, and it is better than a jump that
         // silently does nothing.
-        let said = format!("{} · no card answers to that name", first.sentence);
+        let said = Utterance::refused(&format!(
+            "{} · no card answers to that name",
+            first.sentence
+        ));
         state.say(said.clone());
-        return said;
+        return said.into_clause();
     };
     select_card(state, Some(node));
     if let (Some((x, y)), Some(extent)) = (
@@ -9724,9 +9817,9 @@ fn go_to_problem(state: &Rc<LabState>) -> String {
         );
         point_canvas_at(state, state.zoom.get(), camera, canvas_middle());
     }
-    let said = first.sentence.clone();
+    let said = Utterance::done(first.sentence.clone());
     state.say(said.clone());
-    said
+    said.sentence()
 }
 
 /// ★★★ R1684 — what a press on a form row's control does, decided by the
@@ -9777,8 +9870,9 @@ fn press_row(state: &Rc<LabState>, key: &str) {
     // theirs to open.
     if !field.source().writable() {
         let from = field.source().derived_from().unwrap_or_default().to_owned();
-        state.say(format!(
-            "{key} is worked out from the {from}; take it over to write it"
+        state.say(Utterance::new(
+            Tone::Refused,
+            format!("{key} is worked out from the {from}; take it over to write it"),
         ));
         return;
     }
@@ -9817,10 +9911,13 @@ fn press_element(state: &Rc<LabState>, key: &str, at: usize) {
         .and_then(|form| form.field(key).cloned())
         .and_then(|field| field.element_source(at).derived_from().map(str::to_owned));
     if let Some(from) = derived {
-        state.say(format!(
-            "{key} element {} is worked out from the {from}; it is there \
-             because the canvas draws it",
-            at + 1
+        state.say(Utterance::new(
+            Tone::Refused,
+            format!(
+                "{key} element {} is worked out from the {from}; it is there \
+                 because the canvas draws it",
+                at + 1
+            ),
         ));
         return;
     }
@@ -10054,7 +10151,7 @@ fn add_node(state: &Rc<LabState>, role: Role) {
         },
     );
     select_card(state, Some(id));
-    state.say(format!("added {name}"));
+    state.say(Utterance::done(format!("added {name}")));
 }
 
 fn key(state: &Rc<LabState>, chord: &str) -> bool {
@@ -10071,7 +10168,7 @@ fn key(state: &Rc<LabState>, chord: &str) -> bool {
             } else if verdict.may_launch() {
                 state.running.set(true);
             } else {
-                state.say(verdict.sentence());
+                state.say(Utterance::refused(&verdict.sentence()));
                 return false;
             }
             true
@@ -10651,14 +10748,19 @@ fn gate_access(state: &LabState) -> Vec<AccessNode> {
     // is not told it appeared is not told the operation happened at all.
     //
     // It exists only after an act, so the census at boot could not see it and
-    // no round had ever looked. `Assertive` because it is the answer to
-    // something the person just did, and a polite announcement waits for a
-    // pause that a person working the tool does not leave.
-    if toast_rect(state).is_some() {
+    // no round had ever looked.
+    //
+    // ★★★★★ R1719 — the urgency was `Assertive`, flat, and R1691's reason for
+    // that ("it is the answer to something the person just did") is an argument
+    // for exactly the half of what this screen says that ISN'T. Measured by
+    // driving it: `selected R-01` interrupted a screen reader. It comes off the
+    // tone now, so a confirmation waits and a refusal cuts in, and neither is a
+    // constant anybody can get half right.
+    if let Some(said) = state.toast.get() {
         nodes.push(
             AccessNode::new("lab.toast", AriaRole::Status)
-                .with_name(state.toast.get())
-                .with_live(AccessLive::Assertive),
+                .with_name(said.sentence())
+                .with_live(AccessLive::for_urgency(said.urgency())),
         );
     }
     nodes

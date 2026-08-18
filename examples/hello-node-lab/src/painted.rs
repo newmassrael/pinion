@@ -62,6 +62,7 @@ use pinion_core::external::{ExternalIntrospect, IntrospectValue};
 use pinion_core::reactive::Owner;
 use pinion_core::scene::Rect;
 use pinion_core::selection::Selection;
+use pinion_core::utterance::{Tone, Utterance};
 use pinion_core::widgets::text_edit::use_text_edit_state;
 use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::{Frame, Scene};
@@ -419,7 +420,7 @@ fn declared_tags(state: &LabState) -> Vec<String> {
     // something. Conditional for the same reason the four gated resets are: a
     // message region that was always there would be an empty box on the canvas,
     // and the reference paints its own only while there is something in it.
-    if !state.toast.get().trim().is_empty() {
+    if state.toast.get().is_some() {
         want.push("lab.toast".to_owned());
         want.push("lab.toast.dot".to_owned());
         want.push("lab.toast.text".to_owned());
@@ -3384,11 +3385,22 @@ fn r1684_the_centre_of_every_control_answers_a_press() {
                 checked += 1;
                 if let Some(from) = derived {
                     let said = state.toast.get();
-                    if said == said_before || !said.contains(&key) || !said.contains(&from) {
+                    // ★★ R1719 — the tone is asked for as well as the words. A
+                    // press on a row somebody cannot write is a REFUSAL, and
+                    // before the tone was a value this check could only look
+                    // for the row's name in a string, which "R-01 selected"
+                    // would also have satisfied.
+                    let sentence = said.as_ref().map(Utterance::sentence).unwrap_or_default();
+                    if said == said_before
+                        || said.as_ref().map(Utterance::tone) != Some(Tone::Refused)
+                        || !sentence.contains(&key)
+                        || !sentence.contains(&from)
+                    {
                         dead.push(format!(
                             "{when}: pressing the middle of {key}'s control — worked \
                              out from the {from} — left the screen saying {said:?}, \
-                             which does not name the row and where its value comes from"
+                             which does not refuse and name the row and where its \
+                             value comes from"
                         ));
                     }
                 } else if before == after {
@@ -3601,10 +3613,13 @@ fn r1684_leaving_the_field_applies_what_is_in_it() {
             "S-01",
             "and it still holds what was typed, to be edited rather than retyped"
         );
-        assert!(
-            state.toast.get().contains("already"),
-            "the refusal reached the toast: {:?}",
-            state.toast.get()
+        // ★★ R1719 — asked as "did it refuse", not "does the wording contain
+        // the word already". The tone is what the question was always about.
+        let said = state.toast.get().expect("the screen said something");
+        assert_eq!(
+            said.tone(),
+            Tone::Refused,
+            "the refusal reached the toast: {said:?}"
         );
     });
 }

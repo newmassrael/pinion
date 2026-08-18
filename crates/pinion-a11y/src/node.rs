@@ -494,6 +494,29 @@ pub enum AccessLive {
 }
 
 impl AccessLive {
+    /// R1719 — how urgently a reader hears something a screen just **said**.
+    ///
+    /// The join the mature toolkit does not make, measured at 6.11.1: its
+    /// announcement event carries a politeness and the caller passes it,
+    /// derived from nothing, defaulting to the polite one. So a refusal is
+    /// polite unless somebody remembers — and this tree was measured making
+    /// exactly that mistake in both directions, one screen announcing every
+    /// confirmation assertively and two announcing every refusal politely.
+    ///
+    /// Taking an [`Urgency`](pinion_core::utterance::Urgency) rather than a
+    /// tone is what keeps this crate out of the business of deciding which
+    /// situations are urgent: the utterance answers that, and this only lowers
+    /// the answer. [`Off`](Self::Off) is unreachable from here on purpose — it
+    /// belongs to a *region* that opts out of a live ancestor, and an utterance
+    /// is a thing a screen chose to say.
+    #[must_use]
+    pub const fn for_urgency(urgency: pinion_core::utterance::Urgency) -> Self {
+        match urgency {
+            pinion_core::utterance::Urgency::WhenIdle => Self::Polite,
+            pinion_core::utterance::Urgency::Interrupting => Self::Assertive,
+        }
+    }
+
     /// The WAI-ARIA attribute value.
     #[must_use]
     pub const fn aria_name(self) -> &'static str {
@@ -1580,5 +1603,50 @@ mod tests {
         assert_eq!(n.level, Some(2));
         assert_eq!(n.position_in_set, Some(3));
         assert_eq!(n.size_of_set, Some(7));
+    }
+
+    /// ★★★★★ R1719 — what a screen just said decides how urgently it is heard.
+    ///
+    /// Driven from the tones rather than from the urgencies, because the
+    /// question this lowering answers is about a **refusal** and a
+    /// **confirmation**, and going through `Tone` is what makes the assertion
+    /// fail if either half of the chain is turned around. Three screens were
+    /// measured getting this wrong by hard-coding one end of it.
+    #[test]
+    fn r1719_a_refusal_interrupts_a_reader_and_the_others_do_not() {
+        use pinion_core::utterance::Tone;
+
+        assert_eq!(
+            AccessLive::for_urgency(Tone::Refused.urgency()),
+            AccessLive::Assertive,
+            "a person whose act did not happen has to be told before they \
+             carry on believing it did"
+        );
+        for quiet in [Tone::Done, Tone::Unchanged] {
+            assert_eq!(
+                AccessLive::for_urgency(quiet.urgency()),
+                AccessLive::Polite,
+                "{quiet:?} is the answer to something the person did on \
+                 purpose, so it does not cut anybody off"
+            );
+        }
+    }
+
+    /// The lowering reaches only the two arms an utterance can produce.
+    ///
+    /// [`AccessLive::Off`] belongs to a declared region opting out of a live
+    /// ancestor; there is no utterance that means it, and a lowering that could
+    /// produce it would be a screen able to say something inaudibly.
+    #[test]
+    fn r1719_no_utterance_lowers_to_silence() {
+        use pinion_core::utterance::Urgency;
+
+        for urgency in Urgency::ALL {
+            assert_ne!(
+                AccessLive::for_urgency(urgency),
+                AccessLive::Off,
+                "{urgency:?} would be a thing a screen chose to say and nobody hears"
+            );
+        }
     }
 }

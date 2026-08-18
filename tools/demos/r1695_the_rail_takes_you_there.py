@@ -158,7 +158,14 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             frozenset(before),
             "B: and paints the same page",
         )
-        ok("B: the toast says so rather than refusing", "already" in q(app, "toast").lower())
+        # ★★ R1719 — asked as "what KIND of thing did the screen say", not as
+        # "does the wording contain the word already". The tone is what this
+        # line was always about, and a substring probe would have passed on a
+        # sentence about something else entirely that happened to say "already".
+        ok(
+            "B: the toast says so rather than refusing",
+            q(app, "said")["tone"] == "unchanged",
+        )
 
         # ── (C) the region says where you are ──────────────────────────────
         banner("C — the page region names its destination, for a reader too")

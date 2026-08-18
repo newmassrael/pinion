@@ -739,9 +739,9 @@ fn r1663_pressing_an_unclaimed_byte_leaves_the_selection_alone() {
             "an unclaimed byte changed nothing"
         );
         assert!(
-            state.said.borrow().contains("no field"),
+            state.said_sentence().contains("no field"),
             "the screen must say why nothing happened, said {:?}",
-            state.said.borrow()
+            state.said_sentence()
         );
     });
 }

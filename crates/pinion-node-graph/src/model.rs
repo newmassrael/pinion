@@ -3242,14 +3242,22 @@ impl fmt::Display for EditError {
                     .collect::<Vec<_>>()
                     .join(" -> ")
             ),
-            Self::LabelTaken {
-                tree,
-                label,
-                held_by,
-            } => write!(
+            // ★★★★ R1719 — named by the LABEL, not by the index. This sentence
+            // reaches a person: the node lab puts it on the toast, and it read
+            // `refused: node 4 in tree 0 is already called "P-01"` in front of
+            // somebody looking at a canvas where that card is called `R-01`.
+            // Found by photographing the screen — every gate over it was green,
+            // because they all asked whether the refusal happened.
+            //
+            // The index is dropped rather than kept alongside because here it
+            // adds nothing either audience can act on: a label is unique in its
+            // tree, which is the whole reason this refusal exists, so the label
+            // identifies the node the index would have. The other arms keep
+            // their indices — they are about nodes a caller named by index.
+            Self::LabelTaken { tree, label, .. } => write!(
                 f,
-                "node {} in tree {} is already called {label:?}",
-                held_by.0, tree.0
+                "another card in tree {} is already called {label:?}",
+                tree.0
             ),
             Self::LabelEmpty { tree, node } => write!(
                 f,

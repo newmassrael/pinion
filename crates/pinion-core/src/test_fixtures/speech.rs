@@ -319,11 +319,25 @@ pub mod census {
                 if trimmed.starts_with("impl ") || trimmed.starts_with("impl<") {
                     current = Some(impl_subject(trimmed));
                 }
-                if trimmed.starts_with("pub fn sentence(&self")
-                    || trimmed.starts_with("pub fn message(&self")
-                    || trimmed.starts_with("fn sentence(&self")
-                    || trimmed.starts_with("fn message(&self")
-                {
+                // ★★ R1719 — `self` as well as `&self`. A `Copy` vocabulary
+                // takes its receiver by value (clippy asks it to), and the
+                // first such speaker written after this census existed slipped
+                // straight through: the census reported nothing, and what
+                // failed was the OTHER direction — a drive naming a type this
+                // census could not see. The bidirectional check is what turned
+                // a silent hole into a loud one.
+                if [
+                    "pub fn sentence(",
+                    "pub fn message(",
+                    "fn sentence(",
+                    "fn message(",
+                ]
+                .iter()
+                .any(|head| {
+                    trimmed
+                        .strip_prefix(head)
+                        .is_some_and(|rest| rest.starts_with("&self") || rest.starts_with("self"))
+                }) {
                     match current.clone() {
                         Some(Some(owner)) => {
                             found.insert(owner);
@@ -626,6 +640,33 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["f32"],
             "★★ a primitive subject reads"
+        );
+
+        // ★★ R1719 — a `Copy` vocabulary takes its receiver BY VALUE, and the
+        // census read `&self` only. The first such speaker written after this
+        // census existed went unseen; what failed was the other direction, a
+        // drive naming a type the census could not find, which is the whole
+        // argument for checking both.
+        let by_value = "impl Fault {\n    \
+                        pub fn sentence(self) -> String { String::new() }\n}\n";
+        assert_eq!(
+            speakers_in("v.rs", by_value)
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["Fault"],
+            "★★ a speaker that consumes its receiver is a speaker"
+        );
+
+        // …and the widening does not swallow a method that merely starts the
+        // same way. `sentence_of(&self)` is a different question.
+        assert!(
+            speakers_in(
+                "o.rs",
+                "impl Card {\n    pub fn sentence_of(&self) -> String { String::new() }\n}\n"
+            )
+            .is_empty(),
+            "★★ and a longer name is not this convention"
         );
 
         // A nested generic bound closes before the impl's own list does.
