@@ -13,6 +13,8 @@
 //! it, and [`Refusal`], the one shape a refusal-plus-surface takes — so a
 //! third method cannot invent a fourth spelling of the same pair.
 
+use pinion_core::utterance::Announced;
+
 use crate::query::QueryError;
 use crate::resolve::ResolveExternalError;
 
@@ -145,6 +147,24 @@ pub struct Refusal<E> {
     pub error: E,
     /// The surface that declined, when one was identified.
     pub refused_by: Option<AnswerOrigin>,
+    /// ★★★★★ R1720 — **whether the person in front of that surface was told**,
+    /// for the two channels that ask.
+    ///
+    /// The third fact about a refusal, and the three arrived in the order a
+    /// caller needed them: R1487 said *which surface* refused, R1564 said *what
+    /// it refused about*, and this says *whether anyone at the screen heard*.
+    ///
+    /// It is here because an agent's next move depends on it. An agent that
+    /// knows the person was already told does not have to say it again, and one
+    /// that knows they were not can decide to. Before this the agent could not
+    /// tell those apart, so the choice was made per screen and made
+    /// differently: measured, one of the three announced a refusal and two were
+    /// silent.
+    ///
+    /// `None` for the read channel and for a refusal decided before any surface
+    /// was reached. Nothing was asked, so nothing is claimed — the same
+    /// direction `refused_by` takes for the address that named no node.
+    pub announced: Option<Announced>,
 }
 
 impl<E> Refusal<E> {
@@ -153,6 +173,7 @@ impl<E> Refusal<E> {
         Self {
             error: error.into(),
             refused_by: None,
+            announced: None,
         }
     }
 
@@ -161,7 +182,20 @@ impl<E> Refusal<E> {
         Self {
             error,
             refused_by: Some(origin),
+            announced: None,
         }
+    }
+
+    /// R1720 — the same refusal, recording what the surface did about telling
+    /// the person.
+    ///
+    /// Separate from [`from_surface`](Self::from_surface) because the two facts
+    /// are established at different moments: the origin is bound before the
+    /// branches (R1487), and whether the person was told is only known after
+    /// the surface has been asked.
+    pub(crate) fn announcing(mut self, announced: Announced) -> Self {
+        self.announced = Some(announced);
+        self
     }
 }
 

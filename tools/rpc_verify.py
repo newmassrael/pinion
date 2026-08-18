@@ -3149,6 +3149,167 @@ def assert_eq(actual: Any, expected: Any, label: str = "value") -> None:
         )
 
 
+#: R1720 — arguments chosen so a verb that CAN refuse will: a name nothing is
+#: called, an index nothing sits at, and a value of the wrong kind entirely.
+#: Tried in order, and the first refusal is the one judged.
+HOSTILE_ARGS: tuple[Any, ...] = ("no.such.thing,no.such.thing", -987654, True)
+
+
+def assert_every_refusal_is_heard(
+    tf,
+    *,
+    ext: str = "/external",
+    said: str = "said",
+    exempt: Optional[dict[str, str]] = None,
+    args: Iterable[Any] = HOSTILE_ARGS,
+) -> dict[str, int]:
+    """★★★★★ R1720 §5.15 §2 #2 — **every action this surface publishes, driven
+    until it refuses, and the person told every time.**
+
+    §2 #2 makes the headless path the primary one, so "an agent drives and a
+    person watches" is the ordinary state of a pinion screen. Measured on the
+    three analysis screens the day this was written, in that state **55 verbs
+    refused and 2 reached the person** — and the two that did were the two
+    sites where somebody had written the pair out by hand. The refusal went to
+    the caller; the screen carried on showing a sentence about some earlier act;
+    and nothing anywhere could tell the two situations apart.
+
+    So this drives the surface's own published action list, not a sample of it:
+    a verb added next round is covered the moment it is declared, which is the
+    property a hand-written list of verbs cannot have.
+
+    Two things are asserted per refusing verb, and they check each other:
+
+      * the wire says the person was told (`error.data.announced.reach == "at"`,
+        naming the live region), and
+      * that live region really carries the refusal — the sentence read back at
+        `said` has the clause the agent was given.
+
+    The second is what makes the first unforgeable. A surface can answer
+    `Announced::At` without doing anything; it cannot also make the region say
+    the right sentence.
+
+    `exempt` maps a verb to the REASON it is allowed to refuse silently, in a
+    sentence. A bare list would let a red be silenced by adding a name (R1640),
+    and an exemption whose verb stops refusing fails too — an exemption that
+    outlives its defect is a claim nobody re-checked.
+
+    Returns the census: how many verbs were declared, how many refused, and how
+    many were exempt. A verb that accepted every hostile argument is not a
+    failure — some take no argument they can refuse — but it is counted, because
+    a surface where nothing refuses proves nothing.
+    """
+    exempt = dict(exempt or {})
+    schema = tf.query(f"{ext}/$schema")
+    if isinstance(schema, str):
+        schema = json.loads(schema)
+    verbs = [f["path"] for f in schema if f.get("channel") == "invoke"]
+    if not verbs:
+        raise AssertionError(
+            f"{ext} declares no action at all, so this gate would pass on nothing"
+        )
+
+    refused: list[str] = []
+    unrefused: list[str] = []
+    for verb in verbs:
+        outcome = None
+        for arg in args:
+            try:
+                tf.invoke(f"{ext}/{verb}", arg, with_origin=True)
+            except RpcError as why:
+                outcome = why
+                break
+        if outcome is None:
+            unrefused.append(verb)
+            continue
+        refused.append(verb)
+        why_person_missed = exempt.get(verb)
+        data = outcome.data if isinstance(outcome.data, dict) else {}
+        announced = data.get("announced") or {}
+        reach = announced.get("reach")
+        if why_person_missed is not None:
+            if reach == "at":
+                raise AssertionError(
+                    f"{verb} is exempt because {why_person_missed!r}, and it "
+                    f"announced at {announced.get('at')!r} — an exemption that "
+                    "outlived its defect is a claim nobody re-checked"
+                )
+            continue
+        if reach != "at":
+            raise AssertionError(
+                f"{verb} refused with {data.get('reason')!r} and the person was "
+                f"told nothing (announced={announced or None}). Either the "
+                "surface answers `Announced::at` with the tag of its live "
+                "region, or it says in a sentence why it cannot."
+            )
+        clause = data.get("reason")
+        heard = tf.query(f"{ext}/{said}")
+        if isinstance(heard, str):
+            heard = json.loads(heard) if heard else None
+        if not isinstance(heard, dict):
+            raise AssertionError(
+                f"{verb}: the surface claims it announced at "
+                f"{announced.get('at')!r} and {ext}/{said} reads {heard!r}"
+            )
+        # ★★★★ R1720 — the two kinds of refusal are held to OPPOSITE rules,
+        # and conflating them is what the first draft of this gate did.
+        #
+        # A refusal the SURFACE authored travels as the producer's own sentence
+        # (`ACTION_REFUSED` / `VALUE_OUT_OF_RANGE`), so the agent's copy and the
+        # person's copy must be the same string — one fact, one wording.
+        #
+        # A refusal the FRAMEWORK authored travels as a TAG an agent matches on
+        # (`UnknownInvokePath`, `PathIsAReadSlot`), and a tag is not a thing to
+        # put in front of somebody. There the two must DIFFER, and the person's
+        # copy has to be a sentence.
+        surface_authored = outcome.code in (ACTION_REFUSED, VALUE_OUT_OF_RANGE)
+        if surface_authored:
+            if heard.get("clause") != clause:
+                raise AssertionError(
+                    f"{verb}: the agent was told {clause!r} and the person is "
+                    f"reading {heard.get('clause')!r} — one refusal, two wordings"
+                )
+        else:
+            if heard.get("clause") == clause:
+                raise AssertionError(
+                    f"{verb}: the person is reading the wire's own tag "
+                    f"({clause!r}), which is a word an agent matches on and not "
+                    "a thing anybody reads"
+                )
+            if " " not in (heard.get("clause") or "").strip():
+                raise AssertionError(
+                    f"{verb}: the person is reading {heard.get('clause')!r}, "
+                    "which is not a sentence"
+                )
+        if heard.get("tone") != "refused":
+            raise AssertionError(
+                f"{verb}: the person's copy is toned {heard.get('tone')!r}, so a "
+                "reader who cannot see the screen is told about a thing that "
+                "did not happen when they are next idle"
+            )
+
+    for verb, why in exempt.items():
+        if verb not in refused:
+            raise AssertionError(
+                f"{verb} is declared silent-on-refusal because {why!r} and it "
+                "never refused — a declaration over an arm nobody ran is a "
+                "claim, not a check"
+            )
+
+    census = {
+        "declared": len(verbs),
+        "refused": len(refused),
+        "exempt": len(exempt),
+        "never_refused": len(unrefused),
+    }
+    print(
+        f"[refusal-heard] {tf.example}: {census['refused']} of "
+        f"{census['declared']} declared action(s) refused and were heard, "
+        f"{census['exempt']} exempt, {census['never_refused']} refused nothing"
+    )
+    return census
+
+
 #: R1564 §5.15 (PINION-PR82) — JSON-RPC code for an action the surface REFUSED
 #: to fire, as distinct from `-32602 Invalid params` (the parameters were fine).
 #: Mirrors `pinion_rpc::ACTION_REFUSED`; see its doc for why the split exists.

@@ -99,7 +99,7 @@ use pinion_core::style::{
     TextOverflow, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme, ThemeMode, ThemeProvider, use_theme};
-use pinion_core::utterance::{Tone, Utterance};
+use pinion_core::utterance::{Announced, Tone, Utterance};
 use pinion_core::voice::Silence;
 use pinion_core::widgets::button::ButtonState;
 use pinion_core::widgets::card::{Card, CardAffordance, CardChrome, CardState, Remedy};
@@ -1742,8 +1742,12 @@ impl ShellOracle {
     fn text(arg: &IntrospectValue) -> Result<String, InvokeError> {
         match arg {
             IntrospectValue::Text(s) => Ok(s.clone()),
+            // ★★★★ R1720 — the KIND, not the `Debug` spelling; the node lab
+            // carried the same line and R1720's gate read them both. See
+            // [`IntrospectValue::kind`] for the measurement.
             other => Err(InvokeError::rejected(format!(
-                "expected a string argument, got {other:?}"
+                "this action takes text and was given {}",
+                other.kind()
             ))),
         }
     }
@@ -2639,6 +2643,22 @@ impl ExternalIntrospect for ShellOracle {
             | "config_open" | "drag" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
+    }
+
+    /// ★★★★★ R1720 — the refusal an agent was handed, put in front of the
+    /// person watching this screen.
+    ///
+    /// Measured before this round: **0 of this screen's 20 refusing verbs**
+    /// reached the toast. Every place this screen announced a refusal was on a
+    /// PRESS path — the palette, an affordance, a stepper, a float's redock —
+    /// so the refusals a person saw were exactly the ones they had caused
+    /// themselves, and an agent driving the same board was silent.
+    fn announce(&mut self, refused: &Utterance) -> Announced {
+        let Some(state) = self.state.as_ref() else {
+            return Announced::nowhere("no capture is loaded, so there is no board to say it on");
+        };
+        state.say(refused.clone());
+        Announced::at("shell.toast")
     }
 
     fn invoke(

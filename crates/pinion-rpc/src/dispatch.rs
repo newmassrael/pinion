@@ -10074,6 +10074,17 @@ fn refusal_to_rpc<E>(
             Value::String(origin.to_wire().to_owned()),
         );
     }
+    // ★★★★★ R1720 — the third fact about a refusal: whether the person in front
+    // of that surface was told. An agent that knows they were does not have to
+    // say it twice, and one that knows they were not can decide to — a choice
+    // that was previously made per screen, and measured being made three
+    // different ways. `with_origin` asks for the refusal's full record and has
+    // carried the surface since R1487; this is the second thing in it.
+    if let Some(announced) = &refusal.announced {
+        if let Ok(rendered) = serde_json::to_value(announced) {
+            data.insert("announced".to_owned(), rendered);
+        }
+    }
     RpcError::new(code, message).with_data(Value::Object(data))
 }
 

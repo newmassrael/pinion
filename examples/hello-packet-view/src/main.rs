@@ -63,7 +63,7 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::shrink::ShrinkPolicy;
 use pinion_core::style::{Border, BoxStyle, Color, LayoutStyle, Size, TextOverflow, TextStyle};
 use pinion_core::theme::{ColorRole, Theme, use_theme};
-use pinion_core::utterance::Utterance;
+use pinion_core::utterance::{Announced, Utterance};
 use pinion_core::voice::Silence;
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::field_bytes::{
@@ -2526,6 +2526,22 @@ impl ExternalIntrospect for ViewOracle {
         } else {
             Err(InterveneError::UnknownPath)
         }
+    }
+
+    /// ★★★★★ R1720 — the refusal an agent was handed, put in front of the
+    /// person watching this screen.
+    ///
+    /// Measured before this round: **0 of this screen's 9 refusing verbs**
+    /// changed anything a person could see. Its only refusal a person ever met
+    /// was the one the filter box announces as they type, so an agent that sent
+    /// a malformed query got a sentence and the person beside it got nothing —
+    /// while the list they were looking at stayed exactly as it was.
+    fn announce(&mut self, refused: &Utterance) -> Announced {
+        let Some(state) = self.state.as_ref() else {
+            return Announced::nowhere("no capture is loaded, so there is no app bar to say it in");
+        };
+        state.say(refused.clone());
+        Announced::at("pv.appbar.said")
     }
 
     fn invoke(

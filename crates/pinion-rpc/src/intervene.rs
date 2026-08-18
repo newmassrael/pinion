@@ -37,10 +37,13 @@
 //! [`crate::dispatch`](fn@crate::dispatch); this module exposes the typed dispatcher only.
 
 use pinion_core::Scene;
+use std::borrow::Cow;
+
 use pinion_core::external::{
     InterveneError as TraitInterveneError, IntrospectSchema, IntrospectValue, RefusalReason,
     SchemaChannel,
 };
+use pinion_core::utterance::{Tone, Utterance};
 
 use crate::origin::{AnswerOrigin, Refusal, SceneSource};
 use crate::path::PathError;
@@ -134,6 +137,42 @@ impl From<ResolveExternalError> for InterveneError {
 }
 
 impl InterveneError {
+    /// ★★★★★ R1720 §5.15 §2 #2 — **what the person in front of the surface is
+    /// told when this refusal happens.** The write channel's peer of
+    /// [`InvokeError::said`](crate::InvokeError::said); see it for why the
+    /// wire's tag and the person's sentence come off one value.
+    ///
+    /// The write channel is here for the same reason the action channel is: a
+    /// refused write is a mutation that did not happen, so the screen is
+    /// showing the old value and nothing said why. A refused *read* is not,
+    /// which is why [`ExternalIntrospect::announce`](pinion_core::external::ExternalIntrospect::announce)
+    /// is not called for one.
+    #[must_use]
+    pub fn said(&self) -> Utterance {
+        let clause: Cow<'static, str> = match self {
+            Self::Path(_) => "that address is not one this window can read".into(),
+            Self::UnsupportedPath => "that address is not a shape this window resolves".into(),
+            Self::NoExternalAtPath => "there is nothing at that address to write to".into(),
+            Self::IntrospectionOptedOut => "the surface at that address takes no writes".into(),
+            Self::RetainedNodeNotWritable => {
+                "that address names a drawn node, which cannot be written to".into()
+            }
+            Self::UnknownIntervenePath => "there is no such setting on this surface".into(),
+            Self::PathIsAnAction => "that is something to do, not something to set".into(),
+            Self::InterveneTypeMismatch => "that value is not the kind this setting holds".into(),
+            Self::ReadOnly => "this setting can be read and not set".into(),
+            Self::UnmappedSurfaceError => {
+                "this surface refused in a way the wire cannot name".into()
+            }
+            Self::OutOfRange(reason) => {
+                return Utterance::checked(Tone::Refused, reason.as_str()).unwrap_or_else(|_| {
+                    Utterance::refused(&"this surface refused, and its reason cannot be shown")
+                });
+            }
+        };
+        Utterance::new(Tone::Refused, clause)
+    }
+
     /// R1566 §2 #7 §5.12 — the wire refusal for a surface that declined a
     /// write, judged **against that surface's own declaration**.
     ///
@@ -270,10 +309,11 @@ pub fn intervene_from(
         // does not need.
         Err(err) => {
             let declared = intro.schema();
-            Err(InterveneRefusal::from_surface(
-                InterveneError::from_declined(err, &declared, &state_path),
-                origin,
-            ))
+            let refused = InterveneError::from_declined(err, &declared, &state_path);
+            // R1720 — the write channel's half of the one seam; see
+            // `invoke_declared` for the measurement that put it there.
+            let announced = intro.announce(&refused.said());
+            Err(InterveneRefusal::from_surface(refused, origin).announcing(announced))
         }
     }
 }
@@ -309,10 +349,16 @@ fn intervene_immediate_at(
         Ok(()) => Ok(((), origin)),
         Err(err) => {
             let declared = intro.schema();
-            Err(InterveneRefusal::from_surface(
-                InterveneError::from_declined(err, &declared, &state_path),
-                origin,
-            ))
+            let refused = InterveneError::from_declined(err, &declared, &state_path);
+            // ★★★ R1720 — the immediate-mode branch announces too. Found by
+            // asking where each of the four branches reaches a surface: the
+            // action channel's immediate branch routes through
+            // `invoke_declared` and got this for free, and this one calls
+            // `intervene` directly, so it would have been the one address in
+            // four where a refused mutation stayed silent. An invariant that
+            // holds on three of four paths is a thing a caller cannot rely on.
+            let announced = intro.announce(&refused.said());
+            Err(InterveneRefusal::from_surface(refused, origin).announcing(announced))
         }
     })
 }

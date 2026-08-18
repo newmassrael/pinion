@@ -432,6 +432,28 @@ def body() -> None:
             # passes over it and this pin is what would miss it.
             "lab.inspector": 18,
             "lab.palette.discovery": 3,
+            # ★★★★ R1720 — the toast, and it arrived here for a reason worth
+            # writing down rather than a number worth widening.
+            #
+            # Section A above proves the channel declarations are true by
+            # `intervene`-ing on every declared READ path and requiring each to
+            # be refused. Since R1720 a refused write reaches the person in
+            # front of the screen — a refused mutation is a mutation that did
+            # not happen, so the screen is showing the old value and something
+            # has to say why — and this demo's own probing is what now puts a
+            # sentence on the toast.
+            #
+            # So the screen is no longer "just opened" by the time the backward
+            # check runs, and the toast is legitimately painted. The screen's
+            # own specification already derives this correctly: `painted.rs`
+            # demands the three tags exactly when `state.toast` holds something,
+            # which is the conditional shape the gated resets use. What was
+            # missing is here, in the STATIC table — the family a wire
+            # specification names as a whole.
+            #
+            # Three, and each is a mark: the box, the tone-coloured bullet
+            # (R1719) and the run of text.
+            "lab.toast": 3,
         }
         undeclared = [
             tag

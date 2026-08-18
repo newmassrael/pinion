@@ -82,7 +82,7 @@ use pinion_core::style::{
     TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme, use_theme};
-use pinion_core::utterance::{Tone, Utterance};
+use pinion_core::utterance::{Announced, Tone, Utterance};
 use pinion_core::voice::Silence;
 use pinion_core::widgets::config_form::{
     Applies, ConfigDefect, ConfigField, ConfigForm, FieldType, FormError, Source, Verdict,
@@ -6764,7 +6764,16 @@ impl LabOracle {
     fn text(args: &IntrospectValue) -> Result<String, InvokeError> {
         match args {
             IntrospectValue::Text(s) => Ok(s.clone()),
-            other => Err(InvokeError::rejected(format!("{other:?} is not text"))),
+            // ★★★★ R1720 — the KIND, not the `Debug` spelling. This said
+            // `Int(-987654) is not text`, and R1720's own gate is what read it:
+            // once every refusal reaches the person, a Rust value's syntax in
+            // one is a thing somebody has to read. R1699 fixed this shape on
+            // the person's channel and left it here, because until this round
+            // nothing on the agent's channel had a rule.
+            other => Err(InvokeError::rejected(format!(
+                "this action takes text and was given {}",
+                other.kind()
+            ))),
         }
     }
 
@@ -7557,6 +7566,22 @@ impl ExternalIntrospect for LabOracle {
 
             _ => Err(InterveneError::UnknownPath),
         }
+    }
+
+    /// ★★★★★ R1720 — the refusal an agent was handed, put in front of the
+    /// person watching this screen.
+    ///
+    /// One line, because the framework composed the sentence and chose the
+    /// urgency: this names only the thing a screen actually owns, which is
+    /// *where* speech goes. Before this round the canvas had the pair written
+    /// out by hand at 2 of its 26 refusing verbs, and the other 24 changed
+    /// nothing on screen at all.
+    fn announce(&mut self, refused: &Utterance) -> Announced {
+        let Some(state) = self.state.as_ref() else {
+            return Announced::nowhere("the lab holds no document yet, so it has no toast");
+        };
+        state.say(refused.clone());
+        Announced::at("lab.toast")
     }
 
     #[allow(clippy::too_many_lines, reason = "one arm per published action")]
@@ -8358,13 +8383,18 @@ fn connect(state: &Rc<LabState>, from: NodeId, to: NodeId) -> Result<String, Inv
         return Err(InvokeError::rejected(said.into_clause()));
     };
     let Some(port) = open_slot(state, to, endpoint.as_deref()) else {
-        state.say(Utterance::new(
-            Tone::Refused,
-            format!("{name} has no accept pin"),
-        ));
-        return Err(InvokeError::rejected(format!(
-            "{name} does not listen, so nothing can dial it"
-        )));
+        // ★★★★ R1720 — ONE sentence, where this site had two. It said
+        // `{name} has no accept pin` to the person and
+        // `{name} does not listen, so nothing can dial it` to the agent, about
+        // the same fact — the drift R1719 built the shared value to prevent,
+        // surviving three sites away from where it was written. The framework
+        // now announces the refusal it hands back, so a second wording here
+        // would not merely be untidy: it would be overwritten a moment later
+        // by the one the agent got, and the person would read whichever the
+        // path chose.
+        let said = Utterance::refused(&format!("{name} does not listen, so nothing can dial it"));
+        state.say(said.clone());
+        return Err(InvokeError::rejected(said.into_clause()));
     };
     let made = state
         .doc

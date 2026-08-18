@@ -68,6 +68,7 @@
 
 use serde::Serialize;
 use serde::ser::SerializeStruct;
+use std::borrow::Cow;
 use std::fmt;
 
 /// What kind of thing a screen said.
@@ -471,6 +472,122 @@ fn is_debug_spelling(clause: &str) -> bool {
         return false;
     }
     matches!(clause[head.len()..].chars().next(), Some('(' | '{'))
+}
+
+/// ★★★★★ R1720 — **what a surface did about telling the person that a call was
+/// refused**, answered to the framework rather than decided by each screen.
+///
+/// # The defect this exists for, measured by driving the screens
+///
+/// Measured 2026-08-18 by driving every action slot the three analysis screens
+/// publish, with an argument each verb must refuse: **55 verbs refuse and 2
+/// reach the person** (node lab 2 of 26, capture viewer 0 of 9, dashboard 0 of
+/// 20). The two that arrive do so because that screen hand-wrote the coupling
+/// at those two sites — `let said = …; state.say(said.clone()); Err(…)` — so
+/// the property held exactly where somebody remembered it, which is the same
+/// shape as every fact this workspace has since moved into a type.
+///
+/// §2 #2 makes RPC the AI's primary path, so "an agent drives and a person
+/// watches" is the *normal* state of these screens, not an exception. In that
+/// state a refused call left the screen still holding a sentence about some
+/// earlier act, and the person had no way to know why nothing moved — the same
+/// stale-message defect [`Tone::Unchanged`] was built for, arriving through the
+/// other channel.
+///
+/// # Why three arms
+///
+/// [`Nowhere`](Self::Nowhere) and [`Undeclared`](Self::Undeclared) are not one
+/// arm, for R1718's reason: if "nothing here speaks to a person" were also the
+/// answer of a surface that never considered the question, then a census could
+/// be satisfied by never considering it, and the useful half — *which* surfaces
+/// decided they have no live region, and why — would be unreadable. So the
+/// framework's default is its own arm and no surface writes it.
+///
+/// # Why [`At`](Self::At) names a place
+///
+/// So the claim can be checked rather than believed. The tag it carries is a
+/// live region in the surface's own access tree, and the harness gate goes and
+/// reads the sentence there — a surface cannot satisfy the gate by answering
+/// `At` and doing nothing.
+///
+/// # The floor, measured rather than read
+///
+/// A probe was built against the mature toolkit at 6.11.1 and **run**
+/// offscreen. Refusing a programmatic call emits **0** accessibility events —
+/// both for a verb nobody declared and for a declared verb that answers "no" —
+/// and the caller's whole answer is a boolean; the *reason* for the first goes
+/// to the process's diagnostic stream, a global sink no caller and no person
+/// reads. Its status channel emits **0** accessibility events of its own, takes
+/// no kind, and nothing routes a refusal into it: a caller that wants the
+/// person told has to call it, with words it composes itself. And nothing
+/// anywhere reports whether the person was told.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Announced {
+    /// The person was told, in the live region this names.
+    At(Cow<'static, str>),
+    /// This surface has nowhere to put speech, and this says why.
+    ///
+    /// A reason and not a bare marker, for the reason every exemption in this
+    /// workspace carries one: a silent list can be grown by adding a name, and
+    /// a reason cannot be written without deciding something.
+    Nowhere(Cow<'static, str>),
+    /// Nobody has decided. The framework's own default, and the only answer no
+    /// surface writes for itself.
+    Undeclared,
+}
+
+impl Announced {
+    /// The person was told, in the live region tagged `tag`.
+    #[must_use]
+    pub fn at(tag: impl Into<Cow<'static, str>>) -> Self {
+        Self::At(tag.into())
+    }
+
+    /// Nothing on this surface speaks to a person, `because` this.
+    #[must_use]
+    pub fn nowhere(because: impl Into<Cow<'static, str>>) -> Self {
+        Self::Nowhere(because.into())
+    }
+
+    /// The live region carrying the sentence, when there is one.
+    #[must_use]
+    pub fn tag(&self) -> Option<&str> {
+        match self {
+            Self::At(tag) => Some(tag),
+            Self::Nowhere(_) | Self::Undeclared => None,
+        }
+    }
+
+    /// The word this answer carries on the wire.
+    ///
+    /// Chosen rather than derived from the Rust identifier, for
+    /// [`Tone::wire`]'s reason: an agent matches on it.
+    #[must_use]
+    pub const fn wire(&self) -> &'static str {
+        match self {
+            Self::At(_) => "at",
+            Self::Nowhere(_) => "nowhere",
+            Self::Undeclared => "undeclared",
+        }
+    }
+}
+
+/// The wire form: the answer's own word, and whatever second fact that word has.
+///
+/// Hand-written for [`Utterance`]'s reason — one spelling of each name, beside
+/// [`Announced::wire`] rather than in a `serde` attribute that would be a
+/// second record of the same decision.
+impl Serialize for Announced {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        let mut row = s.serialize_struct("Announced", 2)?;
+        row.serialize_field("reach", self.wire())?;
+        match self {
+            Self::At(tag) => row.serialize_field("at", tag.as_ref())?,
+            Self::Nowhere(why) => row.serialize_field("because", why.as_ref())?,
+            Self::Undeclared => row.skip_field("at")?,
+        }
+        row.end()
+    }
 }
 
 #[cfg(test)]

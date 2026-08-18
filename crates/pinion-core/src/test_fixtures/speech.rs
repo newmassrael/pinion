@@ -326,11 +326,22 @@ pub mod census {
                 // failed was the OTHER direction — a drive naming a type this
                 // census could not see. The bidirectional check is what turned
                 // a silent hole into a loud one.
+                // ★★★★★ R1720 — `said(` too, and it is the same lesson a third
+                // time. A type that answers an `Utterance` speaks just as
+                // surely as one that answers a `String`: the sentence is one
+                // accessor further away, and a census keyed on the accessor's
+                // NAME rather than on the fact would let every future speaker
+                // in through whichever spelling it happened to pick. Measured
+                // on the round that added the first two: they were invisible
+                // here, so the crate's census was green while eleven arms of
+                // one of them said nothing at all.
                 if [
                     "pub fn sentence(",
                     "pub fn message(",
+                    "pub fn said(",
                     "fn sentence(",
                     "fn message(",
+                    "fn said(",
                 ]
                 .iter()
                 .any(|head| {

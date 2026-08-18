@@ -37,6 +37,7 @@ use serde_json::value::RawValue;
 use crate::Event;
 use crate::input::{GesturePhase, Modifiers, PointerKind, RawPointerButton};
 use crate::intent::Intent;
+use crate::utterance::{Announced, Utterance};
 
 thread_local! {
     /// Tag -> the size the framework last announced for that surface.
@@ -1595,6 +1596,44 @@ pub enum IntrospectValue {
 }
 
 impl IntrospectValue {
+    /// ★★★★★ R1720 §5.15 — **what kind of thing this is, in a word a person can
+    /// read.**
+    ///
+    /// The word a producer names when it refuses an argument for its kind, so
+    /// that refusal is a sentence rather than a Rust value's `Debug` spelling.
+    /// Found by the round that made every refusal reach the person: driving the
+    /// node lab's `add_key` with a number answered `Int(-987654) is not text`,
+    /// which the announcement rule refused as
+    /// [`Fault::DebugSpelling`](crate::utterance::Fault::DebugSpelling) — so the
+    /// person got the framework's fallback and the agent got Rust syntax. R1699
+    /// fixed exactly this on the person's channel and it was still here on the
+    /// agent's, because nothing on that channel had a rule.
+    ///
+    /// It names the kind and never the value, which is the whole reason it
+    /// exists: `{other:?}` puts the caller's own argument back in front of them
+    /// wrapped in a constructor, and the useful half of that sentence is the
+    /// kind. A producer that wants to quote the value can, in its own words.
+    ///
+    /// The words are the ones [`SchemaField`]'s `type` already publishes, so a
+    /// refusal about a kind and the declaration of that kind read alike.
+    #[must_use]
+    pub const fn kind(&self) -> &'static str {
+        match self {
+            Self::Null => "null",
+            Self::Bool(_) => "a boolean",
+            Self::Int(_) => "a whole number",
+            Self::Float(_) => "a number",
+            Self::Text(_) => "text",
+            Self::Json(_) | Self::Raw(_) => "json",
+            // ★ No wildcard, deliberately. `IntrospectValue` is
+            // `#[non_exhaustive]` for its consumers, and this match is inside
+            // the defining crate — so the round that adds a variant finds an
+            // unreachable-pattern-free compile error here instead of shipping
+            // through a word somebody guessed. The compiler said so first: the
+            // wildcard this arm replaced was already unreachable.
+        }
+    }
+
     /// R51.155 §5.15 — extract a `bool` payload. Returns `Some(b)`
     /// only when the variant is [`Self::Bool`]; every other variant
     /// (including `Json(serde_json::Value::Bool(_))`) returns `None`
@@ -2384,6 +2423,54 @@ pub trait ExternalIntrospect {
         _args: IntrospectValue,
     ) -> Result<IntrospectValue, InvokeError> {
         Err(InvokeError::UnknownPath)
+    }
+
+    /// ★★★★★ R1720 §5.15 §2 #2 — **tell the person in front of this surface
+    /// that a call was refused**, and say what was done about it.
+    ///
+    /// The framework calls this from the one place either mutation channel
+    /// reaches a surface, with the refusal it is about to hand the caller. So a
+    /// refusal cannot reach the agent without reaching the person, and neither
+    /// half is a thing a call site has to remember.
+    ///
+    /// # Why the framework asks instead of leaving it to the surface
+    ///
+    /// Because leaving it to the surface was measured, and it does not hold.
+    /// Driving every action slot the three analysis screens publish, **55 verbs
+    /// refuse and 2 reach the person** — and those two are the two sites where
+    /// somebody wrote the coupling out by hand. §2 #2 makes the headless path
+    /// the primary one, so a person watching a screen an agent is driving is
+    /// the ordinary case; before this they watched nothing happen, with the
+    /// screen still showing a sentence about an earlier act.
+    ///
+    /// # What it must NOT do
+    ///
+    /// Act. This is the announcement channel, not a second dispatch: the call
+    /// has already been decided, and a surface that mutates here mutates on a
+    /// path no caller asked for. It takes `&mut self` because writing "the last
+    /// thing said" is a write, and for no other reason.
+    ///
+    /// # What it does not cover
+    ///
+    /// Reads. A refused [`query`](Self::query) changed nothing and left nothing
+    /// stale, so there is nothing the person is missing; announcing every
+    /// failed read would fill the one channel a person actually watches with
+    /// the agent's own probing. The two mutation channels
+    /// ([`invoke`](Self::invoke) and [`intervene`](Self::intervene)) both route
+    /// here.
+    ///
+    /// Also in-process dispatch: a binding that calls `invoke` directly does
+    /// not pass through the framework's seam. Such a call is a *person* acting,
+    /// and the surface is already at the keyboard end of it.
+    ///
+    /// # The default is a declaration of nothing
+    ///
+    /// [`Announced::Undeclared`] — see its doc for why it is a third arm rather
+    /// than folded into [`Announced::Nowhere`]. A surface that speaks answers
+    /// [`Announced::at`] with the tag of the live region it just wrote; one
+    /// that genuinely has nowhere answers [`Announced::nowhere`] with a reason.
+    fn announce(&mut self, _refused: &Utterance) -> Announced {
+        Announced::Undeclared
     }
 }
 

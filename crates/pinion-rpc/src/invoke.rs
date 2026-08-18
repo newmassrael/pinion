@@ -32,11 +32,14 @@
 //! [`crate::dispatch`](fn@crate::dispatch); this module exposes the typed dispatcher
 //! only.
 
+use std::borrow::Cow;
+
 use pinion_core::Scene;
 use pinion_core::external::{
     ExternalIntrospect, IntrospectValue, InvokeError as TraitInvokeError, RefusalReason,
     SchemaChannel,
 };
+use pinion_core::utterance::{Announced, Tone, Utterance};
 
 use crate::origin::{AnswerOrigin, Refusal, SceneSource};
 use crate::path::PathError;
@@ -163,9 +166,68 @@ impl From<ResolveExternalError> for InvokeError {
 }
 
 impl InvokeError {
+    /// ★★★★★ R1720 §5.15 §2 #2 — **what the person in front of the surface is
+    /// told when this refusal happens.**
+    ///
+    /// The wire's own word for a refusal is a TAG an agent matches on —
+    /// `"UnknownInvokePath"`, `"PathIsAReadSlot"`, rendered by this crate's
+    /// dispatch module. This is a sentence a person reads. Both come off this
+    /// one value, so they cannot drift, which is the same split [`Utterance`]
+    /// made between a clause and the frame put in front of it.
+    ///
+    /// Every arm speaks, and no two read alike: the arms exist because a caller
+    /// can act differently on each, and a person watching the screen has the
+    /// same claim on the difference. `r1720_every_invoke_refusal_is_said_and_distinct`
+    /// is what holds that.
+    ///
+    /// # The one arm this crate does not author
+    ///
+    /// [`InvokeRejected`](Self::InvokeRejected) carries the producer's own
+    /// sentence, forwarded verbatim — R1564's decision, kept. When that
+    /// sentence cannot be said as it stands — it is empty, it already carries
+    /// the frame, or it is a `Debug` spelling, which are the three faults
+    /// `pinion_core::utterance` names — this answers a sentence of its own
+    /// instead. It does **not** panic: unlike a screen composing its own
+    /// announcement, the clause here has an agent's argument interpolated into
+    /// it, so a panic would be a way to stop the process from the wire.
+    #[must_use]
+    pub fn said(&self) -> Utterance {
+        let clause: Cow<'static, str> = match self {
+            // Addressing. The call never reached a surface, so these are the
+            // framework speaking about the address the agent named.
+            Self::Path(_) => "that address is not one this window can read".into(),
+            Self::UnsupportedPath => "that address is not a shape this window resolves".into(),
+            Self::NoExternalAtPath => "there is nothing at that address to act on".into(),
+            Self::IntrospectionOptedOut => "the surface at that address takes no calls".into(),
+            Self::RetainedNodeNotWritable => {
+                "that address names a drawn node, which cannot be acted on".into()
+            }
+            // The channel question, settled before dispatch (R1637).
+            Self::UnknownInvokePath => "there is no such action on this surface".into(),
+            Self::PathIsAReadSlot => "that is something to read, not something to do".into(),
+            // What the surface itself reported.
+            Self::InvokeTypeMismatch => "that argument is not the kind this action takes".into(),
+            Self::DeclaredButUnhandled => {
+                "this surface publishes that action and did not answer it".into()
+            }
+            Self::UnmappedSurfaceError => {
+                "this surface refused in a way the wire cannot name".into()
+            }
+            Self::InvokeRejected(reason) => {
+                return Utterance::checked(Tone::Refused, reason.as_str()).unwrap_or_else(|_| {
+                    // R1720 — true of all three faults, and it quotes nothing:
+                    // the surface's words are what could not be shown, so
+                    // repeating them here would be showing them.
+                    Utterance::refused(&"this surface refused, and its reason cannot be shown")
+                });
+            }
+        };
+        Utterance::new(Tone::Refused, clause)
+    }
+
     /// R1566 §2 #7 §5.12 — the wire refusal for a surface that declined a call
     /// its **own declaration had already admitted** (R1637 moved that judgement
-    /// ahead of dispatch — see [`invoke_declared`], which is this function's
+    /// ahead of dispatch — see `invoke_declared`, which is this function's
     /// only caller).
     ///
     /// It takes neither the schema nor the path any more, and that is the
@@ -247,8 +309,8 @@ fn invoke_declared(
     intro: &mut dyn ExternalIntrospect,
     action_path: &str,
     args: IntrospectValue,
-) -> Result<IntrospectValue, InvokeError> {
-    match intro.schema().field_for(action_path).map(|f| f.channel) {
+) -> Result<IntrospectValue, (InvokeError, Announced)> {
+    let outcome = match intro.schema().field_for(action_path).map(|f| f.channel) {
         Some(SchemaChannel::Invoke) => intro
             .invoke(action_path, args)
             .map_err(InvokeError::from_dispatched),
@@ -259,7 +321,20 @@ fn invoke_declared(
         // — the same direction `UnmappedSurfaceError` chose for its own
         // unknown.
         _ => Err(InvokeError::UnknownInvokePath),
-    }
+    };
+    // ★★★★★ R1720 §5.15 §2 #2 — **both channels, from one value, in the one
+    // place either branch reaches a surface.** The refusal handed back to the
+    // agent and the sentence put in front of the person are the same
+    // `Utterance`; there is no site where a producer can supply one and forget
+    // the other, because there is no site at all.
+    //
+    // Measured before this line existed: 55 of the three screens' action slots
+    // refuse and **2** reached the person, those two being the two places
+    // somebody had written the pair out by hand.
+    outcome.map_err(|err| {
+        let announced = intro.announce(&err.said());
+        (err, announced)
+    })
 }
 
 /// Resolve `raw_path` against `scene` and invoke the action there
@@ -322,7 +397,7 @@ pub fn invoke_from(
         .map_err(|e| InvokeRefusal::from_resolve(e, origin))?;
     invoke_declared(intro, &action_path, args)
         .map(|value| (value, origin))
-        .map_err(|err| InvokeRefusal::from_surface(err, origin))
+        .map_err(|(err, announced)| InvokeRefusal::from_surface(err, origin).announcing(announced))
 }
 
 /// R1481 §2 #4 §5.12 — the immediate-mode half of [`invoke`], reachable
@@ -370,7 +445,9 @@ fn invoke_immediate_at(
     Some(
         invoke_declared(intro, &action_path, args.clone())
             .map(|value| (value, origin))
-            .map_err(|err| InvokeRefusal::from_surface(err, origin)),
+            .map_err(|(err, announced)| {
+                InvokeRefusal::from_surface(err, origin).announcing(announced)
+            }),
     )
 }
 
@@ -553,7 +630,9 @@ mod tests {
     fn r1566_a_declared_slot_is_named_as_one_to_a_caller() {
         let mut surface = MixedSurface::default();
         let judge = |s: &mut MixedSurface, path: &str| {
-            invoke_declared(s, path, IntrospectValue::Null).unwrap_err()
+            invoke_declared(s, path, IntrospectValue::Null)
+                .unwrap_err()
+                .0
         };
         assert_eq!(judge(&mut surface, "depth"), InvokeError::PathIsAReadSlot);
         assert_eq!(judge(&mut surface, "cell.3"), InvokeError::PathIsAReadSlot);
@@ -612,7 +691,9 @@ mod tests {
                 verdict: Some(err),
                 ..MixedSurface::default()
             };
-            invoke_declared(&mut surface, "reset", IntrospectValue::Null).unwrap_err()
+            invoke_declared(&mut surface, "reset", IntrospectValue::Null)
+                .unwrap_err()
+                .0
         };
         assert_eq!(
             judge(TraitInvokeError::TypeMismatch),
