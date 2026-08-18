@@ -22,10 +22,14 @@
 //!
 //! # What it is a consumer of
 //!
-//! * [`pinion_chart::ChartLegend`] — the declaration, and the first consumer to
-//!   hold **more than one chart kind at once**, which is the position that makes
-//!   the question necessary. The three older legend demos each hold one chart of
-//!   one kind and could get away with knowing.
+//! * [`pinion_chart::ChartLegend`] — the declaration, **asked** rather than
+//!   known. Holding two chart kinds at once is not itself new
+//!   (`hello-linked-legend` holds a scatter and a line, `hello-cross-filter` a
+//!   bar and a line — measured, not remembered); what is new is that this file
+//!   derives what it paints, and whether it offers the gesture at all, from each
+//!   chart's own answer. Those two knew which chart was the selector because
+//!   they were written knowing it, which is fine for a screen and impossible for
+//!   a board assembled from a configuration.
 //! * [`pinion_chart::LegendInteraction::Toggle`] on the **polar and donut
 //!   charts**, which could not offer the gesture at all until this round.
 //! * [`pinion_core::widgets::toggle_group`] — eight independent
