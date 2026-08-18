@@ -66,8 +66,6 @@ if git diff --cached --name-only --diff-filter=ACMR | grep -qE '\.rs$'; then
     # clippy (cheaper, fail-fast) and only when staged files include `*.rs`.
     echo "pre-commit: cargo fmt --all --check ..." >&2
     cargo fmt --all --check
-    echo "pre-commit: cargo clippy --workspace --all-targets --features pinion-runtime/vello ..." >&2
-    cargo clippy --workspace --all-targets --features pinion-runtime/vello
     # R1214 — broken intra-doc link gate. `warnings = "deny"` (workspace.lints)
     # already promotes every rustdoc lint (broken_intra_doc_links /
     # redundant_explicit_links / private_intra_doc_links) to an error, so a
@@ -75,8 +73,69 @@ if git diff --cached --name-only --diff-filter=ACMR | grep -qE '\.rs$'; then
     # which is why ~1000 broken links accreted invisibly from ~R683 (the
     # commit gate ran clippy, never rustdoc). Nearly free once clippy has
     # warmed the build (rustdoc reuses the compiled artifacts).
-    echo "pre-commit: cargo doc --workspace --no-deps --document-private-items ..." >&2
-    cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items
+    #
+    # ⚠ CLIPPY AND THE DOC GATE ARE ONE UNIT, and the note above is why: rustdoc
+    # is nearly free BECAUSE clippy warmed the build. Splitting them across
+    # machines destroys exactly that — clippy warms one `target/`, rustdoc then
+    # starts cold against another — so they travel together or not at all. The
+    # `&&` keeps clippy's fail-fast: a clippy failure still exits without ever
+    # documenting anything.
+    #
+    # ⚠ ROUTED THROUGH THE BUILD-MACHINE WRAPPER WHEN ONE IS CONFIGURED, because
+    # this pair is the heaviest thing the hook does to the machine it runs on.
+    # Measured 2026-08-19 on a 31GB workstation: the doc half alone spawned
+    # EIGHT concurrent rustdocs (340MB-1GB each, one reaching 6.5GB in a sibling
+    # repository), which pushed 13GB into swap and took the box to load 29 while
+    # 82% of its CPU sat idle — every bit of that load was processes blocked on
+    # the paging disk. Nothing was compute-bound; one uncapped command had put
+    # the disk into thrash and every other session queued behind it.
+    #
+    # `$BX` IS AN OPT-IN AND ITS ABSENCE IS THE OLD BEHAVIOUR. Nothing about the
+    # wrapper is named in this repository — no host, no path, no account (that
+    # is deliberate: they belong to a machine, not to a public tree). A checkout
+    # that does not set it runs the pair here, exactly as before, so this gate
+    # never depends on tooling a contributor has no way to obtain.
+    #
+    # ⚠⚠ AND IT FAILS OPEN, which the first version of this did NOT. Setting
+    # `$BX` is not a promise that a build machine answers: the fleet goes away
+    # mid-session, and a hook that turned that into a blocked commit would be
+    # reporting a network as a code defect. That inverts this repository's own
+    # rule for the CI check in `pre-push` — "infrastructure absence is not
+    # evidence of breakage, but always prints". So the wrapper's OWN failure to
+    # run the pair is not a verdict; only the pair's exit status is.
+    #
+    # The two are told apart by the wrapper's own contract rather than by
+    # guessing at exit codes: it prints `bx: exit=<N>` only once the wrapped
+    # command has actually produced a status. That line present means the gate
+    # ran and its answer stands, however it came out. Absent means the gate
+    # never started, and the pair is then run here — loudly.
+    #
+    # ⚠ IT COSTS A TRANSFER AND IT CAN LAND COLD. The wrapper syncs the tree
+    # first — measured at 17s for this repository even when nothing changed —
+    # and it picks whichever build machine is least loaded, which is not always
+    # the one whose `target/` is warm. If commit latency matters more here than
+    # the workstation's memory, unset `$BX` and this returns to running in place.
+    lint_and_doc='cargo clippy --workspace --all-targets --features pinion-runtime/vello && cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items'
+    echo "pre-commit: cargo clippy --workspace --all-targets && cargo doc --workspace --no-deps --document-private-items ..." >&2
+    if [ -n "${BX:-}" ] && [ -x "${BX}" ]; then
+        bx_err="$(mktemp)"
+        if "${BX}" --label pre-commit-lint -- bash -c "$lint_and_doc" 2>"$bx_err"; then
+            bx_rc=0
+        else
+            bx_rc=$?
+        fi
+        cat "$bx_err" >&2
+        if grep -q '^bx: exit=' "$bx_err"; then
+            rm -f "$bx_err"
+            [ "$bx_rc" -eq 0 ] || exit "$bx_rc"
+        else
+            rm -f "$bx_err"
+            echo "pre-commit: the build machine could not RUN the gate (infrastructure, not a gate failure) — running it here instead" >&2
+            bash -c "$lint_and_doc"
+        fi
+    else
+        bash -c "$lint_and_doc"
+    fi
 fi
 
 # 3. mnemosyne-cli validate-code-refs — hallucination-class citation gate
