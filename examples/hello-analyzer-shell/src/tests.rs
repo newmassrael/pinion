@@ -964,6 +964,83 @@ fn a_table_card_counts_its_header_row_in_both_the_count_and_the_indices() {
     }
 }
 
+// ── R1721: the saved-filter bar ──────────────────────────────────────────────
+
+/// ★★★★★ R1721 — **the filter card's chips are operable, and at most one is on.**
+///
+/// Both halves were absent, and the first one is the sharper: measured by driving
+/// the running screen, the five chips announced `checked`, a pointer press over
+/// every one of them changed nothing, and no keyboard reached any of them. A
+/// control announced as operable that does nothing is the defect this tool keeps
+/// reporting, in its own shell.
+///
+/// Pinning the BEHAVIOUR here is what keeps the declaration honest: change
+/// `spec::FILTER_ROW` and this fails, rather than the accessibility census
+/// quietly agreeing with whatever the rule became.
+#[test]
+fn r1721_the_filter_cards_chips_are_operable_and_at_most_one_is_on() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let opening = state.filter_chip.get();
+        assert_eq!(
+            opening,
+            Some(0),
+            "the card opens with the saved filter the specification lights"
+        );
+        super::ShellOracle::choose_filter(&state, "filter#3", 3);
+        assert_eq!(
+            state.filter_chip.get(),
+            Some(3),
+            "★ a chosen saved filter REPLACES the one that was on"
+        );
+        super::ShellOracle::choose_filter(&state, "filter#3", 3);
+        assert_eq!(
+            state.filter_chip.get(),
+            None,
+            "★ and choosing the one that is on empties the row"
+        );
+        assert_eq!(
+            super::filter_row(&state, "filter#3").choice(),
+            pinion_core::widgets::chip_group::Choice::AtMostOne,
+            "the behaviour above IS the declared rule, not a coincidence"
+        );
+    });
+}
+
+/// ★★★★★ R1721 — **the accessibility tree reports the saved filter that is on**,
+/// on this screen too.
+///
+/// Its sibling's counterfactual is what asked for this: replacing the live row
+/// with an all-off one in the tree builder was caught by nothing in that crate's
+/// suite, and the same hole was here. A tree read once and a bar painted live is
+/// exactly the drift this round is about, one layer up.
+#[test]
+fn r1721_the_tree_reports_the_saved_filter_the_card_has_applied() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let selected = || -> Vec<bool> {
+            super::filter_nodes(&state, "filter#3")
+                .into_iter()
+                .filter(|node| node.tag.starts_with("card.filter#3.chip."))
+                .map(|node| node.selected == Some(true))
+                .collect()
+        };
+        assert_eq!(
+            selected(),
+            vec![true, false, false, false, false],
+            "the card opens announcing the saved filter the specification lights"
+        );
+        super::ShellOracle::choose_filter(&state, "filter#3", 2);
+        assert_eq!(
+            selected(),
+            vec![false, false, true, false, false],
+            "★ the option announced as selected MOVES with the choice"
+        );
+    });
+}
+
 // ── R1698: the cursor inside each composite ──────────────────────────────────
 
 /// Press a key the way the SHELL does — through `WidgetCore::apply_key`, with

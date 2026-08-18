@@ -17,6 +17,8 @@
 //! class uses generally. The structure and the behaviour are what is being
 //! reproduced, and those are what this table holds.
 
+use pinion_core::widgets::chip_group::Choice;
+
 /// One pane of the shell, and the width the reference gives it.
 pub struct PaneSpec {
     /// The paint tag.
@@ -141,6 +143,21 @@ pub struct SavedFilter {
 /// status line and the list did not move, which is this screen's own instance
 /// of the defect the tool keeps reporting — an affordance that is announced,
 /// named, and does nothing.
+/// ★★★★★ R1721 — how many saved filters may be on at once, and therefore what
+/// the bar **is**.
+///
+/// Measured 2026-08-19 by driving this screen: pressing a second chip cleared
+/// the first and pressing the chosen one cleared it, so the behaviour was
+/// already at-most-one — while the accessibility tree announced three
+/// independent toggle buttons, the Tab ring cost three stops, and no arrow
+/// walked the bar. One word, and the roles, the stop count, the arrows and the
+/// `Enter` all follow from it.
+///
+/// It lives in the specification because it is a statement about what this
+/// screen *is*, and because both the census in `tests.rs` and the widget in
+/// `main.rs` must read one copy of it.
+pub const SAVED_ROW: Choice = Choice::AtMostOne;
+
 pub const SAVED_FILTERS: &[SavedFilter] = &[
     SavedFilter {
         name: "units only",
@@ -974,9 +991,20 @@ pub const VOICES: &[VoiceSpec] = &[
         role: "textbox",
         population: Population::One,
     },
+    // ★★★★★ R1721 — the bar and its chips announce what the RULE says they are.
+    // These two roles were the word `button`, typed here, over a set that can
+    // never have two on; now they are `pinion_a11y::group_role(SAVED_ROW)` and
+    // `member_role(SAVED_ROW)`, which is what the tree actually builds. The
+    // census and the screen read one declaration, so this table cannot check a
+    // role somebody typed against a role somebody else typed.
+    VoiceSpec {
+        tag: "pv.filter.saved",
+        role: pinion_a11y::group_role(SAVED_ROW).aria_name(),
+        population: Population::One,
+    },
     VoiceSpec {
         tag: "pv.filter.saved.{}",
-        role: "button",
+        role: pinion_a11y::member_role(SAVED_ROW).aria_name(),
         population: Population::SavedFilters,
     },
     VoiceSpec {

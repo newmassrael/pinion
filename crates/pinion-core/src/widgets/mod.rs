@@ -5,6 +5,7 @@ pub mod card;
 pub mod caret_blink;
 pub mod cell_selection;
 pub mod checkbox;
+pub mod chip_group;
 pub mod color_area;
 pub mod column_layout;
 pub mod column_widths;

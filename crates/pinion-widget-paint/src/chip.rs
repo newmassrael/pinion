@@ -40,6 +40,7 @@ use pinion_core::style::{
     TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme};
+use pinion_core::widgets::chip_group::ChipGroup;
 use pinion_core::widgets::interaction::InteractionState;
 
 /// M3 chip corner radius — 8 px, the spec value. Deliberately *not* the
@@ -126,10 +127,14 @@ pub fn selection_border(theme: &Theme, selected: bool) -> Option<Border> {
 ///
 /// The label size is NOT a parameter: see [`CHIP_LABEL_PX`].
 ///
-/// `focusable` is the parameter that must stay a parameter: a radio group is
-/// ONE tab stop with a roving descendant, so its cells are hit targets and
-/// not stops, while independent toggles are each a stop. Baking either in
-/// would make this wrapper wrong for half its callers.
+/// `focusable` is a parameter here because this function is handed one chip and
+/// one chip cannot answer for its row: a radio group is ONE tab stop with a
+/// roving descendant, so its cells are hit targets and not stops, while
+/// independent toggles are each a stop. **R1721 made that answer derivable** —
+/// [`chip_row`] takes the whole row, reads its
+/// [`Choice`](pinion_core::widgets::chip_group::Choice), and passes the right
+/// value here, so a caller with a row has nothing to get wrong. This entry
+/// point stays for the chart bindings that paint a single chip outside any row.
 #[must_use]
 pub fn option_chip<S: InteractionState + Copy>(
     tag: String,
@@ -178,6 +183,47 @@ pub fn option_chip<S: InteractionState + Copy>(
     )
 }
 
+/// R1721 — paint a whole [`ChipGroup`]: one pill per chip, each already
+/// carrying the focusability, the on-ness and the posture the row's rule
+/// derives.
+///
+/// This is the entry point a screen with a row of chips wants, and the reason it
+/// exists is that the three facts a pill needs are three facts a screen was
+/// getting separately. Measured on 2026-08-19 by driving the analysis tool: one
+/// screen made every chip of an at-most-one row its own Tab stop, another made
+/// none of them anything at all, and a third — correct — had simply been written
+/// by somebody who knew. `focusable` is the one that bit: a chip in a composite
+/// row must **not** be a stop, because the row is, and
+/// [`Choice::is_composite`](pinion_core::widgets::chip_group::Choice::is_composite)
+/// is now what says so.
+///
+/// Returns the pills in painting order, laid out by the enclosing flex row at a
+/// uniform `width`. Width stays the caller's because it depends on the font and
+/// on how much room the screen has, and a framework that guessed it would be
+/// guessing about a font.
+///
+/// A screen whose chips carry its own palette — the analysis tool's bars, whose
+/// tones are the reference's and not Material's — keeps its own pill and asks
+/// [`ChipGroup::is_a_stop`] for the one thing it cannot derive by looking at a
+/// chip. That question and this function read the same derivation.
+#[must_use]
+pub fn chip_row(row: &ChipGroup, width: u32, theme: &Theme) -> Vec<Scene> {
+    row.chips()
+        .iter()
+        .map(|chip| {
+            option_chip(
+                chip.tag.clone(),
+                &chip.label,
+                chip.on,
+                row.is_a_stop(&chip.tag),
+                width,
+                chip.posture,
+                theme,
+            )
+        })
+        .collect()
+}
+
 #[must_use]
 pub fn chip_layout(size: Size, padding: Option<Rect>) -> LayoutStyle {
     let mut layout = LayoutStyle::new()
@@ -198,6 +244,109 @@ mod tests {
     use pinion_core::style::SizeValue;
     use pinion_core::theme::ColorRole;
     use pinion_core::widgets::button::ButtonState;
+    use pinion_core::widgets::chip_group::{Chip, ChipPosture, Choice};
+
+    fn row(choice: Choice) -> ChipGroup {
+        ChipGroup::new(
+            "row",
+            "Saved filters",
+            vec![
+                Chip::new("row.0", "units only", true),
+                Chip::new("row.1", "shared memory", false).with_posture(ChipPosture::Hover),
+                Chip::new("row.2", "locked", false).with_posture(ChipPosture::Locked),
+            ],
+            choice,
+        )
+    }
+
+    fn focusables(scenes: &[Scene]) -> Vec<bool> {
+        scenes
+            .iter()
+            .map(|scene| match scene {
+                Scene::Container(node) => node.layout.focusable,
+                other => panic!("a chip is a container, got {other:?}"),
+            })
+            .collect()
+    }
+
+    /// ★★★★★ R1721 — the focus stop is the row's rule, not a parameter a screen
+    /// guesses. A composite row's chips are hit targets; an independent row's
+    /// chips are each a stop. Measured before this round: one analysis screen had
+    /// three stops over an at-most-one row and another had none.
+    #[test]
+    fn r1721_a_chip_is_a_focus_stop_exactly_when_its_row_is_not() {
+        let theme = Theme::light();
+        assert_eq!(
+            focusables(&chip_row(&row(Choice::Any), 120, &theme)),
+            [true, true, true],
+            "independent chips are reached by Tab"
+        );
+        for choice in [Choice::AtMostOne, Choice::ExactlyOne] {
+            assert_eq!(
+                focusables(&chip_row(&row(choice), 120, &theme)),
+                [false, false, false],
+                "{}: the ROW is the stop, so its chips are not",
+                choice.wire()
+            );
+        }
+    }
+
+    /// The pill carries the chip's own three facts: its tag, its on-ness (which
+    /// drops the outline) and its posture (which tints the fill).
+    #[test]
+    fn r1721_each_pill_carries_its_own_chip() {
+        let theme = Theme::light();
+        let pills = chip_row(&row(Choice::Any), 120, &theme);
+        assert_eq!(pills.len(), 3, "one pill per chip");
+        let tags: Vec<_> = pills
+            .iter()
+            .map(|scene| match scene {
+                Scene::Container(node) => node.tag.clone().expect("a pill is tagged"),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert_eq!(tags, ["row.0", "row.1", "row.2"]);
+        let styles: Vec<_> = pills
+            .iter()
+            .map(|scene| match scene {
+                Scene::Container(node) => node.style.clone(),
+                other => panic!("{other:?}"),
+            })
+            .collect();
+        assert!(
+            styles[0].border.is_none(),
+            "the chip that is on drops its outline"
+        );
+        assert!(styles[1].border.is_some(), "the ones that are off keep it");
+        assert_ne!(
+            styles[1].fill, styles[2].fill,
+            "a hovered chip and a locked one are tinted differently"
+        );
+    }
+
+    /// An empty row paints nothing, and does not panic reaching for a chip.
+    #[test]
+    fn r1721_an_empty_row_paints_no_pills() {
+        let empty = ChipGroup::new("row", "Saved filters", Vec::new(), Choice::AtMostOne);
+        assert!(chip_row(&empty, 120, &Theme::light()).is_empty());
+    }
+
+    /// ★★★ This painter and a screen that paints its own pill ask the same
+    /// question, so the two cannot answer it differently.
+    #[test]
+    fn r1721_the_painter_and_a_hand_painted_bar_read_one_derivation() {
+        let theme = Theme::light();
+        for choice in Choice::ALL {
+            let group = row(choice);
+            let painted = focusables(&chip_row(&group, 120, &theme));
+            let asked: Vec<bool> = group
+                .chips()
+                .iter()
+                .map(|chip| group.is_a_stop(&chip.tag))
+                .collect();
+            assert_eq!(painted, asked, "{}", choice.wire());
+        }
+    }
 
     #[test]
     fn r1446_selection_border_is_the_outline_only_while_unselected() {

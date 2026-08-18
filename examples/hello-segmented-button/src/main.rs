@@ -41,15 +41,14 @@
 //! `Home` / `End` jump to the first / last segment, and the
 //! single-key shortcuts `d` / `w` / `m` select Day / Week / Month.
 
-use pinion_a11y::{
-    AccessAction, AccessFocus, AccessNode, RadioCell, WidgetA11y, radiogroup_radio_nodes,
-};
+use pinion_a11y::{AccessAction, AccessFocus, AccessNode, WidgetA11y};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
     AlignItems, BoxStyle, FlexDirection, JustifyContent, LayoutStyle, Size, TextStyle,
 };
 use pinion_core::theme::{ColorRole, Theme, use_theme};
+use pinion_core::widgets::chip_group::{Chip, ChipGroup, ChipPosture, Choice};
 use pinion_core::widgets::radio::{RadioEvent, RadioState};
 use pinion_core::widgets::radio_group::RadioGroupExternal;
 use pinion_core::{Color, Frame, Scene, WidgetCore};
@@ -71,6 +70,22 @@ const WIN_H: u32 = 140;
 const THEME_TAG: &str = "app";
 const N: usize = 3;
 const PRIMARY_TAG: &str = "view_mode";
+
+/// ★★★★★ R1721 — how many segments may be on at once, which is what the control
+/// **is**.
+///
+/// Exactly one: a view mode is chosen, not accumulated, and a control that could
+/// be emptied would leave the view showing nothing. So the track is one Tab stop
+/// with a cursor inside it, the segments are `radio`s under a `radiogroup`, an
+/// arrow both moves and chooses, and choosing the segment already on is
+/// **refused** rather than silently ignored.
+///
+/// The reference toolkit cannot express this row: measured at 6.11.1 by building
+/// a probe and running it, an exclusive set of checkable buttons reports the
+/// push-button role for its members whatever the rule, the object carrying the
+/// rule has no accessibility node at all, and clicking the chosen member leaves it
+/// chosen with nothing said.
+const VIEW_MODE_IS: Choice = Choice::ExactlyOne;
 
 const SEG_W: u32 = 110;
 const SEG_H: u32 = 40;
@@ -106,12 +121,49 @@ impl GroupState {
     }
 }
 
+/// ★★★★★ R1721 — this control, as a value that knows its own rule.
+///
+/// A single-select segmented button IS a row of chips whose rule is
+/// [`Choice::ExactlyOne`], and that is the arm no analysis screen drives: this
+/// binding is what keeps it from being a shape only its own unit tests have seen.
+/// The cursor seat is the roving active index the group already keeps, so no
+/// second copy of "where the cursor is" appears here.
+fn segment_row(state: &GroupState) -> ChipGroup {
+    ChipGroup::new(
+        PRIMARY_TAG,
+        "View mode",
+        (0..N)
+            .map(|i| {
+                Chip::new(
+                    format!("{PRIMARY_TAG}#{i}"),
+                    segment_label(i),
+                    state.rows[i].1,
+                )
+                .with_posture(posture_of(state.rows[i].0))
+            })
+            .collect(),
+        VIEW_MODE_IS,
+    )
+    .with_cursor(rc::active_index(&state.rows, state.focused))
+}
+
+/// A segment's posture, from the radio's own statechart state.
+const fn posture_of(state: RadioState) -> ChipPosture {
+    match state {
+        RadioState::Idle => ChipPosture::Idle,
+        RadioState::Hover => ChipPosture::Hover,
+        RadioState::Pressed => ChipPosture::Pressed,
+        RadioState::Disabled => ChipPosture::Locked,
+    }
+}
+
 /// view-fn (§6.3): pure sync `GroupState -> Scene`. Builds the tonal
 /// track row holding N contiguous segments, each tagged
 /// `"view_mode#<i>"` for the R51.42 sub-index routing.
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: GroupState, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
+    let row = segment_row(&state);
     let segments: Vec<Scene> = (0..N)
         .map(|i| segment(i, state.rows[i].0, state.rows[i].1, &theme))
         .collect();
@@ -127,12 +179,14 @@ fn view(state: GroupState, _frame: &Frame) -> Scene {
                 BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHighest))
                     .with_corner_radius(TRACK_RADIUS),
             )
-            // (R1030 §5.39) hand-composed focus stop — composing view owns the opt-in.
+            // (R1030 §5.39) the focus stop. ★★★★★ R1721 — no longer a hand-composed
+            // `true`: exactly-one makes this a WAI-ARIA composite, so the TRACK is
+            // the stop and its segments are not, and the rule is what says so.
             .with_layout(
                 LayoutStyle::new()
                     .flex(FlexDirection::Row)
                     .with_align_items(AlignItems::Center)
-                    .with_focusable(true)
+                    .with_focusable(row.is_a_stop(PRIMARY_TAG))
                     .with_padding(Rect::new(TRACK_PAD, TRACK_PAD, TRACK_PAD, TRACK_PAD))
                     .with_gap(0),
             ),
@@ -326,23 +380,13 @@ impl WidgetA11y for SegmentedView {
     /// (so the leading check glyph's `TextNode` cannot corrupt the
     /// accessible name) and keep the screen-reader text single-sourced
     /// with the painted label.
+    /// ★★★★★ R1721 — built from the row's own rule now. The tree is the same
+    /// `radiogroup` + `radio` per segment it always was; what changed is that
+    /// nothing here *chooses* those roles. [`VIEW_MODE_IS`] says exactly one
+    /// segment may be on, and the roles, the single Tab stop, the arrows and the
+    /// refusal that stops the last one being cleared all come off that word.
     fn access_node(state: &GroupState, focused: Option<&str>) -> Vec<AccessNode> {
-        let group_focused = focused == Some(<Self as WidgetCore>::tag());
-        let active_idx = rc::active_index(&state.rows, state.focused);
-        let tags: Vec<String> = (0..N).map(|i| format!("{PRIMARY_TAG}#{i}")).collect();
-        let cells: Vec<RadioCell<'_>> = state
-            .rows
-            .iter()
-            .enumerate()
-            .map(|(i, (radio_state, selected))| RadioCell {
-                tag: &tags[i],
-                label: Some(segment_label(i)),
-                state: *radio_state,
-                selected: *selected,
-                focused: group_focused && i == active_idx,
-            })
-            .collect();
-        radiogroup_radio_nodes(<Self as WidgetCore>::tag(), "View mode", &cells)
+        pinion_a11y::chip_group_nodes(&segment_row(state), focused)
     }
 
     /// §5.40 composite focus model — when the group is focused, report

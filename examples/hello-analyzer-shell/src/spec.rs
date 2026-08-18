@@ -35,6 +35,7 @@ use pinion_core::availability::Unavailable;
 /// R1697 — the operations table's shape, from the framework rather than from a
 /// second copy of the sibling screen's (see [`OPERATIONS`]).
 pub use pinion_core::operation::Operation as OperationSpec;
+use pinion_core::widgets::chip_group::Choice;
 use pinion_core::widgets::destination::{Destination, Destinations};
 pub use pinion_core::widgets::roving::{Activation, Axis, Ends, RovingSpec};
 
@@ -378,6 +379,22 @@ pub const FOCUS_RING: &[StopSpec] = &[
         // R1662 and published it to nobody; this round makes it the active
         // descendant, which is the half it was missing.
         cursor: None,
+    },
+    // ★★★★★ R1721 — the filter card's saved-filter bar, and the first stop this
+    // screen has ever had **inside a card**. Measured before this round by driving
+    // the running screen: the card's five chips were announced as operable and a
+    // keyboard reached none of them — the whole board's interior was pointer-only.
+    //
+    // It sits here because the ring is enumerated depth-first over the paint and
+    // the cards are painted inside the canvas. Its cursor is not written out:
+    // `FILTER_ROW` derives it, and this entry reads that derivation so the ring
+    // census and the widget cannot disagree about the arrows. The rule is also why
+    // the bar is ONE stop rather than five.
+    StopSpec {
+        tag: "card.filter#3.chips",
+        holds: "the filter card's saved filters",
+        at: Where::At("dashboard"),
+        cursor: FILTER_ROW.cursor(),
     },
     StopSpec {
         tag: "shell.appbar",
@@ -934,6 +951,20 @@ pub const MAP_UNRESOLVED: usize = 6;
 /// The query the filter card opens with.
 pub const FILTER_QUERY: &str = "name ~= \"units/**\"";
 
+/// ★★★★★ R1721 — how many saved filters the card may have applied at once.
+///
+/// Measured on the reference's own mockup: both places it draws this bar draw
+/// exactly one chip lit out of three and out of five, which is the shape of a
+/// saved filter — applying one replaces the last, and applying the current one
+/// again means "stop filtering". The capture viewer's bar already behaved that
+/// way and announced something else; this card announced the same wrong thing
+/// and did not behave at all.
+///
+/// One word, and the `listbox` the bar is announced as, the `option` each chip
+/// is, the `aria-selected` that carries its on-ness, the single keyboard stop,
+/// the arrows and the `Enter` all follow.
+pub const FILTER_ROW: Choice = Choice::AtMostOne;
+
 /// The saved filter chips, and whether each is on when the screen opens.
 pub const FILTER_CHIPS: &[(&str, bool)] = &[
     ("units only", true),
@@ -1436,9 +1467,20 @@ pub const VOICES: &[VoiceSpec] = &[
         population: Population::One,
         at: Where::At("dashboard"),
     },
+    // ★★★★★ R1721 — the bar and its chips announce what the RULE says they are.
+    // Both were the word `button`, typed here, over a set that can never have two
+    // on; now they are what `chip_group_nodes` actually builds, read from the same
+    // declaration, so this census cannot check one person's typing against
+    // another's.
+    VoiceSpec {
+        tag: "card.filter#3.chips",
+        role: pinion_a11y::group_role(FILTER_ROW).aria_name(),
+        population: Population::One,
+        at: Where::At("dashboard"),
+    },
     VoiceSpec {
         tag: "card.filter#3.chip.{}",
-        role: "button",
+        role: pinion_a11y::member_role(FILTER_ROW).aria_name(),
         population: Population::Chips,
         at: Where::At("dashboard"),
     },

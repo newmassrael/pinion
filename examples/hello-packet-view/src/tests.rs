@@ -236,8 +236,80 @@ fn r1663_counts_carry_thousands_separators() {
     assert_eq!(comma(1_000), "1,000");
 }
 
-/// The saved filters and the layer folds are independent switches, and the wire
-/// and a press reach the same ones.
+/// ★★★★★ R1721 — **at most one saved filter is on**, which is what this bar
+/// declares and is now the reason it is announced as a `listbox`.
+///
+/// The name of the test next door — "the switches are independent" — was true of
+/// the layer folds and false of the saved filters for the whole time it stood
+/// there: `toggle_saved` cleared the vector by hand and nothing asserted it, so
+/// the rule lived in one function while three readers announced another. Pinning
+/// the BEHAVIOUR here is what keeps the declaration honest: change
+/// `spec::SAVED_ROW` and this fails, rather than the census quietly agreeing with
+/// whatever the rule became.
+#[test]
+fn r1721_at_most_one_saved_filter_is_on() {
+    with_state(|state| {
+        super::toggle_saved(state, 1);
+        assert_eq!(state.saved.get(), vec![false, true, false]);
+        super::toggle_saved(state, 2);
+        assert_eq!(
+            state.saved.get(),
+            vec![false, false, true],
+            "choosing a second saved filter REPLACES the first"
+        );
+        super::toggle_saved(state, 2);
+        assert_eq!(
+            state.saved.get(),
+            vec![false, false, false],
+            "and choosing the one that is on empties the row"
+        );
+        assert_eq!(
+            super::saved_row(state).choice(),
+            pinion_core::widgets::chip_group::Choice::AtMostOne,
+            "the behaviour above IS the declared rule, not a coincidence"
+        );
+    });
+}
+
+/// ★★★★★ R1721 — **the accessibility tree reports the saved filter that is on.**
+///
+/// Found by a counterfactual that PASSED: replacing the live row with an all-off
+/// one in `filter_nodes` — so the tree announced "no saved filter applied" while
+/// the bar painted one lit — was caught by nothing in this crate's suite. The
+/// integration demo caught it, and a gate that lives one process away from the
+/// defect is the R1712 / R1719 class: the layer the defect is in had no test.
+#[test]
+fn r1721_the_tree_reports_the_saved_filter_that_is_on() {
+    with_state(|state| {
+        let selected = |state: &std::rc::Rc<super::ViewState>| -> Vec<bool> {
+            super::filter_nodes(state)
+                .into_iter()
+                .filter(|node| node.tag.starts_with("pv.filter.saved."))
+                .map(|node| node.selected == Some(true))
+                .collect()
+        };
+        assert_eq!(
+            selected(state),
+            vec![false, false, false],
+            "the bar opens with nothing applied"
+        );
+        super::toggle_saved(state, 1);
+        assert_eq!(
+            selected(state),
+            vec![false, true, false],
+            "★ the option the row has chosen is the one announced as selected"
+        );
+        super::toggle_saved(state, 2);
+        assert_eq!(
+            selected(state),
+            vec![false, false, true],
+            "★ and it MOVES with the choice rather than being read once"
+        );
+    });
+}
+
+/// The saved filters and the layer folds are separate, and the wire and a press
+/// reach the same ones.
 #[test]
 fn r1663_the_switches_are_independent() {
     with_state(|state| {
@@ -440,7 +512,7 @@ fn r1693_the_arrow_keys_a_keyboard_sends_move_the_selection() {
 fn r1693_the_screen_is_a_keyboard_ring_of_its_composites_and_buttons() {
     let owner = Owner::new();
     owner.run(|| {
-        let _state = use_view_state();
+        let state = use_view_state();
         let scene = super::view(
             (pinion_core::widgets::text_field::TextFieldState::Idle, 0),
             pinion_core::Frame::default(),
@@ -453,7 +525,17 @@ fn r1693_the_screen_is_a_keyboard_ring_of_its_composites_and_buttons() {
             // filter only a mouse has.
             "pv.filter.query".to_owned(),
         ];
-        want.extend((0..spec::SAVED_FILTERS.len()).map(|n| format!("pv.filter.saved.{n}")));
+        // ★★★★★ R1721 — the saved-filter bar's stops come from its RULE, and
+        // this is what the derivation costs a keyboard: three stops became one,
+        // with arrows, `Home`, `End` and `Enter` inside it. The list is not
+        // written down here — `spec::SAVED_ROW` is, and a screen that changed the
+        // rule without changing the ring would fail this rather than drift.
+        want.extend(
+            super::saved_row(&state)
+                .stops()
+                .into_iter()
+                .map(str::to_owned),
+        );
         let mut got = scene.collect_focusable_tags();
         got.sort();
         want.sort();

@@ -49,6 +49,7 @@
 pub mod action;
 pub mod assemble;
 pub mod chart;
+pub mod chip_group;
 pub mod described;
 pub mod focus;
 pub mod grid;
@@ -81,6 +82,7 @@ mod test_fixtures;
 
 pub use action::{AccessAction, PinionAccessAction, translate_action};
 pub use assemble::{build_access_tree, resolve_access_bounds};
+pub use chip_group::{ChipFocus, chip_group_nodes, group_role, member_role};
 pub use described::describedby_region;
 pub use focus::AccessFocus;
 pub use grid::{GridCell, GridColumn, GridRow, grid_table_nodes};

@@ -984,11 +984,10 @@ fn r1663_the_decode_tree_and_the_byte_map_name_the_same_fields() {
 fn r1696_every_composite_pane_and_chip_is_a_keyboard_stop() {
     sweep(|_, _, scene, _, case| {
         let walked = scene.collect_focusable_tags();
-        let mut want: Vec<String> = spec::SAVED_FILTERS
-            .iter()
-            .enumerate()
-            .map(|(n, _)| format!("pv.filter.saved.{n}"))
-            .collect();
+        // ★★★★★ R1721 — the bar's stops are its rule's, not a list here. Three
+        // became one, and the arrows, `Home`, `End` and `Enter` that one stop
+        // carries are what a keyboard got in exchange.
+        let mut want: Vec<String> = super::saved_stops();
         want.extend(spec::PANES.iter().map(|pane| pane.tag.to_owned()));
         // R1707 — the query box is a stop too, and it is the first one: a
         // filter a person cannot Tab to is a filter only a mouse has.

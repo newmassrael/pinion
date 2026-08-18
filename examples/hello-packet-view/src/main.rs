@@ -49,8 +49,8 @@ use std::collections::BTreeMap;
 use std::rc::Rc;
 
 use pinion_a11y::{
-    AccessFocus, AccessLive, AccessNode, AccessState, AccessValue, AriaRole, GridCell, GridColumn,
-    GridRow, WidgetA11y, grid_table_nodes,
+    AccessFocus, AccessLive, AccessNode, AccessValue, AriaRole, GridCell, GridColumn, GridRow,
+    WidgetA11y, grid_table_nodes,
 };
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
@@ -63,9 +63,10 @@ use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::shrink::ShrinkPolicy;
 use pinion_core::style::{Border, BoxStyle, Color, LayoutStyle, Size, TextOverflow, TextStyle};
 use pinion_core::theme::{ColorRole, Theme, use_theme};
-use pinion_core::utterance::{Announced, Utterance};
+use pinion_core::utterance::{Announced, Tone, Utterance};
 use pinion_core::voice::Silence;
 use pinion_core::widget_core::ExtraExternal;
+use pinion_core::widgets::chip_group::{Chip, ChipGroup};
 use pinion_core::widgets::field_bytes::{
     ByteExtent, ByteMap, ByteMapExternal, ByteMapState, ByteSource, Coverage, FieldSpan, SourceId,
     use_byte_map,
@@ -395,7 +396,24 @@ struct ViewState {
     /// is exactly what this list's selection means.
     cell: Signal<Option<usize>>,
     /// Which saved filters are on.
+    ///
+    /// ★★★★★ R1721 — **at most one of them ever is**, and until that round only
+    /// [`toggle_saved`] knew: the vector was cleared by hand there while the
+    /// accessibility tree announced three independent toggle buttons and this
+    /// screen's own test file called them "independent switches". The rule is
+    /// now `spec::SAVED_ROW`, declared once and read by [`saved_row`], and the
+    /// roles, the Tab stops and the arrows are derived from it.
     saved: Signal<Vec<bool>>,
+    /// ★★★★★ R1721 — where the saved-filter row's keyboard cursor rests.
+    ///
+    /// A second fact from [`saved`](Self::saved), for the reason the byte grid's
+    /// cursor is a second fact from its selection: the row declares
+    /// [`Activation::Explicit`], so a reader walks the chips *without* applying
+    /// them and presses `Enter` on the one they want. Collapsing the two would
+    /// make every arrow apply a filter, which is the behaviour
+    /// [`Activation::Follows`] is for and the opposite of what a saved-filter
+    /// bar should do.
+    saved_cursor: Signal<usize>,
     /// ★★★★★ R1707 — the query the list is running, as the person wrote it.
     ///
     /// **This is the field's own buffer, not a copy of it.** The alternative —
@@ -573,6 +591,7 @@ fn use_view_state() -> Rc<ViewState> {
         // started with a cell addressed would announce a column nobody chose.
         cell: Signal::new(None),
         saved: Signal::new(vec![false; spec::SAVED_FILTERS.len()]),
+        saved_cursor: Signal::new(0),
         // R1707 — the field's own buffer, resolved above. The screen opens
         // unfiltered; see `spec::EXAMPLE_QUERY` for why the reference's own
         // query is a saved filter rather than the opening state.
@@ -834,6 +853,24 @@ fn saved_chip(n: usize) -> Rect {
         320 + u32::try_from(spec::SAVED_FILTERS.len() - n).unwrap_or(1) * (width + 8),
     );
     Rect::new(x, APP_BAR_H + 12, width, 22)
+}
+
+/// ★★★★★ R1721 — the saved-filter **bar**: the box the chips sit in, in the
+/// filter strip's own coordinates.
+///
+/// It exists because the row is one widget: an assistive technology asking where
+/// "Saved filters" is should be told where the chips are, and a group whose box
+/// was the whole strip would answer with the query field's ground too. Derived
+/// from the chips rather than written down, so a fourth saved filter moves it.
+fn saved_bar(strip: Rect) -> Rect {
+    let first = saved_chip(0);
+    let last = saved_chip(spec::SAVED_FILTERS.len().saturating_sub(1));
+    Rect::new(
+        first.x,
+        first.y - strip.y,
+        (last.x + last.w).saturating_sub(first.x),
+        first.h,
+    )
 }
 
 /// The n-th message row, in the list pane's own coordinates.
@@ -1187,21 +1224,82 @@ fn announce_query(state: &Rc<ViewState>) {
 /// whole queries rather than clauses: turning two on would mean composing them,
 /// and the reference offers no such composition — pressing a second saved
 /// filter there replaces the first.
+/// ★★★★★ R1721 — **the saved-filter bar, as the one widget it is.**
+///
+/// The row's rule is declared here and nowhere else, and six things follow from
+/// it: the `listbox` the group is announced as, the `option` each chip is, the
+/// `aria-selected` that carries a chip's on-ness, the single Tab stop the bar
+/// costs, the arrows that walk it, and the `Enter` that applies one. Before this
+/// existed each of those was a separate decision and two of them were wrong —
+/// measured by driving the running screen, the bar announced three independent
+/// toggle buttons over a set that can never have two on.
+///
+/// [`SAVED_ROW`](spec::SAVED_ROW) is the rule; this projects the screen's own
+/// state through it, so there is no second copy of what is on.
+fn saved_row(state: &Rc<ViewState>) -> ChipGroup {
+    saved_row_of(&state.saved.get(), state.saved_cursor.get())
+}
+
+/// The bar built from an on-set and a cursor, which is what makes the roster and
+/// the rule readable without a running screen — the censuses ask for the stops,
+/// and the stops do not depend on which chip is on.
+fn saved_row_of(on: &[bool], cursor: usize) -> ChipGroup {
+    ChipGroup::new(
+        SAVED_TAG,
+        "Saved filters",
+        spec::SAVED_FILTERS
+            .iter()
+            .enumerate()
+            .map(|(n, saved)| {
+                Chip::new(
+                    format!("{SAVED_TAG}.{n}"),
+                    saved.name,
+                    on.get(n).copied().unwrap_or(false),
+                )
+            })
+            .collect(),
+        spec::SAVED_ROW,
+    )
+    .with_cursor(cursor)
+}
+
+/// The keyboard stops the saved-filter bar costs, derived from its rule.
+///
+/// Read by the two ring censuses only: the production ring is *enumerated off the
+/// painted scene*, which is the arbiter — a list this file also asserted against
+/// would be the screen grading its own homework.
+#[cfg(test)]
+fn saved_stops() -> Vec<String> {
+    saved_row_of(&[], 0)
+        .stops()
+        .into_iter()
+        .map(str::to_owned)
+        .collect()
+}
+
+/// The bar's own tag — the group node, and the Tab stop the rule derives.
+const SAVED_TAG: &str = "pv.filter.saved";
+
 fn toggle_saved(state: &Rc<ViewState>, n: usize) {
-    let was_on = state.saved.get().get(n).copied().unwrap_or(false);
-    let mut saved = vec![false; spec::SAVED_FILTERS.len()];
-    if let Some(slot) = saved.get_mut(n) {
-        *slot = !was_on;
+    let mut row = saved_row(state);
+    let said = row.choose(n);
+    // ★★★★★ R1721 — the rule applied the change; this screen only stores it.
+    // The `vec![false; N]` that used to live here was the rule, written out at
+    // one site while three others announced a different one.
+    state.saved.set(row.on());
+    if said.tone() == Tone::Done {
+        state.saved_cursor.set(n);
+        let on = row.chips()[n].on;
+        set_query(state, if on { spec::SAVED_FILTERS[n].query } else { "" });
+        state.say(Utterance::done(format!(
+            "{} {} — {}",
+            if on { "applied" } else { "cleared" },
+            spec::SAVED_FILTERS[n].name,
+            count_line(state),
+        )));
+    } else {
+        state.say(said);
     }
-    let on = !was_on;
-    state.saved.set(saved);
-    set_query(state, if on { spec::SAVED_FILTERS[n].query } else { "" });
-    state.say(Utterance::done(format!(
-        "{} {} — {}",
-        if on { "applied" } else { "cleared" },
-        spec::SAVED_FILTERS[n].name,
-        count_line(state),
-    )));
 }
 
 fn toggle_layer(state: &Rc<ViewState>, n: usize) {
@@ -1316,6 +1414,11 @@ fn pane_cursor(state: &Rc<ViewState>, stop: &str) -> Option<Roving> {
                 .collect(),
             format!("pv.bytes.cell.{}", state.byte.get()),
         ),
+        // ★★★★★ R1721 — the saved-filter bar's cursor is not written out here at
+        // all: the row's own rule builds it, seats it, and picks the policy. The
+        // three panes below still project by hand because their rosters are the
+        // screen's subject matter; a chip row's roster IS the widget.
+        SAVED_TAG => return saved_row(state).cursor(),
         _ => return None,
     };
     let mut roving = Roving::new(spec);
@@ -1386,6 +1489,16 @@ fn seat_pane_cursor(state: &Rc<ViewState>, stop: &str, roving: &Roving) {
             }
         }
         "pv.bytes" => select_byte(state, index),
+        // ★★★★★ R1721 — walking the saved-filter bar moves the CURSOR and applies
+        // nothing, because the row declared `Explicit`. A bar whose arrows applied
+        // filters would run four queries on the way to the fifth chip, and that
+        // is the distinction `Activation` exists to make.
+        SAVED_TAG => {
+            state.saved_cursor.set(index);
+            if let Some(chip) = saved_row(state).chips().get(index) {
+                state.say(Utterance::unchanged(chip.label.clone()));
+            }
+        }
         _ => {}
     }
 }
@@ -1416,17 +1529,18 @@ fn key_at(state: &Rc<ViewState>, focused: Option<&str>, chord: &str) -> bool {
             // they are the same write as an arrow: `seat_pane_cursor` reads the
             // whole path, so there is one place that turns a cursor into state
             // whatever key moved it.
-            Landing::Moved { choose: true, .. } | Landing::Entered(_) | Landing::Exited(_) => {
+            // ★★★★★ R1721 — `choose: false` seats the cursor too, and until this
+            // round it did not: every stop here declared `Follows`, so the arm
+            // was dead and the saved-filter bar — the screen's first `Explicit`
+            // composite — would have walked its cursor and thrown the move away.
+            // A dead arm is a defect waiting for its first caller.
+            Landing::Moved { .. } | Landing::Entered(_) | Landing::Exited(_) => {
                 seat_pane_cursor(state, stop, &roving);
             }
-            // Every pane here declares `Follows`, so `choose_keys` is empty and
-            // these cannot arrive; the arms exist because leaving them out
-            // would make a later `Explicit` pane silently do nothing, which is
-            // the defect this round measured on the sibling screen.
             Landing::Chosen(_) | Landing::Refused(_) => {
                 activate_tag(state, &roving.tag_path());
             }
-            Landing::Moved { .. } | Landing::Held(_) | Landing::Nowhere => {}
+            Landing::Held(_) | Landing::Nowhere => {}
         }
         return true;
     }
@@ -1626,7 +1740,6 @@ fn filter_bar(
     ink: Ink,
 ) -> Scene {
     let rect = filter_rect();
-    let saved = state.saved.get();
     let mut children = Vec::new();
     // ★★★ R1707 — the query, as a box a person types in.
     //
@@ -1660,28 +1773,49 @@ fn filter_bar(
             ink.err,
         ));
     }
-    for (n, saved_filter) in spec::SAVED_FILTERS.iter().enumerate() {
-        let name = &saved_filter.name;
-        let chip = saved_chip(n);
-        let on = saved.get(n).copied().unwrap_or(false);
-        children.push(
+    // ★★★★★ R1721 — the bar is ONE widget, and it says so in the paint: a group
+    // container over the chips, focusable exactly when the rule makes the row
+    // the stop. The pill keeps this screen's own tones (the reference's, not
+    // Material's) — what came from the framework is the one thing a chip cannot
+    // work out by looking at itself, and the `with_focusable(true)` that used to
+    // sit here was that answer, guessed.
+    let row_group = saved_row(state);
+    let bar = saved_bar(rect);
+    let mut pills = Vec::with_capacity(row_group.len() * 2);
+    for (n, chip) in row_group.chips().iter().enumerate() {
+        let at = saved_chip(n);
+        let (cx, cy) = (at.x - bar.x, at.y - rect.y - bar.y);
+        pills.push(
             box_at(
-                &format!("pv.filter.saved.{n}"),
-                Rect::new(chip.x, chip.y - rect.y, chip.w, chip.h),
-                if on { ink.lit } else { ink.surface },
-                Some(if on { ink.accent } else { ink.outline }),
+                &chip.tag,
+                Rect::new(cx, cy, at.w, at.h),
+                if chip.on { ink.lit } else { ink.surface },
+                Some(if chip.on { ink.accent } else { ink.outline }),
                 11,
             )
-            // A plain button is its own stop.
-            .with_focusable(true),
+            .with_focusable(row_group.is_a_stop(&chip.tag)),
         );
-        children.push(label(
-            (*name).to_owned(),
-            Rect::new(chip.x + 10, chip.y - rect.y + 5, chip.w - 20, 12),
+        pills.push(label(
+            chip.label.clone(),
+            Rect::new(cx + 10, cy + 5, at.w - 20, 12),
             FONT_SMALL,
-            if on { ink.accent } else { ink.text_2 },
+            if chip.on { ink.accent } else { ink.text_2 },
         ));
     }
+    children.push(
+        Scene::Container(
+            ContainerNode::new(pills)
+                .with_tag(SAVED_TAG.to_owned())
+                // ★ A tagged node that is not pointer-transparent becomes the
+                // router's hit target and swallows the press, because nothing
+                // resolves the BAR to an action — the class
+                // `debt-a-tagged-node-can-swallow-a-real-press-anywhere` names.
+                // The bar is a keyboard fact; the pointer still reaches whichever
+                // chip it is over.
+                .with_layout(absolute(bar).with_pointer_transparent(true)),
+        )
+        .with_focusable(row_group.is_a_stop(SAVED_TAG)),
+    );
     children.push(tagged_label(
         "pv.filter.count",
         count_line(state),
@@ -2969,7 +3103,6 @@ fn app_bar_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
 /// The filter bar: the query box, the saved filters as toggles, and how much of
 /// the capture matched.
 fn filter_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
-    let saved = state.saved.get();
     let mut group = AccessNode::new("pv.filter", AriaRole::Group).with_name("Filter");
     let mut nodes = Vec::new();
     // ★★★ R1707 — the query is a text box, and it announces what it holds and
@@ -2991,22 +3124,18 @@ fn filter_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
         group = group.with_child("pv.filter.fault");
         nodes.push(AccessNode::new("pv.filter.fault", AriaRole::Status).with_name(why));
     }
-    for (n, saved_filter) in spec::SAVED_FILTERS.iter().enumerate() {
-        let name = saved_filter.name;
-        let tag = format!("pv.filter.saved.{n}");
-        group = group.with_child(tag.clone());
-        // A toggle button: WAI-ARIA reflects a saved filter's on/off as
-        // `aria-pressed`, and the chip paints its label as a SIBLING of its box,
-        // so the name comes from the table both readers share.
-        nodes.push(
-            AccessNode::new(tag, AriaRole::Button)
-                .with_name(name)
-                .with_state(AccessState {
-                    checked: Some(saved.get(n).copied().unwrap_or(false)),
-                    ..AccessState::default()
-                }),
-        );
-    }
+    // ★★★★★ R1721 — the bar's whole subtree comes from its rule. It used to be
+    // three `button`s with `aria-pressed`, hand-written here, over a set that can
+    // never have two on: a screen reader was told "toggle button, not pressed"
+    // three times where the truth is "one of three". The rule is
+    // `spec::SAVED_ROW` and this call is the only thing that reads it into a
+    // tree, so the roles, the selection attribute, the cursor and the focus
+    // cannot be chosen here any more.
+    group = group.with_child(SAVED_TAG);
+    nodes.extend(pinion_a11y::chip_group_nodes(
+        &saved_row(state),
+        focus_state::focused().as_deref(),
+    ));
     group = group.with_child("pv.filter.count");
     nodes.push(AccessNode::new("pv.filter.count", AriaRole::Status));
     nodes.insert(0, group);

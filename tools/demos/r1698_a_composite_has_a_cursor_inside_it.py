@@ -195,13 +195,17 @@ def capture(app: RpcSubprocess) -> None:
     # as a regression, in CI, one round later. A name list says WHICH stop
     # arrived; a count says only that the number moved, which is the half that
     # cannot be reviewed.
+    # ★★★★★ R1721 — the three saved-filter chips became ONE stop, and that is the
+    # round's headline rather than a regression: the bar declares that at most one
+    # of its filters may be on, so it is a WAI-ARIA composite — one Tab stop with
+    # a cursor, arrows, `Home`, `End` and `Enter` inside it. The screen's behaviour
+    # was already at-most-one; what it announced was three independent toggle
+    # buttons, which is what the ring above was a picture of.
     assert_eq(
         walked,
         [
             "pv.filter.query",
-            "pv.filter.saved.0",
-            "pv.filter.saved.1",
-            "pv.filter.saved.2",
+            "pv.filter.saved",
             "pv.list",
             "pv.tree",
             "pv.bytes",
@@ -224,20 +228,60 @@ def capture(app: RpcSubprocess) -> None:
         app.tick(16)
         assert_eq(cursor(app) != first, True, f"E: {stop}: the arrow moved its cursor")
 
-    banner("F — ★ and a plain button owns no cursor, so an arrow there moves nothing")
+    banner("F — ★ an arrow belongs to the stop it is pressed at, and to no other")
+    # ★★★★★ R1721 — this section used to stand on the three saved-filter chips,
+    # which were three plain-button stops. They are one composite now, so the
+    # property is asserted in the two forms that survive the change and are
+    # stronger than what they replace:
+    #
+    #   * a stop with NO roster (the query box) consumes an arrow without moving
+    #     anything — the original claim, on a stop that is genuinely rosterless;
+    #   * a stop WITH a roster (the saved-filter bar) moves ITS OWN cursor and
+    #     still leaves the message list alone, which the chips could not show
+    #     because they had no cursor to move.
     row_before = app.query(f"{EXT}/selected_row")
-    for n in range(3):
-        chip = f"pv.filter.saved.{n}"
-        app.request("focus/set", {"tag": chip})
-        app.tick(16)
-        nodes, _ = tree(app)
-        ok(f"F: {chip} publishes no roster", nodes[chip].get("navigation") is None)
-        app.key(path=chip, name="ArrowDown")
-        app.tick(16)
+    app.request("focus/set", {"tag": "pv.filter.query"})
+    app.tick(16)
+    nodes, _ = tree(app)
+    ok(
+        "F: the query box publishes no roster",
+        nodes["pv.filter.query"].get("navigation") is None,
+    )
+    app.key(path="pv.filter.query", name="ArrowDown")
+    app.tick(16)
     assert_eq(
         app.query(f"{EXT}/selected_row"),
         row_before,
-        "F: ★ standing on a filter chip, ArrowDown no longer moves the message list",
+        "F: ★ standing on the query box, ArrowDown does not move the message list",
+    )
+
+    app.request("focus/set", {"tag": "pv.filter.saved"})
+    app.tick(16)
+    nodes, _ = tree(app)
+    bar = nodes["pv.filter.saved"]
+    ok(
+        "F: ★★★ the saved-filter bar publishes a roster where three plain buttons "
+        "used to be — its rule made it a composite",
+        bar.get("navigation") is not None and len(bar["navigation"]["members"]) == 3,
+    )
+    assert_eq(
+        bar["navigation"]["activation"],
+        "explicit",
+        "F: ★★★ and arriving does NOT apply the filter — a bar whose arrows ran "
+        "queries would run two on the way to the third chip",
+    )
+    seat_before = cursor(app)
+    app.key(path="pv.filter.saved", name=bar["navigation"]["keys"][0])
+    app.tick(16)
+    assert_eq(
+        cursor(app) != seat_before,
+        True,
+        "F: the arrow moved the BAR's cursor",
+    )
+    assert_eq(
+        app.query(f"{EXT}/selected_row"),
+        row_before,
+        "F: ★ and left the message list where it was",
     )
 
     banner("G — the wire's own channel still reaches the list")

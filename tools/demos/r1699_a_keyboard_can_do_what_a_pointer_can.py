@@ -313,13 +313,16 @@ def capture(app: RpcSubprocess) -> None:
     # R1708 — by name, not by count. See the sibling note in
     # `r1698_a_composite_has_a_cursor_inside_it.py`: a hand-written `6` reported
     # R1707's new query field as a regression rather than as the stop it is.
+    # ★★★★★ R1721 — the three saved-filter chips are ONE stop now. The bar
+    # declares that at most one of its filters may be on, which makes it a
+    # WAI-ARIA composite rather than three independent toggle buttons, and the
+    # ring is where that is felt: two presses fewer to reach the message list,
+    # and arrows plus `Home` / `End` / `Enter` inside the bar in exchange.
     assert_eq(
         walked,
         [
             "pv.filter.query",
-            "pv.filter.saved.0",
-            "pv.filter.saved.1",
-            "pv.filter.saved.2",
+            "pv.filter.saved",
             "pv.list",
             "pv.tree",
             "pv.bytes",
@@ -389,43 +392,60 @@ def capture(app: RpcSubprocess) -> None:
         "H: and the pane's own axis moves between rows again",
     )
 
-    banner("I — ★ a filter chip is pressed from the keyboard (a button that could not be)")
-    for n in range(3):
-        chip = f"pv.filter.saved.{n}"
-        app.request("focus/set", {"tag": chip})
-        app.tick(16)
+    banner("I — ★ a saved filter is applied from the keyboard (a control that could not be)")
+    # ★★★★★ R1721 — the ROUTE changed and the property is stronger for it. These
+    # were three plain-button stops, each reached by Tab and pressed with
+    # `Enter`; the bar now declares that at most one filter may be on, so it is
+    # one stop with a cursor and a filter is reached by walking to it. The two
+    # facts R1699 built this section for — a keyboard can do what a pointer can,
+    # and one verb answers two keys — are asserted through that route.
+    BAR = "pv.filter.saved"
+    app.request("focus/set", {"tag": BAR})
+    app.tick(16)
+    nodes, _ = tree(app)
+    bar = nodes[BAR]
+    assert_eq(bar["role"], "listbox", "I: the bar announces what its rule makes it")
+    ok("I: and it owns the cursor", bar.get("navigation") is not None)
+
+    def on(chip: str) -> bool:
+        """Whether `chip` is on — `aria-selected` here, because the rule made
+        these options rather than toggle buttons."""
         nodes, _ = tree(app)
-        assert_eq(nodes[chip]["role"], "button", f"I: {chip} announces itself a button")
-        assert_eq(nodes[chip].get("navigation"), None, f"I: {chip} owns no cursor")
+        node = nodes[chip]
+        state = node.get("state") or {}
+        return bool(node.get("selected") or state.get("selected") or state.get("checked"))
 
-        # ★ The observable is the chip's own `aria-pressed`, not the painted
-        # rectangles: a saved filter turning on changes the chip's FILL and moves
-        # nothing, so a gate watching geometry would have reported a button that
-        # works as a button that does not.
-        def pressed() -> bool:
-            nodes, _ = tree(app)
-            return (nodes[chip].get("state") or {}).get("checked")
-
-        before = pressed()
-        app.key(path=chip, name="Enter")
-        app.tick(16)
-        assert_eq(pressed() != before, True, f"I: ★ Enter pressed {chip}")
-        app.key(path=chip, name="Space")
-        app.tick(16)
-        assert_eq(pressed(), before, "I: and Space pressed it back — one verb, two keys")
-
-    banner("J — and an arrow at a chip still reaches nothing it should not")
-    row_before = app.query(f"{EXT}/selected_row")
+    advance = bar["navigation"]["keys"][0]
     for n in range(3):
-        chip = f"pv.filter.saved.{n}"
-        app.request("focus/set", {"tag": chip})
+        chip = f"{BAR}.{n}"
+        assert_eq(nodes[chip]["role"], "option", f"I: {chip} announces itself an option")
+        assert_eq(nodes[chip].get("navigation"), None, f"I: {chip} owns no cursor of its own")
+        app.key(path=BAR, name="Home")
         app.tick(16)
-        app.key(path=chip, name="ArrowDown")
+        for _ in range(n):
+            app.key(path=BAR, name=advance)
+            app.tick(16)
+        assert_eq(cursor(app), chip, f"I: the walk reached {chip}")
+
+        before = on(chip)
+        app.key(path=BAR, name="Enter")
+        app.tick(16)
+        assert_eq(on(chip) != before, True, f"I: ★ Enter applied {chip}")
+        app.key(path=BAR, name="Space")
+        app.tick(16)
+        assert_eq(on(chip), before, "I: and Space cleared it — one verb, two keys")
+
+    banner("J — and an arrow at the bar still reaches nothing it should not")
+    row_before = app.query(f"{EXT}/selected_row")
+    app.request("focus/set", {"tag": BAR})
+    app.tick(16)
+    for _ in range(3):
+        app.key(path=BAR, name="ArrowDown")
         app.tick(16)
     assert_eq(
         app.query(f"{EXT}/selected_row"),
         row_before,
-        "J: standing on a chip, ArrowDown moves no message list",
+        "J: standing on the saved-filter bar, ArrowDown moves no message list",
     )
 
 

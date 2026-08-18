@@ -103,6 +103,7 @@ use pinion_core::utterance::{Announced, Tone, Utterance};
 use pinion_core::voice::Silence;
 use pinion_core::widgets::button::ButtonState;
 use pinion_core::widgets::card::{Card, CardAffordance, CardChrome, CardState, Remedy};
+use pinion_core::widgets::chip_group::{Chip, ChipGroup};
 use pinion_core::widgets::destination::{Destinations, Detour, Journey};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::roving::{Activation, Axis, Ends, Landing, Member, Roving, RovingSpec};
@@ -565,6 +566,18 @@ struct ShellState {
     /// table and the wire publishes them from the same table; four fields would
     /// be four chances for the two to disagree about the order.
     options: Signal<[bool; spec::OPTIONS.len()]>,
+    /// ★★★★★ R1721 — which saved filter the filter card has applied.
+    ///
+    /// It had no state at all until this round, and that was the defect: the five
+    /// chips were painted from a constant table, announced as five operable
+    /// toggle buttons, and a pointer press over any of them changed nothing.
+    /// Measured by driving the running screen — clicked three of them, read the
+    /// tree back, and every `checked` was where it started.
+    ///
+    /// An `Option<usize>` rather than five booleans because the row declares
+    /// at-most-one (`spec::FILTER_ROW`): five booleans would let this file hold a
+    /// state the rule forbids, and the rule is what the chips are announced from.
+    filter_chip: Signal<Option<usize>>,
     selected: Signal<Option<String>>,
     cursor: Signal<(u32, u32)>,
     pressed: RefCell<Option<Hit>>,
@@ -656,6 +669,9 @@ impl ShellState {
             ),
             roster,
             options: Signal::new(opening_options()),
+            // The chip the specification opens with, read from the same table the
+            // paint reads — so the screen opens where the reference's does.
+            filter_chip: Signal::new(spec::FILTER_CHIPS.iter().position(|(_, on)| *on)),
             selected: Signal::new(None),
             cursor: Signal::new((0, 0)),
             pressed: RefCell::new(None),
@@ -848,6 +864,15 @@ impl ShellState {
                     )
                 })
                 .collect(),
+            // ★★★★★ R1721 — the saved-filter bar's roster is the ROW's, taken from
+            // the widget rather than rebuilt here. A second construction of "what
+            // the chips are" is exactly the drift this round is repairing on the
+            // other axis, and the cursor is the one reader that had no need of
+            // which chip is on.
+            _ if stop == filter_chips_tag() => filter_row_of(FILTER_CARD, None, 0)
+                .cursor()
+                .map(|roving| roving.members().to_vec())
+                .unwrap_or_default(),
             _ => Vec::new(),
         }
     }
@@ -1302,6 +1327,8 @@ enum Hit {
     Grip(String),
     Affordance(String, CardAffordance),
     Stepper(String, &'static str),
+    /// R1721 — a saved filter on the filter card, by its index in the row.
+    FilterChip(String, usize),
     Remedy(String),
     Card(String),
     FloatRedock(String),
@@ -1437,6 +1464,17 @@ impl Hit {
             && n <= state.presets.borrow().len()
         {
             return Self::PresetItem(n);
+        }
+        // ★★★★★ R1721 — a saved filter, named. The keyboard reaches the bar and
+        // chooses through the cursor, and `Enter` on a chip has to arrive at the
+        // same action a press on it does — which is what the round-trip gate next
+        // door requires of every member of every composite.
+        if let Some(n) = tag
+            .strip_prefix(&format!("card.{FILTER_CARD}.chip."))
+            .and_then(|n| n.parse::<usize>().ok())
+            && n < spec::FILTER_CHIPS.len()
+        {
+            return Self::FilterChip(FILTER_CARD.to_owned(), n);
         }
         Self::Nothing
     }
@@ -1592,6 +1630,20 @@ impl Hit {
             {
                 return Self::Remedy(id);
             }
+            // ★★★★★ R1721 — a press on a saved filter reaches the saved filter.
+            // Measured before this arm existed, by driving the running screen:
+            // the five chips announced `checked` and clicking every one of them
+            // left every `checked` where it was. The rectangles are the paint's
+            // own, so a chip drawn where it cannot be pressed is not a state this
+            // card can be in.
+            if kind_of(&id) == "filter" {
+                let body = body_rect(inside, editing);
+                for (n, at) in filter_chip_rects(body) {
+                    if contains(at, lx, ly) {
+                        return Self::FilterChip(id, n);
+                    }
+                }
+            }
             return Self::Card(id);
         }
         Self::Nothing
@@ -1603,6 +1655,7 @@ impl Hit {
             | Self::Remedy(id)
             | Self::Card(id)
             | Self::Grip(id)
+            | Self::FilterChip(id, _)
             | Self::Stepper(id, _) => Some(id),
             _ => None,
         }
@@ -1659,6 +1712,7 @@ fn hit_word(hit: &Hit) -> String {
         Hit::Affordance(id, affordance) => format!("card.{id}.{}", affordance.wire()),
         Hit::Stepper(id, verb) => format!("card.{id}.{verb}"),
         Hit::Remedy(id) => format!("card.{id}.remedy"),
+        Hit::FilterChip(id, n) => format!("card.{id}.chip.{n}"),
         Hit::Card(id) => format!("card.{id}"),
         Hit::FloatRedock(id) => format!("float.{id}.redock"),
         Hit::FloatClose(id) => format!("float.{id}.close"),
@@ -3129,6 +3183,11 @@ impl ShellOracle {
                 }
             }
             Hit::Remedy(id) => Self::apply_remedy(state, &id),
+            // ★★★★★ R1721 — the rule applies the choice and says what happened;
+            // this arm only stores it. `Utterance` either way, so a refusal
+            // (there is one: a rule that keeps one on) reaches the person by the
+            // same path a success does.
+            Hit::FilterChip(id, n) => Self::choose_filter(state, &id, n),
             Hit::FloatRedock(id) => {
                 if let Err(why) = Self::redock(state, &id) {
                     state.say(Utterance::refused(&why));
@@ -3265,6 +3324,26 @@ impl ShellOracle {
     /// The framework decides WHICH remedy a state has; what a remedy MEANS for
     /// this data is the application's, which is why this lives here and
     /// `Remedy` has no `perform`.
+    /// ★★★★★ R1721 — choose a saved filter on the filter card.
+    ///
+    /// The rule ([`spec::FILTER_ROW`]) decides what the choice does and writes the
+    /// sentence; this stores the result. The `Option<usize>` the state holds is
+    /// the rule's shape rather than a copy of it — five booleans would let this
+    /// screen hold two chips on, which the row it announces says cannot happen.
+    fn choose_filter(state: &Rc<ShellState>, id: &str, n: usize) {
+        let mut row = filter_row(state, id);
+        let said = row.choose(n);
+        if said.tone() == Tone::Done {
+            state.filter_chip.set(row.chosen());
+            // A pointer press moves the cursor too, so the keyboard picks up
+            // where the mouse left off rather than starting from the seat
+            // somebody walked to five presses ago.
+            let tag = row.chips()[n].tag.clone();
+            state.with_cursor(&filter_chips_tag(), |roving| roving.point_at(&tag));
+        }
+        state.say(said);
+    }
+
     fn apply_remedy(state: &Rc<ShellState>, id: &str) {
         let Some(card) = state.card(id) else { return };
         let Some(remedy) = card.remedy().filter(|r| r.is_actionable()) else {
@@ -4713,9 +4792,9 @@ fn header_scene(card: &Card, rect: Rect, palette: Palette, maximized: bool) -> V
 /// What a card's body paints: its content, or — for **every** not-ready
 /// state — the same two things, the sentence and its derived remedy, so the
 /// twelve kinds cannot disagree about what an encrypted link offers.
-fn body_scene(card: &Card, rect: Rect, palette: Palette) -> Vec<Scene> {
+fn body_scene(state: &ShellState, card: &Card, rect: Rect, palette: Palette) -> Vec<Scene> {
     if card.state().is_ready() {
-        return ready_body(card, rect, palette);
+        return ready_body(state, card, rect, palette);
     }
     let mut out = vec![label(
         &state_sentence(card.state()),
@@ -4764,13 +4843,18 @@ fn body_scene(card: &Card, rect: Rect, palette: Palette) -> Vec<Scene> {
 /// compares painted rows against `spec`, and a placeholder has no rows to
 /// compare. Each body is drawn from the specification's own table, so a row
 /// added there appears here and nowhere is there a second copy to disagree.
-fn ready_body(card: &Card, rect: Rect, palette: Palette) -> Vec<Scene> {
+fn ready_body(state: &ShellState, card: &Card, rect: Rect, palette: Palette) -> Vec<Scene> {
     let id = card.id().as_str();
     match kind_of(id) {
         "packet" => stream_body(id, rect, palette),
         "decode" => decode_body(id, rect, palette),
         "keymap" => map_body(id, rect, palette),
-        "filter" => filter_body(id, rect, palette),
+        // ★★★★★ R1721 — the state is threaded rather than fetched. The first draft
+        // reached for `use_shell_state()` inside the body painter and the RUNNING
+        // screen said no: the shell's press path has no Owner scope, so a click on
+        // a chip panicked in `use_transport_clock`. The demo found it; no unit test
+        // could have, because every one of them runs inside an Owner.
+        "filter" => filter_body(state, id, rect, palette),
         // A kind with no body painter of its own still reads as content rather
         // than as a gap. Reachable only if the catalogue grows a placeable kind
         // before its body does, which is the moment a placeholder is honest.
@@ -5198,7 +5282,7 @@ fn map_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
 
 /// The search and filter card: the query, the saved chips, and the three counts
 /// whose relation is the point of the card.
-fn filter_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
+fn filter_body(state: &ShellState, id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
     let mut out = vec![Scene::Container(
         ContainerNode::new(vec![label(
             spec::FILTER_QUERY,
@@ -5214,14 +5298,169 @@ fn filter_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
         )
         .with_layout(absolute(Rect::new(rect.x, rect.y, rect.w, 28))),
     )];
+    // ★★★★★ R1721 — the bar is one widget, and the chips now come off it: which
+    // are on, which is a keyboard stop, and what each is called. Before this the
+    // five were painted from a constant table and a press over any of them did
+    // nothing, while the tree announced five operable toggle buttons.
+    let row = filter_row(state, id);
+    let placed = filter_chip_rects(rect);
+    let bar = filter_bar_rect(rect);
+    let mut pills = Vec::with_capacity(placed.len());
+    for (n, at) in &placed {
+        let chip = &row.chips()[*n];
+        pills.push(
+            Scene::Container(
+                ContainerNode::new(vec![clipped(
+                    &chip.label,
+                    Rect::new(9, 4, at.w.saturating_sub(18), 13),
+                    FONT_TINY,
+                    if chip.on {
+                        palette.on_accent
+                    } else {
+                        palette.muted
+                    },
+                    TextOverflow::Ellipsis,
+                )])
+                .with_tag(chip.tag.clone())
+                .with_style(
+                    BoxStyle::filled(if chip.on {
+                        palette.accent
+                    } else {
+                        palette.raised
+                    })
+                    .with_corner_radius(10)
+                    .with_border(Border::new(palette.outline, 1)),
+                )
+                .with_layout(absolute(Rect::new(
+                    at.x - bar.x,
+                    at.y - bar.y,
+                    at.w,
+                    at.h,
+                ))),
+            )
+            .with_focusable(row.is_a_stop(&chip.tag)),
+        );
+    }
+    out.push(
+        Scene::Container(
+            ContainerNode::new(pills)
+                .with_tag(row.tag().to_owned())
+                // ★ A tagged node that is not pointer-transparent becomes the
+                // router's hit target and swallows the press —
+                // `debt-a-tagged-node-can-swallow-a-real-press-anywhere`. The bar
+                // is a keyboard fact; a press still reaches the chip under it, or
+                // falls through to the card between chips.
+                .with_layout(absolute(bar).with_pointer_transparent(true)),
+        )
+        .with_focusable(row.is_a_stop(row.tag())),
+    );
+    let last_line = placed.last().map_or(rect.y + 34, |(_, at)| at.y);
+    out.extend(filter_counts(
+        id,
+        Rect::new(
+            rect.x,
+            last_line + 30,
+            rect.w,
+            rect.y + rect.h - (last_line + 30).min(rect.y + rect.h),
+        ),
+        rect,
+        palette,
+    ));
+    out
+}
+
+/// ★★★★★ R1721 — the filter card's saved-filter bar, as the widget it is.
+///
+/// The rule is [`spec::FILTER_ROW`] and this is the only place that reads the
+/// screen's state through it, so the roles, the selection attribute, the stop
+/// and the arrows cannot be decided anywhere else.
+fn filter_row(state: &ShellState, id: &str) -> ChipGroup {
+    // ★★★★★ R1721 — the seat comes from the shell's ONE cursor map, not from a
+    // signal beside it. The first draft of this round added a `filter_cursor`
+    // signal and that was the two-copies shape this tree has paid for
+    // repeatedly: the map is where every other composite's cursor lives, and a
+    // second copy would be a second thing for the arrows and the paint to
+    // disagree about. `cursor_members` reads the roster WITHOUT a seat, so this
+    // read does not recurse.
+    let seat = state
+        .cursor_of(&filter_chips_tag())
+        .and_then(|roving| roving.cursor())
+        .unwrap_or(0);
+    filter_row_of(id, state.filter_chip.get(), seat)
+}
+
+/// The bar built from a choice and a cursor, so the roster and the rule are
+/// readable without a running screen — the ring's roster is asked for from
+/// `cursor_members`, which has no state to read and must not grow a second copy
+/// of what the chips are.
+fn filter_row_of(id: &str, chosen: Option<usize>, cursor: usize) -> ChipGroup {
+    ChipGroup::new(
+        format!("card.{id}.chips"),
+        "Saved filters",
+        spec::FILTER_CHIPS
+            .iter()
+            .enumerate()
+            .map(|(n, (name, _))| {
+                Chip::new(format!("card.{id}.chip.{n}"), *name, chosen == Some(n))
+            })
+            .collect(),
+        spec::FILTER_ROW,
+    )
+    .with_cursor(cursor)
+}
+
+/// The filter card the board opens with, and therefore the card whose
+/// saved-filter bar the declared focus ring names.
+const FILTER_CARD: &str = "filter#3";
+
+/// The tag that bar carries, derived from [`FILTER_CARD`] so the ring's entry and
+/// the widget's own tag are one string rather than two that agree today.
+fn filter_chips_tag() -> String {
+    format!("card.{FILTER_CARD}.chips")
+}
+
+/// Where the filter card's chips land, and which of them the card is tall enough
+/// to show: `(index, rect)` in the body's own coordinates.
+///
+/// ★ ONE geometry, read by the paint and by the hit test —
+/// `debt-paint-and-gesture-read-two-facts` is open in this project because a
+/// control drawn where it cannot be pressed is what happens when those are two
+/// functions, and until this round the chips were drawn by a loop the hit test
+/// did not have.
+///
+/// A chip is as wide as its word, and a row of them wraps rather than running off
+/// the card — the policy R1651 measured on the reference's own form. It is also
+/// CLAMPED to the card: a word longer than the card cannot be made to fit by
+/// wrapping, and the first draft let it run off the right edge on a one-cell
+/// card.
+/// R1721 — the box the saved-filter chips sit in, in the body's own coordinates.
+///
+/// The bar is a region the specification names, so it has to be painted and it
+/// has to have bounds an assistive technology can be given. Derived from the
+/// chips rather than written down, and it falls back to the first line's strip
+/// when the card is too short to show any: a bar that vanished would take the
+/// region with it, and "the card is too short for the chips" is a different fact
+/// from "there is no saved-filter bar".
+fn filter_bar_rect(rect: Rect) -> Rect {
+    let placed = filter_chip_rects(rect);
+    let Some((_, first)) = placed.first() else {
+        return Rect::new(rect.x, rect.y + 34, rect.w, 22);
+    };
+    let right = placed.iter().map(|(_, at)| at.x + at.w).max().unwrap_or(0);
+    let bottom = placed.iter().map(|(_, at)| at.y + at.h).max().unwrap_or(0);
+    Rect::new(
+        rect.x,
+        first.y,
+        right.saturating_sub(rect.x),
+        bottom.saturating_sub(first.y),
+    )
+}
+
+fn filter_chip_rects(rect: Rect) -> Vec<(usize, Rect)> {
+    let mut out = Vec::with_capacity(spec::FILTER_CHIPS.len());
     let mut x = rect.x;
     let mut y = rect.y + 34;
-    for (n, (name, on)) in spec::FILTER_CHIPS.iter().enumerate() {
-        // A chip is as wide as its word, and a row of them wraps rather than
-        // running off the card -- the policy R1651 measured on the reference's
-        // own form and lifted into the framework. ★ It is also CLAMPED to the
-        // card: a word longer than the card cannot be made to fit by wrapping,
-        // and the first draft let it run off the right edge on a one-cell card.
+    for (n, (name, _)) in spec::FILTER_CHIPS.iter().enumerate() {
         let w = (18 + u(name.chars().count()) * 6).min(rect.w);
         if x + w > rect.x + rect.w {
             x = rect.x;
@@ -5230,39 +5469,9 @@ fn filter_body(id: &str, rect: Rect, palette: Palette) -> Vec<Scene> {
         if y + 22 > rect.y + rect.h {
             break;
         }
-        out.push(Scene::Container(
-            ContainerNode::new(vec![clipped(
-                name,
-                Rect::new(9, 4, w.saturating_sub(18), 13),
-                FONT_TINY,
-                if *on {
-                    palette.on_accent
-                } else {
-                    palette.muted
-                },
-                TextOverflow::Ellipsis,
-            )])
-            .with_tag(format!("card.{id}.chip.{n}"))
-            .with_style(
-                BoxStyle::filled(if *on { palette.accent } else { palette.raised })
-                    .with_corner_radius(10)
-                    .with_border(Border::new(palette.outline, 1)),
-            )
-            .with_layout(absolute(Rect::new(x, y, w, 22))),
-        ));
+        out.push((n, Rect::new(x, y, w, 22)));
         x += w + 6;
     }
-    out.extend(filter_counts(
-        id,
-        Rect::new(
-            rect.x,
-            y + 30,
-            rect.w,
-            rect.y + rect.h - (y + 30).min(rect.y + rect.h),
-        ),
-        rect,
-        palette,
-    ));
     out
 }
 
@@ -5461,15 +5670,38 @@ fn keyboard_stop(node: Scene, tag: &str, at: &str) -> Scene {
     node.with_focusable(declared)
 }
 
+/// ★ R1721 — the three booleans that say how a card is being SHOWN, as one
+/// value.
+///
+/// They arrived at `card_scene` as three separate arguments and the round that
+/// threaded the state through the paint made that eight, which clippy's
+/// `too_many_arguments` caught. Grouping them is the right repair rather than an
+/// allow: "selected, being edited, maximised" is one question about this card at
+/// this frame, and a caller cannot now pass two of the three and forget the
+/// third.
+#[derive(Clone, Copy)]
+struct CardFace {
+    /// The board's selection rests on this card.
+    selected: bool,
+    /// The board is in layout-editing mode, so the card shows its edit bar.
+    editing: bool,
+    /// This card is the one wearing the restore face of the maximise control.
+    maximized: bool,
+}
+
 fn card_scene(
+    state: &ShellState,
     card: &Card,
     rect: Rect,
-    selected: bool,
-    editing: bool,
     cell: (u32, u32),
     palette: Palette,
-    maximized: bool,
+    face: CardFace,
 ) -> Scene {
+    let CardFace {
+        selected,
+        editing,
+        maximized,
+    } = face;
     let inside = local(rect);
     // ★★ R1674 — the header's marks say they are IN the header band, so the
     // containment check judges them against that band and not against the
@@ -5487,7 +5719,7 @@ fn card_scene(
         .into_iter()
         .map(|node| in_chrome(node, ChromeRole::Header))
         .collect();
-    children.extend(body_scene(card, body_rect(inside, editing), palette));
+    children.extend(body_scene(state, card, body_rect(inside, editing), palette));
     if editing {
         children.push(in_chrome(
             edit_bar_scene(card.id().as_str(), edit_bar_rect(inside), cell, palette),
@@ -5609,7 +5841,7 @@ fn float_scene(state: &ShellState, float: &Float, palette: Palette) -> Option<Sc
             .with_layout(absolute(affordance_rect(header, 2, 1))),
         ),
     ];
-    children.extend(body_scene(&card, body_rect(inside, false), palette));
+    children.extend(body_scene(state, &card, body_rect(inside, false), palette));
     // ★★ R1697 — the corner, painted last so it is over the body it sits in,
     // and from the SAME function the hit test reads. An affordance a person is
     // meant to grab has to be visible: R1690's lesson is that a capability
@@ -6193,13 +6425,16 @@ fn dashboard_scene(state: &ShellState, palette: Palette) -> Vec<Scene> {
             continue;
         };
         canvas_children.push(card_scene(
+            state,
             card,
             cell_rect(tile),
-            selected.as_deref() == Some(card.id().as_str()),
-            editing,
             (tile.w, tile.h),
             palette,
-            maximized.as_ref().is_some_and(|m| m.id() == card.id()),
+            CardFace {
+                selected: selected.as_deref() == Some(card.id().as_str()),
+                editing,
+                maximized: maximized.as_ref().is_some_and(|m| m.id() == card.id()),
+            },
         ));
     }
     // ★ The snap preview: where a release would put the dragged card. Drawn
@@ -6786,7 +7021,7 @@ fn card_nodes(state: &Rc<ShellState>, card: &Card) -> Vec<AccessNode> {
         Some("packet") => stream_nodes(id),
         Some("decode") => decode_nodes(id),
         Some("keymap") => map_nodes(id),
-        Some("filter") => filter_nodes(id),
+        Some("filter") => filter_nodes(state, id),
         _ => Vec::new(),
     };
     for node in &body {
@@ -7015,29 +7250,18 @@ fn byte_nodes(id: &str) -> Vec<AccessNode> {
 
 /// The search and filter card: the query, the saved chips, and the three counts
 /// whose **relation** is the point of the card.
-fn filter_nodes(id: &str) -> Vec<AccessNode> {
+fn filter_nodes(state: &ShellState, id: &str) -> Vec<AccessNode> {
     let mut nodes = vec![
         AccessNode::new(format!("card.{id}.query"), AriaRole::TextInput)
             .with_name("Query")
             .with_value(AccessValue::Text(spec::FILTER_QUERY.to_owned())),
     ];
-    let mut chips =
-        AccessNode::new(format!("card.{id}.chips"), AriaRole::Group).with_name("Saved filters");
-    for (n, (name, on)) in spec::FILTER_CHIPS.iter().enumerate() {
-        let tag = format!("card.{id}.chip.{n}");
-        chips = chips.with_child(tag.clone());
-        // A saved filter is on or off, which WAI-ARIA reflects as a toggle
-        // button's pressed state rather than as a separate control kind.
-        nodes.push(
-            AccessNode::new(tag, AriaRole::Button)
-                .with_name(*name)
-                .with_state(AccessState {
-                    checked: Some(*on),
-                    ..AccessState::default()
-                })
-                .with_set_position(n, spec::FILTER_CHIPS.len()),
-        );
-    }
+    // ★★★★★ R1721 — the bar's whole subtree is its rule's. It used to be five
+    // `button`s with `aria-pressed`, hand-written here, over a set that can never
+    // have two on — and nothing at all could change one of them. `spec::FILTER_ROW`
+    // is the declaration; this call is the only thing that reads it into a tree.
+    let chips =
+        pinion_a11y::chip_group_nodes(&filter_row(state, id), focus_state::focused().as_deref());
     let mut counts =
         AccessNode::new(format!("card.{id}.counts"), AriaRole::Group).with_name("Match counts");
     for (n, (value, what)) in spec::FILTER_STATS.iter().enumerate() {
@@ -7058,7 +7282,7 @@ fn filter_nodes(id: &str) -> Vec<AccessNode> {
             .with_name("Matched over time")
             .with_value(AccessValue::Text(series_reading(&MATCH_SERIES))),
     );
-    nodes.push(chips);
+    nodes.extend(chips);
     nodes.push(counts);
     nodes
 }

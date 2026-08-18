@@ -1501,6 +1501,45 @@ fn painted_at_destination(destination: &str) -> Painted {
     painted_at((WIN_W, WIN_H)).0
 }
 
+/// ★★★★★ R1721 — **a press at the centre of a painted saved-filter chip reaches
+/// that chip.**
+///
+/// Measured before the arm this checks existed, by driving the running screen: the
+/// five chips announced `checked`, a pointer press over every one of them changed
+/// nothing, and the press landed on the card instead. The paint and the hit test
+/// read ONE geometry (`filter_chip_rects`), which is the standing rule on this
+/// screen — `debt-paint-and-gesture-read-two-facts` is open in this project
+/// precisely because a control drawn where it cannot be pressed is what happens
+/// when those are two functions.
+#[test]
+fn r1721_a_press_at_a_painted_chip_reaches_that_chip() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let shot = painted_at_destination("dashboard");
+        let mut reached = 0;
+        for n in 0..spec::FILTER_CHIPS.len() {
+            let tag = format!("card.filter#3.chip.{n}");
+            let rect = shot
+                .rect(&tag)
+                .unwrap_or_else(|| panic!("{tag} is announced and must be painted"));
+            let hit = Hit::at(&state, rect.x + rect.w / 2, rect.y + rect.h / 2);
+            assert_eq!(
+                super::hit_word(&hit),
+                tag,
+                "a press at the centre of {tag} must reach {tag}, not {:?}",
+                super::hit_word(&hit),
+            );
+            reached += 1;
+        }
+        assert_eq!(
+            reached,
+            spec::FILTER_CHIPS.len(),
+            "every painted chip was pressed"
+        );
+    });
+}
+
 /// ★★★★★ R1695 — **every open destination is a place you arrive at, and every
 /// closed one says why you did not.**
 ///

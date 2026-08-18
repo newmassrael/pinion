@@ -11,11 +11,21 @@
 //! reader, the residue-free boot seed and the AccessKit tree builder are
 //! shared verbatim through the substrate (`toggle_group::apply_key` /
 //! `read_toggle` / `boot_toggle` / `extra_toggles` and
-//! [`pinion_a11y::toggle_button_group_nodes`]). Building this binding is
+//! [`pinion_a11y::toggle_button_group_nodes`], reached since R1721 through
+//! [`pinion_a11y::chip_group_nodes`]). Building this binding is
 //! what forced that lift: a divergence between two consumers of a standard
 //! a11y interaction would be a bug, not a style choice, so the shared core
 //! moved out of `hello-segmented-multi` and both now consume it (SSOT — no
 //! third copy).
+//!
+//! ★★★★★ **R1721 — the "independently-toggleable" in the first line is now a
+//! DECLARATION rather than a description.** [`FILTERS_ARE`] is
+//! [`Choice::Any`], and the group
+//! role, the per-chip role, the `aria-pressed` that carries on-ness and the fact
+//! that each chip is its own Tab stop all follow from it. Nothing about this
+//! screen changed; what changed is that the sentence is checkable, and two
+//! sibling analysis screens had written the same `focusable(true)` by hand over
+//! rows where it was wrong.
 //!
 //! **What genuinely diverges is the paint.** A segmented button is a single
 //! joined stadium *track* of adjacent pills; filter chips are detached,
@@ -44,7 +54,7 @@
 //! `ArrowLeft` (and `ArrowDown` / `ArrowUp`) rove focus with wrap, `Home` /
 //! `End` jump to the first / last chip.
 
-use pinion_a11y::{AccessNode, ToggleSegment, WidgetA11y, toggle_button_group_nodes};
+use pinion_a11y::{AccessNode, WidgetA11y};
 use pinion_core::external::External;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -52,6 +62,7 @@ use pinion_core::style::{
 };
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::widget_core::ExtraExternal;
+use pinion_core::widgets::chip_group::{Chip, ChipGroup, ChipPosture, Choice};
 use pinion_core::widgets::toggle::ToggleState;
 use pinion_core::widgets::toggle_group;
 use pinion_core::{Color, Frame, Scene, WidgetCore, WidgetStateName};
@@ -94,6 +105,21 @@ const LABELS: [&str; N] = ["Nearby", "Open now", "Top rated", "Offers"];
 /// unselected (outlined) chip to verify in live pixels.
 const BOOT_ON: [bool; N] = [true, false, true, false];
 
+/// ★★★★★ R1721 — how many of these filters may be on at once, which is what the
+/// bar **is**.
+///
+/// Any subset, including none and all: these are independent switches that happen
+/// to sit side by side. So each is its own Tab stop, the group is a passive
+/// `group` of `button[aria-pressed]`, and the bar has no cursor — a set of
+/// independent toggles is not a WAI-ARIA composite, and arrows over one would
+/// promise a navigation it does not have.
+///
+/// The declaration earns its place even though this screen's behaviour did not
+/// change: the sibling analysis screens had written the same `focusable(true)` by
+/// hand over rows where it was wrong, and the difference between the three is now
+/// this one word.
+const FILTERS_ARE: Choice = Choice::Any;
+
 /// Filter-chip width — fixed (filter-bar reads as an even strip). Filter-
 /// specific, so it stays local; the chip height / radius / inner gap /
 /// outline width come from the shared [`pinion_widget_paint::chip`]
@@ -133,8 +159,9 @@ impl ChipBarState {
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: ChipBarState, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
+    let row_group = chip_row(&state);
     let chips: Vec<Scene> = (0..N)
-        .map(|i| chip(i, state.rows[i].0, state.rows[i].1, &theme))
+        .map(|i| chip(&row_group, i, state.rows[i].0, &theme))
         .collect();
     // The row carries `GROUP_TAG` and *no* fill — the WAI-ARIA `group` is a
     // passive container, and chips are free-standing (no segmented track).
@@ -162,7 +189,8 @@ fn view(state: ChipBarState, _frame: &Frame) -> Scene {
 /// unselected (transparent fill, `Outline` border), with the shared
 /// hover / pressed / disabled [`state_layer`](pinion_widget_paint::state_layer) overlay. Tagged `chip_{index}`
 /// so a cursor routes straight to that chip's `ToggleExternal`.
-fn chip(index: usize, state: ToggleState, on: bool, theme: &Theme) -> Scene {
+fn chip(row: &ChipGroup, index: usize, state: ToggleState, theme: &Theme) -> Scene {
+    let on = row.chips()[index].on;
     let ink = chip_ink(theme, on, state);
     let mut children: Vec<Scene> = Vec::with_capacity(2);
     if on {
@@ -193,8 +221,12 @@ fn chip(index: usize, state: ToggleState, on: bool, theme: &Theme) -> Scene {
             .with_style(style)
             // R1020 §5.39 — each chip is a Tab stop; opt its tag-carrying
             // Container into the scene-derived focus enumeration.
+            // ★★★★★ R1721 — and *that* is now the rule's answer rather than this
+            // line's. `true` was correct here and wrong on two sibling screens
+            // that had copied the same words, which is what makes it a derivation.
             .with_layout(
-                chip::chip_layout(Size::px(CHIP_W, CHIP_HEIGHT), None).with_focusable(true),
+                chip::chip_layout(Size::px(CHIP_W, CHIP_HEIGHT), None)
+                    .with_focusable(row.is_a_stop(CHIP_TAGS[index])),
             ),
     )
 }
@@ -310,18 +342,49 @@ impl WidgetA11y for FilterChipView {
     /// R753 §5.40 — one [`AriaRole::Group`](pinion_a11y::AriaRole::Group)
     /// parent (`"Filters"`) + one
     /// [`AriaRole::Button`](pinion_a11y::AriaRole::Button) per chip carrying
-    /// **`aria-pressed`**, built by the shared [`toggle_button_group_nodes`]
-    /// substrate from this binding's `(state, on)` rows and [`LABELS`].
+    /// **`aria-pressed`**.
+    ///
+    /// ★★★★★ R1721 — those two roles are no longer chosen here. `chip_row` says
+    /// the rule is [`FILTERS_ARE`], and `pinion_a11y::chip_group_nodes` is what
+    /// turns that into a tree — dispatching to the same toggle-button-group
+    /// builder this binding used to call directly. What changed is that the roles
+    /// now FOLLOW from the row's rule, which is what two sibling analysis screens
+    /// were getting wrong while this one happened to be right.
     fn access_node(state: &ChipBarState, focused: Option<&str>) -> Vec<AccessNode> {
-        let segments: Vec<ToggleSegment<'_>> = (0..N)
-            .map(|i| ToggleSegment {
-                tag: CHIP_TAGS[i],
-                label: LABELS[i],
-                state: state.rows[i].0,
-                on: state.rows[i].1,
+        pinion_a11y::chip_group_nodes(&chip_row(state), focused)
+    }
+}
+
+/// ★★★★★ R1721 — this bar, as a value that knows its own rule.
+///
+/// [`FILTERS_ARE`] is the declaration and everything observable follows from it:
+/// `group` + `button[aria-pressed]`, one Tab stop per chip, and no arrows,
+/// because independent switches are not a composite. That last one is why the
+/// declaration matters here even though nothing about this screen changed: the
+/// `with_focusable(true)` the chip painter used to carry was this answer, written
+/// by hand, and the sibling analysis screen had written the same words over a row
+/// where they were wrong.
+fn chip_row(state: &ChipBarState) -> ChipGroup {
+    ChipGroup::new(
+        GROUP_TAG,
+        "Filters",
+        (0..N)
+            .map(|i| {
+                Chip::new(CHIP_TAGS[i], LABELS[i], state.rows[i].1)
+                    .with_posture(posture_of(state.rows[i].0))
             })
-            .collect();
-        toggle_button_group_nodes(GROUP_TAG, "Filters", &segments, focused)
+            .collect(),
+        FILTERS_ARE,
+    )
+}
+
+/// A filter chip's posture, from the toggle's own statechart state.
+const fn posture_of(state: ToggleState) -> ChipPosture {
+    match state {
+        ToggleState::Idle => ChipPosture::Idle,
+        ToggleState::Hover => ChipPosture::Hover,
+        ToggleState::Pressed => ChipPosture::Pressed,
+        ToggleState::Disabled => ChipPosture::Locked,
     }
 }
 
