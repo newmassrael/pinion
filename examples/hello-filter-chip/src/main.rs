@@ -159,7 +159,7 @@ impl ChipBarState {
 #[allow(clippy::trivially_copy_pass_by_ref)]
 fn view(state: ChipBarState, _frame: &Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
-    let row_group = chip_row(&state);
+    let row_group = filters_row(&state);
     let chips: Vec<Scene> = (0..N)
         .map(|i| chip(&row_group, i, state.rows[i].0, &theme))
         .collect();
@@ -344,14 +344,14 @@ impl WidgetA11y for FilterChipView {
     /// [`AriaRole::Button`](pinion_a11y::AriaRole::Button) per chip carrying
     /// **`aria-pressed`**.
     ///
-    /// ★★★★★ R1721 — those two roles are no longer chosen here. `chip_row` says
+    /// ★★★★★ R1721 — those two roles are no longer chosen here. [`filters_row`] says
     /// the rule is [`FILTERS_ARE`], and `pinion_a11y::chip_group_nodes` is what
     /// turns that into a tree — dispatching to the same toggle-button-group
     /// builder this binding used to call directly. What changed is that the roles
     /// now FOLLOW from the row's rule, which is what two sibling analysis screens
     /// were getting wrong while this one happened to be right.
     fn access_node(state: &ChipBarState, focused: Option<&str>) -> Vec<AccessNode> {
-        pinion_a11y::chip_group_nodes(&chip_row(state), focused)
+        pinion_a11y::chip_group_nodes(&filters_row(state), focused)
     }
 }
 
@@ -364,7 +364,7 @@ impl WidgetA11y for FilterChipView {
 /// `with_focusable(true)` the chip painter used to carry was this answer, written
 /// by hand, and the sibling analysis screen had written the same words over a row
 /// where they were wrong.
-fn chip_row(state: &ChipBarState) -> ChipGroup {
+fn filters_row(state: &ChipBarState) -> ChipGroup {
     ChipGroup::new(
         GROUP_TAG,
         "Filters",
