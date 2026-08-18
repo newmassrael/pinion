@@ -432,31 +432,49 @@ def g_the_seat_answers_a_real_press(tf) -> None:
     )
 
 
-# ── H: what taking the wire's row over costs, said out loud ─────────────────
+# ── H: taking the wire's row over does not take the wires away ──────────────
 
 
-def h_a_taken_over_row_that_drops_a_drawn_link_is_warned_about(tf) -> None:
-    banner("H — the canvas draws a link this card no longer dials, and the gate says so")
+def h_taking_the_wires_row_over_leaves_the_wires_reaching_it(tf) -> None:
+    banner("H — a card may dial outside the drawing, and the drawing still reaches it")
     opening = json.loads(tf.query(f"{EXT}/gate"))
     tf.invoke(f"{EXT}/select", "R-01")
     drawn = [part.strip() for part in row(tf, "connect.endpoints")["value"].split(",")]
     tf.invoke(f"{EXT}/author_field", "connect.endpoints")
+    taken = row(tf, "connect.endpoints")
     assert_eq(
-        row(tf, "connect.endpoints")["source"],
-        None,
-        "H: the row is theirs — a card may be told to dial something this canvas "
-        "does not draw at all",
+        taken["written"],
+        ", ".join(drawn),
+        "H: the row is theirs, seeded with what the canvas was saying",
     )
-    tf.invoke(f"{EXT}/set_field", f"connect.endpoints={drawn[0]}")
+    # ★★★★★ R1717 rewrote this section. R1716 answered "a card may be told to
+    # dial something this canvas does not draw" by letting the written value
+    # take the whole row, and paid for the lost drawn links with a gate warning.
+    # A row can hold both contributions now, so the payment is gone: writing an
+    # address of your own leaves every drawn one reaching the row.
+    tf.invoke(f"{EXT}/set_field", "connect.endpoints=tcp/10.0.0.21:7449")
+    shared = row(tf, "connect.endpoints")
+    assert_eq(
+        shared["written"],
+        "tcp/10.0.0.21:7449",
+        "H: their half is exactly what they typed",
+    )
+    ok(
+        f"H: ★★★★★ and the canvas still reaches the row ({shared['value']!r}) — "
+        f"R1716 dropped {drawn} here and warned about it instead",
+        all(address in shared["value"] for address in drawn),
+    )
+    assert_eq(shared["source"], "wire", "H: which is what the row says it shares with")
     findings = json.dumps(json.loads(tf.query(f"{EXT}/gate")), ensure_ascii=False)
     ok(
-        f"H: ★★★★★ the address the canvas draws and the card no longer dials is "
-        f"named ({drawn[1]})",
-        drawn[1] in findings,
+        "H: ★★ the drawn addresses raise nothing — they are in the row by "
+        "construction, so the R1716 warning could never fire again",
+        not any(address in findings for address in drawn),
     )
     ok(
-        "H: and the one it still dials is not",
-        findings.count(drawn[0]) == 0,
+        "H: ★★★ and what the gate DOES say is the fact underneath it: this card "
+        "dials an address nothing in the graph listens on",
+        "10.0.0.21" in findings and "nothing here listens on" in findings,
     )
     verdict = json.loads(tf.query(f"{EXT}/verdict"))
     ok(
@@ -464,16 +482,11 @@ def h_a_taken_over_row_that_drops_a_drawn_link_is_warned_about(tf) -> None:
         f"legitimate thing to want ({verdict})",
         verdict["may_launch"],
     )
-    tf.invoke(f"{EXT}/set_field", f"connect.endpoints={', '.join(drawn)}")
-    ok(
-        "H: and putting the drawn address back takes the warning away",
-        drawn[1] not in json.dumps(json.loads(tf.query(f"{EXT}/gate")), ensure_ascii=False),
-    )
     tf.invoke(f"{EXT}/remove_field", "connect.endpoints")
     assert_eq(
         row(tf, "connect.endpoints")["source"],
         "wire",
-        "H: ★ and the row goes back to being worked out from the wires",
+        "H: ★ and giving their half back leaves the row worked out from the wires",
     )
     assert_eq(
         json.loads(tf.query(f"{EXT}/gate")),
@@ -490,7 +503,7 @@ def main() -> int:
         d_a_derived_row_is_a_read_out(tf)
         e_drawing_a_link_moves_the_row(tf)
         f_the_document_carries_what_belongs_in_it(tf)
-        h_a_taken_over_row_that_drops_a_drawn_link_is_warned_about(tf)
+        h_taking_the_wires_row_over_leaves_the_wires_reaching_it(tf)
         g_the_seat_answers_a_real_press(tf)
     print(f"\n{len(CHECKS)} named check(s) beyond the equalities:")
     for line in CHECKS:

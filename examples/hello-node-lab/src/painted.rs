@@ -67,7 +67,7 @@ use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::{Frame, Scene};
 
 use super::{
-    Applies, Hit, LabState, Role, WIN_H, WIN_W, canvas_rect, inspector_rect, palette_rect,
+    Applies, Hit, LabState, Role, Source, WIN_H, WIN_W, canvas_rect, inspector_rect, palette_rect,
     rail_rect, spec, toolbar_rect, use_lab_state,
 };
 
@@ -172,6 +172,25 @@ const STATES: &[SweptState] = &[
         super::press(state);
         super::move_cursor(state, px + 60, py + 36);
         super::release(state);
+    }),
+    // ★★★★★ R1717 — **a row with two contributors**, which is a state no
+    // opening screen has: the behaviour canon's own graph declares no dialled
+    // address on any card, so the shared row exists only once somebody writes
+    // one beside the wires. Every gate in this file reads the live form, so
+    // adding the state is what puts the third provenance under all of them —
+    // the badge pair, the third seat, the census populations and the a11y node.
+    //
+    // Reached by the screen's own two acts and not by assignment: take the
+    // wire's row over, then write an address of your own over what it seeded.
+    // The wires come straight back as the other half, which is the property
+    // this round exists for. The address is deliberately one nothing in the
+    // graph listens on — that is what the launch gate's surviving warning is
+    // about, so the swept screen paints that too.
+    ("with an address written beside the wires", |state| {
+        let router = state.node_of("R-01").expect("the opening graph has it");
+        state.selection.set(Selection::one(router));
+        super::author_row(state, router, "connect.endpoints").expect("the wires derive it");
+        super::set_and_sync(state, "connect.endpoints", "tcp/10.0.0.21:7449");
     }),
 ];
 
@@ -427,14 +446,25 @@ fn declared_tags(state: &LabState) -> Vec<String> {
             // cannot be asked, so the painter does not draw one and the
             // specification must not demand one; the source badge takes its
             // place, and a row that is not configuration says that too.
-            match field.source().derived_from() {
-                Some(_) => {
+            //
+            // ★★★ R1717 — and a row with TWO contributors is on both axes: it
+            // can still be edited, so what an edit costs is still news, and
+            // part of it is not the reader's, so the source is news as well.
+            // The specification says which axis a row is on and the census
+            // reads that; a screen cannot quietly drop a badge by putting a row
+            // on a different one.
+            match field.source() {
+                Source::Authored => want.push(format!("lab.form.applies.{}", field.key())),
+                Source::Derived(_) => {
                     want.push(format!("lab.form.source.{}", field.key()));
                     if field.applies() == Applies::Hot {
                         want.push(format!("lab.form.applies.{}", field.key()));
                     }
                 }
-                None => want.push(format!("lab.form.applies.{}", field.key())),
+                Source::Shared(_) => {
+                    want.push(format!("lab.form.applies.{}", field.key()));
+                    want.push(format!("lab.form.source.{}", field.key()));
+                }
             }
             if field.goes().instead().is_some() {
                 want.push(format!("lab.form.aside.{}", field.key()));
@@ -443,11 +473,24 @@ fn declared_tags(state: &LabState) -> Vec<String> {
             // demands one per shown row rather than one somewhere. ★ R1716 —
             // which seat depends on who owns the row: a row somebody wrote can
             // be taken away, and a row the screen works out can be taken over.
-            if field.source().authored() {
-                want.push(format!("lab.form.remove.{}", field.key()));
-            } else {
-                want.push(format!("lab.form.author.{}", field.key()));
-            }
+            // ★ R1717 — and a row they share is given BACK, which is a third
+            // act because the first one's word is a promise it cannot keep.
+            //
+            // ★★ The word is spelled again HERE rather than read off
+            // `Seat::act`, and that is the point of this function: it derives
+            // what the screen owes from the FORM, and the painter derives what
+            // it draws from the same form by its own route. Asking the painter
+            // would make the census self-comparing — the failure R1684's own
+            // comment records — so the two spellings meeting is the check.
+            want.push(format!(
+                "lab.form.{}.{}",
+                match field.source() {
+                    Source::Authored => "remove",
+                    Source::Derived(_) => "author",
+                    Source::Shared(_) => "disown",
+                },
+                field.key()
+            ));
         }
         for field in form.addable() {
             want.push(format!("lab.form.add.{}", field.key()));
@@ -481,6 +524,9 @@ fn must_answer(tag: &str) -> Option<String> {
         // MEANS, and two acts sharing one rectangle is exactly the shape that
         // needs saying out loud.
         ("lab.form.author.", "author"),
+        // ★★ R1717 — and the third act on that one rectangle: give the written
+        // half back. Named apart from `remove` because the row does not leave.
+        ("lab.form.disown.", "disown"),
     ] {
         if let Some(rest) = tag.strip_prefix(prefix) {
             return Some(format!("{verb}:{rest}"));
@@ -3309,12 +3355,27 @@ fn r1684_the_centre_of_every_control_answers_a_press() {
                 // other way out of it. Which rows those are comes from the
                 // form; that the screen SAYS something, and says which row, is
                 // read from the toast the press left behind.
+                //
+                // ★★★★★ R1717 — asked of **what the press lands on**, not of
+                // the row. A row with two contributors is writable and holds
+                // lines that are not the reader's, and the centre of its
+                // control is one of those lines: a question at row granularity
+                // would demand a refusal over the whole row (wrong — they may
+                // type in their own lines) or demand a change over all of it
+                // (wrong — that line is the canvas's). The screen's own hit
+                // test says which element is under the cursor, so the gate asks
+                // the form about THAT.
+                let landed = Hit::at(&state, at.0, at.1);
                 let derived = state
                     .active_card()
                     .and_then(|node| super::shown_form(&state, node))
-                    .and_then(|form| {
-                        form.field(&key)
-                            .and_then(|f| f.source().derived_from().map(str::to_owned))
+                    .and_then(|form| form.field(&key).cloned())
+                    .and_then(|field| match &landed {
+                        Hit::Part { part, .. } => pressed_element(part).and_then(|n| {
+                            field.element_source(n).derived_from().map(str::to_owned)
+                        }),
+                        _ if field.source().writable() => None,
+                        _ => field.source().derived_from().map(str::to_owned),
                     });
                 let before = (witness(&state, "form"), witness(&state, "editing"));
                 let said_before = state.toast.get();
@@ -3497,7 +3558,7 @@ fn r1684_leaving_the_field_applies_what_is_in_it() {
         let press_centre = |tag: &str| press_centre_of(&state, tag);
         let row_value = |key: &str| {
             super::selected_form(&state)
-                .and_then(|form| form.field(key).map(|f| f.value().to_owned()))
+                .and_then(|form| form.field(key).map(|f| f.value().into_owned()))
                 .unwrap_or_default()
         };
         press_centre("lab.form.control.id");
@@ -3613,7 +3674,7 @@ fn r1686_taking_a_row_away_shuts_the_field_standing_on_it() {
         let state = use_lab_state();
         let key = "id";
         let opened_as = super::selected_form(&state)
-            .and_then(|form| form.field(key).map(|f| f.value().to_owned()))
+            .and_then(|form| form.field(key).map(|f| f.value().into_owned()))
             .expect("the opening card has that row");
 
         let row = *painted(&state)
@@ -3651,7 +3712,7 @@ fn r1686_taking_a_row_away_shuts_the_field_standing_on_it() {
         drop(forms);
         assert_eq!(
             super::selected_form(&state)
-                .and_then(|form| form.field(key).map(|f| f.value().to_owned())),
+                .and_then(|form| form.field(key).map(|f| f.value().into_owned())),
             Some(opened_as),
             "★ what was in the field was dropped, not written to the row on \
              its way out"
@@ -3844,9 +3905,20 @@ fn seed_and_commit_faults(state: &std::rc::Rc<LabState>, target: &str, key: &str
     use pinion_core::widgets::config_form::FieldType;
     const PROBE: &str = "tcp/0.0.0.0:7999";
 
+    // ★★★★★ R1717 — the half being EDITED, not the row. A shared row shows
+    // what somebody wrote composed with what the canvas worked out, and only
+    // the first is what a box over it writes; "applying leaves the row holding
+    // what you typed" is false of the row and true of the half. This gate
+    // reported three faults the first time the state existed and it was RIGHT
+    // to — reading them is what made the seed and the commit be fixed as well.
     let value = |state: &std::rc::Rc<LabState>| -> String {
         super::selected_form(state)
-            .and_then(|form| form.field(key).map(|f| f.value().to_owned()))
+            .and_then(|form| {
+                form.field(key).map(|f| {
+                    f.written()
+                        .map_or_else(|| f.value().into_owned(), str::to_owned)
+                })
+            })
             .unwrap_or_default()
     };
     let mut faults = Vec::new();
@@ -3982,6 +4054,15 @@ fn r1684_3_a_press_lands_where_the_paint_put_it_after_a_resize() {
 
 /// The tag of the seat a field target names, in the form painter's vocabulary.
 ///
+/// Which element of a list row a painter part names, if it names one.
+///
+/// ★ R1717 — the part vocabulary spells a list's element rows `item.<key>.<n>`
+/// and its append seat `item.<key>.add`, so this answers `None` for the seat
+/// and for every other family. Written once because two gates ask it.
+fn pressed_element(part: &str) -> Option<usize> {
+    part.strip_prefix("item.")?.rsplit('.').next()?.parse().ok()
+}
+
 /// The inverse of the target grammar the wire reads back — `value:<key>` is a
 /// row's control and `value:<key>[<n>]` is one of a list's element rows — so a
 /// check can ask the paint where the thing being edited is without knowing how

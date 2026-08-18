@@ -84,7 +84,7 @@ use pinion_core::style::{
 use pinion_core::theme::{ColorRole, Theme, use_theme};
 use pinion_core::voice::Silence;
 use pinion_core::widgets::config_form::{
-    Applies, ConfigDefect, ConfigField, ConfigForm, FieldType, FormError, Verdict,
+    Applies, ConfigDefect, ConfigField, ConfigForm, FieldType, FormError, Source, Verdict,
 };
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::scroll::{AutoScroll, ScrollState};
@@ -1089,13 +1089,63 @@ impl LabState {
         all
     }
 
-    /// The gate's defects: every form's own, plus the two the *graph* raises.
+    /// Every address a card on this canvas can be reached at.
     ///
-    /// Both graph warnings are derived rather than listed. A node whose role can
-    /// be dialled and whose listen endpoint is empty is a pin nobody can reach;
-    /// a node that has turned discovery on can acquire links this canvas did not
-    /// author, which is the same fact the master switch states for the graph.
-    fn defects(&self) -> Vec<(String, ConfigDefect)> {
+    /// ★★ R1717 — resolved the same way [`dialled_from`] resolves a link's
+    /// landing, host substitution and all, because the two sets are compared
+    /// and a set built by a second rule would report every address as strange.
+    fn listen_addresses(&self) -> BTreeSet<String> {
+        let mut known = BTreeSet::new();
+        for card in self.cards() {
+            let Some(form) = shown_form(self, card) else {
+                continue;
+            };
+            let Some(listen) = form.field("listen.endpoints") else {
+                continue;
+            };
+            let host = self.host_of(card);
+            let shown = listen.value();
+            for endpoint in FieldType::elements(&shown) {
+                known.insert(endpoint.replace("0.0.0.0", &host).replace("[::]", &host));
+            }
+        }
+        known
+    }
+
+    /// The addresses **somebody wrote** on this card that nothing on this
+    /// canvas listens on.
+    ///
+    /// ★★★★★ R1717 — the behaviour canon's own warning, and the one that
+    /// survives now that a drawn link always reaches the row. It is asked of
+    /// the **written** half alone: a derived address is one this canvas drew,
+    /// so it is inside the graph by construction and asking about it would
+    /// report the drawing to itself.
+    fn dials_outside(&self, node: NodeId) -> Vec<String> {
+        let Some(written) = shown_form(self, node)
+            .as_ref()
+            .and_then(|form| form.field(DIALLED_KEY))
+            .and_then(ConfigField::written)
+            .map(str::to_owned)
+        else {
+            return Vec::new();
+        };
+        let known = self.listen_addresses();
+        FieldType::elements(&written)
+            .filter(|address| !known.contains(*address))
+            .map(str::to_owned)
+            .collect()
+    }
+
+    /// The gate's findings: every form's own defects, plus the three the
+    /// *graph* raises.
+    ///
+    /// All three graph warnings are derived rather than listed. A node whose
+    /// role can be dialled and whose listen endpoint is empty is a pin nobody
+    /// can reach; a node that has turned discovery on can acquire links this
+    /// canvas did not author, which is the same fact the master switch states
+    /// for the graph; and a node told to dial an address nothing here listens
+    /// on has made the drawing stop being the whole picture.
+    fn defects(&self) -> Vec<(String, Finding)> {
         let mut found = Vec::new();
         for node in self.cards() {
             let name = self.name_of(node);
@@ -1105,58 +1155,37 @@ impl LabState {
             if let Some(form) = shown_form(self, node) {
                 let form = &form;
                 for defect in form.defects() {
-                    found.push((name.clone(), defect));
+                    found.push((name.clone(), Finding::Value(defect)));
                 }
-                // ★★★★★ R1716 — **the canvas draws a link this card does not
-                // dial.** A person may take the connect row over — a node can
-                // be told to reach something this graph does not draw, and the
-                // graph is not the boundary of what may be configured — and the
-                // moment they do, the wires stop writing that row. Silently
-                // that is the defect this round was opened to end, one step
-                // along: the picture and the configuration disagreeing with
-                // nobody saying so. So it is a WARNING, on the card, naming the
-                // row: the drawing stands, the person's value stands, and which
-                // link is not in it is said out loud.
-                if form
-                    .field("connect.endpoints")
-                    .is_some_and(|f| f.source().authored())
-                {
-                    let held: Vec<String> = form
-                        .field("connect.endpoints")
-                        .map(|f| FieldType::elements(f.value()).map(str::to_owned).collect())
-                        .unwrap_or_default();
-                    for drawn in dialled_from(self, node) {
-                        if !held.contains(&drawn) {
-                            found.push((
-                                name.clone(),
-                                ConfigDefect::UnknownKey {
-                                    key: format!("{name} · connect.endpoints · {drawn}"),
-                                },
-                            ));
-                        }
-                    }
+                // ★★★★★ R1717 — **this card dials outside the graph.** R1716
+                // warned about the mirror image of this — a drawn link the card
+                // did not dial — which was compensation for a row that could
+                // not hold two contributions at once. It can now, so every
+                // drawn address is in the row by construction and that warning
+                // could never fire again.
+                //
+                // What is left is the fact underneath it, and it is the one the
+                // behaviour canon raises: an address somebody wrote that
+                // nothing in this graph listens on. It is not an error — a node
+                // may legitimately be told to reach an already-running router —
+                // but it means the drawing is no longer the whole picture, so
+                // anything this screen concludes about what reaches what is
+                // being concluded from a partial graph. That is worth saying
+                // and is not worth blocking a launch for.
+                for outside in self.dials_outside(node) {
+                    found.push((name.clone(), Finding::DialsOutside(outside)));
                 }
                 let listens = form
                     .field("listen.endpoints")
                     .is_some_and(|f| !f.value().trim().is_empty());
                 if self.role_of(node).is_some_and(Role::accepts) && !listens {
-                    found.push((
-                        name.clone(),
-                        ConfigDefect::UnknownKey {
-                            key: format!("{name} · listen.endpoints"),
-                        },
-                    ));
+                    found.push((name.clone(), Finding::NothingListening));
                 }
                 if form
                     .field("discovery.multicast")
                     .is_some_and(|f| f.value().trim() == "true")
                 {
-                    found.push((
-                        name.clone(),
-                        ConfigDefect::UnknownKey {
-                            key: format!("{name} · discovery.multicast"),
-                        },
-                    ));
+                    found.push((name.clone(), Finding::DiscoveryOn));
                 }
             }
         }
@@ -1181,15 +1210,7 @@ impl LabState {
         self.defects()
             .into_iter()
             .map(|(who, defect)| {
-                let sentence = match &defect {
-                    ConfigDefect::UnknownKey { key } if key.ends_with("listen.endpoints") => {
-                        format!("{who} · nothing is listening, so no node can dial it")
-                    }
-                    ConfigDefect::UnknownKey { key } if key.ends_with("discovery.multicast") => {
-                        format!("{who} · discovery is on, so links may appear that nobody authored")
-                    }
-                    other => format!("{who} · {}", other.sentence()),
-                };
+                let sentence = format!("{who} · {}", defect.sentence());
                 Problem {
                     // A card whose name no longer resolves is not skipped: the
                     // problem is real and a `None` says the screen cannot take
@@ -1203,8 +1224,22 @@ impl LabState {
             .collect()
     }
 
+    /// ★ R1717 — built from the SAME walk the panel renders, so the count and
+    /// the list cannot disagree. A graph warning is carried as an unknown key
+    /// here for one reason: [`Verdict`] counts blocking against non-blocking
+    /// and that arm is the framework's non-blocking one, so the arithmetic is
+    /// the framework's rather than a second rule written here.
     fn verdict(&self) -> Verdict {
-        let defects: Vec<ConfigDefect> = self.defects().into_iter().map(|(_, d)| d).collect();
+        let defects: Vec<ConfigDefect> = self
+            .defects()
+            .into_iter()
+            .map(|(who, finding)| match finding {
+                Finding::Value(defect) => defect,
+                other => ConfigDefect::UnknownKey {
+                    key: format!("{who} · {}", other.sentence()),
+                },
+            })
+            .collect();
         Verdict::over(&defects)
     }
 
@@ -1251,6 +1286,71 @@ struct Problem {
     sentence: String,
 }
 
+/// One thing the launch gate found — **a value's defect, or the graph's.**
+///
+/// ★★★★★ R1717 — found by LOOKING at the running screen. The graph's three
+/// warnings had no type of their own, so each was smuggled inside a
+/// [`ConfigDefect::UnknownKey`] whose `key` was really a sentence, and
+/// [`LabState::problems`] recovered the sentence by **sniffing the key's
+/// suffix**. Two of the three had an arm and read correctly; the third fell
+/// through to the framework's own wording and the panel said
+///
+/// > R-01 · R-01 · connect.endpoints · tcp/10.0.0.21:7449 reaches outside
+/// > is not a key the target knows; it starts and ignores it
+///
+/// — the card named twice and a sentence about unknown keys glued onto a fact
+/// that is not about one. **R1716 shipped that and every gate was green**,
+/// because the checks over it asked whether the address was NAMED and never
+/// whether the sentence read. A photograph of the panel answered it in one
+/// look.
+///
+/// So the vocabulary is a type. A defect of a value is one arm and each thing
+/// the *graph* can be wrong about is its own, the sentence comes from the arm,
+/// and there is no string left to sniff.
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum Finding {
+    /// A value this form cannot carry — the framework's own three.
+    Value(ConfigDefect),
+    /// A node that can be dialled and is listening nowhere.
+    NothingListening,
+    /// A node that has turned discovery on, so links can appear that this
+    /// canvas did not author.
+    DiscoveryOn,
+    /// An address somebody wrote that nothing on this canvas listens on, so the
+    /// drawing is no longer the whole picture.
+    DialsOutside(String),
+}
+
+impl Finding {
+    /// Whether it stops a launch.
+    ///
+    /// Every graph warning is `false` and says so here rather than by being
+    /// counted somewhere: a graph the tool does not fully know is a reason to
+    /// tell somebody, never a reason to refuse to start what they drew.
+    fn blocks(&self) -> bool {
+        match self {
+            Self::Value(defect) => defect.blocks(),
+            Self::NothingListening | Self::DiscoveryOn | Self::DialsOutside(_) => false,
+        }
+    }
+
+    /// The sentence the gate panel shows, without the card's name — the caller
+    /// puts that in front, once.
+    fn sentence(&self) -> String {
+        match self {
+            Self::Value(defect) => defect.sentence(),
+            Self::NothingListening => "nothing is listening, so no node can dial it".to_owned(),
+            Self::DiscoveryOn => {
+                "discovery is on, so links may appear that nobody authored".to_owned()
+            }
+            Self::DialsOutside(address) => format!(
+                "{DIALLED_KEY} reaches {address}, which nothing here listens on — \
+                 the drawing is not the whole picture"
+            ),
+        }
+    }
+}
+
 /// Put every declared node on the canvas, in its declared frame, holding the
 /// form its role opens with.
 ///
@@ -1270,12 +1370,12 @@ fn seed_nodes(
 
         let listen = form
             .field("listen.endpoints")
-            .map(|f| f.value().to_owned())
+            .map(|f| f.value().into_owned())
             .unwrap_or_default();
         let transport = Transport::of_locator(&listen)
             .or_else(|| {
                 form.field("connect.endpoints")
-                    .and_then(|f| Transport::of_locator(f.value()))
+                    .and_then(|f| Transport::of_locator(&f.value()))
             })
             .unwrap_or(Transport::Tcp);
         let (x, y, _) = node.rect;
@@ -2114,20 +2214,22 @@ fn card_rows(state: &LabState, node: NodeId) -> Vec<(String, String)> {
             .map(|(k, v)| {
                 let live = form
                     .and_then(|f| digest_path(k).and_then(|path| f.field(path)))
-                    .map(|f| f.value().to_owned());
+                    .map(|f| f.value().into_owned());
                 ((*k).to_owned(), live.unwrap_or_else(|| (*v).to_owned()))
             })
             .collect();
     }
-    state
-        .forms
-        .borrow()
-        .get(&node)
+    // ★ R1717 — the SHOWN form, so a card the specification does not declare a
+    // digest for reads the same rows its inspector does. Reading the store here
+    // would show a card whose connect row lost the wires the canvas draws out
+    // of it, which is the second-source failure the branch above records.
+    shown_form(state, node)
+        .as_ref()
         .map_or_else(Vec::new, |form| {
             form.fields()
                 .iter()
                 .take(3)
-                .map(|f| (f.key().to_owned(), f.value().to_owned()))
+                .map(|f| (f.key().to_owned(), f.value().into_owned()))
                 .collect()
         })
 }
@@ -2589,6 +2691,18 @@ enum Hit {
     /// and its meaning is not, and a press that resolved to `remove` on a row
     /// the form refuses to remove would report an act that never happened.
     AuthorField(String),
+    /// ★★★ R1717 — the same seat on a row with **two** contributors: it gives
+    /// the written half back, and the row stays because the derivation is still
+    /// true.
+    ///
+    /// Its own arm for the reason the one above is: the rectangle is shared and
+    /// the act is not. A press that answered `remove` here would name an act
+    /// that did not happen — the row is still on the screen — and a reader
+    /// comparing what they pressed with what they see would conclude the tool
+    /// ignored them. The *request* it sends is the same one, because the form
+    /// decides what taking a half out means from the row's own provenance and a
+    /// second rule here would be a second answer.
+    DisownField(String),
     /// An affordance inside a control: an option, a stepper, a checkbox, a list
     /// row. `part` is the painter's own tag suffix, so this arm covers every
     /// shape and a seventh needs no new arm here.
@@ -2667,10 +2781,16 @@ impl Hit {
                 // Reading the form again here would be a second answer to
                 // "who owns this row", and the two would part on the day a
                 // derivation was added on one side only.
+                //
+                // ★★ R1717 — giving a shared row back is the same request as
+                // removing an authored one: the form decides what "take my
+                // half out of this row" means from the row's own provenance,
+                // so a third target here would be a second copy of that rule.
                 if contains(row.seat.rect(), px, py) {
                     return match row.seat {
                         Seat::Remove(_) => Self::RemoveField(row.key.clone()),
                         Seat::TakeOver(_) => Self::AuthorField(row.key.clone()),
+                        Seat::GiveBack(_) => Self::DisownField(row.key.clone()),
                     };
                 }
                 // Every affordance inside a control, from the geometry the
@@ -2892,6 +3012,9 @@ impl Hit {
         if let Some(key) = tag.strip_prefix("lab.form.remove.") {
             return Self::RemoveField(key.to_owned());
         }
+        if let Some(key) = tag.strip_prefix("lab.form.disown.") {
+            return Self::DisownField(key.to_owned());
+        }
         if tag == "lab.canvas" {
             return Self::Canvas;
         }
@@ -2953,6 +3076,7 @@ impl Hit {
             Self::AddField(key) => format!("add:{key}"),
             Self::RemoveField(key) => format!("remove:{key}"),
             Self::AuthorField(key) => format!("author:{key}"),
+            Self::DisownField(key) => format!("disown:{key}"),
             Self::Part { part, .. } => part.clone(),
             Self::Canvas => "canvas".into(),
         }
@@ -3752,7 +3876,19 @@ fn shown_form(state: &LabState, node: NodeId) -> Option<ConfigForm> {
     let role = state.role_of(node)?;
     let mut rows: Vec<ConfigField> = Vec::with_capacity(stored.fields().len() + 3);
     rows.push(mode_row(role));
-    rows.extend(stored.fields().iter().cloned());
+    // ★★★★★ R1717 — the connect row is held back and composed at the end,
+    // because it is the one row a person and this canvas BOTH have something to
+    // say about. Leaving the written half in place here and appending the wires
+    // after it would put two rows at one path, which is a configuration with no
+    // single value. The behaviour canon holds the same key back in the same
+    // loop for the same reason.
+    rows.extend(
+        stored
+            .fields()
+            .iter()
+            .filter(|f| f.key() != DIALLED_KEY)
+            .cloned(),
+    );
     if let Some(host) = host_row(state, node, &stored) {
         rows.push(host);
     }
@@ -3813,13 +3949,30 @@ fn host_row(state: &LabState, node: NodeId, stored: &ConfigForm) -> Option<Confi
     )
 }
 
-/// The `connect.endpoints` row, worked out from the wires this canvas draws.
+/// The configuration path a node's outgoing links land on.
 ///
-/// ★★★★★ R1716 — the row the screen was **wrong** about. Measured before this
-/// round: `R-01` showed one address nothing in the graph listens on while the
-/// canvas drew three links out of it, and the exported configuration shipped
-/// that one address — so the plan dialled a node it was not drawn to reach and
-/// missed one it was. Two facts about the same thing, one of them typed in.
+/// Named once because three things read it — the row that composes it, the
+/// loop that holds it back, and the gate that judges it — and a fourth spelling
+/// of a dotted path is how a screen starts editing a key nothing ships.
+const DIALLED_KEY: &str = "connect.endpoints";
+
+/// The `connect.endpoints` row: **what somebody wrote and what this canvas
+/// draws, composed**.
+///
+/// ★★★★★ R1716 measured the defect: `R-01` showed one address nothing in the
+/// graph listens on while the canvas drew three links out of it, and the
+/// exported configuration shipped that one address — so the plan dialled a node
+/// it was not drawn to reach and missed one it was. R1716 fixed half of it, by
+/// deriving the row **whenever nobody had written one**, and paid for the other
+/// half with a gate warning: a written value took the whole row, and the wires
+/// stopped reaching the configuration.
+///
+/// ★★★★★ R1717 closes it. A node may be told to dial something this canvas
+/// does not draw at all — an already-running router, say — and it is still
+/// wired to what the canvas *does* draw. Those are two contributions to one
+/// list, not two answers to one question, so the row holds both: what somebody
+/// wrote first, then every drawn address they had not already named. The
+/// behaviour canon composes in exactly that order.
 ///
 /// A dialled address is the target's listen endpoint read from where the target
 /// actually runs: `0.0.0.0` and `[::]` mean *every* address and cannot be
@@ -3829,29 +3982,29 @@ fn host_row(state: &LabState, node: NodeId, stored: &ConfigForm) -> Option<Confi
 /// Reported links are left out. They are what a source SAW, not what this graph
 /// says to do, and a configuration built from them would dial connections
 /// nobody drew.
-///
-/// The row is only derived while nobody has taken it over: an authored value
-/// wins, because a node may be told to dial something this canvas does not draw
-/// at all — an already-running router, say — and a derivation that overwrote
-/// that would make the graph the boundary of what the tool can configure.
 fn dialled_row(state: &LabState, node: NodeId, stored: &ConfigForm) -> Option<ConfigField> {
-    if stored.field("connect.endpoints").is_some() {
-        return None;
-    }
+    let written = stored.field(DIALLED_KEY);
     let addresses = dialled_from(state, node);
-    if addresses.is_empty() {
-        return None;
+    match (written, addresses.is_empty()) {
+        // Nobody wrote one and nothing is drawn: there is no row.
+        (None, true) => None,
+        // Only the canvas has something to say.
+        (None, false) => Some(
+            ConfigField::new(DIALLED_KEY, "address[]", Applies::Hot, addresses.join(", "))
+                .with_shape(settings::shape_or_free(DIALLED_KEY))
+                .derived_from("wire"),
+        ),
+        // Only a person has.
+        (Some(written), true) => Some(written.clone()),
+        // Both. The shape is a list, so `with_derived` cannot refuse — and the
+        // refusal is kept rather than unwrapped because a shape that stopped
+        // being a list would otherwise become a panic on a screen instead of a
+        // row that quietly shows the written half.
+        (Some(written), false) => written
+            .clone()
+            .with_derived("wire", addresses.join(", "))
+            .ok(),
     }
-    Some(
-        ConfigField::new(
-            "connect.endpoints",
-            "address[]",
-            Applies::Hot,
-            addresses.join(", "),
-        )
-        .with_shape(settings::shape_or_free("connect.endpoints"))
-        .derived_from("wire"),
-    )
 }
 
 /// Every address this node's drawn links dial, in link order.
@@ -3915,19 +4068,40 @@ fn amend<T>(
         .get_mut(&node)
         .ok_or_else(|| FormError::NoSuchField("this card".to_owned()))?;
     for field in shown.fields() {
-        if !field.source().authored() {
+        // ★★★★★ R1717 — **the written half, never the shown one.** A row with
+        // two contributors shows the composition, and a store that kept that
+        // would freeze the canvas's addresses into somebody's configuration in
+        // the same act as their first keystroke — after which deleting the link
+        // would leave an address behind that nobody could explain. The floor
+        // does exactly this, measured: writing into a derived value ends the
+        // derivation and the value never follows its source again.
+        //
+        // It is the ROW that is narrowed, not only the text: a shared row put
+        // away whole would carry its derivation, and the next read would
+        // compose the wires onto a value that already held them.
+        let Some(mine) = field.written_row() else {
             continue;
-        }
+        };
         match stored.field(field.key()) {
-            Some(held) if held.value() == field.value() => {}
-            Some(_) => stored.set(field.key(), field.value())?,
-            None => stored.add_typed(field.clone())?,
+            Some(held) if held.written() == mine.written() => {}
+            Some(_) => stored.set(field.key(), mine.value())?,
+            None => stored.add_typed(mine)?,
         }
     }
+    // ★★★ R1717 — "no longer somebody's writing", not "no longer on the
+    // screen". A shared row given back stays on the screen — the wires still
+    // draw it — and the whole point of the act is that the store stops holding
+    // the written half. A rule that looked only at membership would leave that
+    // value behind and compose it back onto the row one read later.
     let gone: Vec<String> = stored
         .fields()
         .iter()
-        .filter(|f| shown.field(f.key()).is_none())
+        .filter(|f| {
+            shown
+                .field(f.key())
+                .and_then(ConfigField::written)
+                .is_none()
+        })
         .map(|f| f.key().to_owned())
         .collect();
     for key in gone {
@@ -7045,6 +7219,19 @@ impl ExternalIntrospect for LabOracle {
                                     // "this build does not say".
                                     "source": f.source().derived_from(),
                                     "aside": f.goes().instead(),
+                                    // ★★★★★ R1717 — the half somebody wrote,
+                                    // which with `source` above is the whole
+                                    // answer and needs no third key: nothing
+                                    // written and a source named is a row this
+                                    // screen works out, both is a row with two
+                                    // contributors, and neither can be read off
+                                    // the shown value. The count is published
+                                    // beside it because recovering it means
+                                    // re-implementing the splitter, and an
+                                    // agent that got the separator wrong would
+                                    // silently disagree with the screen.
+                                    "written": f.written(),
+                                    "derived_elements": f.derived_elements(),
                                 })
                             })
                             .collect(),
@@ -7404,7 +7591,7 @@ impl ExternalIntrospect for LabOracle {
                         })?;
                         let (key, element) = Self::row_target(spelled.trim())?;
                         let held = selected_form_of(&state, node)
-                            .and_then(|form| form.field(&key).map(|f| f.value().to_owned()))
+                            .and_then(|form| form.field(&key).map(|f| f.value().into_owned()))
                             .ok_or_else(|| {
                                 InvokeError::rejected(format!(
                                     "{key:?} is not a row of this card's settings"
@@ -7880,11 +8067,11 @@ fn sync_node(state: &Rc<LabState>, node: NodeId) {
     };
     let listen = form
         .field("listen.endpoints")
-        .map_or(String::new(), |f| f.value().to_owned());
+        .map_or(String::new(), |f| f.value().into_owned());
     let transport = Transport::of_locator(&listen)
         .or_else(|| {
             form.field("connect.endpoints")
-                .and_then(|f| Transport::of_locator(f.value()))
+                .and_then(|f| Transport::of_locator(&f.value()))
         })
         .unwrap_or(Transport::Tcp);
     drop(forms);
@@ -7907,7 +8094,10 @@ fn sync_node(state: &Rc<LabState>, node: NodeId) {
 fn endpoints_in(forms: &BTreeMap<NodeId, ConfigForm>, node: NodeId) -> Vec<String> {
     forms
         .get(&node)
-        .and_then(|form| form.field("listen.endpoints").map(|f| f.value().to_owned()))
+        .and_then(|form| {
+            form.field("listen.endpoints")
+                .map(|f| f.value().into_owned())
+        })
         .map(|value| {
             FieldType::elements(&value)
                 .map(str::to_owned)
@@ -8246,7 +8436,17 @@ fn begin_edit(state: &Rc<LabState>, what: Editing) -> Result<String, InvokeError
         // with the form's own splitter for exactly that reason.
         Editing::Value { node, key, element } => selected_form_of(state, *node)
             .and_then(|form| {
-                let held = form.field(key)?.value().to_owned();
+                let field = form.field(key)?;
+                // ★★★★★ R1717 — the box opens over the half being EDITED. A
+                // shared row shows what somebody wrote composed with what the
+                // canvas worked out, and a box seeded from the composition
+                // would write the canvas's contribution into their half the
+                // moment it was applied — the freeze this round exists to
+                // prevent, arriving through the seed instead of the commit.
+                let held = match field.written() {
+                    Some(written) => written.to_owned(),
+                    None => field.value().into_owned(),
+                };
                 Some(match element {
                     None => held,
                     Some(n) => FieldType::elements(&held).nth(*n)?.to_owned(),
@@ -8502,7 +8702,7 @@ fn set_value(
     // than "no such field" from a store that has never heard of it.
     let held = amend(state, node, |form| {
         form.set(key, value)?;
-        Ok(form.field(key).map(|f| f.value().to_owned()))
+        Ok(form.field(key).map(|f| f.value().into_owned()))
     })
     .map_err(|why| InvokeError::rejected(why.to_string()))?;
     // The pins are DERIVED from the form, so a value that changes an endpoint
@@ -8549,13 +8749,28 @@ fn remove_row(state: &Rc<LabState>, node: NodeId, key: &str) -> Result<String, I
         }
         None => {}
     }
+    // ★★★ R1717 — asked BEFORE the act, because after it the row no longer
+    // says it had two contributors. A row somebody shared with the canvas is
+    // not removed by this; their half is given back, and a toast that said
+    // "removed" over a row still on the screen would read as a tool that
+    // ignored the press.
+    let gave_back = shown_form(state, node)
+        .as_ref()
+        .and_then(|form| form.field(key))
+        .and_then(|field| match field.source() {
+            Source::Shared(from) => Some(from.into_owned()),
+            Source::Authored | Source::Derived(_) => None,
+        });
     amend(state, node, |form| form.remove(key)).map_err(|why| {
         let said = why.to_string();
         state.say(said.clone());
         InvokeError::rejected(said)
     })?;
     sync_node(state, node);
-    state.say(format!("removed {key}"));
+    match gave_back {
+        Some(from) => state.say(format!("{key} is the {from}'s again")),
+        None => state.say(format!("removed {key}")),
+    }
     Ok(key.to_owned())
 }
 
@@ -8604,9 +8819,26 @@ fn set_element(
     at: usize,
     text: &str,
 ) -> Result<String, InvokeError> {
-    let held = selected_form_of(state, node)
-        .and_then(|form| form.field(key).map(|f| f.value().to_owned()))
+    let row = selected_form_of(state, node)
+        .and_then(|form| form.field(key).cloned())
         .ok_or_else(|| InvokeError::rejected(format!("{key:?} is not a row of this card")))?;
+    // ★★★★★ R1717 — **an element the canvas contributed is not theirs to
+    // write.** Driven the first time this state existed, an edit over one of
+    // them wrote the canvas's whole contribution into their half AND moved its
+    // neighbours; the refusal is the value's own, so every door into an
+    // element passes it and none of them has to remember.
+    if let Some(from) = row.element_source(at).derived_from() {
+        let sentence = FormError::Derived {
+            key: format!("{key} element {}", at + 1),
+            from: from.to_owned(),
+        }
+        .to_string();
+        state.say(sentence.clone());
+        return Err(InvokeError::rejected(sentence));
+    }
+    // Only the WRITTEN half is rewritten; the derivation joins it again on the
+    // next read, which is what keeps an edit from freezing the drawing.
+    let held = row.written().unwrap_or_default().to_owned();
     let mut elements: Vec<String> = FieldType::elements(&held).map(str::to_owned).collect();
     let slot = elements
         .get_mut(at)
@@ -9157,6 +9389,7 @@ fn release(state: &Rc<LabState>) {
         | Hit::Field(_)
         | Hit::RemoveField(_)
         | Hit::AuthorField(_)
+        | Hit::DisownField(_)
         | Hit::Part { .. } => {
             act_on_form(state, now);
         }
@@ -9197,7 +9430,11 @@ fn act_on_form(state: &Rc<LabState>, hit: Hit) {
         Hit::Field(key) => press_row(state, &key),
         // ★★ R1686 — the seat, through the one function the wire also calls.
         // A refusal has already reached the toast through `say`.
-        Hit::RemoveField(key) => {
+        // ★★ R1717 — and the seat on a row with two contributors, through the
+        // SAME function: the form reads the row's provenance and decides
+        // whether taking a half out removes the row or gives it back, so this
+        // arm exists to name the act and not to repeat the rule.
+        Hit::RemoveField(key) | Hit::DisownField(key) => {
             if let Some(node) = state.active_card() {
                 remove_row(state, node, &key).ok();
             }
@@ -9534,7 +9771,12 @@ fn press_row(state: &Rc<LabState>, key: &str) {
     // press apply, and watch the old value come back with nothing said. The
     // refusal is said HERE instead, in the framework's own words, and the seat
     // beside the row offers the act that does work.
-    if let Some(from) = field.source().derived_from() {
+    //
+    // ★★ R1717 — asked as "may they write here", not "is anything deriving
+    // it". A row with two contributors is both, and the half that is theirs is
+    // theirs to open.
+    if !field.source().writable() {
+        let from = field.source().derived_from().unwrap_or_default().to_owned();
         state.say(format!(
             "{key} is worked out from the {from}; take it over to write it"
         ));
@@ -9566,6 +9808,22 @@ fn press_element(state: &Rc<LabState>, key: &str, at: usize) {
     let Some(node) = state.active_card() else {
         return;
     };
+    // ★★★★★ R1717 — an element the canvas contributed does not open a box, for
+    // the reason a whole worked-out row does not: the value refuses the write,
+    // so a box over it is one that cannot commit. The sentence names the
+    // ELEMENT, because a row-shaped one would read as "none of this is yours"
+    // over a row whose other lines are.
+    let derived = selected_form_of(state, node)
+        .and_then(|form| form.field(key).cloned())
+        .and_then(|field| field.element_source(at).derived_from().map(str::to_owned));
+    if let Some(from) = derived {
+        state.say(format!(
+            "{key} element {} is worked out from the {from}; it is there \
+             because the canvas draws it",
+            at + 1
+        ));
+        return;
+    }
     let _ = begin_edit(
         state,
         Editing::Value {
@@ -9652,9 +9910,8 @@ fn add_element(state: &Rc<LabState>, key: &str) {
         let Some(field) = forms.get(&node).and_then(|f| f.field(key)) else {
             return;
         };
-        let mut held: Vec<String> = FieldType::elements(field.value())
-            .map(str::to_owned)
-            .collect();
+        let shown = field.value();
+        let mut held: Vec<String> = FieldType::elements(&shown).map(str::to_owned).collect();
         held.push(format!("tcp/0.0.0.0:{}", 7400 + held.len()));
         held.join(FieldType::SEPARATOR)
     };

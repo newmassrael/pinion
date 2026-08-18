@@ -51,7 +51,7 @@ use pinion_core::style::{
 use pinion_core::theme::{ColorRole, Theme};
 use pinion_core::voice::Silence;
 use pinion_core::widgets::config_form::{
-    Applies, ConfigDefect, ConfigField, ConfigForm, FieldType,
+    Applies, ConfigDefect, ConfigField, ConfigForm, FieldType, Source,
 };
 use pinion_core::{Scene, measured_text_extent};
 
@@ -261,6 +261,15 @@ pub enum Seat {
     /// The screen worked this row out, so the seat takes the value **over**:
     /// the row becomes theirs, holding what it was derived to.
     TakeOver(Rect),
+    /// ★★★ R1717 — somebody wrote **part** of this row and the screen works
+    /// the rest out, so the seat gives their part back: the row stays, holding
+    /// what the screen alone says.
+    ///
+    /// A third act and not the first one, because the first one's word is a
+    /// promise this row cannot keep. Taking a shared row out puts it back one
+    /// render later — the derivation is still true — and a reader who pressed
+    /// "remove" and watched the row return has been told the tool is broken.
+    GiveBack(Rect),
 }
 
 impl Seat {
@@ -268,16 +277,34 @@ impl Seat {
     #[must_use]
     pub const fn rect(self) -> Rect {
         match self {
-            Self::Remove(rect) | Self::TakeOver(rect) => rect,
+            Self::Remove(rect) | Self::TakeOver(rect) | Self::GiveBack(rect) => rect,
         }
     }
 
-    /// The word this seat's tag and accessible name are built from.
+    /// The word this seat's accessible name is built from.
     #[must_use]
     pub const fn verb(self) -> &'static str {
         match self {
             Self::Remove(_) => "remove",
             Self::TakeOver(_) => "take over",
+            Self::GiveBack(_) => "give back",
+        }
+    }
+
+    /// The word this seat's **tag** is built from — the name a driver presses.
+    ///
+    /// ★★ R1717 — one place, because there are two doors onto it: the painter
+    /// builds the tag it draws under and the accessibility tree builds the tag
+    /// it announces under, and a screen whose reader is told about a seat at a
+    /// name no press reaches is worse than one with no seat. R1716 wrote the
+    /// same three-armed match twice and this round added a third arm to one of
+    /// them, which is how the pair came to be counted.
+    #[must_use]
+    pub const fn act(self) -> &'static str {
+        match self {
+            Self::Remove(_) => "remove",
+            Self::TakeOver(_) => "author",
+            Self::GiveBack(_) => "disown",
         }
     }
 
@@ -287,6 +314,7 @@ impl Seat {
         match self {
             Self::Remove(_) => Self::Remove(rect),
             Self::TakeOver(_) => Self::TakeOver(rect),
+            Self::GiveBack(_) => Self::GiveBack(rect),
         }
     }
 }
@@ -437,12 +465,13 @@ fn control_height(field: &ConfigField, style: &FormStyle) -> u32 {
     // ★★ R1716 — a derived row shows its value; it does not offer a way to
     // enter one. A list's height is the height of its editing affordances, and
     // a row with none of them is one line like any other read-out.
-    if !field.source().authored() {
+    if !field.source().writable() {
         return style.control_h;
     }
     match field.shape() {
         FieldType::List { .. } => {
-            let elements = u32::try_from(FieldType::elements(field.value()).count()).unwrap_or(0);
+            let shown = field.value();
+            let elements = u32::try_from(FieldType::elements(&shown).count()).unwrap_or(0);
             elements * (style.control_h + LIST_GAP) + ADD_CHIP_H
         }
         _ => style.control_h,
@@ -458,7 +487,7 @@ fn control_height(field: &ConfigField, style: &FormStyle) -> u32 {
 /// R1716 — a derived row is a read-out whatever its shape, so it takes the box
 /// a read-out takes.
 fn control_is_hungry(field: &ConfigField) -> bool {
-    !field.source().authored()
+    !field.source().writable()
         || !matches!(
             field.shape(),
             FieldType::Choice { .. } | FieldType::Flags { .. }
@@ -467,7 +496,7 @@ fn control_is_hungry(field: &ConfigField) -> bool {
 
 /// The natural width of a field's control, before any growth policy.
 fn control_hint(field: &ConfigField, style: &FormStyle) -> u32 {
-    if !field.source().authored() {
+    if !field.source().writable() {
         return style.control_hint_w;
     }
     match field.shape() {
@@ -604,15 +633,18 @@ fn lay_row(field: &ConfigField, at: (u32, u32), key_col: u32, style: &FormStyle)
             // control either: the chips, the toggle and the stepper are all
             // ways to write a value, and painting them over one the screen
             // works out would be an invitation the form refuses.
-            parts: if field.source().authored() {
+            parts: if field.source().writable() {
                 lay_parts(field, control, style)
             } else {
                 Vec::new()
             },
-            seat: if field.source().authored() {
-                Seat::Remove(seat)
-            } else {
-                Seat::TakeOver(seat)
+            // ★★★ R1717 — three acts, from the three answers to where the
+            // value came from. The seat is not a widget a screen chooses: the
+            // row's own provenance decides which act it can honestly offer.
+            seat: match field.source() {
+                Source::Authored => Seat::Remove(seat),
+                Source::Derived(_) => Seat::TakeOver(seat),
+                Source::Shared(_) => Seat::GiveBack(seat),
             },
         }
     }
@@ -702,7 +734,8 @@ fn lay_parts(field: &ConfigField, control: Rect, style: &FormStyle) -> Vec<(Stri
             // control — whose height `control_height` sized for exactly this.
             let mut placed = Vec::new();
             let mut y = control.y;
-            for (n, _) in FieldType::elements(field.value()).enumerate() {
+            let shown = field.value();
+            for (n, _) in FieldType::elements(&shown).enumerate() {
                 placed.push((
                     format!("item.{key}.{n}"),
                     Rect::new(control.x, y, control.w, style.control_h),
@@ -960,47 +993,9 @@ fn view_header(
             None,
         ));
         let said = format!("{tag_prefix}.said.{}", row.key);
-        // ★★★ R1716 — a row nobody wrote shows **where its value came from**
-        // where a row somebody wrote shows what an edit would cost. The
-        // restart badge answers "if you change this, when does it land"; on a
-        // row that refuses every change that question has no reader, and the
-        // one they do have — "why can I not type here" — had no answer at all.
-        // The behaviour canon suppresses exactly this badge on exactly these
-        // rows, and keeps the live one, which is the same rule: a hot row's
-        // value still reaches the running node when its SOURCE moves.
-        match field.source().derived_from() {
-            Some(from) => {
-                if field.applies() == Applies::Hot {
-                    header.push(badge(
-                        field.applies().wire(),
-                        applies_ink(field.applies(), theme),
-                        theme,
-                        Some((
-                            format!("{tag_prefix}.applies.{}", row.key),
-                            Silence::name_of(said.clone()),
-                        )),
-                    ));
-                }
-                header.push(badge(
-                    &format!("{DERIVED_GLYPH} {from}"),
-                    theme.resolve(ColorRole::OnSurfaceMuted),
-                    theme,
-                    Some((
-                        format!("{tag_prefix}.source.{}", row.key),
-                        Silence::name_of(said.clone()),
-                    )),
-                ));
-            }
-            None => header.push(badge(
-                field.applies().wire(),
-                applies_ink(field.applies(), theme),
-                theme,
-                Some((
-                    format!("{tag_prefix}.applies.{}", row.key),
-                    Silence::name_of(said.clone()),
-                )),
-            )),
-        }
+        // What an edit costs, and where the value came from — see
+        // [`provenance_badges`], which is where the rule for the pair lives.
+        header.extend(provenance_badges(tag_prefix, field, &row.key, &said, theme));
         if let Some(instead) = field.goes().instead() {
             // ★★ R1716 — and a row that is not configuration says so beside
             // the source, because "where does this value come from" and "does
@@ -1045,6 +1040,73 @@ fn view_header(
     }
 }
 
+/// The badges that say **what an edit costs** and **where the value came
+/// from**, in the order a reader meets them.
+///
+/// ★★★ R1716 — a row nobody wrote shows where its value came from where a row
+/// somebody wrote shows what an edit would cost. The restart badge answers "if
+/// you change this, when does it land"; on a row that refuses every change that
+/// question has no reader, and the one they do have — "why can I not type
+/// here" — had no answer at all. The behaviour canon suppresses exactly this
+/// badge on exactly these rows and keeps the live one, which is the same rule:
+/// a hot row's value still reaches the running node when its SOURCE moves.
+///
+/// ★★★★★ R1717 — a row with TWO contributors keeps both, because a reader of
+/// one has both questions: they may still type here, so what an edit costs is
+/// news, and part of what they are reading is not theirs, so where the rest
+/// came from is news as well. The source badge then carries the **count**,
+/// which is the fact the floor has no shape for at all — measured, a cell
+/// holding a composed value answers 2 of 256 standard roles and none of them is
+/// how much of it is not yours.
+fn provenance_badges(
+    tag_prefix: &str,
+    field: &ConfigField,
+    key: &str,
+    said: &str,
+    theme: &Theme,
+) -> Vec<Scene> {
+    let applies = || {
+        badge(
+            field.applies().wire(),
+            applies_ink(field.applies(), theme),
+            theme,
+            Some((
+                format!("{tag_prefix}.applies.{key}"),
+                Silence::name_of(said.to_owned()),
+            )),
+        )
+    };
+    let source = |word: &str| {
+        badge(
+            word,
+            theme.resolve(ColorRole::OnSurfaceMuted),
+            theme,
+            Some((
+                format!("{tag_prefix}.source.{key}"),
+                Silence::name_of(said.to_owned()),
+            )),
+        )
+    };
+    match field.source() {
+        Source::Authored => vec![applies()],
+        Source::Derived(from) => {
+            let mut out = Vec::new();
+            if field.applies() == Applies::Hot {
+                out.push(applies());
+            }
+            out.push(source(&format!("{DERIVED_GLYPH} {from}")));
+            out
+        }
+        Source::Shared(from) => vec![
+            applies(),
+            source(&format!(
+                "{DERIVED_GLYPH} {from} {}",
+                field.derived_elements()
+            )),
+        ],
+    }
+}
+
 /// The glyph the seat that takes a row away is drawn with.
 ///
 /// U+00D7, the multiplication sign — a typographic character in Latin-1 rather
@@ -1062,17 +1124,25 @@ const REMOVE_GLYPH: &str = "\u{00d7}";
 /// it, and R1697 recorded what a face's gap looks like when it does not.
 const DERIVED_GLYPH: &str = "\u{21aa}";
 
-/// The seat at a row's trailing edge: it takes an authored row **out**, and
-/// takes a derived row **over**.
+/// The glyph the seat of a row with two contributors shows: give my half back.
+///
+/// ★ R1717 — the take-over arrow reversed, because the act is its mirror and a
+/// reader who has learned one has learned the other.
+const GIVE_BACK_GLYPH: &str = "\u{21a9}";
+
+/// The seat at a row's trailing edge: it takes an authored row **out**, takes a
+/// derived row **over**, and gives a shared row's written half **back**.
 ///
 /// Painted at the rectangle [`RowBox::seat`] published, not at one computed
 /// here — the property this module has kept since R1651.1, and the reason it
 /// keeps it is that the two copies drift silently and the press lands nowhere.
 fn view_remove_seat(tag_prefix: &str, row: &RowBox, origin: (u32, u32), theme: &Theme) -> Scene {
-    let (glyph, tag) = match row.seat {
-        Seat::Remove(_) => (REMOVE_GLYPH, format!("{tag_prefix}.remove.{}", row.key)),
-        Seat::TakeOver(_) => (DERIVED_GLYPH, format!("{tag_prefix}.author.{}", row.key)),
+    let glyph = match row.seat {
+        Seat::Remove(_) => REMOVE_GLYPH,
+        Seat::TakeOver(_) => DERIVED_GLYPH,
+        Seat::GiveBack(_) => GIVE_BACK_GLYPH,
     };
+    let tag = format!("{tag_prefix}.{}.{}", row.seat.act(), row.key);
     Scene::Container(
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
             glyph.to_owned(),
@@ -1111,12 +1181,13 @@ fn view_control(
         // it just invited. So a derived row is a read-out of its own value, in
         // the muted ink the canon draws it in, and the seat beside it offers
         // the act that IS available — taking the row over.
-        if !field.source().authored() {
+        if !field.source().writable() {
             return derived_control(tag_prefix, row, field, origin, theme);
         }
         match field.shape() {
             FieldType::Choice { .. } | FieldType::Flags { .. } => {
-                let chosen: Vec<&str> = FieldType::elements(field.value()).collect();
+                let shown = field.value();
+                let chosen: Vec<&str> = FieldType::elements(&shown).collect();
                 option_chips(tag_prefix, row, &chosen, origin, theme)
             }
             FieldType::Boolean => boolean_control(tag_prefix, row, field, origin, theme),
@@ -1384,7 +1455,7 @@ fn number_control(
 ) -> Scene {
     let muted = theme.resolve(ColorRole::OnSurfaceMuted);
     let mut children = vec![Scene::Text(TextNode::styled(
-        field.value().to_owned(),
+        field.value().into_owned(),
         Rect::new(10, 8, row.control.w.saturating_sub(STEP_W * 2 + 16), 14),
         form_run_style()
             .with_size_px(12)
@@ -1425,21 +1496,33 @@ fn list_control(
     theme: &Theme,
 ) -> Scene {
     let muted = theme.resolve(ColorRole::OnSurfaceMuted);
-    let elements: Vec<&str> = FieldType::elements(field.value()).collect();
+    let shown = field.value();
+    let elements: Vec<&str> = FieldType::elements(&shown).collect();
     let mut children = Vec::new();
     for (n, element) in elements.iter().enumerate() {
         let name = format!("item.{}.{n}", row.key);
         let seat = part_seat(row, &name);
+        // ★★★★★ R1717 — an element the derivation contributed wears the
+        // read-out's skin, for the reason a whole derived row does: the fill is
+        // what an eye reads as "you may type here", and this line cannot be
+        // typed away — the link that put it there is still drawn.
+        let mine = field.element_source(n).writable();
         children.push(Scene::Container(
             ContainerNode::new(vec![Scene::Text(TextNode::styled(
                 (*element).to_owned(),
                 Rect::new(10, 8, seat.w.saturating_sub(20), 14),
-                form_run_style()
-                    .with_size_px(12)
-                    .with_fg(theme.resolve(ColorRole::OnSurface)),
+                form_run_style().with_size_px(12).with_fg(if mine {
+                    theme.resolve(ColorRole::OnSurface)
+                } else {
+                    theme.resolve(ColorRole::OnSurfaceMuted)
+                }),
             ))])
             .with_tag(format!("{tag_prefix}.{name}"))
-            .with_style(control_skin(None, theme))
+            .with_style(if mine {
+                control_skin(None, theme)
+            } else {
+                derived_skin(theme)
+            })
             .with_layout(placed(
                 framed(LayoutStyle::new().with_focusable(true)),
                 seat,
@@ -1478,7 +1561,7 @@ fn text_control(
 ) -> Scene {
     Scene::Container(
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
-            field.value().to_owned(),
+            field.value().into_owned(),
             Rect::default(),
             form_run_style()
                 .with_size_px(12)
@@ -1518,7 +1601,7 @@ fn derived_control(
 ) -> Scene {
     Scene::Container(
         ContainerNode::new(vec![Scene::Text(TextNode::styled(
-            field.value().to_owned(),
+            field.value().into_owned(),
             Rect::default(),
             form_run_style()
                 .with_size_px(12)
@@ -1648,10 +1731,7 @@ pub fn row_access_nodes(
         // ★★ R1716 — and WHICH act, from the seat itself. A seat that takes a
         // row over announced as "remove" would be the same failure one step
         // later: the name is what a reader decides by.
-        let seat_tag = match row.seat {
-            Seat::Remove(_) => format!("{tag_prefix}.remove.{}", row.key),
-            Seat::TakeOver(_) => format!("{tag_prefix}.author.{}", row.key),
-        };
+        let seat_tag = format!("{tag_prefix}.{}.{}", row.seat.act(), row.key);
         nodes.push(
             AccessNode::new(seat_tag, AriaRole::Button)
                 .with_name(format!("{} {}", row.seat.verb(), field.key()))
@@ -1693,7 +1773,7 @@ fn control_role(field: &ConfigField) -> AriaRole {
     // and refuses every write is exactly that failure, one axis over. The
     // read-only state on the same node is what says it cannot be typed into;
     // the role is what says what is there.
-    if !field.source().authored() {
+    if !field.source().writable() {
         return AriaRole::TextInput;
     }
     match field.shape() {
@@ -1725,7 +1805,7 @@ fn control_role(field: &ConfigField) -> AriaRole {
 fn control_value(field: &ConfigField) -> AccessValue {
     match field.shape() {
         FieldType::Boolean => AccessValue::Bool(field.value().trim() == "true"),
-        _ => AccessValue::Text(field.value().to_owned()),
+        _ => AccessValue::Text(field.value().into_owned()),
     }
 }
 
@@ -1741,7 +1821,7 @@ fn control_state(field: &ConfigField) -> AccessState {
     // reachable, its value is worth hearing and copying, and it simply refuses
     // to change. Marking it disabled would take it out of a reader's walk
     // entirely — the value they came for.
-    state.read_only = !field.source().authored();
+    state.read_only = !field.source().writable();
     state
 }
 
@@ -1759,7 +1839,7 @@ fn part_access_node(tag_prefix: &str, field: &ConfigField, suffix: &str, seat: R
         // An option: a radio when exactly one may be chosen, a checkbox when
         // any subset may. The chosen set is the field's own value.
         "option" => {
-            let on = FieldType::elements(field.value()).any(|word| word == last);
+            let on = FieldType::elements(&field.value()).any(|word| word == last);
             let role = if matches!(field.shape(), FieldType::Choice { .. }) {
                 AriaRole::RadioButton
             } else {
@@ -1804,10 +1884,28 @@ fn part_access_node(tag_prefix: &str, field: &ConfigField, suffix: &str, seat: R
         });
     }
     if suffix.starts_with("item.") && last != "add" {
-        let element = FieldType::elements(field.value())
-            .nth(last.parse::<usize>().unwrap_or(usize::MAX))
-            .unwrap_or_default();
+        let at = last.parse::<usize>().unwrap_or(usize::MAX);
+        let shown = field.value();
+        let element = FieldType::elements(&shown).nth(at).unwrap_or_default();
         node = node.with_value(AccessValue::Text(element.to_owned()));
+        // ★★★ R1717 — and an element the derivation contributed says it is a
+        // read-out and what worked it out, the way a whole derived row does. A
+        // reader who cannot see that its box has no fill has no other way to
+        // learn that this one line will not take an edit. It goes in the NAME
+        // rather than through a described-by region: a region per element would
+        // put a status node beside every line of every list on the screen, and
+        // what a reader needs here is one clause.
+        if let Some(from) = field.element_source(at).derived_from() {
+            node = node
+                .with_name(format!(
+                    "{key} element {}, worked out from the {from}",
+                    element_ordinal(last)
+                ))
+                .with_state(AccessState {
+                    read_only: true,
+                    ..AccessState::default()
+                });
+        }
     }
     node
 }

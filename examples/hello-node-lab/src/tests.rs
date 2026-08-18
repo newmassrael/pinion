@@ -47,7 +47,8 @@ fn r1716_a_card_told_where_it_runs_runs_there_in_the_plan() {
         assert_eq!(
             shown
                 .field("host")
-                .map(pinion_core::widgets::config_form::ConfigField::value),
+                .map(|f| f.value().into_owned())
+                .as_deref(),
             Some("host-c")
         );
         assert_eq!(
@@ -68,6 +69,164 @@ fn r1716_a_card_told_where_it_runs_runs_there_in_the_plan() {
         assert!(
             placed.contains(&("P-01", "host-a")),
             "while a card nobody told still runs where it is drawn: {placed:?}"
+        );
+    });
+}
+
+/// Take the connect row over and write one address of your own over the seed —
+/// the two acts a person performs to reach a row with two contributors.
+///
+/// It is written as the screen's own operations rather than by building the
+/// state, because a state a test invents can be one no session reaches: the
+/// only door into this on the real screen is the take-over seat followed by a
+/// commit into the box it leaves behind.
+fn share_the_connect_row(state: &std::rc::Rc<LabState>, address: &str) -> Vec<String> {
+    let node = state.active_card().expect("the screen opens on a card");
+    let drawn: Vec<String> = super::shown_form(state, node)
+        .and_then(|form| {
+            form.field("connect.endpoints")
+                .map(|f| f.value().into_owned())
+        })
+        .map(|value| {
+            pinion_core::widgets::config_form::FieldType::elements(&value)
+                .map(str::to_owned)
+                .collect()
+        })
+        .expect("the canvas draws links out of the opening card");
+    super::author_row(state, node, "connect.endpoints").expect("the wires derive it");
+    super::amend(state, node, |form| form.set("connect.endpoints", address))
+        .expect("theirs to write now");
+    drawn
+}
+
+/// ★★★★★ R1717 — **one key, two contributors.** A card may be told to dial an
+/// address this canvas does not draw, and every address it DOES draw still
+/// reaches the row and the exported configuration.
+///
+/// R1716 answered the first half by letting a written value take the whole row
+/// and paid for the second with a gate warning. This pins the payment gone,
+/// one layer under the demo: the failure is a form rather than a screen.
+#[test]
+fn r1717_a_written_address_and_every_drawn_one_stand_in_one_row() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = std::rc::Rc::new(state());
+        let node = state.active_card().expect("the screen opens on a card");
+        let outside = "tcp/10.0.0.21:7449";
+        let drawn = share_the_connect_row(&state, outside);
+        assert!(
+            drawn.len() >= 2,
+            "the opening card is drawn to more than one peer: {drawn:?}"
+        );
+        let form = super::shown_form(&state, node).expect("a form");
+        let row = form.field("connect.endpoints").expect("held");
+        assert_eq!(
+            row.written(),
+            Some(outside),
+            "★ their half is exactly what they typed"
+        );
+        let value = row.value();
+        let shown: Vec<&str> =
+            pinion_core::widgets::config_form::FieldType::elements(&value).collect();
+        assert_eq!(
+            shown[0], outside,
+            "★★ written first — the half a person is looking for is the one \
+             they meet first"
+        );
+        for address in &drawn {
+            assert!(
+                shown.contains(&address.as_str()),
+                "★★★★★ the canvas still reaches the row: {address} missing from {shown:?}"
+            );
+        }
+        assert_eq!(
+            row.derived_elements(),
+            drawn.len(),
+            "★★ and the row says how many of them are the canvas's"
+        );
+        let document = form.document().expect("shippable");
+        assert_eq!(
+            document["connect"]["endpoints"],
+            serde_json::Value::Array(
+                shown
+                    .iter()
+                    .map(|a| serde_json::Value::String((*a).to_string()))
+                    .collect()
+            ),
+            "★★★★★ and the exported configuration ships both — the picture and \
+             the file saying the same thing is the whole point"
+        );
+    });
+}
+
+/// ★★★★★ R1717 — the gate's surviving warning: an address **somebody wrote**
+/// that nothing on this canvas listens on.
+///
+/// R1716 warned about the mirror image — a drawn link the card did not dial —
+/// which was compensation for a row that could not hold two contributions.
+/// That warning is now unreachable by construction, and this is the fact
+/// underneath it: the graph is no longer the whole picture, so anything
+/// concluded from it is being concluded from a partial one.
+#[test]
+fn r1717_an_address_outside_the_graph_warns_and_does_not_block() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = std::rc::Rc::new(state());
+        let node = state.active_card().expect("the screen opens on a card");
+        let opening = state.defects();
+        let outside = "tcp/10.0.0.21:7449";
+        let drawn = share_the_connect_row(&state, outside);
+        let lines: Vec<String> = state
+            .gate_lines()
+            .into_iter()
+            .map(|(_, sentence)| sentence)
+            .collect();
+        let said = lines.join(" | ");
+        assert!(
+            said.contains(outside) && said.contains("nothing here listens on"),
+            "★★★ the address nothing here listens on is named: {said}"
+        );
+        // ★★★★★ R1717 — and the SENTENCE READS. R1716 smuggled this warning
+        // inside an unknown-key defect whose key was really a sentence, so the
+        // panel said "R-01 · R-01 · … is outside this graph is not a key the
+        // target knows" for a whole round with every gate green — because
+        // every check asked whether the address was NAMED. A photograph of the
+        // panel answered it in one look; this is that question, in a test.
+        let about: Vec<&String> = lines.iter().filter(|line| line.contains(outside)).collect();
+        assert_eq!(about.len(), 1, "one line is about it: {said}");
+        assert_eq!(
+            about[0].matches("R-01").count(),
+            1,
+            "★★★★★ and the card is named ONCE in it: {}",
+            about[0]
+        );
+        assert!(
+            !about[0].contains("is not a key the target knows"),
+            "★★ with a sentence about the graph, not about an unknown key: {}",
+            about[0]
+        );
+        for address in &drawn {
+            assert!(
+                !said.contains(address.as_str()),
+                "★★★★★ and no DRAWN address is — they are in the row by \
+                 construction, so R1716's warning could never fire again: \
+                 {address} in {said}"
+            );
+        }
+        assert!(
+            state.verdict().may_launch(),
+            "★★ it warns and does not block — a node may legitimately be told \
+             to reach an already-running peer"
+        );
+        super::amend(&state, node, |form| form.remove("connect.endpoints"))
+            .expect("their half goes");
+        let back = super::shown_form(&state, node).expect("a form");
+        let row = back.field("connect.endpoints").expect("★ the row STAYS");
+        assert_eq!(row.written(), None, "★ and their half is gone");
+        assert_eq!(
+            state.defects().len(),
+            opening.len(),
+            "★ leaving the gate exactly as the screen opened it"
         );
     });
 }

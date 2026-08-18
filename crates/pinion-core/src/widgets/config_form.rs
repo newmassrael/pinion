@@ -199,16 +199,53 @@ impl Applies {
 ///   it. Here the refusal is the value's own, so a screen cannot forget it.
 /// * **Nothing can say why.** A locked cell answers 3 of 256 standard roles and
 ///   none of them is a reason; driving its editor logs a line and returns void.
+/// # ★★★★★ R1717 — one key can have TWO contributors
+///
+/// [`Self::Shared`] is the arm the behaviour canon has and R1716 did not: a
+/// node may be told to dial an address this canvas does not draw *and* the
+/// addresses it does draw, and those are not competing answers — they are two
+/// contributions to one list. R1716 let the written half win the whole row,
+/// which made the picture and the configuration disagree with only a gate
+/// warning to say so.
+///
+/// # What the floor does here, measured rather than read
+///
+/// The mature toolkit at 6.11.1 was built and **run** for R1717, and it does
+/// compose two contributors — a settings store falls back to a second store, so
+/// a key only the second one holds still answers, and taking the written half
+/// away brings the other back. So the *capability* is parity. Four things it
+/// does not do:
+///
+/// * **The composition is whole-key, never element-wise.** Measured: a written
+///   one-element list beside a worked-out three-element list answers **one**
+///   element. One store wins the key entire; there is no union.
+/// * **No reader can ask which store answered.** The file name is the written
+///   store's whatever answered, and the scope is the asking object's. Telling
+///   them apart needs a *second* object with fallbacks switched off, and it
+///   answers about the **key**, not about the value.
+/// * **The binding half ends on a contribution.** Writing into a derived value
+///   clears its derivation, and after the source moves the value does not
+///   follow it any more.
+/// * **A cell holding a composed value answers 2 of 256 standard roles**, and
+///   none of them is how much of it is not the reader's.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Source {
-    /// Somebody wrote it. The only kind of row a person may edit or take away.
+    /// Somebody wrote all of it.
     Authored,
-    /// This screen worked it out, from the thing this names.
+    /// Nobody wrote any of it; this screen worked it out, from the thing this
+    /// names.
     ///
     /// The word is shown to a reader — `role`, `wire`, `kind default` — so it
     /// is written for them and not for a log.
     Derived(Cow<'static, str>),
+    /// R1717 — **both.** Somebody wrote part of it and the rest was worked out
+    /// from the thing this names, and the row shows their composition.
+    ///
+    /// Only a shape that [`FieldType::merges`] can be in this state: two
+    /// contributions to a single value are not a composition, they are a
+    /// contradiction, and [`ConfigField::with_derived`] refuses one.
+    Shared(Cow<'static, str>),
 }
 
 impl Default for Source {
@@ -218,19 +255,72 @@ impl Default for Source {
 }
 
 impl Source {
-    /// Whether somebody wrote this value.
+    /// Every answer, so a consumer enumerates rather than spelling them out.
+    ///
+    /// The names alone — a census over the vocabulary needs the words and a
+    /// value of each arm would need a source name that means nothing.
+    pub const WORDS: [&'static str; 3] = ["authored", "derived", "shared"];
+
+    /// Whether a person may write this row.
+    ///
+    /// ★★★ R1717 — the question every consumer was really asking when it
+    /// asked whether the value was authored, and the two stopped being the same
+    /// question the moment a row could be **partly** authored. Spelled as its
+    /// own predicate so that a screen painting a control, a form refusing a
+    /// write and an accessibility tree marking a node read-only all read one
+    /// fact.
     #[must_use]
-    pub const fn authored(&self) -> bool {
-        matches!(self, Self::Authored)
+    pub const fn writable(&self) -> bool {
+        !matches!(self, Self::Derived(_))
     }
 
-    /// What the value was worked out from, when it was not written.
+    /// What part of the value was worked out, and from what — `None` when
+    /// nothing was.
     #[must_use]
     pub fn derived_from(&self) -> Option<&str> {
         match self {
             Self::Authored => None,
-            Self::Derived(from) => Some(from),
+            Self::Derived(from) | Self::Shared(from) => Some(from),
         }
+    }
+
+    /// The word this answer is spelled with on the wire and in a census.
+    #[must_use]
+    pub const fn wire(&self) -> &'static str {
+        match self {
+            Self::Authored => Self::WORDS[0],
+            Self::Derived(_) => Self::WORDS[1],
+            Self::Shared(_) => Self::WORDS[2],
+        }
+    }
+}
+
+/// What a screen worked out for one row, held **beside** what somebody wrote
+/// rather than instead of it.
+///
+/// ★★★ R1717 — carrying the value and not only the source name is what makes
+/// the composition re-runnable: a row whose written half changes has to be able
+/// to say what it shows *now*, and a type that had thrown the worked-out half
+/// away could only do that by asking the screen again at every keystroke.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Derivation {
+    /// What the value was worked out from — the word a reader sees.
+    from: Cow<'static, str>,
+    /// What it was worked out to be.
+    value: String,
+}
+
+impl Derivation {
+    /// What this was worked out from.
+    #[must_use]
+    pub fn from(&self) -> &str {
+        &self.from
+    }
+
+    /// What it was worked out to be, before any written half joins it.
+    #[must_use]
+    pub fn value(&self) -> &str {
+        &self.value
     }
 }
 
@@ -496,6 +586,49 @@ impl FieldType {
         matches!(self, Self::Choice { .. })
     }
 
+    /// ★★★★★ R1717 — whether a value of this shape can hold **two
+    /// contributions at once**.
+    ///
+    /// A sequence can: the addresses somebody wrote and the addresses a canvas
+    /// draws are both true of one node, and a list that showed only one of them
+    /// would ship a configuration that contradicts the picture. A single value
+    /// cannot: a mode worked out from a role and a mode somebody typed are
+    /// competing answers, and a form that "composed" them would invent a third.
+    ///
+    /// So the rule is the **shape's**, not a flag a screen sets per row — which
+    /// is what makes [`ConfigField::with_derived`] able to refuse rather than
+    /// silently pick a winner.
+    #[must_use]
+    pub const fn merges(&self) -> bool {
+        matches!(self, Self::List { .. } | Self::Flags { .. })
+    }
+
+    /// A written half and a worked-out one composed, in the order a reader
+    /// meets them: what somebody wrote first, then what the screen worked out
+    /// and they had not already said.
+    ///
+    /// Written-first because the written half is the one a person is looking
+    /// for, and de-duplicated because one address said twice is one address —
+    /// the behaviour canon composes in exactly this order for exactly this
+    /// reason.
+    ///
+    /// A shape that does not [`merges`](Self::merges) answers the written half
+    /// alone; nothing can reach that, because a row of such a shape is never
+    /// allowed to hold both.
+    #[must_use]
+    pub fn compose(&self, written: &str, worked_out: &str) -> String {
+        if !self.merges() {
+            return written.to_string();
+        }
+        let mut out: Vec<&str> = Self::split(written).collect();
+        for element in Self::split(worked_out) {
+            if !out.contains(&element) {
+                out.push(element);
+            }
+        }
+        out.join(Self::SEPARATOR)
+    }
+
     /// The elements a [`Self::List`] or [`Self::Flags`] text holds, in order.
     ///
     /// Public because a painter drawing a row per element must split it the
@@ -637,9 +770,20 @@ pub struct ConfigField {
     key: Cow<'static, str>,
     ty: Cow<'static, str>,
     applies: Applies,
-    value: String,
-    /// What the field was when the form was opened, so an edit is knowable.
-    original: String,
+    /// ★★★★★ R1717 — **the half somebody wrote**, and `None` when nobody
+    /// has. Not "the value": the value is what the row SHOWS, which is this
+    /// composed with [`Self::worked_out`] and is therefore derived.
+    ///
+    /// The split is what makes `edited` answerable. R1716 held one string, so a
+    /// row whose shown value included a contribution the reader never made
+    /// would have had two answers to "did somebody change this" — and that is
+    /// the reason R1716 chose not to compose at all.
+    written: Option<String>,
+    /// The written half when the form was opened, so an edit is knowable.
+    original: Option<String>,
+    /// R1717 — what this screen worked out for this key. See [`Derivation`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    worked_out: Option<Derivation>,
     /// R1651 — the shape the text has to have. Defaults to [`FieldType::Text`],
     /// which is what a field with no declared structure already was.
     #[serde(default)]
@@ -659,15 +803,11 @@ pub struct ConfigField {
     /// goes back.
     #[serde(default)]
     hidden: bool,
-    /// R1716 — where this value came from. See [`Source`].
+    /// R1716 — where this value goes. See [`Goes`].
     ///
     /// Skipped when it is the ordinary answer, so a stored form written before
     /// this existed reads back unchanged and one written now is byte-identical
     /// to what that reader expects.
-    #[serde(default, skip_serializing_if = "Source::authored")]
-    source: Source,
-    /// R1716 — where this value goes. See [`Goes`]. Skipped for the same
-    /// reason as [`Self::source`].
     #[serde(default, skip_serializing_if = "Goes::into_document")]
     goes: Goes,
 }
@@ -692,12 +832,12 @@ impl ConfigField {
             key: key.into(),
             ty: ty.into(),
             applies,
-            original: value.clone(),
-            value,
+            original: Some(value.clone()),
+            written: Some(value),
+            worked_out: None,
             shape: FieldType::Text,
             custom: false,
             hidden: false,
-            source: Source::Authored,
             goes: Goes::Document,
         }
     }
@@ -712,8 +852,73 @@ impl ConfigField {
     /// text box over a value nobody can write.
     #[must_use]
     pub fn derived_from(mut self, from: impl Into<Cow<'static, str>>) -> Self {
-        self.source = Source::Derived(from.into());
+        let value = self.written.take().unwrap_or_default();
+        self.original = None;
+        self.worked_out = Some(Derivation {
+            from: from.into(),
+            value,
+        });
         self
+    }
+
+    /// ★★★★★ R1717 — this screen ALSO worked something out for this key,
+    /// **beside** what somebody wrote.
+    ///
+    /// The row then shows the two composed ([`FieldType::compose`]), keeps
+    /// being writable, and writes only the half that is somebody's — so a wire
+    /// the canvas draws reaches the configuration without taking a hand-written
+    /// address away, which is the behaviour canon's rule and the one R1716
+    /// could not express.
+    ///
+    /// A written half that contributes **nothing** — an empty list — leaves the
+    /// row wholly [`Source::Derived`]. That is not a special case bolted on: a
+    /// person who empties their half has given the row back, and a row that
+    /// claimed to be partly theirs while holding none of it would offer a
+    /// take-over of something they already own.
+    ///
+    /// # Errors
+    ///
+    /// [`FormError::Unmergeable`] — this row's shape holds a single value, so a
+    /// written value and a worked-out one cannot both stand. The caller has to
+    /// decide which, and the two ways to say so are this builder's absence and
+    /// [`Self::derived_from`].
+    pub fn with_derived(
+        mut self,
+        from: impl Into<Cow<'static, str>>,
+        value: impl Into<String>,
+    ) -> Result<Self, FormError> {
+        if self.written.is_some() && !self.shape.merges() {
+            return Err(FormError::Unmergeable {
+                key: self.key.to_string(),
+                ty: self.ty.to_string(),
+            });
+        }
+        self.worked_out = Some(Derivation {
+            from: from.into(),
+            value: value.into(),
+        });
+        self.settle_ownership();
+        Ok(self)
+    }
+
+    /// Give the row back to its derivation when the written half contributes
+    /// nothing to it.
+    ///
+    /// One place, called by every act that can empty a written half, so
+    /// "written but contributing nothing" is a state this type cannot be in and
+    /// no consumer has to test for.
+    fn settle_ownership(&mut self) {
+        if self.worked_out.is_none() {
+            return;
+        }
+        let contributes = match &self.written {
+            Some(written) => !self.shape.compose(written, "").is_empty(),
+            None => false,
+        };
+        if !contributes {
+            self.written = None;
+            self.original = None;
+        }
     }
 
     /// This row does not go into the document; it is about `instead` — see
@@ -725,9 +930,51 @@ impl ConfigField {
     }
 
     /// Where this value came from.
+    ///
+    /// ★★★ R1717 — **derived from the two halves**, not stored beside them. A
+    /// row that held its own answer to this could be told it was authored while
+    /// holding a derivation, and every consumer of that answer would be wrong
+    /// at once.
     #[must_use]
-    pub const fn source(&self) -> &Source {
-        &self.source
+    pub fn source(&self) -> Source {
+        match (&self.worked_out, &self.written) {
+            (None, _) => Source::Authored,
+            (Some(worked_out), None) => Source::Derived(worked_out.from.clone()),
+            (Some(worked_out), Some(_)) => Source::Shared(worked_out.from.clone()),
+        }
+    }
+
+    /// The half somebody wrote — `None` when nobody has.
+    ///
+    /// ★★ R1717 — this is what a screen **stores**. The value below is what it
+    /// shows, and storing that instead is how a wire's contribution freezes
+    /// into somebody's configuration without them saying so.
+    #[must_use]
+    pub fn written(&self) -> Option<&str> {
+        self.written.as_deref()
+    }
+
+    /// What this screen worked out for this row — `None` when nothing did.
+    #[must_use]
+    pub const fn worked_out(&self) -> Option<&Derivation> {
+        self.worked_out.as_ref()
+    }
+
+    /// **The row somebody wrote**, with the derivation dropped — `None` when
+    /// nobody wrote any of it.
+    ///
+    /// ★★★ R1717 — what a caller **stores**. A shared row put away whole
+    /// carries its derivation with it, and the next read composes the same
+    /// worked-out value onto a written half that already holds it; two reads
+    /// later the two are indistinguishable and the person owns addresses they
+    /// never typed. Returning `None` rather than an emptied row is what lets
+    /// the caller skip a wholly derived row without testing for it twice.
+    #[must_use]
+    pub fn written_row(&self) -> Option<Self> {
+        self.written.as_ref()?;
+        let mut mine = self.clone();
+        mine.worked_out = None;
+        Some(mine)
     }
 
     /// Where this value goes.
@@ -781,7 +1028,7 @@ impl ConfigField {
     ///
     /// The defect the text has.
     pub fn encoded(&self) -> Result<Value, ConfigDefect> {
-        self.shape.encode(&self.key, &self.value)
+        self.shape.encode(&self.key, &self.value())
     }
 
     /// Every way this row is wrong, in the order a reader meets them.
@@ -826,16 +1073,93 @@ impl ConfigField {
         self.applies
     }
 
-    /// The current value.
+    /// **What the row shows** — the two halves composed.
+    ///
+    /// ★★★★★ R1717 — computed rather than held. The shown value is a
+    /// function of what somebody wrote and what the screen worked out, and a
+    /// copy of it kept beside them would be a third place the same fact lives:
+    /// every write would have to remember to refresh it, and the one that
+    /// forgot would show a value the document does not contain.
+    ///
+    /// It borrows in both the ordinary cases and only allocates for a row that
+    /// genuinely has two contributors, which is the rare one.
     #[must_use]
-    pub fn value(&self) -> &str {
-        &self.value
+    pub fn value(&self) -> Cow<'_, str> {
+        match (&self.written, &self.worked_out) {
+            (Some(written), None) => Cow::Borrowed(written.as_str()),
+            (None, Some(worked_out)) => Cow::Borrowed(worked_out.value.as_str()),
+            (Some(written), Some(worked_out)) => {
+                Cow::Owned(self.shape.compose(written, &worked_out.value))
+            }
+            // Not reachable through this type's constructors: `new` writes a
+            // half and `derived_from` works one out. A form read back from a
+            // document that names neither shows nothing, which is the only
+            // honest thing left to show.
+            (None, None) => Cow::Borrowed(""),
+        }
     }
 
-    /// Whether the value differs from what the form opened with.
+    /// Where the element at `at` of the shown value came from.
+    ///
+    /// ★★★★★ R1717 — **provenance reaches the element, because editing
+    /// does.** A list of addresses is shown one per line and a person edits one
+    /// line at a time, so a row that could only answer for the whole value
+    /// would leave every line looking equally theirs. It is not: an address the
+    /// canvas drew cannot be typed away — the link is still drawn — and a box
+    /// that accepted the edit would write the canvas's whole contribution into
+    /// their half and reorder its neighbours in the same act. Both were
+    /// measured on this screen the first time it was driven.
+    ///
+    /// Derivable rather than stored, and derivable only because
+    /// [`FieldType::compose`] puts the written half FIRST: the elements before
+    /// the written half's count are somebody's and the rest are the
+    /// derivation's. That is the second thing the composition order buys.
+    ///
+    /// A row with one contributor answers the same thing for every element as
+    /// it does for itself, and an index past the end answers for the row —
+    /// there is nothing there to have come from anywhere.
+    #[must_use]
+    pub fn element_source(&self, at: usize) -> Source {
+        let Some(worked_out) = &self.worked_out else {
+            return Source::Authored;
+        };
+        let Some(written) = &self.written else {
+            return Source::Derived(worked_out.from.clone());
+        };
+        if at < FieldType::elements(written).count() {
+            Source::Authored
+        } else {
+            Source::Derived(worked_out.from.clone())
+        }
+    }
+
+    /// How many of the shown value's elements came from the derivation rather
+    /// than from somebody — `0` on a row with one contributor.
+    ///
+    /// ★★ R1717 — the number the floor cannot produce: a cell holding a
+    /// composed value answers 2 of 256 standard roles there and none of them is
+    /// this. A reader looking at four addresses needs to know that three of
+    /// them will change when the drawing does.
+    #[must_use]
+    pub fn derived_elements(&self) -> usize {
+        let (Some(written), Some(worked_out)) = (&self.written, &self.worked_out) else {
+            return 0;
+        };
+        let mine: Vec<&str> = FieldType::elements(written).collect();
+        FieldType::elements(&worked_out.value)
+            .filter(|element| !mine.contains(element))
+            .count()
+    }
+
+    /// Whether the **written half** differs from what the form opened with.
+    ///
+    /// ★★★★★ R1717 — a question about writing, so it is asked of the half
+    /// somebody wrote. A row whose shown value moved because the canvas moved
+    /// was not edited by anybody, and a form that said it was would offer a
+    /// "put it back" that puts nothing back.
     #[must_use]
     pub fn edited(&self) -> bool {
-        self.value != self.original
+        self.written != self.original
     }
 
     /// Set the value.
@@ -853,13 +1177,40 @@ impl ConfigField {
     /// and the error names what from. [`ConfigForm::author`] is the way to take
     /// it over.
     pub fn set(&mut self, value: impl Into<String>) -> Result<(), FormError> {
-        if let Some(from) = self.source.derived_from() {
+        if self.written.is_none() {
+            let from = self.worked_out.as_ref().map_or("", |w| w.from.as_ref());
             return Err(FormError::Derived {
                 key: self.key.to_string(),
                 from: from.to_owned(),
             });
         }
-        self.value = value.into();
+        self.written = Some(value.into());
+        // ★★ R1717 — writing an empty half onto a shared row gives it back to
+        // the derivation, which is the same act `ConfigForm::remove` performs
+        // and has to mean the same thing however a person reaches it.
+        self.settle_ownership();
+        Ok(())
+    }
+
+    /// Give this row back to the thing it is worked out from: the written half
+    /// goes and the derivation stands alone.
+    ///
+    /// ★★★ R1717 — the mirror of [`Self::author`], and what
+    /// [`ConfigForm::remove`] does to a shared row instead of taking it off the
+    /// screen. Taking the row away would be wrong twice: the derivation is
+    /// still true, so the row is back one render later, and the reader would
+    /// have watched a row they did not delete disappear and return.
+    ///
+    /// # Errors
+    ///
+    /// [`FormError::NotDerived`] — nothing is deriving this row, so there is
+    /// nobody to give it back to.
+    pub fn disown(&mut self) -> Result<(), FormError> {
+        if self.worked_out.is_none() {
+            return Err(FormError::NotDerived(self.key.to_string()));
+        }
+        self.written = None;
+        self.original = None;
         Ok(())
     }
 
@@ -879,20 +1230,23 @@ impl ConfigField {
     /// [`FormError::NotDerived`] — the row is already somebody's writing, so
     /// there is nothing to take over.
     pub fn author(&mut self) -> Result<Takeover, FormError> {
-        let Source::Derived(from) = std::mem::take(&mut self.source) else {
+        let seeded = self.value().into_owned();
+        let Some(worked_out) = self.worked_out.take() else {
             return Err(FormError::NotDerived(self.key.to_string()));
         };
+        self.written = Some(seeded.clone());
+        self.original = Some(seeded.clone());
         Ok(Takeover {
             key: self.key.to_string(),
-            was: from.into_owned(),
-            seeded: self.value.clone(),
+            was: worked_out.from.into_owned(),
+            seeded,
         })
     }
 
     /// Accept the current value as the settled one — what a successful launch
     /// does, after which nothing is pending a restart.
     pub fn settle(&mut self) {
-        self.original.clone_from(&self.value);
+        self.original.clone_from(&self.written);
     }
 
     /// Put the value back to what the form opened with.
@@ -904,7 +1258,7 @@ impl ConfigField {
     /// which is what makes "is there anything to put back" and "put it back"
     /// one fact instead of two.
     pub fn revert(&mut self) {
-        self.value.clone_from(&self.original);
+        self.written.clone_from(&self.original);
     }
 }
 
@@ -1092,7 +1446,23 @@ impl ConfigForm {
     pub fn derived(&self) -> Vec<&ConfigField> {
         self.fields
             .iter()
-            .filter(|f| !f.source().authored())
+            .filter(|f| f.worked_out().is_some())
+            .collect()
+    }
+
+    /// R1717 — the rows a person and this screen **both** have something to say
+    /// about, in the order it shows them.
+    ///
+    /// A separate rollup from [`Self::derived`] rather than a filter over it,
+    /// because the two answer different questions and a reader of one is not
+    /// asking the other: `derived` is "which of these does the screen keep up
+    /// to date", and this is "which of these will change under somebody who
+    /// thinks they own it".
+    #[must_use]
+    pub fn shared(&self) -> Vec<&ConfigField> {
+        self.fields
+            .iter()
+            .filter(|f| matches!(f.source(), Source::Shared(_)))
             .collect()
     }
 
@@ -1184,11 +1554,24 @@ impl ConfigForm {
             .iter()
             .position(|f| f.key() == key)
             .ok_or_else(|| FormError::NoSuchField(key.to_string()))?;
-        if let Some(from) = self.fields[at].source().derived_from() {
-            return Err(FormError::Derived {
-                key: key.to_string(),
-                from: from.to_owned(),
-            });
+        match self.fields[at].source() {
+            // Nobody wrote it, so there is nothing here to take away.
+            Source::Derived(from) => {
+                return Err(FormError::Derived {
+                    key: key.to_string(),
+                    from: from.into_owned(),
+                });
+            }
+            // ★★★★★ R1717 — **the written half goes and the row stays.** The
+            // derivation is still true, so a row taken off the screen is back
+            // one render later; what a person asked for is to stop owning it,
+            // and that is what they get. The seat the painter draws on such a
+            // row says so in its own word.
+            Source::Shared(_) => {
+                self.fields[at].disown()?;
+                return Ok(());
+            }
+            Source::Authored => {}
         }
         let mut field = self.fields.remove(at);
         field.revert();
@@ -1792,6 +2175,18 @@ pub enum FormError {
     },
     /// R1716 — a row asked to be taken over that nobody was deriving.
     NotDerived(String),
+    /// R1717 — a row asked to hold a written half and a worked-out one at once
+    /// when its shape holds a **single** value.
+    ///
+    /// Two contributions to one address list compose; two contributions to one
+    /// mode contradict. The refusal names the declared type, because that is
+    /// the word on the row's badge and so the word the caller can look for.
+    Unmergeable {
+        /// The row that refused.
+        key: String,
+        /// The type the configuration calls it, verbatim from the row.
+        ty: String,
+    },
 }
 
 impl std::fmt::Display for FormError {
@@ -1804,6 +2199,10 @@ impl std::fmt::Display for FormError {
                 write!(f, "{key} is worked out from the {from}, not written here")
             }
             Self::NotDerived(key) => write!(f, "{key} is already yours to write"),
+            Self::Unmergeable { key, ty } => write!(
+                f,
+                "{key} holds one {ty}, so a written value and a worked-out one cannot both stand"
+            ),
         }
     }
 }
@@ -1816,8 +2215,8 @@ mod tests {
 
     use super::super::text_format::{CharClass, CharSet, Span, TextFormat};
     use super::{
-        Applies, Aside, ConfigDefect, ConfigField, ConfigForm, DocumentError, FieldType, FormError,
-        Takeover, Unexpressible, Value, Verdict,
+        Applies, Aside, ConfigDefect, ConfigField, ConfigForm, Derivation, DocumentError,
+        FieldType, FormError, Source, Takeover, Unexpressible, Value, Verdict,
     };
 
     /// The five rows the reference tool's node inspector shows, with the shapes
@@ -2720,7 +3119,7 @@ mod tests {
         let form = with_derived();
         let mode = form.field("mode").expect("held");
         assert_eq!(mode.source().derived_from(), Some("role"));
-        assert!(!mode.source().authored());
+        assert!(!mode.source().writable());
         assert_eq!(
             form.field("id").expect("held").source().derived_from(),
             None,
@@ -2891,14 +3290,24 @@ mod tests {
         );
     }
 
-    /// ★★ R1716 — the stored form of a row nobody derived is byte-identical to
-    /// what it was before this round, so no persisted document changed shape.
+    /// ★★★ R1717 — the stored form carries the two HALVES and never the
+    /// answer they add up to.
+    ///
+    /// R1716 stored `source` beside the value, which meant a form could be read
+    /// back saying it was authored while holding a derivation. Here `source` is
+    /// computed, so it is not in the stored form at all and cannot disagree
+    /// with what is: a row nobody derived writes no derivation, and one that
+    /// was derived writes what it was worked out from and to.
     #[test]
-    fn r1716_an_authored_row_stores_exactly_as_it_did_before() {
+    fn r1717_a_stored_form_carries_the_halves_and_not_the_answer() {
         let stored = serde_json::to_string(&form()).expect("serialize");
         assert!(
             !stored.contains("source") && !stored.contains("goes"),
-            "★ the ordinary answer is not written down: {stored}"
+            "★ the answer is not written down at all: {stored}"
+        );
+        assert!(
+            !stored.contains("worked_out"),
+            "★ nor is a derivation nobody has: {stored}"
         );
         let mut derived = form();
         derived.upsert(
@@ -2906,8 +3315,8 @@ mod tests {
         );
         let text = serde_json::to_string(&derived).expect("serialize");
         assert!(
-            text.contains("\"derived\""),
-            "and the other answer is: {text}"
+            text.contains(r#""worked_out":{"from":"role","value":"peer"}"#),
+            "and a row that WAS worked out carries both halves of that: {text}"
         );
         let mut back: ConfigForm = serde_json::from_str(&text).expect("deserialize");
         assert_eq!(back, derived, "★ and it survives the round trip");
@@ -2919,6 +3328,330 @@ mod tests {
             }),
             "★★ including the refusal — a form read back off a wire is not a \
              form that forgot who owns its values"
+        );
+    }
+
+    /// A row a person and the screen both contribute to: two addresses written,
+    /// three worked out from the wires, one of them already named.
+    fn shared() -> ConfigField {
+        ConfigField::new(
+            "connect.endpoints",
+            "address[]",
+            Applies::Hot,
+            "t/mine:1, t/9:9",
+        )
+        .with_shape(FieldType::List {
+            of: Box::new(FieldType::Text),
+        })
+        .with_derived("wire", "t/a:1, t/9:9, t/b:2")
+        .expect("a list holds two contributions")
+    }
+
+    /// ★★★★★ R1717 — one key, two contributors, and the row shows their
+    /// composition: what somebody wrote first, then what the canvas worked out
+    /// and they had not already said.
+    #[test]
+    fn r1717_a_row_composes_what_was_written_with_what_was_worked_out() {
+        let row = shared();
+        assert_eq!(
+            row.value(),
+            "t/mine:1, t/9:9, t/a:1, t/b:2",
+            "★ written first, worked-out after, and the address they both name once"
+        );
+        assert_eq!(row.written(), Some("t/mine:1, t/9:9"));
+        assert_eq!(row.worked_out().map(Derivation::from), Some("wire"));
+        assert_eq!(row.source(), Source::Shared("wire".into()));
+        assert_eq!(row.source().wire(), "shared");
+        assert!(
+            row.source().writable(),
+            "★★ and it is still theirs to type in — the half that is not \
+             theirs does not take the row away from them"
+        );
+        assert_eq!(
+            row.derived_elements(),
+            2,
+            "★★ two of the four came from the canvas; the third worked-out \
+             address was already written down and is not counted twice"
+        );
+    }
+
+    /// ★★★★★ R1717 — a shape that holds ONE value refuses to hold two
+    /// contributions, and the refusal is the type's rather than a screen's.
+    #[test]
+    fn r1717_a_single_valued_shape_refuses_two_contributions() {
+        let scalar = ConfigField::new("mode", "mode", Applies::Restart, "peer").with_shape(
+            FieldType::Choice {
+                of: vec!["peer".into(), "router".into()],
+            },
+        );
+        assert!(!FieldType::Boolean.merges());
+        assert!(
+            !FieldType::Choice {
+                of: vec!["peer".into()]
+            }
+            .merges()
+        );
+        assert!(
+            FieldType::List {
+                of: Box::new(FieldType::Text)
+            }
+            .merges()
+        );
+        assert!(
+            FieldType::Flags {
+                of: vec!["read".into()]
+            }
+            .merges()
+        );
+        assert_eq!(
+            scalar.with_derived("role", "router"),
+            Err(FormError::Unmergeable {
+                key: "mode".to_owned(),
+                ty: "mode".to_owned(),
+            }),
+            "★ two answers to one mode contradict; they do not compose"
+        );
+    }
+
+    /// ★★★★★ R1717 — `edited` is a question about the half somebody WROTE.
+    ///
+    /// The failure it prevents: a row whose shown value moved because the
+    /// canvas moved was not edited by anybody, and a form that said it was
+    /// would offer a "put it back" that puts nothing back.
+    #[test]
+    fn r1717_a_moving_derivation_is_not_somebody_editing() {
+        let row = shared();
+        assert!(!row.edited(), "★ nobody has typed anything yet");
+        let moved = ConfigField::new(
+            "connect.endpoints",
+            "address[]",
+            Applies::Hot,
+            "t/mine:1, t/9:9",
+        )
+        .with_shape(FieldType::List {
+            of: Box::new(FieldType::Text),
+        })
+        .with_derived("wire", "t/a:1, t/9:9, t/b:2, t/c:3")
+        .expect("a list holds two contributions");
+        assert_ne!(moved.value(), row.value(), "★ the canvas drew another link");
+        assert!(
+            !moved.edited(),
+            "★★★ and that is still not an edit — the written half did not move"
+        );
+        let mut typed = shared();
+        typed
+            .set("t/mine:1, t/9:9, t/mine:2")
+            .expect("theirs to write");
+        assert!(typed.edited(), "★ this is");
+        assert_eq!(
+            typed.value(),
+            "t/mine:1, t/9:9, t/mine:2, t/a:1, t/b:2",
+            "★★ and the canvas still reaches the row afterwards — a keystroke \
+             does not freeze the drawing into somebody's configuration"
+        );
+    }
+
+    /// ★★★★★ R1717 — what a caller STORES is the written half.
+    #[test]
+    fn r1717_the_row_a_caller_stores_is_the_written_half() {
+        let mine = shared().written_row().expect("somebody wrote some of it");
+        assert_eq!(mine.value(), "t/mine:1, t/9:9");
+        assert_eq!(mine.source(), Source::Authored);
+        assert_eq!(
+            mine.derived_elements(),
+            0,
+            "★ a stored row has nothing worked out in it"
+        );
+        let worked_out =
+            ConfigField::new("mode", "mode", Applies::Restart, "peer").derived_from("role");
+        assert_eq!(
+            worked_out.written_row(),
+            None,
+            "★★ and a row nobody wrote stores NOTHING — an emptied row would \
+             put a key in the file that somebody would then own"
+        );
+    }
+
+    /// ★★★★★ R1717 — emptying the written half gives the row back, however a
+    /// person reaches it.
+    #[test]
+    fn r1717_an_emptied_written_half_gives_the_row_back() {
+        let mut typed = shared();
+        typed.set("  ,  ").expect("theirs to write");
+        assert_eq!(
+            typed.source(),
+            Source::Derived("wire".into()),
+            "★ they emptied their half, so the row is the canvas's again"
+        );
+        assert_eq!(typed.value(), "t/a:1, t/9:9, t/b:2");
+        assert_eq!(
+            typed.set("anything"),
+            Err(FormError::Derived {
+                key: "connect.endpoints".to_owned(),
+                from: "wire".to_owned(),
+            }),
+            "★★ and the row refuses them the way any worked-out row does"
+        );
+        let mut seat = shared();
+        seat.disown().expect("something is deriving it");
+        assert_eq!(seat.source(), Source::Derived("wire".into()));
+        assert_eq!(
+            seat.value(),
+            "t/a:1, t/9:9, t/b:2",
+            "★★★ the same state by the other door — one act, one rule"
+        );
+        let mut nothing_derives_it = ConfigField::new("id", "text", Applies::Restart, "a1");
+        assert_eq!(
+            nothing_derives_it.disown(),
+            Err(FormError::NotDerived("id".to_owned())),
+            "★ and a row nobody derives has nobody to give back to"
+        );
+    }
+
+    /// ★★★★★ R1717 — `remove` on a shared row takes the written half out and
+    /// LEAVES the row, because the derivation is still true.
+    #[test]
+    fn r1717_removing_a_shared_row_gives_it_back_rather_than_taking_it_away() {
+        let mut form = ConfigForm::new(vec![shared()], Vec::new());
+        form.remove("connect.endpoints").expect("their half goes");
+        let row = form
+            .field("connect.endpoints")
+            .expect("★ the row is still on the screen — the canvas still draws it");
+        assert_eq!(row.source(), Source::Derived("wire".into()));
+        assert_eq!(row.value(), "t/a:1, t/9:9, t/b:2");
+        assert_eq!(
+            form.remove("connect.endpoints"),
+            Err(FormError::Derived {
+                key: "connect.endpoints".to_owned(),
+                from: "wire".to_owned(),
+            }),
+            "★★ and a second press has nothing left to take"
+        );
+    }
+
+    /// ★★★★ R1717 — taking a shared row over adopts what the canvas said,
+    /// and says so.
+    #[test]
+    fn r1717_taking_a_shared_row_over_adopts_the_whole_composition() {
+        let mut form = ConfigForm::new(vec![shared()], Vec::new());
+        let took = form
+            .author("connect.endpoints")
+            .expect("something derives it");
+        assert_eq!(
+            took,
+            Takeover {
+                key: "connect.endpoints".to_owned(),
+                was: "wire".to_owned(),
+                seeded: "t/mine:1, t/9:9, t/a:1, t/b:2".to_owned(),
+            },
+            "★ it starts from what was on the screen, never from their half alone"
+        );
+        let row = form.field("connect.endpoints").expect("held");
+        assert_eq!(row.source(), Source::Authored);
+        assert_eq!(row.written(), Some("t/mine:1, t/9:9, t/a:1, t/b:2"));
+        assert!(
+            !row.edited(),
+            "★★ and taking a row over is not typing in it — nothing is pending \
+             a restart because of it"
+        );
+        assert_eq!(
+            form.shared().len(),
+            0,
+            "★ the rollup follows: nothing is shared any more"
+        );
+    }
+
+    /// ★★★ R1717 — the two rollups answer different questions, so a row can
+    /// be in both.
+    #[test]
+    fn r1717_shared_rows_are_derived_rows_and_are_their_own_rollup() {
+        let form = ConfigForm::new(
+            vec![
+                ConfigField::new("id", "text", Applies::Restart, "a1"),
+                ConfigField::new("mode", "mode", Applies::Restart, "peer").derived_from("role"),
+                shared(),
+            ],
+            Vec::new(),
+        );
+        let derived: Vec<&str> = form.derived().iter().map(|f| f.key()).collect();
+        assert_eq!(
+            derived,
+            ["mode", "connect.endpoints"],
+            "★ 'which of these does the screen keep up to date' — both"
+        );
+        let shared_rows: Vec<&str> = form.shared().iter().map(|f| f.key()).collect();
+        assert_eq!(
+            shared_rows,
+            ["connect.endpoints"],
+            "★★ 'which of these will change under somebody who thinks they own \
+             it' — only the one they can type in"
+        );
+        assert_eq!(Source::WORDS.len(), 3);
+        let mut seen = std::collections::BTreeSet::new();
+        for source in [
+            Source::Authored,
+            Source::Derived("role".into()),
+            Source::Shared("wire".into()),
+        ] {
+            assert!(seen.insert(source.wire()), "{} spells two", source.wire());
+        }
+    }
+
+    /// ★★★★★ R1717 — provenance reaches the ELEMENT, because editing does.
+    ///
+    /// The failure it prevents was measured the first time a screen was driven
+    /// into this state: an edit over a line the canvas contributed wrote the
+    /// canvas's whole contribution into somebody's half and reordered its
+    /// neighbours in the same act.
+    #[test]
+    fn r1717_an_element_says_which_half_it_came_from() {
+        let row = shared();
+        assert_eq!(
+            row.value(),
+            "t/mine:1, t/9:9, t/a:1, t/b:2",
+            "two written, then the two worked out that were not already said"
+        );
+        assert_eq!(row.element_source(0), Source::Authored);
+        assert_eq!(
+            row.element_source(1),
+            Source::Authored,
+            "★ an address the canvas ALSO names is still theirs — they wrote it, \
+             and its place in the row is the place their half put it"
+        );
+        assert_eq!(row.element_source(2), Source::Derived("wire".into()));
+        assert_eq!(row.element_source(3), Source::Derived("wire".into()));
+        assert_eq!(
+            row.element_source(99),
+            Source::Derived("wire".into()),
+            "★ past the end there is nothing to have come from anywhere, and \
+             answering for the row is the honest fallback"
+        );
+        let mine = ConfigField::new("id", "text", Applies::Restart, "a1");
+        assert_eq!(
+            mine.element_source(0),
+            Source::Authored,
+            "★★ a row with ONE contributor answers the same for every element \
+             as it does for itself"
+        );
+        let theirs =
+            ConfigField::new("mode", "mode", Applies::Restart, "peer").derived_from("role");
+        assert_eq!(theirs.element_source(0), Source::Derived("role".into()));
+    }
+
+    /// ★★★★ R1717 — the document ships the composition, and a row that goes
+    /// aside still does not.
+    #[test]
+    fn r1717_a_document_ships_both_contributions() {
+        let form = ConfigForm::new(vec![shared()], Vec::new());
+        assert_eq!(
+            form.document().expect("shippable"),
+            json!({
+                "connect": {
+                    "endpoints": ["t/mine:1", "t/9:9", "t/a:1", "t/b:2"]
+                }
+            }),
+            "★ the picture and the configuration say the same thing, which is \
+             the whole reason the composition exists"
         );
     }
 
