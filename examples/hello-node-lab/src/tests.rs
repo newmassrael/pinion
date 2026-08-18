@@ -231,6 +231,64 @@ fn r1717_an_address_outside_the_graph_warns_and_does_not_block() {
     });
 }
 
+/// ★★★★★ R1718 — **the launch gate says every finding it can have, no two of
+/// them read alike, and none of them names the card the panel puts in front.**
+///
+/// The last clause is the one this screen shipped wrong for a round. R1717's
+/// `Finding::sentence` doc says the sentence comes "without the card's name —
+/// the caller puts that in front, once", and before R1717 a situation carried
+/// inside another type's variant put the name inside as well, so the panel read
+/// `R-01 · R-01 · … is not a key the target knows`. It was a claim in a doc
+/// comment and nothing read the doc; this reads it.
+///
+/// The arm count is the type's own, so a fifth finding fails here rather than
+/// shipping unworded — which is exactly how the fourth one shipped.
+#[test]
+fn r1718_every_gate_finding_is_said_distinctly_and_never_names_its_card() {
+    use pinion_core::test_fixtures::speech::assert_speaks_of;
+    use pinion_core::widgets::config_form::ConfigDefect;
+
+    // A subject that could not occur inside any of these clauses by accident,
+    // and the one the panel actually prefixes: a card's name.
+    const CARD: &str = "R-01";
+
+    let said = [
+        (
+            "Value",
+            super::Finding::Value(ConfigDefect::OutOfRange {
+                key: "transport.link.tx.batch_size".to_owned(),
+                allowed: "0..=65535".to_owned(),
+            })
+            .sentence(),
+        ),
+        (
+            "NothingListening",
+            super::Finding::NothingListening.sentence(),
+        ),
+        ("DiscoveryOn", super::Finding::DiscoveryOn.sentence()),
+        (
+            "DialsOutside",
+            super::Finding::DialsOutside("tcp/10.0.0.21:7449".to_owned()).sentence(),
+        ),
+    ];
+    assert_speaks_of("Finding", CARD, super::Finding::ARMS, &said, &[]);
+}
+
+/// ★★★★ R1718 — and nothing on this screen speaks to a person without being
+/// driven.
+///
+/// The screen matters more than the framework here: the framework's speaking
+/// types are few and central, and a SCREEN grows a vocabulary a situation at a
+/// time — which is exactly how the launch gate came to have a fourth situation
+/// with no wording of its own.
+#[test]
+fn r1718_every_speaking_type_on_this_screen_is_driven() {
+    pinion_core::test_fixtures::speech::census::assert_every_speaker_is_driven(
+        std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")),
+        1,
+    );
+}
+
 #[test]
 fn r1651_the_opening_graph_is_the_specification() {
     let owner = Owner::new();

@@ -45,6 +45,15 @@ sce-build = { workspace = true }
 # alloc cost (Snapshot=Vec<bool> per user input). Drives the data-
 # driven SmallVec-vs-Vec decision for R51.102's substrate refactor.
 criterion = { workspace = true }
+# R1718 — this crate's own INTEGRATION tests link the lib built without
+# `cfg(test)`, so `test_fixtures` needs the feature turned on for them the way
+# any downstream consumer does. Measured, and worth the line: without it
+# `cargo test -p pinion-core` fails to compile the speech census while
+# `cargo test -p pinion-core -p pinion-rpc` passes, because the sibling's own
+# dev-dependency turns the feature on for the shared build. A gate that is
+# only there when another crate happens to be in the same invocation is a gate
+# that is not there.
+pinion-core = { path = ".", features = ["test-fixtures"] }
 
 [[bench]]
 name = "listbox_dispatch"

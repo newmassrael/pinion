@@ -260,7 +260,14 @@ pub enum TextFormat {
 /// Three states because two cannot express a value that is *on its way*. See
 /// the [module documentation](self) for what this carries that a bare state
 /// does not.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// ★ R1718 — the variant census is derived so that the gate over what a type
+/// says can be told this type's own arm count rather than the length of
+/// whatever list a caller happened to build. That gate lives behind the
+/// `test-fixtures` feature, so it is named here rather than linked: a link
+/// into a feature-gated module is a documentation build that fails without
+/// the feature.
+#[derive(Debug, Clone, PartialEq, Eq, pinion_derive::VariantCensus)]
 pub enum Judgement {
     /// The text satisfies the format.
     Acceptable,
@@ -808,5 +815,30 @@ mod tests {
         let none = TextFormat::split('.', TextFormat::number(0, 9), Span::exactly(0));
         assert!(none.judge("").acceptable());
         assert!(none.judge("1").refused());
+    }
+
+    /// ★★★★ R1718 — every judgement a person could be shown is said, and the
+    /// one that says nothing **declares** it.
+    ///
+    /// The declaration is the point. A launch verdict's good case in this same
+    /// workspace says "nothing to fix — launch is open" and this one returns
+    /// the empty string; both are defensible, and leaving either as the
+    /// unexamined default is how a reader ends up meeting a blank where a
+    /// sibling type would have spoken. Here the silence is a decision: an
+    /// acceptable value has no defect to show, and the row shows no badge.
+    #[test]
+    fn r1718_every_judgement_is_said_and_its_silence_is_declared() {
+        use crate::test_fixtures::speech::assert_speaks;
+
+        let digits = TextFormat::Chars {
+            allow: CharSet::of(&[CharClass::Digit]),
+            len: Span::between(2, 4),
+        };
+        let said = [
+            ("Acceptable", digits.judge("123").sentence()),
+            ("Unfinished", digits.judge("1").sentence()),
+            ("Refused", digits.judge("1x").sentence()),
+        ];
+        assert_speaks("Judgement", Judgement::ARMS, &said, &["Acceptable"]);
     }
 }

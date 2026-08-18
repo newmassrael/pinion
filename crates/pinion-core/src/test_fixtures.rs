@@ -26,6 +26,11 @@
 // `containment::escapes` and what a screen has to supply is the metric.
 pub mod screen_ink;
 
+// R1718 §5.12 — the gate over what a type SAYS. Its own module for the same
+// reason `screen_ink` has one: it is a harness vocabulary rather than a widget
+// stand-in, and the thing a caller supplies is the driving.
+pub mod speech;
+
 use std::borrow::Cow;
 
 use crate::Frame;

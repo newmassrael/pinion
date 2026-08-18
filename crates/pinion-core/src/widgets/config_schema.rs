@@ -553,7 +553,7 @@ fn strict_prefix<'a>(a: &'a str, b: &'a str) -> Option<(&'a str, &'a str)> {
 mod tests {
     use super::super::config_form::{Applies, ConfigField, ConfigForm, FieldType};
     use super::super::text_format::{CharClass, CharSet, Span, TextFormat};
-    use super::{ConfigSchema, SchemaError, SchemaLeaf};
+    use super::{ConfigSchema, Mistyped, SchemaError, SchemaLeaf};
 
     fn ident() -> FieldType {
         FieldType::Formatted {
@@ -942,5 +942,60 @@ mod tests {
             sentence.contains("discovery") && sentence.contains("label"),
             "the long form names the sections nothing reaches: {sentence}",
         );
+    }
+
+    /// ★★★★ R1718 — every way a palette can fall short is said, and no two of
+    /// them read alike.
+    ///
+    /// This producer is not an enum: it is a report that appends a line per
+    /// kind of shortfall, so the arms are the five `if`/`for` blocks plus the
+    /// clean case. Driving them one at a time is what makes the count mean
+    /// something — a report driven only with everything wrong at once would
+    /// pass while two of its lines read identically.
+    #[test]
+    fn r1718_every_way_a_palette_falls_short_is_said_and_distinct() {
+        use crate::test_fixtures::speech::assert_speaks;
+
+        let schema = schema();
+        let row = |key: &'static str, ty: &'static str| {
+            ConfigForm::new(
+                vec![ConfigField::new(key, ty, Applies::Restart, "a1")],
+                Vec::new(),
+            )
+        };
+        // Every leaf the schema declares, so nothing is missing and nothing is
+        // wrong: the clean line, which a report of shortfalls still has to say.
+        let whole = ConfigForm::new(
+            schema
+                .leaves()
+                .iter()
+                .map(|leaf| {
+                    ConfigField::new(leaf.path.clone(), "x", Applies::Restart, "")
+                        .with_shape(leaf.ty.clone())
+                })
+                .collect(),
+            Vec::new(),
+        );
+        let said = [
+            ("clean", schema.reached_by(&whole).sentence()),
+            ("roots missing", schema.reached_by(&palette()).sentence()),
+            ("mistyped", schema.reached_by(&row("id", "text")).sentence()),
+            (
+                "unknown",
+                schema.reached_by(&row("routng.mode", "mode")).sentence(),
+            ),
+            (
+                "unauthorable",
+                schema.reached_by(&row("routing", "map")).sentence(),
+            ),
+        ];
+        assert_speaks("Reach", 5, &said, &[]);
+
+        let one = Mistyped {
+            path: "routing.hops".to_owned(),
+            declared: FieldType::Integer { min: 1, max: 8 },
+            offered: FieldType::Text,
+        };
+        assert_speaks("Mistyped", 1, &[("Mistyped", one.sentence())], &[]);
     }
 }

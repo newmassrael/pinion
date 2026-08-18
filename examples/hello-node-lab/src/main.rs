@@ -1307,7 +1307,7 @@ struct Problem {
 /// So the vocabulary is a type. A defect of a value is one arm and each thing
 /// the *graph* can be wrong about is its own, the sentence comes from the arm,
 /// and there is no string left to sniff.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, pinion_derive::VariantCensus)]
 enum Finding {
     /// A value this form cannot carry — the framework's own three.
     Value(ConfigDefect),

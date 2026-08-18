@@ -550,4 +550,45 @@ mod tests {
             );
         }
     }
+
+    /// ★★★★★ R1718 — **every reason a person can be given for a shut
+    /// affordance is said, and no two of them read alike.**
+    ///
+    /// This one reaches a screen reader: an accessibility node's state
+    /// description is exactly this sentence, so an arm that read like another
+    /// would tell somebody who cannot see the seat the wrong thing about why
+    /// they cannot use it — and the census that existed counted the KINDS, not
+    /// what they say. Both halves are driven, because a kind with a detail and
+    /// the same kind without one are two sentences a person meets.
+    #[test]
+    fn r1718_every_reason_a_shut_affordance_gives_is_said_and_distinct() {
+        use crate::test_fixtures::speech::assert_speaks;
+
+        let bare: Vec<(&str, String)> = UnavailableKind::ALL
+            .iter()
+            .map(|kind| (kind.name(), Unavailable::new(*kind, "").sentence()))
+            .collect();
+        assert_speaks(
+            "Unavailable (no detail)",
+            UnavailableKind::ALL.len(),
+            &bare,
+            &[],
+        );
+
+        let detailed: Vec<(&str, String)> = UnavailableKind::ALL
+            .iter()
+            .map(|kind| {
+                (
+                    kind.name(),
+                    Unavailable::new(*kind, "the second release").sentence(),
+                )
+            })
+            .collect();
+        assert_speaks(
+            "Unavailable (with detail)",
+            UnavailableKind::ALL.len(),
+            &detailed,
+            &[],
+        );
+    }
 }

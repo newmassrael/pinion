@@ -3437,6 +3437,7 @@ version = "0.0.1"
 dependencies = [
  "pinion-a11y",
  "pinion-core",
+ "pinion-derive",
  "pinion-forge",
  "pinion-gpu",
  "pinion-node-graph",
@@ -6136,6 +6137,7 @@ version = "0.0.1"
 dependencies = [
  "criterion",
  "lru 0.18.0",
+ "pinion-core",
  "pinion-derive",
  "sce-build",
  "sce-rust-runtime",

@@ -3695,4 +3695,113 @@ mod tests {
             "including which fields reach a running node"
         );
     }
+
+    /// ★★★★★ R1718 — **every sentence these types can put in front of a
+    /// person is said, and a reader can tell them apart.**
+    ///
+    /// Measured before this test existed: of the wordings this workspace can
+    /// show a person, 11 of 39 matched any search at all, and the checks that
+    /// did exist were substring probes over fragments — which is how a whole
+    /// situation came to read as another one's wording for a round with every
+    /// gate green. The arm counts below are the TYPES' own, so a fourth defect
+    /// or a fifth situation fails here rather than shipping unworded.
+    #[test]
+    fn r1718_every_sentence_a_reader_is_shown_is_said_and_distinct() {
+        use crate::test_fixtures::speech::assert_speaks;
+
+        let defects = [
+            (
+                "UnknownKey",
+                ConfigDefect::UnknownKey {
+                    key: "plugins.names".to_owned(),
+                }
+                .sentence(),
+            ),
+            (
+                "WrongType",
+                ConfigDefect::WrongType {
+                    key: "batch_size".to_owned(),
+                    want: "a whole number".to_owned(),
+                    got: "\"lots\"".to_owned(),
+                }
+                .sentence(),
+            ),
+            (
+                "OutOfRange",
+                ConfigDefect::OutOfRange {
+                    key: "batch_size".to_owned(),
+                    allowed: "0..=65535".to_owned(),
+                }
+                .sentence(),
+            ),
+        ];
+        assert_speaks("ConfigDefect", ConfigDefect::ARMS, &defects, &[]);
+
+        // Not an enum: four situations the producer matches on. The count is
+        // stated here because there is no `ARMS` to read, and it is the number
+        // a reader of that `match` would count.
+        let verdicts = [
+            ("clean", Verdict::over(&[]).sentence()),
+            (
+                "warning only",
+                Verdict::over(&[ConfigDefect::UnknownKey {
+                    key: "k".to_owned(),
+                }])
+                .sentence(),
+            ),
+            (
+                "blocking only",
+                Verdict::over(&[ConfigDefect::OutOfRange {
+                    key: "k".to_owned(),
+                    allowed: "0..=1".to_owned(),
+                }])
+                .sentence(),
+            ),
+            (
+                "both",
+                Verdict::over(&[
+                    ConfigDefect::UnknownKey {
+                        key: "k".to_owned(),
+                    },
+                    ConfigDefect::OutOfRange {
+                        key: "k".to_owned(),
+                        allowed: "0..=1".to_owned(),
+                    },
+                ])
+                .sentence(),
+            ),
+        ];
+        assert_speaks("Verdict", 4, &verdicts, &[]);
+
+        let unexpressed = [
+            (
+                "Defective",
+                Unexpressible::Defective(ConfigDefect::UnknownKey {
+                    key: "k".to_owned(),
+                })
+                .sentence(),
+            ),
+            (
+                "Collides",
+                Unexpressible::Collides {
+                    at: "transport".to_owned(),
+                }
+                .sentence(),
+            ),
+        ];
+        assert_speaks("Unexpressible", 2, &unexpressed, &[]);
+
+        // One sentence, and the two properties that are not vacuous for it:
+        // it is said at all, and it is said when the act happens.
+        let took = [(
+            "Takeover",
+            Takeover {
+                key: "mode".to_owned(),
+                was: "role".to_owned(),
+                seeded: "router".to_owned(),
+            }
+            .sentence(),
+        )];
+        assert_speaks("Takeover", 1, &took, &[]);
+    }
 }

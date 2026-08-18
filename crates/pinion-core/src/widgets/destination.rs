@@ -611,4 +611,45 @@ mod tests {
             );
         }
     }
+
+    /// ★★★★ R1718 — both reasons a journey can refuse to move are said, and
+    /// they do not read alike.
+    ///
+    /// This producer exists because two screens authored their own wording for
+    /// the same refusal and one of them told a reserved destination the wrong
+    /// thing. That was the reason to derive it; this is the check that the
+    /// derivation actually says two different things.
+    #[test]
+    fn r1718_both_refusals_a_journey_can_give_are_said_and_distinct() {
+        use crate::availability::Unavailable;
+        use crate::test_fixtures::speech::assert_speaks;
+
+        let roster = Destinations::new(vec![
+            Destination::open("packets", "Packets"),
+            Destination::closed(
+                "dashboard",
+                "Dashboard",
+                Unavailable::reserved("the second release"),
+            ),
+        ])
+        .expect("two distinct destinations are a roster");
+        let said = [
+            (
+                "NoSuchDestination",
+                Detour::NoSuchDestination {
+                    key: "nowhere".to_owned(),
+                }
+                .sentence(&roster),
+            ),
+            (
+                "Closed",
+                Detour::Closed {
+                    key: "dashboard".to_owned(),
+                    why: Unavailable::reserved("the second release"),
+                }
+                .sentence(&roster),
+            ),
+        ];
+        assert_speaks("Detour", 2, &said, &[]);
+    }
 }
