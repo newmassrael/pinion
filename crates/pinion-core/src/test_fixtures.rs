@@ -1094,6 +1094,339 @@ impl WidgetCore for ModalTailFixture {
     }
 }
 
+/// R1715 §5.39 §5.35 §5.15 — the raw multi-button pointer sink's paint tag in
+/// [`RawSinkFocusFixture`]: a terminal pane forwarding xterm mouse reports to
+/// the program it hosts.
+pub const RAW_FOCUS_PANE: &str = "raw_focus.pane";
+
+thread_local! {
+    /// R1715 — when set, [`RAW_FOCUS_OTHER`]'s control hands its focus on to
+    /// this tag from inside `External::on_focus_change`.
+    static RAW_FOCUS_REDIRECT: std::cell::Cell<Option<&'static str>> =
+        const { std::cell::Cell::new(None) };
+    /// R1715 — the same for [`RAW_FOCUS_PANE`]'s sink. Point the two at each
+    /// other and the frame cannot settle, which is the case the resolution's
+    /// pass bound exists to catch.
+    static RAW_SINK_REDIRECT: std::cell::Cell<Option<&'static str>> =
+        const { std::cell::Cell::new(None) };
+    /// R1715 — how many times either widget was told it GAINED focus.
+    ///
+    /// This is what makes the resolution's pass bound observable. A bound that
+    /// only has to terminate is satisfied by any finite number, so raising it
+    /// from 8 to 200 changes nothing a test can see — measured, exactly that
+    /// counterfactual passed. What the bound is actually for is that user code
+    /// re-runs a SMALL number of times per frame, and this counter is that
+    /// quantity.
+    static RAW_FOCUS_GAINED: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// R1715 §5.39 — make [`RAW_FOCUS_OTHER`]'s control hand its focus on from
+/// inside `on_focus_change` (`None` restores the inert default).
+///
+/// The shape a container reaches for when it wants to give its focus to a
+/// child: "I was told I have focus; the real target is over there." The
+/// observer fires from inside the focus resolution, so honouring it requires
+/// the resolution to reach a FIXED POINT rather than stop after one pass —
+/// which is what R1715 made it do. Measured at R1715, none of the tree's 9
+/// `on_focus_change` bodies writes a mailbox, so without a deliberate
+/// exerciser the settle loop would be a mechanism nothing drives.
+pub fn set_raw_focus_redirect(target: Option<&'static str>) {
+    RAW_FOCUS_REDIRECT.set(target);
+}
+
+/// R1715 §5.39 — the [`RawFocusSink`] half of [`set_raw_focus_redirect`].
+/// Arming both, pointed at each other, is the non-converging frame.
+pub fn set_raw_sink_redirect(target: Option<&'static str>) {
+    RAW_SINK_REDIRECT.set(target);
+}
+
+/// R1715 §5.39 — how many times a widget of [`RawSinkFocusFixture`] has been
+/// told it GAINED focus since the last [`clear_raw_focus_edges`].
+///
+/// The resolution's pass bound is only a real bound if something reads it. A
+/// test asserting this count against a literal is that reader: the frame's
+/// user-code re-entry is bounded and SMALL, not merely finite.
+#[must_use]
+pub fn raw_focus_gained_count() -> usize {
+    RAW_FOCUS_GAINED.get()
+}
+
+/// R1715 — record that a fixture widget was told it gained focus.
+fn note_raw_focus_gained() {
+    RAW_FOCUS_GAINED.set(RAW_FOCUS_GAINED.get() + 1);
+}
+
+/// R1715 §5.39 — the sibling control that holds the keyboard before the raw
+/// edge lands, so a test reads a focus **move** rather than a ring that was
+/// already where it wanted to be.
+pub const RAW_FOCUS_OTHER: &str = "raw_focus.other";
+
+/// R1715 §5.39 §5.35 §5.15 — an [`External`] that owns the raw multi-button
+/// pointer stream and asks for the keyboard from inside
+/// [`External::raw_pointer_button`].
+///
+/// The consumer shape (sprag PINION-PR89): a pane hosting a child program that
+/// enabled xterm mouse reporting owns the raw stream, so
+/// [`wants_raw_pointer_buttons`](External::wants_raw_pointer_buttons)
+/// suppresses the GUI default for it — `click_to_focus` included. The focus
+/// mailbox is therefore the ONLY channel such a widget has left to say "the
+/// click that reached my child also gave me the keyboard".
+///
+/// It requests on **every** `(button, edge)` pair rather than the realistic
+/// left-press alone: the shell seam routes all six pairs through ONE raw arm,
+/// so a fixture answering a single pair would leave five arms unmeasured.
+#[derive(Debug, Default)]
+pub struct RawFocusSink;
+
+thread_local! {
+    /// R1715 — every raw edge [`RawFocusSink`] was handed, as
+    /// `"<button>:<edge>"`. The child's own report: a fix that bought focus
+    /// by *stealing* the click would empty this, and emptying it breaks every
+    /// mouse-driven program running inside a pane.
+    static RAW_FOCUS_EDGE_LOG: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+
+    /// R1715 — every payload the LEGACY `send` wire delivered to
+    /// [`RawFocusSink`]. It must stay EMPTY: a raw sink trades that wire for
+    /// the raw stream, which is one of the four GUI defaults
+    /// [`External::wants_raw_pointer_buttons`] suppresses for it. This is the
+    /// observable the round's own counterfactual found nothing was reading —
+    /// dropping the raw arm's `return` let both dispatches run, and every gate
+    /// stayed green because focus happened to land on the same tag either way.
+    static RAW_FOCUS_SEND_LOG: std::cell::RefCell<Vec<String>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// R1715 §5.35 §5.15 — the raw edges [`RawFocusSink`] received since the last
+/// [`clear_raw_focus_edges`], as `"<button>:<edge>"` wire tokens.
+#[must_use]
+pub fn raw_focus_edges() -> Vec<String> {
+    RAW_FOCUS_EDGE_LOG.with_borrow(Clone::clone)
+}
+
+/// R1715 §5.35 §5.15 — drop everything [`raw_focus_edges`] would report, so a
+/// test can assert on the delivery of one specific dispatch.
+pub fn clear_raw_focus_edges() {
+    RAW_FOCUS_EDGE_LOG.with_borrow_mut(Vec::clear);
+    RAW_FOCUS_SEND_LOG.with_borrow_mut(Vec::clear);
+    RAW_FOCUS_GAINED.set(0);
+}
+
+/// R1715 §5.35 §5.15 — the payloads the LEGACY `PointerDown` / `PointerUp`
+/// send wire delivered to [`RawFocusSink`] since the last
+/// [`clear_raw_focus_edges`]. A correct raw arm leaves this **empty**: owning
+/// the raw stream means the GUI default for this widget does not also run.
+#[must_use]
+pub fn raw_focus_legacy_sends() -> Vec<String> {
+    RAW_FOCUS_SEND_LOG.with_borrow(Clone::clone)
+}
+
+impl External for RawFocusSink {
+    fn backends(&self) -> crate::external::BackendSupport {
+        crate::external::BackendSupport::new(
+            &[
+                crate::external::Backend::Gui,
+                crate::external::Backend::Tui,
+                crate::external::Backend::Rpc,
+            ],
+            crate::external::BackendFallback::Skip,
+        )
+    }
+    fn repaint_ownership(&self) -> crate::external::RepaintOwner {
+        crate::external::RepaintOwner::Framework
+    }
+    fn thread_ownership(&self) -> crate::external::ThreadOwnership {
+        crate::external::ThreadOwnership::UiThreadSync
+    }
+    fn wants_raw_pointer_buttons(&self) -> bool {
+        true
+    }
+    fn raw_pointer_button(&mut self, event: crate::input::RawPointerButton) {
+        RAW_FOCUS_EDGE_LOG.with_borrow_mut(|log| {
+            log.push(format!(
+                "{}:{}",
+                event.button.as_wire_name(),
+                event.edge.as_wire_name()
+            ));
+        });
+        crate::focus_request::request(RAW_FOCUS_PANE);
+    }
+    fn on_focus_change(&mut self, focused: bool) {
+        if !focused {
+            return;
+        }
+        note_raw_focus_gained();
+        if let Some(target) = RAW_SINK_REDIRECT.get() {
+            crate::focus_request::request(target);
+        }
+    }
+    fn introspect_mut(&mut self) -> Option<&mut dyn crate::external::ExternalIntrospect> {
+        Some(self)
+    }
+}
+
+/// R1715 §5.35 §5.15 — the sink's `send` channel exists ONLY so a test can
+/// prove nothing arrives on it. `dispatch_send` reaches a widget through
+/// `introspect_mut().invoke("send", …)`, so a sink without this surface cannot
+/// tell "the GUI default was suppressed" from "the GUI default ran and had
+/// nowhere to land" — and that indistinguishability is what let the round's
+/// CF-5 pass with the raw arm's `return` deleted.
+impl crate::external::ExternalIntrospect for RawFocusSink {
+    fn schema(&self) -> crate::external::IntrospectSchema {
+        crate::external::IntrospectSchema::new(
+            const { &[crate::external::SchemaField::new("send", "string")] },
+        )
+    }
+
+    fn query(&self, _path: &str) -> Result<IntrospectValue, crate::external::ReadRefusal> {
+        Err(crate::external::ReadRefusal::UnknownPath)
+    }
+
+    fn intervene(&mut self, _path: &str, _value: IntrospectValue) -> Result<(), InterveneError> {
+        Err(InterveneError::UnknownPath)
+    }
+
+    fn invoke(
+        &mut self,
+        path: &str,
+        args: IntrospectValue,
+    ) -> Result<IntrospectValue, InvokeError> {
+        if path != "send" {
+            return Err(InvokeError::UnknownPath);
+        }
+        let payload = match args {
+            IntrospectValue::Text(t) => t,
+            other => format!("{other:?}"),
+        };
+        RAW_FOCUS_SEND_LOG.with_borrow_mut(|log| log.push(payload));
+        Ok(IntrospectValue::Null)
+    }
+}
+
+/// R1715 §5.39 — the plain control beside [`RawFocusSink`]: an ordinary
+/// focusable widget that takes focus through `click_to_focus` like any other.
+///
+/// Its `on_focus_change` is the fixture's **deliberate offender**, armed by
+/// [`set_raw_focus_redirect`]: a container trying to hand its focus to a child
+/// from inside the observer. Kept as its own type rather than folded into
+/// [`FocusArcRecorder`], because that recorder is shared with the modal-tail
+/// tests and an offender that leaked into them would break tests about a
+/// different contract.
+#[derive(Debug, Default)]
+pub struct RawFocusControl;
+
+impl External for RawFocusControl {
+    fn backends(&self) -> crate::external::BackendSupport {
+        crate::external::BackendSupport::new(
+            &[
+                crate::external::Backend::Gui,
+                crate::external::Backend::Tui,
+                crate::external::Backend::Rpc,
+            ],
+            crate::external::BackendFallback::Skip,
+        )
+    }
+    fn repaint_ownership(&self) -> crate::external::RepaintOwner {
+        crate::external::RepaintOwner::Framework
+    }
+    fn thread_ownership(&self) -> crate::external::ThreadOwnership {
+        crate::external::ThreadOwnership::UiThreadSync
+    }
+    fn on_focus_change(&mut self, focused: bool) {
+        if !focused {
+            return;
+        }
+        note_raw_focus_gained();
+        if let Some(target) = RAW_FOCUS_REDIRECT.get() {
+            crate::focus_request::request(target);
+        }
+    }
+}
+
+/// R1715 §5.39 §5.35 §5.15 — the raw-edge focus fixture: a [`RawFocusSink`]
+/// beside a plain focusable control, both painted as hit-testable rects so a
+/// test can drive a real pointer edge at either one.
+///
+/// Two consumer field reports drive it, one per backend, because §2 #6 makes
+/// post-dispatch focus resolution a *mirrored* seam — a fix on one backend
+/// alone would give GUI and TUI different focus from identical input:
+///
+/// - `pinion-shell/tests/raw_edge_resolves_its_focus.rs` (PINION-PR89).
+/// - `pinion-tui/tests/raw_edge_resolves_its_focus.rs` (the mirror).
+///
+/// Unlike [`ModalTailFixture`] the view DOES paint focusable nodes: these
+/// tests drive the seam through a real hit-test, so the enumeration has to be
+/// the scene-derived one a click resolves against.
+pub struct RawSinkFocusFixture;
+
+impl WidgetCore for RawSinkFocusFixture {
+    type State = ();
+    type Event = ();
+
+    fn create_external() -> Box<dyn External> {
+        Box::new(RawFocusControl)
+    }
+
+    fn create_extra_externals() -> Vec<crate::widget_core::ExtraExternal> {
+        vec![crate::widget_core::ExtraExternal::new(
+            RAW_FOCUS_PANE,
+            Box::new(RawFocusSink),
+        )]
+    }
+
+    fn tag() -> &'static str {
+        RAW_FOCUS_OTHER
+    }
+
+    fn read_state(_scene: &Scene) -> Self::State {}
+
+    fn view((): Self::State, _frame: &Frame) -> Scene {
+        // Two side-by-side 40x40 focus stops: the left half is the plain
+        // control, the right half is the raw sink. A test seeds the cursor
+        // inside one and the router resolves the edge to that tag.
+        //
+        // The geometry is DECLARED (flex row + fixed sizes), not written into
+        // `rect` — the paint pass lowers `layout` through taffy and overwrites
+        // whatever rects the view fn wrote, so a hand-placed rect on a node
+        // whose style says `Auto` collapses to zero height and the hit-test
+        // silently resolves to the root instead. Measured while building this
+        // fixture: `raw_focus_edges()` came back EMPTY with every focus
+        // assertion red, which reads exactly like the defect under test.
+        let stop = |tag: &'static str| {
+            Scene::Container(ContainerNode {
+                tag: Some(Cow::Borrowed(tag)),
+                children: Vec::new(),
+                layout: crate::style::LayoutStyle {
+                    size: crate::style::Size::px(40, 40),
+                    flex_shrink: 0.0,
+                    focusable: true,
+                    ..Default::default()
+                },
+                ..Default::default()
+            })
+        };
+        Scene::Container(ContainerNode {
+            tag: Some(Cow::Borrowed("raw_focus.root")),
+            children: vec![stop(RAW_FOCUS_OTHER), stop(RAW_FOCUS_PANE)],
+            layout: crate::style::LayoutStyle {
+                display: crate::style::Display::Flex,
+                flex_direction: crate::style::FlexDirection::Row,
+                size: crate::style::Size::px(80, 40),
+                ..Default::default()
+            },
+            ..Default::default()
+        })
+    }
+
+    fn event_name((): Self::Event) -> &'static str {
+        "__internal__"
+    }
+
+    fn title() -> &'static str {
+        "RawSinkFocusFixture"
+    }
+}
+
 /// R51.167 §5.23 R27 — substrate-level reducer test fixture.
 ///
 /// Reuses [`ButtonFixture`]'s External / paint / `read_state` /

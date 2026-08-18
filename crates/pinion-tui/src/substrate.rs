@@ -66,6 +66,17 @@ use pinion_runtime::{
 use crate::WidgetViewTui;
 use crate::text_layout::{layout_for_terminal, layout_for_viewport_px};
 
+/// R1715 §5.41 §5.39 §2 #6 — how many passes
+/// [`ShellCoreTui::drain_focus_mailboxes`] runs before declaring the frame
+/// unable to settle. Deliberately the same number as
+/// `pinion_shell::FOCUS_SETTLE_PASSES`: the two backends share the mailboxes,
+/// so a backend-specific bound would mean identical input converging on one
+/// and being reported as a cycle on the other. Not re-exported across the
+/// crate boundary because `pinion-tui` does not depend on `pinion-shell` (the
+/// cycle invariant); the pairing is asserted by the §2 #6 parity gates
+/// instead.
+const FOCUS_SETTLE_PASSES: u8 = 8;
+
 /// R51.117 §5.41 — TUI shell dispatch substrate.
 ///
 /// R51.124 §5.41 — composes the backend-agnostic
@@ -984,7 +995,8 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// to a raw sink through the shared [`InputRouter`](pinion_runtime::InputRouter)
     /// seam ([`CoreShell::raw_pointer_button_for_window`](pinion_runtime::CoreShell::raw_pointer_button_for_window),
     /// a method both backends reach). A consumed raw edge suppresses the
-    /// per-button default (returning the router's repaint signal); otherwise
+    /// per-button default and resolves the focus the dispatch leaves behind
+    /// (R1715, below), returning the router's repaint signal; otherwise
     /// the standard arc runs — left = press/release, middle = pan open/close,
     /// right = context-menu press-edge one-shot (no release half). The TUI
     /// carries no modifier chords yet (§2 #6 divergence carry, the
@@ -1006,16 +1018,33 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
             edge,
             pinion_core::Modifiers::default(),
         ) {
-            return true;
+            // R1715 §5.41 §5.39 §2 #6 — mirror of the Vello arm: USER code ran
+            // in this dispatch, so the focus it left behind is resolved here
+            // rather than waiting for whatever dispatch comes next. "No
+            // `DispatchTail`" retires `handle_tail`'s tail work, not its focus
+            // work. The mirror is mandatory, not cosmetic — `handle_tail`'s
+            // own comment promises the two backends give "identical focus AND
+            // identical modal stacks from identical input", and fixing one
+            // side alone would make that sentence false. Sharper here than on
+            // the window, in fact: click-to-focus is Vello-only, so on a
+            // terminal the mailbox is the ONLY way a press moves focus at all.
+            changed = true;
+        } else {
+            match (button, edge) {
+                (PointerButton::Left, PointerEdge::Down) => changed |= self.pointer_down(),
+                (PointerButton::Left, PointerEdge::Up) => changed |= self.pointer_up(),
+                (PointerButton::Middle, PointerEdge::Down) => self.middle_pressed(),
+                (PointerButton::Middle, PointerEdge::Up) => changed |= self.middle_released(),
+                (PointerButton::Right, PointerEdge::Down) => changed |= self.secondary_click(),
+                (PointerButton::Right, PointerEdge::Up) => {}
+            }
         }
-        match (button, edge) {
-            (PointerButton::Left, PointerEdge::Down) => changed |= self.pointer_down(),
-            (PointerButton::Left, PointerEdge::Up) => changed |= self.pointer_up(),
-            (PointerButton::Middle, PointerEdge::Down) => self.middle_pressed(),
-            (PointerButton::Middle, PointerEdge::Up) => changed |= self.middle_released(),
-            (PointerButton::Right, PointerEdge::Down) => changed |= self.secondary_click(),
-            (PointerButton::Right, PointerEdge::Up) => {}
-        }
+        // R1715 §5.41 §5.39 — ONE exit, the Vello twin's shape: the resolution
+        // belongs to the seam, so a future arm inherits it instead of having to
+        // remember it. Idempotent by `drain_focus_mailboxes`'s post-condition,
+        // so the arms that already resolved through `handle_tail` are
+        // unaffected by construction.
+        changed |= self.drain_focus_mailboxes();
         changed
     }
 
@@ -1742,11 +1771,40 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// [`Self::handle_tail`] can OR it into the flag the crossterm surface
     /// repaints on. Bumps the §5.34 revision on the same condition, so an
     /// in-flight preview's `base_revision` detects the concurrent change.
+    ///
+    /// R1715 — **when this returns, both mailboxes are EMPTY**: the resolution
+    /// is a FIXED POINT, the Vello twin's shape and for its reasons (see
+    /// `pinion_shell::ShellCore::drain_focus_mailboxes`). User code runs inside
+    /// a pass — `on_focus_change` observers, and the R1020 retry's `V::view` —
+    /// so a single pass silently deferred anything they asked for to the next
+    /// dispatch, which is PINION-PR89's defect one layer in. Settling also
+    /// makes handing focus on from `on_focus_change` land in the same frame
+    /// instead of one input late. The emptiness on return is what makes the
+    /// call idempotent, and idempotence is what lets [`Self::pointer_button`]
+    /// resolve on every path out rather than on the paths somebody remembered.
+    ///
+    /// §2 #6 — the bound is [`FOCUS_SETTLE_PASSES`], the same number the window
+    /// backend uses, so the two cannot disagree about which frames converge.
     fn drain_focus_mailboxes(&mut self) -> bool {
+        let mut visible = false;
+        for _ in 0..FOCUS_SETTLE_PASSES {
+            match self.drain_focus_mailboxes_once() {
+                None => return visible,
+                Some(changed) => visible |= changed,
+            }
+        }
+        self.report_unsettled_focus();
+        visible
+    }
+
+    /// R1715 §5.41 §5.39 — ONE pass of the fixed point. `None` means both
+    /// mailboxes were already empty (the frame has settled); `Some(changed)`
+    /// reports whether that pass made the frame visibly different.
+    fn drain_focus_mailboxes_once(&mut self) -> Option<bool> {
         let modal_reqs = pinion_core::modal_scope_request::drain();
         let focus_req = pinion_core::focus_request::drain();
         if modal_reqs.is_empty() && focus_req.is_none() {
-            return false;
+            return None;
         }
         let focus_before = self.focus.focused().map(str::to_owned);
         let modal_edited = self.apply_modal_requests(modal_reqs);
@@ -1754,12 +1812,44 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         if self.focus.focused() != focus_before.as_deref() {
             self.notify_focus_change(focus_before.as_deref());
             self.revision.bump();
-            return true;
+            return Some(true);
         }
         if modal_edited {
             self.revision.bump();
         }
-        modal_edited
+        Some(modal_edited)
+    }
+
+    /// R1715 §5.41 §5.39 — the frame did not settle inside
+    /// [`FOCUS_SETTLE_PASSES`]. Mirror of
+    /// `pinion_shell::ShellCore::report_unsettled_focus`, which carries the
+    /// full rationale; §2 #6 makes the mirror mandatory, because a bound
+    /// enforced on one backend only is not a bound.
+    ///
+    /// Reports through this backend's own [`Self::set_log_sink`] channel
+    /// rather than `tracing`, for the reason every other terminal-side
+    /// diagnostic does: this process owns the terminal, so a stray write to
+    /// stderr lands in the middle of the rendered grid.
+    fn report_unsettled_focus(&mut self) {
+        let stray_focus = pinion_core::focus_request::drain();
+        let stray_modals = pinion_core::modal_scope_request::drain();
+        if stray_focus.is_none() && stray_modals.is_empty() {
+            return;
+        }
+        let detail = format!(
+            "after {FOCUS_SETTLE_PASSES} passes, still pending: \
+             focus_request={stray_focus:?}, {} modal edit(s)",
+            stray_modals.len(),
+        );
+        if let Some(sink) = &mut self.log_sink {
+            let _ = writeln!(
+                sink,
+                "tui: focus did not settle and the pending requests were \
+                 dropped ({detail}) — two widgets are handing focus to each \
+                 other from on_focus_change",
+            );
+        }
+        debug_assert!(false, "focus did not settle ({detail})");
     }
 
     /// R664 §5.39 — apply a drained [`pinion_core::focus_request`] entry via

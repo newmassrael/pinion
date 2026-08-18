@@ -30,8 +30,8 @@
 use core::fmt;
 
 use pinion_core::test_fixtures::{
-    ContextMenuFixture, EchoButtonFixture, ModalTailFixture, RepeatingButtonFixture,
-    ScrollbarMultiFixture,
+    ContextMenuFixture, EchoButtonFixture, ModalTailFixture, RawSinkFocusFixture,
+    RepeatingButtonFixture, ScrollbarMultiFixture,
 };
 
 use crate::{VelloContext, VelloRenderer, WidgetRenderer, WidgetView};
@@ -253,6 +253,22 @@ impl WidgetView for ModalTailFixture {
         crate::SizeStrategy::Fixed {
             width: 8,
             height: 8,
+        }
+    }
+}
+
+/// R1715 §5.39 §5.35 §5.15 — Vello-side `WidgetView` impl for the raw-edge
+/// focus fixture, so `ShellCore::pointer_button_for_window` — the one seam
+/// both the native `MouseInput` path and the `scene/pointer_button` RPC drain
+/// cross — is driven with a raw sink in the scene. The surface is sized to the
+/// fixture's two 40x40 focus stops so both are hit-testable.
+impl WidgetView for RawSinkFocusFixture {
+    type Renderer = TestRenderer;
+
+    fn initial_size_strategy() -> crate::SizeStrategy {
+        crate::SizeStrategy::Fixed {
+            width: 80,
+            height: 40,
         }
     }
 }

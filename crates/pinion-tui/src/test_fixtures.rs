@@ -28,8 +28,8 @@
 //! same time this impl compiles.
 
 use pinion_core::test_fixtures::{
-    ButtonFixture, ContextMenuFixture, EchoButtonFixture, ModalTailFixture, RepeatingButtonFixture,
-    ScrollbarMultiFixture, ShadowingFixture,
+    ButtonFixture, ContextMenuFixture, EchoButtonFixture, ModalTailFixture, RawSinkFocusFixture,
+    RepeatingButtonFixture, ScrollbarMultiFixture, ShadowingFixture,
 };
 use ratatui::backend::TestBackend;
 
@@ -96,6 +96,16 @@ impl WidgetViewTui for ContextMenuFixture {
 /// mirror is the class of defect where GUI and TUI end up with different
 /// focus — and different modal stacks — from identical input.
 impl WidgetViewTui for ModalTailFixture {
+    type Renderer = crate::TuiRenderer<TestBackend>;
+}
+
+/// R1715 §5.41 §5.39 §5.35 — TUI-side `WidgetViewTui` impl for the raw-edge
+/// focus fixture, so `ShellCoreTui::pointer_button` resolves its own focus
+/// rather than inheriting the Vello result. §2 #6: both backends offer the
+/// edge through the SAME `CoreShell::raw_pointer_button_for_window` seam but
+/// own separate post-dispatch drains, so an untested mirror is exactly the
+/// class where GUI and TUI end up with different focus from identical input.
+impl WidgetViewTui for RawSinkFocusFixture {
     type Renderer = crate::TuiRenderer<TestBackend>;
 }
 

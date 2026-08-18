@@ -3162,6 +3162,16 @@ impl<V: WidgetCore> CoreShell<V> {
     /// [`External::raw_pointer_button`](pinion_core::External::raw_pointer_button),
     /// the `pointer_move` precedent, so the caller bumps the revision + requests
     /// a redraw rather than draining a statechart transition.
+    ///
+    /// R1715 — "no [`DispatchTail`]" is not "no post-dispatch work". The
+    /// callback is USER code and may write the focus / modal mailboxes like any
+    /// other widget body, so the caller still owes the frame's focus
+    /// resolution; the cited `pointer_move` precedent
+    /// (`ShellCore::cursor_moved_for_window`) calls `handle_tail`
+    /// unconditionally and so already does exactly that. Read as licence to
+    /// return early instead, this paragraph cost sprag's panes their keyboard
+    /// (PINION-PR89): the request waited in the mailbox for whatever dispatch
+    /// came next, so focus arrived one input late and swallowed that input.
     pub fn raw_pointer_button_for_window(
         &mut self,
         window_id: &str,

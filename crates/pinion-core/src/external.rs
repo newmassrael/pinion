@@ -2683,6 +2683,16 @@ pub trait External: core::fmt::Debug {
     /// trades them for the raw edges — the W3C model, where a listener that
     /// handles `mousedown` / `contextmenu` opts out of the browser's default.
     ///
+    /// R1715 — and it is scoped to this widget's GUI *defaults*, the four
+    /// listed above. The dispatch's own post-processing is not one of them: a
+    /// raw sink is user code like any other widget body, so a
+    /// [`focus_request`](crate::focus_request) it writes from
+    /// [`raw_pointer_button`](Self::raw_pointer_button) is resolved before the
+    /// next paint exactly as one written from `invoke` would be. Losing the
+    /// GUI default is in fact why it needs that mailbox at all — click-to-focus
+    /// is one of the things being suppressed, so a pane that wants the keyboard
+    /// on its own click has no other channel to ask (PINION-PR89).
+    ///
     /// Independent of, and usually paired with,
     /// [`wants_hover_move`](Self::wants_hover_move) (or
     /// [`wants_pointer_capture`](Self::wants_pointer_capture)): those forward

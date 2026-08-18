@@ -23,8 +23,8 @@
 //! [`ButtonFixture`]: pinion_core::test_fixtures::ButtonFixture
 
 use pinion_core::test_fixtures::{
-    ButtonFixture, ContextMenuFixture, EchoButtonFixture, ModalTailFixture, RepeatingButtonFixture,
-    ScrollbarMultiFixture, ShadowingFixture,
+    ButtonFixture, ContextMenuFixture, EchoButtonFixture, ModalTailFixture, RawSinkFocusFixture,
+    RepeatingButtonFixture, ScrollbarMultiFixture, ShadowingFixture,
 };
 
 use crate::widget_a11y::WidgetA11y;
@@ -62,6 +62,12 @@ impl WidgetA11y for ContextMenuFixture {}
 /// rationale applies identically (trait lives here, fixture lives in
 /// `pinion-core`).
 impl WidgetA11y for ModalTailFixture {}
+
+/// R1715 §5.40 §5.39 — atomic-default `WidgetA11y` impl for the raw-edge
+/// focus fixture [`RawSinkFocusFixture`]. Same default-empty shape as
+/// [`ButtonFixture`]; the orphan-rule placement rationale applies identically
+/// (trait lives here, fixture lives in `pinion-core`).
+impl WidgetA11y for RawSinkFocusFixture {}
 
 /// R1549.2 §2 #6 — the repeating-button fixture's blank impl, so a TUI
 /// test can drive a held press through the same trait stack.

@@ -70,6 +70,22 @@ use super::WidgetView;
 /// keeping the shell widget-library-agnostic (it never names a dock type).
 const CROSS_WINDOW_DROP_PREVIEW_TAG: &str = "__xwin_drop_preview";
 
+/// R1715 §5.39 — how many times [`ShellCore::drain_focus_mailboxes`] will
+/// re-run its pass before declaring the frame unable to settle.
+///
+/// A pass is needed whenever user code inside the resolution asks for focus
+/// again: a container handing focus to its child is 2, a chain through a panel
+/// to a field is 3. The bound is generous against that and still catches a
+/// two-widget ping-pong on the frame it starts, rather than hanging the event
+/// loop — the shape a declarative UI runtime bounds its nested-update depth
+/// with, and for the same reason: an unbounded fixed point over user code is a
+/// hang, and a silent cap is a lost request. This one is neither; see
+/// [`ShellCore::report_unsettled_focus`].
+///
+/// §2 #6 — `pinion_tui::ShellCoreTui` carries the same bound, so the two
+/// backends cannot disagree about which frames converge.
+const FOCUS_SETTLE_PASSES: u8 = 8;
+
 // R1150 §5.51 — the R1137 `REDOCK_DRAG_HINT_TAG` (the on-floater redock
 // schematic) was removed: it placed the preview on the dragged floater's own
 // rect, which under the R1146 release-only (static) floater sat at the wrong
@@ -2869,9 +2885,9 @@ impl<V: WidgetView> ShellCore<V> {
     /// [`External::wants_raw_pointer_buttons`](pinion_core::External::wants_raw_pointer_buttons))
     /// — is offered the edge FIRST and receives it verbatim (button +
     /// press/release + held modifiers), with the GUI default suppressed. A
-    /// `true` (consumed) bumps the §5.34 revision + requests a redraw (the
-    /// `External` mutated its own state — no [`DispatchTail`])
-    /// and returns.
+    /// `true` (consumed) bumps the §5.34 revision, requests a redraw (the
+    /// `External` mutated its own state — no [`DispatchTail`]), resolves the
+    /// focus the dispatch leaves behind (R1715, below) and returns.
     ///
     /// EVERY other widget keeps the standard per-button semantics unchanged —
     /// the non-capture invariant:
@@ -2913,26 +2929,53 @@ impl<V: WidgetView> ShellCore<V> {
         ) {
             self.revision.bump();
             self.request_redraw_for_window(window_id);
-            return;
+            // R1715 §5.39 — USER code ran in this dispatch:
+            // `External::raw_pointer_button` may write the focus mailbox like
+            // any other widget body, and owning the raw stream is exactly what
+            // takes `click_to_focus` away from it, so the mailbox is the only
+            // channel it has left. "No `DispatchTail`" retires
+            // `handle_tail`'s FIRST responsibility (drain the tail), not its
+            // second (resolve the focus this dispatch leaves behind) — and the
+            // single-frame guarantee both mailboxes advertise is that call.
+            // Reported by sprag (PINION-PR89): before this, a pane whose child
+            // program had enabled xterm mouse reporting could not be given the
+            // keyboard by clicking it. The request waited for whatever
+            // dispatch came next, so focus arrived one input late AND ate that
+            // input — a symptom indistinguishable by eye from "nothing
+            // happened". Costs two `Cell::take`s on the empty-mailbox path, so
+            // the high-frequency raw stream pays essentially nothing.
+        } else {
+            match (button, edge) {
+                (PointerButton::Left, PointerEdge::Down) => {
+                    self.mouse_pressed_for_window(window_id, PointerId::MOUSE);
+                }
+                (PointerButton::Left, PointerEdge::Up) => {
+                    self.mouse_released_for_window(window_id, PointerId::MOUSE);
+                }
+                (PointerButton::Middle, PointerEdge::Down) => {
+                    self.middle_pressed_for_window(window_id, PointerId::MOUSE);
+                }
+                (PointerButton::Middle, PointerEdge::Up) => {
+                    self.middle_released_for_window(window_id, PointerId::MOUSE);
+                }
+                (PointerButton::Right, PointerEdge::Down) => {
+                    self.secondary_click_for_window(window_id, PointerId::MOUSE);
+                }
+                (PointerButton::Right, PointerEdge::Up) => {}
+            }
         }
-        match (button, edge) {
-            (PointerButton::Left, PointerEdge::Down) => {
-                self.mouse_pressed_for_window(window_id, PointerId::MOUSE);
-            }
-            (PointerButton::Left, PointerEdge::Up) => {
-                self.mouse_released_for_window(window_id, PointerId::MOUSE);
-            }
-            (PointerButton::Middle, PointerEdge::Down) => {
-                self.middle_pressed_for_window(window_id, PointerId::MOUSE);
-            }
-            (PointerButton::Middle, PointerEdge::Up) => {
-                self.middle_released_for_window(window_id, PointerId::MOUSE);
-            }
-            (PointerButton::Right, PointerEdge::Down) => {
-                self.secondary_click_for_window(window_id, PointerId::MOUSE);
-            }
-            (PointerButton::Right, PointerEdge::Up) => {}
-        }
+        // R1715 §5.39 — ONE exit, so a future arm cannot forget. The early
+        // `return` this replaces is how the raw arm came to skip the focus
+        // resolution in the first place; putting the resolution on the seam
+        // instead of on the arms means the next arm added to that `match`
+        // inherits it rather than having to remember it.
+        //
+        // The six non-raw arms are unaffected BY CONSTRUCTION, not by
+        // judgement: they reach `handle_tail`, which resolves and leaves the
+        // mailboxes empty (`drain_focus_mailboxes`'s R1715 post-condition), so
+        // this second call takes both `Cell`s, finds `None`, and returns. An
+        // idempotent no-op cannot change what they do.
+        self.drain_focus_mailboxes();
     }
 
     /// R51.78 §5.39 — Tab / Shift+Tab dispatch decoupled from winit.
@@ -7343,11 +7386,55 @@ impl<V: WidgetView> ShellCore<V> {
     ///
     /// No-op — and no snapshot cost — when both mailboxes are empty, which
     /// is every quiescent frame.
+    ///
+    /// ## R1715 — the resolution is a FIXED POINT, and that is the point
+    ///
+    /// **When this returns, both mailboxes are EMPTY.** Not as an observation
+    /// about the code below but as a guarantee: the pass below repeats until
+    /// nothing is left to apply.
+    ///
+    /// It has to, because two places inside one pass run USER code.
+    /// [`Self::notify_focus_change`] fires `External::on_focus_change`
+    /// observers, and [`Self::apply_focus_request`]'s R1020 retry re-runs
+    /// `V::view`. Either can write a mailbox the pass has already emptied, and
+    /// a single-pass resolution **silently deferred** that write to whatever
+    /// dispatch came next — which is PINION-PR89's defect exactly, one layer
+    /// in: focus a frame late, and the input that carried it swallowed. A
+    /// method built to abolish that must not re-arm it inside itself.
+    ///
+    /// Settling also makes the *capability* work rather than half-work: "I was
+    /// told I have focus; the real target is my child" is how a container hands
+    /// focus on (the toolkit's focus proxy, the web's `delegatesFocus`), and it
+    /// is expressed by requesting from `on_focus_change`. One pass landed that
+    /// request one input late; a fixed point lands it in the same frame.
+    ///
+    /// R1456 is untouched. Its case — a modal pop's automatic restore and an
+    /// explicit request in ONE frame — puts both requests in the mailbox at the
+    /// same time, so they resolve inside a single pass and the intermediate
+    /// owner is still never announced. A later pass exists only when user code
+    /// *reacted* to being focused, and there the intermediate is not a
+    /// transient the frame is hiding: it is the widget that chose to hand on.
+    ///
+    /// The bound is [`FOCUS_SETTLE_PASSES`]; exceeding it is reported by
+    /// [`Self::report_unsettled_focus`] rather than looped on forever.
     fn drain_focus_mailboxes(&mut self) {
+        for _ in 0..FOCUS_SETTLE_PASSES {
+            if !self.drain_focus_mailboxes_once() {
+                return;
+            }
+        }
+        self.report_unsettled_focus();
+    }
+
+    /// R1715 §5.39 — ONE pass of [`Self::drain_focus_mailboxes`]'s fixed point.
+    /// `false` means both mailboxes were already empty, i.e. the frame has
+    /// settled — the quiescent answer, and the reason a settled frame costs two
+    /// `Cell::take`s rather than a loop.
+    fn drain_focus_mailboxes_once(&mut self) -> bool {
         let modal_reqs = pinion_core::modal_scope_request::drain();
         let focus_req = pinion_core::focus_request::drain();
         if modal_reqs.is_empty() && focus_req.is_none() {
-            return;
+            return false;
         }
         let focus_before = self.focus.focused().map(str::to_owned);
         let modal_edited = self.apply_modal_requests(modal_reqs);
@@ -7360,6 +7447,39 @@ impl<V: WidgetView> ShellCore<V> {
             self.revision.bump();
             self.request_redraw();
         }
+        true
+    }
+
+    /// R1715 §5.39 — the frame did not settle inside [`FOCUS_SETTLE_PASSES`]:
+    /// two widgets are handing focus back and forth, each reacting to the
+    /// other's `on_focus_change`. Report it and clear, so the frame ends.
+    ///
+    /// Clearing rather than leaving is deliberate. A request left in the
+    /// mailbox lands on the next, unrelated input — the silent-late defect this
+    /// whole round is about, wearing a different hat.
+    ///
+    /// Loud in two registers: a `debug_assert` fails the build's own tests, and
+    /// a release build logs at ERROR rather than dying inside a user's event
+    /// loop over what is a binding-side cycle.
+    fn report_unsettled_focus(&mut self) {
+        let stray_focus = pinion_core::focus_request::drain();
+        let stray_modals = pinion_core::modal_scope_request::drain();
+        if stray_focus.is_none() && stray_modals.is_empty() {
+            return;
+        }
+        let detail = format!(
+            "after {FOCUS_SETTLE_PASSES} passes, still pending: \
+             focus_request={stray_focus:?}, {} modal edit(s); focus is {:?}",
+            stray_modals.len(),
+            self.focus.focused(),
+        );
+        tracing::error!(
+            target: "pinion::focus",
+            "focus did not settle and the pending requests were dropped \
+             ({detail}). Two widgets are handing focus to each other from \
+             `on_focus_change`; one of them must stop asking.",
+        );
+        debug_assert!(false, "focus did not settle ({detail})");
     }
 
     /// R693 §5.39 — apply a drained [`pinion_core::modal_scope_request`]
