@@ -230,15 +230,13 @@ impl Fault {
     /// Every reason a clause cannot be said, in declaration order.
     pub const ALL: [Self; 3] = [Self::Empty, Self::AlreadyFramed, Self::DebugSpelling];
 
-    /// The name this fault carries on the wire.
-    #[must_use]
-    pub const fn wire(self) -> &'static str {
-        match self {
-            Self::Empty => "empty",
-            Self::AlreadyFramed => "already-framed",
-            Self::DebugSpelling => "debug-spelling",
-        }
-    }
+    // ★★ R1719.1 (closing audit) — a `wire()` used to sit here, beside
+    // `Tone::wire` and `Urgency::wire`, and it had **no consumer**: a fault
+    // never crosses the wire. It is what `checked` hands a test and what the
+    // production door panics with, and `Utterance`'s serializer does not carry
+    // it, so the name was symmetry with two neighbours that really are
+    // published. Deleted on R1706.1's rule — parity is about a capability, not
+    // about a method having a peer.
 
     /// What a developer reads when this fault stops an utterance.
     ///
@@ -421,8 +419,12 @@ impl fmt::Display for Utterance {
 impl Serialize for Utterance {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
         let mut row = s.serialize_struct("Utterance", 4)?;
-        row.serialize_field("tone", self.tone.wire())?;
-        row.serialize_field("clause", &self.clause)?;
+        // ★ R1719.1 (closing audit) — through the accessors, not the fields.
+        // `clause()` had no reader outside this module's tests while the wire
+        // published the same fact off the field beside it, which is two readings
+        // of one record with nothing holding them together.
+        row.serialize_field("tone", self.tone().wire())?;
+        row.serialize_field("clause", self.clause())?;
         row.serialize_field("sentence", &self.sentence())?;
         row.serialize_field("urgency", self.urgency().wire())?;
         row.end()
