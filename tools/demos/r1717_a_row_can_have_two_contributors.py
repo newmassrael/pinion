@@ -366,8 +366,15 @@ def e_the_seat_gives_the_written_half_back(tf) -> None:
         "E: ★★ and the row STAYS, worked out from the wires — the derivation "
         "was still true, so a removed row would be back one render later",
     )
-    said = tf.query(f"{EXT}/toast")
-    ok(f"E: the screen says which act happened ({said!r})", "again" in said)
+    # ★★★ The WHOLE sentence, not a substring of it. This round's own defect
+    # was a launch-panel line that read as nonsense while every check over it
+    # asked whether a word was present — so a sentence a person reads is asserted
+    # entire, and a reworded one has to come back here.
+    assert_eq(
+        tf.query(f"{EXT}/toast"),
+        "connect.endpoints is the wire's again",
+        "E: ★★★ the screen says which act happened, in the words it happened in",
+    )
     assert_action_refused(
         lambda: tf.invoke(f"{EXT}/remove_field", "connect.endpoints"),
         saying="wire",

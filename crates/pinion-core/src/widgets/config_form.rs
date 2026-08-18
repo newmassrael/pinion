@@ -587,20 +587,31 @@ impl FieldType {
     }
 
     /// ★★★★★ R1717 — whether a value of this shape can hold **two
-    /// contributions at once**.
+    /// contributions at once and SHOW which is which**.
     ///
-    /// A sequence can: the addresses somebody wrote and the addresses a canvas
-    /// draws are both true of one node, and a list that showed only one of them
-    /// would ship a configuration that contradicts the picture. A single value
-    /// cannot: a mode worked out from a role and a mode somebody typed are
-    /// competing answers, and a form that "composed" them would invent a third.
+    /// A list can: the addresses somebody wrote and the addresses a canvas
+    /// draws are both true of one node, a list that showed only one of them
+    /// would ship a configuration that contradicts the picture, and a list is
+    /// drawn one element per line — so [`ConfigField::element_source`] has a
+    /// line to answer for. A single value cannot hold two at all: a mode worked
+    /// out from a role and a mode somebody typed are competing answers, and a
+    /// form that "composed" them would invent a third.
+    ///
+    /// ★★ [`Self::Flags`] is a set, so it could hold two — and it is **not**
+    /// here, which was the closing audit of the round that wrote this line. Its
+    /// members are drawn as chips with no per-member place to say "this one is
+    /// the screen's", so a shared one would paint a chosen chip a person could
+    /// press and silently adopt: the exact freeze this axis exists to end, one
+    /// shape over. The rule this answers is therefore about what can be SHOWN,
+    /// not only about what a value can hold — and the day a chip can carry its
+    /// own provenance this becomes `List | Flags` and the painter follows.
     ///
     /// So the rule is the **shape's**, not a flag a screen sets per row — which
     /// is what makes [`ConfigField::with_derived`] able to refuse rather than
     /// silently pick a winner.
     #[must_use]
     pub const fn merges(&self) -> bool {
-        matches!(self, Self::List { .. } | Self::Flags { .. })
+        matches!(self, Self::List { .. })
     }
 
     /// A written half and a worked-out one composed, in the order a reader
@@ -3397,11 +3408,27 @@ mod tests {
             }
             .merges()
         );
+        // ★★ A set COULD hold two contributions, and does not, because its
+        // members are drawn as chips with nowhere to say which chip is the
+        // screen's — a shared one would paint a chosen chip a person could
+        // press and silently adopt. The rule is about what can be shown.
         assert!(
-            FieldType::Flags {
+            !FieldType::Flags {
                 of: vec!["read".into()]
             }
             .merges()
+        );
+        assert_eq!(
+            ConfigField::new("control.permissions", "perm", Applies::Restart, "read")
+                .with_shape(FieldType::Flags {
+                    of: vec!["read".into(), "write".into()],
+                })
+                .with_derived("role", "write"),
+            Err(FormError::Unmergeable {
+                key: "control.permissions".to_owned(),
+                ty: "perm".to_owned(),
+            }),
+            "★★★ and the refusal is the type's, so no screen can reach that state"
         );
         assert_eq!(
             scalar.with_derived("role", "router"),
