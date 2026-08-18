@@ -196,10 +196,24 @@ pub fn option_chip<S: InteractionState + Copy>(
 //
 // What the four screens actually share is the ONE thing a chip cannot work out by
 // looking at itself, and that is a question rather than a painter:
-// `ChipGroup::is_a_stop`. Deleting the wrapper leaves that unchanged and takes
-// away a third meaning of the name `chip_row` (two bindings already have local
-// ones, with two other signatures). The R1719.1 rule, on a painter instead of a
-// wire form: symmetry is not a consumer.
+// `ChipGroup::is_a_stop`. The R1719.1 rule, on a painter instead of a wire form:
+// symmetry is not a consumer.
+//
+// ★ R1721.2 corrects this note's own arithmetic, which was false the moment it
+// was written: it said the deletion took away "a third meaning of the name
+// `chip_row`, two bindings already have local ones". Measured — **one** binding
+// has one (`hello-model-chart`, a different signature), because the same commit
+// renamed the other to `filters_row`. So the wrapper was the second meaning, and
+// after the rename there is one. The session's closing audit found it, which is
+// what that audit's second question is for: a claim this round *wrote* is as much
+// its output as the code, and this one contradicted an edit three files away.
+//
+// What went with the wrapper, stated rather than left silent: four tests were
+// R1721's here and two remain. `…_read_one_derivation` is **subsumed** — the
+// surviving `…_a_chip_is_a_focus_stop_exactly_when_its_row_is_not` now drives
+// `option_chip` with `is_a_stop` directly, which is that pairing. `…_an_empty_row
+// _paints_no_pills` is **vacuous** without a row painter: a caller iterates
+// `row.chips()`, and the empty row's own answers are asserted in `pinion-core`.
 
 #[must_use]
 pub fn chip_layout(size: Size, padding: Option<Rect>) -> LayoutStyle {
