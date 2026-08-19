@@ -392,6 +392,27 @@ pub fn owed() -> Ledger {
     Ledger::from_json(&doc).expect("the rail's declared remainder is a readable ledger")
 }
 
+/// ★★★★★ R1733 — the BOARD's written specification: the palette row a widget
+/// is picked up from, and what the canvas puts on screen while one is carried.
+///
+/// `include_str!` rather than a read at run time so the gate cannot pass by
+/// finding no file: a specification that goes missing must break the build, not
+/// silently stop judging.
+const BOARD_SPEC_JSON: &str = include_str!("../../../docs/analyzer-board-spec.json");
+
+/// The board's specification, parsed.
+///
+/// # Panics
+///
+/// If the document is not a specification — unreadable JSON, a surface with no
+/// canon, a remainder entry naming no round or no reason. All defects in the
+/// pin, and all of them must stop the build rather than weaken the gate.
+#[must_use]
+pub fn board_document() -> pinion_core::conformance::SpecDocument {
+    pinion_core::conformance::SpecDocument::parse(BOARD_SPEC_JSON)
+        .expect("docs/analyzer-board-spec.json is a specification document")
+}
+
 // --- The Settings destination -------------------------------------------------
 //
 // ★★ R1695 — the second page, and the reason the region is worth building: a
@@ -832,7 +853,16 @@ pub const CATALOGUE: &[WidgetSpec] = &[
 /// The palette panel's heading and the line under it.
 pub const PALETTE_TITLE: &str = "Widget Palette";
 /// The palette panel's sub-heading.
-pub const PALETTE_HINT: &str = "Add one to the board";
+///
+/// ★ R1733 — the reference's own line, reachable at last: it says a row is
+/// dragged onto the canvas, and until this round that was an instruction to do
+/// something this build could not do. It said "add one to the board" instead,
+/// which is true of the click and silent about the gesture.
+pub const PALETTE_HINT: &str = "Drag onto the canvas, or click to add";
+
+/// ★ R1733 — what the canvas says while a palette footprint is being carried
+/// over it. The reference's whole-canvas invitation, in this tool's words.
+pub const DROP_INVITATION: &str = "Drop to add widget";
 
 /// How many entries the first release places.
 #[must_use]
@@ -1328,6 +1358,12 @@ pub enum Population {
     KeyRows,
     /// R1695 — one per [`THEMES`] choice, keyed by index.
     Themes,
+    /// ★ R1733 — one per catalogue entry the first release **places**: the
+    /// mirror of [`Reserved`](Self::Reserved), and the rows whose parts are
+    /// addressable. A reserved row's parts are not tagged at all, for the two
+    /// reasons the painter states, so a family over the whole catalogue would
+    /// demand nine regions that are not there.
+    Placeable,
 }
 
 impl Population {
@@ -1393,6 +1429,11 @@ impl Population {
             Population::Options => OPTIONS.iter().map(|o| o.key.to_owned()).collect(),
             Population::KeyRows => KEY_ROWS.iter().map(|r| r.key.to_owned()).collect(),
             Population::Themes => indexes(THEMES.len()),
+            Population::Placeable => CATALOGUE
+                .iter()
+                .filter(|w| w.tier == Tier::Placeable)
+                .map(|w| w.kind.to_owned())
+                .collect(),
         }
     }
 }
@@ -1783,6 +1824,39 @@ pub const SILENCES: &[(&str, Population, &str, Where)] = &[
         "match.spark.line",
         Population::One,
         "decorative",
+        Where::At("dashboard"),
+    ),
+    // ★★ R1733 — a palette row's four parts. The ROW is the control: pressing
+    // anywhere on it adds, and it is the thing a reader arrives at. Its parts
+    // are how it is drawn, so each says which of the four kinds of quiet it
+    // owes — the swatch is decoration, the name IS the row's name, and the
+    // line and the seat belong to it.
+    //
+    // Only the rows a widget can be picked up FROM: a reserved row's parts
+    // carry no tag at all (`part_tag_of`), so a family over the whole
+    // catalogue would demand nine regions that are not painted.
+    (
+        "shell.palette.part.swatch.{}",
+        Population::Placeable,
+        "decorative",
+        Where::At("dashboard"),
+    ),
+    (
+        "shell.palette.part.name.{}",
+        Population::Placeable,
+        "name_of",
+        Where::At("dashboard"),
+    ),
+    (
+        "shell.palette.part.gist.{}",
+        Population::Placeable,
+        "part_of",
+        Where::At("dashboard"),
+    ),
+    (
+        "shell.palette.part.verb.{}",
+        Population::Placeable,
+        "part_of",
         Where::At("dashboard"),
     ),
     // R1695 — a settings row's title and its sentence under it are what the

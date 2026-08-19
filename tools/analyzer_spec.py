@@ -37,11 +37,17 @@ from pathlib import Path
 DOCS = Path(__file__).resolve().parent.parent / "docs"
 RAIL_SPEC_PATH = DOCS / "analyzer-rail-spec.json"
 KEYS_SPEC_PATH = DOCS / "analyzer-keys-spec.json"
+BOARD_SPEC_PATH = DOCS / "analyzer-board-spec.json"
 
 
 def rail_spec() -> dict:
     """The tool's navigation, as `docs/analyzer-rail-spec.json` states it."""
     return json.loads(RAIL_SPEC_PATH.read_text(encoding="utf-8"))
+
+
+def board_spec() -> dict:
+    """The board's palette row and its carry, as their pin states them (R1733)."""
+    return json.loads(BOARD_SPEC_PATH.read_text(encoding="utf-8"))
 
 
 def keys_spec() -> dict:

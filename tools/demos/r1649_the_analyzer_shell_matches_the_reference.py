@@ -619,6 +619,18 @@ def body() -> None:
             (tag, {"x": x, "y": y, "w": w, "h": h})
             for tag, (x, y, w, h) in abs_rects_of(snap).items()
         ]
+        # ★★★★★ R1733 — a region the screen has DECLARED quiet is not a control,
+        # and that is derived rather than listed. R1728's rule: an exception
+        # written by name is only as good as whoever last updated it, and this
+        # population's exclusions had already grown to three. A palette row's
+        # four parts are drawn inside the row and the ROW is what a press
+        # answers for, so each of them declares its silence — sixteen regions,
+        # none of which had to be named here.
+        quiet = {
+            node["tag"]
+            for node in tf.request("scene/voice").result["nodes"]
+            if node.get("voice") == "silent"
+        }
         controls = [
             (tag, rect)
             for tag, rect in tagged
@@ -626,12 +638,11 @@ def body() -> None:
             # and the DETACHED badge are not in this population.
             if tag != "shell.rail.account"
             and not tag.endswith(".badge")
+            and tag not in quiet
             # ★ R1694 — the palette's section headings and its two counts are
             # addressable so a reader can walk into a group and hear how many
-            # seats are placed and reserved. They are readouts, not controls,
-            # and pressing one does nothing on purpose: the population here is
-            # a PREFIX rule, so the exclusion has to be by name and stated,
-            # exactly as the two above are.
+            # seats are placed and reserved. They are ANNOUNCED readouts, so the
+            # derivation above does not reach them and the exclusion is by name.
             and not tag.startswith("shell.palette.section.")
             and tag not in ("shell.palette.placed", "shell.palette.reserved")
             and (

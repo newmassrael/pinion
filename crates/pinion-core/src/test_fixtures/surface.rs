@@ -116,6 +116,40 @@ pub fn painted_surface(
         .collect()
 }
 
+/// ★★★★★ R1733 — one surface whose parts are **layers**, in the order they are
+/// drawn.
+///
+/// [`painted_surface`] sorts by reading order, which is the right rule for a
+/// surface laid out in a row, a column or a grid — parts that sit beside each
+/// other, where "which comes first" is a question about the page. A drag's
+/// on-screen answer is not laid out at all: a grid overlay, the mark at the
+/// cell a release would use, an invitation across the whole canvas and a chip
+/// on the cursor are four things **stacked**, each covering the ones before it.
+/// Reading order over four overlapping rectangles is arithmetic on coordinates
+/// that mean nothing: the tallest part vertically overlaps every other, so they
+/// all land on one "line" and sort by left edge — and the left edge of a
+/// full-canvas banner and of a mark at column 0 differ by a padding constant.
+///
+/// So the order specified for a stack is the **z-order**, and paint order is
+/// the z-order. This is a second rule rather than a second *implementation* of
+/// the first: both readings share [`painted_parts`], and which one a surface
+/// uses is a property of the surface, declared where the specification is.
+#[must_use]
+pub fn painted_stack(
+    scene: &Scene,
+    stem: &str,
+    titles: &dyn Fn(&str) -> Option<String>,
+) -> Vec<Part> {
+    painted_parts(scene, stem)
+        .into_iter()
+        .map(|(key, _)| {
+            let title =
+                titles(&key).unwrap_or_else(|| format!("<{key} is painted and no table names it>"));
+            Part::new(key, title)
+        })
+        .collect()
+}
+
 /// ★★★★★ R1732 — the same reading, for a surface whose parts are addressed
 /// **family first**: `<prefix><part>.<address>`.
 ///

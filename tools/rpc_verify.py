@@ -5078,6 +5078,52 @@ def declared_and_painted(
     )
 
 
+def declared_but_unreachable(
+    app: "RpcSubprocess", declared: "Iterable[str]", size: tuple[int, int]
+) -> "list[str]":
+    """★★★★★ R1733 — of the names a screen's specification declares, the ones
+    that are neither PAINTED at `size` nor **one gesture away**.
+
+    ## What this is the repair of
+
+    Two demos asserted that nothing the specification names stops being painted
+    when a window is resized to its floor, and computed that as
+    `declared - declared_and_painted(...)`. That rule was written when a window
+    could not pan and its panes could not scroll. Both changed: R1714 gave
+    `assert_declared_panes_on_screen` exactly this clause — *painted, or one
+    gesture away, and the wire says which* — and left the sibling rule beside it
+    on the old footing.
+
+    Measured on the capture viewer at its own declared floor, ten rounds out of
+    ten: **290** declared regions are painted at the design size and **127** at
+    the floor, so **163** are out of sight — and `scene/scroll_reach` reports
+    `lost: 0` and names every one of them `scrollable`, with the scroll that
+    brings it back. Nothing is missing; the rule had no way to say so. It passed
+    whenever the state it ran in happened to leave nothing out of sight, which
+    is what made it a flake rather than a red: it went red once in a 29-demo
+    sweep and passed ten times standing alone.
+
+    ## It keeps its teeth
+
+    A region that is neither drawn nor reachable still fails, and so does one
+    the report cannot name — the two directions R1714 kept for panes. The
+    caller should ALSO assert `scene/scroll_reach`'s `lost` is zero; this
+    answers the per-name question, not the screen-wide one.
+    """
+    painted = set(abs_rects_of(app.snapshot(source="paint", viewport=size)))
+    resp = app.request("scene/scroll_reach")
+    assert resp is not None and isinstance(resp.result, dict), (
+        "scene/scroll_reach answers, or a region out of sight cannot be told "
+        "from a region that is gone"
+    )
+    reachable = {
+        row["tag"]
+        for row in resp.result.get("out_of_sight", [])
+        if isinstance(row, dict) and row.get("tag") and row.get("reach") != "lost"
+    }
+    return sorted(set(declared) - painted - reachable)
+
+
 def assert_declared_panes_on_screen(
     app: "RpcSubprocess", size: tuple[int, int], *, label: str
 ) -> list[str]:

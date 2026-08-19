@@ -123,6 +123,22 @@ impl TileId {
     }
 }
 
+/// (R1733) So a call that takes an id can be handed a literal, the way
+/// [`TileId::new`] already allows. Two concrete impls rather than one blanket
+/// one over `Into<String>`, because a blanket impl would collide with the
+/// reflexive `From<T> for T`.
+impl From<&str> for TileId {
+    fn from(id: &str) -> Self {
+        Self::new(id)
+    }
+}
+
+impl From<String> for TileId {
+    fn from(id: String) -> Self {
+        Self(id)
+    }
+}
+
 impl std::fmt::Display for TileId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.write_str(&self.0)
@@ -833,7 +849,10 @@ impl TileGrid {
             return Err(TileError::Duplicate(tile.id));
         }
         let mut tile = tile;
-        tile.col = tile.col.min(self.columns - tile.w);
+        // R1733 — the same clamp `landing` and `landing_for` apply, called
+        // rather than repeated. It had been written out here, in `landing`, and
+        // a third time in every shell drawing a preview.
+        tile.col = self.landing_for(tile.w, tile.col, tile.row).0;
         let id = tile.id.clone();
         self.tiles.push(tile);
         Ok(self.reflow_around(&id))
@@ -881,7 +900,32 @@ impl TileGrid {
     #[must_use]
     pub fn landing(&self, id: &TileId, col: u32, row: u32) -> Option<(u32, u32)> {
         let target = self.tiles.iter().find(|t| &t.id == id)?;
-        Some((col.min(self.columns.saturating_sub(target.w)), row))
+        Some(self.landing_for(target.w, col, row))
+    }
+
+    /// (R1733) Where a tile `w` columns wide asked for `(col, row)` would
+    /// start — **whether or not it is on the board yet**.
+    ///
+    /// [`landing`](Self::landing) is this asked about a tile the grid already
+    /// holds. This is the same question for a footprint that is still on a
+    /// palette, which is the one a drop preview needs and the one that had no
+    /// answer: a shell drawing "where this new card would go" had to write the
+    /// clamp itself, which is the two-clamps-one-fact shape R1668 measured on
+    /// the *other* drag and repaired only there.
+    ///
+    /// Height takes no part. Rows are unbounded ([`rows`](Self::rows) is
+    /// derived), so nothing about `h` can move where a tile starts — and a
+    /// parameter that could not change the answer would be a promise this
+    /// cannot keep.
+    ///
+    /// The column stops at `columns - w` so the tile stays on the board; a drag
+    /// past the right edge is a gesture, not an error. A `w` of zero is
+    /// treated as one, because a zero-cell tile is refused at
+    /// [`place`](Self::place) and answering a landing for it here would let a
+    /// preview be drawn for something that can never be placed.
+    #[must_use]
+    pub fn landing_for(&self, w: u32, col: u32, row: u32) -> (u32, u32) {
+        (col.min(self.columns.saturating_sub(w.max(1))), row)
     }
 
     /// Resize a tile, pushing whatever it grows into downward.
@@ -1245,6 +1289,301 @@ impl TileGrid {
     }
 }
 
+/// ★★★★★ (R1733) What a board drag is carrying.
+///
+/// A board has one drag in flight, and it is **either** moving something
+/// already on the board **or** placing something that is not on it yet. Two
+/// arms rather than two fields, because two nullable fields can be set at once
+/// and that state has no meaning.
+///
+/// The behaviour reference spells it the other way — a held card id and a held
+/// palette kind, each nullable — and so every handler has to remember to check
+/// the other one before acting. Measured in that prototype: three do, and the
+/// fourth handler anyone adds is a defect nothing can catch. Here the check is
+/// a `match`, and the compiler is what performs it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Carried {
+    /// A tile the board already holds, gripped `dx` columns and `dy` rows
+    /// inside its own rectangle — so a card grabbed by its middle keeps that
+    /// grip instead of jumping its top-left corner under the pointer.
+    Placed {
+        /// Which tile.
+        id: TileId,
+        /// Columns between the tile's left edge and the grip.
+        dx: u32,
+        /// Rows between the tile's top edge and the grip.
+        dy: u32,
+    },
+    /// A footprint that is not on the board — a palette entry. Its id is the
+    /// one a drop would place it under, decided when the drag opens so an
+    /// abandoned drag consumes nothing.
+    Fresh {
+        /// The id a drop would place it under.
+        id: TileId,
+        /// Width in columns.
+        w: u32,
+        /// Height in rows.
+        h: u32,
+    },
+}
+
+impl Carried {
+    /// Whose tile this drag would land — the id already on the board, or the
+    /// one a fresh footprint would take.
+    #[must_use]
+    pub const fn id(&self) -> &TileId {
+        match self {
+            Self::Placed { id, .. } | Self::Fresh { id, .. } => id,
+        }
+    }
+
+    /// Whether the board already holds what is being carried.
+    #[must_use]
+    pub const fn is_placed(&self) -> bool {
+        matches!(self, Self::Placed { .. })
+    }
+}
+
+/// (R1733) What a [`TileDrag::drop_on`] did.
+///
+/// Three arms, because a release has three outcomes a caller must tell apart
+/// and only one of them is a change. R1701 measured what happens when the
+/// middle arm is left to a remembered comparison: a click that carried nothing
+/// reflowed the board and announced a move that had not happened.
+#[derive(Debug, Clone, PartialEq, Eq)]
+#[non_exhaustive]
+pub enum Dropped {
+    /// The board took it, at that cell, displacing whatever the reflow names.
+    Landed {
+        /// Where it went — the cell the preview was drawing.
+        at: (u32, u32),
+        /// What had to move out of the way.
+        reflow: Reflow,
+    },
+    /// The landing is where the tile already was: a press and a release that
+    /// carried it nowhere. The board is untouched, and saying "moved" here is
+    /// the lie this arm exists to make unspellable.
+    Unmoved,
+    /// The pointer was not over the board when the button came up. Nothing
+    /// happened, and nothing was wrong — which is a different answer from a
+    /// drop the board refused.
+    Abandoned,
+}
+
+/// ★★★★★ (R1733) A board drag in flight: what is being carried, and the cell a
+/// release would put it in.
+///
+/// # The one fact the preview and the commit share
+///
+/// [`preview`](Self::preview) is what a painter draws and
+/// [`drop_on`](Self::drop_on) is what a release does, and both read the same
+/// stored landing — so they cannot disagree. R1668 measured the failure this
+/// forecloses on the move gesture (a six-column card dragged to column seven
+/// previewed seven and committed six, because a shell had written the clamp and
+/// the grid had written it too), repaired it for tiles already on the board,
+/// and left the same shape open for anything arriving from a palette.
+///
+/// # Against the reference toolkit at 6.11.1
+///
+/// Measured by building a probe against it and running it, not by reading about
+/// it. Its grid container, the layout base, its widget class and its item view
+/// were enumerated through the runtime meta-object, and a drag was driven onto
+/// a real drop target.
+///
+/// | question | there | here |
+/// |---|---|---|
+/// | any member answering "where would a `w`-wide item land at this cell" | **0** across all four classes. The one name that matches at all is a *bool* on the item view saying whether to draw an indicator | [`TileGrid::landing_for`] |
+/// | asking for an occupied cell | both items get geometry and **overlap**; the add call returns `void`, so there is nothing to refuse with, and the position query answers only the first | [`TileError`], and a reflow that names what it displaced |
+/// | what a drag-move event carries | a **pixel**. Nothing on the event, the widget or the layout turns it into the cell a release would use, so the highlight and the commit are two computations | one landing, stored, read by both |
+/// | a release that carried nothing | the target's drop handler runs regardless; telling a click from a drag is the application's | [`Dropped::Unmoved`] |
+/// | what a surface accepts, asked **before** the drag | one bool on the widget. A part can say yes or no and cannot say *what*; the kinds are declared once for the whole model, outside the meta-object, and the refusal is a bare bool with no reason | ★the floor is **above** us on the neighbouring axis — see below |
+///
+/// The last row is honest rather than favourable: a target there accepts a
+/// payload from a source that has never heard of it, negotiated by format, and
+/// pinion's drag session dispatches only to the source. What the floor cannot
+/// do is answer *which* kinds, per part, without running a drag.
+///
+/// # Examples
+///
+/// ```
+/// use pinion_core::widgets::tile_grid::{Dropped, Tile, TileDrag, TileGrid};
+///
+/// let mut board = TileGrid::new(12);
+/// board.place(Tile::new("first", 0, 0, 6, 1)).expect("an empty board");
+///
+/// // A palette entry is picked up. Nothing is over the board yet.
+/// let mut drag = TileDrag::pick(&board, "second", 4, 2).expect("a free id that fits");
+/// assert_eq!(drag.landing(), None);
+///
+/// // The pointer crosses the board, well past the right edge.
+/// drag.hover(&board, 11, 1);
+/// assert_eq!(drag.landing(), Some((8, 1)), "clamped so the footprint stays on");
+/// assert_eq!(drag.preview(&board).map(|t| (t.col, t.row, t.w, t.h)), Some((8, 1, 4, 2)));
+///
+/// // The release lands exactly where the preview was.
+/// let Ok(Dropped::Landed { at, .. }) = drag.drop_on(&mut board) else {
+///     panic!("the board takes it")
+/// };
+/// assert_eq!(at, (8, 1));
+/// assert_eq!(board.tile(&"second".into()).map(|t| (t.col, t.row)), Some((8, 1)));
+/// ```
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TileDrag {
+    carried: Carried,
+    /// The landing, already resolved through the grid — or [`None`] while the
+    /// pointer is not over the board at all.
+    ///
+    /// One field rather than a flag beside a cell. The reference keeps a
+    /// "the pointer is over the board" bool next to a nullable snap and so can
+    /// spell *not over the board, and here is where it would go*, which is
+    /// nothing.
+    over: Option<(u32, u32)>,
+}
+
+impl TileDrag {
+    /// Open a drag on a tile the board holds, gripped at board cell
+    /// `(col, row)`.
+    ///
+    /// The landing starts where the tile already is, so a press that never
+    /// moves previews the truth rather than nothing.
+    ///
+    /// # Errors
+    ///
+    /// [`TileError::NoSuchTile`].
+    pub fn grip(grid: &TileGrid, id: &TileId, col: u32, row: u32) -> Result<Self, TileError> {
+        let tile = grid
+            .tile(id)
+            .ok_or_else(|| TileError::NoSuchTile(id.clone()))?;
+        Ok(Self {
+            carried: Carried::Placed {
+                id: id.clone(),
+                dx: col.saturating_sub(tile.col),
+                dy: row.saturating_sub(tile.row),
+            },
+            over: Some((tile.col, tile.row)),
+        })
+    }
+
+    /// Open a drag carrying a footprint the board does not hold yet.
+    ///
+    /// Refused **here**, at pick-up, rather than at the release: a palette
+    /// entry that can never be placed should not be draggable, and the reason
+    /// is available while the person is still holding it. The floor's add call
+    /// returns nothing at all, so there the first news is a card drawn on top
+    /// of another one.
+    ///
+    /// The landing starts as [`None`] — a footprint is picked up over the
+    /// palette, which is not the board.
+    ///
+    /// # Errors
+    ///
+    /// [`TileError::Empty`] for a footprint with no area, [`TileError::TooWide`]
+    /// for one wider than the board, [`TileError::Duplicate`] when the board
+    /// already holds that id.
+    pub fn pick(grid: &TileGrid, id: impl Into<TileId>, w: u32, h: u32) -> Result<Self, TileError> {
+        if w == 0 || h == 0 {
+            return Err(TileError::Empty { w, h });
+        }
+        if w > grid.columns() {
+            return Err(TileError::TooWide {
+                w,
+                columns: grid.columns(),
+            });
+        }
+        let id = id.into();
+        if grid.tile(&id).is_some() {
+            return Err(TileError::Duplicate(id));
+        }
+        Ok(Self {
+            carried: Carried::Fresh { id, w, h },
+            over: None,
+        })
+    }
+
+    /// What is being carried.
+    #[must_use]
+    pub const fn carried(&self) -> &Carried {
+        &self.carried
+    }
+
+    /// The pointer is over board cell `(col, row)`: resolve the landing.
+    ///
+    /// The cell is the one the *pointer* is in; the grip offset and the column
+    /// clamp are applied here, once, so no caller applies either.
+    pub fn hover(&mut self, grid: &TileGrid, col: u32, row: u32) {
+        let (w, wanted) = match &self.carried {
+            Carried::Placed { id, dx, dy } => {
+                let Some(tile) = grid.tile(id) else { return };
+                (tile.w, (col.saturating_sub(*dx), row.saturating_sub(*dy)))
+            }
+            Carried::Fresh { w, .. } => (*w, (col, row)),
+        };
+        self.over = Some(grid.landing_for(w, wanted.0, wanted.1));
+    }
+
+    /// The pointer left the board. There is no landing until it comes back, and
+    /// a release now is [`Dropped::Abandoned`].
+    pub fn leave(&mut self) {
+        self.over = None;
+    }
+
+    /// The cell a release would put it in, or [`None`] while the pointer is off
+    /// the board.
+    #[must_use]
+    pub const fn landing(&self) -> Option<(u32, u32)> {
+        self.over
+    }
+
+    /// The tile a painter should draw as the preview — id, landing and
+    /// footprint — or [`None`] while the pointer is off the board.
+    ///
+    /// Read from the same landing [`drop_on`](Self::drop_on) commits, which is
+    /// the whole point of the type.
+    #[must_use]
+    pub fn preview(&self, grid: &TileGrid) -> Option<Tile> {
+        let (col, row) = self.over?;
+        match &self.carried {
+            Carried::Placed { id, .. } => {
+                let tile = grid.tile(id)?;
+                Some(Tile::new(id.as_str(), col, row, tile.w, tile.h))
+            }
+            Carried::Fresh { id, w, h } => Some(Tile::new(id.as_str(), col, row, *w, *h)),
+        }
+    }
+
+    /// Release: put what is carried where the preview was.
+    ///
+    /// # Errors
+    ///
+    /// Whatever [`TileGrid::place`] or [`TileGrid::move_to`] refuses — a board
+    /// that changed under a drag long enough (a tile removed, an id taken) is
+    /// a refusal with a name rather than a silent no-op.
+    pub fn drop_on(self, grid: &mut TileGrid) -> Result<Dropped, TileError> {
+        let Some((col, row)) = self.over else {
+            return Ok(Dropped::Abandoned);
+        };
+        match self.carried {
+            Carried::Placed { id, .. } => {
+                if grid.tile(&id).map(|t| (t.col, t.row)) == Some((col, row)) {
+                    return Ok(Dropped::Unmoved);
+                }
+                let reflow = grid.move_to(&id, col, row)?;
+                Ok(Dropped::Landed {
+                    at: (col, row),
+                    reflow,
+                })
+            }
+            Carried::Fresh { id, w, h } => {
+                let reflow = grid.place(Tile::new(id.as_str(), col, row, w, h))?;
+                Ok(Dropped::Landed {
+                    at: (col, row),
+                    reflow,
+                })
+            }
+        }
+    }
+}
+
 /// (R1609) **The one derivation under every resize**: put one edge of a tile on
 /// a grid line, holding the opposite edge still.
 ///
@@ -1307,6 +1646,223 @@ fn span(cells: u32) -> u16 {
 
 #[cfg(test)]
 mod tests {
+    /// ★★★★★ R1733 — the cell a palette drag PREVIEWS is the cell its release
+    /// PLACES, over the whole board and past both edges.
+    ///
+    /// The property R1668 established for a tile the board already holds, on
+    /// the drag that had no answer at all: before this round `landing` needed a
+    /// tile in the grid, so a shell drawing "where this new card would go" had
+    /// to write the clamp itself — which is exactly the two-clamps-one-fact
+    /// shape R1668 measured, one gesture over.
+    ///
+    /// Driven rather than reasoned: every cell of a twelve-column board plus
+    /// four columns past its right edge, for three footprint widths.
+    #[test]
+    fn r1733_a_fresh_drags_preview_is_the_cell_its_release_places() {
+        use super::{Dropped, Tile, TileDrag, TileGrid, TileId};
+        for w in [1_u32, 4, 12] {
+            for col in 0..16_u32 {
+                for row in 0..3_u32 {
+                    let mut board = TileGrid::new(12);
+                    board.place(Tile::new("sitting", 0, 0, 6, 1)).expect("fits");
+                    let mut drag = TileDrag::pick(&board, "new", w, 2).expect("free id, fits");
+                    drag.hover(&board, col, row);
+                    let previewed = drag.preview(&board).expect("the pointer is on the board");
+                    let landing = drag.landing().expect("the pointer is on the board");
+
+                    let Ok(Dropped::Landed { at, .. }) = drag.drop_on(&mut board) else {
+                        panic!("the board takes a {w}-wide footprint at ({col},{row})")
+                    };
+                    let placed = board.tile(&TileId::new("new")).expect("it is there now");
+
+                    assert_eq!(at, landing, "{w} wide at ({col},{row})");
+                    assert_eq!(
+                        (previewed.col, previewed.row),
+                        (placed.col, placed.row),
+                        "{w} wide at ({col},{row}): previewed {previewed:?}, placed {placed:?}",
+                    );
+                    assert_eq!(
+                        (previewed.w, previewed.h),
+                        (placed.w, placed.h),
+                        "the preview's footprint is the placed one",
+                    );
+                    assert!(
+                        placed.col + placed.w <= 12,
+                        "a drag past the right edge stops on the board",
+                    );
+                }
+            }
+        }
+    }
+
+    /// R1733 — a footprint that can never be placed is refused **while it is
+    /// being picked up**, with the reason, rather than at the release.
+    ///
+    /// The floor's add call returns nothing at all (measured: `void`, and two
+    /// items asked for the same cell both get geometry and overlap), so there
+    /// the first news is a card drawn on top of another one.
+    #[test]
+    fn r1733_a_footprint_that_cannot_be_placed_is_refused_at_pick_up() {
+        use super::{Tile, TileDrag, TileError, TileGrid, TileId};
+        let mut board = TileGrid::new(12);
+        board.place(Tile::new("taken", 0, 0, 2, 1)).expect("fits");
+
+        assert_eq!(
+            TileDrag::pick(&board, "zero", 0, 3).unwrap_err(),
+            TileError::Empty { w: 0, h: 3 },
+        );
+        assert_eq!(
+            TileDrag::pick(&board, "zero", 3, 0).unwrap_err(),
+            TileError::Empty { w: 3, h: 0 },
+        );
+        assert_eq!(
+            TileDrag::pick(&board, "huge", 13, 1).unwrap_err(),
+            TileError::TooWide { w: 13, columns: 12 },
+        );
+        assert_eq!(
+            TileDrag::pick(&board, "taken", 2, 1).unwrap_err(),
+            TileError::Duplicate(TileId::new("taken")),
+        );
+        assert!(
+            TileDrag::pick(&board, "fine", 12, 1).is_ok(),
+            "exactly wide"
+        );
+    }
+
+    /// ★★★★★ R1733 — a release with no landing changes nothing, and says so
+    /// with its own word.
+    ///
+    /// Three outcomes a caller has to tell apart, and only one is a change.
+    /// R1701 measured what a remembered comparison costs: a click that carried
+    /// nothing reflowed the board and announced a move that had not happened.
+    #[test]
+    fn r1733_a_release_that_carried_nothing_is_its_own_answer() {
+        use super::{Dropped, Tile, TileDrag, TileGrid, TileId};
+        let mut board = TileGrid::new(12);
+        board.place(Tile::new("a", 0, 0, 6, 1)).expect("fits");
+        board.place(Tile::new("b", 6, 0, 6, 1)).expect("fits");
+        let before = board.clone();
+
+        // A palette drag released off the board.
+        let mut fresh = TileDrag::pick(&board, "c", 3, 1).expect("free");
+        fresh.hover(&board, 4, 4);
+        assert!(fresh.landing().is_some());
+        fresh.leave();
+        assert_eq!(fresh.landing(), None, "leaving takes the preview away");
+        assert_eq!(fresh.clone().drop_on(&mut board), Ok(Dropped::Abandoned));
+        assert_eq!(board, before, "an abandoned drag is not a placement");
+
+        // A card pressed and released without moving.
+        let held = TileDrag::grip(&board, &TileId::new("b"), 8, 0).expect("it is there");
+        assert_eq!(held.landing(), Some((6, 0)), "the preview starts truthful");
+        assert_eq!(held.drop_on(&mut board), Ok(Dropped::Unmoved));
+        assert_eq!(board, before, "a click is not a move");
+
+        // And the same drag, carried one row down, IS a change.
+        let mut moved = TileDrag::grip(&board, &TileId::new("b"), 8, 0).expect("there");
+        moved.hover(&board, 8, 1);
+        let Ok(Dropped::Landed { at, reflow }) = moved.drop_on(&mut board) else {
+            panic!("the board takes it")
+        };
+        assert_eq!(at, (6, 1));
+        assert!(reflow.is_clean(), "nothing was in the way");
+        assert_ne!(board, before);
+    }
+
+    /// R1733 — the grip offset is applied once, inside the drag.
+    ///
+    /// A card grabbed by its middle keeps that grip: the pointer moving to
+    /// column nine of a six-wide card gripped three columns in previews column
+    /// six, not nine. The caller does no arithmetic, so there is no second
+    /// place for it to be done differently.
+    #[test]
+    fn r1733_a_grip_offset_is_the_drags_own_arithmetic() {
+        use super::{Tile, TileDrag, TileGrid, TileId};
+        let mut board = TileGrid::new(12);
+        board.place(Tile::new("wide", 0, 2, 6, 2)).expect("fits");
+        // Gripped three columns in and one row down from the card's corner.
+        let mut drag = TileDrag::grip(&board, &TileId::new("wide"), 3, 3).expect("there");
+        drag.hover(&board, 9, 5);
+        assert_eq!(
+            drag.landing(),
+            Some((6, 4)),
+            "the pointer's cell less the grip"
+        );
+        drag.hover(&board, 1, 0);
+        assert_eq!(
+            drag.landing(),
+            Some((0, 0)),
+            "clamped at the left by unsign"
+        );
+        drag.hover(&board, 14, 2);
+        assert_eq!(
+            drag.landing(),
+            Some((6, 1)),
+            "and at the right by the board"
+        );
+    }
+
+    /// ★★★★★ R1733 — what a drag carries is ONE thing, and the compiler is
+    /// what checks it.
+    ///
+    /// The behaviour reference keeps a held card id and a held palette kind as
+    /// two nullable fields, so every handler must remember to check the other
+    /// before acting; three do. This asserts the property that makes the fourth
+    /// handler safe: reading what is carried is a match with no third case and
+    /// no both-at-once case, and each arm names the id a drop would use.
+    #[test]
+    fn r1733_a_board_carries_one_thing_and_it_names_itself() {
+        use super::{Carried, Tile, TileDrag, TileGrid, TileId};
+        let mut board = TileGrid::new(12);
+        board.place(Tile::new("sitting", 0, 0, 4, 1)).expect("fits");
+
+        let held = TileDrag::grip(&board, &TileId::new("sitting"), 0, 0).expect("there");
+        assert!(held.carried().is_placed());
+        assert_eq!(held.carried().id(), &TileId::new("sitting"));
+        assert!(matches!(
+            held.carried(),
+            Carried::Placed { dx: 0, dy: 0, .. }
+        ));
+
+        let fresh = TileDrag::pick(&board, "arriving", 3, 2).expect("free");
+        assert!(!fresh.carried().is_placed());
+        assert_eq!(fresh.carried().id(), &TileId::new("arriving"));
+        assert!(matches!(fresh.carried(), Carried::Fresh { w: 3, h: 2, .. }));
+        assert_eq!(
+            fresh.landing(),
+            None,
+            "a footprint is picked up over the palette, which is not the board",
+        );
+    }
+
+    /// R1733 — `landing_for`, `landing` and `place` apply ONE clamp.
+    ///
+    /// The clamp had been written out three times: here, in `landing`, and in
+    /// every shell drawing a preview. This asserts the first two agree with the
+    /// third for every column of a board and four past its edge.
+    #[test]
+    fn r1733_one_clamp_serves_the_query_the_move_and_the_placement() {
+        use super::{Tile, TileGrid, TileId};
+        let grid = TileGrid::new(12);
+        for w in 1..=12_u32 {
+            for col in 0..16_u32 {
+                let asked = grid.landing_for(w, col, 1);
+                let mut placed = grid.clone();
+                placed.place(Tile::new("t", col, 1, w, 1)).expect("fits");
+                let landed = placed.tile(&TileId::new("t")).expect("there");
+                assert_eq!(asked, (landed.col, landed.row), "{w} wide at column {col}");
+
+                let asked_again = placed.landing(&TileId::new("t"), col, 1).expect("there");
+                assert_eq!(asked, asked_again, "the two queries are one clamp");
+            }
+        }
+        assert_eq!(
+            grid.landing_for(0, 5, 0),
+            grid.landing_for(1, 5, 0),
+            "a zero-wide footprint is treated as one, as `place` refuses it",
+        );
+    }
+
     /// R1668 — a preview that asks where a tile would land and a release that
     /// moves it agree, because the release is written in terms of the ask.
     ///

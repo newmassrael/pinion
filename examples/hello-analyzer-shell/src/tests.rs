@@ -8,7 +8,7 @@
 use pinion_core::reactive::Owner;
 use pinion_core::scene::Rect;
 use pinion_core::widgets::card::{CardAffordance, CardState, Remedy};
-use pinion_core::widgets::tile_grid::Tile;
+use pinion_core::widgets::tile_grid::{Tile, TileDrag};
 use pinion_core::widgets::transport::TransportStatus;
 use pinion_screen::ScreenState;
 
@@ -2246,18 +2246,15 @@ fn r1726_the_dragged_card_is_above_the_slot_it_would_land_in() {
             .map(|c| c.id().clone())
             .expect("the board opens with cards");
         let tile = board.tile(&dragged).expect("the card is on the board");
-        state.drag.set(Some(super::Drag {
-            id: dragged.clone(),
-            dx: 0,
-            dy: 0,
-            snap: (tile.col, tile.row),
-        }));
+        state.drag.set(Some(
+            TileDrag::grip(&board, &dragged, tile.col, tile.row).expect("the card is on the board"),
+        ));
 
         let scene = super::view(ScreenState::default(), pinion_core::Frame::default());
         let tags = scene.tags();
         let at = |want: &str| tags.iter().position(|t| t == want);
 
-        let slot = at("shell.dropslot").expect("the snap preview is painted while dragging");
+        let slot = at("shell.carry.slot").expect("the snap preview is painted while dragging");
         let card = at(&format!("card.{dragged}")).expect("the dragged card is painted");
         let others: Vec<usize> = state
             .placed()
@@ -2359,15 +2356,12 @@ fn r1726_the_drop_preview_covers_nothing() {
             .expect("the board opens with cards");
         let board = state.board.get();
         let tile = board.tile(&dragged).expect("on the board");
-        state.drag.set(Some(super::Drag {
-            id: dragged,
-            dx: 0,
-            dy: 0,
-            snap: (tile.col, tile.row),
-        }));
+        state.drag.set(Some(
+            TileDrag::grip(&board, &dragged, tile.col, tile.row).expect("on the board"),
+        ));
 
         let scene = super::view(ScreenState::default(), pinion_core::Frame::default());
-        let fill = find_fill(&scene, "shell.dropslot").expect("the preview is painted");
+        let fill = find_fill(&scene, "shell.carry.slot").expect("the preview is painted");
         assert!(
             fill.a < 0x80,
             "the preview must be translucent so what is under it stays \
@@ -2391,7 +2385,7 @@ fn r1726_the_cursor_carries_the_name_of_what_it_holds() {
         let state = super::use_shell_state();
         let scene = super::view(ScreenState::default(), pinion_core::Frame::default());
         assert!(
-            !scene.tags().iter().any(|t| t == "shell.carried"),
+            !scene.tags().iter().any(|t| t == "shell.carry.chip"),
             "nothing is carried when nothing is being dragged"
         );
 
@@ -2403,17 +2397,14 @@ fn r1726_the_cursor_carries_the_name_of_what_it_holds() {
         let board = state.board.get();
         let tile = board.tile(&dragged).expect("on the board");
         state.cursor.set((640, 400));
-        state.drag.set(Some(super::Drag {
-            id: dragged.clone(),
-            dx: 0,
-            dy: 0,
-            snap: (tile.col, tile.row),
-        }));
+        state.drag.set(Some(
+            TileDrag::grip(&board, &dragged, tile.col, tile.row).expect("on the board"),
+        ));
 
         let scene = super::view(ScreenState::default(), pinion_core::Frame::default());
         let tags = scene.tags();
         assert!(
-            tags.iter().any(|t| t == "shell.carried"),
+            tags.iter().any(|t| t == "shell.carry.chip"),
             "a card being carried puts its name on the cursor"
         );
         // ★ Above the BOARD and everything on it — not last in the window,
@@ -2423,12 +2414,12 @@ fn r1726_the_cursor_carries_the_name_of_what_it_holds() {
         // the page, and the page is not the whole window.
         let carried = tags
             .iter()
-            .position(|t| t == "shell.carried")
+            .position(|t| t == "shell.carry.chip")
             .expect("the chip is painted");
         let board_things: Vec<usize> = tags
             .iter()
             .enumerate()
-            .filter(|(_, t)| t.starts_with("card.") || *t == "shell.dropslot")
+            .filter(|(_, t)| t.starts_with("card.") || *t == "shell.carry.slot")
             .map(|(i, _)| i)
             .collect();
         assert!(

@@ -1,0 +1,111 @@
+{
+  "$comment": [
+    "R1733 — the analysis tool's DASHBOARD BOARD and the gesture that populates",
+    "it, written down once, in neutral vocabulary, as the behaviour reference",
+    "draws it.",
+    "",
+    "WHY THIS IS A FILE AND NOT A RUST CONSTANT. The reason the four spec files",
+    "beside it are. The screen's own `spec` module is what a RUNNING screen",
+    "needs — paint tags, catalogue rows, the wording of a refusal. A",
+    "specification written there would be written by the same hand in the same",
+    "edit as the thing under test, so a conformance check would be asking the",
+    "subject for the answer.",
+    "",
+    "EXTRACTION. The reference is not in this repository and must not be. The",
+    "procedure is the recorded one: the document is a single JSON string line",
+    "holding the whole application as one inline script plus its markup.",
+    "Measured 2026-08-20 by extracting both and reading the palette drawer, the",
+    "canvas element's drag handlers and the two blocks the canvas draws while a",
+    "placement is in flight.",
+    "",
+    "WHAT THIS ROUND IS ABOUT. The reference's palette row is `draggable` and",
+    "its canvas takes the drop; this build could only ever ADD from a palette",
+    "row, which was the last first-pass reproduction gap its GUI element census",
+    "had open. Measured in the reference: the palette row carries BOTH — a drag",
+    "start and a click that adds — so reproducing the drag is an addition and",
+    "not a replacement. That distinction is load-bearing here, because the",
+    "reference has zero keyboard bindings and moving its pointer-only gesture",
+    "over INSTEAD of the action would take the palette away from a reader who",
+    "cannot drag.",
+    "",
+    "VOCABULARY. The reference's product and protocol words are replaced by the",
+    "words the tool class uses generally. Structure and behaviour are what is",
+    "being reproduced; the wording is not. The titles below are this file's",
+    "words for what is drawn — the reference labels almost none of these parts —",
+    "and the file says so rather than pretending otherwise.",
+    "",
+    "THE TWO HALVES. Each surface carries `canon` — what the reference has — and",
+    "`owed` — where this build differs, each entry carrying the round that",
+    "accepted it and why. The gate asserts the difference between the built",
+    "surface and `canon` is EXACTLY `owed`, so a new divergence fails and so",
+    "does an owed one that has been paid off without this file being told.",
+    "",
+    "OWED RUNS IN BOTH DIRECTIONS. A part this build has and the reference does",
+    "not is a divergence too, and is recorded here rather than deleted: the",
+    "standing order rule is that the reference is what must be REPRODUCED and",
+    "is not a ceiling, so something present here and absent there stays and says",
+    "why."
+  ],
+  "palette_row": {
+    "$comment": [
+      "One row of the widget palette — the SOURCE half of the gesture. The",
+      "reference draws the row as a single draggable element carrying four",
+      "things, and the row is also the click target that adds without a drag.",
+      "",
+      "Read back from the paint in reading order: these four sit beside each",
+      "other on one line, which is what reading order is the rule for."
+    ],
+    "canon": [
+      { "ordinal": 1, "key": "swatch", "title": "the tile carrying the kind's short code" },
+      { "ordinal": 2, "key": "name", "title": "what the widget is called" },
+      { "ordinal": 3, "key": "gist", "title": "the one line saying what it shows" },
+      { "ordinal": 4, "key": "verb", "title": "the seat that places one without a drag" }
+    ],
+    "owed": []
+  },
+  "carry": {
+    "$comment": [
+      "What the board puts on screen while a palette footprint is being carried",
+      "over it. These parts are LAYERS, not a row, so the order specified is the",
+      "z-order and the build's side is read in paint order — see the framework's",
+      "`painted_stack`, which exists because reading order over four overlapping",
+      "rectangles is arithmetic on coordinates that mean nothing.",
+      "",
+      "Measured in the reference: while a placement is in flight it raises a",
+      "per-cell dashed overlay, pushes a snap rectangle into the grid at the",
+      "cell a release would use, and covers the whole canvas with a dashed frame",
+      "that says in words what letting go does. It also grows the overlay by",
+      "THREE rows rather than one, so there is somewhere to drop below what is",
+      "already placed; that is behaviour rather than a part, and the screen's",
+      "own gate asserts it."
+    ],
+    "canon": [
+      { "ordinal": 1, "key": "grid", "title": "the cell grid, raised while a placement is in flight" },
+      { "ordinal": 2, "key": "slot", "title": "the mark at the cell a release would use" },
+      { "ordinal": 3, "key": "banner", "title": "the whole-canvas invitation saying a release places it" }
+    ],
+    "owed": [
+      {
+        "key": "chip",
+        "sentence": "part 3 `chip` is on the surface and no specification declares it",
+        "since": "R1733",
+        "why": "A second-pass improvement, kept deliberately. The reference is a browser prototype, so while a palette row is carried the browser draws its own drag image and the application draws nothing that names what is in hand. A framework that paints its own scene has no such gift: without this chip the only thing on screen is a mark at a cell, and a person who has picked up the wrong row learns it on release. R1726 built the chip for the other drag and named the same reason; the standing order rule keeps what the reference lacks."
+      }
+    ]
+  },
+  "slot": {
+    "$comment": [
+      "The snap mark itself. The reference draws a dashed accent rectangle",
+      "spanning the carried footprint, centred on a six-dot grip glyph and the",
+      "destination cell in parentheses — the same glyph its rows are dragged by,",
+      "so the mark and the handle read as the same gesture.",
+      "",
+      "Two parts side by side, so this one IS a reading-order surface."
+    ],
+    "canon": [
+      { "ordinal": 1, "key": "grip", "title": "the grip glyph, the same one a row is dragged by" },
+      { "ordinal": 2, "key": "cell", "title": "the destination cell, in words" }
+    ],
+    "owed": []
+  }
+}

@@ -110,7 +110,7 @@ use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::roving::{Activation, Axis, Ends, Landing, Member, Roving, RovingSpec};
 use pinion_core::widgets::scroll::ScrollState;
 use pinion_core::widgets::tile_grid::{
-    Maximized, Tile, TileDirection, TileGrid, TileId, TileNudge,
+    Carried, Dropped, Maximized, Tile, TileDirection, TileDrag, TileGrid, TileId, TileNudge,
 };
 use pinion_core::widgets::toggle::ToggleState;
 use pinion_core::widgets::transport::{TransportClock, TransportStatus, use_transport_clock};
@@ -486,8 +486,8 @@ struct Float {
 
 /// A detached panel being moved or resized, in flight.
 ///
-/// A separate type from [`Drag`] rather than an arm added to it, because the
-/// two live on **different planes**: a card is dragged between the board's
+/// A separate type from the board's [`TileDrag`] rather than an arm added to
+/// it, because the two live on **different planes**: a card is dragged between the board's
 /// cells and previews where it would land, and a panel is dragged in pixels and
 /// moves as the pointer moves — which is what the reference does, and what a
 /// window does. Folding a pixel gesture into a type whose fields are a cell
@@ -507,15 +507,19 @@ struct FloatGrab {
     origin: (u32, u32),
 }
 
-/// A drag in flight: which card, where inside it the grab landed, and the cell
-/// a release would put it in.
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-struct Drag {
-    id: TileId,
-    dx: u32,
-    dy: u32,
-    snap: (u32, u32),
-}
+// ★★★★★ R1733 — the board drag in flight is the framework's
+// `TileDrag` now, not a struct here.
+//
+// This file held `Drag { id, dx, dy, snap }`, which could carry only a card the
+// board already had. Reproducing the reference's palette gesture meant carrying
+// something that is NOT on the board, and the cheap way to do that is a second
+// nullable field beside this one — which is precisely how the reference spells
+// it, and why three of its handlers each have to remember to check the other.
+// Two nullable fields can be set at once and that state has no meaning.
+//
+// The framework type is one value with two arms, so the check is a `match` and
+// the compiler performs it; and its landing is read by both the preview and the
+// release, so R1668's "one fact, two clamps" cannot come back on the new drag.
 
 /// A saved layout: the arrangement AND which cards were on it.
 ///
@@ -596,7 +600,7 @@ struct ShellState {
     selected: Signal<Option<String>>,
     cursor: Signal<(u32, u32)>,
     pressed: RefCell<Option<Hit>>,
-    drag: Signal<Option<Drag>>,
+    drag: Signal<Option<TileDrag>>,
     /// ★★★★★ R1698 — **one keyboard cursor per composite**, keyed by the tag
     /// that owns the Tab stop.
     ///
@@ -1124,6 +1128,29 @@ fn cell_rect(tile: &Tile) -> Rect {
 ///
 /// One function, so the fold cannot be remembered at one call site and
 /// forgotten at the other — which is exactly what had happened.
+/// ★★★★★ R1733 — whether a window point is **on the board at all**.
+///
+/// The half a card drag never needed: a card gripped on the board is always
+/// over some cell, so "off the board" had no consequence and no name. A
+/// footprint carried off a palette starts off the board and may be released
+/// there, and the two are different answers — `cell_at_window` clamps, so
+/// asking it alone turns a release over the palette into a placement at
+/// whatever cell the clamp last produced.
+///
+/// Derived from the same rectangles [`Hit::at`] uses rather than a second
+/// arithmetic: the board is the canvas, and the canvas is only the canvas at
+/// the dashboard destination — at any other page that region belongs to the
+/// page. A floating panel over it is not the board either; it is chrome, and
+/// dropping a card onto one is not a placement.
+fn on_board(state: &ShellState, px: u32, py: u32) -> bool {
+    state.at() == "dashboard"
+        && contains(canvas_rect(), px, py)
+        && !matches!(
+            Hit::at(state, px, py),
+            Hit::Float(_) | Hit::FloatRedock(_) | Hit::FloatClose(_) | Hit::FloatResize(_)
+        )
+}
+
 fn cell_at_window(state: &ShellState, px: u32, py: u32) -> (u32, u32) {
     let canvas = canvas_rect();
     let (ox, oy) = state.canvas_scroll.offset();
@@ -1160,7 +1187,12 @@ fn carried_label(text: &str, cx: u32, cy: u32, palette: Palette) -> Scene {
             12,
             palette.ink,
         )])
-        .with_tag("shell.carried")
+        // ★ R1733 — renamed from `shell.carried` into the surface stem the
+        // carry's other parts share, so one specification can read all of them
+        // back out of the paint. The chip is this build's answer to a fact the
+        // reference gets from the browser's own drag image, and the
+        // specification records it as such rather than deleting it.
+        .with_tag("shell.carry.chip")
         .with_style(
             BoxStyle::filled(palette.raised)
                 .with_corner_radius(9)
@@ -2190,8 +2222,14 @@ impl ShellOracle {
         Ok(IntrospectValue::Text(format!("{id} redock")))
     }
 
-    /// Place a new card of that kind at the bottom of the board.
-    fn add(state: &Rc<ShellState>, kind: &str) -> Result<IntrospectValue, InvokeError> {
+    /// ★★★★★ R1733 — what the palette OFFERS of a kind: its catalogue entry
+    /// and the footprint the specification gives it.
+    ///
+    /// Lifted out of [`Self::add`] because the drag needs the same three
+    /// refusals *at pick-up*, and a second copy of them would be a second
+    /// wording of "this row does not place a card" — which is the shape the
+    /// R1668 comment right below warns about, one gesture over.
+    fn offered(kind: &str) -> Result<(&'static spec::WidgetSpec, (u32, u32)), InvokeError> {
         let def = def_of(kind.trim()).ok_or_else(|| {
             InvokeError::rejected(format!(
                 "{kind:?} is not a widget kind; the palette offers {}",
@@ -2214,21 +2252,89 @@ impl ShellOracle {
                 def.kind, def.reserved_for
             )));
         }
-        let (cols, rows) = kind_span(def.kind).ok_or_else(|| {
+        let span = kind_span(def.kind).ok_or_else(|| {
             InvokeError::rejected(format!("{:?} has no specified cell size", def.kind))
         })?;
-        let ordinal = {
-            let mut next = state.next_id.borrow_mut();
-            let now = *next;
-            *next += 1;
-            now
+        Ok((def, span))
+    }
+
+    /// R1733 — the id the next card of a kind would take, **without consuming
+    /// the counter**.
+    ///
+    /// A drag that is picked up and then abandoned must leave nothing behind,
+    /// and bumping an ordinal is a change ("what is being carried is not yet a
+    /// value" — the rule R1732 built the picker on). The counter moves in
+    /// [`Self::add_at`], where a card is actually placed.
+    fn prospective_id(state: &Rc<ShellState>, def: &spec::WidgetSpec) -> String {
+        format!("{}#{}", def.kind, *state.next_id.borrow())
+    }
+
+    /// ★★★★★ R1733 — pick a palette row's widget up: the drag the pointer will
+    /// carry until it releases.
+    ///
+    /// Refused **here**, while the person is still holding it, rather than at
+    /// the drop — and by the same three sentences the action gives.
+    fn pick_up(state: &Rc<ShellState>, kind: &str) -> Result<TileDrag, InvokeError> {
+        let (def, (cols, rows)) = Self::offered(kind)?;
+        let id = Self::prospective_id(state, def);
+        TileDrag::pick(&state.board.get(), id, cols, rows)
+            .map_err(|why| InvokeError::rejected(why.to_string()))
+    }
+
+    /// Place a new card of that kind at `at`, or at the bottom of the board
+    /// when the caller names no cell.
+    ///
+    /// ★★★★★ R1733 — the placement goes through the same [`TileDrag`] the
+    /// pointer gesture does, so a drop, a palette click and a wire call are one
+    /// arithmetic. A cell the caller invented (`add` now takes one) is clamped
+    /// by the board's own rule instead of trusted, and the preview a drag drew
+    /// and the cell this places at cannot differ, because `hover` is the
+    /// function that resolved both.
+    fn add_at(
+        state: &Rc<ShellState>,
+        kind: &str,
+        at: Option<(u32, u32)>,
+    ) -> Result<IntrospectValue, InvokeError> {
+        let board = state.board.get();
+        let mut drag = Self::pick_up(state, kind)?;
+        let (col, row) = at.unwrap_or((0, board.rows()));
+        drag.hover(&board, col, row);
+        Self::place_carried(state, drag)
+    }
+
+    /// ★★★★★ R1733 — put a carried footprint down: the board takes the tile,
+    /// and a card, a selection and a sentence follow it.
+    ///
+    /// The pointer gesture hands its **live** drag here, so the object that
+    /// resolved the preview is the object that commits — not a second one built
+    /// from a remembered cell. [`Self::add_at`] builds one and hands it over
+    /// too, so a palette click, a wire call and a drop are one path with one
+    /// arithmetic and one set of refusals.
+    fn place_carried(
+        state: &Rc<ShellState>,
+        drag: TileDrag,
+    ) -> Result<IntrospectValue, InvokeError> {
+        let Carried::Fresh { id, .. } = drag.carried() else {
+            return Err(InvokeError::rejected(
+                "a card already on the board is moved, not added",
+            ));
         };
-        let id = format!("{}#{ordinal}", def.kind);
+        let id = id.as_str().to_string();
+        // The prospective id names the kind before its `#ordinal`, so the
+        // catalogue entry is derived from what is carried rather than passed
+        // beside it — one fact, not two that can disagree.
+        let (def, _) = Self::offered(id.split('#').next().unwrap_or_default())?;
         let mut board = state.board.get();
-        let row = board.rows();
-        board
-            .place(Tile::new(id.clone(), 0, row, cols, rows))
-            .map_err(|why| InvokeError::rejected(why.to_string()))?;
+        match drag.drop_on(&mut board) {
+            Ok(Dropped::Landed { .. }) => {}
+            Ok(other) => {
+                return Err(InvokeError::rejected(format!(
+                    "a carry with no landing places nothing ({other:?})"
+                )));
+            }
+            Err(why) => return Err(InvokeError::rejected(why.to_string())),
+        }
+        *state.next_id.borrow_mut() += 1;
         state.board.set(board);
         let mut cards = state.cards.get();
         cards.push(
@@ -2240,6 +2346,40 @@ impl ShellOracle {
         state.selected.set(Some(id.clone()));
         state.say(Utterance::done(format!("{} added", def.label)));
         Ok(IntrospectValue::Text(id))
+    }
+
+    /// The wire's `add`: a kind, and optionally the cell to place it in.
+    ///
+    /// R1733 — the cell is what the pointer gesture resolves, so an agent can
+    /// reach the same placement a person's drag reaches. Without it the wire
+    /// could only ever append at the bottom, and the new gesture would be one
+    /// no agent could perform — the §2 #2 rule that the headless path is the
+    /// primary one, not a subset.
+    fn add(state: &Rc<ShellState>, call: &str) -> Result<IntrospectValue, InvokeError> {
+        let mut parts = call.split(',');
+        let kind = parts.next().unwrap_or_default();
+        let at = match (parts.next(), parts.next()) {
+            (None, None) => None,
+            (Some(col), Some(row)) => Some((Self::cell_word(col)?, Self::cell_word(row)?)),
+            _ => {
+                return Err(InvokeError::rejected(
+                    "a placement names both a column and a row, or neither",
+                ));
+            }
+        };
+        if parts.next().is_some() {
+            return Err(InvokeError::rejected(
+                "add takes a kind, and optionally a column and a row",
+            ));
+        }
+        Self::add_at(state, kind, at)
+    }
+
+    /// One cell coordinate off the wire.
+    fn cell_word(word: &str) -> Result<u32, InvokeError> {
+        word.trim()
+            .parse::<u32>()
+            .map_err(|_| InvokeError::rejected(format!("{word:?} is not a cell coordinate")))
     }
 
     fn maximize(state: &Rc<ShellState>, id: &str) -> Result<IntrospectValue, InvokeError> {
@@ -2534,6 +2674,7 @@ const FIELDS: &[SchemaField] = const {
         SchemaField::new("hit", "string"),
         SchemaField::new("keymap", "string"),
         SchemaField::new("drag", "string"),
+        SchemaField::new("carrying", "string"),
         // per-card reads
         SchemaField::action_with(
             "title",
@@ -2618,7 +2759,21 @@ const FIELDS: &[SchemaField] = const {
                 ]
             },
         ),
-        SchemaField::action("add", "string"),
+        // R1733 — a kind, and optionally the cell a drop would put it in. The
+        // two cell arguments are declared optional together; `add` refuses one
+        // without the other rather than guessing the missing half.
+        SchemaField::action_with(
+            "add",
+            "string",
+            ArgForm::Delimited(','),
+            const {
+                &[
+                    SchemaArg::key("kind", "string", "catalogue"),
+                    SchemaArg::key("col", "int", "layout").optional(),
+                    SchemaArg::key("row", "int", "layout").optional(),
+                ]
+            },
+        ),
         SchemaField::action("maximize", "string"),
         SchemaField::action("restore", "string"),
         SchemaField::action("redock", "string"),
@@ -2775,12 +2930,7 @@ impl ExternalIntrospect for ShellOracle {
                 let (x, y) = state.cursor.get();
                 text(hit_word(&Hit::at(state, x, y)))
             }
-            // Where a release would put the dragged card — the snap preview, as
-            // a value. Empty when nothing is being dragged, which is a
-            // different answer from a drag hovering over cell 0,0.
-            "drag" => text(state.drag.get().map_or_else(String::new, |d| {
-                format!("{},{},{}", d.id, d.snap.0, d.snap.1)
-            })),
+            "drag" | "carrying" => Ok(carry_slot(state, path)),
             "keymap" => text(
                 KEYMAP
                     .iter()
@@ -2874,7 +3024,7 @@ impl ExternalIntrospect for ShellOracle {
             | "restore_to" | "floating" | "floats" | "float_grab" | "presets" | "transport"
             | "playhead" | "affordances" | "states" | "remedies" | "steppers" | "toast"
             | "cursor" | "selected" | "hit" | "keymap" | "rail" | "tabs" | "catalogue"
-            | "config_open" | "drag" => Err(InterveneError::ReadOnly),
+            | "config_open" | "drag" | "carrying" => Err(InterveneError::ReadOnly),
             _ => Err(InterveneError::UnknownPath),
         }
     }
@@ -3011,19 +3161,23 @@ impl ShellOracle {
         let Some(mut drag) = state.drag.get() else {
             return;
         };
-        let (col, row) = cell_at_window(state, px, py);
-        // ★ R1668 — the GRID says where it would land, rather than this file
-        // guessing. A preview computed here and a release computed there is one
-        // fact with two clamps, and the two disagreed: a six-column card
-        // dragged to column seven previewed seven and committed six.
-        let wanted = (col.saturating_sub(drag.dx), row.saturating_sub(drag.dy));
-        let snap = state
-            .board
-            .get()
-            .landing(&drag.id, wanted.0, wanted.1)
-            .unwrap_or(wanted);
-        if snap != drag.snap {
-            drag.snap = snap;
+        let before = drag.landing();
+        // ★★★★★ R1733 — the drag is told where the pointer IS, and works out
+        // the rest. The grip offset and the column clamp both live in the
+        // framework type now, so this file does no arithmetic that could differ
+        // from what the release does — R1668's finding, made structural.
+        //
+        // ★ And it is told when the pointer is NOT on the board, which is the
+        // half a card drag never needed: a footprint carried out over the
+        // palette has no landing, so releasing there is an abandon rather than
+        // a placement at whatever cell the clamp last produced.
+        if on_board(state, px, py) {
+            let (col, row) = cell_at_window(state, px, py);
+            drag.hover(&state.board.get(), col, row);
+        } else {
+            drag.leave();
+        }
+        if drag.landing() != before {
             state.drag.set(Some(drag));
         }
     }
@@ -3156,15 +3310,31 @@ impl ShellOracle {
         }
         if let Hit::Grip(id) = &hit {
             let board = state.board.get();
-            let tile_id = TileId::new(id.clone());
-            if let Some(tile) = board.tile(&tile_id) {
-                let (col, row) = cell_at_window(state, px, py);
-                state.drag.set(Some(Drag {
-                    id: tile_id,
-                    dx: col.saturating_sub(tile.col),
-                    dy: row.saturating_sub(tile.row),
-                    snap: (tile.col, tile.row),
-                }));
+            let (col, row) = cell_at_window(state, px, py);
+            if let Ok(drag) = TileDrag::grip(&board, &TileId::new(id.clone()), col, row) {
+                state.drag.set(Some(drag));
+            }
+        }
+        // ★★★★★ R1733 — **a press on a palette row picks the widget up.**
+        //
+        // The reference's palette tile is draggable and its board takes the
+        // drop; this row was reachable only as an action, which is the last
+        // first-pass gap its GUI census had open.
+        //
+        // The action is NOT replaced. The press latches the hit as it always
+        // has, so a press and release on the same row still adds at the bottom
+        // — see `release`, where an abandoned carry falls through to the latch.
+        // That matters more here than fidelity does: the reference has no
+        // keyboard bindings at all, so moving its pointer-only gesture over
+        // *instead* of the action would take the palette away from a reader who
+        // cannot drag.
+        if let Hit::Palette(kind) = &hit {
+            match Self::pick_up(state, kind) {
+                Ok(drag) => state.drag.set(Some(drag)),
+                // A reserved row, or a kind with no declared footprint. The
+                // press still latches, so the release says the same thing the
+                // action would — one refusal, not two spellings of it.
+                Err(_) => state.drag.set(None),
             }
         }
         // ★★★★★ R1697 — **a press on a detached panel grabs it.**
@@ -3255,30 +3425,55 @@ impl ShellOracle {
         }
         if let Some(drag) = state.drag.get() {
             state.drag.set(None);
-            let mut board = state.board.get();
-            // ★★★★★ R1701 — the guard the FLOAT arm ten lines above has had
-            // since R1697, on the arm beside it. R1697 wrote "nothing checked
-            // that a press which moved nothing does not announce a move" and
-            // built the check for a detached panel; a card on the board told the
-            // same lie, and worse — `move_to` is a real edit, so a click that
-            // carried nothing could still reflow the board and displace three
-            // other cards. Measured: a single click on a header said "Decode
-            // Inspector moved" with the layout byte-identical.
+            // ★★★★★ R1733 — an ABANDONED carry falls through to the latch.
             //
-            // The comparison is against where the tile IS, not against a
-            // remembered origin, because a maximise between the press and the
-            // release moves it without the drag having carried it.
-            if board.tile(&drag.id).map(|t| (t.col, t.row)) == Some(drag.snap) {
+            // That is what keeps the palette's action alive now that pressing a
+            // row also picks the widget up: press and release on the same row
+            // carries it nowhere, so the latched hit acts and the card is added
+            // at the bottom exactly as before. Fidelity to a pointer-only
+            // reference must not cost a reader the only path they have.
+            if !Self::commit_drag(state, drag) {
                 return;
             }
-            if let Ok(reflow) = board.move_to(&drag.id, drag.snap.0, drag.snap.1) {
+        }
+        let (px, py) = state.cursor.get();
+        let Some(latched) = latched else { return };
+        if Hit::at(state, px, py) != latched {
+            return;
+        }
+        Self::act_on_hit(state, latched);
+    }
+
+    /// Put down what the board was carrying. Answers whether the release should
+    /// go on to perform the latched control.
+    ///
+    /// ★★★★★ R1733 — the three outcomes are the framework's
+    /// [`Dropped`] arms rather than a remembered comparison. R1701 measured
+    /// what the comparison costs when somebody forgets it: a click that carried
+    /// nothing reflowed the board and announced a move that had not happened.
+    /// Here the middle case has a name and the `match` is what demands it.
+    fn commit_drag(state: &Rc<ShellState>, drag: TileDrag) -> bool {
+        if !drag.carried().is_placed() {
+            // Carried off the board and let go: the palette's action performs
+            // instead, from the latch.
+            if drag.landing().is_none() {
+                return true;
+            }
+            if let Err(why) = Self::place_carried(state, drag) {
+                state.say(Utterance::refused(&why));
+            }
+            return false;
+        }
+        let mut board = state.board.get();
+        let label = label_of(drag.carried().id().as_str());
+        match drag.drop_on(&mut board) {
+            Ok(Dropped::Landed { reflow, .. }) => {
                 state.board.set(board);
                 state.say(Utterance::done(if reflow.is_clean() {
-                    format!("{} moved", label_of(drag.id.as_str()))
+                    format!("{label} moved")
                 } else {
                     format!(
-                        "{} moved, displacing {}",
-                        label_of(drag.id.as_str()),
+                        "{label} moved, displacing {}",
                         reflow
                             .displaced()
                             .iter()
@@ -3287,15 +3482,30 @@ impl ShellOracle {
                             .join(", ")
                     )
                 }));
+                false
             }
-            return;
+            // Everything that is NOT a landing leaves the board alone and says
+            // nothing, and the two ways to get here are worth naming even
+            // though they share an answer:
+            //
+            // * `Unmoved` — a press and release that carried the card nowhere.
+            //   The latch is not performed either, because a header's latched
+            //   hit is the card itself and acting on it would re-announce the
+            //   selection the press already made.
+            // * `Abandoned` — released off the board, so the card stays where
+            //   it is. The reference has no answer here at all: its board drag
+            //   listens on the whole document, so a release over its palette
+            //   commits.
+            //
+            // `Dropped` is non-exhaustive, so a later arm lands here too —
+            // leaving the board untouched is the answer that cannot be wrong
+            // about a case this build has never seen.
+            Ok(_) => false,
+            Err(why) => {
+                state.say(Utterance::refused(&InvokeError::rejected(why.to_string())));
+                false
+            }
         }
-        let (px, py) = state.cursor.get();
-        let Some(latched) = latched else { return };
-        if Hit::at(state, px, py) != latched {
-            return;
-        }
-        Self::act_on_hit(state, latched);
     }
 
     /// What a completed press on one hit target does.
@@ -4948,8 +5158,9 @@ fn grid_scene(rows: u32, palette: Palette, bright: bool) -> Vec<Scene> {
         palette.grid
     };
     let size = if bright { 3 } else { 2 };
+    let rows = rows.max(1);
     let mut out = Vec::new();
-    for row in 0..=rows.max(1) {
+    for row in 0..=rows {
         for col in 0..=GRID_COLS {
             out.push(dot(
                 GAP + col * pitch - size / 2,
@@ -4959,7 +5170,32 @@ fn grid_scene(rows: u32, palette: Palette, bright: bool) -> Vec<Scene> {
             ));
         }
     }
-    out
+    if !bright {
+        return out;
+    }
+    // ★★★★★ R1733 — while something is being placed the grid is a PART of the
+    // screen, with a name, rather than texture.
+    //
+    // The reference draws a dashed rectangle per cell only while a placement is
+    // in flight (`showOverlay`); this board brightens the dots it always has.
+    // Same fact, drawn differently — and it had no tag, so a specification of
+    // what a carry puts on screen could not read it back out of the paint. The
+    // wrapper exists exactly when the overlay is on, so the part is present
+    // when the fact is and absent when it is not.
+    // ★ The box is the marks' own extent, not the grid's arithmetic: a mark is
+    // centred on its intersection, so the last one in each direction reaches
+    // half its size past the last line. The containment gate measured the
+    // difference — two pixels, five marks over — on the wrapper's first run.
+    vec![Scene::Container(
+        ContainerNode::new(out)
+            .with_tag("shell.carry.grid")
+            .with_layout(absolute(Rect::new(
+                0,
+                0,
+                GAP + GRID_COLS * pitch + size.div_ceil(2),
+                GAP + rows * ROW_H + size.div_ceil(2),
+            ))),
+    )]
 }
 
 /// A card's header: grip, status light, title, LIVE badge, controls.
@@ -6256,6 +6492,106 @@ fn operations_json() -> serde_json::Value {
 ///
 /// Every field is read straight out of `spec`, so the running application and
 /// the gate compare against one table rather than two spellings of it.
+/// ★★★★★ R1733 — the two slots that describe a board drag in flight.
+///
+/// * `drag` — where a release would put what is carried. Empty when nothing is
+///   being carried, which is a different answer from a carry hovering over cell
+///   0,0 — **and empty ALSO when something is carried off the board**, because
+///   then there is no cell a release would use.
+/// * `carrying` — WHAT is being carried, and whether it is already on the
+///   board.
+///
+/// Two names rather than one string with a sentinel in it: a reader asking
+/// *where would it land* and a reader asking *is anything held* are asking
+/// different questions, and one answer for both is how a client ends up parsing
+/// for emptiness. The second is the half a wire reader could not see at all — a
+/// palette footprint in flight is not a tile, not a card and not in `layout`,
+/// so before this round every question about it had the same answer as
+/// "nothing is happening". The floor cannot answer it either: a drag there
+/// lives inside the source widget's own event loop.
+fn carry_slot(state: &ShellState, path: &str) -> IntrospectValue {
+    let held = state.drag.get();
+    IntrospectValue::Text(match (path, held) {
+        (_, None) => String::new(),
+        ("carrying", Some(drag)) => format!(
+            "{}:{}",
+            if drag.carried().is_placed() {
+                "placed"
+            } else {
+                "fresh"
+            },
+            drag.carried().id(),
+        ),
+        (_, Some(drag)) => drag
+            .landing()
+            .map(|(col, row)| format!("{},{col},{row}", drag.carried().id()))
+            .unwrap_or_default(),
+    })
+}
+
+/// Every widget kind the palette offers, and what each row says about itself.
+fn catalogue_json() -> serde_json::Value {
+    serde_json::Value::Array(
+        spec::CATALOGUE
+            .iter()
+            .map(|w| {
+                serde_json::json!({
+                    "kind": w.kind,
+                    "code": w.code,
+                    "label": w.label,
+                    "gist": w.gist,
+                    "section": w.section,
+                    "tier": tier_word(w.tier),
+                    "reserved_for": w.reserved_for,
+                })
+            })
+            .collect(),
+    )
+}
+
+/// ★★ R1733 — the board specification's surfaces, as a value a client reads.
+///
+/// Each surface names its parts in the specified order and the differences this
+/// build has declared against them, each with the round that accepted it and
+/// why. Read out of `docs/analyzer-board-spec.json` — the reviewed artifact —
+/// rather than restated here, so the thing an agent is told and the thing the
+/// gate judges against are one file.
+fn carry_surfaces_json() -> serde_json::Value {
+    let doc = spec::board_document();
+    serde_json::Value::Array(
+        doc.surfaces()
+            .map(|surface| {
+                let parts = doc.canon(surface).map(|canon| {
+                    canon
+                        .parts()
+                        .iter()
+                        .map(|part| serde_json::json!({ "key": part.key, "title": part.title }))
+                        .collect::<Vec<_>>()
+                });
+                let owed = doc.ledger(surface).map(|ledger| {
+                    ledger
+                        .owed()
+                        .iter()
+                        .map(|entry| {
+                            serde_json::json!({
+                                "key": entry.key,
+                                "says": entry.sentence,
+                                "since": entry.since,
+                                "why": entry.why,
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                });
+                serde_json::json!({
+                    "surface": surface,
+                    "parts": parts.unwrap_or_default(),
+                    "owed": owed.unwrap_or_default(),
+                })
+            })
+            .collect(),
+    )
+}
+
 fn spec_json() -> serde_json::Value {
     serde_json::json!({
         "window": { "w": spec::WIN_W, "h": spec::WIN_H },
@@ -6308,15 +6644,21 @@ fn spec_json() -> serde_json::Value {
         "sections": spec::SECTIONS.iter().map(|(key, title, tier)| serde_json::json!({
             "key": key, "title": title, "tier": tier_word(*tier),
         })).collect::<Vec<_>>(),
-        "catalogue": spec::CATALOGUE.iter().map(|w| serde_json::json!({
-            "kind": w.kind,
-            "code": w.code,
-            "label": w.label,
-            "gist": w.gist,
-            "section": w.section,
-            "tier": tier_word(w.tier),
-            "reserved_for": w.reserved_for,
-        })).collect::<Vec<_>>(),
+        "catalogue": catalogue_json(),
+        // ★ R1733 — what the palette panel SAYS, published beside what it
+        // holds. Its line is now the reference's own — that a row is dragged
+        // onto the canvas — and an agent that can only read the catalogue
+        // learns the kinds and not that there are two ways to place one.
+        "palette": { "title": spec::PALETTE_TITLE, "hint": spec::PALETTE_HINT },
+        // ★★ R1733 — the board gesture's written specification, published.
+        //
+        // §2 #7: an agent driving this screen needs to know what a carry puts
+        // on the board *before* it starts one, and which of those parts this
+        // build has that the reference does not. The rail publishes the same
+        // two halves for the same reason (R1728), and the reason is that a
+        // specification nothing reads at run time is a document rather than a
+        // contract.
+        "carry_surfaces": carry_surfaces_json(),
         "placeable_count": spec::placeable_count(),
         "reserved_count": spec::reserved_count(),
         "board": spec::BOARD.iter().map(|p| serde_json::json!({
@@ -6410,6 +6752,40 @@ const fn tier_word(tier: spec::Tier) -> &'static str {
     }
 }
 
+/// ★★★★★ R1733 — the tag one PART of a palette row is addressed by, when the
+/// row is one a widget can be picked up from.
+///
+/// Family first — `part.<what>.<kind>` — because the kind is the address and
+/// the part is what is drawn of it, which is the convention
+/// `painted_surface_of` reads. The row itself keeps `shell.palette.<kind>`, so
+/// the row's own tag and its parts' cannot be confused for each other by a
+/// dot count.
+///
+/// ★★ [`None`] for a RESERVED row, and both halves of that are deliberate:
+///
+/// * The specification is the reference's palette row, and the reference has
+///   no reserved rows at all — its twelve are all draggable. A reserved row's
+///   trailing seat says *later*; calling it `verb` ("the seat that places one
+///   without a drag") would be a specification claiming something untrue of the
+///   thing it was read off.
+/// * A reserved row DECLARES itself unavailable, and the disabled cascade
+///   reaches every tagged node under it. So tagging four parts inside one turns
+///   one announced inert region into five, four of which are ink — and a
+///   region stating a reason that reaches no reader is a defect this tree
+///   already gates for. It caught this on the first run: thirty-six of them.
+fn part_tag_of(part: &str, def: &'static spec::WidgetSpec) -> Option<String> {
+    (def.tier == spec::Tier::Placeable).then(|| part_tag(part, def.kind))
+}
+
+/// The tag one part of a palette row is addressed by, unconditionally — the
+/// spelling, for a caller that has already decided the row has parts.
+pub(crate) fn part_tag(part: &str, kind: &str) -> String {
+    format!("{PALETTE_PART}{part}.{kind}")
+}
+
+/// The stem every palette-row part is tagged under.
+pub(crate) const PALETTE_PART: &str = "shell.palette.part.";
+
 /// One palette row: the swatch, the name, the one line, and what the row offers
 /// -- the verb for a placeable entry, the booking for a reserved one.
 fn palette_row(
@@ -6434,10 +6810,35 @@ fn palette_row(
     // and every one of the nine reserved rows painted its name under the
     // badge -- eighteen overlapping pairs, which the gate reported before
     // anybody looked at the window.
+    // ★ R1733 — a row's parts are TAGGED when the row is one a widget can be
+    // picked up from, so the specification of what such a row is made of can be
+    // read back out of the paint rather than off a table this file also writes.
+    // A reserved row's are not, for the two reasons on `part_tag_of`.
+    //
+    // ★★ Each tagged part DECLARES its quiet. The row is the control — pressing
+    // anywhere on it adds, and it is the thing a reader arrives at — so its
+    // parts owe a reader silence with a reason: the name IS the row's name, and
+    // the line and the seat are folded into its announcement. A painted,
+    // addressable region nobody decided anything about is `unvoiced`, and the
+    // demo harness's census counted sixteen of them on this row's first run.
+    let row_tag = format!("shell.palette.{}", def.kind);
+    let part = |what: &str, text: &str, at: Rect, px: u32, fg: Color| -> Scene {
+        match part_tag_of(what, def) {
+            Some(tag) => {
+                cell(tag, text, at, px, fg, TextOverflow::Ellipsis).silenced(if what == "name" {
+                    Silence::name_of(row_tag.clone())
+                } else {
+                    Silence::part_of(row_tag.clone())
+                })
+            }
+            None => clipped(text, at, px, fg, TextOverflow::Ellipsis),
+        }
+    };
     let (trailing_w, trailing) = if reserved {
         (
             52,
-            label(
+            part(
+                "verb",
                 "later",
                 Rect::new(rect.w.saturating_sub(52), 15, 46, 16),
                 FONT_SMALL,
@@ -6447,7 +6848,8 @@ fn palette_row(
     } else {
         (
             34,
-            label(
+            part(
+                "verb",
                 &if placed == 0 {
                     "+".to_string()
                 } else {
@@ -6472,30 +6874,35 @@ fn palette_row(
     };
     Scene::Container(
         ContainerNode::new(vec![
+            // The swatch is the kind's colour and its short code — decoration
+            // all the way down, so the silence covers the run inside it too.
             code_chip(
                 def.code,
                 Rect::new(8, 7, 32, 32),
                 BoxStyle::filled(kind_color(def.kind)).with_corner_radius(8),
                 palette.on_accent,
-                None,
-            ),
+                part_tag_of("swatch", def),
+            )
+            .silenced(Silence::decorative(
+                "the kind's colour tile and its short code",
+            )),
             // Both elide. A palette is a list of names of varying length in a
             // fixed column, so "the longest one happens to fit" is not a
             // property anybody can keep -- and the boot gate measured this one
             // at ten pixels outside its row.
-            clipped(
+            part(
+                "name",
                 def.label,
                 Rect::new(50, 8, text_w, 16),
                 FONT_BODY,
                 palette.ink,
-                TextOverflow::Ellipsis,
             ),
-            clipped(
+            part(
+                "gist",
                 def.gist,
                 Rect::new(50, 26, text_w, 14),
                 FONT_SMALL,
                 palette.muted,
-                TextOverflow::Ellipsis,
             ),
             trailing,
         ])
@@ -6506,6 +6913,55 @@ fn palette_row(
                 .with_border(Border::new(palette.outline, 1)),
         )
         .with_layout(layout),
+    )
+}
+
+/// ★★★★★ R1726/R1733 — **the mark at the cell a release would use.**
+///
+/// R1726: the preview is a MARK, not a surface. It was an opaque fill, and an
+/// opaque fill has no correct layer — under the cards it hides behind whatever
+/// occupies the destination, and over them it hides the widget standing there.
+/// Both were driven with a real pointer and both read the same way to the
+/// person: "the widget goes grey". Translucent, it can sit above the board and
+/// cover nothing, so the destination is legible AND so is what is currently in
+/// it — which is exactly what somebody deciding where to drop needs at once.
+///
+/// R1733: and it SAYS WHICH CELL, beside the same grip glyph the row it came
+/// from is dragged by. Both read from the reference's own mark — a six-dot grip
+/// and the coordinate in parentheses, in the accent, centred. This board drew an
+/// empty rectangle, so "where exactly" was something you counted grid lines for,
+/// and on a twelve-column board nobody does.
+fn carry_slot_scene(ghost: &Tile, palette: Palette) -> Scene {
+    let tint = palette.accent_fg;
+    let slot = cell_rect(ghost);
+    let mid = slot.h.saturating_sub(16) / 2;
+    Scene::Container(
+        ContainerNode::new(vec![
+            Scene::Container(
+                ContainerNode::new(
+                    (0..3)
+                        .flat_map(|r| (0..2).map(move |c| dot(c * 6, r * 6, 3, tint)))
+                        .collect(),
+                )
+                .with_tag("shell.carry.slot.grip")
+                .with_layout(absolute(Rect::new(slot.w / 2 - 34, mid + 2, 9, 15))),
+            ),
+            cell(
+                "shell.carry.slot.cell".to_owned(),
+                &format!("({},{})", ghost.col, ghost.row),
+                Rect::new(slot.w / 2 - 18, mid, 60, 16),
+                FONT_BODY,
+                tint,
+                TextOverflow::Clip,
+            ),
+        ])
+        .with_tag("shell.carry.slot")
+        .with_style(
+            BoxStyle::filled(Color::rgba(tint.r, tint.g, tint.b, 0x24))
+                .with_corner_radius(10)
+                .with_border(Border::new(palette.accent_fg, 2)),
+        )
+        .with_layout(absolute(slot)),
     )
 }
 
@@ -6760,7 +7216,19 @@ fn dashboard_scene(state: &ShellState, palette: Palette) -> Vec<Scene> {
     let maximized = state.maximized.get();
 
     let canvas = canvas_rect();
-    let mut canvas_children = grid_scene(board.rows() + 1, palette, editing || drag.is_some());
+    // ★★★★★ R1733 — the board grows while something is being carried.
+    //
+    // Read from the behaviour reference's own arithmetic: its overlay row count
+    // is the tallest tile's bottom plus **three** rows while a drag is in
+    // flight and plus one otherwise. Without it there is nowhere to drop a card
+    // *below* everything already placed — the grid simply stops, and the last
+    // row of the board is the last row a drop can reach.
+    let carrying_rows = if drag.is_some() { 3 } else { 1 };
+    let mut canvas_children = grid_scene(
+        board.rows() + carrying_rows,
+        palette,
+        editing || drag.is_some(),
+    );
     for card in &state.placed() {
         let Some(tile) = board.tile(card.id()) else {
             continue;
@@ -6800,39 +7268,30 @@ fn dashboard_scene(state: &ShellState, palette: Palette) -> Vec<Scene> {
     // it there is no layer between "over the cards" and "under the dragged
     // one", because the dragged card IS one of the cards.
     if let Some(drag) = &drag {
-        if let Some(tile) = board.tile(&drag.id) {
-            let ghost = Tile::new(drag.id.as_str(), drag.snap.0, drag.snap.1, tile.w, tile.h);
-            // ★★★★★ R1726 — **the preview is a MARK, not a surface.** It was
-            // an opaque fill, and an opaque fill has no correct layer: under
-            // the cards it hides behind whatever occupies the destination, and
-            // over them it hides the widget standing there. Both were driven
-            // with a real pointer and both read the same way to the person —
-            // "the widget goes grey". Translucent, it can sit above the board
-            // and cover nothing: the destination is legible AND so is what is
-            // currently in it, which is exactly what a person deciding where to
-            // drop needs to see at once.
-            let tint = palette.accent_fg;
-            canvas_children.push(Scene::Container(
-                ContainerNode::new(Vec::new())
-                    .with_tag("shell.dropslot")
-                    .with_style(
-                        BoxStyle::filled(Color::rgba(tint.r, tint.g, tint.b, 0x24))
-                            .with_corner_radius(10)
-                            .with_border(Border::new(palette.accent_fg, 2)),
-                    )
-                    .with_layout(absolute(cell_rect(&ghost))),
-            ));
+        // ★★★★★ R1733 — the preview is the DRAG's, so the rectangle drawn here
+        // and the cell a release commits to are the same value read twice
+        // rather than two derivations that agree today. And it answers for a
+        // palette footprint the same way it answers for a card, which is what
+        // made the new gesture two lines here instead of a second painter.
+        if let Some(ghost) = drag.preview(&board) {
+            canvas_children.push(carry_slot_scene(&ghost, palette));
         }
         // Third consumer of the held derivation, and the one that made it a
         // function rather than only a `ContainerNode` builder — this board
         // never holds a container of its own, it hands its cards to a pane
         // helper.
-        let held = [format!("card.{}", drag.id)];
-        pinion_core::held::raise_to_front(
-            &mut canvas_children,
-            &held,
-            pinion_core::held::HELD_SHADOW,
-        );
+        //
+        // ★ R1733 — only a card the board already holds can be raised. A
+        // palette footprint has no card on the canvas to lift, and asking for
+        // one by name would quietly raise nothing; the `match` is what says so.
+        if drag.carried().is_placed() {
+            let held = [format!("card.{}", drag.carried().id())];
+            pinion_core::held::raise_to_front(
+                &mut canvas_children,
+                &held,
+                pinion_core::held::HELD_SHADOW,
+            );
+        }
     }
     // ★★★★★ R1726 — **the label that follows the cursor**, which the behaviour
     // reference has and this board did not.
@@ -6848,9 +7307,15 @@ fn dashboard_scene(state: &ShellState, palette: Palette) -> Vec<Scene> {
     //
     // It is NOT inside the scrolling board: it follows the pointer in window
     // coordinates, so it must not slide when the board does.
+    //
+    // ★ R1733 — and it is what a palette drag has INSTEAD of a card standing
+    // still on the board: a footprint being carried has nothing painted at its
+    // source, so this chip is the only thing that says what is in hand. The
+    // reference gets that for free from the browser's own drag image; a
+    // framework that draws its own scene has to draw it.
     let drag_label = drag.as_ref().map(|drag| {
         let (cx, cy) = state.cursor.get();
-        carried_label(&label_of(drag.id.as_str()), cx, cy, palette)
+        carried_label(&label_of(drag.carried().id().as_str()), cx, cy, palette)
     });
     let canvas_children = canvas_children;
     // ★ R1662 — the BOARD scrolls and the floats do not. A torn-off card is
@@ -6874,6 +7339,44 @@ fn dashboard_scene(state: &ShellState, palette: Palette) -> Vec<Scene> {
         // reader walks is the board inside it.
         .silenced(Silence::layout("the board's scrolling viewport")),
     ];
+    // ★★★★★ R1733 — **the invitation**, which the reference draws over the
+    // whole canvas the moment a palette footprint is carried onto it.
+    //
+    // Read from its own markup: while its board is being dragged onto, a dashed
+    // accent frame inset eight pixels covers the canvas and says, in words, that
+    // letting go places the widget. It is not decoration — it is the only thing
+    // that distinguishes "carrying something onto this" from "the grid happens
+    // to be brighter", and a person who has picked a row up and is unsure what
+    // happens next is exactly the reader it answers.
+    //
+    // Only for a FRESH carry. Moving a card the board already holds is not an
+    // add, and the reference agrees: it is the palette handlers that set the
+    // flag this reads, and the reorder path leaves it alone.
+    if drag
+        .as_ref()
+        .is_some_and(|d| !d.carried().is_placed() && d.landing().is_some())
+    {
+        canvas_children.push(Scene::Container(
+            ContainerNode::new(vec![label(
+                spec::DROP_INVITATION,
+                Rect::new(0, canvas.h / 2 - 24, canvas.w - 16, 20),
+                FONT_BODY,
+                palette.accent_fg,
+            )])
+            .with_tag("shell.carry.banner")
+            .with_style(
+                BoxStyle::filled(Color::rgba(0, 0, 0, 0))
+                    .with_corner_radius(16)
+                    .with_border(Border::new(palette.accent_fg, 2)),
+            )
+            .with_layout(absolute(Rect::new(
+                8,
+                8,
+                canvas.w.saturating_sub(16),
+                canvas.h.saturating_sub(16),
+            ))),
+        ));
+    }
     // ★ R1697 — back to front, which is the REVERSE of the order the hit test
     // walks. Both read `floats_front_to_back`, so painting the frontmost panel
     // last and hitting it first are one decision rather than two that agree

@@ -80,6 +80,7 @@ from rpc_verify import (  # noqa: E402
     assert_declared_panes_on_screen,
     assert_eq,
     declared_and_painted,
+    declared_but_unreachable,
     design_size,
     png_pixel,
     read_png_rgba8,
@@ -300,12 +301,31 @@ def the_specification_survives_a_clamped_resize(
     probe = (floor[0] - 80, floor[1] - 40)
     landed = granted(resolve(app, probe))
     resize_and_settle(app, probe)
-    gone = sorted(declared - declared_and_painted(app, landed))
+    # ★★★★★ R1733 — painted, **or one gesture away**, and the wire says which.
+    #
+    # This asked for painted alone, which was the right rule when a window could
+    # not pan and its panes could not scroll. Both changed, and R1714 gave the
+    # pane assertion beside this one exactly this clause while leaving this one
+    # on the old footing. Measured on the capture viewer at its own floor: 163
+    # of 290 declared regions are out of sight, `scroll_reach` reports `lost: 0`
+    # and names every one of them scrollable with the scroll that brings it
+    # back. The old rule went red once in a 29-demo sweep and passed ten times
+    # standing alone — a flake, because whether anything was out of sight
+    # depended on the state the section happened to run in.
+    gone = declared_but_unreachable(app, declared, landed)
     assert_eq(
         gone,
         [],
-        f"F/{name}: everything the specification names is still painted at the "
-        f"granted {landed}",
+        f"F/{name}: everything the specification names is on screen at the "
+        f"granted {landed}, or one gesture from it",
+    )
+    reach = app.request("scene/scroll_reach")
+    assert reach is not None and isinstance(reach.result, dict)
+    assert_eq(
+        reach.result["lost"],
+        0,
+        f"F/{name}: ★ and nothing is out of reach altogether — the half the "
+        f"per-name check above cannot answer",
     )
     CHECKS.append(f"F/{name}: {len(declared)} declared regions survive a clamped resize")
 

@@ -742,6 +742,26 @@ fn r1668_the_screen_invents_no_seat_and_states_the_counts_it_specifies() {
                 "shell.palette.placed".to_owned(),
                 "shell.palette.reserved".to_owned(),
             ])
+            // ★ R1733 — and every PART of every row a widget can be picked up
+            // from. The population is the board specification's own
+            // `palette_row` roster crossed with the PLACEABLE catalogue, so a
+            // part added to the paint and not to the specification fails here
+            // as well as at the conformance check — and a part named only in
+            // this file could not exist. Reserved rows have no parts, for the
+            // two reasons `part_tag_of` states.
+            .chain(
+                spec::board_document()
+                    .canon("palette_row")
+                    .expect("the board specification declares a palette row")
+                    .parts()
+                    .iter()
+                    .flat_map(|part| {
+                        spec::CATALOGUE
+                            .iter()
+                            .filter(|w| w.tier == spec::Tier::Placeable)
+                            .map(move |w| super::part_tag(part.key.as_ref(), w.kind))
+                    }),
+            )
             .collect();
         for tag in shot.family("shell.palette.") {
             assert!(
@@ -1337,10 +1357,19 @@ fn r1668_every_reserved_seat_is_declared_with_the_booking_it_states() {
 #[test]
 fn r1668_the_screen_paints_exactly_the_reserved_seats_it_specifies() {
     sweep(|_, shot, _, case| {
+        // ★ R1733 — a ROW, by the shape of its name: `shell.palette.<kind>`,
+        // with nothing further under it. Its parts are addressed
+        // `shell.palette.part.<what>.<kind>` and the disabled cascade reaches
+        // them too, so counting everything under the stem counted a reserved
+        // row five times. A shape rather than a list of exclusions, so an
+        // invented row is still caught — which is what this check is for.
         let inert_rows: Vec<&String> = shot
             .inert
             .keys()
-            .filter(|t| t.starts_with("shell.palette."))
+            .filter(|t| {
+                t.strip_prefix("shell.palette.")
+                    .is_some_and(|rest| !rest.contains('.'))
+            })
             .collect();
         assert_eq!(
             inert_rows.len(),
@@ -2789,4 +2818,515 @@ fn r1697_every_declared_way_of_causing_an_operation_causes_it() {
         spec::OPERATIONS.len() - ABSENT_OPERATIONS,
         absent.join("\n  ")
     );
+}
+
+// ── R1733: the palette hands the board a footprint ─────────────────────────
+//
+// ★★★★★ The integration test the round is judged by: the gesture is DRIVEN —
+// a real press on a palette row, a real cursor move onto the board, a real
+// release — and what it puts on screen is read back out of the PAINT and held
+// against `docs/analyzer-board-spec.json`, in both directions.
+//
+// A table of intentions would pass while the painter drew something else; that
+// is the whole reason R1730 built this mechanism, and it has caught something
+// on every screen it has been pointed at since.
+
+/// What the board specification calls one part of one surface.
+///
+/// Read out of the document rather than written here, so a title this module
+/// invented could not make a difference report as agreement.
+fn board_title(surface: &'static str) -> impl Fn(&str) -> Option<String> {
+    move |key: &str| {
+        spec::board_document()
+            .canon(surface)?
+            .parts()
+            .iter()
+            .find(|p| p.key == key)
+            .map(|p| p.title.as_ref().to_owned())
+    }
+}
+
+/// The kind a carry is picked up from in these checks.
+///
+/// The FIRST placeable kind, taken from the catalogue rather than named here —
+/// a reserved row refuses to be picked up (by design, and asserted below), and
+/// a hand-written kind is one the catalogue can rename out from under.
+fn first_placeable() -> &'static str {
+    spec::CATALOGUE
+        .iter()
+        .find(|w| w.tier == spec::Tier::Placeable)
+        .map(|w| w.kind)
+        .expect("the catalogue places at least one kind")
+}
+
+/// Pick a palette row up and carry it to the middle of the canvas, without
+/// letting go. Answers the cell the carry says it would land in.
+///
+/// Driven through the same two entry points a hand reaches — the press path and
+/// the cursor path — so a green here is a claim about the screen rather than
+/// about a test-only door.
+fn carry_to_middle(state: &std::rc::Rc<ShellState>, shot: &Painted, kind: &str) -> (u32, u32) {
+    let (px, py) = aim(shot, &format!("shell.palette.{kind}"));
+    ShellOracle::move_cursor(state, px, py);
+    ShellOracle::press(state);
+    let canvas = super::canvas_rect();
+    ShellOracle::move_cursor(state, canvas.x + canvas.w / 2, canvas.y + canvas.h / 2);
+    state
+        .drag
+        .get()
+        .and_then(|d| d.landing())
+        .expect("a carry over the middle of the board has a landing")
+}
+
+/// ★★★★★ R1733 — **every surface the board specification declares is the one
+/// the paint draws, while a widget is actually being carried.**
+///
+/// Swept across every state and every size, because a gesture that only
+/// conforms on the screen as it opens has not been checked in the states a
+/// person reaches: a maximised card, a board of one-cell cards, an open menu.
+#[test]
+fn r1733_every_specified_board_surface_is_the_one_the_paint_draws() {
+    let doc = spec::board_document();
+    let kind = first_placeable();
+    let mut carried = 0;
+    sweep(|state, shot, _, case| {
+        carry_to_middle(state, shot, kind);
+        // Repaint: the carry is what puts these surfaces on screen, so the shot
+        // the sweep took before it was armed cannot hold them.
+        let (_, scene) = painted_at(case.size);
+        carried += 1;
+
+        for surface in doc.surfaces() {
+            let built = match surface {
+                // Layers, so the specified order is the z-order.
+                "carry" => pinion_core::test_fixtures::surface::painted_stack(
+                    &scene,
+                    "shell.carry.",
+                    &board_title("carry"),
+                ),
+                "slot" => pinion_core::test_fixtures::surface::painted_surface(
+                    &scene,
+                    "shell.carry.slot.",
+                    &board_title("slot"),
+                ),
+                "palette_row" => pinion_core::test_fixtures::surface::painted_surface_of(
+                    &scene,
+                    super::PALETTE_PART,
+                    kind,
+                    &board_title("palette_row"),
+                ),
+                other => panic!("no surface named {other}"),
+            };
+            assert!(
+                !built.is_empty(),
+                "{case}: the {surface} surface painted no parts at all, so a \
+                 difference against it would come out empty and read as success",
+            );
+            let unreconciled: Vec<String> = doc
+                .unreconciled(surface, &built)
+                .iter()
+                .map(pinion_core::conformance::Unreconciled::sentence)
+                .collect();
+            assert!(
+                unreconciled.is_empty(),
+                "{case}: the painted {surface} surface is not what \
+                 docs/analyzer-board-spec.json declares:\n  {}\n  \
+                 (painted: {:?})",
+                unreconciled.join("\n  "),
+                built.iter().map(|p| p.key.as_ref()).collect::<Vec<_>>(),
+            );
+        }
+    });
+    assert_eq!(carried, CASES, "every swept case carried a widget");
+}
+
+/// ★★ The specification is the reference's, rather than whatever this build
+/// happens to hold.
+#[test]
+fn r1733_the_board_specification_is_the_references_own_gesture() {
+    let doc = spec::board_document();
+    assert_eq!(
+        doc.canon("palette_row")
+            .expect("the pin fixes the row")
+            .parts()
+            .iter()
+            .map(|p| p.key.as_ref())
+            .collect::<Vec<_>>(),
+        ["swatch", "name", "gist", "verb"],
+        "the reference's row is a code tile, a name, a line and an add seat",
+    );
+    assert_eq!(
+        doc.canon("carry")
+            .expect("the pin fixes the carry")
+            .parts()
+            .iter()
+            .map(|p| p.key.as_ref())
+            .collect::<Vec<_>>(),
+        ["grid", "slot", "banner"],
+        "and while a footprint is carried it raises the grid, marks the cell \
+         and says what letting go does",
+    );
+    assert_eq!(
+        doc.canon("slot").expect("the pin fixes the mark").len(),
+        2,
+        "the reference's mark carries a grip glyph and the cell in words",
+    );
+}
+
+/// ★★★★★ R1733 — **the cell the preview drew is the cell the release placed**,
+/// driven through the real gesture at every size.
+///
+/// The property R1668 established for a card already on the board, on the drag
+/// that had no answer at all until this round. Asserted on the SCREEN rather
+/// than on the framework type, because the framework's own test cannot see a
+/// shell that decides to clamp for itself — which is exactly what R1668 found.
+#[test]
+fn r1733_a_carry_lands_where_its_preview_said_it_would() {
+    let kind = first_placeable();
+    let mut checked = 0;
+    sweep(|state, shot, _, case| {
+        let before = state.board.get().tiles().len();
+        let previewed = carry_to_middle(state, shot, kind);
+        let carrying = witness(state, "carrying");
+        assert!(
+            carrying.contains("fresh:"),
+            "{case}: the wire says what is being carried, and it is not on the \
+             board yet: {carrying}",
+        );
+        assert_eq!(
+            witness(state, "drag"),
+            format!(
+                "Text(\"{kind}#{},{},{}\")",
+                state.next_id.borrow(),
+                previewed.0,
+                previewed.1
+            ),
+            "{case}: the wire's landing is the carry's",
+        );
+
+        // The id the carry is holding, taken from the wire before the release:
+        // the board may already hold cards of this kind, so "a card of that
+        // kind at that row" is not a witness — the first draft used it and
+        // found an OLDER card at the same row, reporting a defect that was its
+        // own choice of needle.
+        let id = pinion_core::widgets::tile_grid::TileId::new(format!(
+            "{kind}#{}",
+            state.next_id.borrow()
+        ));
+        ShellOracle::release(state);
+        let board = state.board.get();
+        assert_eq!(
+            board.tiles().len(),
+            before + 1,
+            "{case}: a release over the board places one card",
+        );
+        let placed = board
+            .tile(&id)
+            .unwrap_or_else(|| panic!("{case}: the carried card {id} is on the board"));
+        assert_eq!(
+            (placed.col, placed.row),
+            previewed,
+            "{case}: the preview promised {previewed:?} and the release took \
+             {:?}",
+            (placed.col, placed.row),
+        );
+        assert_eq!(
+            witness(state, "carrying"),
+            "Text(\"\")",
+            "{case}: nothing is carried once it has been put down",
+        );
+        checked += 1;
+    });
+    assert_eq!(checked, CASES);
+}
+
+/// ★★★★★ R1733 — **the action survives the gesture.**
+///
+/// A press and a release on the same palette row still adds at the bottom of
+/// the board, because an abandoned carry falls through to the latched control.
+/// This is the assertion that keeps a pointer-only reference from costing a
+/// reader the only path they have: the reference has zero keyboard bindings,
+/// so reproducing its drag INSTEAD of the click would be a regression wearing
+/// a reproduction's clothes.
+#[test]
+fn r1733_a_click_on_a_palette_row_still_adds_at_the_bottom() {
+    let kind = first_placeable();
+    let mut checked = 0;
+    sweep(|state, shot, _, case| {
+        let board = state.board.get();
+        let bottom = board.rows();
+        let before = board.tiles().len();
+        press_tag(state, shot, &format!("shell.palette.{kind}"));
+        let board = state.board.get();
+        assert_eq!(
+            board.tiles().len(),
+            before + 1,
+            "{case}: a click on a palette row adds a card",
+        );
+        let placed = board
+            .tiles()
+            .iter()
+            .find(|t| t.row == bottom && t.col == 0)
+            .unwrap_or_else(|| panic!("{case}: the click placed at the bottom of the board"));
+        assert_eq!(super::kind_of(placed.id.as_str()), kind);
+        assert!(
+            state.drag.get().is_none(),
+            "{case}: and nothing is left being carried",
+        );
+        checked += 1;
+    });
+    assert_eq!(checked, CASES);
+}
+
+/// ★★★★★ R1733 — **a carry let go off the board places nothing where the
+/// cursor is.**
+///
+/// The half a card drag never needed and the reference does not have: its board
+/// drag listens on the whole document, so a release over the palette commits.
+/// Here the carry has no landing off the board, and a release with no landing
+/// is an abandon — which for a palette row means the latched control acts
+/// instead, so the row's click behaviour is what a person gets.
+#[test]
+fn r1733_a_carry_let_go_off_the_board_is_not_a_placement() {
+    let kind = first_placeable();
+    let mut checked = 0;
+    sweep(|state, shot, _, case| {
+        let bottom = state.board.get().rows();
+        let (px, py) = aim(shot, &format!("shell.palette.{kind}"));
+        ShellOracle::move_cursor(state, px, py);
+        ShellOracle::press(state);
+        let canvas = super::canvas_rect();
+        // Onto the board, so a landing exists...
+        ShellOracle::move_cursor(state, canvas.x + canvas.w / 2, canvas.y + canvas.h / 2);
+        let over = state
+            .drag
+            .get()
+            .and_then(|d| d.landing())
+            .expect("a carry over the board has a landing");
+        assert_ne!(
+            over,
+            (0, bottom),
+            "{case}: the middle of the board is not where a click would put it, \
+             so the two outcomes are distinguishable",
+        );
+        // ...and back onto the palette, where it is not.
+        ShellOracle::move_cursor(state, px, py);
+        assert_eq!(
+            state.drag.get().and_then(|d| d.landing()),
+            None,
+            "{case}: carried off the board, there is no cell a release would use",
+        );
+        ShellOracle::release(state);
+
+        let board = state.board.get();
+        let landed = board
+            .tiles()
+            .iter()
+            .filter(|t| super::kind_of(t.id.as_str()) == kind)
+            .map(|t| (t.col, t.row))
+            .collect::<Vec<_>>();
+        assert!(
+            landed.contains(&(0, bottom)),
+            "{case}: the release over the row acted as the row's click, at the \
+             bottom of the board: {landed:?}",
+        );
+        assert!(
+            !landed.contains(&over),
+            "{case}: and nothing was placed at {over:?}, where the carry had \
+             been over the board",
+        );
+        checked += 1;
+    });
+    assert_eq!(checked, CASES);
+}
+
+/// ★★★★★ R1733 — **the board grows while something is carried**, by the three
+/// rows the reference grows by.
+///
+/// Without it there is nowhere VISIBLE to drop a card below everything already
+/// placed: the guide stops at the last occupied row, so the last row of the
+/// board looks like the last row a drop can reach.
+///
+/// Counted out of the paint — the grid's own marks — rather than from its
+/// rectangle. ★ The first draft measured the rectangle and read four rows for a
+/// board of four: the grid lives inside the scrolling viewport, so its
+/// resolved rectangle is the viewport's height whatever it asked for, and a
+/// height that says "four" while seven rows of marks are drawn inside it would
+/// have failed a true screen. The marks are the fact; the box around them is
+/// the window they are seen through.
+#[test]
+fn r1733_the_board_grows_three_rows_while_something_is_carried() {
+    let kind = first_placeable();
+    let mut checked = 0;
+    sweep(|state, shot, _, case| {
+        let rows = state.board.get().rows();
+        carry_to_middle(state, shot, kind);
+        let (_, scene) = painted_at(case.size);
+        let mut marks = None;
+        scene.for_each_node(&mut |visit| {
+            if visit.node.tag() == Some("shell.carry.grid")
+                && let Scene::Container(container) = visit.node
+            {
+                marks = Some(container.children.len());
+            }
+        });
+        let marks =
+            marks.unwrap_or_else(|| panic!("{case}: the grid is a named part while carrying"));
+        // One mark per grid intersection, so `(rows + 1) * (columns + 1)`.
+        let per_row = usize::try_from(spec::GRID_COLS + 1).expect("a column count");
+        assert_eq!(
+            marks % per_row,
+            0,
+            "{case}: {marks} marks is not a whole number of rows of {per_row}",
+        );
+        let drawn = u32::try_from(marks / per_row).expect("a row count") - 1;
+        assert_eq!(
+            drawn,
+            rows + 3,
+            "{case}: a board of {rows} row(s) draws {drawn} while carrying, and \
+             the reference draws three more than it holds",
+        );
+        checked += 1;
+    });
+    assert_eq!(checked, CASES);
+}
+
+/// ★★★★★ R1733 — and the cells those extra rows show are **reachable**: a
+/// carry aimed below everything already placed lands below it.
+///
+/// The behaviour the three rows exist for, asserted separately from the marks
+/// that advertise it — because a guide drawn over cells a drop cannot reach
+/// would be worse than no guide.
+#[test]
+fn r1733_a_carry_reaches_the_rows_below_what_is_placed() {
+    let kind = first_placeable();
+    let mut checked = 0;
+    let mut cases = 0;
+    sweep(|state, shot, _, case| {
+        cases += 1;
+        let rows = state.board.get().rows();
+        let (px, py) = aim(shot, &format!("shell.palette.{kind}"));
+        ShellOracle::move_cursor(state, px, py);
+        ShellOracle::press(state);
+        let canvas = super::canvas_rect();
+        let mut reached = 0;
+        for step in 1..=3 {
+            let want = rows + step;
+            let y = canvas.y + super::GAP + want * super::ROW_H + super::ROW_H / 2;
+            if y >= canvas.y + canvas.h {
+                // Below the viewport at this size. A person scrolls to it and a
+                // cursor cannot be put outside the window, so this is a limit
+                // of the harness rather than of the board — and the case where
+                // NO row is reachable is asserted below rather than skipped,
+                // because "nothing was asked" must not read as "nothing was
+                // wrong" (R1651.1).
+                continue;
+            }
+            ShellOracle::move_cursor(state, canvas.x + canvas.w / 2, y);
+            assert_eq!(
+                state.drag.get().and_then(|d| d.landing()).map(|(_, r)| r),
+                Some(want),
+                "{case}: a carry aimed {step} row(s) below the board lands there",
+            );
+            reached += 1;
+            checked += 1;
+        }
+        if reached == 0 {
+            let first = canvas.y + super::GAP + (rows + 1) * super::ROW_H + super::ROW_H / 2;
+            assert!(
+                first >= canvas.y + canvas.h,
+                "{case}: no row below the board was reached and the first one is \
+                 inside the viewport, so the reason is not the window",
+            );
+        }
+        ShellOracle::release(state);
+    });
+    // ★ The pin is the CASES, not the rows: a board taller than the viewport
+    // legitimately reaches none of them from a cursor that cannot leave the
+    // window, and that case proves its own reason above. Pinning the rows
+    // instead would make a state that grew a card look like a regression.
+    assert_eq!(cases, CASES);
+    assert!(
+        checked > 0,
+        "no row below any board was reachable, so this check asked nothing",
+    );
+}
+
+/// R1733 — a reserved row cannot be picked up, and says the same thing the
+/// click says.
+///
+/// One refusal with one wording, not two: the pick-up and the action both go
+/// through the catalogue's own tier, so a row that is booked for a later
+/// release is un-draggable for the reason it is un-clickable.
+#[test]
+fn r1733_a_reserved_row_cannot_be_picked_up() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let reserved = spec::CATALOGUE
+            .iter()
+            .find(|w| w.tier == spec::Tier::Reserved)
+            .expect("this release reserves at least one kind");
+        let picked = ShellOracle::pick_up(&state, reserved.kind);
+        let added = ShellOracle::add(&state, reserved.kind);
+        assert!(picked.is_err(), "a reserved row is not a drag source");
+        assert_eq!(
+            format!("{:?}", picked.unwrap_err()),
+            format!("{:?}", added.unwrap_err()),
+            "and the pick-up refuses in the same words the click does",
+        );
+    });
+}
+
+/// ★★★★★ R1733 — **an agent reaches the cell a person's drag reaches.**
+///
+/// §2 #2: the headless path is the primary one, not a subset of it. A gesture
+/// only a hand can perform would be a capability this framework's own premise
+/// says must not exist — so `add` takes the cell, refuses a half-named one, and
+/// clamps what it is given by the board's rule rather than trusting it.
+#[test]
+fn r1733_the_wire_places_at_a_cell_and_refuses_half_a_cell() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let kind = first_placeable();
+        let before = state.board.get().rows();
+
+        ShellOracle::add(&state, &format!("{kind},3,{}", before + 1))
+            .expect("a kind and a cell place a card there");
+        let placed = state
+            .board
+            .get()
+            .tiles()
+            .iter()
+            .find(|t| t.row == before + 1)
+            .map(|t| (t.col, t.row))
+            .expect("the card is at the named cell");
+        assert_eq!(placed, (3, before + 1));
+
+        assert!(
+            ShellOracle::add(&state, &format!("{kind},3")).is_err(),
+            "a placement names both a column and a row, or neither",
+        );
+        assert!(
+            ShellOracle::add(&state, &format!("{kind},a,b")).is_err(),
+            "and a cell that is not a number is refused rather than rounded to one",
+        );
+
+        // Past the right edge: clamped by the board, exactly as the pointer is.
+        ShellOracle::add(&state, &format!("{kind},11,{}", before + 4))
+            .expect("a column past the edge is a gesture, not an error");
+        let clamped = state
+            .board
+            .get()
+            .tiles()
+            .iter()
+            .find(|t| t.row == before + 4)
+            .map(|t| (t.col, t.col + t.w))
+            .expect("the card is on the board");
+        assert!(
+            clamped.1 <= spec::GRID_COLS,
+            "a placement past the right edge stops on the board: {clamped:?}",
+        );
+    });
 }

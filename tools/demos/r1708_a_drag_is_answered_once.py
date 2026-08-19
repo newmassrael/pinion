@@ -99,6 +99,7 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     abs_rects_of,
     declared_and_painted,
+    declared_but_unreachable,
     declared_panes,
     design_size,
     png_pixel,
@@ -585,12 +586,16 @@ def drive(name: str, example: str, resizer: Path | None) -> None:
         # if the frame that answered the fold were laid out for a superseded
         # size: a declared region that is on screen at the opening size and
         # gone after the drag.
-        gone = sorted(declared - declared_and_painted(app, landed))
+        # ★ R1733 — painted, or one gesture away, and the wire says which. The
+        # same repair the sibling rule in `r1710` took: this was written when a
+        # window could not pan and its panes could not scroll, and a region out
+        # of sight read as a region that was gone.
+        gone = declared_but_unreachable(app, declared, landed)
         assert_eq(
             gone,
             [],
-            f"G2/{name}: everything the specification names is still painted "
-            f"after the fold, at {landed}",
+            f"G2/{name}: everything the specification names is still on screen "
+            f"after the fold at {landed}, or one gesture from it",
         )
         CHECKS.append(f"G2/{name}: {len(declared)} declared regions survive the fold")
         the_pixels_are_the_folded_size(app, name, landed, design[0])
