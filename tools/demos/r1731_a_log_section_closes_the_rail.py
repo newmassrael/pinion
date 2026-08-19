@@ -51,7 +51,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from analyzer_spec import DOCS, rail_spec  # noqa: E402
+from analyzer_spec import DOCS, rail_spec, surfaces  # noqa: E402
 from rpc_verify import (  # noqa: E402
     RealPointer,
     RealPointerUnavailable,
@@ -86,10 +86,6 @@ def q(app: RpcSubprocess, path: str):
 def logs_spec() -> dict:
     """The section's own reviewed artifact, read from the repository."""
     return json.loads(LOGS_SPEC_PATH.read_text(encoding="utf-8"))
-
-
-def surfaces(spec: dict) -> list[str]:
-    return sorted(key for key in spec if not key.startswith("$"))
 
 
 def pointer(app: RpcSubprocess):

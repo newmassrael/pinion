@@ -81,7 +81,15 @@ def open_keys() -> list[str]:
     return sorted(key for key in rail_keys() if key not in shut)
 
 
-def surfaces() -> list[str]:
-    """The key-pattern section's specified surfaces, by the name its pin gives
-    them."""
-    return sorted(key for key in keys_spec() if not key.startswith("$"))
+def surfaces(spec: dict) -> list[str]:
+    """The surfaces a section's specification fixes, by the name it gives them.
+
+    Takes the document rather than reading one, because there is more than one:
+    R1730 wrote this bound to the key-pattern pin and R1731's section grew a
+    copy of it within the round — the same duplication, one level down, and
+    caught by the close audit rather than by the next round.
+
+    Keys beginning with `$` are the document's own commentary and are not
+    surfaces, which is the rule `pinion_core::conformance::SpecDocument` takes.
+    """
+    return sorted(key for key in spec if not key.startswith("$"))

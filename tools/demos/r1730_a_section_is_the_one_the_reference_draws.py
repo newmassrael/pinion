@@ -123,9 +123,9 @@ def section_a(app: RpcSubprocess, spec: dict) -> None:
     conformance = q(app, "conformance")
     ok(
         "A: it reports every surface the specification fixes",
-        sorted(conformance) == surfaces(),
+        sorted(conformance) == surfaces(spec),
     )
-    for surface in surfaces():
+    for surface in surfaces(spec):
         canon = spec[surface]["canon"]
         owed = spec[surface]["owed"]
         row = conformance[surface]
@@ -338,7 +338,7 @@ def section_e(spec: dict) -> None:
 
 def body() -> None:
     spec = keys_spec()
-    named = surfaces()
+    named = surfaces(spec)
     ok("the specification fixes three surfaces", len(named) == 3)
     ok(
         "and every one of them declares an ordered roster of named parts",
