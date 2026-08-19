@@ -136,6 +136,20 @@ pub enum UnavailableKind {
     /// either hidden (and the specification's shape is invisible) or it claims
     /// one of the three falsehoods above.
     ///
+    /// ★ R1728.1 — this vocabulary is matched **exhaustively** by its
+    /// consumers, so adding an arm is a workspace-wide edit. Ask what that
+    /// population is rather than trusting a number written here:
+    ///
+    /// ```text
+    /// grep -rn 'UnavailableKind::' --include=*.rs crates/ examples/
+    /// ```
+    ///
+    /// The command is quoted instead of its answer because R1728's own
+    /// changelog entry recorded the count it had measured *before* adding this
+    /// arm, and the round then added six references of its own — the number
+    /// was stale inside the round that wrote it, which is the third time this
+    /// project has caught that shape.
+    ///
     /// It shares [`AwaitRelease`](Recourse::AwaitRelease) with
     /// [`Reserved`](Self::Reserved) because the reader's *action* is the same
     /// one — wait — and the kinds stay apart because what they are waiting for

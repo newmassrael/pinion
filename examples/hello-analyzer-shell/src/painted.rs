@@ -1875,6 +1875,30 @@ fn r1728_no_two_seats_are_drawn_the_same() {
         canon.len(),
         "every specified seat has its own mark"
     );
+    // ★★★ R1728.1 — and none of them is the painter's FALLBACK.
+    //
+    // The closing audit found the hole the check above leaves: the defect it
+    // was written for was two seats sharing the fallback, and it catches that
+    // only because they collided. ONE seat falling through is unique, so it
+    // passes — and the next rail key added without an arm gets the generic
+    // mark silently, which is exactly the state `sessions` and `settings` were
+    // already in when this round started. Comparing against the fallback
+    // itself is what makes the arm mandatory rather than merely unshared.
+    let fallback = format!(
+        "{:?}",
+        super::rail_mark("<no seat has this key>", Rect::new(0, 0, 20, 20), ink)
+    );
+    for seat in canon.seats() {
+        let drawn = format!(
+            "{:?}",
+            super::rail_mark(seat.key.as_ref(), Rect::new(0, 0, 20, 20), ink)
+        );
+        assert_ne!(
+            drawn, fallback,
+            "the {} seat has no arm in the painter and is drawn with the generic mark",
+            seat.key,
+        );
+    }
 }
 
 /// ★★★★★ R1695 — the specification says which destination each region belongs
