@@ -51772,6 +51772,82 @@
         "had no collapsed-chooser type at all."
       ]
     },
+    "R1732.1": {
+      "decision_summary": "R1732's own verification prose said the demo sweep found one defect. It found\n**two**, and the second is the more interesting one.\n\n## What the filed entry got wrong\n\nR1732's `verification` reads: \"`r1651` failed first — its backward check\nreported fourteen painted tags the specification does not declare … Repaired by\ndeclaring the five new families there; **the rest of the sweep is green**.\"\n\nThe sweep was 7 of 36 in when that sentence was written. It is not what the\nsweep found. `r1692_a_voice_is_judged_not_only_counted` failed too, at demo 15,\nand it failed on a **different** defect that the earlier repair does not touch.\n\n## The second defect, which is worth its own paragraph\n\nThe type badge declares its silence as *\"my text is the name of the row's\ndescription region\"*. R1732 gave that badge the option count — `mode · 3` — and\nleft the description region saying `mode, restart; worked out from the role`.\nThe redirect then pointed at a node that speaks and says **something else**: a\nreader following the label aloud arrives somewhere that does not contain it.\n\nNothing in the crate could see it. The badge's box was right, the region's\nsentence was right, and only the RELATION between them was false — the same\nshape as R1656's seven-pixel overflow, one axis over. What saw it was a sibling\napplication's demo, holding every declared silence to the node it names.\n\nThe repair is the derivation, not the sentence: the description region is built\nfrom `type_word(field)` as well, so the badge's words are inside it by\nconstruction and a future round that changes one changes both.\n\n## Why this is a sub-round and not an amendment\n\nThe ledger is frozen; an entry cannot be edited once filed. A correction is\ntherefore its own entry, which is the right shape anyway — \"the round said X\nand X was false\" is a fact about the round that a reader of the ledger should\nmeet, not a difference they have to notice between two versions of one entry.\n\n## The lesson, stated so the next round can act on it\n\n**Verification prose written while the verification is still running is a\nprediction.** R1732 wrote its sweep result at 7 of 36 because the file was ready\nand the sweep was not; the sentence was true of what had run and false of the\nrun. The rule this repository already has — *a number measured in the middle of\na round is re-measured at the end* — reaches prose about outcomes too, and this\nis the instance that says so.",
+      "changes_bullets": [
+        "No code change. This entry corrects R1732's own verification record.",
+        "The repair the correction is about — `row_access_nodes` building the row's",
+        "description region from `type_word(field)` rather than `field.ty()`, so the type",
+        "badge's declared silence names a region that really contains its words — is in",
+        "R1732's commit, made when the demo reported it. What was not in R1732 is the",
+        "statement that it happened.",
+        "The demo sweep's true result: **36 node-lab demos, 34 green on the first pass,",
+        "two red** — `r1651` (a backward check over painted tags the specification does",
+        "not declare, fourteen of them, the round's new `key` and `type` names) and",
+        "`r1692` (a declared silence whose redirect no longer arrived at its own words).",
+        "Both repaired; ten demos re-run afterwards, all green."
+      ],
+      "verification_bullets": [
+        "The correction itself is a claim about a record, so it is verified by reading",
+        "the record and the run:",
+        "* `docs/.atomic/workspace.atomic.json`, entry `R1732`, `verification` — carries",
+        "the sentence \"the rest of the sweep is green\".",
+        "* the sweep's own summary — 36 rows, two of them non-zero: `r1651` and `r1692`.",
+        "* the re-run after both repairs — 10 demos, every one zero, including `r1692`",
+        "and the four that drive the form's editor.",
+        "* `cargo test -p pinion-core -p pinion-widget-paint -p hello-node-lab` — 3,797 /",
+        "900 / 97, green with the repair in place.",
+        "No new gate. What would have caught the false sentence is a habit, not a check,",
+        "and the entry says which one."
+      ],
+      "impact_refs": [
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "None. The correction closes what it opened.",
+        "Stated rather than carried: this is the third round in this campaign whose",
+        "closing audit found a sentence the round itself had written and then made false",
+        "(R1721.2 and R1730 are the others). The pattern is always the same — prose",
+        "written at the moment it was true, about something still in flight."
+      ],
+      "publishable_decision_summary": "R1732's own verification prose said the demo sweep found one defect. It found\n**two**, and the second is the more interesting one.\n\n## What the filed entry got wrong\n\nR1732's `verification` reads: \"`r1651` failed first — its backward check\nreported fourteen painted tags the specification does not declare … Repaired by\ndeclaring the five new families there; **the rest of the sweep is green**.\"\n\nThe sweep was 7 of 36 in when that sentence was written. It is not what the\nsweep found. `r1692_a_voice_is_judged_not_only_counted` failed too, at demo 15,\nand it failed on a **different** defect that the earlier repair does not touch.\n\n## The second defect, which is worth its own paragraph\n\nThe type badge declares its silence as *\"my text is the name of the row's\ndescription region\"*. R1732 gave that badge the option count — `mode · 3` — and\nleft the description region saying `mode, restart; worked out from the role`.\nThe redirect then pointed at a node that speaks and says **something else**: a\nreader following the label aloud arrives somewhere that does not contain it.\n\nNothing in the crate could see it. The badge's box was right, the region's\nsentence was right, and only the RELATION between them was false — the same\nshape as R1656's seven-pixel overflow, one axis over. What saw it was a sibling\napplication's demo, holding every declared silence to the node it names.\n\nThe repair is the derivation, not the sentence: the description region is built\nfrom `type_word(field)` as well, so the badge's words are inside it by\nconstruction and a future round that changes one changes both.\n\n## Why this is a sub-round and not an amendment\n\nThe ledger is frozen; an entry cannot be edited once filed. A correction is\ntherefore its own entry, which is the right shape anyway — \"the round said X\nand X was false\" is a fact about the round that a reader of the ledger should\nmeet, not a difference they have to notice between two versions of one entry.\n\n## The lesson, stated so the next round can act on it\n\n**Verification prose written while the verification is still running is a\nprediction.** R1732 wrote its sweep result at 7 of 36 because the file was ready\nand the sweep was not; the sentence was true of what had run and false of the\nrun. The rule this repository already has — *a number measured in the middle of\na round is re-measured at the end* — reaches prose about outcomes too, and this\nis the instance that says so.",
+      "publishable_changes_bullets": [
+        "No code change. This entry corrects R1732's own verification record.",
+        "The repair the correction is about — `row_access_nodes` building the row's",
+        "description region from `type_word(field)` rather than `field.ty()`, so the type",
+        "badge's declared silence names a region that really contains its words — is in",
+        "R1732's commit, made when the demo reported it. What was not in R1732 is the",
+        "statement that it happened.",
+        "The demo sweep's true result: **36 node-lab demos, 34 green on the first pass,",
+        "two red** — `r1651` (a backward check over painted tags the specification does",
+        "not declare, fourteen of them, the round's new `key` and `type` names) and",
+        "`r1692` (a declared silence whose redirect no longer arrived at its own words).",
+        "Both repaired; ten demos re-run afterwards, all green."
+      ],
+      "publishable_verification_bullets": [
+        "The correction itself is a claim about a record, so it is verified by reading",
+        "the record and the run:",
+        "* `docs/.atomic/workspace.atomic.json`, entry `R1732`, `verification` — carries",
+        "the sentence \"the rest of the sweep is green\".",
+        "* the sweep's own summary — 36 rows, two of them non-zero: `r1651` and `r1692`.",
+        "* the re-run after both repairs — 10 demos, every one zero, including `r1692`",
+        "and the four that drive the form's editor.",
+        "* `cargo test -p pinion-core -p pinion-widget-paint -p hello-node-lab` — 3,797 /",
+        "900 / 97, green with the repair in place.",
+        "No new gate. What would have caught the false sentence is a habit, not a check,",
+        "and the entry says which one."
+      ],
+      "publishable_impact_refs": [
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "None. The correction closes what it opened.",
+        "Stated rather than carried: this is the third round in this campaign whose",
+        "closing audit found a sentence the round itself had written and then made false",
+        "(R1721.2 and R1730 are the others). The pattern is always the same — prose",
+        "written at the moment it was true, about something still in flight."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
