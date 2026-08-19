@@ -101,26 +101,34 @@ pub enum Seat {
     /// for the same stated reason: *"when the second release arrives the lock is
     /// lifted and the screen structure does not change"*.
     Reserved(&'static str),
-    /// Built and shipping, on a **different surface of this product**; the
-    /// detail names that surface.
-    ///
-    /// Not the same answer as [`Reserved`](Self::Reserved), and the difference
-    /// is the reader's next move: one is waited for and the other is opened.
-    /// The behaviour reference is one application whose rail switches between
-    /// all of its sections; this tree assembles the tool as several, so a
-    /// destination can be finished and still not be here. Saying *reserved*
-    /// would send a reader off to wait for something that already exists.
-    Elsewhere(&'static str),
+    // ★★★★★ R1729 — **`Elsewhere` was here, and it is gone because nothing
+    // constructs it any more.**
+    //
+    // It said *built and shipping, on a different surface of this product*, and
+    // it existed because this tree assembled a one-application tool as three
+    // executables: R1695 gave it three seats, R1724 took one (the node lab),
+    // R1728 found two of the remaining three were seats the reference does not
+    // have at all, and R1729 mounted the last real one (the capture viewer).
+    // The compiler is what reported the arm was dead — an unconstructed variant
+    // is a `dead_code` error under this workspace's lints — so the round did
+    // not have to notice.
+    //
+    // Deleted rather than kept with an allow: an arm nobody builds is a claim
+    // about this screen that is no longer true, and its return should be a
+    // compile-checked event rather than a comment somebody remembers.
+    // `pinion_core::availability::UnavailableKind::Elsewhere` is untouched and
+    // still has consumers — the vocabulary is the framework's, and any product
+    // with more than one surface needs it. What ended is this rail needing it.
     /// ★★★★★ R1728 — in the reference's **first** release, and this build has
     /// not built it; the detail names what specifies it.
     ///
-    /// The fourth arm, and the one the rail could not be made faithful without.
-    /// Measured: the reference draws eight seats and this application drew
-    /// seven, and the two it lacked were absent for a reason none of the three
-    /// arms above could say. [`Reserved`](Self::Reserved) says *wait for a
-    /// later release* and would be a lie about the scope — the reference
-    /// implements both sections today, each with a row list and a detail pane.
-    /// [`Elsewhere`](Self::Elsewhere) says *go and open it* and would send a
+    /// The arm the rail could not be made faithful without. Measured at R1728:
+    /// the reference draws eight seats and this application drew seven, and the
+    /// two it lacked were absent for a reason none of the arms it had could
+    /// say. [`Reserved`](Self::Reserved) says *wait for a later release* and
+    /// would be a lie about the scope — the reference implements both sections
+    /// today, each with a row list and a detail pane. The `Elsewhere` arm this
+    /// enum carried until R1729 said *go and open it*, and would have sent a
     /// reader after a window nobody has written. So the seats were simply left
     /// off — and a rail that omits a seat cannot be compared with one that has
     /// it, which is how the divergence stayed invisible.
@@ -147,7 +155,7 @@ impl RailSpec {
     pub const fn reserved_for(&self) -> Option<&'static str> {
         match self.seat {
             Seat::Reserved(why) => Some(why),
-            Seat::Page | Seat::Elsewhere(_) | Seat::Unbuilt(_) => None,
+            Seat::Page | Seat::Unbuilt(_) => None,
         }
     }
 }
@@ -175,10 +183,16 @@ pub const RAIL: &[RailSpec] = &[
         title: "Dashboard",
         seat: Seat::Page,
     },
+    // ★★★★★ R1729 — **the second seat to stop saying *elsewhere*, and the
+    // last one that ever could.** Its page is `hello-packet-view`, mounted
+    // through `pinion_screen::Mount<PacketView>` — the same screen the
+    // standalone binary runs, unedited. What remains closed on this rail is
+    // closed for reasons no mount can fix: two sections nobody has built, and
+    // two the reference itself defers.
     RailSpec {
         key: "packets",
         title: "Packets",
-        seat: Seat::Elsewhere("the capture viewer"),
+        seat: Seat::Page,
     },
     // ★★ R1728 — the two seats the fourth arm exists for. The reference has
     // both, working, in its first release; this build has neither. They are
@@ -251,9 +265,6 @@ pub fn destinations() -> Destinations {
                 Seat::Page => Destination::open(seat.key, seat.title),
                 Seat::Reserved(why) => {
                     Destination::closed(seat.key, seat.title, Unavailable::reserved(why))
-                }
-                Seat::Elsewhere(where_) => {
-                    Destination::closed(seat.key, seat.title, Unavailable::elsewhere(where_))
                 }
                 Seat::Unbuilt(spec) => {
                     Destination::closed(seat.key, seat.title, Unavailable::unbuilt(spec))

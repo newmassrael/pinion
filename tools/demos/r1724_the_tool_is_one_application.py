@@ -16,7 +16,8 @@ application's invention.)
 What this script drives, on the running application:
 
 * **A** — the rail. The node lab seat is open, and `elsewhere` is down from
-  three to one.
+  three to **zero** (R1729 mounted the capture viewer, the last one that was
+  genuinely built and unreachable; the Rust arm is gone with it).
 * **B** — arriving paints the node lab. The lab's own panes are inside the page
   region at the node lab seat and absent at Dashboard.
 * **C** — the lab lays out in the REGION, not the window. The page it paints
@@ -108,9 +109,12 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         elsewhere = sorted(k for k, r in rows.items() if r["kind"] == "elsewhere")
         assert_eq(
             elsewhere,
-            ["packets"],
-            "A: ★ R1728 -- ONE seat is still on another surface. It read two "
-            "until this round, and neither was a seat the reference has",
+            [],
+            "A: ★★★★★ R1729 -- NO seat is on another surface any more. This read "
+            "three at R1695, two at R1724, one at R1728, and the capture "
+            "viewer's mount took the last one. In the Rust source the arm is "
+            "gone outright: nothing constructed it, and the compiler is what "
+            "said so",
         )
         unbuilt = sorted(k for k, r in rows.items() if r["kind"] == "unbuilt")
         assert_eq(
@@ -122,14 +126,19 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         opens = sorted(k for k, r in rows.items() if r["open"])
         assert_eq(
             opens,
-            ["dashboard", "lab", "settings"],
-            "A: three destinations this ONE application hosts",
+            ["dashboard", "lab", "packets", "settings"],
+            "A: four destinations this ONE application hosts",
         )
         # ★★★★★ §2 #2 — which destinations are whole screens is PUBLISHED, not
         # inferred from tag prefixes. An agent that had to guess would be
         # guessing at a rule nobody wrote down.
         mounted = sorted(k for k, r in rows.items() if r["mounted"])
-        assert_eq(mounted, ["lab"], "A: one section is a whole screen")
+        assert_eq(
+            mounted,
+            ["lab", "packets"],
+            "A: ★ R1729 -- TWO sections are whole screens now, each the library "
+            "half of a binary the demo sweep still drives on its own",
+        )
         assert_eq(
             rows["lab"]["screen"]["tag"],
             LAB_ROOT,

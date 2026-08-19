@@ -651,13 +651,26 @@ struct ShellState {
 fn screen_roster() -> ScreenRoster {
     ScreenRoster::new(
         spec::destinations(),
-        vec![(
+        vec![
+            // ★★★★★ R1729 — **the seat that used to say *elsewhere*.**
+            //
+            // The capture viewer was an executable of its own for as long as
+            // this tool was three of them, and the rail said so honestly:
+            // *built, shipping, and not here*. It is here now, mounted the way
+            // the node lab was, with the screen unedited — only its package
+            // gained a `[lib]` and its binding a `pub`.
+            (
+                "packets",
+                Box::new(Mount::<hello_packet_view::PacketView>::new()) as Box<dyn Screen>,
+            ),
             // ★ R1728 — `lab`, not `catalog`. The reference's fifth seat is its
             // node graph section and this is it; `catalog` was a key the
             // reference does not have.
-            "lab",
-            Box::new(Mount::<hello_node_lab::NodeLabView>::new()) as Box<dyn Screen>,
-        )],
+            (
+                "lab",
+                Box::new(Mount::<hello_node_lab::NodeLabView>::new()) as Box<dyn Screen>,
+            ),
+        ],
     )
     .expect("the mounted screens sit at open destinations of this rail")
     // ★★★★★ R1725 — **this application has a navigation, so its pages must not

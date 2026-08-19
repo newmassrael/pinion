@@ -276,12 +276,18 @@ def body() -> None:
         # stopped saying *built, shipping, and not here* — it is here.
         # ★★★★★ R1728 — **two, then one.** The other two were never one screen
         # behind two seats: measured against the reference, `stream` and
-        # `decode` were this application's invention. What is genuinely built
-        # and elsewhere is the capture viewer, and it is one seat.
+        # `decode` were this application's invention.
+        # ★★★★★ R1729 — **one, then NONE.** The capture viewer is mounted, so no
+        # seat of this rail is built-and-not-here any more. In the Rust source
+        # the arm itself is gone (nothing constructed it, and an unconstructed
+        # variant is a compile error under this workspace's lints); on the wire
+        # the vocabulary survives, because it is the framework's, so what this
+        # asserts is that this SCREEN never uses it.
         assert_eq(
             sorted(elsewhere),
-            ["shell.rail.packets"],
-            "B2: one destination is built and not here",
+            [],
+            "B2: every built section of this tool is reachable from this one "
+            "application",
         )
         # ★★★★★ R1728 — and a THIRD reason joined, for the two seats the
         # reference has working and this build has not written. Neither existing
@@ -316,7 +322,7 @@ def body() -> None:
             [
                 row["tag"]
                 for row in tf.request("scene/disabled", {}).result["disabled"]
-                if row["reason"] not in ("reserved", "elsewhere", "unbuilt")
+                if row["reason"] not in ("reserved", "unbuilt")
             ],
             [],
             "B2: nothing on this screen is inert for any other reason",

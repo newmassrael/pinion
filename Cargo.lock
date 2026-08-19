@@ -1789,6 +1789,7 @@ name = "hello-analyzer-shell"
 version = "0.0.1"
 dependencies = [
  "hello-node-lab",
+ "hello-packet-view",
  "pinion-a11y",
  "pinion-chart",
  "pinion-core",

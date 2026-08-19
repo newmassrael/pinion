@@ -1636,7 +1636,18 @@ fn r1695_every_open_destination_is_a_place_you_arrive_at() {
             roster.open().count(),
             "every open destination was arrived at and measured",
         );
-        assert_eq!(pages.len(), 3, "three open destinations, measured");
+        // ★ R1729 — this used to pin the count at three, and the capture
+        // viewer's mount made it four. The literal is gone: the population is
+        // `roster.open().count()` on the line above, and all this needs to add
+        // is that there is more than one page, because otherwise the pairwise
+        // comparison below has nothing to compare and would pass on a screen
+        // that paints the same thing everywhere. A count written twice is a
+        // number that has to be edited by hand every time the tool grows a
+        // section — this file has now paid that twice in two rounds.
+        assert!(
+            pages.len() > 1,
+            "a single open destination makes the pairwise check below vacuous",
+        );
         for (i, (key, page)) in pages.iter().enumerate() {
             for (other_key, other) in &pages[i + 1..] {
                 assert!(
@@ -1646,6 +1657,80 @@ fn r1695_every_open_destination_is_a_place_you_arrive_at() {
                 );
             }
         }
+    });
+}
+
+/// ★★★★★ R1729 — **every mounted screen actually paints itself, and only
+/// where it belongs.**
+///
+/// The population is the roster's own `mounted_keys`, not a list here, so a
+/// screen mounted by a later round is covered the day it is mounted rather than
+/// the day somebody remembers to add it. R1724 wrote this check for the node
+/// lab by name; the capture viewer's mount is the second consumer, and a second
+/// hand-written copy is what this project lifts on sight.
+///
+/// Three claims per mounted screen, and the third is the one a picture cannot
+/// show:
+///
+/// 1. arriving paints regions under **that screen's own root tag**;
+/// 2. leaving takes them away, so the page is not painted everywhere at once;
+/// 3. the host's chrome survives — a page is a page, not a takeover. Measured
+///    at 6.11.1, a placed application window keeps its own menu bar, tool bar
+///    and status bar on top of its host's, and the tree publishes two of each.
+#[test]
+fn r1729_every_mounted_screen_paints_itself_where_it_belongs() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let screens = super::screen_roster();
+        let mounted: Vec<&str> = screens.mounted_keys().collect();
+        assert!(
+            mounted.len() > 1,
+            "one mounted screen makes the away-comparison below vacuous",
+        );
+
+        for key in &mounted {
+            state
+                .go(key)
+                .unwrap_or_else(|why| panic!("{key} is mounted and refused: {why:?}"));
+            let shot = painted_at((WIN_W, WIN_H)).0;
+            let root = screens
+                .tag_of(key)
+                .expect("a mounted destination names its screen's root tag");
+            let here: Vec<&String> = shot
+                .tags
+                .keys()
+                .filter(|tag| tag.as_str() == root || tag.starts_with(&format!("{root}.")))
+                .collect();
+            assert!(
+                !here.is_empty(),
+                "at {key}: the mounted screen's root is {root:?} and nothing \
+                 under it is painted, so arriving is indistinguishable from not",
+            );
+            // The host is still the host.
+            for chrome in ["shell.appbar", "shell.rail", &format!("shell.rail.{key}")] {
+                assert!(
+                    shot.rect(chrome).is_some(),
+                    "at {key}: the host's {chrome} stopped being painted",
+                );
+            }
+            // And every other mounted screen is away.
+            for other in &mounted {
+                if other == key {
+                    continue;
+                }
+                let other_root = screens.tag_of(other).expect("a mounted key has a screen");
+                assert!(
+                    !shot.tags.keys().any(|tag| {
+                        tag.as_str() == other_root || tag.starts_with(&format!("{other_root}."))
+                    }),
+                    "at {key}: {other}'s screen ({other_root}) is painted too",
+                );
+            }
+        }
+        state
+            .go(spec::RAIL_ACTIVE)
+            .expect("the opening seat is open");
     });
 }
 

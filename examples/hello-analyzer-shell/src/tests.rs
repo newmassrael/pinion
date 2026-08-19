@@ -185,13 +185,6 @@ fn r1668_every_reserved_seat_names_what_it_waits_for() {
     // a release names the surface that HAS it, and names a real one. The arm
     // exists because *reserved* would send a reader to wait for something that
     // has already shipped.
-    let elsewhere: Vec<_> = spec::RAIL
-        .iter()
-        .filter_map(|seat| match seat.seat {
-            spec::Seat::Elsewhere(surface) => Some((seat.key, surface)),
-            spec::Seat::Page | spec::Seat::Reserved(_) | spec::Seat::Unbuilt(_) => None,
-        })
-        .collect();
     // ★★★★★ R1724 — **three, then two.** The node lab's seat stopped saying
     // *elsewhere* because the lab is mounted here now
     // (`pinion_screen::Mount<NodeLabView>`), so the tool is one application at
@@ -199,30 +192,24 @@ fn r1668_every_reserved_seat_names_what_it_waits_for() {
     //
     // ★★★★★ R1728 — **two, then one.** The other two were never one screen
     // behind two seats: measured against the reference, `stream` and `decode`
-    // were this application's invention. The reference's second seat is the
-    // capture viewer, which is still an executable of its own, and its third is
-    // a section this build has not written — a different sentence, and the one
-    // `Unbuilt` was added for. The count is not written down here: it is
-    // derived from the seats, so a seat that changes arm moves it.
-    assert_eq!(
-        elsewhere.len(),
-        1,
-        "one screen of this tool is still a separate executable: {elsewhere:?}",
-    );
-    for (key, surface) in elsewhere {
-        assert!(
-            surface.starts_with("the ") && surface.len() > 8,
-            "the {key} seat points at {surface:?}, which names no surface",
-        );
-    }
-    // ★★ R1728 — and the mirror: a seat that is neither a page, nor booked, nor
-    // somewhere else names *what specifies it*, so a reader is told the thing
-    // exists in the plan rather than being left with a dead icon.
+    // were this application's invention.
+    //
+    // ★★★★★ R1729 — **one, then NONE, and the arm itself is gone.** The capture
+    // viewer is mounted, so nothing constructed `Seat::Elsewhere` and the
+    // compiler said so — an unconstructed variant is a `dead_code` error here.
+    // There is no assertion left to write on this axis, which is the strongest
+    // form the claim can take: *no seat of this rail can say "built, shipping,
+    // and not here", because the screen has no way to spell it.* The framework's
+    // `UnavailableKind::Elsewhere` is untouched and still has consumers.
+    //
+    // ★★ R1728 — what IS still spelled: a seat that is neither a page nor
+    // booked names *what specifies it*, so a reader is told the thing exists in
+    // the plan rather than being left with a dead icon.
     let unbuilt: Vec<_> = spec::RAIL
         .iter()
         .filter_map(|seat| match seat.seat {
             spec::Seat::Unbuilt(specified_by) => Some((seat.key, specified_by)),
-            spec::Seat::Page | spec::Seat::Reserved(_) | spec::Seat::Elsewhere(_) => None,
+            spec::Seat::Page | spec::Seat::Reserved(_) => None,
         })
         .collect();
     assert!(!unbuilt.is_empty(), "the fourth arm has no seat using it");

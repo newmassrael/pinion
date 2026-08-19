@@ -231,25 +231,26 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             by_reason.setdefault(row["reason"], []).append(tag.rsplit(".", 1)[1])
         assert_eq(
             sorted(by_reason),
-            ["elsewhere", "reserved", "unbuilt"],
-            "C: ★★★ THREE kinds, where a bool has one. `reserved` is booked for "
-            "a later release, `elsewhere` is built on another surface, and "
-            "`unbuilt` -- new this round -- is in the reference's own first "
-            "release and not written here",
+            ["reserved", "unbuilt"],
+            "C: ★★★ TWO kinds, where a bool has one. `reserved` is booked for a "
+            "later release the reference itself defers; `unbuilt` is in the "
+            "reference's own FIRST release and not written here. ★ R1729 -- a "
+            "third kind, `elsewhere`, was here until the capture viewer was "
+            "mounted, and its absence is the measurement: no section of this "
+            "tool is built-and-unreachable any more",
         )
         assert_eq(sorted(by_reason["reserved"]), ["sessions", "topology"])
-        assert_eq(sorted(by_reason["elsewhere"]), ["packets"])
         assert_eq(sorted(by_reason["unbuilt"]), ["keys", "logs"])
-        # ★★ The recourse is DERIVED, and two kinds legitimately share one: the
-        # reader's action is the same (wait) and what they are waiting for is
-        # not, which is why the kinds stay apart while the recourse merges.
+        # ★★ The recourse is DERIVED, and these two kinds legitimately share
+        # one: the reader's action is the same (wait) and what they are waiting
+        # for is not, which is why the kinds stay apart while the recourse
+        # merges.
         for tag, row in disabled.items():
-            expected = {
-                "reserved": "await_release",
-                "unbuilt": "await_release",
-                "elsewhere": "open_elsewhere",
-            }[row["reason"]]
-            assert_eq(row["recourse"], expected, f"C: {tag} derives its recourse")
+            assert_eq(
+                row["recourse"],
+                "await_release",
+                f"C: {tag} derives its recourse",
+            )
         ok(
             "C: ★ and the two that share a recourse do NOT share a sentence, "
             "so a reader is not told to wait for the wrong thing",
@@ -281,16 +282,26 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
                 "the section exists in the plan",
                 len(reason["detail"]) > 8,
             )
-        # ★★ And the three kinds reach a listener as three different reasons,
-        # which is the whole point of spending an arm rather than reusing one.
+        # ★★ And the two kinds reach a listener as two different reasons, which
+        # is the whole point of spending an arm rather than reusing one: both
+        # seats are inert, both ask the reader to wait, and they are waiting for
+        # different things.
         heard = {
-            tree[f"shell.rail.{k}"]["unavailable"]["kind"]
-            for k in ("topology", "packets", "keys")
+            tree[f"shell.rail.{k}"]["unavailable"]["kind"] for k in ("topology", "keys")
         }
         assert_eq(
             sorted(heard),
-            ["elsewhere", "reserved", "unbuilt"],
-            "D: ★★★ a reader hears three distinct reasons where a bool has one",
+            ["reserved", "unbuilt"],
+            "D: ★★★ a reader hears distinct reasons where a bool has one -- and "
+            "hears them for seats whose RECOURSE is identical, which is exactly "
+            "the case a bool, and a recourse alone, both flatten",
+        )
+        # ★ R1729 — the seat that used to be the third reason is now a page, so
+        # a reader arrives at it instead of being told where it lives.
+        ok(
+            "D: the capture seat is announced as somewhere you go, not as a "
+            "reason you cannot",
+            tree["shell.rail.packets"].get("unavailable") is None,
         )
 
     # ★★★★★ The demo's own coverage, said out loud. Section B is the only one

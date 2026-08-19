@@ -92,18 +92,18 @@
     "match — the key alone, or a substring — would let a seat drift from",
     "`elsewhere` to `unbuilt`, or from renamed to absent, without a word."
   ],
+  "$paid_comment": [
+    "R1729 paid off `packets`. Its entry said the fix was a mount rather than a",
+    "build, and it was: the capture viewer's package gained a `[lib]`, its",
+    "binding gained a `pub`, and the shell mounted it. Not one line of the",
+    "screen changed.",
+    "",
+    "The entry is DELETED rather than marked done, because the gate asserts the",
+    "live difference EQUALS this list. A paid divergence left here would fail",
+    "just as loudly as a new one — which is the point: the list cannot quietly",
+    "describe a worse build than the one that exists."
+  ],
   "owed": [
-    {
-      "key": "packets",
-      "sentence": "`packets` is specified open and is closed (elsewhere)",
-      "since": "R1728",
-      "why": [
-        "The capture viewer is built and shipping as its own executable, so the",
-        "seat tells a reader to open it rather than claiming it is missing.",
-        "Paying this off is a mount, not a build: the screen becomes a page the",
-        "way the node lab did, and the seat opens."
-      ]
-    },
     {
       "key": "keys",
       "sentence": "`keys` is specified open and is closed (unbuilt)",

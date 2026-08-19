@@ -206,11 +206,24 @@ impl ScreenRoster {
             .filter(|key| self.screens.contains_key(*key))
     }
 
+    /// The paint-root tag of the screen mounted at `key`, if one is.
+    ///
+    /// ★ R1729 — the asymmetry this closes: the roster could name the tag of
+    /// the screen you are *at* and not of any other, while
+    /// [`wire`](Self::wire) had been publishing all of them since R1724. So a
+    /// caller asking "is some other screen painted right now" — which is how
+    /// you check that leaving a page takes it away — had to navigate there to
+    /// find out what to look for, and navigating is the thing under test.
+    #[must_use]
+    pub fn tag_of(&self, key: &str) -> Option<&'static str> {
+        self.screens.get(key).map(|s| s.tag())
+    }
+
     /// The current screen's paint-root tag, when the journey is at a mounted
     /// destination.
     #[must_use]
     pub fn current_tag(&self, journey: &Journey) -> Option<&'static str> {
-        self.screens.get(journey.at()).map(|s| s.tag())
+        self.tag_of(journey.at())
     }
 
     /// The current screen's title — what the host publishes as the window's

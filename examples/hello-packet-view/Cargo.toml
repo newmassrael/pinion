@@ -8,6 +8,18 @@ authors.workspace = true
 description = "R1663 Phase-B plane-B integration consumer — the analysis tool's capture viewer assembled as ONE app against a written-down specification of the reference screen: a filter bar, the always-visible session context, a three-pane body (message list, layered decode, bytes) and a reassembly strip. The decode tree, the byte highlight and the layer chain are all derived from one pinion_core::widgets::field_bytes::ByteMap, which is the relation the analyzer census claimed and no surface held."
 publish = false
 
+# ★★★★★ R1729 — this package is BOTH a screen and a page.
+#
+# The library is the screen itself; the binary is four lines that run it in a
+# window of its own. That split is what lets the analysis-tool shell mount this
+# screen at a destination (`pinion_screen::Mount<PacketView>`) without the demo
+# sweep losing the process it drives one screen through — the two things the
+# integration debt said had to be kept at once. Same shape as `hello-node-lab`,
+# which took it at R1724.
+[lib]
+name = "hello_packet_view"
+path = "src/lib.rs"
+
 [[bin]]
 name = "hello-packet-view"
 path = "src/main.rs"
