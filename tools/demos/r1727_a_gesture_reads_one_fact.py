@@ -68,6 +68,11 @@ from rpc_verify import (  # noqa: E402
 
 CHECKS: list[str] = []
 
+#: How many real-pointer sessions actually opened. Zero means this host could
+#: not drive one, and the coverage line at the end says so rather than letting a
+#: shorter run read as a pass.
+REAL_POINTER_RUNS = 0
+
 #: The card and the empty board cell the measurement above used, in the
 #: dashboard's logical pixels: the centre of `loss`, and two rows down-left.
 FROM = (564.0, 137.0)
@@ -111,11 +116,14 @@ def real_pointer(app: RpcSubprocess) -> "RealPointer | None":
     read fails open on — but a check that silently stopped happening is exactly
     the failure this round exists to end, so it always prints.
     """
+    global REAL_POINTER_RUNS
     try:
-        return RealPointer(app)
+        pointer = RealPointer(app)
     except RealPointerUnavailable as exc:
-        print(f"[real-pointer] UNAVAILABLE — sections B/C/D not driven: {exc}")
+        print(f"[real-pointer] UNAVAILABLE — this section is not driven: {exc}")
         return None
+    REAL_POINTER_RUNS += 1
+    return pointer
 
 
 def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
@@ -381,9 +389,31 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         ok(f"E: {label}", True)
     ok(f"E: {swept} further captured-drag surfaces swept", swept == 2)
 
+    # ★★★★★ The demo's own coverage, said out loud — because a section that
+    # quietly does not run is the exact shape this round exists to end. Four of
+    # the six sections need a real pointer; on a host without one they are
+    # skipped, and without this the only evidence would be a smaller number
+    # nobody was comparing against anything.
     print(f"\n{len(CHECKS)} named check(s):")
     for line in CHECKS:
         print(f"  - {line}")
+    driven = [c for c in CHECKS if c[0] in "BCDF"]
+    if REAL_POINTER_RUNS == 0:
+        print(
+            f"[coverage] NO REAL POINTER on this host: {len(CHECKS)} checks ran, "
+            "and every one of them came from the wire. The real-pointer sections "
+            "(B, C, D, F) contributed nothing."
+        )
+    else:
+        assert len(driven) >= 12, (
+            f"the real pointer ran {REAL_POINTER_RUNS} time(s) but only "
+            f"{len(driven)} check(s) came from it — a section stopped "
+            "contributing without saying so"
+        )
+        print(
+            f"[coverage] {REAL_POINTER_RUNS} real-pointer session(s) contributed "
+            f"{len(driven)} of {len(CHECKS)} named checks."
+        )
 
 
 if __name__ == "__main__":
