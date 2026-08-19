@@ -106,10 +106,28 @@ class Population:
 
 
 def _sources() -> list[tuple[str, str]]:
-    return [
-        (p.parts[-3], p.read_text())
-        for p in sorted((WORKSPACE / "examples").glob("*/src/main.rs"))
-    ]
+    """Every example's binding source, whichever file the package puts it in.
+
+    ★★★★★ R1724 — `src/main.rs` stopped being the only answer. A screen that is
+    also a **page** of another application is a library plus a four-line
+    binary (`pinion_screen::Mount<V>` needs the binding, and a binary is not a
+    thing another crate can reach into), so `hello-node-lab`'s 20,666-line
+    binding now lives in `src/lib.rs`.
+
+    A census keyed on the FILE NAME would have gone quiet about it — not
+    reported it missing, just stopped counting it — which is the failure mode
+    this project keeps meeting: the population shrank and the number still
+    looked fine. The library is preferred where a package has both, because the
+    binary in that arrangement is the four lines.
+    """
+    out: list[tuple[str, str]] = []
+    for pkg in sorted((WORKSPACE / "examples").iterdir()):
+        for name in ("lib.rs", "main.rs"):
+            source = pkg / "src" / name
+            if source.is_file():
+                out.append((pkg.name, source.read_text()))
+                break
+    return out
 
 
 def interactive_bindings() -> Population:

@@ -1,0 +1,731 @@
+//! ★★★★★ R1724 — **what mounting guarantees, driven.**
+//!
+//! Each test here is one row of the table in the crate's own documentation,
+//! and the rows were measured against the reference toolkit at 6.11.1 by
+//! building a probe and running it. Where a row says the reference does the
+//! wrong thing, the assertion message says what it did.
+
+use std::cell::Cell;
+use std::rc::Rc;
+
+use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
+use pinion_core::external::{External, StubExternal, layout_size};
+use pinion_core::reactive::{Owner, VIEWPORT_SIZE};
+use pinion_core::scene::{ContainerNode, Rect};
+use pinion_core::shrink::ShrinkPolicy;
+use pinion_core::widget_core::ExtraExternal;
+use pinion_core::widgets::destination::{Destination, Destinations, Journey};
+use pinion_core::{Frame, Modifiers, Scene, WidgetCore};
+use pinion_screen::{Mount, Screen, ScreenRoster};
+use pinion_shell::test_fixtures::TestRenderer;
+use pinion_shell::{SizeStrategy, WidgetView, WindowSpec};
+
+// --- Two fixture screens, each observable ------------------------------------
+//
+// Real bindings, not stubs of `Screen`: the whole claim of this crate is that
+// an existing `WidgetView` becomes a page without being edited, so the tests
+// must go through `Mount<V>` rather than around it.
+
+thread_local! {
+    /// What the lab's projection currently reads, so a test can move it.
+    static LAB_VALUE: Cell<u32> = const { Cell::new(0) };
+    /// The extent the lab last saw while painting.
+    static LAB_PAINTED_AT: Cell<(u32, u32)> = const { Cell::new((0, 0)) };
+    /// The extent the lab last saw while handling a key.
+    static LAB_KEYED_AT: Cell<(u32, u32)> = const { Cell::new((0, 0)) };
+    /// Whether the viewer took the last file drop.
+    static VIEWER_DROPS: Cell<u32> = const { Cell::new(0) };
+}
+
+const LAB_SHRINK: ShrinkPolicy = ShrinkPolicy::panning(LAB_COMFORTABLE, (600, 300));
+
+const LAB_TAG: &str = "fixture_lab";
+const LAB_FIELD_TAG: &str = "fixture_lab.field";
+const VIEWER_TAG: &str = "fixture_viewer";
+
+struct LabFixture;
+
+impl WidgetCore for LabFixture {
+    type State = u32;
+    type Event = ();
+
+    fn create_external() -> Box<dyn External> {
+        Box::new(StubExternal::new())
+    }
+
+    fn create_extra_externals() -> Vec<ExtraExternal> {
+        vec![ExtraExternal::new(
+            LAB_FIELD_TAG,
+            Box::new(StubExternal::new()),
+        )]
+    }
+
+    fn tag() -> &'static str {
+        LAB_TAG
+    }
+
+    fn read_state(_scene: &Scene) -> u32 {
+        LAB_VALUE.with(Cell::get)
+    }
+
+    fn view(state: u32, _frame: &Frame) -> Scene {
+        // A screen that hit-tests its own rectangles asks the framework how
+        // big it is. That question is the one `with_surface_extent` answers.
+        LAB_PAINTED_AT.with(|at| at.set(layout_size(LAB_TAG, (10, 10), (1440, 900))));
+        Scene::Container(
+            ContainerNode::new(vec![Scene::Container(
+                ContainerNode::new(Vec::new()).with_tag(format!("lab.value.{state}")),
+            )])
+            .with_tag(LAB_TAG),
+        )
+    }
+
+    fn event_name((): ()) -> &'static str {
+        "lab_event"
+    }
+
+    fn title() -> &'static str {
+        "the node graph lab"
+    }
+
+    fn keybinding(key: &str) -> Option<()> {
+        (key == "F5").then_some(())
+    }
+
+    fn apply_key(
+        _scene: &mut Scene,
+        _focused: Option<&str>,
+        key: &str,
+        _modifiers: Modifiers,
+    ) -> bool {
+        LAB_KEYED_AT.with(|at| at.set(layout_size(LAB_TAG, (10, 10), (1440, 900))));
+        key == "Space"
+    }
+
+    fn fmt_state_log(state: &u32) -> String {
+        format!("lab at {state}")
+    }
+}
+
+impl WidgetA11y for LabFixture {
+    fn access_node(state: &u32, _focused: Option<&str>) -> Vec<AccessNode> {
+        vec![AccessNode::new(LAB_TAG, AriaRole::Group).with_name(format!("lab {state}"))]
+    }
+}
+
+/// The width below which the lab fixture's layout stops reflowing — the fact a
+/// region has to respect or pan over.
+const LAB_COMFORTABLE: (u32, u32) = (1625, 400);
+
+impl WidgetView for LabFixture {
+    type Renderer = TestRenderer;
+
+    fn initial_size_strategy() -> SizeStrategy {
+        SizeStrategy::shrinking(LAB_SHRINK, LAB_COMFORTABLE)
+    }
+
+    /// Like the real node lab's: a layout that stops reflowing well before the
+    /// window does, and pans over the difference.
+    fn shrink_policy() -> Option<ShrinkPolicy> {
+        Some(LAB_SHRINK)
+    }
+
+    fn focus_ring_style(_focused_tag: &str) -> Option<pinion_overlay::FocusRingStyle> {
+        // A content surface that owns its own indicator — the one hook whose
+        // `None` is a decision rather than an absence.
+        None
+    }
+}
+
+struct ViewerFixture;
+
+impl WidgetCore for ViewerFixture {
+    type State = u32;
+    type Event = ();
+
+    fn create_external() -> Box<dyn External> {
+        Box::new(StubExternal::new())
+    }
+
+    fn tag() -> &'static str {
+        VIEWER_TAG
+    }
+
+    fn read_state(_scene: &Scene) -> u32 {
+        0
+    }
+
+    fn view(_state: u32, _frame: &Frame) -> Scene {
+        Scene::Container(ContainerNode::new(Vec::new()).with_tag(VIEWER_TAG))
+    }
+
+    fn event_name((): ()) -> &'static str {
+        "viewer_event"
+    }
+
+    fn title() -> &'static str {
+        "the capture viewer"
+    }
+}
+
+impl WidgetA11y for ViewerFixture {}
+
+impl WidgetView for ViewerFixture {
+    type Renderer = TestRenderer;
+
+    fn initial_size_strategy() -> SizeStrategy {
+        SizeStrategy::Fixed {
+            width: 800,
+            height: 600,
+        }
+    }
+
+    /// A section that tears a panel off owns a window. The reference leaves it
+    /// on screen when you navigate away; here it is part of what "the current
+    /// screen" means.
+    fn windows() -> Vec<WindowSpec> {
+        vec![
+            WindowSpec::main(Self::title(), Self::initial_size_strategy()),
+            WindowSpec::new(
+                "viewer.float",
+                "torn-off byte pane",
+                Self::initial_size_strategy(),
+            ),
+        ]
+    }
+
+    fn on_file_drop(_window_id: &str, _state: &u32, _path: &str) -> bool {
+        VIEWER_DROPS.with(|n| n.set(n.get() + 1));
+        true
+    }
+}
+
+// --- The fixture application --------------------------------------------------
+
+fn destinations() -> Destinations {
+    Destinations::new(vec![
+        Destination::open("dashboard", "Dashboard"),
+        Destination::open("catalog", "Catalog"),
+        Destination::open("stream", "Stream"),
+        Destination::closed(
+            "topology",
+            "Topology",
+            pinion_core::availability::Unavailable::reserved("requirement 12"),
+        ),
+    ])
+    .expect("the fixture rail is navigable")
+}
+
+fn roster() -> ScreenRoster {
+    ScreenRoster::new(
+        destinations(),
+        vec![
+            (
+                "catalog",
+                Box::new(Mount::<LabFixture>::new()) as Box<dyn Screen>,
+            ),
+            ("stream", Box::new(Mount::<ViewerFixture>::new())),
+        ],
+    )
+    .expect("the fixture screens are mounted at open destinations")
+}
+
+fn at(key: &str) -> Journey {
+    Journey::begin(&destinations(), key).expect("the fixture opens at a real destination")
+}
+
+// --- The rows -----------------------------------------------------------------
+
+/// ★★★★★ The row the reference gets most wrong. Measured at 6.11.1: a page
+/// that is not current, sent a press, a key and a wheel, **counted all three**.
+#[test]
+fn r1724_only_the_screen_you_are_at_has_externals() {
+    let roster = roster();
+
+    let here = roster.externals(&at("catalog"));
+    let tags: Vec<&str> = here.iter().map(|e| e.tag.as_ref()).collect();
+    assert_eq!(
+        tags,
+        vec![LAB_TAG, LAB_FIELD_TAG],
+        "the current screen's primary surface first, then its extras, in the \
+         order the binding declared them"
+    );
+
+    let elsewhere = roster.externals(&at("stream"));
+    let tags: Vec<&str> = elsewhere.iter().map(|e| e.tag.as_ref()).collect();
+    assert_eq!(
+        tags,
+        vec![VIEWER_TAG],
+        "and standing at the other destination, the lab's two surfaces are not \
+         in the set at all -- there is nothing for the router to resolve a \
+         press to and no slot for the wire to address"
+    );
+    assert!(
+        !tags.contains(&LAB_TAG) && !tags.contains(&LAB_FIELD_TAG),
+        "stated the other way round, because this is the guarantee"
+    );
+}
+
+/// A destination the host paints itself is not a screen, and every accessor
+/// says so rather than guessing.
+#[test]
+fn r1724_an_unmounted_destination_is_the_hosts_own_page() {
+    let roster = roster();
+    let dashboard = at("dashboard");
+    assert!(!roster.is_mounted("dashboard"));
+    assert_eq!(roster.current_tag(&dashboard), None);
+    assert_eq!(roster.current_title(&dashboard), None);
+    assert!(roster.externals(&dashboard).is_empty());
+    assert!(
+        roster
+            .page_scene(&dashboard, (100, 100), &Frame::default())
+            .is_none()
+    );
+    assert_eq!(
+        roster.mounted_keys().collect::<Vec<_>>(),
+        vec!["catalog", "stream"],
+        "and the mounted keys come back in rail order, not in map order"
+    );
+}
+
+/// ★★★★★ The row the reference gets right, and which this must not regress:
+/// leaving and returning is a return, not a restart.
+#[test]
+fn r1724_a_screen_you_left_keeps_what_it_had() {
+    let roster = roster();
+    let catalog = at("catalog");
+
+    LAB_VALUE.with(|v| v.set(7));
+    let state = roster.latch(&catalog, &Scene::Container(ContainerNode::new(Vec::new())));
+    assert_eq!(state.at, 1, "catalog is the second destination on the rail");
+
+    // Go somewhere else, and let the world move on while we are away.
+    let stream = at("stream");
+    LAB_VALUE.with(|v| v.set(99));
+    let away = roster.latch(&stream, &Scene::Container(ContainerNode::new(Vec::new())));
+    assert_eq!(away.at, 2, "and stream is the third");
+
+    // Come back. Nothing has latched the lab since, so what it holds is what
+    // it held -- the reference toolkit's one good row, kept.
+    assert_eq!(
+        roster
+            .with_current(&catalog, |screen| screen.fmt_state_log())
+            .as_deref(),
+        Some("lab at 7"),
+        "the projection parked before leaving is still there on return"
+    );
+}
+
+/// The revision is a change detector, and both halves of it move.
+#[test]
+fn r1724_the_hosts_state_notices_navigation_and_the_screen_moving() {
+    let roster = roster();
+    let catalog = at("catalog");
+    let empty = Scene::Container(ContainerNode::new(Vec::new()));
+
+    LAB_VALUE.with(|v| v.set(1));
+    let first = roster.latch(&catalog, &empty);
+    let again = roster.latch(&catalog, &empty);
+    assert_eq!(
+        first, again,
+        "a projection that has not moved does not move the revision, so a host \
+         with constant state is not repainted for nothing"
+    );
+
+    LAB_VALUE.with(|v| v.set(2));
+    let moved = roster.latch(&catalog, &empty);
+    assert_ne!(
+        again.revision, moved.revision,
+        "and when the screen inside a constant host moves, the host's state \
+         does too -- without this a mounted text field paints its first frame \
+         and no other"
+    );
+
+    let elsewhere = roster.latch(&at("dashboard"), &empty);
+    assert_ne!(
+        moved.at, elsewhere.at,
+        "arriving somewhere is the other half of the detector"
+    );
+}
+
+/// ★★★★★ The paint half and the gesture half of a mounted screen read ONE
+/// rectangle. Before R1724 the in-view branch of `layout_size` answered the
+/// window — which is the shape of the R1700 defect, where a screen's paint
+/// reflowed and its hit test did not.
+#[test]
+fn r1724_a_mounted_screen_lays_out_in_its_region_not_the_window() {
+    let roster = roster();
+    let catalog = at("catalog");
+    let owner = Owner::new();
+    VIEWPORT_SIZE.resolve(&owner).set((1920, 1080));
+
+    let region = (1000, 780);
+    owner.run(|| {
+        let _ = roster.page_scene(&catalog, region, &Frame::default());
+    });
+    assert_eq!(
+        LAB_PAINTED_AT.with(Cell::get),
+        region,
+        "the screen painted in the region the host placed it in, not the \
+         1920x1080 window it is inside"
+    );
+
+    // And the hooks the shell wraps in an owner scope read the same rectangle,
+    // which is what stops a press landing where nothing is drawn.
+    let mut scene = Scene::Container(ContainerNode::new(Vec::new()));
+    owner.run(|| {
+        roster.with_current(&catalog, |screen| {
+            screen.apply_key(&mut scene, None, "Space", Modifiers::default())
+        });
+    });
+    assert_eq!(
+        LAB_KEYED_AT.with(Cell::get),
+        region,
+        "a key handler inside an owner scope reads the region too -- this is \
+         the half a grant only around `view` would have missed"
+    );
+}
+
+/// ★★★★★ The row that changes what an application can be. Measured at 6.11.1:
+/// a page's own floating tool window is **still visible after you leave its
+/// page**.
+#[test]
+fn r1724_a_screens_windows_leave_with_it() {
+    let roster = roster();
+
+    let viewer_windows = roster
+        .with_current(&at("stream"), |screen| screen.windows())
+        .expect("the viewer is mounted");
+    let ids: Vec<String> = viewer_windows
+        .iter()
+        .map(|w| w.id.as_ref().to_owned())
+        .collect();
+    assert!(
+        ids.iter().any(|id| id == "viewer.float"),
+        "while its section is showing, the torn-off pane is one of the \
+         application's windows: {ids:?}"
+    );
+
+    let lab_windows = roster
+        .with_current(&at("catalog"), |screen| screen.windows())
+        .expect("the lab is mounted");
+    let ids: Vec<String> = lab_windows
+        .iter()
+        .map(|w| w.id.as_ref().to_owned())
+        .collect();
+    assert!(
+        !ids.iter().any(|id| id == "viewer.float"),
+        "and standing in the lab it is not, so leaving a section takes its \
+         floating panels with it: {ids:?}"
+    );
+}
+
+/// ★★★★★ §2 #2 — which destinations are whole screens is on the wire.
+///
+/// `Destinations::wire` cannot answer it: a destination's page being another
+/// binding is a fact about the PAIRING, not about the destination. Left
+/// unpublished, a client infers it from the tag prefixes it happens to see,
+/// which is a rule nobody wrote down.
+#[test]
+fn r1724_the_roster_publishes_which_destinations_are_screens() {
+    let roster = roster();
+    let wire = roster.wire(&at("catalog"));
+    assert_eq!(
+        wire["at"], "catalog",
+        "the journey, as `Destinations::wire`"
+    );
+
+    let rows = wire["destinations"]
+        .as_array()
+        .expect("the roster publishes its destinations")
+        .clone();
+    assert_eq!(rows.len(), 4, "every destination, mounted or not");
+
+    let by_key = |key: &str| {
+        rows.iter()
+            .find(|row| row["key"] == key)
+            .expect("the key is on the rail")
+            .clone()
+    };
+    assert_eq!(by_key("catalog")["mounted"], true);
+    assert_eq!(by_key("catalog")["screen"]["tag"], LAB_TAG);
+    assert_eq!(by_key("catalog")["screen"]["title"], "the node graph lab");
+    assert_eq!(
+        by_key("dashboard")["mounted"],
+        false,
+        "a page the host paints itself is not a screen, and says so",
+    );
+    assert!(
+        by_key("dashboard")["screen"].is_null(),
+        "so there is nothing to address"
+    );
+    assert_eq!(
+        by_key("dashboard")["open"],
+        true,
+        "and the fields `Destinations::wire` already published are unchanged",
+    );
+    assert_eq!(
+        by_key("topology")["kind"],
+        "reserved",
+        "including the closure vocabulary on a seat nothing is mounted at",
+    );
+}
+
+/// The title the host publishes is the screen's. The reference keeps a mounted
+/// window's title and shows it nowhere.
+#[test]
+fn r1724_the_window_title_is_the_current_screens() {
+    let roster = roster();
+    assert_eq!(
+        roster.current_title(&at("catalog")),
+        Some("the node graph lab")
+    );
+    assert_eq!(
+        roster.current_title(&at("stream")),
+        Some("the capture viewer")
+    );
+}
+
+/// A pairing that cannot be run is refused where it is written, not where it
+/// paints.
+#[test]
+fn r1724_a_roster_refuses_a_mount_it_cannot_honour() {
+    use pinion_screen::MountDefect;
+
+    let missing = ScreenRoster::new(
+        destinations(),
+        vec![(
+            "sessions",
+            Box::new(Mount::<LabFixture>::new()) as Box<dyn Screen>,
+        )],
+    );
+    assert_eq!(
+        missing.err(),
+        Some(MountDefect::NoSuchDestination {
+            key: "sessions".to_owned()
+        })
+    );
+
+    let shut = ScreenRoster::new(
+        destinations(),
+        vec![(
+            "topology",
+            Box::new(Mount::<LabFixture>::new()) as Box<dyn Screen>,
+        )],
+    );
+    assert_eq!(
+        shut.err(),
+        Some(MountDefect::DestinationIsClosed {
+            key: "topology".to_owned()
+        }),
+        "a seat that tells a reader the destination is unavailable, with the \
+         screen mounted right there, is the application contradicting itself"
+    );
+
+    let twice = ScreenRoster::new(
+        destinations(),
+        vec![
+            (
+                "catalog",
+                Box::new(Mount::<LabFixture>::new()) as Box<dyn Screen>,
+            ),
+            ("catalog", Box::new(Mount::<ViewerFixture>::new())),
+        ],
+    );
+    assert_eq!(
+        twice.err(),
+        Some(MountDefect::DuplicateMount {
+            key: "catalog".to_owned()
+        })
+    );
+}
+
+/// The hooks a binding overrode are the hooks the mounted screen answers. The
+/// census in `coverage` proves every hook is *mirrored*; these prove the
+/// mirroring *dispatches*, on the hooks whose default is a different answer.
+#[test]
+fn r1724_a_mounted_binding_keeps_the_hooks_it_overrode() {
+    let roster = roster();
+    let catalog = at("catalog");
+    let stream = at("stream");
+    let empty = Scene::Container(ContainerNode::new(Vec::new()));
+
+    LAB_VALUE.with(|v| v.set(4));
+    let _ = roster.latch(&catalog, &empty);
+
+    assert_eq!(
+        roster.with_current(&catalog, |screen| screen.keybinding("F5")),
+        Some(Some("lab_event")),
+        "a typed event crossed the roster as the name it would have become"
+    );
+    assert_eq!(
+        roster.with_current(&catalog, |screen| screen.keybinding("F6")),
+        Some(None),
+        "and a chord the binding does not bind is still not bound"
+    );
+
+    let nodes = roster
+        .with_current(&catalog, |screen| screen.access_node(None))
+        .expect("the lab is mounted");
+    assert_eq!(
+        nodes.iter().map(|n| n.name.clone()).collect::<Vec<_>>(),
+        vec![Some("lab 4".to_owned())],
+        "the accessibility tree is built from the latched projection"
+    );
+
+    assert_eq!(
+        roster.with_current(&catalog, |screen| screen.focus_ring_style("anything")),
+        Some(None),
+        "a content surface that suppresses the framework ring still does when \
+         it is a page -- the hook whose `None` is a decision"
+    );
+    assert!(
+        roster
+            .with_current(&stream, |screen| screen.focus_ring_style("anything"))
+            .expect("the viewer is mounted")
+            .is_some(),
+        "and a screen that did not suppress it still gets one"
+    );
+
+    let before = VIEWER_DROPS.with(Cell::get);
+    assert_eq!(
+        roster.with_current(&stream, |screen| screen.on_file_drop("main", "/tmp/a.pcap")),
+        Some(true),
+        "a file dropped on the application reaches the screen that is showing"
+    );
+    assert_eq!(VIEWER_DROPS.with(Cell::get), before + 1);
+    assert_eq!(
+        roster.with_current(&catalog, |screen| screen
+            .on_file_drop("main", "/tmp/a.pcap")),
+        Some(false),
+        "and the screen that is not showing is not offered it"
+    );
+    assert_eq!(
+        VIEWER_DROPS.with(Cell::get),
+        before + 1,
+        "measured rather than inferred: the viewer's counter did not move"
+    );
+
+    // A hook neither fixture overrides still answers, so a mount is total
+    // rather than only forwarding what somebody remembered.
+    assert_eq!(
+        roster.with_current(&catalog, |screen| screen
+            .dock_drop_preview("panel", "target", Rect::new(0, 0, 10, 10), 0.5, 0.5)
+            .is_none()),
+        Some(true)
+    );
+    assert_eq!(
+        roster.with_current(&catalog, |screen| screen.windows_signal().is_some()),
+        Some(false)
+    );
+}
+
+/// A mount that has never been latched answers from an empty scene rather than
+/// panicking: a host laying out a rail seat may ask a page what it is before
+/// anybody has gone there.
+#[test]
+fn r1724_an_unlatched_mount_reads_an_empty_scene() {
+    LAB_VALUE.with(|v| v.set(0));
+    let mount: Mount<LabFixture> = Mount::new();
+    assert_eq!(mount.fmt_state_log(), "lab at 0");
+    assert_eq!(mount.tag(), LAB_TAG);
+    assert_eq!(mount.title(), "the node graph lab");
+}
+
+/// ★★★★★ R1724 — **a region owes a screen the recourse it declared.**
+///
+/// The lab fixture declares `Recourse::Pan` with a comfortable size wider than
+/// the region it is placed in, so its scene comes back wrapped in a viewport of
+/// the region's size. Measured on the real mount before this existed: 51 of the
+/// node lab's regions painted outside the rectangle it was placed in, its
+/// inspector running past the window's right edge.
+#[test]
+fn r1724_a_screen_too_big_for_its_region_pans_inside_it() {
+    let roster = roster();
+    let owner = Owner::new();
+    VIEWPORT_SIZE.resolve(&owner).set((1920, 1080));
+
+    // Wide enough for the lab's comfortable size: nothing to pan over, and the
+    // scene comes back exactly as the screen painted it.
+    let roomy = owner
+        .run(|| {
+            roster.page_scene(
+                &at("catalog"),
+                (LAB_COMFORTABLE.0 + 40, 600),
+                &Frame::default(),
+            )
+        })
+        .expect("the lab is mounted");
+    assert!(
+        matches!(roomy, Scene::Container(_)),
+        "a screen that fits is handed back untouched, not wrapped for nothing"
+    );
+
+    // Narrower than it: the region becomes the viewport and the screen the
+    // content, which is what `Recourse::Pan` means.
+    let tight = owner
+        .run(|| {
+            roster.page_scene(
+                &at("catalog"),
+                (LAB_COMFORTABLE.0 - 400, 600),
+                &Frame::default(),
+            )
+        })
+        .expect("the lab is mounted");
+    let Scene::Scroll(node) = &tight else {
+        panic!("a screen that does not fit its region pans inside it; got {tight:?}");
+    };
+    assert_eq!(
+        (node.viewport.w, node.viewport.h),
+        (LAB_COMFORTABLE.0 - 400, 600),
+        "the viewport is the region, so nothing is painted outside it",
+    );
+
+    // A screen that declares nothing gets nothing done to it.
+    let plain = owner
+        .run(|| roster.page_scene(&at("stream"), (10, 10), &Frame::default()))
+        .expect("the viewer is mounted");
+    assert!(
+        matches!(plain, Scene::Container(_)),
+        "no declaration, no recourse -- `pan` is the identity"
+    );
+}
+
+/// The extent grant does not leak past the host's scene: after `page_scene`
+/// returns, a read of the same tag is the ordinary one again.
+#[test]
+fn r1724_the_grant_is_scoped_to_the_hosts_scene() {
+    let roster = roster();
+    let owner = Owner::new();
+    VIEWPORT_SIZE.resolve(&owner).set((1920, 1080));
+    owner.run(|| {
+        let _ = roster.page_scene(&at("catalog"), (640, 480), &Frame::default());
+    });
+    assert_eq!(
+        pinion_core::external::granted_surface_extent(LAB_TAG),
+        None,
+        "no grant stands once the page is painted"
+    );
+    assert_eq!(
+        owner.run(|| layout_size(LAB_TAG, (10, 10), (1440, 900))),
+        (1920, 1080),
+        "so an un-granted read is what it always was"
+    );
+}
+
+/// The screens a roster holds are reachable only through a journey — there is
+/// no expression in this crate that hands out one the application is not
+/// showing. `Rc` is unused elsewhere; this keeps the import honest by pinning
+/// that the roster is shareable the way a host's owner cache holds it.
+#[test]
+fn r1724_a_roster_is_held_the_way_a_host_holds_it() {
+    let roster = Rc::new(roster());
+    let shared = Rc::clone(&roster);
+    assert_eq!(shared.destinations().len(), 4);
+    assert_eq!(
+        shared.mounted_keys().count(),
+        2,
+        "two of the four destinations are screens; the other two are the \
+         host's own page and a locked seat"
+    );
+}

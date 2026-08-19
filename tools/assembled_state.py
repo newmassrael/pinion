@@ -247,13 +247,27 @@ def scan(source: str, name: str) -> Binding:
 
 
 def population() -> list[Binding]:
-    """Every binding that declares a sibling external, in name order."""
+    """Every binding that declares a sibling external, in name order.
+
+    ★★★★★ R1724 — a binding's source is `src/lib.rs` when the screen is also a
+    **page** of another application (`pinion_screen::Mount<V>` needs the
+    binding, and a binary is not a thing another crate can reach into), so the
+    population is keyed on the package rather than on a file name. Keyed on the
+    name it would have gone quiet about `hello-node-lab` — 20,666 lines and an
+    `ExtraExternal` — rather than reporting it missing.
+    """
     out: list[Binding] = []
-    for main in sorted(WORKSPACE.glob("examples/*/src/main.rs")):
-        source = main.read_text(encoding="utf-8")
+    for pkg in sorted(WORKSPACE.glob("examples/*")):
+        root = next(
+            (pkg / "src" / name for name in ("lib.rs", "main.rs") if (pkg / "src" / name).is_file()),
+            None,
+        )
+        if root is None:
+            continue
+        source = root.read_text(encoding="utf-8")
         if "ExtraExternal::new" not in source:
             continue
-        out.append(scan(source, main.parent.parent.name))
+        out.append(scan(source, pkg.name))
     return out
 
 
@@ -312,8 +326,16 @@ def report(bindings: list[Binding], verbose: bool) -> int:
     # built to replace -- so it is a REFUSAL, not a note.
     missing: list[str] = []
     for name, (_, proof) in sorted(VERDICTS.items()):
-        source = WORKSPACE / "examples" / name / "src" / "main.rs"
-        if not source.is_file() or f"fn {proof}(" not in source.read_text(encoding="utf-8"):
+        # R1724 — the binding's source, whichever file the package puts it in.
+        # A path assumed here would report a real proof as missing the day the
+        # binding became a library, which is a refusal on a false premise.
+        found = False
+        for file in ("lib.rs", "main.rs"):
+            source = WORKSPACE / "examples" / name / "src" / file
+            if source.is_file() and f"fn {proof}(" in source.read_text(encoding="utf-8"):
+                found = True
+                break
+        if not found:
             missing.append(f"{name}: {proof}")
     # ...and a verdict for a binding that no longer assembles is a rule with
     # nothing under it, which goes stale in exactly the direction nobody looks.

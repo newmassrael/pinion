@@ -41,6 +41,7 @@ use pinion_core::external::{ExternalIntrospect, IntrospectValue};
 use pinion_core::reactive::Owner;
 use pinion_core::scene::Rect;
 use pinion_core::{Frame, Scene};
+use pinion_screen::ScreenState;
 
 use super::{Hit, ShellOracle, ShellState, WIN_H, WIN_W, spec, use_shell_state};
 
@@ -199,7 +200,7 @@ fn painted_at(size: (u32, u32)) -> (Painted, Scene) {
     // only this screen's sweep could drive, and one more thing the harness could
     // resolve that production could not.
     pinion_core::external::record_surface_size(super::VIEW_TAG, size.0, size.1);
-    let mut scene = super::view((), Frame::default());
+    let mut scene = super::view(ScreenState::default(), Frame::default());
     let mut cache = pinion_runtime::LayoutCache::new();
     pinion_runtime::compute_layout(&mut scene, &mut cache, size.0, size.1);
     // ★ The cascade is what the WINDOW runs after layout, through the settle
@@ -1561,6 +1562,7 @@ fn r1695_every_open_destination_is_a_place_you_arrive_at() {
     owner.run(|| {
         let state = use_shell_state();
         let roster = spec::destinations();
+        let screens = super::screen_roster();
         let mut seen: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
 
         for destination in roster.all() {
@@ -1573,11 +1575,25 @@ fn r1695_every_open_destination_is_a_place_you_arrive_at() {
                         key,
                         "arriving at {key} did not move the journey"
                     );
+                    // ★★★★★ R1724 — what "its own" means depends on whose page
+                    // it is. This screen's pages paint its settings rows or its
+                    // cards; a mounted screen's page paints that screen, and
+                    // the prefix is the screen's own tag rather than a fourth
+                    // literal in this list.
+                    let mounted = screens.is_mounted(key);
                     let inside: BTreeSet<String> = shot
                         .tags
                         .keys()
                         .filter(|tag| {
-                            tag.starts_with("shell.settings.") || tag.starts_with("card.")
+                            if mounted {
+                                // Everything that is not this shell's chrome —
+                                // which is the only thing this file can say
+                                // about another screen's tags, and enough: the
+                                // pages are compared pairwise below.
+                                !tag.starts_with("shell.") && tag.as_str() != super::VIEW_TAG
+                            } else {
+                                tag.starts_with("shell.settings.") || tag.starts_with("card.")
+                            }
                         })
                         .cloned()
                         .collect();
@@ -1604,17 +1620,31 @@ fn r1695_every_open_destination_is_a_place_you_arrive_at() {
             }
         }
 
-        // ★ The two pages are DIFFERENT pages. Without this the check above is
+        // ★ The pages are DIFFERENT pages. Without this the check above is
         // satisfied by a region that paints the dashboard whatever the journey
-        // says — which is the exact defect this round repairs, and it would
+        // says — which is the exact defect R1695 repaired, and it would
         // otherwise pass every assertion above.
-        let pages: Vec<&BTreeSet<String>> = seen.values().collect();
-        assert_eq!(pages.len(), 2, "two open destinations, measured");
-        assert!(
-            pages[0].is_disjoint(pages[1]),
-            "two destinations painted overlapping content: {:?}",
-            pages[0].intersection(pages[1]).collect::<Vec<_>>(),
+        // ★★★★★ R1724 — three of them now, and PAIRWISE rather than the one
+        // comparison two pages allowed. The third is the node graph lab,
+        // mounted whole, so "the pages are distinct" became a claim a loop has
+        // to make: with three destinations a single `pages[0]`/`pages[1]`
+        // comparison would have left one page unchecked against either.
+        let pages: Vec<(&String, &BTreeSet<String>)> = seen.iter().collect();
+        assert_eq!(
+            pages.len(),
+            roster.open().count(),
+            "every open destination was arrived at and measured",
         );
+        assert_eq!(pages.len(), 3, "three open destinations, measured");
+        for (i, (key, page)) in pages.iter().enumerate() {
+            for (other_key, other) in &pages[i + 1..] {
+                assert!(
+                    page.is_disjoint(other),
+                    "{key} and {other_key} painted overlapping content: {:?}",
+                    page.intersection(other).collect::<Vec<_>>(),
+                );
+            }
+        }
     });
 }
 
@@ -1693,10 +1723,27 @@ fn r1696_the_keyboard_ring_is_the_one_the_specification_declares() {
     owner.run(|| {
         let state = use_shell_state();
         let roster = spec::destinations();
+        let screens = super::screen_roster();
         for destination in roster.open() {
             let key = destination.key.as_ref();
             if key != state.at() {
                 state.go(key).expect("an open destination is reachable");
+            }
+            // ★★★★★ R1724 — a destination whose page is a mounted screen has a
+            // keyboard ring, and it is that screen's. `hello-node-lab` declares
+            // its own stops and closes its own set against them; this table
+            // could only ever hold a copy, and a copy of another screen's ring
+            // is the two-lists-of-one-thing defect R1695 was a repair for. What
+            // this census still owes at such a destination is that the section
+            // is reachable by a keyboard at all.
+            if screens.is_mounted(key) {
+                let reachable = painted_at((WIN_W, WIN_H)).1.collect_focusable_tags();
+                assert!(
+                    !reachable.is_empty(),
+                    "at {key}: a mounted screen is showing and nothing in the \
+                     window is focusable",
+                );
+                continue;
             }
             let (_, scene) = painted_at((WIN_W, WIN_H));
             // The enumeration the framework walks, in the order it walks it.
@@ -1753,10 +1800,11 @@ fn r1696_the_keyboard_ring_is_the_one_the_specification_declares() {
                 );
             }
             // Every stop is a node a reader can be told about.
-            let announced: BTreeSet<String> = super::AnalyzerShellView::access_node(&(), None)
-                .into_iter()
-                .map(|node| node.tag)
-                .collect();
+            let announced: BTreeSet<String> =
+                super::AnalyzerShellView::access_node(&ScreenState::default(), None)
+                    .into_iter()
+                    .map(|node| node.tag)
+                    .collect();
             for tag in &walked {
                 assert!(
                     announced.contains(tag),
@@ -1794,10 +1842,11 @@ fn r1695_each_destination_announces_only_its_own_regions() {
             if key != state.at() {
                 state.go(key).expect("an open destination is reachable");
             }
-            let announced: BTreeSet<String> = super::AnalyzerShellView::access_node(&(), None)
-                .into_iter()
-                .map(|node| node.tag)
-                .collect();
+            let announced: BTreeSet<String> =
+                super::AnalyzerShellView::access_node(&ScreenState::default(), None)
+                    .into_iter()
+                    .map(|node| node.tag)
+                    .collect();
             for voice in spec::VOICES {
                 for member in voice.population.members() {
                     let tag = voice.tag.replace("{}", &member);

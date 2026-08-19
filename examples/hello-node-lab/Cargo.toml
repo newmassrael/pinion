@@ -8,6 +8,17 @@ authors.workspace = true
 description = "R1651 Phase-B plane-A integration consumer — the analysis-tool node graph lab assembled as ONE app against a written-down specification of the reference screen: a role-grouped node palette, a canvas of host frames and node cards with dial/accept pins, a pre-launch validation gate, and a node inspector that IS the settings editor (pinion_widget_paint::config_form over pinion_core::widgets::config_form). The graph is a pinion_node_graph::Document, so connect refusals, the determinism switch and reachability are the crate's rather than the example's. The specification is a value the demo asserts the painted scene against in both directions."
 publish = false
 
+# ★★★★★ R1724 — this package is BOTH a screen and a page.
+#
+# The library is the screen itself; the binary is four lines that run it in a
+# window of its own. That split is what lets the analysis-tool shell mount this
+# screen at a destination (`pinion_screen::Mount<NodeLabView>`) without the
+# demo sweep losing the process it drives one screen through — the two things
+# the integration debt said had to be kept at once.
+[lib]
+name = "hello_node_lab"
+path = "src/lib.rs"
+
 [[bin]]
 name = "hello-node-lab"
 path = "src/main.rs"

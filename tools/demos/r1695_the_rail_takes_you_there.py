@@ -127,8 +127,14 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
                 ok(f"A: {key} names the surface that has it", bool(row["detail"]))
         opens = [k for k, r in rows.items() if r["open"]]
         closed = [k for k, r in rows.items() if not r["open"]]
-        assert_eq(len(opens), 2, "A: two destinations this application hosts")
-        assert_eq(len(closed), 5, "A: five it declares and cannot take you to")
+        # ★★★★★ R1724 — **two, then three.** Catalog's page is now the node
+        # graph lab, mounted whole (`pinion_screen::Mount<NodeLabView>`), so
+        # what this application hosts grew by a destination without a line of
+        # that screen changing. `assert_every_destination_arrives` below drives
+        # it like any other seat — which is the point: a mounted screen is a
+        # destination, not a special case.
+        assert_eq(len(opens), 3, "A: three destinations this application hosts")
+        assert_eq(len(closed), 4, "A: four it declares and cannot take you to")
         kinds = sorted({rows[k]["kind"] for k in closed})
         assert_eq(kinds, ["elsewhere", "reserved"], "A: two ways to be closed")
         print(f"[demo] roster: {len(rows)} destination(s), {len(opens)} open, {kinds}")
@@ -296,7 +302,15 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             # cycle, and asserting the cycle rather than a prefix means the
             # order holds from any entry point.
             seen: list[str] = []
-            for _ in range(len(want) * 3 + 8):
+            # ★★★★★ R1724 — the bound is on the RING, and the ring is no longer
+            # only this screen's. Catalog's page is the node graph lab, mounted
+            # whole, so its stops are in the cycle too — and `want` counts only
+            # the composites this screen's table declares. Sized from `want`,
+            # the walk stopped before it came back round and reported the first
+            # declared stop as missing from a ring it had simply not finished.
+            # The loop already ends when the cycle closes; this is the runaway
+            # guard, so it is sized for a window that can hold another screen.
+            for _ in range(400):
                 stop = app.request("focus/next").result.get("focused")
                 assert stop is not None, (
                     f"F2: at {key} the ring ran out — the screen announces "

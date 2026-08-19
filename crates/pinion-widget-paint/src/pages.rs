@@ -66,27 +66,21 @@ use pinion_core::{Color, Scene};
 /// The builder is called **once**, with one destination. A page that is not
 /// current is never constructed.
 ///
-/// # The region is pointer-transparent, and that is not a default
+/// # Who resolves a press inside the region is the caller's fact
 ///
 /// It carries a tag, because *arriving* has to be observable and an unnamed
 /// rectangle cannot be compared across destinations. The §5.35 router resolves
 /// a press to the **deepest tagged node** under the cursor and then looks that
-/// tag up as an `External`; a tagged region that kept its own hit box would
-/// therefore become the target for every press anywhere on the page, find no
-/// `External`, and forward nothing — the whole destination dead to a mouse
-/// while every wire path kept working.
-///
-/// That is not hypothetical. The first draft of this function omitted it and
-/// the consuming screen's own R1649 gate went red on the first run, which is
-/// the gate that exists because this shell shipped exactly that bug once.
-/// Declaring it here rather than at each caller is the point: a tag is an
-/// address, and the region is the one node whose address is never a target.
+/// tag up as an `External` — so what the region must do with a press depends
+/// entirely on what its page is made of, and [`PagePointer`] is the caller
+/// saying which.
 #[must_use]
 pub fn view_page_region(
     tag: impl Into<Cow<'static, str>>,
     viewport: Rect,
     fill: Color,
     here: &Destination,
+    pointer: PagePointer,
     page: impl FnOnce(&Destination) -> Vec<Scene>,
 ) -> Scene {
     Scene::Container(
@@ -97,9 +91,45 @@ pub fn view_page_region(
                 LayoutStyle::new()
                     .with_size(Size::px(viewport.w, viewport.h))
                     .with_absolute_position(viewport.x, viewport.y)
-                    .with_pointer_transparent(true),
+                    .with_pointer_transparent(matches!(pointer, PagePointer::HostResolves)),
             ),
     )
+}
+
+/// ★★★★★ R1724 — **what a press inside the page region is for.**
+///
+/// Two arms, because a paged region has two kinds of page and they need
+/// opposite answers — and the first of them was written as an unconditional
+/// truth until the second existed.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PagePointer {
+    /// The host hit-tests the page itself, from its own root surface.
+    ///
+    /// The region is pointer-transparent. Without that, a tagged region with a
+    /// hit box becomes the target for every press anywhere on the page, finds
+    /// no `External`, and forwards nothing — the whole destination dead to a
+    /// mouse while every wire path keeps working. Not hypothetical: the first
+    /// draft of this function omitted it and the consuming screen's R1649 gate
+    /// went red on the first run.
+    HostResolves,
+    /// The page is a screen with surfaces of its own
+    /// (`pinion_screen::ScreenRoster::page_scene`).
+    ///
+    /// ★★★★★ The region must be an ORDINARY container here, and getting this
+    /// wrong is invisible in every gate that does not press. Measured on the
+    /// day the first screen was mounted: pointer transparency in
+    /// [`Scene::hit_test`](pinion_core::Scene::hit_test) skips a child **and
+    /// its whole subtree** — the arm exists for overlays, where that is exactly
+    /// right — so the mounted screen painted 139 regions, answered every wire
+    /// path, appeared in the accessibility tree, reported `routed_by:
+    /// node_lab`, and **not one press in it reached anything**. Neither the
+    /// screen nor the host: the press resolved to the region's own tag, which
+    /// no `External` answers.
+    ///
+    /// Ordinary is safe for the reason transparency was needed in the other
+    /// arm: `hit_test` descends into children first and returns the container
+    /// only when no child hits, and a mounted screen's root covers the region.
+    PageResolves,
 }
 
 #[cfg(test)]
@@ -109,7 +139,7 @@ mod tests {
     use pinion_core::availability::Unavailable;
     use pinion_core::widgets::destination::{Destination, Destinations, Journey};
 
-    use super::{Rect, Scene, view_page_region};
+    use super::{PagePointer, Rect, Scene, view_page_region};
 
     fn roster() -> Destinations {
         Destinations::new(vec![
@@ -143,6 +173,7 @@ mod tests {
                 Rect::new(0, 0, 100, 100),
                 pinion_core::Color::TRANSPARENT,
                 journey.here(&roster),
+                PagePointer::HostResolves,
                 |here| {
                     built.borrow_mut().push(here.key.to_string());
                     Vec::new()
@@ -182,6 +213,7 @@ mod tests {
             Rect::new(52, 56, 800, 600),
             pinion_core::Color::TRANSPARENT,
             journey.here(&roster),
+            PagePointer::HostResolves,
             |_| {
                 vec![Scene::Container(pinion_core::scene::ContainerNode::new(
                     Vec::new(),
@@ -203,6 +235,79 @@ mod tests {
             node.layout.pointer_transparent,
             "a page region that is its own hit target kills every control on \
              the page it holds",
+        );
+    }
+
+    /// ★★★★★ R1724 — **and the opposite page needs the opposite answer, which
+    /// is why the line above is a parameter now.**
+    ///
+    /// `pointer_transparent` in `Scene::hit_test` skips a child AND ITS WHOLE
+    /// SUBTREE — the arm exists for overlays, where that is exactly right. In
+    /// front of a page that is a screen with surfaces of its own it means the
+    /// screen cannot be pressed at all. Measured the day the first screen was
+    /// mounted: it painted 139 regions, answered every wire path, appeared in
+    /// the accessibility tree, and not one press in it reached anything —
+    /// neither the screen nor the host.
+    ///
+    /// Written against `hit_test` rather than against the flag, because the
+    /// flag is the mechanism and reaching the child is the property.
+    #[test]
+    fn r1724_a_page_that_is_a_screen_is_reachable_by_the_pointer() {
+        use pinion_core::scene::ContainerNode;
+        use pinion_core::style::{LayoutStyle, Size};
+
+        let roster = roster();
+        let journey = Journey::begin(&roster, "dashboard").expect("begin");
+        let viewport = Rect::new(52, 56, 800, 600);
+        // A screen's root: a tagged container filling the region, the shape
+        // `ScreenRoster::page_scene` hands back.
+        let screen = || {
+            vec![Scene::Container(
+                ContainerNode::new(Vec::new())
+                    .with_tag("mounted_screen")
+                    .with_layout(
+                        LayoutStyle::new()
+                            .with_size(Size::px(viewport.w, viewport.h))
+                            .with_absolute_position(viewport.x, viewport.y),
+                    ),
+            )]
+        };
+        let region = |pointer| {
+            let mut scene = Scene::Container(ContainerNode::new(vec![view_page_region(
+                "shell.page",
+                viewport,
+                pinion_core::Color::TRANSPARENT,
+                journey.here(&roster),
+                pointer,
+                |_| screen(),
+            )]));
+            let mut cache = pinion_runtime::LayoutCache::new();
+            pinion_runtime::compute_layout(&mut scene, &mut cache, 1440, 900);
+            scene
+        };
+
+        let inside = (viewport.x + viewport.w / 2, viewport.y + viewport.h / 2);
+        let deepest = |scene: &Scene| -> Option<String> {
+            let hit = scene.hit_test(inside.0, inside.1)?;
+            (0..=hit.segments.len()).rev().find_map(|k| {
+                scene
+                    .lookup_path_ref(&hit.segments[..k])
+                    .and_then(|node| node.tag().map(str::to_owned))
+            })
+        };
+
+        assert_eq!(
+            deepest(&region(PagePointer::PageResolves)).as_deref(),
+            Some("mounted_screen"),
+            "a press inside the region reaches the SCREEN, which is the only \
+             thing that can answer it",
+        );
+        assert_eq!(
+            deepest(&region(PagePointer::HostResolves)),
+            None,
+            "and where the host resolves, the region and its page are both \
+             invisible to the hit test, so the press falls through to whatever \
+             the host paints it on -- its own root surface",
         );
     }
 }

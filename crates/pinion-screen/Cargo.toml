@@ -1,0 +1,28 @@
+[package]
+name = "pinion-screen"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1724 §5.16 §5.38 — mounting a whole binding as one destination of an application. `Screen` is the dispatchable half of a `WidgetView` with the window-level half removed; `Mount<V>` turns any existing binding into one without editing it; `ScreenRoster` pairs a `Destinations` roster with the screens behind its keys so the screen the journey is at is the only one constructed, routable, keyable and readable. The reference toolkit's paged container keeps every page alive: measured at 6.11.1, a page that is not showing counts a press, a key and a wheel, is reachable in the accessibility tree with its children, and leaves its own floating windows on screen when you navigate away."
+publish = false
+
+[dependencies]
+pinion-core = { path = "../pinion-core", version = "0.0.1" }
+pinion-a11y = { path = "../pinion-a11y", version = "0.0.1" }
+pinion-shell = { path = "../pinion-shell", version = "0.0.1" }
+pinion-overlay = { path = "../pinion-overlay", version = "0.0.1" }
+pinion-text = { path = "../pinion-text", version = "0.0.1" }
+# The roster's published shape, which is `Destinations::wire` plus the mount.
+serde_json = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../pinion-core", features = ["test-fixtures"] }
+serde_json = { workspace = true }
+# The mounted-screen tests go through `Mount<V>` with REAL bindings, so they
+# need a `VelloRenderer` to name as `WidgetView::Renderer`.
+pinion-shell = { path = "../pinion-shell", features = ["test-fixtures"] }
+
+[lints]
+workspace = true

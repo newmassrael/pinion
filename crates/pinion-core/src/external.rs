@@ -160,12 +160,27 @@ pub fn forget_surface_size(tag: &str) {
 /// fraction is a fraction of, so a press and the layout it is resolved against
 /// come from one derivation.
 ///
-/// ★ Stated limit: for a surface that does not fill its window the in-view
-/// branch answers the window, which is larger. Nothing can do better there —
-/// during its own view a surface's rectangle has not been decided yet — and
-/// none of this project's self-hit-testing screens is in that position. A
-/// surface that is would read its rectangle off the previous frame instead, and
-/// this function is where that would be decided rather than in three screens.
+/// ★★★★★ R1724 — **that stated limit had no consumer until a screen was
+/// mounted inside another one, and the answer is not the previous frame.**
+///
+/// R1700 wrote the limit down: *"for a surface that does not fill its window
+/// the in-view branch answers the window, which is larger… A surface that is
+/// would read its rectangle off the previous frame instead, and this function
+/// is where that would be decided rather than in three screens."* The
+/// prescription is here, and it is a better one than the note guessed:
+/// **whoever placed the surface knows its extent before the view runs**, so the
+/// placer states it and nothing has to be a frame late.
+///
+/// [`with_surface_extent`] is that statement. Inside it this function answers
+/// the granted extent for the named tag; outside it nothing changes, so every
+/// full-window screen reads exactly what it read before.
+///
+/// The tracked read is what a grant gives up, and it is given up on purpose:
+/// [`use_viewport_size`](crate::reactive::use_viewport_size) is what makes a
+/// view re-run on a resize, and a granted surface does not need to — it is
+/// painted *by* a host whose own view took that read, so the host re-running is
+/// what re-runs the guest. A grant is therefore only correct while the granting
+/// host is building its scene, which is why it is a scope rather than a setter.
 ///
 /// The mature retained-mode toolkits this project is judged against answer a
 /// widget's own size from every callback with no scope attached (measured at
@@ -196,14 +211,98 @@ pub fn forget_surface_size(tag: &str) {
 /// unknown", and a window of no extent is not a size to lay anything out in.
 #[must_use]
 pub fn layout_size(tag: &str, floor: (u32, u32), design: (u32, u32)) -> (u32, u32) {
-    let live = match crate::reactive::Owner::current() {
-        Some(_) => Some(crate::reactive::use_viewport_size()),
-        None => surface_size(tag),
+    let live = match granted_surface_extent(tag) {
+        // R1724 — a host that placed this surface said how big it made it.
+        // That beats both other readings: the viewport is the wrong rectangle
+        // and the recorded size is the previous frame's.
+        Some(extent) => Some(extent),
+        None => match crate::reactive::Owner::current() {
+            Some(_) => Some(crate::reactive::use_viewport_size()),
+            None => surface_size(tag),
+        },
     };
     match live {
         Some((w, h)) if w > 0 && h > 0 => (w.max(floor.0), h.max(floor.1)),
         _ => design,
     }
+}
+
+thread_local! {
+    /// Tag -> the extent a host granted that surface for the scene it is
+    /// building right now. A stack because a granted surface may itself grant
+    /// one to a surface it places.
+    static GRANTED_EXTENTS: RefCell<Vec<(String, (u32, u32))>> = const { RefCell::new(Vec::new()) };
+}
+
+/// ★★★★★ R1724 §5.16 §5.21 — **state the extent a surface was placed in, for
+/// the duration of building its scene.**
+///
+/// A screen that hit-tests its own rectangles asks [`layout_size`] how big it
+/// is. Left alone that answers the window, which is right for a screen that
+/// fills one and wrong for a screen mounted inside another — and wrong in the
+/// direction R1700 measured on the capture viewer, where the paint reflowed and
+/// the hit test did not, so every rectangle that moved stopped being pressable
+/// where it was drawn.
+///
+/// The gesture half needs no such statement and never did: a pointer fraction
+/// is a fraction of the surface's own painted rectangle (`capture_rel_coords`
+/// normalises over `rect_for_tag`), and [`surface_size`] records that same
+/// rectangle. So the two halves already agree *outside* a view. This scope is
+/// what makes them agree *inside* one.
+///
+/// # It is a scope, and re-entrant
+///
+/// The grant is only true while the host is building the frame it computed the
+/// rectangle for. Ending it on scope exit is what stops a stale extent from
+/// being read by the next frame's hit test — and the stack lets a mounted
+/// screen mount one of its own.
+///
+/// A grant of zero on either axis is not a size (the [`layout_size`] contract:
+/// a surface of no extent is not something to lay out in), and is refused here
+/// rather than left to be read as one.
+///
+/// # Panics
+///
+/// If `extent` is zero on either axis.
+pub fn with_surface_extent<R>(tag: &str, extent: (u32, u32), body: impl FnOnce() -> R) -> R {
+    assert!(
+        extent.0 > 0 && extent.1 > 0,
+        "a surface extent grant must have both axes positive; got {extent:?} for `{tag}`"
+    );
+    GRANTED_EXTENTS.with(|stack| stack.borrow_mut().push((tag.to_owned(), extent)));
+    // The pop is a guard rather than a line after `body()`: a view that panics
+    // would otherwise leave the grant standing, and the next frame's hit test
+    // would read an extent for a surface nobody is placing.
+    let _pop = PopGrantOnDrop;
+    body()
+}
+
+struct PopGrantOnDrop;
+
+impl Drop for PopGrantOnDrop {
+    fn drop(&mut self) {
+        GRANTED_EXTENTS.with(|stack| {
+            stack.borrow_mut().pop();
+        });
+    }
+}
+
+/// The extent granted to `tag` by the innermost enclosing
+/// [`with_surface_extent`], if any.
+///
+/// Innermost wins so a host that re-grants the same tag deeper in its own scene
+/// (a preview of a screen beside the screen) reads the rectangle it is
+/// currently drawing rather than the outer one.
+#[must_use]
+pub fn granted_surface_extent(tag: &str) -> Option<(u32, u32)> {
+    GRANTED_EXTENTS.with(|stack| {
+        stack
+            .borrow()
+            .iter()
+            .rev()
+            .find(|(granted, _)| granted == tag)
+            .map(|(_, extent)| *extent)
+    })
 }
 
 /// ★★★★★ R1714 — **the pixel a pointer fraction names, in the frame the
@@ -4194,6 +4293,113 @@ mod tests {
             design,
             "R1006's `(0, 0)` is 'viewport unknown', which is the design size",
         );
+    }
+
+    /// ★★★★★ R1724 — **the stated limit R1700 left, driven.**
+    ///
+    /// The note said the in-view branch answers the window for a surface that
+    /// does not fill one, and that nothing could do better. The first half is
+    /// what the first two assertions measure; the rest is the better answer.
+    #[test]
+    fn r1724_a_granted_extent_is_what_a_mounted_surface_lays_out_in() {
+        let tag = "r1724.mounted";
+        let floor = (200, 100);
+        let design = (1440, 900);
+        let owner = crate::reactive::Owner::new();
+        crate::reactive::viewport::VIEWPORT_SIZE
+            .resolve(&owner)
+            .set((1600, 1000));
+
+        // The limit, before the grant: a surface occupying a 1000x800 region of
+        // a 1600x1000 window is told it is 1600x1000 while it paints, and
+        // 1000x800 while it hit-tests. Two facts, and the gesture is the one
+        // that is right.
+        record_surface_size(tag, 1000, 800);
+        assert_eq!(
+            owner.run(|| layout_size(tag, floor, design)),
+            (1600, 1000),
+            "in a view with no grant the window is still the answer — unchanged",
+        );
+        assert_eq!(
+            layout_size(tag, floor, design),
+            (1000, 800),
+            "and out of a view the surface's own rectangle is, as before",
+        );
+
+        // With the grant the two halves are one fact.
+        assert_eq!(
+            owner.run(|| with_surface_extent(tag, (1000, 800), || layout_size(tag, floor, design))),
+            (1000, 800),
+            "the host said how big it made the region, and that is what the \
+             guest lays out in",
+        );
+
+        // A grant is for one tag, not for the frame.
+        assert_eq!(
+            owner.run(
+                || with_surface_extent("r1724.other", (300, 300), || layout_size(
+                    tag, floor, design
+                ))
+            ),
+            (1600, 1000),
+            "a grant to a sibling surface says nothing about this one",
+        );
+
+        // The floor still applies to a granted extent — a region below the
+        // floor clips exactly as a window below it does.
+        assert_eq!(
+            owner.run(|| with_surface_extent(tag, (50, 50), || layout_size(tag, floor, design))),
+            floor,
+            "a region under the floor stops the layout shrinking, same rule",
+        );
+
+        // Innermost wins, so a screen placed inside a placed screen reads its
+        // own rectangle.
+        assert_eq!(
+            owner.run(|| with_surface_extent(tag, (1000, 800), || {
+                with_surface_extent(tag, (400, 300), || layout_size(tag, floor, design))
+            })),
+            (400, 300),
+            "the innermost grant is the one being drawn",
+        );
+
+        // And the grant ends with the scope: this is what keeps the next
+        // frame's hit test off a rectangle nobody is placing.
+        assert_eq!(
+            granted_surface_extent(tag),
+            None,
+            "no grant stands once the host has finished its scene",
+        );
+        assert_eq!(
+            owner.run(|| layout_size(tag, floor, design)),
+            (1600, 1000),
+            "so the un-granted reading is exactly what it was before",
+        );
+        forget_surface_size(tag);
+    }
+
+    /// R1724 — the guard, not a line after the call: a view that panics must
+    /// not leave its grant standing for whoever reads next.
+    #[test]
+    fn r1724_a_grant_does_not_survive_a_panic_in_the_body() {
+        let tag = "r1724.panicking";
+        let caught = std::panic::catch_unwind(|| {
+            with_surface_extent(tag, (640, 480), || panic!("the guest's view blew up"));
+        });
+        assert!(caught.is_err(), "the panic is the point of the fixture");
+        assert_eq!(
+            granted_surface_extent(tag),
+            None,
+            "and the grant went with the stack frame that made it",
+        );
+    }
+
+    /// R1724 — a zero extent is refused where it is made rather than read back
+    /// later as `design`, which is what `layout_size` would have done with it.
+    #[test]
+    #[should_panic(expected = "a surface extent grant must have both axes positive")]
+    fn r1724_a_zero_extent_is_not_a_grant() {
+        with_surface_extent("r1724.zero", (0, 480), || ());
     }
 
     /// R1353 §2 #2 — a declared arity that does not match the `query` impl is

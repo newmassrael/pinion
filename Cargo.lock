@@ -1788,12 +1788,14 @@ dependencies = [
 name = "hello-analyzer-shell"
 version = "0.0.1"
 dependencies = [
+ "hello-node-lab",
  "pinion-a11y",
  "pinion-chart",
  "pinion-core",
  "pinion-forge",
  "pinion-gpu",
  "pinion-runtime",
+ "pinion-screen",
  "pinion-shell",
  "pinion-widget-paint",
  "serde",
@@ -6313,6 +6315,18 @@ dependencies = [
  "skrifa 0.42.1",
  "taffy",
  "vello",
+]
+
+[[package]]
+name = "pinion-screen"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-overlay",
+ "pinion-shell",
+ "pinion-text",
+ "serde_json",
 ]
 
 [[package]]

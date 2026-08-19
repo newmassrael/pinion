@@ -558,7 +558,26 @@ pub fn pan(policy: Option<ShrinkPolicy>, tag: &str, window: (u32, u32), root: Sc
     let node = ScrollNode::from_state(state, Rect::new(0, 0, window.0, window.1), root)
         .with_axis(ScrollAxis::Both);
     let layout = node.layout.clone().with_absolute_position(0, 0);
-    Scene::Scroll(node.with_layout(layout))
+    // ★★★★★ R1724 — **the pan is a clip, not a thing on the screen**, and it
+    // has to say so or it is a painted addressable region nobody gave a voice
+    // and nobody declared quiet.
+    //
+    // Nothing noticed until a screen was mounted inside another one. Every
+    // screen that declares `Recourse::Pan` opens at its own comfortable size,
+    // so the pan node does not exist at boot and the voice census never met
+    // it; place that same screen in a REGION smaller than its layout minimum
+    // and it exists from the first frame. Measured the day this landed: the
+    // analysis-tool shell at Catalog reported `unvoiced: 1` and the tag was
+    // this node.
+    //
+    // The declaration belongs here rather than in each screen for the reason
+    // the whole function does: a viewport the framework mints is not something
+    // an application should have to remember to describe. It is the same
+    // silence a scrolling pane's viewport carries — what a reader walks is the
+    // layout inside it.
+    Scene::Scroll(node.with_layout(layout)).silenced(crate::voice::Silence::layout(
+        "the window's panning viewport",
+    ))
 }
 
 /// What a declaration and a measurement said about each other.
@@ -980,6 +999,24 @@ mod tests {
             crate::widgets::scroll::max_scroll_offset(1625, 1200),
             425,
             "the range the window is short by",
+        );
+        // ★★★★★ R1724 — and it declares itself a clip rather than a thing on
+        // the screen. Without this the pan is a painted, addressable region
+        // nobody gave a voice and nobody declared quiet, which is the exact
+        // arm `scene/voice` calls `unvoiced`. Nothing met it for ten rounds
+        // because a screen that declares `Recourse::Pan` opens at its own
+        // comfortable size, so the node does not exist at boot; the day a
+        // screen was placed in a REGION smaller than its layout minimum it
+        // existed from the first frame and the shell reported `unvoiced: 1`.
+        let silence = node
+            .layout
+            .silence
+            .as_ref()
+            .expect("the pan viewport declares why it is quiet");
+        assert_eq!(
+            silence.kind(),
+            crate::voice::SilenceKind::Layout,
+            "a viewport is a clip: what a reader walks is the layout inside it",
         );
     }
 

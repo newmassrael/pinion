@@ -30,6 +30,7 @@ members = [
     "crates/pinion-chart",
     "crates/pinion-graph",
     "crates/pinion-node-graph",
+    "crates/pinion-screen",
     "examples/hello-button",
     "examples/hello-window-focus",
     "examples/hello-window-focus-multi",

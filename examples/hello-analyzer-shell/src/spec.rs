@@ -149,10 +149,17 @@ pub const RAIL: &[RailSpec] = &[
         title: "Decode",
         seat: Seat::Elsewhere("the capture viewer"),
     },
+    // ★★★★★ R1724 — **the first seat to stop saying *elsewhere*.**
+    //
+    // Its page is `hello-node-lab`, mounted through
+    // `pinion_screen::Mount<NodeLabView>` — the same 20,655-line binding the
+    // standalone `hello-node-lab` binary runs, unedited. Which destinations
+    // have a screen behind them is the `ScreenRoster`'s fact and is not
+    // written down a second time here: a seat only says whether it is open.
     RailSpec {
         key: "catalog",
         title: "Catalog",
-        seat: Seat::Elsewhere("the node graph lab"),
+        seat: Seat::Page,
     },
     RailSpec {
         key: "settings",

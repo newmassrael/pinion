@@ -25,6 +25,12 @@ pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
 pinion-chart = { path = "../../crates/pinion-chart", version = "0.0.1" }
 # R1662 — the scrolling-pane assembly the board sits in.
 pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+# ★★★★★ R1724 — the axis that makes this the analysis tool's ONE application:
+# a destination's page can be another binding, mounted whole.
+pinion-screen = { path = "../../crates/pinion-screen", version = "0.0.1" }
+# The Catalog destination's page. The library half of the standalone
+# `hello-node-lab` binary — the same 20,655-line screen, unedited.
+hello-node-lab = { path = "../hello-node-lab" }
 vello = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

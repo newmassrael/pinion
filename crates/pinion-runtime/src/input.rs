@@ -3640,7 +3640,7 @@ impl InputRouter {
 ///
 /// A tagged decorative child — a header section's own label, an icon inside a
 /// row — must not become the pointer target: `pointer_down` would dispatch to
-/// it, [`dispatch_send`] would find no `External` for its primary half, and
+/// it, `dispatch_send` would find no `External` for its primary half, and
 /// the event would be **dropped silently**. Measured on `hello-column-reorder`
 /// (R1497): `scene/click` on `colhdr#3` / `colhdr#4` was lost 100% of the time
 /// while `#0` / `#1` / `#2` worked, and the discriminator was exactly whether the
@@ -3672,7 +3672,13 @@ impl InputRouter {
 /// reading the tree can tell them apart. Which one is decoration is a fact
 /// only the paint site knows, which is why the toolkit and CSS both make it a
 /// declaration and why this walk asks for none.
-fn resolve_pointer_tag(paint_scene: &Scene, x: f64, y: f64) -> Option<String> {
+/// ★ R1724 — `pub` so a gate can ask the ROUTER what a press addresses instead
+/// of writing the walk out again.
+///
+/// The test that found the defect below re-implemented this in four lines and
+/// therefore did not see the repair — the R47 class, in the smallest possible
+/// form. A hit test spelled twice is two hit tests.
+pub fn resolve_pointer_tag(paint_scene: &Scene, x: f64, y: f64) -> Option<String> {
     let xu = floor_clamp_u32(x);
     let yu = floor_clamp_u32(y);
     let hit = paint_scene.hit_test(xu, yu)?;
@@ -3682,11 +3688,40 @@ fn resolve_pointer_tag(paint_scene: &Scene, x: f64, y: f64) -> Option<String> {
         let Some(scene) = paint_scene.lookup_path_ref(&hit.segments[..k]) else {
             continue;
         };
-        if let Some(tag) = scene.tag() {
+        if let Some(tag) = tag_beneath_a_viewport(scene) {
             return Some(tag.to_string());
         }
     }
     None
+}
+
+/// ★★★★★ R1724 §5.35 §5.45 — **a scroll viewport is a clip, not a target.**
+///
+/// [`Scene::lookup_path_ref`] is path-transparent at a `Scroll` — its own
+/// comment says so, *"a wrapper, not a path-bearing layer"* — but only while
+/// segments remain: handed an empty remainder it stops AT the scroll and
+/// returns the wrapper. That is the case a press lands in whenever nothing
+/// deeper is hittable, which is the normal state of a screen that makes its
+/// own paint pointer-transparent and resolves every gesture at its root
+/// (R1655, and three screens of this tree do it).
+///
+/// While the scroll is the WINDOW's own pan the wrapper sits above the paint
+/// root and nothing is hurt: no external carries its tag, so the router drops a
+/// press it was going to drop anyway. Put a screen inside a region that pans
+/// and the wrapper sits between the screen and *its own root* — measured the
+/// day the first screen was mounted: a press at the centre of a card the screen
+/// painted resolved to `window.pan`, and the whole section was dead to a mouse
+/// while its paint, its wire, its accessibility tree and `scene/pointer_reach`
+/// were all correct.
+///
+/// Looking through cannot take a press away from anything: a `Scroll` tag is a
+/// scroll ADDRESS (`scene/scroll {path}`), never an `External`'s, so a press
+/// that resolved to one was already being forwarded nowhere.
+fn tag_beneath_a_viewport(scene: &Scene) -> Option<&str> {
+    match scene {
+        Scene::Scroll(node) => tag_beneath_a_viewport(&node.content),
+        other => other.tag(),
+    }
 }
 
 /// R1650 §5.35 §2 #7 — a painted tag that the pointer reaches and **nothing can
@@ -5233,6 +5268,62 @@ mod tests {
     /// ★ The size announced is the WIDGET's rect, not the window's — because
     /// that is the rect `pointer_move` normalises over. A viewport inset by a
     /// toolbar would otherwise be handed a basis it never had.
+    /// ★★★★★ R1724 §5.35 §5.45 — **a press resolves through a scroll viewport
+    /// to what it is a viewport onto.**
+    ///
+    /// The gate this crate did not have, and its absence is a finding rather
+    /// than an oversight: the repair landed with its only gate in a consuming
+    /// example, so a counterfactual restoring the defect was caught by nothing
+    /// `cargo test -p pinion-runtime` runs. A gate beside the layer a defect
+    /// lives in is a gate the next person editing that layer will not trip.
+    ///
+    /// The defect it pins: [`Scene::lookup_path_ref`] is path-transparent at a
+    /// `Scroll` only while segments remain, and returns the WRAPPER when handed
+    /// an empty remainder — which is what a press produces whenever nothing
+    /// deeper is hittable. That is the normal state of a screen that makes its
+    /// own paint pointer-transparent and resolves every gesture at its root
+    /// (R1655; three screens of this tree do it). Harmless while the scroll is
+    /// a window's own pan, because nothing is below it; fatal once a pan sits
+    /// between a screen and its own root, where it left a whole mounted
+    /// section dead to the mouse.
+    #[test]
+    fn r1724_a_press_resolves_through_a_scroll_to_what_it_shows() {
+        use pinion_core::scene::{ScrollAxis, ScrollNode};
+        use pinion_core::style::{LayoutStyle, Size};
+
+        let screen = Scene::Container(
+            ContainerNode::new(vec![Scene::Container(
+                // The screen's own paint, transparent to the pointer the way
+                // `hello-node-lab` paints every absolutely-placed node so that
+                // one root external resolves every gesture.
+                ContainerNode::new(Vec::new())
+                    .with_tag("screen.card")
+                    .with_layout(
+                        LayoutStyle::new()
+                            .with_absolute_position(10, 10)
+                            .with_size(Size::px(80, 40))
+                            .with_pointer_transparent(true),
+                    ),
+            )])
+            .with_tag("screen")
+            .with_layout(LayoutStyle::new().with_size(Size::px(400, 300))),
+        );
+        let panned = Scene::Scroll(
+            ScrollNode::new(Rect::new(0, 0, 200, 150), screen)
+                .with_axis(ScrollAxis::Both)
+                .with_tag("window.pan"),
+        );
+        let mut paint = Scene::Container(ContainerNode::new(vec![panned]));
+        let mut cache = crate::LayoutCache::new();
+        crate::compute_layout(&mut paint, &mut cache, 200, 150);
+
+        assert_eq!(
+            resolve_pointer_tag(&paint, 50.0, 50.0).as_deref(),
+            Some("screen"),
+            "the press reaches the screen the viewport shows, not the viewport",
+        );
+    }
+
     #[test]
     fn r1656_the_size_announced_is_the_widgets_own_rect() {
         let (handle, sizes) = SizedExternal::new();

@@ -10,6 +10,7 @@ use pinion_core::scene::Rect;
 use pinion_core::widgets::card::{CardAffordance, CardState, Remedy};
 use pinion_core::widgets::tile_grid::Tile;
 use pinion_core::widgets::transport::TransportStatus;
+use pinion_screen::ScreenState;
 
 use std::collections::BTreeMap;
 
@@ -191,7 +192,14 @@ fn r1668_every_reserved_seat_names_what_it_waits_for() {
             spec::Seat::Page | spec::Seat::Reserved(_) => None,
         })
         .collect();
-    assert_eq!(elsewhere.len(), 3, "{elsewhere:?}");
+    // ★★★★★ R1724 — **three, then two.** Catalog stopped saying *elsewhere*
+    // because the node graph lab is mounted here now
+    // (`pinion_screen::Mount<NodeLabView>`), so the tool is one application at
+    // that seat rather than two executables. The two that remain are the
+    // capture viewer's, and they are a later round's: they are one screen
+    // behind two seats, and what `decode` is has to be settled before it can be
+    // mounted at all.
+    assert_eq!(elsewhere.len(), 2, "{elsewhere:?}");
     for (key, surface) in elsewhere {
         assert!(
             surface.starts_with("the ") && surface.len() > 8,
@@ -530,7 +538,7 @@ fn r1668_the_chrome_is_uniform_and_a_refusal_is_still_demonstrable() {
 fn r1649_every_tag_but_the_root_is_pointer_transparent() {
     let owner = Owner::new();
     owner.run(|| {
-        let scene = super::view((), pinion_core::Frame::default());
+        let scene = super::view(ScreenState::default(), pinion_core::Frame::default());
         let mut tagged = 0;
         let mut walk = vec![(&scene, true)];
         while let Some((node, is_root)) = walk.pop() {
@@ -595,7 +603,7 @@ fn r1653_no_two_text_runs_of_one_widget_are_painted_on_top_of_each_other() {
     use std::collections::BTreeMap;
     let owner = Owner::new();
     owner.run(|| {
-        let mut scene = super::view((), pinion_core::Frame::default());
+        let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
         let mut cache = pinion_runtime::LayoutCache::new();
         pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
 
@@ -697,7 +705,7 @@ fn r1662_a_board_taller_than_the_canvas_is_reachable_by_scrolling() {
             super::ShellOracle::add(&state, spec::BOARD[0].kind).expect("the palette offers it");
         }
         let paint = || {
-            let mut scene = super::view((), pinion_core::Frame::default());
+            let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
             let mut cache = pinion_runtime::LayoutCache::new();
             pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
             scene
@@ -784,7 +792,7 @@ fn r1662_a_board_taller_than_the_canvas_is_reachable_by_scrolling() {
 fn announced() -> std::collections::BTreeMap<String, pinion_a11y::AccessNode> {
     use pinion_a11y::WidgetA11y;
     Owner::new().run(|| {
-        super::AnalyzerShellView::access_node(&(), None)
+        super::AnalyzerShellView::access_node(&ScreenState::default(), None)
             .into_iter()
             .map(|node| (node.tag.clone(), node))
             .collect()
@@ -816,10 +824,14 @@ fn the_voice_table_is_a_partition_with_no_tag_in_both_halves() {
 
 #[test]
 fn the_locked_table_is_derived_from_the_tier_and_the_reservation() {
-    // ★ R1695 — sixteen now, not eleven: nine catalogue entries booked for a
-    // later release, FIVE rail destinations this application cannot take you to,
-    // and the settings page's two key rows. Derived rather than listed, so a
-    // seat that is unlocked leaves the table by being unlocked.
+    // ★ R1695 — sixteen then: nine catalogue entries booked for a later
+    // release, FIVE rail destinations this application cannot take you to, and
+    // the settings page's two key rows. Derived rather than listed, so a seat
+    // that is unlocked leaves the table by being unlocked.
+    // ★★★★★ R1724 — **fifteen now, and this is the assertion that shows the
+    // derivation works.** Catalog's page is the node graph lab, mounted, so
+    // that rail seat is open — and it left this table without anybody editing
+    // this table, which is exactly what "derived rather than listed" was for.
     let tags: Vec<String> = spec::LOCKED
         .iter()
         .flat_map(|(template, population, _)| {
@@ -829,7 +841,7 @@ fn the_locked_table_is_derived_from_the_tier_and_the_reservation() {
                 .map(move |member| template.replace("{}", &member))
         })
         .collect();
-    assert_eq!(tags.len(), 16, "{tags:?}");
+    assert_eq!(tags.len(), 15, "{tags:?}");
     assert_eq!(
         tags.iter()
             .filter(|t| t.starts_with("shell.palette."))
@@ -855,19 +867,38 @@ fn the_locked_table_is_derived_from_the_tier_and_the_reservation() {
 /// nothing said so — a page added to this screen would simply not appear in any
 /// census, which is `debt-the-voice-gate-judges-only-the-opening-screen` in the
 /// small. The roster is the enumeration that was missing.
+///
+/// ★★★★★ R1724 — **and it is a partition over the pages this screen paints.**
+///
+/// A destination whose page is a mounted screen has no regions in this table
+/// and must not: the regions are that screen's, enumerated by that screen's own
+/// specification and judged by its own tests. What this census owes is that no
+/// destination falls out of *both* — so a key is covered here, or it has a
+/// screen, and the assertion names which.
 #[test]
 fn r1695_every_open_destination_owns_at_least_one_declared_region() {
     let roster = spec::destinations();
+    let screens = super::screen_roster();
     for destination in roster.open() {
         let key = destination.key.as_ref();
         let own = spec::VOICES
             .iter()
             .filter(|voice| matches!(voice.at, spec::Where::At(k) if k == key))
             .count();
+        if screens.is_mounted(key) {
+            assert_eq!(
+                own, 0,
+                "the {key} destination's page is a mounted screen, so this \
+                 screen's census must not also claim regions there — two \
+                 censuses over one page is how they come to disagree",
+            );
+            continue;
+        }
         assert!(
             own > 0,
-            "the {key} destination is open and the census gives it no region \
-             of its own, so arriving there is a page nobody judges",
+            "the {key} destination is open, this screen paints it, and the \
+             census gives it no region of its own, so arriving there is a page \
+             nobody judges",
         );
     }
     // And a row cannot name a destination the rail does not hold — the join
@@ -1054,7 +1085,7 @@ fn r1721_the_tree_reports_the_saved_filter_the_card_has_applied() {
 /// person's key comes in by. A gate that drives the layer BELOW the defect is
 /// the shape R1693 named and this is its fourth recorded occurrence.
 fn press_key(focused: Option<&str>, chord: &str) -> bool {
-    let mut scene = super::view((), pinion_core::Frame::default());
+    let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
     AnalyzerShellView::apply_key(
         &mut scene,
         focused,
@@ -1215,7 +1246,7 @@ fn r1698_the_tree_publishes_the_cursor_and_the_roster_it_walks() {
     let owner = Owner::new();
     owner.run(|| {
         let _ = use_shell_state();
-        let nodes = AnalyzerShellView::access_node(&(), None);
+        let nodes = AnalyzerShellView::access_node(&ScreenState::default(), None);
         let by_tag: BTreeMap<&str, &pinion_a11y::AccessNode> =
             nodes.iter().map(|n| (n.tag.as_str(), n)).collect();
 
@@ -1300,8 +1331,9 @@ fn r1698_the_focus_target_names_the_member_the_cursor_is_on() {
             let Some(declared) = stop.cursor else {
                 continue;
             };
-            let target = AnalyzerShellView::access_focus_target(&(), Some(stop.tag))
-                .unwrap_or_else(|| panic!("{} owns the focus and reports no target", stop.tag));
+            let target =
+                AnalyzerShellView::access_focus_target(&ScreenState::default(), Some(stop.tag))
+                    .unwrap_or_else(|| panic!("{} owns the focus and reports no target", stop.tag));
             assert_eq!(
                 target.focus_tag, stop.tag,
                 "the AT focus stays on the composite"
@@ -1323,8 +1355,9 @@ fn r1698_the_focus_target_names_the_member_the_cursor_is_on() {
             // And it FOLLOWS the arrows rather than being a value read once.
             let before = target.active_descendant.clone();
             assert!(press_key(Some(stop.tag), declared.axis.keys()[0]));
-            let after = AnalyzerShellView::access_focus_target(&(), Some(stop.tag))
-                .and_then(|t| t.active_descendant);
+            let after =
+                AnalyzerShellView::access_focus_target(&ScreenState::default(), Some(stop.tag))
+                    .and_then(|t| t.active_descendant);
             assert_ne!(
                 before, after,
                 "{}: the descendant moved with the cursor",
@@ -1338,8 +1371,9 @@ fn r1698_the_focus_target_names_the_member_the_cursor_is_on() {
         // reader landing there is told which one.
         let first = state.placed()[0].id().as_str().to_owned();
         state.selected.set(Some(first.clone()));
-        let target = AnalyzerShellView::access_focus_target(&(), Some("shell.canvas"))
-            .expect("the board reports a target");
+        let target =
+            AnalyzerShellView::access_focus_target(&ScreenState::default(), Some("shell.canvas"))
+                .expect("the board reports a target");
         assert_eq!(target.active_descendant, Some(format!("card.{first}")));
     });
 }
@@ -1409,7 +1443,7 @@ fn r1699_every_cursor_member_resolves_to_the_hit_its_tag_names() {
     let owner = Owner::new();
     owner.run(|| {
         let state = use_shell_state();
-        let mut scene = super::view((), pinion_core::Frame::default());
+        let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
         let mut cache = pinion_runtime::LayoutCache::new();
         pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
         let rects = scene.absolute_rects_by_tag();
@@ -1495,7 +1529,7 @@ fn r1699_choosing_a_member_from_the_keyboard_does_something() {
     owner.run(|| {
         let state = use_shell_state();
         let screen = || {
-            let mut scene = super::view((), pinion_core::Frame::default());
+            let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
             let mut cache = pinion_runtime::LayoutCache::new();
             pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
             let mut tags: Vec<(String, (u32, u32, u32, u32))> = scene
@@ -1594,7 +1628,7 @@ fn r1699_the_nested_tab_list_is_entered_walked_and_left() {
     owner.run(|| {
         let state = use_shell_state();
         let descendant = || {
-            AnalyzerShellView::access_focus_target(&(), Some("shell.appbar"))
+            AnalyzerShellView::access_focus_target(&ScreenState::default(), Some("shell.appbar"))
                 .and_then(|t| t.active_descendant)
         };
         assert!(press_key(Some("shell.appbar"), "Home"));
@@ -1664,7 +1698,7 @@ fn r1699_the_nested_composite_publishes_its_roster_unentered() {
     let owner = Owner::new();
     owner.run(|| {
         let _ = use_shell_state();
-        let nodes = AnalyzerShellView::access_node(&(), None);
+        let nodes = AnalyzerShellView::access_node(&ScreenState::default(), None);
         let by_tag: BTreeMap<&str, &pinion_a11y::AccessNode> =
             nodes.iter().map(|n| (n.tag.as_str(), n)).collect();
 
@@ -1735,7 +1769,7 @@ fn point(oracle: &mut super::ShellOracle, x: u32, y: u32) {
 /// recorded twice — take a press point from the painted scene, never from
 /// arithmetic beside the thing under test — is the rule here too.
 fn grip_centre(n: usize) -> (String, u32, u32) {
-    let mut scene = super::view((), pinion_core::Frame::default());
+    let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
     let mut cache = pinion_runtime::LayoutCache::new();
     pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
     let rects = scene.absolute_rects_by_tag();
@@ -1870,6 +1904,274 @@ fn r1701_a_click_on_a_header_that_moved_nothing_says_nothing() {
             state.toast.get(),
             said,
             "\u{2605} and says nothing, because there is nothing to say"
+        );
+    });
+}
+
+// --- R1724: the tool is one application --------------------------------------
+//
+// These are the shell's half of `pinion-screen`'s guarantees. That crate proves
+// them against fixtures; these prove that THIS application is wired to them —
+// which is a different claim, and the one the integration debt is about.
+
+/// The tags in a scene, so a claim about "what the window shows" is a set
+/// rather than a walk written four times.
+///
+/// ★ Not `painted::Painted::of(..).tags`, and the difference is load-bearing:
+/// that one keys tags by their absolute RECTANGLE and therefore skips every
+/// node the layout pass has not placed. These tests assert about the scene the
+/// view returns, without running layout, because what they are about is which
+/// screen composed it. Unifying the two would make this silently empty.
+fn painted_tags(scene: &pinion_core::Scene) -> std::collections::BTreeSet<String> {
+    let mut tags = std::collections::BTreeSet::new();
+    scene.for_each_node(&mut |visit| {
+        if let Some(tag) = visit.node.tag() {
+            tags.insert(tag.to_owned());
+        }
+    });
+    tags
+}
+
+fn lab_tags(tags: &std::collections::BTreeSet<String>) -> Vec<String> {
+    tags.iter()
+        .filter(|t| t.as_str() == "node_lab" || t.starts_with("lab."))
+        .cloned()
+        .collect()
+}
+
+/// ★★★★★ R1724 — **arriving at Catalog shows the node graph lab.**
+///
+/// The seat said `elsewhere` — *built, shipping, and not here* — for as long as
+/// the tool was three executables. It is here now, and this is what that means:
+/// the same binding the standalone `hello-node-lab` binary runs paints inside
+/// this window's page region.
+#[test]
+fn r1724_the_catalog_destination_is_the_node_lab_itself() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = super::use_shell_state();
+
+        let dashboard = painted_tags(&super::view(
+            ScreenState::default(),
+            pinion_core::Frame::default(),
+        ));
+        assert_eq!(
+            lab_tags(&dashboard),
+            Vec::<String>::new(),
+            "no part of the lab is anywhere on the dashboard"
+        );
+
+        state
+            .go("catalog")
+            .expect("Catalog is a destination we can reach");
+        let catalog = painted_tags(&super::view(
+            ScreenState::default(),
+            pinion_core::Frame::default(),
+        ));
+        let lab = lab_tags(&catalog);
+        assert!(
+            catalog.contains("node_lab"),
+            "the lab's own paint root is in the window"
+        );
+        for pane in ["lab.palette", "lab.canvas", "lab.inspector"] {
+            assert!(
+                lab.iter().any(|t| t == pane),
+                "the lab's {pane} pane is painted"
+            );
+        }
+        assert!(
+            lab.len() > 40,
+            "a whole screen arrived, not a placeholder: {} region(s)",
+            lab.len()
+        );
+        // And the application is still the application.
+        for chrome in ["shell.appbar", "shell.rail", "shell.canvas"] {
+            assert!(
+                catalog.contains(chrome),
+                "the shell's {chrome} is still painted"
+            );
+        }
+    });
+}
+
+/// ★★★★★ R1724 — **a press inside the section reaches the section.**
+///
+/// The property no gate in this tree had, and the one that was false while
+/// every other gate was green. Measured the day the lab was first mounted: it
+/// painted 139 tagged regions, answered every path on the wire, appeared in
+/// the accessibility tree, and `scene/pointer_reach` reported it `routed_by:
+/// node_lab` — and not one press anywhere inside it reached anything, the
+/// screen or the host.
+///
+/// Every one of those checks was true and none of them was this one. They ask
+/// what a painted rectangle RESOLVES to; this asks whether the hit test
+/// descends that far, which is a question one layer below them.
+#[test]
+fn r1724_a_press_inside_the_mounted_section_resolves_to_it() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = super::use_shell_state();
+        state.go("catalog").expect("Catalog is reachable");
+        let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
+        let mut cache = pinion_runtime::LayoutCache::new();
+        pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
+
+        // ★★★★★ The ROUTER's own resolution, not a copy of it. The first draft
+        // of this test wrote the four-line walk out here, and then did not see
+        // the repair it was written to check — a hit test spelled twice is two
+        // hit tests, which is the R47 class in its smallest possible form.
+        let resolves_at = |x: u32, y: u32| -> Option<String> {
+            pinion_runtime::resolve_pointer_tag(&scene, f64::from(x), f64::from(y))
+        };
+
+        // ★ The card's rectangle is stated in the PAGE's frame, not the
+        // window's: the pan viewport gives its content its own layout pass, so
+        // a rectangle inside it counts from the page's origin. Converting is
+        // the caller's job and getting it wrong is how the first draft of this
+        // test pressed 22 pixels above the card it named.
+        let page = pinion_runtime::rect_for_tag(&scene, "window.pan")
+            .expect("the mounted section pans inside its region");
+        let card = pinion_runtime::rect_for_tag(&scene, "lab.node.P-02")
+            .expect("the mounted lab paints its node cards");
+        let inside = (page.x + card.x + card.w / 2, page.y + card.y + card.h / 2);
+        let landed = resolves_at(inside.0, inside.1);
+        assert_eq!(
+            landed.as_deref(),
+            Some("node_lab"),
+            "a press at ({}, {}) -- the centre of a card the mounted screen \
+             painted -- must resolve to that screen's own surface. It is the \
+             ONE external the lab registers (R1655), so this is what carries \
+             every gesture the section has",
+            inside.0,
+            inside.1,
+        );
+
+        // And the host still owns its own chrome, so the two do not fight.
+        let seat = pinion_runtime::rect_for_tag(&scene, "shell.rail.dashboard")
+            .expect("the rail is painted");
+        assert_eq!(
+            resolves_at(seat.x + seat.w / 2, seat.y + seat.h / 2).as_deref(),
+            Some(super::VIEW_TAG),
+            "a press on the shell's rail is the shell's, with a whole other \
+             screen showing beside it",
+        );
+    });
+}
+
+/// ★★★★★ R1724 — **the surfaces are the showing screen's, and nobody else's.**
+///
+/// Measured at 6.11.1 by building a probe and running it: a page of the
+/// reference toolkit's paged container that is not showing, sent a press, a key
+/// and a wheel, counted all three. Here the externals of a screen the journey
+/// is not at are not in the set the shell hands the framework, so there is
+/// nothing for the router to resolve a press to and no slot for the wire.
+#[test]
+fn r1724_only_the_showing_section_has_surfaces() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = super::use_shell_state();
+        let tags = || {
+            super::AnalyzerShellView::create_extra_externals()
+                .iter()
+                .map(|e| e.tag.clone().into_owned())
+                .collect::<Vec<_>>()
+        };
+
+        assert_eq!(
+            tags(),
+            Vec::<String>::new(),
+            "the dashboard is this application's own page, so it mounts nothing"
+        );
+
+        state.go("catalog").expect("Catalog is reachable");
+        let live = tags();
+        assert!(
+            live.iter().any(|t| t == "node_lab"),
+            "the lab's own surface is live while the lab is showing: {live:?}"
+        );
+
+        state.go("dashboard").expect("the dashboard is reachable");
+        assert_eq!(
+            tags(),
+            Vec::<String>::new(),
+            "and it is gone the moment the rail takes you elsewhere"
+        );
+    });
+}
+
+/// ★★★★★ R1724 — **the accessibility tree follows the rail into the section.**
+///
+/// The row the reference toolkit fails twice over: measured at 6.11.1, its
+/// non-current page is reachable as an accessible child with its text field
+/// under it, marked `invisible` and nothing more.
+#[test]
+fn r1724_the_tree_holds_the_showing_section_and_only_it() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = super::use_shell_state();
+        let announced = || {
+            super::AnalyzerShellView::access_node(&ScreenState::default(), None)
+                .into_iter()
+                .map(|n| n.tag)
+                .collect::<Vec<_>>()
+        };
+        let lab_nodes = |nodes: &[String]| {
+            nodes
+                .iter()
+                .filter(|t| t.as_str() == "node_lab" || t.starts_with("lab."))
+                .count()
+        };
+
+        assert_eq!(
+            lab_nodes(&announced()),
+            0,
+            "nothing of the lab on the dashboard"
+        );
+
+        state.go("catalog").expect("Catalog is reachable");
+        let nodes = super::AnalyzerShellView::access_node(&ScreenState::default(), None);
+        let region = nodes
+            .iter()
+            .find(|n| n.tag == "shell.canvas")
+            .expect("the page region is in the tree");
+        assert!(
+            region.children.iter().any(|c| c == "node_lab"),
+            "the lab's root hangs under the region it is painted in: {:?}",
+            region.children
+        );
+        let tags: Vec<String> = nodes.into_iter().map(|n| n.tag).collect();
+        assert!(
+            lab_nodes(&tags) > 20,
+            "and the lab announces its own screen: {} node(s)",
+            lab_nodes(&tags)
+        );
+    });
+}
+
+/// ★★★★★ R1724 — **the host's state notices the section it is showing.**
+///
+/// This shell declared `State = ()` for as long as every page was its own, and
+/// that was true then: its pages are signals. A mounted screen's projection
+/// comes out of the state scene, so a host whose state never differs would
+/// paint that screen's first frame and no other.
+#[test]
+fn r1724_the_hosts_state_moves_when_the_rail_does() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = super::use_shell_state();
+        let empty =
+            pinion_core::Scene::Container(pinion_core::scene::ContainerNode::new(Vec::new()));
+        let here = super::AnalyzerShellView::read_state(&empty);
+        state.go("catalog").expect("Catalog is reachable");
+        let there = super::AnalyzerShellView::read_state(&empty);
+        assert_ne!(
+            here, there,
+            "arriving somewhere is a change the framework can see"
+        );
+        assert_eq!(
+            there,
+            super::AnalyzerShellView::read_state(&empty),
+            "and standing still is not"
         );
     });
 }

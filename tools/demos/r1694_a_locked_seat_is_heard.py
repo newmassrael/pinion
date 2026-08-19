@@ -118,10 +118,15 @@ def body() -> None:
         # live and refusing nothing until then) and the settings page's own two
         # booked affordances. Each row now says WHICH destination it belongs to,
         # so this demo can ask about the one the screen opens at.
-        assert_eq(len(locked), 16, "A: sixteen regions are declared unavailable")
+        # ★★★★★ R1724 — fifteen: Catalog's page is the node graph lab, mounted
+        # (`pinion_screen::Mount<NodeLabView>`), so that rail seat is open and
+        # left this table by being open. Nobody edited the table — it is derived
+        # from the seat's own standing, which is what "derived rather than
+        # listed" was for.
+        assert_eq(len(locked), 15, "A: fifteen regions are declared unavailable")
         here = spec["rail_active"]
         locked = [row["tag"] for row in locked if row["at"] in ("*", here)]
-        assert_eq(len(locked), 14, "A: fourteen of them are on the opening screen")
+        assert_eq(len(locked), 13, "A: thirteen of them are on the opening screen")
         assert_eq(
             len(spec["catalogue"]),
             13,

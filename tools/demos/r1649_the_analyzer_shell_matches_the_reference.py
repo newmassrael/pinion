@@ -267,10 +267,14 @@ def body() -> None:
             for row in tf.request("scene/disabled", {}).result["disabled"]
             if row["reason"] == "elsewhere"
         ]
+        # ★★★★★ R1724 — **three, then two.** Catalog's page is the node graph
+        # lab, mounted whole through `pinion_screen::Mount<NodeLabView>`, so the
+        # seat stopped saying *built, shipping, and not here* — it is here. The
+        # two that remain are the capture viewer's.
         assert_eq(
             sorted(elsewhere),
-            ["shell.rail.catalog", "shell.rail.decode", "shell.rail.stream"],
-            "B2: three destinations are built and not here",
+            ["shell.rail.decode", "shell.rail.stream"],
+            "B2: two destinations are built and not here",
         )
         assert_eq(
             [

@@ -114,9 +114,12 @@ use pinion_core::widgets::tile_grid::{
 use pinion_core::widgets::toggle::ToggleState;
 use pinion_core::widgets::transport::{TransportClock, TransportStatus, use_transport_clock};
 use pinion_core::{Frame, Scene, WidgetCore};
+// ★★★★★ R1724 — the axis that makes this file an application rather than a
+// screen: a destination's page can be another binding, mounted whole.
+use pinion_screen::{Mount, Screen, ScreenRoster, ScreenState};
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{self, ButtonColors, ButtonStyle};
-use pinion_widget_paint::pages::view_page_region;
+use pinion_widget_paint::pages::{PagePointer, view_page_region};
 use pinion_widget_paint::pane::{PanePointer, scroll_pane};
 use pinion_widget_paint::run::text_run;
 use pinion_widget_paint::switch::{self, SwitchStyle};
@@ -556,10 +559,20 @@ struct ShellState {
     /// now reads it, so *arriving* is a fact about the window rather than about
     /// a variable.
     journey: Signal<Journey>,
-    /// The roster the journey is navigated against. Held rather than rebuilt at
-    /// each read so the paint, the hit test and the wire cannot be looking at
-    /// three rosters — the failure this whole axis is a repair for.
-    roster: Destinations,
+    /// ★★★★★ R1724 — **the roster, and the screens behind the destinations
+    /// that have one.**
+    ///
+    /// This was a bare [`Destinations`] and the difference is what makes the
+    /// analysis tool one application: a destination's page can now be another
+    /// binding. Catalog is `hello-node-lab`, mounted whole and unedited, and
+    /// its seat stopped saying *built, shipping, and not here*.
+    ///
+    /// Held rather than rebuilt at each read, for the reason the roster always
+    /// was — the paint, the hit test and the wire must not be looking at three
+    /// rosters — and now for a second one: a mounted screen's latched
+    /// projection lives on the mount, so a roster rebuilt per frame would
+    /// forget what the screen was showing every frame.
+    screens: ScreenRoster,
     /// The Settings destination's four switches, in specification order.
     ///
     /// One array rather than four signals because the page renders them from a
@@ -610,6 +623,38 @@ struct ShellState {
     /// ([[debt-the-analyzer-canvas-does-not-scroll]]). Held on the state
     /// because the paint and the hit test both read it.
     canvas_scroll: Rc<ScrollState>,
+}
+
+/// ★★★★★ R1724 — **the destinations of this application, and the screens
+/// behind the ones that have one.**
+///
+/// A function rather than a literal inside [`ShellState::new`] because it has
+/// two readers and they must not diverge: the running application, and the
+/// censuses over this file's specification. Those censuses enumerate *this
+/// screen's* regions, keyboard stops and voices, and they are complete for the
+/// pages this screen paints — a page that is another screen is judged by that
+/// screen's own specification and its own tests. Which is which is one fact,
+/// and it lives here.
+///
+/// `Mount<NodeLabView>` needs nothing from the node lab beyond its binding, and
+/// [`ScreenRoster::new`] refuses a mount at a destination the rail declares
+/// closed, so a seat cannot say *built, shipping, and not here* while showing
+/// the screen.
+///
+/// # Panics
+///
+/// If a screen is mounted at a key the rail does not hold or has closed — a
+/// defect in this pairing rather than a state the running screen can reach.
+#[must_use]
+fn screen_roster() -> ScreenRoster {
+    ScreenRoster::new(
+        spec::destinations(),
+        vec![(
+            "catalog",
+            Box::new(Mount::<hello_node_lab::NodeLabView>::new()) as Box<dyn Screen>,
+        )],
+    )
+    .expect("the mounted screens sit at open destinations of this rail")
 }
 
 impl ShellState {
@@ -667,7 +712,7 @@ impl ShellState {
                 Journey::begin(&roster, spec::RAIL_ACTIVE)
                     .expect("the screen opens at a destination it can reach"),
             ),
-            roster,
+            screens: screen_roster(),
             options: Signal::new(opening_options()),
             // The chip the specification opens with, read from the same table the
             // paint reads — so the screen opens where the reference's does.
@@ -703,6 +748,14 @@ impl ShellState {
         self.journey.get().at().to_owned()
     }
 
+    /// The destinations, which since R1724 are the screen roster's.
+    ///
+    /// A method rather than a field so there is one roster and not a copy of
+    /// its destination half beside it.
+    fn roster(&self) -> &Destinations {
+        self.screens.destinations()
+    }
+
     /// Go to a destination the way both a press and the wire do.
     ///
     /// One function rather than one per channel: R1673 measured this screen's
@@ -710,8 +763,8 @@ impl ShellState {
     /// verb is the only arrangement in which they cannot.
     fn go(&self, key: &str) -> Result<(), Detour> {
         let mut journey = self.journey.get();
-        let arrival = journey.navigate(&self.roster, key)?;
-        let title = journey.here(&self.roster).title.clone();
+        let arrival = journey.navigate(self.roster(), key)?;
+        let title = journey.here(self.roster()).title.clone();
         self.journey.set(journey);
         match arrival {
             pinion_core::widgets::destination::Arrival::AlreadyHere => {
@@ -2510,7 +2563,10 @@ impl ExternalIntrospect for ShellOracle {
             // built by the framework so two screens of one product cannot
             // publish the same fact in two shapes.
             "destinations" => Ok(IntrospectValue::Json(
-                state.roster.wire(&state.journey.get()),
+                // ★ R1724 — the roster's wire, plus which destinations are
+                // whole screens. An agent that had to infer that from tag
+                // prefixes would be inferring a rule nobody wrote down.
+                state.screens.wire(&state.journey.get()),
             )),
             "options" => Ok(IntrospectValue::Json(options_json(state))),
             "editing" => Ok(IntrospectValue::Bool(state.editing.get())),
@@ -2674,12 +2730,12 @@ impl ExternalIntrospect for ShellOracle {
                 state.go(&name).map_err(|detour| match detour {
                     Detour::NoSuchDestination { .. } => InterveneError::out_of_range(format!(
                         "{name:?} is not a rail section; they are {}",
-                        state.roster.keys().collect::<Vec<_>>().join(", ")
+                        state.roster().keys().collect::<Vec<_>>().join(", ")
                     )),
                     Detour::Closed { .. } => InterveneError::out_of_range(format!(
                         "the {name:?} section is {}",
                         state
-                            .roster
+                            .roster()
                             .get(&name)
                             .and_then(|d| d.standing.why())
                             .map_or_else(
@@ -3141,7 +3197,7 @@ impl ShellOracle {
                 if let Err(detour) = state.go(key) {
                     // ★ R1719 — a detour is the rail declining to take you
                     // there, so it is a refusal and now reads as one.
-                    state.say(Utterance::refused(&detour.sentence(&state.roster)));
+                    state.say(Utterance::refused(&detour.sentence(state.roster())));
                 }
             }
             Hit::Option(key) => Self::toggle_option(state, key),
@@ -4376,7 +4432,7 @@ fn rail_scene(state: &ShellState, palette: Palette) -> Scene {
         // refusal and its accessibility node are one fact. Three of these were
         // painted live and refused nothing until this round.
         let layout = state
-            .roster
+            .roster()
             .get(key)
             .and_then(|d| d.standing.why())
             .map_or_else(
@@ -6331,14 +6387,14 @@ const fn toast_dot(tone: Tone, palette: Palette) -> Color {
     }
 }
 
-fn view(_state: (), _frame: Frame) -> Scene {
+fn view(_state: ScreenState, frame: Frame) -> Scene {
     let theme = use_theme(THEME_TAG).theme_animated();
     let state = use_shell_state();
     let dark = theme_word(&state.theme) == "dark";
     let palette = palette_of(&theme, dark);
 
     let journey = state.journey.get();
-    let here = journey.here(&state.roster).clone();
+    let here = journey.here(state.roster()).clone();
     let region = page_rect(here.key.as_ref());
     // ★★★★★ R1695 — the page a destination gets, built by the framework's
     // region so that the pages it is NOT at are never constructed. Before this
@@ -6351,9 +6407,33 @@ fn view(_state: (), _frame: Frame) -> Scene {
             region,
             palette.canvas,
             &here,
-            |here| match here.key.as_ref() {
-                "settings" => settings_scene(&state, palette, region),
-                _ => dashboard_scene(&state, palette),
+            // ★★★★★ R1724 — a mounted screen resolves its own presses, and the
+            // region must not be pointer-transparent in front of it. Measured
+            // the day the lab was first mounted: transparent, the whole screen
+            // was dead to a mouse while every wire path kept working.
+            if state.screens.is_mounted(here.key.as_ref()) {
+                PagePointer::PageResolves
+            } else {
+                PagePointer::HostResolves
+            },
+            // ★★★★★ R1724 — **the page may now be a whole other binding.**
+            //
+            // `page_scene` hands back the mounted screen's own scene, built in
+            // the extent this region was placed at — so the guest's paint and
+            // its hit test resolve against one rectangle. A destination with no
+            // screen behind it is one of this application's own pages, exactly
+            // as before, and the match below is what says which.
+            |here| {
+                state
+                    .screens
+                    .page_scene(&journey, (region.w, region.h), &frame)
+                    .map_or_else(
+                        || match here.key.as_ref() {
+                            "settings" => settings_scene(&state, palette, region),
+                            _ => dashboard_scene(&state, palette),
+                        },
+                        |mounted| vec![mounted],
+                    )
             },
         ),
         // ★ R1696 — a stop at the DASHBOARD only, where this region is the
@@ -6491,7 +6571,16 @@ fn dashboard_scene(state: &ShellState, palette: Palette) -> Vec<Scene> {
 struct AnalyzerShellView;
 
 impl WidgetCore for AnalyzerShellView {
-    type State = ();
+    /// ★★★★★ R1724 — **where the application is, and how far the screen it is
+    /// showing has moved.**
+    ///
+    /// This was `()`, which was true while every page was this file's own: the
+    /// board, the cards and the switches are signals, and a signal repaints on
+    /// its own. It stops being true the moment a page is another binding whose
+    /// projection comes out of the state scene — a mounted screen's text field
+    /// would paint its first frame and no other, because nothing this shell
+    /// declares would ever differ.
+    type State = ScreenState;
     type Event = ();
 
     fn create_external() -> Box<dyn External> {
@@ -6500,13 +6589,38 @@ impl WidgetCore for AnalyzerShellView {
         Box::new(oracle)
     }
 
+    /// ★★★★★ R1724 — the surfaces of whichever screen is showing, and nobody
+    /// else's.
+    ///
+    /// This is the whole of "a section you are not in cannot be pressed": the
+    /// externals of a screen the journey is not at are not in the state scene,
+    /// so the §5.35 router has no target and the wire has no slot. Measured at
+    /// 6.11.1, a page of the reference toolkit's paged container that is not
+    /// showing counted a press, a key and a wheel.
+    fn create_extra_externals() -> Vec<pinion_core::widget_core::ExtraExternal> {
+        let state = use_shell_state();
+        state.screens.externals(&state.journey.get())
+    }
+
+    /// R1724 — the surface set IS the current screen's, so it changes whenever
+    /// the rail does.
+    fn external_set_is_dynamic() -> bool {
+        true
+    }
+
     fn tag() -> &'static str {
         VIEW_TAG
     }
 
-    fn read_state(_scene: &Scene) {}
+    /// R1724 — read the current screen's projection out of the state scene and
+    /// park it on its mount, reporting where we are as the `Copy` value the
+    /// framework compares frame to frame.
+    fn read_state(scene: &Scene) -> ScreenState {
+        let state = use_shell_state();
+        state.screens.latch(&state.journey.get(), scene)
+    }
 
-    fn view(state: (), frame: &Frame) -> Scene {
+    fn view(state: ScreenState, frame: &Frame) -> Scene {
         view(state, *frame)
     }
 
@@ -6538,12 +6652,23 @@ impl WidgetCore for AnalyzerShellView {
     /// three of this tree's bindings forward a key to one External without ever
     /// asking where focus is.
     fn apply_key(
-        _scene: &mut Scene,
+        scene: &mut Scene,
         focused: Option<&str>,
         chord: &str,
-        _modifiers: pinion_core::Modifiers,
+        modifiers: pinion_core::Modifiers,
     ) -> bool {
-        ShellOracle::key_at(&use_shell_state(), focused, chord)
+        let state = use_shell_state();
+        // ★★★★★ R1724 — the showing screen answers first, and the shell's own
+        // chrome second. Both are on screen at once, so both have to be
+        // reachable; the guest goes first because the chord a person types
+        // while looking at a section belongs to that section.
+        if state.screens.with_current(&state.journey.get(), |screen| {
+            screen.apply_key(scene, focused, chord, modifiers)
+        }) == Some(true)
+        {
+            return true;
+        }
+        ShellOracle::key_at(&state, focused, chord)
     }
 }
 
@@ -6560,9 +6685,24 @@ impl WidgetA11y for AnalyzerShellView {
     /// The ring comes free with it: `resolve_focus_ring_tag` reads exactly this
     /// hook, so publishing the descendant is also what makes the cursor visible
     /// on screen.
-    fn access_focus_target(_state: &(), focused: Option<&str>) -> Option<AccessFocus> {
+    /// ★ R1724 — a stop that is not one of this shell's own belongs to the
+    /// screen showing in the page region.
+    ///
+    /// Decided by **ownership** (`spec::FOCUS_RING` is this shell's stop
+    /// table) rather than by the shape of the guest's answer: the trait's
+    /// default returns an atomic focus for whatever it is handed, so "the
+    /// guest said something" cannot be told from "the guest has nothing to
+    /// say".
+    fn access_focus_target(_state: &ScreenState, focused: Option<&str>) -> Option<AccessFocus> {
         let stop = focused?;
         let state = use_shell_state();
+        if !spec::FOCUS_RING.iter().any(|own| own.tag == stop)
+            && let Some(target) = state.screens.with_current(&state.journey.get(), |screen| {
+                screen.access_focus_target(Some(stop))
+            })
+        {
+            return target;
+        }
         let cursor = state
             .cursor_of(stop)
             // ★★★★★ R1699 — the INNERMOST tag, not the member at this level.
@@ -6605,10 +6745,17 @@ impl WidgetA11y for AnalyzerShellView {
     /// emitted only where that destination is showing, which is the same
     /// property the paint has and for the same reason: a reader offered a
     /// control that is not on screen is offered a control nobody can reach.
-    fn access_node(_state: &(), _focused: Option<&str>) -> Vec<AccessNode> {
+    /// ★★★★★ R1724 — and a page that is a whole screen brings **its own**
+    /// tree, under this region, only while it is showing.
+    ///
+    /// Measured at 6.11.1: a page of the paged container that is NOT showing is
+    /// reachable as an accessible child with its text field under it, marked
+    /// `invisible` and nothing more. Here the screen that is not showing was
+    /// never built, so there is nothing to mark.
+    fn access_node(_state: &ScreenState, focused: Option<&str>) -> Vec<AccessNode> {
         let state = use_shell_state();
         let journey = state.journey.get();
-        let here = journey.here(&state.roster);
+        let here = journey.here(state.roster());
         let dashboard = spec::shows_board_chrome(here.key.as_ref());
         let mut root = AccessNode::new(VIEW_TAG, AriaRole::Group)
             .with_name("Analyzer dashboard")
@@ -6645,6 +6792,19 @@ impl WidgetA11y for AnalyzerShellView {
             nodes.extend(sub_bar_nodes(&state));
             nodes.extend(cards);
             nodes.extend(palette_nodes(&state));
+        } else if let Some(mounted) = state
+            .screens
+            .with_current(&journey, |screen| screen.access_node(focused))
+        {
+            // ★★★★★ R1724 — the mounted screen's tree, parented to the region
+            // it is painted in. The screen's own root is the region's child, so
+            // a reader walking the rail arrives at the section rather than at a
+            // rectangle with nothing in it.
+            if let Some(root) = mounted.first() {
+                region = region.with_child(root.tag.clone());
+            }
+            nodes.push(region);
+            nodes.extend(mounted);
         } else {
             let (children, rows) = settings_nodes(&state);
             for child in children {
@@ -7376,6 +7536,48 @@ impl WidgetView for AnalyzerShellView {
 
     fn shrink_policy() -> Option<ShrinkPolicy> {
         Some(SHRINK)
+    }
+
+    /// ★★★ R1724 — a text box inside the showing screen is that screen's, and
+    /// so is the press that puts a caret in it.
+    ///
+    /// This shell has no text box of its own that takes a caret from a
+    /// pointer, so both hooks are pure delegation — which is the point: a
+    /// mounted screen keeps every hook it overrode, and the two the node lab
+    /// overrode are these.
+    fn position_caret_for_point(
+        _state: &ScreenState,
+        scene: &Scene,
+        focused: Option<&str>,
+        hit_tag: Option<&str>,
+        x: f32,
+        y: f32,
+        extend: bool,
+    ) -> Option<usize> {
+        let state = use_shell_state();
+        state
+            .screens
+            .with_current(&state.journey.get(), |screen| {
+                screen.position_caret_for_point(scene, focused, hit_tag, x, y, extend)
+            })
+            .flatten()
+    }
+
+    fn select_drag_to_point(
+        _state: &ScreenState,
+        scene: &Scene,
+        focused: Option<&str>,
+        anchor: usize,
+        x: f32,
+        y: f32,
+    ) -> bool {
+        let state = use_shell_state();
+        state
+            .screens
+            .with_current(&state.journey.get(), |screen| {
+                screen.select_drag_to_point(scene, focused, anchor, x, y)
+            })
+            .unwrap_or(false)
     }
 }
 

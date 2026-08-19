@@ -759,7 +759,10 @@ impl<V: WidgetCore> CoreShell<V> {
         // shared with `Self::reconcile_externals` — SSOT for the root
         // shape (bare External vs Container([primary, ...extras])).
         let scene = Self::compose_root(primary, extra_children);
-        let cached_state = V::read_state(&scene);
+        // ★★★★★ R1724 — the same `root_owner.run(...)` wrap `V::view` (R51.146)
+        // and `V::apply_key` (R51.152) have. See `Self::tail` for why the
+        // projection needs the scope the other two already had.
+        let cached_state = root_owner.run(|| V::read_state(&scene));
         let frame_signal = Signal::new(0_u64);
         let last_dt: std::rc::Rc<Cell<f32>> = std::rc::Rc::new(Cell::new(0.0_f32));
 
@@ -969,7 +972,11 @@ impl<V: WidgetCore> CoreShell<V> {
         // R51.173 §5.23 R27 — by-value snapshot. `V::State: Copy`
         // already constrains the type; no `&mut` borrow is taken so
         // the call site reads as a pure snapshot pass.
-        let state = V::read_state(&self.scene);
+        // R1724 — inside the scope, like the `V::update` below it. These two
+        // lines were the visible half of the inconsistency `Self::tail`
+        // records.
+        let scene = &self.scene;
+        let state = self.root_owner.run(|| V::read_state(scene));
         let commands = self.root_owner.run(|| V::update(state, intent));
         for cmd in &commands {
             self.root_owner.dispatch_command(cmd.clone());
@@ -2154,7 +2161,27 @@ impl<V: WidgetCore> CoreShell<V> {
     pub fn tail(&mut self) -> DispatchTail<V::State> {
         walk_scene_and_drain(&mut self.scene, &mut self.intent_queue);
         let intents = self.intent_queue.drain();
-        let now = V::read_state(&self.scene);
+        // ★★★★★ R1724 §5.16 §5.28 — **the projection is read in the binding's
+        // own scope**, which is the wrap `V::view` (R51.146), `V::apply_key`
+        // (R51.152) and `V::update` all already had and this call did not.
+        //
+        // The inconsistency was visible two lines apart in
+        // [`Self::route_intent_through_update`]: `V::update` inside the scope,
+        // the `V::read_state` feeding it outside one. It went unnoticed for as
+        // long as it did because a binding whose projection comes only out of
+        // the scene never needs the scope — measured across this tree's 236
+        // `read_state` implementations, not one of them reads a hook, a
+        // viewport or a surface size.
+        //
+        // What needs it is a binding whose projection is a fact about *which*
+        // of several screens it is showing (`pinion_screen::ScreenRoster`):
+        // that lives in the owner cache like every other large screen's state,
+        // and without the scope a host could not answer where it was. Left
+        // unwrapped the alternative is a second home for the journey outside
+        // the reactive store, which is two spellings of one fact.
+        let owner = self.root_owner.clone();
+        let scene = &self.scene;
+        let now = owner.run(|| V::read_state(scene));
         let state_change = if now == self.cached_state {
             None
         } else {
@@ -7686,5 +7713,93 @@ mod key_arrival_tests {
             "the press reached a binding that only implements `apply_key`"
         );
         assert_eq!(SEEN.with(|s| s.borrow().clone()), vec!["z".to_owned()]);
+    }
+
+    /// ★★★★★ R1724 — **the projection is read in the binding's own scope.**
+    ///
+    /// `V::view`, `V::apply_key` and `V::update` have had that wrap since
+    /// R51.146 / R51.152; `V::read_state` did not, and the inconsistency was
+    /// visible two lines apart inside
+    /// [`CoreShell::route_intent_through_update`]. It went unnoticed because a
+    /// projection read only out of the scene never needs a scope — measured,
+    /// none of this tree's 236 `read_state` implementations reads a hook.
+    ///
+    /// What needs it is a binding whose projection is a fact about **which of
+    /// several screens it is showing**: that state lives in the owner cache
+    /// like every other large screen's, so without the scope the host cannot
+    /// answer where it is. This fixture is the smallest thing with that shape,
+    /// and the assertion is on the boot path AND on the dispatch tail, because
+    /// they are separate call sites and only one of them was ever going to be
+    /// remembered.
+    #[test]
+    fn r1724_read_state_runs_inside_the_bindings_owner_scope() {
+        use pinion_core::reactive::Owner;
+        use std::cell::Cell;
+
+        thread_local! {
+            /// How many times the projection was read with no scope to read it
+            /// in. Counted rather than panicked so a regression names the
+            /// number instead of unwinding out of a `Drop`.
+            static SCOPELESS: Cell<u32> = const { Cell::new(0) };
+        }
+
+        struct ScopedStateFixture;
+
+        impl WidgetCore for ScopedStateFixture {
+            type State = ButtonState;
+            type Event = ButtonEvent;
+
+            fn create_external() -> Box<dyn pinion_core::external::External> {
+                <pinion_core::test_fixtures::ButtonFixture as WidgetCore>::create_external()
+            }
+
+            fn tag() -> &'static str {
+                "scoped_state"
+            }
+
+            fn read_state(_scene: &Scene) -> Self::State {
+                if Owner::current().is_none() {
+                    SCOPELESS.with(|n| n.set(n.get() + 1));
+                }
+                ButtonState::Idle
+            }
+
+            fn view(state: Self::State, frame: &Frame) -> Scene {
+                <pinion_core::test_fixtures::ButtonFixture as WidgetCore>::view(state, frame)
+            }
+
+            fn event_name(event: Self::Event) -> &'static str {
+                <pinion_core::test_fixtures::ButtonFixture as WidgetCore>::event_name(event)
+            }
+
+            fn title() -> &'static str {
+                "Scoped state"
+            }
+        }
+
+        SCOPELESS.with(|n| n.set(0));
+        let mut core: CoreShell<ScopedStateFixture> = CoreShell::new();
+        assert_eq!(
+            SCOPELESS.with(Cell::get),
+            0,
+            "boot read the projection inside the binding's root scope",
+        );
+        let _ = core.tail();
+        assert_eq!(
+            SCOPELESS.with(Cell::get),
+            0,
+            "and so does the dispatch tail, which is the call site a host \
+             mounting screens goes through on every event",
+        );
+        let _ = core.route_intent_through_update(&pinion_core::intent::Intent::new_static(
+            "r1724",
+            pinion_core::external::IntrospectValue::Bool(true),
+        ));
+        assert_eq!(
+            SCOPELESS.with(Cell::get),
+            0,
+            "and the intent route, whose own `V::update` was already wrapped \
+             while the `V::read_state` two lines above it was not",
+        );
     }
 }
