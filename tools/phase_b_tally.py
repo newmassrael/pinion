@@ -1443,9 +1443,27 @@ AXES = [
         # a question the floor can be asked. That is depth on a member the
         # catalogue already had, and depth is not breadth — R1680's own rule,
         # applied to this round's own work.
-        "judged_at": 1703,
+        # ★★★ R1729 re-judgment, demanded by this tool: the declared-round
+        # evidence had grown 26% since R1703 and the judgment above rested on
+        # three measured numbers. All three were re-measured rather than
+        # re-asserted, and the completion HOLDS STILL at 99 — which is a
+        # legitimate outcome, because what this tool demands is a LOOK.
+        #
+        #   `External::wheel` widget implementors   2 -> 3  (radio_group joined)
+        #   absent widget kinds                     3 -> 3  (a dial, a font
+        #     picker and a canned message/input dialog; not one has landed)
+        #   mnemonic-declaring example screens      4
+        #
+        # The one that moved is depth on a member the catalogue already had,
+        # and the breadth gap — three kinds nobody has built — is untouched.
+        # R1680's rule applies to this re-judgment exactly as it applied to the
+        # one above: depth is not breadth, so a wheel implementor does not buy a
+        # point. R1724-R1729 landed a great deal ON this axis (mounting, chrome
+        # negotiation, a rail that matches its specification) and every bit of
+        # it is depth by that rule.
+        "judged_at": 1729,
         "completion": 99,
-        "evidence_snapshot": {"example-name": 78, "round-axis": 27},
+        "evidence_snapshot": {"example-name": 78, "round-axis": 34},
     },
     {
         "key": "dataviz",
