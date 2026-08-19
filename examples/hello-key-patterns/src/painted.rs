@@ -29,10 +29,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use pinion_core::conformance::Part;
 use pinion_core::reactive::Owner;
 use pinion_core::scene::Rect;
 use pinion_core::test_fixtures::screen_ink::{assert_contained_ink, stand_in_ink};
+use pinion_core::test_fixtures::surface::painted_surface;
 use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::{Frame, Scene};
 
@@ -153,61 +153,6 @@ impl Painted {
             .filter(|t| t.starts_with(stem))
             .collect()
     }
-
-    /// ★★★★★ One surface, read back out of the paint.
-    ///
-    /// The parts under `stem` whose remainder holds no further dot, ordered by
-    /// where they were **painted** — down the screen first, then across it.
-    ///
-    /// The dot rule is a derivation rather than a list of exclusions, and R1728
-    /// is why: a rail gate that named the chrome it had to skip was only as good
-    /// as whoever last updated the list, and it went wrong the first time a seat
-    /// grew a child. A part's own decoration is tagged *inside* it, so it is
-    /// excluded by the shape of its name rather than by being remembered.
-    ///
-    /// The order is **reading order**, derived: parts whose painted rectangles
-    /// overlap vertically are on one line and sort across it; lines sort down
-    /// the screen. One rule for every kind of surface — a row of parts, a
-    /// column of them, and the record pane's two-by-two grid of single facts,
-    /// which is two parts on one line, twice.
-    ///
-    /// ★ The naive `(y, x)` sort was wrong and the gate said so on its first
-    /// run: the section header's three parts are vertically CENTRED against
-    /// different heights, so the filter box's top edge sits seven pixels above
-    /// the title's and it sorted first. Aligning the tops to make the sort work
-    /// would have been fixing the screen to suit the check.
-    fn surface(&self, stem: &str, titles: &dyn Fn(&str) -> String) -> Vec<Part> {
-        let mut found: Vec<(Rect, String)> = self
-            .tags
-            .iter()
-            .filter_map(|(tag, rect)| {
-                let key = tag.strip_prefix(stem)?;
-                (!key.contains('.')).then(|| (*rect, key.to_owned()))
-            })
-            .collect();
-        found.sort_by_key(|(rect, _)| (rect.y, rect.x));
-        let mut ordered: Vec<(Rect, String)> = Vec::with_capacity(found.len());
-        let mut line: Vec<(Rect, String)> = Vec::new();
-        let mut bottom = 0;
-        for (rect, key) in found {
-            if !line.is_empty() && rect.y >= bottom {
-                line.sort_by_key(|(r, _)| r.x);
-                ordered.append(&mut line);
-                bottom = 0;
-            }
-            bottom = bottom.max(rect.y + rect.h);
-            line.push((rect, key));
-        }
-        line.sort_by_key(|(r, _)| r.x);
-        ordered.append(&mut line);
-        ordered
-            .into_iter()
-            .map(|(_, key)| {
-                let title = titles(&key);
-                Part::new(key, title)
-            })
-            .collect()
-    }
 }
 
 /// Run the real pipeline at `size` and index what came out of it.
@@ -246,7 +191,10 @@ fn sweep(mut check: impl FnMut(&std::rc::Rc<ViewState>, &Painted, &Scene, (u32, 
 }
 
 /// What each surface's parts are titled, by the running screen's own tables.
-fn title_of(surface: &str) -> impl Fn(&str) -> String + use<> {
+///
+/// `None` for a key no table names, which is what makes a part the paint has
+/// invented report as itself rather than as a blank.
+fn title_of(surface: &str) -> impl Fn(&str) -> Option<String> + use<> {
     let table: Vec<(&'static str, &'static str)> = match surface {
         "header" => spec::HEADER.iter().map(|p| (p.key, p.title)).collect(),
         "columns" => spec::COLUMNS.iter().map(|c| (c.key, c.title)).collect(),
@@ -254,10 +202,10 @@ fn title_of(surface: &str) -> impl Fn(&str) -> String + use<> {
         other => panic!("no surface named {other}"),
     };
     move |key: &str| {
-        table.iter().find(|(k, _)| *k == key).map_or_else(
-            || format!("<{key} is painted and no table names it>"),
-            |(_, t)| (*t).to_owned(),
-        )
+        table
+            .iter()
+            .find(|(k, _)| *k == key)
+            .map(|(_, t)| (*t).to_owned())
     }
 }
 
@@ -292,18 +240,17 @@ fn stem_of(surface: &str) -> &'static str {
 /// the floor is exactly the kind of divergence nobody notices.
 #[test]
 fn r1730_every_specified_surface_is_the_one_the_paint_draws() {
-    sweep(|_, shot, _, _, case| {
-        for &surface in spec::SURFACES {
-            let built = shot.surface(stem_of(surface), &title_of(surface));
+    let doc = spec::document();
+    sweep(|_, _, scene, _, case| {
+        for surface in doc.surfaces() {
+            let built = painted_surface(scene, stem_of(surface), &title_of(surface));
             assert!(
                 !built.is_empty(),
                 "{case}: the {surface} surface painted no parts at all, so a difference \
                  against it would come out empty and read as success",
             );
-            let canon = spec::canon(surface);
-            let found = canon.diff(&built);
-            let unreconciled: Vec<String> = spec::owed(surface)
-                .judge(&found)
+            let unreconciled: Vec<String> = doc
+                .unreconciled(surface, &built)
                 .iter()
                 .map(pinion_core::conformance::Unreconciled::sentence)
                 .collect();
@@ -326,7 +273,8 @@ fn r1730_every_specified_surface_is_the_one_the_paint_draws() {
 /// size and shape first.
 #[test]
 fn r1730_the_specification_is_the_references_own_section() {
-    let columns = spec::canon("columns");
+    let doc = spec::document();
+    let columns = doc.canon("columns").expect("the pin fixes the columns");
     assert_eq!(
         columns
             .parts()
@@ -345,12 +293,12 @@ fn r1730_the_specification_is_the_references_own_section() {
         "the specification is the reference's seven columns in the reference's order",
     );
     assert_eq!(
-        spec::canon("detail").len(),
+        doc.canon("detail").expect("the pin fixes the pane").len(),
         11,
         "the reference's record pane has eleven parts",
     );
     assert_eq!(
-        spec::canon("header").len(),
+        doc.canon("header").expect("the pin fixes the header").len(),
         3,
         "the reference's section header has a name, a summary and a filter",
     );
@@ -367,8 +315,10 @@ fn r1730_the_specification_is_the_references_own_section() {
 /// the fourth column anything at all and the difference would be invisible.
 #[test]
 fn r1730_a_column_header_reads_what_the_specification_calls_it() {
+    let doc = spec::document();
+    let columns = doc.canon("columns").expect("the pin fixes the columns");
     sweep(|_, shot, _, _, case| {
-        for part in spec::canon("columns").parts() {
+        for part in columns.parts() {
             let tag = format!("kp.column.{}", part.key);
             let painted: Vec<&str> = shot
                 .runs

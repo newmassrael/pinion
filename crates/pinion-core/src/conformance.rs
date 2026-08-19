@@ -88,6 +88,7 @@
 //! ```
 
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 
 /// One named part of a surface — a column, a section, a group.
 ///
@@ -753,6 +754,230 @@ impl Ledger {
     }
 }
 
+// --- A whole written specification -------------------------------------------
+
+/// Why a specification document could not be read.
+///
+/// Every arm is a defect in the written pin. They stop the build rather than
+/// warning, for the reason [`Ledger::new`] refuses rather than warns: a document
+/// that failed to parse and came out empty would read as *this build reproduces
+/// everything*.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SpecDefect {
+    /// The text is not JSON.
+    NotJson {
+        /// What the parser said.
+        why: String,
+    },
+    /// The document declares no surface at all, so nothing can fail against it.
+    NoSurfaces,
+    /// One surface's `canon` is not a roster this vocabulary can hold.
+    Surface {
+        /// The surface it is about.
+        surface: String,
+        /// What is wrong with it.
+        defect: SurfaceDefect,
+    },
+    /// One surface's `owed` is not a ledger.
+    Ledger {
+        /// The surface it is about.
+        surface: String,
+        /// What is wrong with it.
+        defect: LedgerDefect,
+    },
+    /// The document is not shaped like one — a surface that is not an object, a
+    /// missing `canon`, a part missing a key or a title.
+    Malformed {
+        /// What was expected, and where.
+        what: String,
+    },
+}
+
+/// ★★★★★ R1731 — **a whole written specification: several surfaces, each with
+/// its canon and its declared remainder.**
+///
+/// # What forced this
+///
+/// R1730 wrote the loader, the per-surface lookup and the wire report inside the
+/// first screen that needed them. The second screen needed the same four
+/// functions over a different document, and two mechanical copies of a rule is
+/// this project's lift trigger — with the usual sharper reason behind it: two
+/// screens loading a specification differently would disagree about the same
+/// build, and the one nobody ran would be the one that was wrong.
+///
+/// # The shape on disk
+///
+/// One object per surface, keyed by the name the specification gives it, each
+/// carrying `canon` (an ordered array of `{key, title}`) and `owed` (a
+/// [`Ledger`]). Keys beginning with `$` are commentary and are skipped, so a
+/// document can explain itself to the person reviewing it — which is the whole
+/// reason the specification is a document rather than a constant.
+///
+/// # Examples
+///
+/// ```
+/// use pinion_core::conformance::{Part, SpecDocument};
+///
+/// let doc = SpecDocument::parse(r#"{
+///   "$comment": "what the reference draws",
+///   "columns": {
+///     "canon": [{"key": "id", "title": "ID"}, {"key": "name", "title": "Name"}],
+///     "owed": []
+///   }
+/// }"#)
+/// .expect("the document is a specification");
+///
+/// assert_eq!(doc.surfaces().collect::<Vec<_>>(), ["columns"]);
+/// let built = [Part::new("id", "ID"), Part::new("name", "Name")];
+/// assert!(doc.unreconciled("columns", &built).is_empty());
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SpecDocument {
+    order: Vec<String>,
+    canon: BTreeMap<String, SurfaceSpec>,
+    owed: BTreeMap<String, Ledger>,
+}
+
+impl SpecDocument {
+    /// Read a specification document.
+    ///
+    /// # Errors
+    ///
+    /// [`SpecDefect`] — unreadable JSON, no surfaces, or a surface whose canon
+    /// or remainder this vocabulary refuses.
+    pub fn parse(text: &str) -> Result<Self, SpecDefect> {
+        let doc: serde_json::Value =
+            serde_json::from_str(text).map_err(|why| SpecDefect::NotJson {
+                why: why.to_string(),
+            })?;
+        let object = doc.as_object().ok_or_else(|| SpecDefect::Malformed {
+            what: "the document is an object of surfaces".to_owned(),
+        })?;
+        let mut order = Vec::new();
+        let mut canon = BTreeMap::new();
+        let mut owed = BTreeMap::new();
+        for (name, body) in object {
+            if name.starts_with('$') {
+                continue;
+            }
+            let parts = body
+                .get("canon")
+                .and_then(serde_json::Value::as_array)
+                .ok_or_else(|| SpecDefect::Malformed {
+                    what: format!("surface `{name}` declares a `canon` array"),
+                })?
+                .iter()
+                .map(|part| {
+                    let field = |key: &str| {
+                        part.get(key)
+                            .and_then(serde_json::Value::as_str)
+                            .map(str::to_owned)
+                            .ok_or_else(|| SpecDefect::Malformed {
+                                what: format!("every part of `{name}` carries a string `{key}`"),
+                            })
+                    };
+                    Ok(Part::new(field("key")?, field("title")?))
+                })
+                .collect::<Result<Vec<_>, SpecDefect>>()?;
+            canon.insert(
+                name.clone(),
+                SurfaceSpec::new(parts).map_err(|defect| SpecDefect::Surface {
+                    surface: name.clone(),
+                    defect,
+                })?,
+            );
+            owed.insert(
+                name.clone(),
+                Ledger::from_json(body).map_err(|defect| SpecDefect::Ledger {
+                    surface: name.clone(),
+                    defect,
+                })?,
+            );
+            order.push(name.clone());
+        }
+        if order.is_empty() {
+            return Err(SpecDefect::NoSurfaces);
+        }
+        Ok(Self { order, canon, owed })
+    }
+
+    /// The surfaces this document fixes, in the order it declares them.
+    pub fn surfaces(&self) -> impl Iterator<Item = &str> {
+        self.order.iter().map(String::as_str)
+    }
+
+    /// One surface's canon, or `None` for a name this document does not fix.
+    #[must_use]
+    pub fn canon(&self, surface: &str) -> Option<&SurfaceSpec> {
+        self.canon.get(surface)
+    }
+
+    /// One surface's declared remainder.
+    #[must_use]
+    pub fn ledger(&self, surface: &str) -> Option<&Ledger> {
+        self.owed.get(surface)
+    }
+
+    /// Every way `built` is not what this document declares for `surface`, in
+    /// both directions and against the remainder.
+    ///
+    /// An unknown surface answers a single [`Unreconciled::Undeclared`] rather
+    /// than an empty vector, because "nothing is wrong" and "nobody specified
+    /// this" must not read the same.
+    #[must_use]
+    pub fn unreconciled(&self, surface: &str, built: &[Part]) -> Vec<Unreconciled> {
+        let (Some(canon), Some(ledger)) = (self.canon(surface), self.ledger(surface)) else {
+            return vec![Unreconciled::Undeclared {
+                key: surface.to_owned(),
+                sentence: format!("`{surface}` is a surface no specification declares"),
+            }];
+        };
+        ledger.judge(&canon.diff(built))
+    }
+
+    /// The whole comparison, as the value a running application publishes.
+    ///
+    /// One shape rather than one per screen, because an agent asking two
+    /// screens how much of their specification they are should not have to read
+    /// two answers.
+    #[must_use]
+    pub fn wire(&self, built: &dyn Fn(&str) -> Vec<Part>) -> serde_json::Value {
+        let mut out = serde_json::Map::new();
+        for surface in self.surfaces() {
+            let canon = &self.canon[surface];
+            let ledger = &self.owed[surface];
+            let found = canon.diff(&built(surface));
+            out.insert(
+                surface.to_owned(),
+                serde_json::json!({
+                    "specified": canon.len(),
+                    "reproduced": canon.len() - found.len(),
+                    "divergences": found
+                        .iter()
+                        .map(|d| serde_json::json!({ "key": d.key(), "says": d.sentence() }))
+                        .collect::<Vec<_>>(),
+                    "owed": ledger
+                        .owed()
+                        .iter()
+                        .map(|entry| serde_json::json!({
+                            "key": entry.key,
+                            "says": entry.sentence,
+                            "since": entry.since,
+                            "why": entry.why,
+                        }))
+                        .collect::<Vec<_>>(),
+                    "unreconciled": ledger
+                        .judge(&found)
+                        .iter()
+                        .map(|u| serde_json::json!({ "key": u.key(), "says": u.sentence() }))
+                        .collect::<Vec<_>>(),
+                }),
+            );
+        }
+        serde_json::Value::Object(out)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
@@ -1138,6 +1363,147 @@ mod tests {
         distinct.sort_unstable();
         distinct.dedup();
         assert_eq!(distinct.len(), said.len(), "two arms read the same");
+    }
+
+    // --- A whole written specification ---------------------------------------
+
+    fn document() -> super::SpecDocument {
+        super::SpecDocument::parse(
+            r#"{
+              "$comment": "what the reference draws",
+              "columns": {
+                "canon": [
+                  {"ordinal": 1, "key": "id", "title": "ID"},
+                  {"ordinal": 2, "key": "name", "title": "Name"}
+                ],
+                "owed": []
+              },
+              "detail": {
+                "canon": [
+                  {"ordinal": 1, "key": "subject", "title": "Subject"},
+                  {"ordinal": 2, "key": "bytes", "title": "Wire bytes"}
+                ],
+                "owed": [{
+                  "key": "bytes",
+                  "sentence": "part 1 `bytes` (Wire bytes) is specified and the surface has no such part",
+                  "since": "R1731",
+                  "why": ["The reference shows the frame and this build has not decoded one."]
+                }]
+              }
+            }"#,
+        )
+        .expect("the fixture is a specification")
+    }
+
+    #[test]
+    fn a_document_answers_its_surfaces_in_the_order_it_declares_them() {
+        assert_eq!(
+            document().surfaces().collect::<Vec<_>>(),
+            ["columns", "detail"],
+        );
+        assert_eq!(document().canon("columns").expect("a surface").len(), 2);
+        assert_eq!(document().ledger("detail").expect("a surface").len(), 1);
+        assert!(document().canon("nothing").is_none());
+    }
+
+    /// ★ Commentary keys are skipped, because a specification a person reviews
+    /// has to be able to explain itself.
+    #[test]
+    fn a_commentary_key_is_not_a_surface() {
+        assert!(!document().surfaces().any(|s| s.starts_with('$')));
+    }
+
+    #[test]
+    fn a_document_judges_a_surface_against_its_own_remainder() {
+        let doc = document();
+        assert!(
+            doc.unreconciled(
+                "columns",
+                &[Part::new("id", "ID"), Part::new("name", "Name")]
+            )
+            .is_empty()
+        );
+        assert!(
+            doc.unreconciled("detail", &[Part::new("subject", "Subject")])
+                .is_empty(),
+            "the missing part is the one the remainder declares",
+        );
+        // Built, and nobody told the ledger.
+        assert!(matches!(
+            doc.unreconciled(
+                "detail",
+                &[
+                    Part::new("subject", "Subject"),
+                    Part::new("bytes", "Wire bytes")
+                ]
+            )[0],
+            Unreconciled::Paid { .. },
+        ));
+    }
+
+    /// ★★ A surface nobody specified answers a NAMED difference rather than an
+    /// empty vector — "nothing is wrong" and "nobody declared this" must not
+    /// read the same.
+    #[test]
+    fn an_unspecified_surface_is_reported_rather_than_passing() {
+        let found = document().unreconciled("invented", &[Part::new("x", "X")]);
+        assert_eq!(found.len(), 1);
+        assert!(found[0].sentence().contains("no specification declares"));
+    }
+
+    #[test]
+    fn a_document_that_is_not_one_is_refused() {
+        assert!(matches!(
+            super::SpecDocument::parse("not json"),
+            Err(super::SpecDefect::NotJson { .. }),
+        ));
+        assert_eq!(
+            super::SpecDocument::parse(r#"{"$comment": "only prose"}"#),
+            Err(super::SpecDefect::NoSurfaces),
+        );
+        assert!(matches!(
+            super::SpecDocument::parse(r#"{"columns": {"owed": []}}"#),
+            Err(super::SpecDefect::Malformed { .. }),
+        ));
+        assert!(matches!(
+            super::SpecDocument::parse(
+                r#"{"columns": {"canon": [{"key": "id", "title": "ID"},
+                    {"key": "id", "title": "Again"}], "owed": []}}"#
+            ),
+            Err(super::SpecDefect::Surface { .. }),
+        ));
+        assert!(matches!(
+            super::SpecDocument::parse(
+                r#"{"columns": {"canon": [{"key": "id", "title": "ID"}],
+                    "owed": [{"key": "id", "sentence": "nothing names it",
+                              "since": "R1", "why": "short"}]}}"#
+            ),
+            Err(super::SpecDefect::Ledger { .. }),
+        ));
+    }
+
+    /// The wire shape is the framework's, so an agent asking two screens how
+    /// much of their specification they are does not read two answers.
+    #[test]
+    fn a_document_publishes_one_shape_for_every_surface() {
+        let built = |surface: &str| match surface {
+            "columns" => vec![Part::new("id", "ID"), Part::new("name", "Name")],
+            _ => vec![Part::new("subject", "Subject")],
+        };
+        let wire = document().wire(&built);
+        assert_eq!(wire["columns"]["specified"], 2);
+        assert_eq!(wire["columns"]["reproduced"], 2);
+        assert_eq!(wire["detail"]["reproduced"], 1);
+        assert_eq!(wire["detail"]["owed"][0]["since"], "R1731");
+        for surface in ["columns", "detail"] {
+            assert!(
+                wire[surface]["unreconciled"]
+                    .as_array()
+                    .expect("an array")
+                    .is_empty(),
+                "{surface} publishes a difference its ledger does not declare",
+            );
+        }
     }
 
     /// ★★★★★ The trait's reason for existing: the navigation axis's own

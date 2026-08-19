@@ -43,6 +43,9 @@ hello-packet-view = { path = "../hello-packet-view" }
 # nowhere in this tree, and its own surfaces are checked against
 # `docs/analyzer-keys-spec.json`.
 hello-key-patterns = { path = "../hello-key-patterns" }
+# ★★★★★ R1731 — the log destination's page, and the one that closes the rail:
+# with it every section the reference opens is one this application opens.
+hello-log-view = { path = "../hello-log-view" }
 vello = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

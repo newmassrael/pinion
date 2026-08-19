@@ -230,23 +230,33 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         by_reason: dict[str, list[str]] = {}
         for tag, row in disabled.items():
             by_reason.setdefault(row["reason"], []).append(tag.rsplit(".", 1)[1])
-        assert_eq(
-            sorted(by_reason),
-            ["reserved", "unbuilt"],
-            "C: ★★★ TWO kinds, where a bool has one. `reserved` is booked for a "
-            "later release the reference itself defers; `unbuilt` is in the "
-            "reference's own FIRST release and not written here. ★ R1729 -- a "
-            "third kind, `elsewhere`, was here until the capture viewer was "
-            "mounted, and its absence is the measurement: no section of this "
-            "tool is built-and-unreachable any more",
-        )
         # ★ R1730 — DERIVED from the specification rather than written out. The
         # first round to pay a divergence off broke both of the literals that
         # used to be here, which is the same class as a stale number in prose.
+        # ★★★★★ R1731 — and the KINDS are derived too, for the same reason one
+        # round later. This asserted `["reserved", "unbuilt"]`, and the round
+        # that built the last owed section left the rail with ONE kind: an
+        # `unbuilt` seat is one the specification opens and this build has not,
+        # and there are none. A demo that pins the vocabulary a screen happens
+        # to be using pins the state of the build, which is the thing under
+        # test.
         reserved_keys = sorted(s["key"] for s in canon if s.get("kind") == "reserved")
         owed_keys = sorted(entry["key"] for entry in owed)
-        assert_eq(sorted(by_reason["reserved"]), reserved_keys)
-        assert_eq(sorted(by_reason["unbuilt"]), owed_keys)
+        wanted = {"reserved": reserved_keys}
+        if owed_keys:
+            wanted["unbuilt"] = owed_keys
+        assert_eq(
+            sorted(by_reason),
+            sorted(wanted),
+            "C: ★★★ every kind of shut this rail SPELLS is one the specification "
+            "accounts for. `reserved` is booked for a later release the "
+            "reference itself defers; `unbuilt` is in the reference's own FIRST "
+            "release and not written here, and R1731 left none of those. ★ A "
+            "third kind, `elsewhere`, was here until R1729 mounted the capture "
+            "viewer -- no section of this tool is built-and-unreachable any more",
+        )
+        for reason, keys in wanted.items():
+            assert_eq(sorted(by_reason[reason]), keys, f"C: the {reason} seats")
         # ★★ The recourse is DERIVED, and these two kinds legitimately share
         # one: the reader's action is the same (wait) and what they are waiting
         # for is not, which is why the kinds stay apart while the recourse
@@ -257,16 +267,19 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
                 "await_release",
                 f"C: {tag} derives its recourse",
             )
+        # ★★★★★ R1731 — the claim is now over the kinds the rail ACTUALLY
+        # spells, one seat of each. It read one reserved seat and one owed seat,
+        # and the round that built the last owed section left the second index
+        # out of range. What the check is about is that two seats sharing a
+        # recourse do not share a SENTENCE — so its population is one seat per
+        # kind, whatever kinds there are, and it says how many that was.
+        one_each = [keys[0] for keys in wanted.values()]
+        sentences = {disabled[f"shell.rail.{k}"]["detail"] for k in one_each}
         ok(
-            "C: ★ and the two kinds that share a recourse do NOT share a "
-            "sentence, so a reader is not told to wait for the wrong thing",
-            len(
-                {
-                    disabled[f"shell.rail.{k}"]["detail"]
-                    for k in (reserved_keys[0], owed_keys[0])
-                }
-            )
-            == 2,
+            f"C: ★ the {len(one_each)} kind(s) of shut this rail spells give "
+            "as many distinct sentences, so a reader is not told to wait for "
+            "the wrong thing",
+            len(sentences) == len(one_each),
         )
 
         # ── (D) and a reader hears it ─────────────────────────────────────
@@ -294,20 +307,17 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
                 "the section exists in the plan",
                 len(reason["detail"]) > 8,
             )
-        # ★★ And the two kinds reach a listener as two different reasons, which
-        # is the whole point of spending an arm rather than reusing one: both
-        # seats are inert, both ask the reader to wait, and they are waiting for
-        # different things.
-        # ★ R1730 — one seat of each kind, derived. Written out, this named
-        # `keys`, and the round that BUILT that section left the demo asking a
-        # page for its reason.
-        heard = {
-            tree[f"shell.rail.{k}"]["unavailable"]["kind"]
-            for k in (reserved_keys[0], owed_keys[0])
-        }
+        # ★★ And every kind the rail spells reaches a listener as its own
+        # reason, which is the whole point of spending an arm rather than
+        # reusing one: the seats are inert, they ask the reader to wait, and
+        # what they are waiting for is not the same.
+        # ★ R1730 — one seat of each kind, derived. ★ R1731 — and the KINDS are
+        # derived too, because the round that built the last owed section left
+        # this reading one seat that no longer exists.
+        heard = {tree[f"shell.rail.{k}"]["unavailable"]["kind"] for k in one_each}
         assert_eq(
             sorted(heard),
-            ["reserved", "unbuilt"],
+            sorted(wanted),
             "D: ★★★ a reader hears distinct reasons where a bool has one -- and "
             "hears them for seats whose RECOURSE is identical, which is exactly "
             "the case a bool, and a recourse alone, both flatten",

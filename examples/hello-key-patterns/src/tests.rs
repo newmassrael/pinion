@@ -46,11 +46,10 @@ fn oracle(state: &std::rc::Rc<super::ViewState>) -> ViewOracle {
 /// `painted.rs` is what ties these tables to the pixels.
 #[test]
 fn r1730_the_tables_reproduce_the_specification_or_say_where_they_do_not() {
-    for &surface in spec::SURFACES {
-        let canon = spec::canon(surface);
-        let found = canon.diff(&built(surface));
-        let unreconciled: Vec<String> = spec::owed(surface)
-            .judge(&found)
+    let doc = spec::document();
+    for surface in doc.surfaces() {
+        let unreconciled: Vec<String> = doc
+            .unreconciled(surface, &built(surface))
             .iter()
             .map(Unreconciled::sentence)
             .collect();
@@ -67,7 +66,8 @@ fn r1730_the_tables_reproduce_the_specification_or_say_where_they_do_not() {
 #[test]
 fn r1730_the_wire_says_how_much_of_the_section_is_here() {
     let published = conformance_json();
-    for &surface in spec::SURFACES {
+    let doc = spec::document();
+    for surface in doc.surfaces() {
         let row = &published[surface];
         let specified = row["specified"].as_u64().expect("a count");
         let reproduced = row["reproduced"].as_u64().expect("a count");
@@ -89,9 +89,11 @@ fn r1730_the_wire_says_how_much_of_the_section_is_here() {
 /// refuses a malformed pin; this asserts the pin that IS there is not empty.
 #[test]
 fn r1730_the_specification_is_not_empty() {
-    for &surface in spec::SURFACES {
+    let doc = spec::document();
+    assert_eq!(doc.surfaces().count(), 3, "the pin fixes three surfaces");
+    for surface in doc.surfaces() {
         assert!(
-            spec::canon(surface).len() >= 3,
+            doc.canon(surface).expect("a declared surface").len() >= 3,
             "the {surface} specification is too small to be the reference's",
         );
     }

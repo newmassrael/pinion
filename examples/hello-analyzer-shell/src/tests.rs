@@ -202,21 +202,29 @@ fn r1668_every_reserved_seat_names_what_it_waits_for() {
     // and not here", because the screen has no way to spell it.* The framework's
     // `UnavailableKind::Elsewhere` is untouched and still has consumers.
     //
-    // ★★ R1728 — what IS still spelled: a seat that is neither a page nor
-    // booked names *what specifies it*, so a reader is told the thing exists in
-    // the plan rather than being left with a dead icon.
-    let unbuilt: Vec<_> = spec::RAIL
+    // ★★★★★ R1731 — **and the same thing happened again, one arm along.**
+    // R1730 built `keys` and R1731 built `logs`, so nothing constructs
+    // `Seat::Unbuilt` either and the compiler said so. This rail now has TWO
+    // arms — a page and a booked seat — and cannot spell either *built,
+    // shipping, and not here* or *specified and not built*. What is left shut
+    // is shut because the reference itself defers it, which is the only kind of
+    // shut a faithful reproduction of this rail can have.
+    //
+    // What is asserted instead is the property that survives: every seat that
+    // is not a page names the requirement it is booked under.
+    let booked: Vec<_> = spec::RAIL
         .iter()
-        .filter_map(|seat| match seat.seat {
-            spec::Seat::Unbuilt(specified_by) => Some((seat.key, specified_by)),
-            spec::Seat::Page | spec::Seat::Reserved(_) => None,
-        })
+        .filter_map(|seat| seat.reserved_for().map(|why| (seat.key, why)))
         .collect();
-    assert!(!unbuilt.is_empty(), "the fourth arm has no seat using it");
-    for (key, specified_by) in unbuilt {
+    assert_eq!(
+        booked.len(),
+        2,
+        "the reference draws two of its eight seats locked itself",
+    );
+    for (key, why) in booked {
         assert!(
-            specified_by.starts_with("the ") && specified_by.len() > 8,
-            "the {key} seat cites {specified_by:?}, which names no specification",
+            why.starts_with("requirement ") && why.len() > 12,
+            "the {key} seat cites {why:?}, which names no requirement",
         );
     }
 }

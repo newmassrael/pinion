@@ -255,6 +255,15 @@ AXES = [
                 # (`docs/analyzer-keys-spec.json`, through
                 # `pinion_core::conformance`).
                 "key-patterns",
+                # R1731, added WITH the round for the reason the entries above
+                # give. `hello-log-view` is the tool's log section: a
+                # five-column event list with two narrowings over it — a live
+                # query and an exclusive, ORDERED severity choice — beside a
+                # decode pane whose last part is the frame's own bytes through
+                # `pinion_widget_paint::hex_dump`. Data grid plus master-detail
+                # plus the byte dump this list already holds, assembled; and it
+                # is the seat that closed the analysis tool's rail.
+                "log-view",
             ]),
         ],
         # R1532 re-judgment, demanded by this axis's round count going 0 -> 1

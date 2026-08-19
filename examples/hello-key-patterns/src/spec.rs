@@ -16,7 +16,7 @@
 //! class uses generally. The structure and the behaviour are what is being
 //! reproduced, and those are what these tables hold.
 
-use pinion_core::conformance::{Ledger, Part, SurfaceSpec};
+use pinion_core::conformance::SpecDocument;
 
 // ── Geometry ────────────────────────────────────────────────────────────────
 
@@ -469,59 +469,23 @@ pub const FILTER_PLACEHOLDER: &str = "by in (T-01)";
 /// census pins take.
 const KEYS_SPEC_JSON: &str = include_str!("../../../docs/analyzer-keys-spec.json");
 
-/// The specification document, parsed.
+/// The specification, as the framework's own document.
+///
+/// ★ R1731 — this was a loader, a per-surface lookup and a remainder reader
+/// written here. The second screen to hold a written specification needed the
+/// same four functions over a different pin, so they are
+/// [`pinion_core::conformance::SpecDocument`] now — two screens
+/// loading a specification differently would disagree about the same build, and
+/// the one nobody ran would be the one that was wrong.
 ///
 /// # Panics
 ///
-/// If the pin is not readable JSON — a defect in the pin rather than a state
-/// the running screen can reach.
+/// If the pin is not a specification — unreadable JSON, no surfaces, a
+/// duplicate part key, a remainder entry naming no round. All are defects in
+/// the pin rather than states the running screen can reach, and all must stop
+/// the build rather than quietly weaken the comparison.
 #[must_use]
-fn document() -> serde_json::Value {
-    serde_json::from_str(KEYS_SPEC_JSON).expect("the section specification is readable JSON")
-}
-
-/// The three surfaces the specification fixes, by the name it gives them.
-pub const SURFACES: &[&str] = &["header", "columns", "detail"];
-
-/// One surface of the specification, as the framework's comparable form.
-///
-/// # Panics
-///
-/// If the pin does not declare `surface` as a roster of named parts — a defect
-/// in the pin. It must stop the build rather than quietly weaken the
-/// comparison, which is what an empty or unparsed specification would do.
-#[must_use]
-pub fn canon(surface: &str) -> SurfaceSpec {
-    let doc = document();
-    let parts = doc[surface]["canon"]
-        .as_array()
-        .unwrap_or_else(|| panic!("the specification declares a `{surface}` canon array"))
-        .iter()
-        .map(|part| {
-            Part::new(
-                part["key"]
-                    .as_str()
-                    .expect("a specified part has a key")
-                    .to_owned(),
-                part["title"]
-                    .as_str()
-                    .expect("a specified part has a title")
-                    .to_owned(),
-            )
-        })
-        .collect();
-    SurfaceSpec::new(parts).expect("the specification is a roster of named parts")
-}
-
-/// The declared, reviewed remainder for one surface.
-///
-/// # Panics
-///
-/// If the pin's `owed` entries are malformed, name no round, state no reason or
-/// do not name their own part — all defects in the pin, all refused by the
-/// framework's own loader rather than by a check written here.
-#[must_use]
-pub fn owed(surface: &str) -> Ledger {
-    Ledger::from_json(&document()[surface])
-        .unwrap_or_else(|e| panic!("the `{surface}` remainder is a readable ledger: {e:?}"))
+pub fn document() -> SpecDocument {
+    SpecDocument::parse(KEYS_SPEC_JSON)
+        .unwrap_or_else(|e| panic!("the section specification is readable: {e:?}"))
 }

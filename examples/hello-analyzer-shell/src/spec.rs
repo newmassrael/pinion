@@ -120,24 +120,25 @@ pub enum Seat {
     // `pinion_core::availability::UnavailableKind::Elsewhere` is untouched and
     // still has consumers — the vocabulary is the framework's, and any product
     // with more than one surface needs it. What ended is this rail needing it.
-    /// ★★★★★ R1728 — in the reference's **first** release, and this build has
-    /// not built it; the detail names what specifies it.
-    ///
-    /// The arm the rail could not be made faithful without. Measured at R1728:
-    /// the reference draws eight seats and this application drew seven, and the
-    /// two it lacked were absent for a reason none of the arms it had could
-    /// say. [`Reserved`](Self::Reserved) says *wait for a later release* and
-    /// would be a lie about the scope — the reference implements both sections
-    /// today, each with a row list and a detail pane. The `Elsewhere` arm this
-    /// enum carried until R1729 said *go and open it*, and would have sent a
-    /// reader after a window nobody has written. So the seats were simply left
-    /// off — and a rail that omits a seat cannot be compared with one that has
-    /// it, which is how the divergence stayed invisible.
-    ///
-    /// The framework's own vocabulary gained the matching arm in the same
-    /// round, so this lowers to a stated reason on the wire and in the
-    /// accessibility tree rather than to a bare disabled bit.
-    Unbuilt(&'static str),
+    // ★★★★★ R1731 — **`Unbuilt` was here, and it is gone for the same reason
+    // `Elsewhere` went at R1729: nothing constructs it.**
+    //
+    // It said *in the specification of the release being built, and not built*,
+    // and R1728 spent an arm on it because the rail could not be made faithful
+    // without one: the reference draws eight seats, this application drew
+    // seven, and the two it lacked were absent for a reason none of the arms it
+    // had could say. R1730 built the first of those two and R1731 the second,
+    // so the arm has no constructor — and an unconstructed variant is a
+    // `dead_code` error under this workspace's lints, so the compiler is what
+    // reported it rather than a reader noticing.
+    //
+    // Deleted rather than kept behind an allow, which makes the claim the
+    // strongest form available: **this rail cannot say "specified and not
+    // built", because it has no way to spell it.** Its return would be a
+    // compile-checked event rather than a comment somebody remembers.
+    // `pinion_core::availability::UnavailableKind::Unbuilt` is untouched and
+    // still has consumers — the vocabulary is the framework's, and any product
+    // assembled against a written specification passes through that state.
 }
 
 /// One seat on the icon rail.
@@ -156,7 +157,7 @@ impl RailSpec {
     pub const fn reserved_for(&self) -> Option<&'static str> {
         match self.seat {
             Seat::Reserved(why) => Some(why),
-            Seat::Page | Seat::Unbuilt(_) => None,
+            Seat::Page => None,
         }
     }
 }
@@ -208,14 +209,14 @@ pub const RAIL: &[RailSpec] = &[
         title: "Key Patterns",
         seat: Seat::Page,
     },
-    // ★★ R1728 — the seat the fourth arm exists for. The reference has this
-    // section, working, in its first release; this build has not built it. It
-    // is drawn, named, inert and honest about why, rather than left off the
-    // rail.
+    // ★★★★★ R1731 — **the seat that closed the rail.** Its page is
+    // `hello-log-view`, built for it the way `keys` was, and with it every
+    // section the reference opens is a section this application opens. What
+    // stays shut is shut because the reference itself defers it.
     RailSpec {
         key: "logs",
         title: "Logs",
-        seat: Seat::Unbuilt("the behaviour reference"),
+        seat: Seat::Page,
     },
     // ★★★★★ R1724 — **the first seat to stop saying *elsewhere*.**
     //
@@ -275,9 +276,6 @@ pub fn destinations() -> Destinations {
                 Seat::Page => Destination::open(seat.key, seat.title),
                 Seat::Reserved(why) => {
                     Destination::closed(seat.key, seat.title, Unavailable::reserved(why))
-                }
-                Seat::Unbuilt(spec) => {
-                    Destination::closed(seat.key, seat.title, Unavailable::unbuilt(spec))
                 }
             })
             .collect(),

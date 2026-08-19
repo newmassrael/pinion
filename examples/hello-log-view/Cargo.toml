@@ -1,0 +1,49 @@
+[package]
+name = "hello-log-view"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "R1731 Phase-B plane-C integration consumer — the analysis tool's log section, the fourth seat of the reference's rail and the last one this build owed. A 46-high header carrying a live-capture mark, a live filter and an exclusive severity choice; a five-column event list; and a 340-wide decode pane whose last part is the frame's own bytes, drawn through pinion_widget_paint::hex_dump rather than as a string. Its three surfaces are checked against docs/analyzer-logs-spec.json through pinion_core::conformance, read back out of the PAINTED scene."
+publish = false
+
+# ★ R1731 — a library and a four-line binary from its first round, which is the
+# rule R1730 measured: `hello-key-patterns` was built this way and its doc gate
+# reported nothing, where `hello-packet-view` paid eight findings for the same
+# split done afterwards.
+[lib]
+name = "hello_log_view"
+path = "src/lib.rs"
+
+[[bin]]
+name = "hello-log-view"
+path = "src/main.rs"
+
+[dependencies]
+pinion-core = { path = "../../crates/pinion-core", version = "0.0.1" }
+# §5.40 AccessKit substrate for `WidgetA11y::access_node`.
+pinion-a11y = { path = "../../crates/pinion-a11y", version = "0.0.1" }
+# §5.21 the scrolling pane, and R1613's byte dump — the decode pane's last part
+# is a real hex dump rather than a formatted string, so what is drawn and what a
+# pointer reaches are one fact.
+pinion-widget-paint = { path = "../../crates/pinion-widget-paint", version = "0.0.1" }
+# §5.16 paint-side AppShell (winit + Vello + RPC).
+pinion-shell = { path = "../../crates/pinion-shell", version = "0.0.1" }
+# R1537 §5.16 — the emitted renderer owns its wgpu device through pinion-gpu.
+pinion-gpu = { path = "../../crates/pinion-gpu", version = "0.0.1" }
+vello = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+[dev-dependencies]
+pinion-core = { path = "../../crates/pinion-core", features = ["test-fixtures"] }
+# R1653 — the integration test runs the real view -> layout pipeline, so the
+# rectangles it asserts against are the ones the window would paint.
+pinion-runtime = { path = "../../crates/pinion-runtime", version = "0.0.1" }
+
+[build-dependencies]
+pinion-forge = { path = "../../crates/pinion-forge", version = "0.0.1" }
+
+[lints]
+workspace = true

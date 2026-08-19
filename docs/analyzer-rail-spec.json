@@ -106,20 +106,27 @@
     "seat it leads to. Its own surfaces are checked the same way this rail is,",
     "against `docs/analyzer-keys-spec.json`.",
     "",
+    "R1731 paid off `logs`, and with it the list is EMPTY: every section the",
+    "reference opens, this build opens. `hello-log-view` is it — a header",
+    "carrying a capture mark, a live filter and an exclusive severity choice; a",
+    "five-column event list; and a decode pane whose last part is the frame's",
+    "own bytes, drawn through the framework's byte-dump geometry. Its three",
+    "surfaces are checked the same way this rail is, against",
+    "docs/analyzer-logs-spec.json.",
+    "",
+    "★ The application's `Seat::Unbuilt` arm went with it. Nothing constructs",
+    "it any more and an unconstructed variant is a dead_code error under this",
+    "workspace's lints, so the compiler is what reported the rail can no longer",
+    "SPELL 'specified and not built'. The framework's",
+    "`UnavailableKind::Unbuilt` is untouched and still has consumers — the",
+    "vocabulary is the framework's, and any product built against a written",
+    "specification passes through that state.",
+    "",
     "An entry is DELETED rather than marked done, because the gate asserts the",
     "live difference EQUALS this list. A paid divergence left here would fail",
     "just as loudly as a new one — which is the point: the list cannot quietly",
-    "describe a worse build than the one that exists."
+    "describe a worse build than the one that exists. An EMPTY list is the",
+    "strongest form of that: there is nothing left to describe."
   ],
-  "owed": [
-    {
-      "key": "logs",
-      "sentence": "`logs` is specified open and is closed (unbuilt)",
-      "since": "R1728",
-      "why": [
-        "As above: the reference implements it, with severity and type columns",
-        "and a detail pane, and this build has not."
-      ]
-    }
-  ]
+  "owed": []
 }

@@ -1,48 +1,50 @@
 // R1412 §5.49 — example bindings tolerate looser doc-markdown lints.
 #![allow(clippy::doc_markdown)]
 
-//! `hello-key-patterns` — R1730 §5.27 §5.40 §5.41 — the analysis tool's
-//! **key-pattern section**, the third seat of the reference's rail, assembled
-//! as one screen against a specification written down somewhere else.
+//! `hello-log-view` — R1731 §5.27 §5.40 §5.41 — the analysis tool's **log
+//! section**, the fourth seat of the reference's rail and the last one this
+//! build owed.
 //!
 //! ## What forced this example
 //!
-//! `docs/analyzer-rail-spec.json` carried two accepted divergences from the
-//! reference's navigation, and this is one of them: *`keys` is specified open
-//! and is closed (unbuilt)*. The reference implements the section — rows and a
-//! record pane — and this tree drew the seat, named it and refused it. R1728
-//! made that refusal honest; a refusal is not a reproduction.
+//! `docs/analyzer-rail-spec.json` carried one accepted divergence from the
+//! reference's navigation after R1730 paid off the third: *`logs` is specified
+//! open and is closed (unbuilt)*. The reference implements the section — an
+//! event list and a decode pane — and this tree drew the seat, named it and
+//! refused it.
 //!
-//! ## What is new, and what is assembly
+//! ## What is assembly, and what is not
 //!
-//! The screen is assembly: a list, a record pane and a filter, all out of
-//! substrates this tree already had. What is new is the shape the round is
-//! named for — [`pinion_core::conformance`], a **surface** written down and
-//! compared with the built one in both directions, with a ledger of accepted
-//! differences that fails when a difference is paid off and not recorded.
+//! Almost all of it is assembly, and that is the point: R1730 built
+//! [`pinion_core::conformance`] and the round after it needed no new framework
+//! to hold a second specified screen. What R1731 *did* add is the part R1730
+//! would otherwise have been copied for —
+//! [`SpecDocument`](pinion_core::conformance::SpecDocument) and
+//! `pinion_core::test_fixtures::surface`, which are the loader and the
+//! paint-side reader both screens now share.
 //!
-//! R1728 gave a *navigation* that treatment and it found three defects in its
-//! first three runs. Everything a screen is made of that is not a navigation —
-//! a list's columns, a pane's sections, a header's parts — had no way to be
-//! checked at all. This screen is the first consumer, three times over: its
-//! three surfaces are compared with `docs/analyzer-keys-spec.json`, and it
-//! publishes the result on the wire so an agent can ask how much of the section
-//! is really here before it plans anything.
+//! Two things here are this section's own rather than the sibling's:
+//!
+//! * the severity choice is **exclusive and ordered** — *warnings* means
+//!   warnings and errors — which three independent toggles could not express;
+//! * the decode pane's last part is the frame's **bytes**, drawn through the
+//!   framework's own byte-dump geometry, so what is on screen is what
+//!   [`pinion_core::widgets::hex_dump::HexLayout`] says is there
+//!   rather than a second formatting loop.
 //!
 //! ## The screen
 //!
 //! ```text
-//! cargo run -p hello-key-patterns --release
+//! cargo run -p hello-log-view --release
 //! ```
 //!
-//! A 46-high section header — the section's name, a **derived** summary and a
-//! live filter — over a seven-column declaration list, beside a 320-wide record
-//! pane of eleven parts. Click a declaration to open its record; type in the
-//! filter to narrow the list; the arrows walk it. The record pane's last part
-//! is the reference's own action out of the section, and it refuses with the
-//! reason the rail specification gives that seat.
+//! A 46-high header — the section's name, whether a capture is running, a live
+//! filter and the severity choice — over a five-column event list, beside a
+//! 340-wide decode pane. Click an event to decode it; type in the filter to
+//! narrow the list; click a severity to keep that severity and worse; the
+//! arrows walk it.
 //!
-//! See `tools/demos/r1730_a_section_is_the_one_the_reference_draws.py`.
+//! See `tools/demos/r1731_a_log_section_is_the_one_the_reference_draws.py`.
 
 mod spec;
 
@@ -58,7 +60,6 @@ use pinion_a11y::{
     AccessFocus, AccessLive, AccessNode, AccessValue, AriaRole, GridCell, GridColumn, GridRow,
     WidgetA11y, grid_table_nodes,
 };
-use pinion_core::availability::{Recourse, Unavailable, UnavailableKind};
 use pinion_core::conformance::Part;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
@@ -75,6 +76,7 @@ use pinion_core::utterance::{Tone, Utterance};
 use pinion_core::voice::Silence;
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::grid_sort::Admission;
+use pinion_core::widgets::hex_dump::HexLayout;
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::row_query::RowQuery;
 use pinion_core::widgets::scroll::ScrollState;
@@ -88,39 +90,34 @@ use pinion_widget_paint::text_field as tf_paint;
 
 include!(concat!(env!("OUT_DIR"), "/app.rs"));
 
-vello_renderer_impl!(HelloKeyPatternsRenderer, HelloKeyPatternsRendererError);
+vello_renderer_impl!(HelloLogViewRenderer, HelloLogViewRendererError);
 
 // ── Tags ────────────────────────────────────────────────────────────────────
 
 /// The tag the widget is registered under — the receiver a press resolves to.
-const VIEW_TAG: &str = "key_patterns";
+const VIEW_TAG: &str = "log_view";
 /// The root address, for `scene/snapshot` and the sweep.
-const ROOT_TAG: &str = "kp.root";
+const ROOT_TAG: &str = "lv.root";
 /// The theme scope.
 const THEME_TAG: &str = "app";
-/// The filter box: the tag its own external is addressed by, its buffer is
-/// keyed on, and it is painted under. One name.
-///
-/// Deliberately **outside** the `kp.header.` namespace the header's parts live
-/// in. A surface's parts are read back by walking that prefix and taking the
-/// names with no further dot in them, so a child tagged inside a part would
-/// have to be excluded by name — and R1728 measured what naming an exclusion
-/// costs: the gate is then only as good as whoever last updated the list.
-const QUERY_TAG: &str = "kp.filter.query";
+/// The filter box. Deliberately outside the `lv.header.` namespace the header's
+/// parts live in — a surface's parts are read back by walking that prefix and
+/// taking the names with no further dot, so a child tagged inside a part would
+/// have to be excluded by name.
+const QUERY_TAG: &str = "lv.filter.query";
 /// The list's accessibility header row. Nothing paints it — the column headers
 /// are painted individually — so it is anchored by the members it composes.
-const LIST_HEADER: &str = "kp.list.header";
+const LIST_HEADER: &str = "lv.list.header";
 /// The list's grid.
-const LIST_TAG: &str = "kp.list";
-/// The record pane.
-const DETAIL_TAG: &str = "kp.detail";
+const LIST_TAG: &str = "lv.list";
+/// The decode pane.
+const DETAIL_TAG: &str = "lv.detail";
 /// The section header.
-const HEADER_TAG: &str = "kp.header";
+const HEADER_TAG: &str = "lv.header";
 
 const FONT_SMALL: u32 = 11;
 const FONT_BODY: u32 = 12;
 const FONT_TITLE: u32 = 14;
-const FONT_SUBJECT: u32 = 16;
 
 // ── Geometry ────────────────────────────────────────────────────────────────
 
@@ -133,15 +130,10 @@ const DETAIL_W: u32 = spec::DETAIL_W;
 const PAD: u32 = spec::PAD;
 const GAP: u32 = spec::GAP;
 
-/// The smallest width this section lays out completely at, **derived from the
-/// reference's own grid**.
-///
-/// The reference gives its pattern column `minmax(150px, 1fr)` — a stated
-/// minimum for the one column that flexes — and fixes the other six. So the
-/// narrowest complete layout is the record pane, plus the row's padding, plus
-/// the six fixed widths and their gaps, plus that 150. Written as a sum rather
-/// than as a number because every term of it is a fact somewhere else, and a
-/// number here would go stale the first time a column's width moved.
+/// The smallest width this section lays out completely at, derived from the
+/// reference's own grid: the decode pane, plus the row's padding, plus the four
+/// fixed widths and their gaps, plus the minimum the reference gives the message
+/// column.
 const fn min_width() -> u32 {
     let mut fixed = 0;
     let mut gaps = 0;
@@ -153,48 +145,32 @@ const fn min_width() -> u32 {
         }
         n += 1;
     }
-    DETAIL_W + 2 * PAD + fixed + gaps + spec::PATTERN_MIN
+    DETAIL_W + 2 * PAD + fixed + gaps + spec::MESSAGE_MIN
 }
 
 /// The smallest width the layout is complete at.
 const MIN_W: u32 = min_width();
-/// The smallest height it is complete at — the record pane's own stack, which
-/// is the taller of the two columns. Asserted against the laid-out stack by
-/// `tests.rs` rather than trusted, because it is the one term of the floor that
-/// arithmetic here cannot derive.
-const MIN_H: u32 = 460;
+/// The smallest height it is complete at — the decode pane's own stack, which is
+/// the taller of the two columns. Asserted against the laid-out stack by
+/// `tests.rs` rather than trusted.
+const MIN_H: u32 = 420;
 
-/// ★ R1712 — what this screen concedes when it is not given the room it wants.
-///
-/// The list's own columns are what it gives up first, and naming that is the
-/// point of the declaration: six of the seven have widths the specification
-/// fixes, so a window narrower than the layout takes the difference out of the
-/// pattern column until that column reaches the minimum the reference gives it,
-/// and below the floor the right-hand columns clip. The record pane does not
-/// shrink — it restates a row the list is still showing, and a pane that
-/// narrowed would elide the very values a reader opened it for.
-const SHRINK: ShrinkPolicy = ShrinkPolicy::conceding(
-    (MIN_W, MIN_H),
-    (760, 420),
-    &["the columns right of the pattern clip before the record pane narrows"],
-);
-
-/// The section opens larger than the narrowest layout it can manage.
-///
-/// A `const` assertion rather than a test, because it is decidable at compile
-/// time and a screen whose opening size is below its own layout floor should
-/// not build. `ShrinkPolicy::conceding` already refuses a floor above the
-/// comfortable size; this is the other pair, which nothing else checks.
 const _: () = assert!(
     MIN_W < WIN_W && MIN_H < WIN_H,
     "the section must open larger than the narrowest layout it can manage",
+);
+
+/// What this screen concedes when it is not given the room it wants.
+const SHRINK: ShrinkPolicy = ShrinkPolicy::conceding(
+    (MIN_W, MIN_H),
+    (720, 380),
+    &["the columns right of the message clip before the decode pane narrows"],
 );
 
 fn window_size() -> (u32, u32) {
     pinion_core::external::layout_size(VIEW_TAG, SHRINK.comfortable(), (WIN_W, WIN_H))
 }
 
-/// The whole area left of the record pane.
 fn list_column_rect() -> Rect {
     let (w, h) = window_size();
     Rect::new(0, 0, w.saturating_sub(DETAIL_W), h)
@@ -220,15 +196,13 @@ fn detail_rect() -> Rect {
 }
 
 /// The x and width of column `n`, in the list column's own coordinates.
-///
-/// One derivation, read by the header painter, every row painter, the hit test
-/// and the accessibility tree — so a column cannot move for one of them.
 fn column_rect(n: usize) -> Rect {
     let gaps = u32::try_from(spec::COLUMNS.len().saturating_sub(1)).unwrap_or(0);
+    let fixed: u32 = spec::COLUMNS.iter().map(|c| c.width).sum();
     let flexible = list_column_rect()
         .w
         .saturating_sub(2 * PAD)
-        .saturating_sub(fixed_width())
+        .saturating_sub(fixed)
         .saturating_sub(GAP * gaps);
     let mut x = PAD;
     for (i, column) in spec::COLUMNS.iter().enumerate() {
@@ -245,12 +219,6 @@ fn column_rect(n: usize) -> Rect {
     Rect::new(x, 0, 0, ROW_H)
 }
 
-/// The widths the specification fixes, added up.
-fn fixed_width() -> u32 {
-    spec::COLUMNS.iter().map(|c| c.width).sum()
-}
-
-/// Row `visual`'s rectangle inside the scrolling list body.
 fn list_row_rect(visual: usize) -> Rect {
     Rect::new(
         0,
@@ -260,77 +228,89 @@ fn list_row_rect(visual: usize) -> Rect {
     )
 }
 
-/// The record pane's parts, in paint order, each with the rectangle it was
-/// given — in the pane's own coordinates.
-///
-/// ★★★★★ The one derivation the painter, the hit test and the painted-roster
-/// check all read. A part that shares its row with the next one is laid out
-/// beside it, which is how the reference draws its four single facts as a
-/// two-by-two grid; everything else stacks.
-fn detail_parts() -> Vec<(&'static str, Rect)> {
-    let inner = DETAIL_W.saturating_sub(2 * PAD);
-    let half = inner.saturating_sub(9) / 2;
-    let mut out = Vec::with_capacity(spec::DETAIL.len());
-    // The pane's own heading strip holds the first two parts side by side.
-    out.push(("subject", Rect::new(PAD, 14, 160, 20)));
-    out.push((
-        "ordinal",
-        Rect::new(DETAIL_W.saturating_sub(PAD + 48), 14, 48, 20),
-    ));
-    let mut y = HEADER_H + 18;
-    let mut n = 2;
-    while n < spec::DETAIL.len() {
-        let part = &spec::DETAIL[n];
-        if part.pairs {
-            out.push((part.key, Rect::new(PAD, y, half, part.height)));
-            let beside = &spec::DETAIL[n + 1];
-            out.push((
-                beside.key,
-                Rect::new(PAD + half + 9, y, half, beside.height),
-            ));
-            y += part.height.max(beside.height) + 9;
-            n += 2;
-            continue;
-        }
-        out.push((part.key, Rect::new(PAD, y, inner, part.height)));
-        y += part.height + 16;
-        n += 1;
-    }
-    out
-}
-
-/// One part's rectangle, by key.
-fn detail_part_rect(key: &str) -> Option<Rect> {
-    detail_parts()
-        .into_iter()
-        .find(|(k, _)| *k == key)
-        .map(|(_, rect)| rect)
-}
-
-/// The header's three parts, left to right, in the header's own coordinates.
+/// The header's four parts, left to right, in the header's own coordinates.
 fn header_parts() -> Vec<(&'static str, Rect)> {
     let w = header_rect().w;
+    let filter_x = w.saturating_sub(PAD + spec::SEVERITY_W + 10 + spec::FILTER_W);
     vec![
-        ("title", Rect::new(PAD, 14, 120, 18)),
-        ("summary", Rect::new(PAD + 132, 15, 260, 16)),
+        ("title", Rect::new(PAD, 14, 60, 18)),
+        ("live", Rect::new(PAD + 72, 15, 96, 16)),
         (
             "filter",
             Rect::new(
-                w.saturating_sub(PAD + spec::FILTER_W),
+                filter_x,
                 (HEADER_H.saturating_sub(spec::FILTER_H)) / 2,
                 spec::FILTER_W,
                 spec::FILTER_H,
             ),
         ),
+        (
+            "severity",
+            Rect::new(
+                w.saturating_sub(PAD + spec::SEVERITY_W),
+                (HEADER_H.saturating_sub(26)) / 2,
+                spec::SEVERITY_W,
+                26,
+            ),
+        ),
     ]
+}
+
+/// One severity choice's rectangle, in the severity part's own coordinates.
+fn choice_rect(n: usize) -> Rect {
+    let each = spec::SEVERITY_W / u32::try_from(spec::CHOICES.len()).unwrap_or(1);
+    Rect::new(u32::try_from(n).unwrap_or(0) * each, 0, each - 4, 26)
+}
+
+/// The byte dump's geometry for `bytes`.
+///
+/// Eight per row rather than the classic sixteen, because the pane is 340 wide
+/// and a sixteen-wide row of hex does not fit in it — the reference wraps for
+/// the same reason.
+fn byte_layout(bytes: &[u8]) -> HexLayout {
+    HexLayout::new(bytes.len())
+        .with_bytes_per_row(8)
+        .with_offset_digits(4)
+}
+
+/// The decode pane's parts, in paint order, each with the rectangle it was
+/// given — in the pane's own coordinates.
+///
+/// Two of them are measured rather than fixed: the decoded fields and the bytes
+/// are lists, and a list's height is its content's. Passing the record in is
+/// what makes that possible, and it is why this takes an argument where the
+/// sibling section's peer does not.
+fn detail_parts(record: &'static spec::RowSpec) -> Vec<(&'static str, Rect)> {
+    let inner = DETAIL_W.saturating_sub(2 * PAD);
+    let mut out = Vec::with_capacity(spec::DETAIL.len());
+    out.push(("subject", Rect::new(PAD, 14, 150, 20)));
+    out.push((
+        "kind",
+        Rect::new(DETAIL_W.saturating_sub(PAD + 96), 14, 96, 20),
+    ));
+    let mut y = HEADER_H + 18;
+    for part in &spec::DETAIL[2..] {
+        let height = match part.key {
+            "layers" => {
+                spec::LIST_LABEL_H + spec::FIELD_H * u32::try_from(record.fields.len()).unwrap_or(0)
+            }
+            "bytes" => {
+                spec::LIST_LABEL_H
+                    + 18 * u32::try_from(byte_layout(record.bytes).rows().max(1)).unwrap_or(1)
+            }
+            _ => part.height,
+        };
+        out.push((part.key, Rect::new(PAD, y, inner, height)));
+        y += height + if part.height == 0 { 18 } else { 9 };
+    }
+    out
 }
 
 const fn contains(rect: Rect, px: u32, py: u32) -> bool {
     px >= rect.x && px < rect.x + rect.w && py >= rect.y && py < rect.y + rect.h
 }
 
-/// The centre of a rectangle — where the sweep presses, because a control that
-/// does not answer at the middle of its own paint is not reachable.
+/// The centre of a rectangle — where the sweep presses.
 #[cfg(test)]
 const fn centre(rect: Rect) -> (u32, u32) {
     (rect.x + rect.w / 2, rect.y + rect.h / 2)
@@ -358,9 +338,8 @@ struct Ink {
     text_3: Color,
     accent: Color,
     accent_soft: Color,
-    ok: Color,
     warn: Color,
-    declaration: Color,
+    err: Color,
 }
 
 fn ink() -> Ink {
@@ -374,16 +353,28 @@ fn ink() -> Ink {
         text_3: rgb(0x69_7180),
         accent: rgb(0xEC_5AA0),
         accent_soft: Color::rgba(0xEC, 0x5A, 0xA0, 0x28),
-        ok: rgb(0x35_C08B),
         warn: rgb(0xD9_A21B),
-        declaration: rgb(0xC7_7800),
+        err: rgb(0xE0_5252),
     }
 }
 
-fn health_ink(health: spec::Health, ink: Ink) -> Color {
-    match health {
-        spec::Health::Resolved => ink.ok,
-        spec::Health::NumericOnly => ink.warn,
+fn severity_ink(severity: spec::Severity, ink: Ink) -> Color {
+    match severity {
+        spec::Severity::Info => ink.text_2,
+        spec::Severity::Warn => ink.warn,
+        spec::Severity::Error => ink.err,
+    }
+}
+
+/// The ink a message class is drawn in — a reader's index into a list going
+/// past, which is why the reference gives its classes different colours.
+fn kind_ink(kind: &str) -> Color {
+    match kind {
+        "Data" => rgb(0x3d_8b_fd),
+        "Query" => rgb(0xb0_69_d8),
+        "Response" => rgb(0x2e_a0_67),
+        "Declaration" => rgb(0xd1_8b_1f),
+        _ => rgb(0x77_82_8c),
     }
 }
 
@@ -391,18 +382,20 @@ fn health_ink(health: spec::Health, ink: Ink) -> Color {
 
 /// Everything the screen holds, and nothing it can derive.
 struct ViewState {
-    /// Which declaration's record is open, by index into [`spec::ROWS`].
+    /// Which event's decode is open, by index into [`spec::ROWS`].
     row: Signal<usize>,
-    /// ★ The filter's own buffer, **not** a copy of it. A `Signal<String>`
-    /// beside the field is the two-copies shape this tree has paid for
-    /// repeatedly, and here it would fail visibly: the list would filter on the
-    /// last committed query while the box showed the one being typed.
+    /// Which severity choice is on. **One** index rather than a set of flags:
+    /// the choice is exclusive and the floors are ordered.
+    choice: Signal<usize>,
+    /// Whether a capture is running, which is what the header's live mark reads.
+    capturing: Signal<bool>,
+    /// The filter's own buffer, not a copy of it.
     query: Rc<TextEditState>,
     /// The list body's scroll offset.
     list_scroll: Rc<ScrollState>,
     /// Where the cursor last was, because a press carries no coordinates.
     cursor: Signal<(u32, u32)>,
-    /// The last thing the screen said, for the live region and the wire.
+    /// The last thing the screen said.
     said: RefCell<Option<Utterance>>,
 }
 
@@ -419,13 +412,6 @@ impl ViewState {
             .unwrap_or_default()
     }
 
-    /// The running query, parsed.
-    ///
-    /// A malformed query keeps everything rather than nothing: a half-typed
-    /// query is malformed on nearly every keystroke, and a screen that emptied
-    /// its list while a person typed would flash the section away and back. The
-    /// refusal is not swallowed — it is what [`query_fault`](Self::query_fault)
-    /// answers and what the header paints.
     fn query(&self) -> RowQuery {
         RowQuery::parse(&self.query.text(), &spec::query_columns()).unwrap_or_default()
     }
@@ -436,26 +422,33 @@ impl ViewState {
             .map(|e| e.to_string())
     }
 
-    /// The source indices the query keeps, in declaration order.
+    /// The severity floor the chosen control sets.
+    fn floor(&self) -> Option<spec::Severity> {
+        spec::CHOICES
+            .get(self.choice.get())
+            .and_then(|choice| choice.floor)
+    }
+
+    /// The source indices the section is showing, in capture order.
     ///
-    /// The ONE derivation. The painter, the hit test, the keyboard, the
-    /// accessibility tree and the wire all read it, so the list a person sees
-    /// and the list a press lands in cannot be two lists.
+    /// The ONE derivation, and it folds **both** narrowings: the severity floor
+    /// and the query. Two lists — one per control — is how a screen comes to
+    /// press the wrong row.
     fn kept(&self) -> Vec<usize> {
         let query = self.query();
-        if query.is_everything() {
-            return (0..spec::ROWS.len()).collect();
-        }
+        let floor = self.floor();
         (0..spec::ROWS.len())
+            .filter(|&n| floor.is_none_or(|least| spec::ROWS[n].severity >= least))
             .filter(|&n| {
+                if query.is_everything() {
+                    return true;
+                }
                 let cells = spec::ROWS[n].attributes();
                 query.admit(|c| cells.get(c).map_or("", String::as_str)) == Admission::Admitted
             })
             .collect()
     }
 
-    /// Which declaration the list's cursor is on: the open one when the query
-    /// kept it, else the first it did keep, else the open one again.
     fn cursor_row(&self) -> usize {
         let open = self.row.get();
         let kept = self.kept();
@@ -465,93 +458,42 @@ impl ViewState {
         kept.first().copied().unwrap_or(open)
     }
 
-    /// The record the pane is showing.
     fn record(&self) -> &'static spec::RowSpec {
         &spec::ROWS[self.cursor_row()]
     }
 
-    /// What the header's summary says.
+    /// What the header's live mark reads.
     ///
-    /// **Derived**, because the reference derives it: it counts the
-    /// declarations and the ones that resolved to a number only. A build that
-    /// painted the sentence as a constant would show `8 declared` under a
-    /// filter that kept two.
-    fn summary(&self) -> String {
-        let kept = self.kept();
-        let unresolved = kept
-            .iter()
-            .filter(|&&n| spec::ROWS[n].health == spec::Health::NumericOnly)
-            .count();
-        let scope = if self.query().is_everything() {
-            format!("{} declared", kept.len())
+    /// ★ The reference draws this mark while a capture is running and NOTHING
+    /// there when it is not. This build always draws the part and changes what
+    /// it says: a blank cannot be told apart from a build that forgot to draw
+    /// it, and the specification fixes that the part is there rather than what
+    /// it reads.
+    fn capture_reading(&self) -> String {
+        if self.capturing.get() {
+            format!("LIVE · {} events", self.kept().len())
         } else {
-            format!("{} of {} declared", kept.len(), spec::ROWS.len())
-        };
-        format!("{scope} · {unresolved} numeric-only")
+            format!("PAUSED · {} events", self.kept().len())
+        }
     }
 }
 
 fn use_view_state() -> Rc<ViewState> {
     // ★ [[owner-cache-no-nested-factory]] — every cached slot this one holds is
-    // resolved BEFORE the factory runs, because `Owner::cache` cannot re-enter
-    // itself and a factory that calls another `use_*` hook does exactly that.
-    let list_scroll = pinion_core::widgets::scroll::use_scroll_state("kp.list.body");
+    // resolved BEFORE the factory runs.
+    let list_scroll = pinion_core::widgets::scroll::use_scroll_state("lv.list.body");
     let query = use_text_edit_state(QUERY_TAG);
     let owner = pinion_core::reactive::Owner::current()
         .expect("use_view_state requires an active Owner scope");
-    owner.cache("key_patterns.state", || ViewState {
+    owner.cache("log_view.state", || ViewState {
         row: Signal::new(spec::OPENING_ROW),
+        choice: Signal::new(spec::OPENING_CHOICE),
+        capturing: Signal::new(true),
         query,
         list_scroll,
         cursor: Signal::new((0, 0)),
         said: RefCell::new(None),
     })
-}
-
-// ── The action out of the section ───────────────────────────────────────────
-
-/// The rail specification, as text, compiled in.
-///
-/// The **same** artifact the shell's rail is judged against, read rather than
-/// copied. The record pane's last part points at a section whose standing is
-/// that file's fact, and a second copy of that fact here is how the button
-/// would come to promise something the navigation refuses.
-const RAIL_SPEC_JSON: &str = include_str!("../../../docs/analyzer-rail-spec.json");
-
-/// Why the reference's own action out of this section cannot be taken.
-///
-/// The reference draws a live button into its topology section. The scope
-/// reference draws that section **locked**, booked under a requirement of a
-/// release that has not shipped — so reproducing the affordance faithfully
-/// means drawing it and refusing it with that reason. Leaving it off would be a
-/// divergence; making it navigate would be a promise the specification does not
-/// keep.
-///
-/// # Panics
-///
-/// If the rail specification does not describe the section this points at — a
-/// defect in the pin rather than a state the screen can reach.
-fn declarer_standing() -> Unavailable {
-    let doc: serde_json::Value =
-        serde_json::from_str(RAIL_SPEC_JSON).expect("the rail specification is readable JSON");
-    let seat = doc["canon"]
-        .as_array()
-        .expect("the rail specification declares a canon array")
-        .iter()
-        .find(|seat| seat["key"].as_str() == Some(spec::DECLARER_SECTION))
-        .expect("the rail specification names the section this action leads to");
-    let kind = seat["kind"]
-        .as_str()
-        .and_then(UnavailableKind::from_name)
-        .unwrap_or(UnavailableKind::Unbuilt);
-    let detail = seat["$note"]
-        .as_str()
-        .and_then(|note| note.split_once("under ").map(|(_, rest)| rest))
-        .map_or_else(
-            || "the behaviour reference".to_owned(),
-            |rest| rest.trim_end_matches('.').to_owned(),
-        );
-    Unavailable::new(kind, detail)
 }
 
 // ── The hit test ────────────────────────────────────────────────────────────
@@ -560,62 +502,61 @@ fn declarer_standing() -> Unavailable {
 /// painter uses.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum Hit {
-    /// A declaration row, by its index in [`spec::ROWS`].
-    Declaration(usize),
-    /// The record pane's action, which refuses.
-    Declarer,
+    /// An event row, by its index in [`spec::ROWS`].
+    Event(usize),
+    /// A severity choice, by its index in [`spec::CHOICES`].
+    Choice(usize),
     /// Nothing that answers.
     None,
 }
 
 impl Hit {
     /// What a **key** press at `tag` addresses.
-    ///
-    /// A keyboard activation names a thing, not a pixel, so synthesising a
-    /// press at the middle of the tag's rectangle would be wrong for a row
-    /// scrolled out of the list.
     fn of_tag(tag: &str) -> Self {
         if let Some(n) = tag
-            .strip_prefix("kp.list.row.")
+            .strip_prefix("lv.list.row.")
             .and_then(|n| n.parse::<usize>().ok())
             && n < spec::ROWS.len()
         {
-            return Self::Declaration(n);
+            return Self::Event(n);
         }
-        // A cell's press is its row's press — the cell labels are text runs,
-        // transparent to the pointer, so a press anywhere on a cell already
-        // reaches the row.
         if let Some((row, _column)) = tag
-            .strip_prefix("kp.list.cell.")
+            .strip_prefix("lv.list.cell.")
             .and_then(|rest| rest.split_once('_'))
             && let Ok(row) = row.parse::<usize>()
             && row < spec::ROWS.len()
         {
-            return Self::Declaration(row);
+            return Self::Event(row);
         }
-        if tag == "kp.detail.declarer" {
-            return Self::Declarer;
+        if let Some(key) = tag.strip_prefix("lv.severity.")
+            && let Some(n) = spec::CHOICES.iter().position(|c| c.key == key)
+        {
+            return Self::Choice(n);
         }
         Self::None
     }
 
-    /// The word the wire answers a press with, and therefore the word
-    /// [`External::target_at`] answers with too.
     fn word(&self) -> Option<String> {
         Some(match self {
-            Self::Declaration(n) => format!("declaration.{n}"),
-            Self::Declarer => "declarer".to_owned(),
+            Self::Event(n) => format!("event.{n}"),
+            Self::Choice(n) => format!("severity.{}", spec::CHOICES[*n].key),
             Self::None => return None,
         })
     }
 
     /// What answers at the window point `(px, py)`.
     fn at(state: &ViewState, px: u32, py: u32) -> Self {
-        let detail = detail_rect();
-        if contains(detail, px, py) {
-            let (dx, dy) = (px - detail.x, py - detail.y);
-            if detail_part_rect("declarer").is_some_and(|r| contains(r, dx, dy)) {
-                return Self::Declarer;
+        let header = header_rect();
+        if contains(header, px, py) {
+            if let Some((_, at)) = header_parts().into_iter().find(|(k, _)| *k == "severity")
+                && contains(at, px, py)
+            {
+                let (cx, cy) = (px - at.x, py - at.y);
+                for n in 0..spec::CHOICES.len() {
+                    if contains(choice_rect(n), cx, cy) {
+                        return Self::Choice(n);
+                    }
+                }
             }
             return Self::None;
         }
@@ -624,11 +565,9 @@ impl Hit {
             let (ox, oy) = state.list_scroll.offset();
             let lx = px.saturating_sub(list.x).saturating_add(clamp_offset(ox));
             let ly = py.saturating_sub(list.y).saturating_add(clamp_offset(oy));
-            // Walk what is DRAWN: a hit test over the source rows would answer
-            // a hidden declaration under a filtered list.
             for (visual, &n) in state.kept().iter().enumerate() {
                 if contains(list_row_rect(visual), lx, ly) {
-                    return Self::Declaration(n);
+                    return Self::Event(n);
                 }
             }
         }
@@ -644,39 +583,43 @@ const fn clamp_offset(offset: i32) -> u32 {
 
 // ── The handlers a press and the wire both reach ────────────────────────────
 
-fn select_declaration(state: &Rc<ViewState>, row: usize) {
+fn select_event(state: &Rc<ViewState>, row: usize) {
     if row >= spec::ROWS.len() {
         return;
     }
     state.row.set(row);
+    let record = &spec::ROWS[row];
     state.say(Utterance::done(format!(
-        "{} declared by {}",
-        spec::ROWS[row].pattern,
-        spec::ROWS[row].by
+        "{} at {} from {}",
+        record.message, record.time, record.source
     )));
 }
 
-/// The reference's action out of the section, taken.
+/// Choose a severity floor.
 ///
-/// It refuses, and the refusal reaches the person rather than being a disabled
-/// bit: the reason and what to do about it are both derived from the rail
-/// specification's own standing for that seat.
-fn show_declarer(state: &Rc<ViewState>) {
-    let why = declarer_standing();
-    let recourse = match why.kind().recourse() {
-        Recourse::AwaitRelease => "it opens with the release it is booked under",
-        Recourse::Nothing => "nothing here opens it",
-        _ => "it is not this section's to open",
-    };
-    state.say(Utterance::new(
-        Tone::Refused,
-        format!(
-            "{} is {} ({}) — {recourse}",
-            spec::DECLARER_SECTION,
-            why.kind().name(),
-            why.detail(),
-        ),
-    ));
+/// The choice is exclusive, so this SETS rather than toggles — and it says what
+/// the list became, because narrowing a log to nothing looks exactly like a
+/// screen that broke.
+fn choose_severity(state: &Rc<ViewState>, n: usize) {
+    if n >= spec::CHOICES.len() {
+        return;
+    }
+    state.choice.set(n);
+    let kept = state.kept().len();
+    let choice = &spec::CHOICES[n];
+    state.say(if kept == 0 {
+        Utterance::new(
+            Tone::Unchanged,
+            format!("{} keeps nothing in this capture", choice.title),
+        )
+    } else {
+        Utterance::done(format!("{} · {kept} of {}", choice.title, spec::ROWS.len()))
+    });
+}
+
+fn set_capturing(state: &Rc<ViewState>, on: bool) {
+    state.capturing.set(on);
+    state.say(Utterance::done(state.capture_reading()));
 }
 
 fn set_query(state: &Rc<ViewState>, text: &str) {
@@ -687,7 +630,11 @@ fn set_query(state: &Rc<ViewState>, text: &str) {
 fn announce_query(state: &Rc<ViewState>) {
     match state.query_fault() {
         Some(why) => state.say(Utterance::new(Tone::Refused, why)),
-        None => state.say(Utterance::done(state.summary())),
+        None => state.say(Utterance::done(format!(
+            "{} of {} shown",
+            state.kept().len(),
+            spec::ROWS.len()
+        ))),
     }
 }
 
@@ -702,19 +649,18 @@ fn press(state: &Rc<ViewState>) -> bool {
 
 fn act_on_hit(state: &Rc<ViewState>, hit: &Hit) -> bool {
     match hit {
-        Hit::Declaration(n) => {
-            select_declaration(state, *n);
+        Hit::Event(n) => {
+            select_event(state, *n);
             true
         }
-        Hit::Declarer => {
-            show_declarer(state);
+        Hit::Choice(n) => {
+            choose_severity(state, *n);
             true
         }
         Hit::None => false,
     }
 }
 
-/// Step the list's cursor by `delta` visible rows.
 fn step(state: &Rc<ViewState>, delta: i32) -> bool {
     let kept = state.kept();
     if kept.is_empty() {
@@ -733,36 +679,18 @@ fn step(state: &Rc<ViewState>, delta: i32) -> bool {
     if next == here {
         return false;
     }
-    select_declaration(state, kept[next]);
+    select_event(state, kept[next]);
     true
 }
 
-/// ★★★★★ R1730 — a key belongs to what has focus, and this screen answers only
-/// for its own stops.
+/// A key belongs to what has focus, and this screen answers only for its own
+/// stops.
 ///
-/// **Measured by mounting it.** The first draft matched on the chord alone, so
-/// the list's arrows were consumed whatever had focus — and the moment the
-/// shell mounted this section at its rail seat, walking the rail with the arrow
-/// keys stopped one seat short, because the page took the press the rail was
-/// aimed at. A page that eats its host's navigation keys is not a page.
-///
-/// `None` is this screen's own stops driven with nothing focused, which is what
-/// the wire's `key` action and the model tests do.
+/// ★ The rule R1730 measured by mounting its sibling: a page that matches on the
+/// chord alone eats the presses its host's navigation was aimed at.
 fn key_at(state: &Rc<ViewState>, focused: Option<&str>, chord: &str) -> bool {
     match focused {
-        Some(DETAIL_TAG) => {
-            return match chord {
-                "Enter" | "Space" => {
-                    show_declarer(state);
-                    true
-                }
-                _ => false,
-            };
-        }
         Some(LIST_TAG) | None => {}
-        // Somebody else's stop — the host's rail, the filter box, a sibling
-        // page. Refused rather than handled, so the press reaches whatever it
-        // was aimed at.
         Some(_) => return false,
     }
     let kept = state.kept();
@@ -771,12 +699,12 @@ fn key_at(state: &Rc<ViewState>, focused: Option<&str>, chord: &str) -> bool {
         "ArrowUp" => step(state, -1),
         "Home" => kept.first().is_some_and(|&n| {
             let moved = n != state.cursor_row();
-            select_declaration(state, n);
+            select_event(state, n);
             moved
         }),
         "End" => kept.last().is_some_and(|&n| {
             let moved = n != state.cursor_row();
-            select_declaration(state, n);
+            select_event(state, n);
             moved
         }),
         _ => false,
@@ -843,67 +771,13 @@ fn box_at(tag: &str, rect: Rect, fill: Color, border: Option<Color>, radius: u32
     )
 }
 
-/// ★★★★★ R1730 — one part of a specified surface: the tag the specification
-/// compares, on a box that **holds that part's marks**.
-///
-/// Its children are in the part's own coordinates, which is what makes the tag
-/// honest — the rectangle the painted roster reads back is the extent of the
-/// thing, not a marker floating beside it.
-///
-/// The first draft did float a marker beside it: an empty tagged box per part,
-/// with a `layout` silence. The framework's own structure gate reported eleven
-/// of them as **hollow** — a box declared to hold a layout and holding nothing —
-/// and it was right twice over. A reader landing there would have heard an
-/// empty region, and the roster would have gone on reading correctly while the
-/// part it named stopped being painted.
+/// One part of a specified surface: the tag the specification compares, on a box
+/// that HOLDS that part's marks, in the part's own coordinates.
 fn part_box(tag: &str, rect: Rect, children: Vec<Scene>) -> Scene {
-    part_box_styled(tag, rect, None, children)
-}
-
-/// A part that draws a face of its own — a card, a button.
-///
-/// The face is this node's *style* rather than a child box, and that is not
-/// tidiness. A part declared unavailable cascades onto everything inside it, so
-/// a tagged face inside a refusing part is a second region carrying the reason
-/// and announcing nothing — which the framework's stated-reason gate reports as
-/// *a sentence written for somebody who cannot receive it*. One node per part
-/// cannot have that shape.
-fn part_box_styled(tag: &str, rect: Rect, face: Option<BoxStyle>, children: Vec<Scene>) -> Scene {
-    let mut node = ContainerNode::new(children)
-        .with_tag(tag.to_owned())
-        .with_layout(absolute(rect));
-    if let Some(style) = face {
-        node = node.with_style(style);
-    }
-    Scene::Container(node)
-}
-
-/// The card a single fact and the action are drawn on.
-fn card_face(ink: Ink, radius: u32) -> BoxStyle {
-    BoxStyle::filled(ink.surface_2)
-        .with_corner_radius(radius)
-        .with_border(Border::new(ink.outline, PANEL_FRAME))
-}
-
-/// The same box for a part that cannot be used, carrying why.
-///
-/// The reason rides on **this** tag because this is the tag the accessibility
-/// tree announces. Declared one node down — on the button's face — it never
-/// reaches a reader, and the framework's stated-reason gate says so: *a reason
-/// on `scene/disabled` that never reaches `scene/access` is a sentence written
-/// for somebody who cannot receive it*.
-fn part_box_unavailable(
-    tag: &str,
-    rect: Rect,
-    why: Unavailable,
-    face: BoxStyle,
-    children: Vec<Scene>,
-) -> Scene {
     Scene::Container(
         ContainerNode::new(children)
             .with_tag(tag.to_owned())
-            .with_style(face)
-            .with_layout(absolute(rect).with_unavailable(why)),
+            .with_layout(absolute(rect)),
     )
 }
 
@@ -929,7 +803,7 @@ fn view(field: (TextFieldState, u32), _frame: Frame) -> Scene {
                 ],
             )
             .silenced(Silence::layout(
-                "places the header, the column row, the list and the record pane",
+                "places the header, the column row, the event list and the decode pane",
             )),
         ])
         .with_tag(VIEW_TAG)
@@ -964,37 +838,22 @@ fn header_bar(
     for (key, at) in header_parts() {
         let tag = format!("{HEADER_TAG}.{key}");
         match key {
-            // ★ It IS the header's name, so it is silent and says whose name
-            // it is. Announced on its own it would tell a reader the section is
-            // called Key Patterns twice.
             "title" => children.push(
                 tagged_label(&tag, spec::HEADER[0].title, at, FONT_TITLE, ink.text)
                     .silenced(Silence::name_of(HEADER_TAG)),
             ),
-            "summary" => children.push(tagged_label(
+            "live" => children.push(tagged_label(
                 &tag,
-                state.summary(),
+                state.capture_reading(),
                 at,
                 FONT_SMALL,
-                state.query_fault().map_or(ink.text_3, |_| ink.warn),
+                if state.capturing.get() {
+                    ink.accent
+                } else {
+                    ink.text_3
+                },
             )),
-            // ★★★★★ R1730 — the field is painted inside a viewport of its own
-            // size, and that is a MEASURED repair rather than decoration.
-            //
-            // A single-line field does not clip: the framework's own painter
-            // wraps its content in a `Scene::Scroll` for a multi-line field and
-            // keeps a flat child list for a single-line one, so text wider than
-            // the box is painted straight over whatever is beside it. This
-            // screen's own containment gate caught it on its first run — a
-            // query of ordinary length overhung the box by 128 pixels, into the
-            // list's column header.
-            //
-            // Clipped here because the fix belongs to the framework and reaches
-            // every field in the tree, which is a blast radius of its own round:
-            // see the debt note this round opened. What a viewport does NOT
-            // give is the caret staying visible while a person types past the
-            // edge, and that is the same missing axis.
-            _ => children.push(
+            "filter" => children.push(
                 part_box(
                     &tag,
                     at,
@@ -1014,9 +873,42 @@ fn header_bar(
                     "places the filter box; the field inside it is what a reader lands on",
                 )),
             ),
+            _ => children.push(part_box(&tag, at, severity_choice(state, ink))),
         }
     }
     panel(HEADER_TAG, rect, ink.surface, Some(ink.outline), children)
+}
+
+/// The three severity marks, in the severity part's own coordinates.
+fn severity_choice(state: &Rc<ViewState>, ink: Ink) -> Vec<Scene> {
+    let chosen = state.choice.get();
+    let mut out = Vec::with_capacity(spec::CHOICES.len() * 2);
+    for (n, choice) in spec::CHOICES.iter().enumerate() {
+        let at = choice_rect(n);
+        let on = n == chosen;
+        out.push(
+            box_at(
+                &format!("lv.severity.{}", choice.key),
+                at,
+                if on { ink.accent_soft } else { ink.surface_2 },
+                Some(if on { ink.accent } else { ink.outline }),
+                7,
+            )
+            .with_focusable(false),
+        );
+        out.push(label(
+            choice.title,
+            Rect::new(at.x + 8, at.y + 7, at.w.saturating_sub(16), 13),
+            FONT_SMALL,
+            match choice.floor {
+                _ if on => ink.accent,
+                Some(spec::Severity::Warn) => ink.warn,
+                Some(spec::Severity::Error) => ink.err,
+                _ => ink.text_2,
+            },
+        ));
+    }
+    out
 }
 
 fn column_header(ink: Ink) -> Scene {
@@ -1024,19 +916,15 @@ fn column_header(ink: Ink) -> Scene {
     let mut children = Vec::new();
     for (n, column) in spec::COLUMNS.iter().enumerate() {
         let at = column_rect(n);
-        // ★ ONE tag per column, on the header a reader actually sees. The first
-        // draft had two — an empty anchor for the roster beside a label for the
-        // reader — and the two could have drifted apart without anything
-        // noticing, which is the shape this project keeps paying for.
         children.push(tagged_label(
-            &format!("kp.column.{}", column.key),
+            &format!("lv.column.{}", column.key),
             column.title,
             Rect::new(at.x, 10, at.w, 12),
             10,
             ink.text_3,
         ));
     }
-    panel("kp.colhead", rect, ink.bg, Some(ink.outline), children).silenced(Silence::layout(
+    panel("lv.colhead", rect, ink.bg, Some(ink.outline), children).silenced(Silence::layout(
         "places the column headers; the grid announces them as its header row",
     ))
 }
@@ -1062,30 +950,26 @@ fn list_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
                 children,
             )
             .silenced(Silence::layout(
-                "scrolls the declarations; the rows inside it are what a reader lands on",
+                "scrolls the events; the rows inside it are what a reader lands on",
             )),
         ],
     )
     .with_focusable(true)
 }
 
-/// One declaration row, in the list pane's own coordinates.
-///
-/// `n` is the row's index in [`spec::ROWS`] — its identity, which is what every
-/// tag carries. `visual` is where it sits right now, which the query decides.
 fn list_row_paint(n: usize, visual: usize, open: usize, ink: Ink) -> Vec<Scene> {
     let row = &spec::ROWS[n];
     let at = list_row_rect(visual);
     let mut children = Vec::with_capacity(spec::COLUMNS.len() + 3);
     if n == open {
         children.push(
-            box_at("kp.list.open", at, ink.accent_soft, Some(ink.accent), 0).silenced(
-                Silence::decorative("the band behind the open declaration; the row says so"),
+            box_at("lv.list.open", at, ink.accent_soft, Some(ink.accent), 0).silenced(
+                Silence::decorative("the band behind the open event; the row says so"),
             ),
         );
     }
     children.push(box_at(
-        &format!("kp.list.row.{n}"),
+        &format!("lv.list.row.{n}"),
         at,
         Color::rgba(0, 0, 0, 0),
         None,
@@ -1093,32 +977,32 @@ fn list_row_paint(n: usize, visual: usize, open: usize, ink: Ink) -> Vec<Scene> 
     ));
     for (c, column) in spec::COLUMNS.iter().enumerate() {
         let col = column_rect(c);
-        let cell = Rect::new(col.x, at.y + 13, col.w, 14);
+        let cell = Rect::new(col.x, at.y + 11, col.w, 14);
         let fg = match column.key {
-            "id" => ink.accent,
-            "by" | "direction" => ink.text_2,
-            "status" => health_ink(row.health, ink),
+            "time" | "source" => ink.text_2,
+            "severity" => severity_ink(row.severity, ink),
+            "type" => kind_ink(row.kind),
             _ => ink.text,
         };
-        if column.key == "status" {
+        if column.key == "severity" {
             children.push(
                 box_at(
-                    &format!("kp.list.dot.{n}"),
-                    Rect::new(cell.x, cell.y + 4, 7, 7),
+                    &format!("lv.list.dot.{n}"),
+                    Rect::new(cell.x, cell.y + 4, 6, 6),
                     fg,
                     None,
-                    4,
+                    3,
                 )
-                .silenced(Silence::decorative("repeats the status the cell reads")),
+                .silenced(Silence::decorative("repeats the severity the cell reads")),
             );
         }
-        let text_x = if column.key == "status" {
-            cell.x + 13
+        let text_x = if column.key == "severity" {
+            cell.x + 12
         } else {
             cell.x
         };
         children.push(tagged_label(
-            &format!("kp.list.cell.{n}_{}", column.key),
+            &format!("lv.list.cell.{n}_{}", column.key),
             row.cell(column.key),
             Rect::new(text_x, cell.y, cell.w.saturating_sub(text_x - cell.x), 14),
             FONT_BODY,
@@ -1132,44 +1016,19 @@ fn detail_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
     let rect = detail_rect();
     let record = state.record();
     let mut children = Vec::new();
-    for (key, at) in detail_parts() {
+    for (key, at) in detail_parts(record) {
         let tag = format!("{DETAIL_TAG}.{key}");
         let marks = detail_part_paint(key, at, record, ink);
-        children.push(match key {
-            // ★ The pane's heading IS the pane's name. Announced on its own a
-            // reader would be told what the pane is called twice.
-            "subject" => part_box(&tag, at, marks).silenced(Silence::name_of(DETAIL_TAG)),
-            "declarer" => {
-                part_box_unavailable(&tag, at, declarer_standing(), card_face(ink, 8), marks)
-            }
-            // The four single facts the reference draws as a two-by-two grid,
-            // each on a card of its own.
-            "declared_by" | "direction" | "matches" | "rate" => {
-                part_box_styled(&tag, at, Some(card_face(ink, 9)), marks)
-            }
-            _ => part_box(&tag, at, marks),
+        children.push(if key == "subject" {
+            part_box(&tag, at, marks).silenced(Silence::name_of(DETAIL_TAG))
+        } else {
+            part_box(&tag, at, marks)
         });
-    }
-    // The refusal's own sentence, under the action rather than inside it: it is
-    // about the part and not a second name for it.
-    if let Some(at) = detail_part_rect("declarer") {
-        let why = declarer_standing();
-        children.push(label(
-            format!("{} · {}", why.kind().name(), why.detail()),
-            Rect::new(at.x, at.y + at.h + 4, at.w, 12),
-            10,
-            ink.text_3,
-        ));
     }
     panel(DETAIL_TAG, rect, ink.surface, Some(ink.outline), children).with_focusable(true)
 }
 
-/// What one part of the record pane draws, **in the part's own coordinates**.
-///
-/// Split from [`detail_pane`] so each arm is readable, and keyed by the same
-/// string [`spec::DETAIL`] declares — a part added to the table with no arm here
-/// draws an empty box, which the framework's structure gate reports as hollow
-/// rather than letting the roster read correctly over nothing.
+/// What one part of the decode pane draws, in the part's own coordinates.
 fn detail_part_paint(key: &str, at: Rect, record: &'static spec::RowSpec, ink: Ink) -> Vec<Scene> {
     let whole = Rect::new(0, 0, at.w, at.h);
     let title_of = |key: &str| {
@@ -1180,114 +1039,104 @@ fn detail_part_paint(key: &str, at: Rect, record: &'static spec::RowSpec, ink: I
     };
     match key {
         "subject" => vec![label(title_of("subject"), whole, FONT_TITLE, ink.text)],
-        "ordinal" => vec![label(
-            format!("#{}", record.id),
+        "kind" => vec![
+            box_at(
+                "lv.detail.kind.pill",
+                whole,
+                Color::rgba(0x2A, 0x2E, 0x36, 0xB0),
+                None,
+                6,
+            )
+            .silenced(Silence::decorative("the tone behind the type tag")),
+            label(
+                record.kind,
+                Rect::new(9, 4, whole.w.saturating_sub(18), 13),
+                FONT_SMALL,
+                kind_ink(record.kind),
+            ),
+        ],
+        "message" => vec![label(record.message, whole, FONT_BODY, ink.text)],
+        "meta" => vec![label(
+            format!(
+                "{} · {} · src {}",
+                record.time,
+                record.severity.label(),
+                record.source
+            ),
             whole,
             FONT_SMALL,
-            ink.text_2,
+            severity_ink(record.severity, ink),
         )],
-        "pattern" => vec![label(record.pattern, whole, FONT_SUBJECT, ink.text)],
-        "standing" => standing_pills(whole, record, ink),
-        "declared_by" => fact_box(whole, title_of(key), record.by, ink),
-        "direction" => fact_box(whole, title_of(key), record.direction, ink),
-        "matches" => fact_box(whole, title_of(key), &record.matches.to_string(), ink),
-        "rate" => fact_box(whole, title_of(key), record.rate, ink),
-        "endpoints" => endpoint_chips(whole, record, ink),
-        "first_seen" => vec![label(
-            format!("first seen · {}", record.first_seen),
-            whole,
-            FONT_SMALL,
-            ink.text_3,
-        )],
-        "declarer" => vec![label(
-            title_of("declarer"),
-            Rect::new(12, 10, whole.w.saturating_sub(24), 14),
-            FONT_BODY,
-            ink.text_3,
-        )],
+        "layers" => decoded_fields(whole, record, ink),
+        "bytes" => wire_bytes(whole, record, ink),
         _ => Vec::new(),
     }
 }
 
-fn standing_pills(at: Rect, record: &'static spec::RowSpec, ink: Ink) -> Vec<Scene> {
-    let kind = Rect::new(0, 0, 96, at.h);
-    let health = Rect::new(104, 0, 116, at.h);
-    vec![
-        box_at(
-            "kp.detail.standing.kind",
-            kind,
-            Color::rgba(0xC7, 0x78, 0x00, 0x29),
-            None,
-            6,
-        )
-        .silenced(Silence::decorative("the tone behind the declaration tag")),
-        label(
-            "Declaration",
-            Rect::new(kind.x + 9, kind.y + 5, kind.w - 18, 13),
-            FONT_SMALL,
-            ink.declaration,
-        ),
-        box_at(
-            "kp.detail.standing.health",
-            health,
-            Color::rgba(0x35, 0xC0, 0x8B, 0x29),
-            None,
-            11,
-        )
-        .silenced(Silence::decorative("the tone behind the resolution pill")),
-        label(
-            record.health.label(),
-            Rect::new(health.x + 10, health.y + 5, health.w - 20, 13),
-            FONT_SMALL,
-            health_ink(record.health, ink),
-        ),
-    ]
-}
-
-fn fact_box(at: Rect, title: &str, value: &str, ink: Ink) -> Vec<Scene> {
-    vec![
-        label(
-            title.to_owned(),
-            Rect::new(11, 9, at.w.saturating_sub(22), 12),
-            10,
-            ink.text_3,
-        ),
-        label(
-            value.to_owned(),
-            Rect::new(11, 25, at.w.saturating_sub(22), 16),
-            FONT_BODY,
-            ink.text,
-        ),
-    ]
-}
-
-fn endpoint_chips(at: Rect, record: &'static spec::RowSpec, ink: Ink) -> Vec<Scene> {
+fn decoded_fields(at: Rect, record: &'static spec::RowSpec, ink: Ink) -> Vec<Scene> {
     let mut out = vec![label(
-        "MATCHED ENDPOINTS",
+        "DECODED LAYERS",
         Rect::new(0, 0, at.w, 12),
         10,
         ink.text_3,
     )];
-    let mut x = 0;
-    for (n, endpoint) in record.endpoints.iter().enumerate() {
-        let chip = Rect::new(x, 18, 62, 26);
-        out.push(
-            box_at(
-                &format!("kp.detail.endpoint.{n}"),
-                chip,
-                ink.surface_2,
-                Some(ink.outline),
-                7,
-            )
-            .silenced(Silence::decorative("the card behind one matched endpoint")),
-        );
+    for (n, (name, value)) in record.fields.iter().enumerate() {
+        let y = spec::LIST_LABEL_H + u32::try_from(n).unwrap_or(0) * spec::FIELD_H;
         out.push(label(
-            (*endpoint).to_owned(),
-            Rect::new(chip.x + 10, chip.y + 7, chip.w - 20, 13),
+            *name,
+            Rect::new(0, y + 4, 88, 13),
+            FONT_SMALL,
+            ink.text_3,
+        ));
+        out.push(label(
+            *value,
+            Rect::new(96, y + 4, at.w.saturating_sub(96), 13),
             FONT_SMALL,
             ink.text,
         ));
-        x += chip.w + 6;
+    }
+    out
+}
+
+/// The frame's bytes, drawn from the framework's own dump geometry.
+///
+/// ★ The glyphs come from [`HexLayout::glyph_at`] rather than from a second
+/// formatting loop here, which is R1613's rule: what is drawn and what the
+/// geometry says is there are one fact. A row with no frame says so — the
+/// reference draws that case rather than hiding it, and a blank block would be
+/// indistinguishable from a decode that failed.
+fn wire_bytes(at: Rect, record: &'static spec::RowSpec, ink: Ink) -> Vec<Scene> {
+    let mut out = vec![label(
+        "WIRE BYTES",
+        Rect::new(0, 0, at.w, 12),
+        10,
+        ink.text_3,
+    )];
+    if record.bytes.is_empty() {
+        out.push(label(
+            spec::NO_FRAME,
+            Rect::new(0, spec::LIST_LABEL_H + 2, at.w, 14),
+            FONT_SMALL,
+            ink.warn,
+        ));
+        return out;
+    }
+    let layout = byte_layout(record.bytes);
+    for row in 0..layout.rows() {
+        let mut line = String::with_capacity(layout.total_cols());
+        for col in 0..layout.total_cols() {
+            line.push(layout.glyph_at(
+                record.bytes,
+                pinion_core::widgets::hex_dump::Cell::new(col, row),
+            ));
+        }
+        let y = spec::LIST_LABEL_H + u32::try_from(row).unwrap_or(0) * 18;
+        out.push(label(
+            line.trim_end().to_owned(),
+            Rect::new(0, y, at.w, 15),
+            FONT_SMALL,
+            ink.text_2,
+        ));
     }
     out
 }
@@ -1296,15 +1145,10 @@ fn endpoint_chips(at: Rect, record: &'static spec::RowSpec, ink: Ink) -> Vec<Sce
 
 /// One surface's parts, as the running screen's own tables declare them.
 ///
-/// What the wire publishes and what the specification is compared against. The
-/// painted scene is compared with **this** by `painted.rs`, so the chain runs
-/// specification → tables → paint with both links checked, rather than a
-/// specification checked against a copy of itself.
-///
 /// # Panics
 ///
-/// If asked for a surface `docs/analyzer-keys-spec.json` does not fix, which is
-/// a defect in this file.
+/// If asked for a surface the specification does not name, which is a defect in
+/// this file.
 #[must_use]
 fn built(surface: &str) -> Vec<Part> {
     match surface {
@@ -1324,11 +1168,6 @@ fn built(surface: &str) -> Vec<Part> {
     }
 }
 
-/// How much of the specified section this build reproduces, and where it does
-/// not.
-///
-/// Not a test fixture: this is the sentence an agent driving the tool needs
-/// before it plans anything.
 fn conformance_json() -> serde_json::Value {
     spec::document().wire(&built)
 }
@@ -1349,6 +1188,22 @@ fn spec_json() -> serde_json::Value {
             .iter()
             .map(|p| serde_json::json!({ "key": p.key, "title": p.title }))
             .collect::<Vec<_>>(),
+        // ★ The vocabulary AND the control, because they are two facts: how bad
+        // an event can be, and which floors a reader may set. An agent given
+        // only the controls could not tell whether a severity it saw on a row
+        // is one it can filter to.
+        "severity_vocabulary": spec::Severity::ALL
+            .iter()
+            .map(|s| s.label())
+            .collect::<Vec<_>>(),
+        "severities": spec::CHOICES
+            .iter()
+            .map(|c| serde_json::json!({
+                "key": c.key,
+                "title": c.title,
+                "floor": c.floor.map(spec::Severity::label),
+            }))
+            .collect::<Vec<_>>(),
         "gestures": spec::GESTURES
             .iter()
             .map(|(g, does)| serde_json::json!({ "gesture": g, "does": does }))
@@ -1356,15 +1211,14 @@ fn spec_json() -> serde_json::Value {
         "rows": spec::ROWS
             .iter()
             .map(|r| serde_json::json!({
-                "id": r.id,
-                "pattern": r.pattern,
-                "by": r.by,
-                "direction": r.direction,
-                "matches": r.matches,
-                "rate": r.rate,
-                "health": r.health.name(),
-                "first_seen": r.first_seen,
-                "endpoints": r.endpoints,
+                "time": r.time,
+                "severity": r.severity.label(),
+                "source": r.source,
+                "type": r.kind,
+                "message": r.message,
+                "fields": r.fields.iter().map(|(k, v)| serde_json::json!([k, v]))
+                    .collect::<Vec<_>>(),
+                "bytes": r.bytes.len(),
             }))
             .collect::<Vec<_>>(),
     })
@@ -1405,12 +1259,6 @@ impl ViewOracle {
         args.as_str()
             .map(str::to_owned)
             .ok_or_else(|| InvokeError::rejected("expected a string argument"))
-    }
-
-    fn index(args: &IntrospectValue) -> Result<usize, InvokeError> {
-        args.as_i64()
-            .and_then(|n| usize::try_from(n).ok())
-            .ok_or_else(|| InvokeError::rejected("expected a row index"))
     }
 }
 
@@ -1468,25 +1316,26 @@ impl ExternalIntrospect for ViewOracle {
             const {
                 &[
                     SchemaField::new("spec", "json"),
-                    // ★★★★★ R1730 — the reading this round exists for.
                     SchemaField::new("conformance", "json"),
                     SchemaField::new("row_count", "int"),
                     SchemaField::new("selected_row", "int"),
                     SchemaField::new("record", "json"),
-                    SchemaField::new("summary", "string"),
+                    SchemaField::new("severity", "string"),
+                    SchemaField::new("capturing", "bool"),
+                    SchemaField::new("capture_reading", "string"),
                     SchemaField::new("kept_rows", "json"),
                     SchemaField::new("query", "string"),
                     SchemaField::new("query_fault", "string"),
                     SchemaField::new("why_hidden", "json"),
-                    SchemaField::new("declarer", "json"),
                     SchemaField::new("said", "object"),
                     SchemaField::parametric(
                         "hit.<x>.<y>",
                         "string",
                         const { &[SchemaArg::open("x", "int"), SchemaArg::open("y", "int")] },
                     ),
-                    SchemaField::action("select_declaration", "int"),
-                    SchemaField::action("show_declarer", "string"),
+                    SchemaField::action("select_event", "int"),
+                    SchemaField::action("choose_severity", "string"),
+                    SchemaField::action("capture", "string"),
                     SchemaField::action("filter", "string"),
                     SchemaField::action("point", "string"),
                     SchemaField::action("press", "string"),
@@ -1501,7 +1350,7 @@ impl ExternalIntrospect for ViewOracle {
         let state = self
             .state
             .as_ref()
-            .ok_or_else(|| ReadRefusal::unavailable("no session is loaded"))?;
+            .ok_or_else(|| ReadRefusal::unavailable("no capture is loaded"))?;
         if let Some(rest) = path.strip_prefix("hit.") {
             let (x, y) = rest.split_once('.').ok_or(ReadRefusal::QueryTypeMismatch)?;
             let (px, py) = (
@@ -1526,18 +1375,21 @@ impl ExternalIntrospect for ViewOracle {
             "record" => {
                 let record = state.record();
                 Ok(IntrospectValue::Json(serde_json::json!({
-                    "id": record.id,
-                    "pattern": record.pattern,
-                    "by": record.by,
-                    "direction": record.direction,
-                    "matches": record.matches,
-                    "rate": record.rate,
-                    "health": record.health.name(),
-                    "first_seen": record.first_seen,
-                    "endpoints": record.endpoints,
+                    "time": record.time,
+                    "severity": record.severity.label(),
+                    "source": record.source,
+                    "type": record.kind,
+                    "message": record.message,
+                    "fields": record.fields.iter().map(|(k, v)| serde_json::json!([k, v]))
+                        .collect::<Vec<_>>(),
+                    "bytes": record.bytes.len(),
                 })))
             }
-            "summary" => Ok(IntrospectValue::Text(state.summary())),
+            "severity" => Ok(IntrospectValue::Text(
+                spec::CHOICES[state.choice.get()].key.to_owned(),
+            )),
+            "capturing" => Ok(IntrospectValue::Bool(state.capturing.get())),
+            "capture_reading" => Ok(IntrospectValue::Text(state.capture_reading())),
             "kept_rows" => Ok(IntrospectValue::Json(serde_json::json!(state.kept()))),
             "query" => Ok(IntrospectValue::Text(state.query.text())),
             "query_fault" => Ok(IntrospectValue::Text(
@@ -1546,13 +1398,20 @@ impl ExternalIntrospect for ViewOracle {
             "why_hidden" => {
                 let kept = state.kept();
                 let query = state.query();
+                let floor = state.floor();
                 Ok(IntrospectValue::Json(serde_json::json!(
                     (0..spec::ROWS.len())
                         .filter(|n| !kept.contains(n))
                         .map(|n| {
                             let cells = spec::ROWS[n].attributes();
+                            // ★ WHICH narrowing dropped it. Two controls narrow
+                            // this list and a reader who is told only "hidden"
+                            // has to guess which one to undo.
+                            let by_severity =
+                                floor.is_some_and(|least| spec::ROWS[n].severity < least);
                             serde_json::json!({
                                 "row": n,
+                                "severity": by_severity,
                                 "clause": query
                                     .rejecting_clause(|c| {
                                         cells.get(c).map_or("", String::as_str)
@@ -1562,15 +1421,6 @@ impl ExternalIntrospect for ViewOracle {
                         })
                         .collect::<Vec<_>>()
                 )))
-            }
-            "declarer" => {
-                let why = declarer_standing();
-                Ok(IntrospectValue::Json(serde_json::json!({
-                    "section": spec::DECLARER_SECTION,
-                    "kind": why.kind().name(),
-                    "detail": why.detail(),
-                    "recourse": why.kind().recourse().name(),
-                })))
             }
             "said" => Ok(IntrospectValue::Text(state.said_sentence())),
             _ => Err(ReadRefusal::UnknownPath),
@@ -1592,17 +1442,35 @@ impl ExternalIntrospect for ViewOracle {
     ) -> Result<IntrospectValue, InvokeError> {
         let state = self.state()?.clone();
         match path {
-            "select_declaration" => {
-                let n = Self::index(&args)?;
+            "select_event" => {
+                let n = args
+                    .as_usize()
+                    .ok_or_else(|| InvokeError::rejected("expected a row index"))?;
                 if n >= spec::ROWS.len() {
-                    return Err(InvokeError::rejected(format!("no declaration {n}")));
+                    return Err(InvokeError::rejected(format!("no event {n}")));
                 }
-                select_declaration(&state, n);
+                select_event(&state, n);
                 Ok(IntrospectValue::Int(i64::try_from(n).unwrap_or(i64::MAX)))
             }
-            "show_declarer" => {
-                show_declarer(&state);
-                Ok(IntrospectValue::Text(state.said_sentence()))
+            "choose_severity" => {
+                let key = Self::text(&args)?;
+                let n = spec::CHOICES
+                    .iter()
+                    .position(|c| c.key == key)
+                    .ok_or_else(|| InvokeError::rejected("no such severity choice"))?;
+                choose_severity(&state, n);
+                Ok(IntrospectValue::Int(
+                    i64::try_from(state.kept().len()).unwrap_or(i64::MAX),
+                ))
+            }
+            "capture" => {
+                let on = match Self::text(&args)?.as_str() {
+                    "on" => true,
+                    "off" => false,
+                    _ => return Err(InvokeError::rejected("expected \"on\" or \"off\"")),
+                };
+                set_capturing(&state, on);
+                Ok(IntrospectValue::Bool(on))
             }
             "filter" => {
                 set_query(&state, &Self::text(&args)?);
@@ -1639,14 +1507,12 @@ impl ExternalIntrospect for ViewOracle {
 
 // ── The binding ─────────────────────────────────────────────────────────────
 
-/// ★ R1730 — public from the first round, because this screen is both a window
+/// ★ R1731 — public from the first round, because this screen is both a window
 /// of its own and a **page** of the analysis-tool shell
-/// (`pinion_screen::Mount<KeyPatternView>`).
-pub struct KeyPatternView;
+/// (`pinion_screen::Mount<LogView>`).
+pub struct LogView;
 
-impl WidgetCore for KeyPatternView {
-    /// The filter box's posture and caret, which the shell reads out of the
-    /// painted scene and hands back to the view.
+impl WidgetCore for LogView {
     type State = (TextFieldState, u32);
     type Event = ();
 
@@ -1677,7 +1543,7 @@ impl WidgetCore for KeyPatternView {
     }
 
     fn title() -> &'static str {
-        "pinion hello-key-patterns (R1730 §5.41 key-pattern section)"
+        "pinion hello-log-view (R1731 §5.41 log section)"
     }
 
     fn apply_key(
@@ -1686,8 +1552,6 @@ impl WidgetCore for KeyPatternView {
         chord: &str,
         modifiers: pinion_core::Modifiers,
     ) -> bool {
-        // While the filter has focus every key is the box's, through the
-        // framework's own keymap rather than another copy of one.
         if focused == Some(QUERY_TAG) {
             let state = use_view_state();
             return edit_field_keymap(
@@ -1704,12 +1568,12 @@ impl WidgetCore for KeyPatternView {
     }
 }
 
-impl WidgetA11y for KeyPatternView {
+impl WidgetA11y for LogView {
     fn access_node(_state: &(TextFieldState, u32), focused: Option<&str>) -> Vec<AccessNode> {
         let state = use_view_state();
         let mut nodes = vec![
             AccessNode::new(ROOT_TAG, AriaRole::Group)
-                .with_name("Key patterns")
+                .with_name("Logs")
                 .with_child(HEADER_TAG)
                 .with_child(LIST_TAG)
                 .with_child(DETAIL_TAG),
@@ -1726,25 +1590,48 @@ impl WidgetA11y for KeyPatternView {
     ) -> Option<AccessFocus> {
         let state = use_view_state();
         (focused == Some(LIST_TAG)).then(|| {
-            AccessFocus::composite(LIST_TAG, format!("kp.list.row.{}", state.cursor_row()))
+            AccessFocus::composite(LIST_TAG, format!("lv.list.row.{}", state.cursor_row()))
         })
     }
 }
 
 fn header_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
-    vec![
+    let chosen = state.choice.get();
+    let mut nodes = vec![
         AccessNode::new(HEADER_TAG, AriaRole::Group)
             .with_name(spec::HEADER[0].title)
-            .with_child("kp.header.summary")
-            .with_child(QUERY_TAG),
-        AccessNode::new("kp.header.summary", AriaRole::Status)
-            .with_name("Summary")
-            .with_value(AccessValue::Text(state.summary()))
+            .with_child("lv.header.live")
+            .with_child(QUERY_TAG)
+            .with_child("lv.header.severity"),
+        // The capture state is a live region: it changes without a reader
+        // touching it, which is the definition.
+        AccessNode::new("lv.header.live", AriaRole::Status)
+            .with_name("Capture state")
+            .with_value(AccessValue::Text(state.capture_reading()))
             .with_live(AccessLive::Polite),
         AccessNode::new(QUERY_TAG, AriaRole::TextInput)
             .with_name("Filter")
             .with_value(AccessValue::Text(state.query.text())),
-    ]
+        // ★ The group OWNS its members. A `radiogroup` that declares no child
+        // of the role it promises is what the framework's structure gate calls
+        // *empty*, and it caught this on the demo's first run: the three marks
+        // were built and announced and the group did not say they were its.
+        spec::CHOICES.iter().fold(
+            AccessNode::new("lv.header.severity", AriaRole::RadioGroup)
+                .with_name("Severity")
+                .with_value(AccessValue::Text(spec::CHOICES[chosen].title.to_owned())),
+            |group, choice| group.with_child(format!("lv.severity.{}", choice.key)),
+        ),
+    ];
+    for (n, choice) in spec::CHOICES.iter().enumerate() {
+        nodes.push(
+            AccessNode::new(format!("lv.severity.{}", choice.key), AriaRole::RadioButton)
+                .with_name(choice.title)
+                .with_selected(n == chosen)
+                .with_set_position(n, spec::CHOICES.len()),
+        );
+    }
+    nodes
 }
 
 fn list_nodes(state: &Rc<ViewState>, focused: Option<&str>) -> Vec<AccessNode> {
@@ -1752,7 +1639,7 @@ fn list_nodes(state: &Rc<ViewState>, focused: Option<&str>) -> Vec<AccessNode> {
     let columns: Vec<GridColumn> = spec::COLUMNS
         .iter()
         .map(|column| GridColumn {
-            tag: format!("kp.column.{}", column.key),
+            tag: format!("lv.column.{}", column.key),
             sort: None,
         })
         .collect();
@@ -1760,13 +1647,13 @@ fn list_nodes(state: &Rc<ViewState>, focused: Option<&str>) -> Vec<AccessNode> {
         .kept()
         .into_iter()
         .map(|n| GridRow {
-            tag: format!("kp.list.row.{n}"),
+            tag: format!("lv.list.row.{n}"),
             selected: n == open,
             state: RadioState::Idle,
             cells: spec::COLUMNS
                 .iter()
                 .map(|column| GridCell {
-                    tag: format!("kp.list.cell.{n}_{}", column.key),
+                    tag: format!("lv.list.cell.{n}_{}", column.key),
                     name: format!("{}: {}", column.title, spec::ROWS[n].cell(column.key)),
                     focused: focused == Some(LIST_TAG) && n == open,
                     selected: None,
@@ -1774,69 +1661,57 @@ fn list_nodes(state: &Rc<ViewState>, focused: Option<&str>) -> Vec<AccessNode> {
                 .collect(),
         })
         .collect();
-    grid_table_nodes(
-        LIST_TAG,
-        "Declarations",
-        false,
-        LIST_HEADER,
-        &columns,
-        &rows,
-    )
+    grid_table_nodes(LIST_TAG, "Events", false, LIST_HEADER, &columns, &rows)
 }
 
 fn detail_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
     let record = state.record();
-    let why = declarer_standing();
-    // ★ Every part but the first. The pane's heading IS the pane's name (the
-    // paint says so with `Silence::name_of`), so announcing it again would tell
-    // a reader what the pane is called twice; every other part, the declaration
-    // number included, is a fact a reader wants.
     let mut pane = AccessNode::new(DETAIL_TAG, AriaRole::Group).with_name(spec::DETAIL[0].title);
     for part in &spec::DETAIL[1..] {
-        pane = pane.with_child(format!("kp.detail.{}", part.key));
+        pane = pane.with_child(format!("lv.detail.{}", part.key));
     }
     let mut nodes = vec![pane];
     for part in &spec::DETAIL[1..] {
-        let tag = format!("kp.detail.{}", part.key);
-        let node = match part.key {
-            "declarer" => {
-                // The reason travels as a value rather than as a disabled bit.
-                // The paint declares it too (`LayoutStyle::with_unavailable` on
-                // the button's face), and this is the explicit-node half of the
-                // same fact for a screen that publishes its own tree.
-                let mut node = AccessNode::new(tag, AriaRole::Button).with_name(part.title);
-                node.unavailable = Some(why.clone());
-                node
-            }
-            "endpoints" => AccessNode::new(tag, AriaRole::Group)
+        let tag = format!("lv.detail.{}", part.key);
+        nodes.push(
+            AccessNode::new(tag, AriaRole::Group)
                 .with_name(part.title)
-                .with_value(AccessValue::Text(record.endpoints.join(", "))),
-            key => AccessNode::new(tag, AriaRole::Group)
-                .with_name(part.title)
-                .with_value(AccessValue::Text(detail_reading(key, record))),
-        };
-        nodes.push(node);
+                .with_value(AccessValue::Text(detail_reading(part.key, record))),
+        );
     }
     nodes
 }
 
-/// What one part of the record pane reads as.
+/// What one part of the decode pane reads as.
 fn detail_reading(key: &str, record: &'static spec::RowSpec) -> String {
     match key {
-        "ordinal" => format!("#{}", record.id),
-        "pattern" => record.pattern.to_owned(),
-        "standing" => format!("Declaration, {}", record.health.label()),
-        "declared_by" => record.by.to_owned(),
-        "direction" => record.direction.to_owned(),
-        "matches" => record.matches.to_string(),
-        "rate" => record.rate.to_owned(),
-        "first_seen" => record.first_seen.to_owned(),
+        "kind" => record.kind.to_owned(),
+        "message" => record.message.to_owned(),
+        "meta" => format!(
+            "{}, {}, from {}",
+            record.time,
+            record.severity.label(),
+            record.source
+        ),
+        "layers" => record
+            .fields
+            .iter()
+            .map(|(name, value)| format!("{name}: {value}"))
+            .collect::<Vec<_>>()
+            .join(", "),
+        "bytes" => {
+            if record.bytes.is_empty() {
+                spec::NO_FRAME.to_owned()
+            } else {
+                format!("{} bytes", record.bytes.len())
+            }
+        }
         _ => String::new(),
     }
 }
 
-impl WidgetView for KeyPatternView {
-    type Renderer = HelloKeyPatternsRenderer;
+impl WidgetView for LogView {
+    type Renderer = HelloLogViewRenderer;
 
     fn position_caret_for_point(
         state: &(TextFieldState, u32),
@@ -1885,12 +1760,7 @@ impl WidgetView for KeyPatternView {
     }
 }
 
-/// Which byte of the filter's text a window point lands on, when the filter is
-/// what has focus and the point is inside it.
-///
-/// Resolved against [`filter_field_style`], which is also what paints the box —
-/// two styles here would put the caret on a different letter from the one under
-/// the cursor.
+/// Which byte of the filter's text a window point lands on.
 fn query_byte_at(
     posture: TextFieldState,
     scene: &Scene,
@@ -1902,9 +1772,6 @@ fn query_byte_at(
         return None;
     }
     let rect = pinion_shell::rect_for_tag(scene, QUERY_TAG)?;
-    // Compared in the pointer's own units rather than by casting it to the
-    // rectangle's: a cast would round a point just outside the left edge INTO
-    // the box, and a press half a pixel above it out of one it is in.
     if !rect.contains_point(x, y) {
         return None;
     }
@@ -1919,7 +1786,7 @@ fn query_byte_at(
     )
 }
 
-/// Run the key-pattern section as an application of its own.
+/// Run the log section as an application of its own.
 pub fn run() {
-    pinion_shell::run::<KeyPatternView>();
+    pinion_shell::run::<LogView>();
 }

@@ -1,0 +1,95 @@
+{
+  "$comment": [
+    "R1731 — the analysis tool's LOG section, written down once, in neutral",
+    "vocabulary, as the behaviour reference draws it. The reference's fourth",
+    "rail seat and the last one this build owed.",
+    "",
+    "WHY THIS IS A FILE AND NOT A RUST CONSTANT. The same reason",
+    "`analyzer-rail-spec.json` and `analyzer-keys-spec.json` are: the screen's",
+    "own `spec` module is what a RUNNING screen needs — paint tags, column",
+    "widths, row data, the wording of a refusal — and a specification written",
+    "beside it, by the same hand in the same edit, is a gate asking the thing",
+    "under test for the answer.",
+    "",
+    "EXTRACTION. The reference is not in this repository and must not be. The",
+    "procedure is recorded in the session memory note on the behaviour",
+    "reference: the section is one method producing the rows, one producing the",
+    "decode, and one block of markup drawing both. Measured 2026-08-19: five",
+    "columns in one order, a 340-wide decode pane with six parts, and a 46-high",
+    "section header carrying a name, a live-capture mark, a filter box and a",
+    "severity choice.",
+    "",
+    "VOCABULARY. The reference's product, protocol and resource words are",
+    "replaced by the words the tool class uses generally. Structure and",
+    "behaviour are what is being reproduced; the wording is not. Two titles",
+    "below name a part the reference draws WITHOUT a label — `meta` and `live` —",
+    "and those two titles are this file's words for what is there, said rather",
+    "than pretended.",
+    "",
+    "THE TWO HALVES. Each surface carries `canon` — what the reference has — and",
+    "`owed` — where this build does not have it, each entry carrying the round",
+    "that accepted it and why. The gate asserts the difference between the built",
+    "surface and `canon` is EXACTLY `owed`."
+  ],
+  "header": {
+    "$comment": [
+      "The section header, 46 high. The reference draws a pulsing mark beside",
+      "the name while a capture is running and NOTHING there when it is not.",
+      "",
+      "This build always draws the part and changes what it says, which is a",
+      "deliberate improvement on the reference rather than a divergence from it:",
+      "the part is in the same place with the same job, and a blank cannot be",
+      "told apart from a build that forgot to draw it. The specification fixes",
+      "that the part is THERE and where; what it reads is the build's.",
+      "",
+      "The severity choice is three exclusive marks (all, warnings, errors), not",
+      "three independent toggles; the reference draws exactly one of them filled."
+    ],
+    "canon": [
+      { "ordinal": 1, "key": "title", "title": "Logs" },
+      { "ordinal": 2, "key": "live", "title": "Capture state" },
+      { "ordinal": 3, "key": "filter", "title": "Filter" },
+      { "ordinal": 4, "key": "severity", "title": "Severity" }
+    ],
+    "owed": []
+  },
+  "columns": {
+    "$comment": [
+      "The list's columns, left to right. The reference fixes four widths and",
+      "lets the message take the rest — the same shape its key-pattern section",
+      "has, and for the same reason: the free column is the one a reader is",
+      "actually reading."
+    ],
+    "canon": [
+      { "ordinal": 1, "key": "time", "title": "Time" },
+      { "ordinal": 2, "key": "severity", "title": "Sev" },
+      { "ordinal": 3, "key": "source", "title": "Src" },
+      { "ordinal": 4, "key": "type", "title": "Type" },
+      { "ordinal": 5, "key": "message", "title": "Message" }
+    ],
+    "owed": []
+  },
+  "detail": {
+    "$comment": [
+      "The 340-wide pane on the right, top to bottom. It is the section's own",
+      "answer to 'what was in that frame', and it is a different shape from the",
+      "key-pattern section's record pane: two of its parts are LISTS rather than",
+      "single facts — the decoded fields and the bytes — which is why the bytes",
+      "part is drawn through the framework's own byte-dump rather than as a",
+      "string.",
+      "",
+      "`meta` is the reference's unlabelled line under the message: when it",
+      "happened, how bad it was, and which endpoint it came from. Three facts on",
+      "one line, so one part."
+    ],
+    "canon": [
+      { "ordinal": 1, "key": "subject", "title": "Decode Inspector" },
+      { "ordinal": 2, "key": "kind", "title": "Type" },
+      { "ordinal": 3, "key": "message", "title": "Message" },
+      { "ordinal": 4, "key": "meta", "title": "When and where" },
+      { "ordinal": 5, "key": "layers", "title": "Decoded layers" },
+      { "ordinal": 6, "key": "bytes", "title": "Wire bytes" }
+    ],
+    "owed": []
+  }
+}

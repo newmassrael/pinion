@@ -31,6 +31,13 @@ pub mod screen_ink;
 // stand-in, and the thing a caller supplies is the driving.
 pub mod speech;
 
+// R1731 §5.32 §5.40 — reading a specified surface back out of a PAINTED scene,
+// for the same reason the two above are here. The second screen to compare its
+// surfaces with a written specification would otherwise have carried a verbatim
+// copy of the walk and the reading-order rule, and two screens reading a roster
+// differently would disagree about the same defect.
+pub mod surface;
+
 use std::borrow::Cow;
 
 use crate::Frame;

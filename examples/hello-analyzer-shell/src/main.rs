@@ -675,6 +675,13 @@ fn screen_roster() -> ScreenRoster {
                 "keys",
                 Box::new(Mount::<hello_key_patterns::KeyPatternView>::new()) as Box<dyn Screen>,
             ),
+            // ★★★★★ R1731 — **the page that closed the rail.** With this every
+            // section the reference opens is one this application opens, and
+            // `docs/analyzer-rail-spec.json`'s declared remainder is empty.
+            (
+                "logs",
+                Box::new(Mount::<hello_log_view::LogView>::new()) as Box<dyn Screen>,
+            ),
             // ★ R1728 — `lab`, not `catalog`. The reference's fifth seat is its
             // node graph section and this is it; `catalog` was a key the
             // reference does not have.
