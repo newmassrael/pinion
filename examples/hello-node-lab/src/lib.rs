@@ -716,6 +716,27 @@ struct LabState {
     /// [`Selection`] holds both, with the leader an index into the members so
     /// that "the inspector follows something that is not selected" is
     /// unrepresentable rather than merely avoided.
+    /// ★★★★★ R1726 — **the order the cards are stacked in**, front last.
+    ///
+    /// The card order was the specification's, so picking a card up raised it
+    /// for exactly as long as the gesture lasted and dropping it put it back
+    /// underneath whatever it was dropped on. Measured: during a drag the held
+    /// card painted at index 101 against the other's 77, and the moment it was
+    /// released it went back to 70 against 80 — the two overlapped and the one
+    /// just placed was the hidden one.
+    ///
+    /// So which card is in front is a fact this screen has to OWN, not one a
+    /// gesture can lend it: the transient half is
+    /// [`ContainerNode::with_held`](pinion_core::scene::ContainerNode::with_held),
+    /// and this is the half that survives the release. Only cards named here
+    /// are ordered by it; anything else keeps its declared position, so a card
+    /// nobody has touched is exactly where the specification puts it.
+    ///
+    /// Position is NOT changed by this — a node's place on the canvas is what
+    /// the person meant by putting it there, and the free-canvas rule (which
+    /// every node editor keeps, and which this tree's tile dashboard
+    /// deliberately does not) is that a drop displaces nothing.
+    stacking: RefCell<Vec<NodeId>>,
     selection: Signal<Selection<NodeId>>,
     selected_link: Signal<Option<LinkPick>>,
     zoom: Signal<u32>,
@@ -962,6 +983,9 @@ impl LabState {
             forms: Tracked::new(forms),
             frames: RefCell::new(frames),
             opened_at: RefCell::new(opened_at),
+            // Empty: nothing has been picked up yet, so every card is exactly
+            // where the specification declares it.
+            stacking: RefCell::new(Vec::new()),
             selection: Signal::new(selection),
             selected_link: Signal::new(selected_link),
             zoom: Signal::new(spec::OPENING_ZOOM),
@@ -1130,7 +1154,31 @@ impl LabState {
                 all.push(node.id);
             }
         }
-        all
+        // ★★★★★ R1726 — then the cards that have been PICKED UP, in the order
+        // they were, last. A card nobody has touched keeps the position the
+        // specification gives it, which is why this is a stable partition
+        // rather than a sort: the screen still opens exactly as declared.
+        let raised = self.stacking.borrow();
+        let mut resting: Vec<NodeId> = all
+            .iter()
+            .copied()
+            .filter(|id| !raised.contains(id))
+            .collect();
+        resting.extend(raised.iter().copied().filter(|id| all.contains(id)));
+        resting
+    }
+
+    /// ★★★★★ R1726 — this card was picked up, so it is in front from now on.
+    ///
+    /// Called when a drag STARTS rather than when it ends, for two reasons: a
+    /// press that turns out not to move still means "I am working on this one",
+    /// and a card that only came forward on release would spend the whole
+    /// gesture underneath the thing it is being dragged over — which is the
+    /// defect this pays off, moved later rather than removed.
+    fn raise(&self, node: NodeId) {
+        let mut stacking = self.stacking.borrow_mut();
+        stacking.retain(|id| *id != node);
+        stacking.push(node);
     }
 
     /// Every address a card on this canvas can be reached at.
@@ -6141,8 +6189,22 @@ fn canvas(state: &LabState, ink: Ink) -> Scene {
     // the inspector) and it underflows on a leftward pan, which is a crash on
     // half of the gesture the hint strip advertises.
     let (world_w, world_h) = world_extent(state);
+    // ★★★★★ R1726 — the world says what it is HOLDING, and the card being
+    // dragged paints in front, is pressed first and is raised, all from that
+    // one word. Before it, a dragged card went UNDER the card it was over:
+    // measured by paint order, index 70 against the stationary card's 80. The
+    // owner reported that as three things — it goes grey, they do not overlap,
+    // is not overlapping better — and all three were this.
+    let held = match state.drag.get() {
+        Some(Drag::Node { node, .. }) => Some(format!("lab.node.{}", state.name_of(node))),
+        _ => None,
+    };
+    let mut world_surface = ContainerNode::new(canvas_world(state, ink));
+    if let Some(tag) = held {
+        world_surface = world_surface.with_held(tag);
+    }
     let world = Scene::Container(
-        ContainerNode::new(canvas_world(state, ink))
+        world_surface
             // ★★★★★ R1705 — TRANSPARENT, and this line is the whole reason the
             // first draft of the lattice drew nothing. The surface used to
             // carry the same `ink.bg` the canvas behind it carries, which was
@@ -9272,6 +9334,11 @@ fn press(state: &Rc<LabState>) {
     match &hit {
         Hit::Node(node) => {
             select_card(state, Some(*node));
+            // ★★★★★ R1726 — picking a card up puts it in front, and it STAYS
+            // there when it is put down. Position is untouched: on a free
+            // canvas a drop displaces nothing, because where a node sits is
+            // what the person meant by putting it there.
+            state.raise(*node);
             let (cx, cy) = state
                 .doc
                 .borrow()

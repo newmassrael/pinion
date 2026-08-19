@@ -1075,6 +1075,76 @@ fn cell_rect(tile: &Tile) -> Rect {
     )
 }
 
+/// ★★★★★ R1726 — a WINDOW point turned into the cell it falls in, with the
+/// board's scroll folded in.
+///
+/// The board slides under the canvas, so a window point and a board point
+/// differ by the scroll offset. `Hit::at` has folded it since R1662 — which is
+/// why pressing a scrolled card still selects the right one — and the two
+/// places that turned a press into a CELL did not. So a drag begun after
+/// scrolling computed its grab and its destination in the unscrolled frame.
+/// Reported from the running board: scroll down, press a widget, and the drop
+/// position is not where the widget is.
+///
+/// One function, so the fold cannot be remembered at one call site and
+/// forgotten at the other — which is exactly what had happened.
+fn cell_at_window(state: &ShellState, px: u32, py: u32) -> (u32, u32) {
+    let canvas = canvas_rect();
+    let (ox, oy) = state.canvas_scroll.offset();
+    let fold = |v: u32, by: i32| -> u32 {
+        #[allow(
+            clippy::cast_sign_loss,
+            clippy::cast_possible_truncation,
+            reason = "clamped into u32's range on the line above the cast"
+        )]
+        let folded = (i64::from(v) + i64::from(by)).clamp(0, i64::from(u32::MAX)) as u32;
+        folded
+    };
+    cell_at(
+        fold(px.saturating_sub(canvas.x), ox),
+        fold(py.saturating_sub(canvas.y), oy),
+    )
+}
+
+/// ★★★★★ R1726 — the chip that rides the cursor while a card is carried,
+/// saying WHAT is being carried.
+///
+/// Its shape is the behaviour reference's, read from that prototype's own
+/// source: offset `+14, +10` from the pointer, above everything, transparent to
+/// it, a bordered surface chip holding the widget's name. The reference does
+/// **not** drag a copy of the widget — the widget stays on the board and this
+/// names it — which is the answer to "shouldn't the widget show while
+/// dragging": it does, in place, and this is what tells you which one you have.
+fn carried_label(text: &str, cx: u32, cy: u32, palette: Palette) -> Scene {
+    let w = 22 + u32::try_from(text.chars().count()).unwrap_or(8) * 7;
+    Scene::Container(
+        ContainerNode::new(vec![label(
+            text,
+            Rect::new(11, 7, w.saturating_sub(22), 15),
+            12,
+            palette.ink,
+        )])
+        .with_tag("shell.carried")
+        .with_style(
+            BoxStyle::filled(palette.raised)
+                .with_corner_radius(9)
+                .with_border(Border::new(palette.accent_fg, 1)),
+        )
+        // Transparent to the pointer: it rides the cursor, so a hit test that
+        // could land on it would be testing the label instead of the board
+        // underneath — the R1497 class this tree already paid for once.
+        .with_layout(
+            absolute(Rect::new(
+                cx.saturating_add(14),
+                cy.saturating_add(10),
+                w,
+                29,
+            ))
+            .with_pointer_transparent(true),
+        ),
+    )
+}
+
 /// The board cell a canvas-local pixel lands on — the inverse of [`cell_rect`],
 /// and the only place the two directions meet.
 fn cell_at(lx: u32, ly: u32) -> (u32, u32) {
@@ -2898,8 +2968,7 @@ impl ShellOracle {
         let Some(mut drag) = state.drag.get() else {
             return;
         };
-        let canvas = canvas_rect();
-        let (col, row) = cell_at(px.saturating_sub(canvas.x), py.saturating_sub(canvas.y));
+        let (col, row) = cell_at_window(state, px, py);
         // ★ R1668 — the GRID says where it would land, rather than this file
         // guessing. A preview computed here and a release computed there is one
         // fact with two clamps, and the two disagreed: a six-column card
@@ -3046,8 +3115,7 @@ impl ShellOracle {
             let board = state.board.get();
             let tile_id = TileId::new(id.clone());
             if let Some(tile) = board.tile(&tile_id) {
-                let canvas = canvas_rect();
-                let (col, row) = cell_at(px.saturating_sub(canvas.x), py.saturating_sub(canvas.y));
+                let (col, row) = cell_at_window(state, px, py);
                 state.drag.set(Some(Drag {
                     id: tile_id,
                     dx: col.saturating_sub(tile.col),
@@ -6528,24 +6596,81 @@ fn dashboard_scene(state: &ShellState, palette: Palette) -> Vec<Scene> {
             },
         ));
     }
-    // ★ The snap preview: where a release would put the dragged card. Drawn
-    // rather than moving the card, because the reference commits on release and
-    // a board reflowing under the finger would make the preview a lie.
-    if let Some(drag) = &drag
-        && let Some(tile) = board.tile(&drag.id)
-    {
-        let ghost = Tile::new(drag.id.as_str(), drag.snap.0, drag.snap.1, tile.w, tile.h);
-        canvas_children.push(Scene::Container(
-            ContainerNode::new(Vec::new())
-                .with_tag("shell.dropslot")
-                .with_style(
-                    BoxStyle::filled(palette.high)
-                        .with_corner_radius(10)
-                        .with_border(Border::new(palette.accent_fg, 2)),
-                )
-                .with_layout(absolute(cell_rect(&ghost))),
-        ));
+    // ★★★★★ R1726 — the snap preview, and then the card being HELD above it.
+    //
+    // The order here is three deep and every layer was measured, because two of
+    // the three arrangements are wrong and each is wrong in a way the other
+    // hides:
+    //
+    // * preview LAST (what shipped): it is opaque, so it covered the card being
+    //   dragged whole — reported as "while dragging the widget's interior is
+    //   just grey". The widget had lost nothing; it was underneath.
+    // * preview FIRST (this round's first repair): the card is visible again,
+    //   but the preview now hides behind whatever already occupies the target
+    //   cell — which is every drag ONTO another widget, i.e. the normal one. A
+    //   drag with no visible destination reads as the thing you are holding
+    //   having vanished.
+    // * preview after the resting cards, the held card after the preview: the
+    //   destination is visible over the board AND the card you are holding is
+    //   on top of both. That is this.
+    //
+    // The lift is what makes the third arrangement expressible at all: without
+    // it there is no layer between "over the cards" and "under the dragged
+    // one", because the dragged card IS one of the cards.
+    if let Some(drag) = &drag {
+        if let Some(tile) = board.tile(&drag.id) {
+            let ghost = Tile::new(drag.id.as_str(), drag.snap.0, drag.snap.1, tile.w, tile.h);
+            // ★★★★★ R1726 — **the preview is a MARK, not a surface.** It was
+            // an opaque fill, and an opaque fill has no correct layer: under
+            // the cards it hides behind whatever occupies the destination, and
+            // over them it hides the widget standing there. Both were driven
+            // with a real pointer and both read the same way to the person —
+            // "the widget goes grey". Translucent, it can sit above the board
+            // and cover nothing: the destination is legible AND so is what is
+            // currently in it, which is exactly what a person deciding where to
+            // drop needs to see at once.
+            let tint = palette.accent_fg;
+            canvas_children.push(Scene::Container(
+                ContainerNode::new(Vec::new())
+                    .with_tag("shell.dropslot")
+                    .with_style(
+                        BoxStyle::filled(Color::rgba(tint.r, tint.g, tint.b, 0x24))
+                            .with_corner_radius(10)
+                            .with_border(Border::new(palette.accent_fg, 2)),
+                    )
+                    .with_layout(absolute(cell_rect(&ghost))),
+            ));
+        }
+        // Third consumer of the held derivation, and the one that made it a
+        // function rather than only a `ContainerNode` builder — this board
+        // never holds a container of its own, it hands its cards to a pane
+        // helper.
+        let held = [format!("card.{}", drag.id)];
+        pinion_core::held::raise_to_front(
+            &mut canvas_children,
+            &held,
+            pinion_core::held::HELD_SHADOW,
+        );
     }
+    // ★★★★★ R1726 — **the label that follows the cursor**, which the behaviour
+    // reference has and this board did not.
+    //
+    // Read from the reference's own source rather than guessed: it keeps THREE
+    // things during a board drag — the widget stays where it is, a snap mark
+    // shows the destination cell, and a small chip rides the cursor carrying
+    // the widget's NAME (`dragGhost`, offset +14/+10 from the pointer, above
+    // everything, transparent to it). We had the first two. Without the third
+    // the gesture never says WHAT is being carried, which is what "shouldn't
+    // the widget show while dragging" is asking for — and the answer the
+    // reference gives is a name, not a copy of the widget.
+    //
+    // It is NOT inside the scrolling board: it follows the pointer in window
+    // coordinates, so it must not slide when the board does.
+    let drag_label = drag.as_ref().map(|drag| {
+        let (cx, cy) = state.cursor.get();
+        carried_label(&label_of(drag.id.as_str()), cx, cy, palette)
+    });
+    let canvas_children = canvas_children;
     // ★ R1662 — the BOARD scrolls and the floats do not. A torn-off card is
     // chrome over the canvas, so it keeps its place when the board slides;
     // that is the same split the node lab makes between its world surface and
@@ -6576,6 +6701,11 @@ fn dashboard_scene(state: &ShellState, palette: Palette) -> Vec<Scene> {
             canvas_children.push(scene);
         }
     }
+    // ★★★★★ R1726 — the carried label rides the cursor, so it is LAST: above
+    // the board, above the torn-off panels, above everything. It is the one
+    // thing on this screen whose position is the pointer's rather than the
+    // layout's.
+    canvas_children.extend(drag_label);
     canvas_children
 }
 

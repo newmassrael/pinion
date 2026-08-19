@@ -3889,6 +3889,16 @@ pub struct ContainerNode {
     /// ordinary container is headed by its first External (the substrate's
     /// "primary is first in declaration order" convention), unchanged.
     pub no_primary_head: bool,
+    /// ★★★★★ R1726 §5.21 §5.35 — the child this surface is **holding**, when a
+    /// gesture is holding one.
+    ///
+    /// Set only by [`Self::with_held`], which is also what moved that child to
+    /// the end of [`children`](Self::children). Recording it without moving the
+    /// child, or moving the child without recording it, are the two halves of
+    /// the defect the declaration exists to remove — so they are one call, and
+    /// [`Self::held`] is how a reader (the wire, a census, a test) asks which
+    /// child that is without re-deriving it from the order.
+    pub held: Option<crate::held::Held>,
     /// R682 §5.16 — within-paint-pass memoised structural hash for
     /// the §5.16 paint-fragment cache (axis 4 of the 4-axis
     /// paint-pipeline rewrite series).
@@ -3959,10 +3969,79 @@ impl ContainerNode {
             tag: None,
             aria_label: None,
             no_primary_head: false,
+            held: None,
             paint_hash: Cell::new(None),
             marks: None,
             derivations: None,
         }
+    }
+
+    /// ★★★★★ R1726 §5.21 §5.35 §5.39 — **this surface is holding `tag`**: that
+    /// child paints in front of its siblings, is hit before them, and is
+    /// raised.
+    ///
+    /// One call for all three because they are one fact, and a screen that got
+    /// two of them right would look correct and behave wrongly. Measured on two
+    /// of this tree's own screens before it existed: a dragged node card
+    /// painted *behind* the card it was over, so the stationary card's opaque
+    /// body covered it — reported as "it goes grey" and "they do not overlap",
+    /// which were the same defect seen twice.
+    ///
+    /// # Why it reorders rather than being consulted later
+    ///
+    /// The child order **is** the z-order: a scene paints depth-first, and
+    /// [`Scene::hit_test`] walks the same children in reverse, so the last
+    /// child is both drawn last and hit first. A flag consulted at paint time
+    /// would be a second source for that order, and the two would disagree the
+    /// first time anything else read `children` — the failure this crate keeps
+    /// meeting. So the declaration moves the child, once, here; afterwards the
+    /// order is simply true, and [`Self::held`] answers *which* child without
+    /// re-deriving it.
+    ///
+    /// A `tag` no child carries is a no-op and records nothing: a surface
+    /// holding something that is not on it is not a state to paint, and
+    /// [`Self::held`] answering `None` says so.
+    ///
+    /// Elevation is [`HELD_SHADOW`](crate::held::HELD_SHADOW); use
+    /// [`Self::with_held_group_shadow`] to name another.
+    #[must_use]
+    pub fn with_held(self, tag: impl Into<String>) -> Self {
+        self.with_held_group([tag.into()])
+    }
+
+    /// [`Self::with_held`] for a gesture holding **several** children — a
+    /// selection dragged rigidly.
+    ///
+    /// They keep their order relative to each other and move to the front
+    /// together: a group picked up is one thing, and reshuffling it against
+    /// itself would be an edit nobody asked for. Tags no child carries are
+    /// dropped, and a call that holds nothing records nothing.
+    #[must_use]
+    pub fn with_held_group<T: Into<String>>(self, tags: impl IntoIterator<Item = T>) -> Self {
+        self.with_held_group_shadow(tags, crate::held::HELD_SHADOW)
+    }
+
+    /// [`Self::with_held_group`] with the elevation named rather than
+    /// defaulted, for a surface whose visual language sets its own.
+    #[must_use]
+    pub fn with_held_group_shadow<T: Into<String>>(
+        mut self,
+        tags: impl IntoIterator<Item = T>,
+        shadow: crate::style::BoxShadow,
+    ) -> Self {
+        let wanted: Vec<String> = tags.into_iter().map(Into::into).collect();
+        // The derivation lives in `held` so this and the `Vec<Scene>` entry
+        // point cannot drift: a caller who never holds a container — the tile
+        // dashboard hands its cards straight to a pane helper — reaches the
+        // same partition rather than writing a second one.
+        self.held = crate::held::raise_to_front(&mut self.children, &wanted, shadow);
+        self
+    }
+
+    /// Which child this surface is holding, if any.
+    #[must_use]
+    pub fn held(&self) -> Option<&crate::held::Held> {
+        self.held.as_ref()
     }
 
     /// R1629 — publish **how this container's drawing was produced**.

@@ -2099,6 +2099,233 @@ fn r1724_only_the_showing_section_has_surfaces() {
     });
 }
 
+/// ★★★★★ R1726 — **the card you are dragging is on top, and the slot it would
+/// land in is underneath.**
+///
+/// The owner's report, driven: *"while dragging, the widget's interior is just
+/// grey"*. It was not — the widget kept every row it had. The snap preview was
+/// filled opaque and pushed AFTER the cards, so it covered the card whole.
+///
+/// Both halves are asserted because either alone leaves the symptom: a preview
+/// drawn behind a card that is not itself lifted still ends up under its
+/// neighbours, and a lifted card under an opaque preview is still hidden.
+/// Asserted over the paint ORDER, since that is the z-order here.
+#[test]
+fn r1726_the_dragged_card_is_above_the_slot_it_would_land_in() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = super::use_shell_state();
+        let board = state.board.get();
+        let dragged = state
+            .placed()
+            .first()
+            .map(|c| c.id().clone())
+            .expect("the board opens with cards");
+        let tile = board.tile(&dragged).expect("the card is on the board");
+        state.drag.set(Some(super::Drag {
+            id: dragged.clone(),
+            dx: 0,
+            dy: 0,
+            snap: (tile.col, tile.row),
+        }));
+
+        let scene = super::view(ScreenState::default(), pinion_core::Frame::default());
+        let tags = scene.tags();
+        let at = |want: &str| tags.iter().position(|t| t == want);
+
+        let slot = at("shell.dropslot").expect("the snap preview is painted while dragging");
+        let card = at(&format!("card.{dragged}")).expect("the dragged card is painted");
+        let others: Vec<usize> = state
+            .placed()
+            .iter()
+            .filter(|c| *c.id() != dragged)
+            .filter_map(|c| at(&format!("card.{}", c.id())))
+            .collect();
+
+        // ★★★★★ THREE layers, and each boundary was a measured defect.
+        //
+        // The preview above the resting cards: below them it hides behind
+        // whatever already occupies the target cell, which is every drag ONTO
+        // another widget — a destination you cannot see reads as the thing you
+        // are holding having vanished. Measured with a real pointer: the slot
+        // landed at (518,114) squarely under a neighbour and was invisible.
+        assert!(
+            others.iter().all(|other| *other < slot),
+            "the snap preview paints ABOVE the resting cards, or the \
+             destination disappears under whichever card already sits there: \
+             slot {slot} against {others:?}"
+        );
+        // And the held card above the preview: below it, the opaque slot covers
+        // the widget whole, which is what was reported as its interior going
+        // grey.
+        assert!(
+            slot < card,
+            "the card being dragged paints above the preview, or the opaque \
+             slot covers its whole body: slot {slot}, card {card}"
+        );
+    });
+}
+
+/// ★★★★★ R1726 — **a press after scrolling lands on the cell it looks like.**
+///
+/// Reported from the running board: scroll down, press a widget, and the drop
+/// position is not where the widget is. `Hit::at` has folded the board's scroll
+/// offset since R1662 — which is why the press still *selects* the right card —
+/// and the two places that turned a press into a CELL did not, so the grab and
+/// the destination were computed in the unscrolled frame.
+///
+/// Driven as a difference rather than as an absolute: the same window point,
+/// scrolled and unscrolled, must name cells that differ by the scroll. An
+/// assertion on one cell number would pass for a function that ignores the
+/// offset whenever the offset happens to be zero.
+#[test]
+fn r1726_a_press_after_scrolling_names_the_cell_under_it() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = super::use_shell_state();
+        let canvas = super::canvas_rect();
+        let point = (canvas.x + 40, canvas.y + super::ROW_H * 3);
+
+        let unscrolled = super::cell_at_window(&state, point.0, point.1);
+        // The offset is clamped into `[0, max]`, and a board whose content fits
+        // has a max of zero — so the range has to exist before the board can
+        // slide. Without this the scroll silently stays at 0 and the test
+        // passes for a function that ignores it.
+        let row_h = i32::try_from(super::ROW_H).unwrap_or(1);
+        state.canvas_scroll.set_max(0, row_h * 4);
+        state.canvas_scroll.scroll_by(0, row_h * 2);
+        assert_eq!(
+            state.canvas_scroll.offset().1,
+            row_h * 2,
+            "the board really did slide, or the rest of this proves nothing"
+        );
+
+        let scrolled = super::cell_at_window(&state, point.0, point.1);
+        assert_ne!(
+            unscrolled, scrolled,
+            "the same window point names a different cell once the board has \
+             slid under it; equal means the scroll was not folded in, which is \
+             the defect -- the press selects one card and the drag computes \
+             another"
+        );
+        assert_eq!(
+            scrolled.1,
+            unscrolled.1 + 2,
+            "and it differs BY the scroll: two rows further down the board"
+        );
+    });
+}
+
+/// ★★★★★ R1726 — **the drop preview is a mark, not a surface.**
+///
+/// An opaque preview has no correct layer and both were driven with a real
+/// pointer: under the cards it hides behind whatever occupies the destination
+/// (so the drag has no visible target), over them it hides the widget standing
+/// there (reported as "the widget goes grey"). Translucent, it can sit above
+/// the board and cover nothing.
+#[test]
+fn r1726_the_drop_preview_covers_nothing() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = super::use_shell_state();
+        let dragged = state
+            .placed()
+            .first()
+            .map(|c| c.id().clone())
+            .expect("the board opens with cards");
+        let board = state.board.get();
+        let tile = board.tile(&dragged).expect("on the board");
+        state.drag.set(Some(super::Drag {
+            id: dragged,
+            dx: 0,
+            dy: 0,
+            snap: (tile.col, tile.row),
+        }));
+
+        let scene = super::view(ScreenState::default(), pinion_core::Frame::default());
+        let fill = find_fill(&scene, "shell.dropslot").expect("the preview is painted");
+        assert!(
+            fill.a < 0x80,
+            "the preview must be translucent so what is under it stays \
+             readable; alpha {} is a surface, not a mark",
+            fill.a
+        );
+        assert!(fill.a > 0, "and it is a mark rather than nothing at all");
+    });
+}
+
+/// ★★★★★ R1726 — **the cursor carries the name of what it is carrying.**
+///
+/// The behaviour reference keeps three things during a board drag: the widget
+/// stays put, a snap mark shows the destination, and a chip rides the cursor
+/// with the widget's NAME. This tree had the first two, so the gesture never
+/// said what was being carried.
+#[test]
+fn r1726_the_cursor_carries_the_name_of_what_it_holds() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = super::use_shell_state();
+        let scene = super::view(ScreenState::default(), pinion_core::Frame::default());
+        assert!(
+            !scene.tags().iter().any(|t| t == "shell.carried"),
+            "nothing is carried when nothing is being dragged"
+        );
+
+        let dragged = state
+            .placed()
+            .first()
+            .map(|c| c.id().clone())
+            .expect("the board opens with cards");
+        let board = state.board.get();
+        let tile = board.tile(&dragged).expect("on the board");
+        state.cursor.set((640, 400));
+        state.drag.set(Some(super::Drag {
+            id: dragged.clone(),
+            dx: 0,
+            dy: 0,
+            snap: (tile.col, tile.row),
+        }));
+
+        let scene = super::view(ScreenState::default(), pinion_core::Frame::default());
+        let tags = scene.tags();
+        assert!(
+            tags.iter().any(|t| t == "shell.carried"),
+            "a card being carried puts its name on the cursor"
+        );
+        // ★ Above the BOARD and everything on it — not last in the window,
+        // which the palette owns. The first draft asserted last-in-the-scene
+        // and failed against `shell.palette.reserved`, which is a true fact
+        // about a different plane: this chip's place is the pointer's within
+        // the page, and the page is not the whole window.
+        let carried = tags
+            .iter()
+            .position(|t| t == "shell.carried")
+            .expect("the chip is painted");
+        let board_things: Vec<usize> = tags
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| t.starts_with("card.") || *t == "shell.dropslot")
+            .map(|(i, _)| i)
+            .collect();
+        assert!(
+            board_things.iter().all(|at| *at < carried),
+            "the chip paints after every card and after the drop preview: \
+             {carried} against {board_things:?}"
+        );
+    });
+}
+
+/// The fill colour of the first node carrying `tag`.
+fn find_fill(scene: &pinion_core::Scene, tag: &str) -> Option<pinion_core::style::Color> {
+    let mut found = None;
+    scene.for_each_node(&mut |visit| {
+        if found.is_none() && visit.node.tag() == Some(tag) {
+            found = visit.node.box_style().map(|s| s.fill);
+        }
+    });
+    found
+}
+
 /// ★★★★★ R1725 — **one application, one navigation.**
 ///
 /// The defect this pins was visible the moment the first screen was mounted and

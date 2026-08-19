@@ -1895,6 +1895,7 @@ fn coordinator() -> NodeGraphExternal {
             edit_buffer: use_text_edit_state(EDIT_TF_TAG),
             marquee_rect: use_marquee_rect(),
             node_drag: use_node_drag(),
+            node_stacking: use_node_stacking(),
             pin_create: use_pin_create(),
         },
     )

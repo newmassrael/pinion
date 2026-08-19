@@ -20,6 +20,73 @@ fn state() -> LabState {
     LabState::opening()
 }
 
+/// ★★★★★ R1726 — **a card you picked up stays in front after you put it down.**
+///
+/// The owner's report, and the half a transient lift does not answer. Measured
+/// on the running screen before this existed: a dragged card painted at index
+/// 101 while held and went straight back to 70 the moment it was released, so
+/// the card just placed was the hidden one under the card it was dropped on.
+///
+/// Asserted over the card ORDER rather than over a picture, because that order
+/// is the z-order: the scene paints depth-first and the hit test walks the same
+/// children in reverse. And the second assertion is the one that keeps this a
+/// reorder rather than a rearrangement — a drop on a free canvas must displace
+/// nothing, which is the rule every node editor keeps and the opposite of the
+/// tile dashboard's.
+#[test]
+fn r1726_a_card_you_picked_up_stays_in_front_after_you_drop_it() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = state();
+        let before = state.cards();
+        assert!(before.len() >= 3, "the opening graph has cards to stack");
+        let first = before[0];
+        let last = *before.last().expect("a last card");
+
+        state.raise(first);
+        let after = state.cards();
+        assert_eq!(
+            after.last().copied(),
+            Some(first),
+            "the card that was picked up is now the front one, and stays there \
+             -- nothing about this is tied to a gesture still being held"
+        );
+        assert_eq!(
+            after.len(),
+            before.len(),
+            "raising adds and removes no card"
+        );
+
+        // Raising another puts THAT one in front and keeps the first ahead of
+        // the untouched ones: the order is a history of what has been handled.
+        state.raise(last);
+        let after = state.cards();
+        assert_eq!(after.last().copied(), Some(last));
+        let positions = |id| after.iter().position(|c| *c == id).expect("still a card");
+        assert!(
+            positions(first) > positions(before[1]),
+            "a card picked up earlier is still in front of one never touched"
+        );
+
+        // ★ And a card nobody has touched is exactly where the specification
+        // puts it, so the screen still OPENS as declared.
+        let untouched: Vec<_> = before
+            .iter()
+            .copied()
+            .filter(|id| *id != first && *id != last)
+            .collect();
+        let still: Vec<_> = after
+            .iter()
+            .copied()
+            .filter(|id| untouched.contains(id))
+            .collect();
+        assert_eq!(
+            still, untouched,
+            "the cards nobody picked up keep their declared order"
+        );
+    });
+}
+
 /// ★★★★★ R1725 — **this screen draws its own navigation only where it is the
 /// one providing it, and every rectangle follows from that one fact.**
 ///

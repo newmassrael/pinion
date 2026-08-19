@@ -2098,6 +2098,64 @@ fn use_node_drag() -> Rc<RefCell<Option<NodeDragStart>>> {
     owner.cache("node_graph.node_drag", || RefCell::new(None))
 }
 
+/// ★★★★★ R1726 — **the order the canvas stacks its nodes in**, front last.
+///
+/// The graph model holds its nodes in an id map, so it has no sibling order to
+/// carry this: which node is in front is a fact about this CANVAS rather than
+/// about the graph, and it belongs to the screen. Only nodes that have been
+/// picked up appear here; everything else keeps the model's order, so a graph
+/// nobody has touched draws exactly as it always did.
+///
+/// ★★ Second of two sites — `hello-node-lab` holds the same `Vec` for the same
+/// reason. Two is not three, so by this project's lift rule it stays duplicated
+/// and the count is written down instead: whoever adds the third lifts all
+/// three into a model, and the shape to lift is *an order over ids that a
+/// pick-up raises*.
+fn use_node_stacking() -> Rc<RefCell<Vec<NodeId>>> {
+    let owner = Owner::current().expect("use_node_stacking requires an active Owner scope");
+    owner.cache("node_graph.stacking", || RefCell::new(Vec::new()))
+}
+
+/// These nodes were picked up, so they are in front from now on — in the order
+/// given, which keeps a dragged selection's own arrangement.
+fn raise_nodes(stacking: &Rc<RefCell<Vec<NodeId>>>, nodes: impl IntoIterator<Item = NodeId>) {
+    let mut stacking = stacking.borrow_mut();
+    for node in nodes {
+        stacking.retain(|id| *id != node);
+        stacking.push(node);
+    }
+}
+
+/// `cards` reordered so the ones that have been picked up paint last.
+///
+/// A stable partition rather than a sort: a node nobody has touched keeps the
+/// position the model gives it.
+fn stacked(cards: Vec<Scene>) -> Vec<Scene> {
+    let stacking = use_node_stacking();
+    let stacking = stacking.borrow();
+    if stacking.is_empty() {
+        return cards;
+    }
+    let raised: Vec<String> = stacking
+        .iter()
+        .map(|id| format!("{GRAPH_TAG}#node_{}", id.0))
+        .collect();
+    let mut resting: Vec<Scene> = Vec::with_capacity(cards.len());
+    let mut lifted: Vec<Option<Scene>> =
+        std::iter::repeat_with(|| None).take(raised.len()).collect();
+    for card in cards {
+        match card
+            .tag()
+            .and_then(|tag| raised.iter().position(|r| r == tag))
+        {
+            Some(at) => lifted[at] = Some(card),
+            None => resting.push(card),
+        }
+    }
+    resting.extend(lifted.into_iter().flatten());
+    resting
+}
+
 /// R1182 — register the edge-drag auto-pan driver on the owner's animation
 /// clock (idempotent; the `use_caret_blink` *register-once mechanism* is the
 /// precedent — the rest-semantics differ, see [`AutoPan::is_at_rest`]). Called
@@ -3145,6 +3203,9 @@ struct GraphServices {
     /// ([`use_node_drag`]) so both read one authoritative drag state (the
     /// drag's rim-probe cursor rides inside it, [`NodeDragStart::cursor`]).
     node_drag: Rc<RefCell<Option<NodeDragStart>>>,
+    /// ★ R1726 — the canvas's stacking order, carried in with the rest so the
+    /// press path never reaches the owner cache (which it has no scope for).
+    node_stacking: Rc<RefCell<Vec<NodeId>>>,
     /// R1220 — the open pin-drop create menu, shared with the view fn's
     /// floating-menu paint ([`use_pin_create`]).
     pin_create: Rc<Signal<Option<PinCreate>>>,
@@ -3192,6 +3253,18 @@ struct NodeGraphExternal {
     /// tick reads the same latch + members + rim-probe cursor
     /// ([`NodeDragStart::cursor`]) the coordinator writes.
     node_drag: Rc<RefCell<Option<NodeDragStart>>>,
+    /// ★★★★★ R1726 — the canvas's stacking order, HELD here rather than fetched
+    /// where it is used.
+    ///
+    /// `use_node_stacking` reaches the owner cache, and the press path has no
+    /// owner scope — the first draft called it there and the running screen
+    /// panicked with `use_node_stacking requires an active Owner scope` on the
+    /// first real press. Every unit test in this tree runs inside `owner.run`,
+    /// so none of them could see it; the demo, which drives the real binary,
+    /// caught it immediately. Same class as R1721's, and the repair is the one
+    /// `node_drag` above already uses: take the handle where a scope exists and
+    /// keep it.
+    node_stacking: Rc<RefCell<Vec<NodeId>>>,
     pending_press: Cell<PendingPress>,
     /// Edge under the most recent background press (the capture-seed
     /// `pointer_move` records it; a background `PointerUp` consumes it).
@@ -3236,6 +3309,7 @@ impl NodeGraphExternal {
             marquee_rect: services.marquee_rect,
             grabbed_node: Cell::new(None),
             node_drag: services.node_drag,
+            node_stacking: services.node_stacking,
             pin_create: services.pin_create,
             pending_press: Cell::new(PendingPress::None),
             pending_edge_hit: Cell::new(None),
@@ -5983,6 +6057,13 @@ impl External for NodeGraphExternal {
                 })
                 .collect();
             if !snapshot.is_empty() {
+                // ★★★★★ R1726 — picking nodes up puts them in front, and they
+                // STAY there once dropped. The transient half is the world's
+                // `with_held_group`; this is the half that survives the
+                // release, and without it a node dropped onto another goes
+                // straight back underneath it (measured on the sibling screen:
+                // index 101 while held, back to 70 the moment it landed).
+                raise_nodes(&self.node_stacking, snapshot.iter().map(|(id, ..)| *id));
                 *self.node_drag.borrow_mut() = Some(NodeDragStart {
                     members: snapshot,
                     latch: DragLatch::new(screen),
@@ -8398,9 +8479,9 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
         }
     }
 
-    world_children.extend(view_node_cards(
+    world_children.extend(stacked(view_node_cards(
         &graph, &selected, active, state, &theme, zoom,
-    ));
+    )));
 
     // R880 — the live marquee rubber band layers over everything in the
     // world (reading the Signal subscribes the paint Effect, so each drag
@@ -8415,8 +8496,26 @@ fn view(state: RootState, _frame: &Frame) -> Scene {
     // explicitly-sized scroll content), and `update_scroll_state_bounds`
     // derives the pan maxima from it each frame.
     let world_extent = upx(wpx(WORLD, zoom));
+    // ★★★★★ R1726 — the world says which nodes it is HOLDING, and they paint in
+    // front, are pressed first and are raised, all from that one word. A GROUP,
+    // because this screen drags the whole selection rigidly — which is what
+    // made the capability take a set rather than one tag.
+    //
+    // Measured before it existed: a dragged node painted at index 12 against
+    // the stationary node's 15, so it went UNDER the node it was over.
+    let held: Vec<String> = use_node_drag()
+        .borrow()
+        .as_ref()
+        .map(|drag| {
+            drag.members
+                .iter()
+                .map(|(id, ..)| format!("{GRAPH_TAG}#node_{}", id.0))
+                .collect()
+        })
+        .unwrap_or_default();
     let world = Scene::Container(
         ContainerNode::new(world_children)
+            .with_held_group(held)
             .with_style(BoxStyle::filled(theme.resolve(ColorRole::Surface)))
             .with_layout(LayoutStyle::new().with_size(Size::px(world_extent, world_extent))),
     );
@@ -8541,6 +8640,7 @@ impl WidgetCore for NodeEditorView {
                 edit_buffer: use_text_edit_state(EDIT_TF_TAG),
                 marquee_rect: use_marquee_rect(),
                 node_drag: use_node_drag(),
+                node_stacking: use_node_stacking(),
                 pin_create: use_pin_create(),
             },
         ))
