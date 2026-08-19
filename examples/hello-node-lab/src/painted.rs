@@ -4764,6 +4764,507 @@ fn r1691_a_rows_control_announces_the_kind_its_shape_is() {
     });
 }
 
+// ── The inspector, against the specification somebody wrote down (R1732) ────
+
+/// The size the conformance sweep paints at.
+///
+/// The maximised one, and for a stated reason rather than convenience: the
+/// inspector's form scrolls, a row below the fold is clipped away entirely, and
+/// a check that could not see it would report a missing part where a reader
+/// only has to scroll. R1662's `reachable` index is the other half of that
+/// question and is asked by its own test; this one is about what the row IS.
+const CONFORMANCE_SIZE: (u32, u32) = (2494, 1531);
+
+/// Put a card on the inspector and give it the enumeration row, the way a
+/// session does: select, then press the chip that offers the key.
+///
+/// Through the painted rectangle and the screen's own press path — not by
+/// calling the form's `add` — because a state a test invents can be one no
+/// gesture reaches, and this whole module exists because three rounds' worth of
+/// helpers were right while the painter was not.
+fn card_with_enum_row(state: &std::rc::Rc<LabState>) {
+    let node = state.node_of("P-01").expect("the opening graph has it");
+    state.selection.set(Selection::one(node));
+    let shot = painted_at(state, CONFORMANCE_SIZE).0;
+    let chip = *shot
+        .tags
+        .get(&format!("lab.form.add.{}", spec::ENUM_KEY))
+        .unwrap_or_else(|| panic!("the palette offers {}", spec::ENUM_KEY));
+    let (px, py) = centre(chip);
+    super::move_cursor(state, px, py);
+    super::press(state);
+    super::release(state);
+}
+
+/// What this build calls each part of a form row — the SCREEN's words, against
+/// which the specification's are compared.
+///
+/// The screen's own table and not the pin's: a build that renamed what it draws
+/// while the pin kept the old word has to fail, and it can only fail if the two
+/// are written in two places by two hands. R1728 is the round that learned it.
+fn row_part_title(part: &str) -> Option<String> {
+    let said = match part {
+        "key" => "the configuration path this row is about",
+        "type" => "the type word, and how many words are on offer",
+        "applies" => "when an edit to this row lands",
+        "remove" => "the seat that takes the row out of the form",
+        "control" => "the box the value is entered in",
+        "author" => "the seat that takes the row's value over",
+        "disown" => "the seat that gives this row's half back",
+        "aside" => "that the row is not configuration",
+        "defect" => "what is wrong with the value",
+        "shown" => "the word the row holds",
+        "pick" => "the arrow that opens the roster",
+        "toggle" => "the switch a boolean row is set with",
+        "said" => "the row's spoken description",
+        _ => return None,
+    };
+    Some(said.to_owned())
+}
+
+/// One inspector surface, as the PAINT has it.
+///
+/// # Panics
+///
+/// If asked for a surface the specification does not name, which is a defect in
+/// this file rather than a state the screen can reach.
+fn built_inspector(
+    scene: &Scene,
+    shot: &Painted,
+    surface: &str,
+) -> Vec<pinion_core::conformance::Part> {
+    use pinion_core::test_fixtures::surface::{painted_parts, painted_surface_of};
+    match surface {
+        "enum_row" => painted_surface_of(scene, "lab.form.", spec::ENUM_KEY, &|part| {
+            row_part_title(part)
+        }),
+        "enum_roster" => {
+            let stem = format!("lab.form.option.{}.", spec::ENUM_KEY);
+            painted_parts(scene, &stem)
+                .into_iter()
+                .map(|(word, _)| {
+                    // The title is the WORD THE ROSTER DREW, read back out of
+                    // the run inside that option's box — not the key repeated.
+                    // A roster whose third row drew the second word would
+                    // otherwise be a surface nothing could tell apart.
+                    let tag = format!("{stem}{word}");
+                    let drawn = shot
+                        .runs
+                        .iter()
+                        .find(|(_, _, owner)| owner.as_deref() == Some(tag.as_str()))
+                        .map_or_else(
+                            || "<nothing is drawn in this option>".to_owned(),
+                            |(text, _, _)| text.clone(),
+                        );
+                    pinion_core::conformance::Part::new(word, drawn)
+                })
+                .collect()
+        }
+        "controls" => control_kinds(scene),
+        other => panic!("no inspector surface named {other}"),
+    }
+}
+
+/// The kinds of value control this build draws, each titled by **what the paint
+/// actually put inside it**.
+///
+/// Classified from the painted affordances rather than from the field's shape,
+/// which is the whole point: a table of intentions passes while the painter
+/// draws something else, and the defect this round repaired — an enumeration
+/// drawn as a row of chips — is exactly a shape whose control was the wrong
+/// kind.
+///
+/// The order is the specification's, and this surface is the one place that is
+/// not a claim: the reference's five kinds are the order its markup TESTS them
+/// in, which no screen lays out. What is being judged here is which kinds exist
+/// and what each draws; a part out of place would say nothing, so nothing is
+/// arranged to make it say something.
+fn control_kinds(scene: &Scene) -> Vec<pinion_core::conformance::Part> {
+    let mut found: BTreeMap<&'static str, String> = BTreeMap::new();
+    let state = use_lab_state();
+    // The SHOWN form, not the stored one: the rows the screen works out for
+    // itself — the derived ones — are only in the first, and one of the five
+    // kinds under judgement is exactly those.
+    let Some(form) = super::selected_form(&state) else {
+        return Vec::new();
+    };
+    let keys: Vec<String> = form
+        .fields()
+        .iter()
+        .filter(|f| !f.hidden())
+        .map(|f| f.key().to_owned())
+        .collect();
+    for key in keys {
+        let parts = row_families(scene, &key);
+        let has = |p: &str| parts.contains(p);
+        let (kind, drawn) = if has("author") {
+            ("derived", "a read-out with no way to write into it")
+        } else if has("pick") {
+            (
+                "enum",
+                "a collapsed control holding one word, and an arrow that opens the roster",
+            )
+        } else if has("toggle") {
+            ("bool", "a switch, and the word it is set to")
+        } else if has("step") {
+            ("int", "a stepper that cannot leave the declared range")
+        } else if has("item") {
+            ("list", "one row per element, and a row that appends one")
+        } else if has("option") {
+            ("perm", "one chip per permission word, each on or off")
+        } else {
+            ("text", "a box holding the value as text")
+        };
+        found.entry(kind).or_insert_with(|| drawn.to_owned());
+    }
+    // The specification's order first, then anything this build has beyond it —
+    // which is where the two second-pass controls land, and where the ledger
+    // expects them.
+    let mut out = Vec::new();
+    for kind in ["text", "enum", "bool", "perm", "derived"] {
+        if let Some(drawn) = found.remove(kind) {
+            out.push(pinion_core::conformance::Part::new(kind, drawn));
+        }
+    }
+    for (kind, drawn) in found {
+        out.push(pinion_core::conformance::Part::new(kind, drawn));
+    }
+    out
+}
+
+/// Which part FAMILIES the paint gave the row keyed `key`.
+///
+/// ★★★ A second reading beside
+/// [`painted_parts_of`](pinion_core::test_fixtures::surface::painted_parts_of),
+/// and the difference is a fact about this widget's tag vocabulary rather than
+/// a preference: **a form row's parts come in two shapes.** Most are
+/// `<family>.<key>` exactly — the key, the type badge, the seat, the chevron —
+/// and the ones a shape can have several of carry a discriminator after the
+/// address: `option.<key>.<word>`, `step.<key>.up`, `item.<key>.<n>`. The
+/// address-suffix reading finds the first kind and cannot find the second, and
+/// the first draft of this gate reported `perm`, `int` and `list` absent for
+/// exactly that reason.
+///
+/// A family holds no dots, so the seam is the FIRST segment after the prefix,
+/// and what follows is the address with whatever the shape appended to it.
+/// ⇒ [[debt-a-rail-tag-prefix-holds-seats-and-chrome-alike]] is the same
+/// question one level up, and is still open.
+fn row_families(scene: &Scene, key: &str) -> BTreeSet<String> {
+    let mut found = BTreeSet::new();
+    scene.for_each_node(&mut |visit| {
+        let (Some(_), Some(tag)) = (visit.absolute_rect(), visit.node.tag()) else {
+            return;
+        };
+        let Some(rest) = tag.strip_prefix("lab.form.") else {
+            return;
+        };
+        let Some((family, address)) = rest.split_once('.') else {
+            return;
+        };
+        if address == key
+            || address
+                .strip_prefix(key)
+                .is_some_and(|t| t.starts_with('.'))
+        {
+            found.insert(family.to_owned());
+        }
+    });
+    found
+}
+
+/// ★★★★★ R1732 — **the integration gate: the inspector the pipeline paints,
+/// against `docs/analyzer-inspector-spec.json`.**
+///
+/// Every surface, judged as an equality: a part the specification has and the
+/// paint does not, a part the paint has and the specification does not, a part
+/// in the wrong place and a part drawn as the wrong thing all fail, and so does
+/// a declared remainder that has quietly been paid off.
+#[test]
+fn r1732_the_inspector_reproduces_the_specification_or_says_where_it_does_not() {
+    use pinion_core::conformance::Unreconciled;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        card_with_enum_row(&state);
+        let doc = spec::inspector_document();
+        let judge = |surface: &str, scene: &Scene, shot: &Painted| {
+            let built = built_inspector(scene, shot, surface);
+            let unreconciled: Vec<String> = doc
+                .unreconciled(surface, &built)
+                .iter()
+                .map(Unreconciled::sentence)
+                .collect();
+            assert!(
+                unreconciled.is_empty(),
+                "the {surface} surface is not what docs/analyzer-inspector-spec.json \
+                 declares:\n  {}",
+                unreconciled.join("\n  "),
+            );
+        };
+
+        // ★ Each surface is read in the state it is SPECIFIED for. The row is
+        // specified with its roster shut — a roster standing over it is a part
+        // of the row that is not always there — and the roster is specified
+        // open, because a shut one has no parts at all. Reading both from one
+        // paint would make one of the two a claim about a state the file does
+        // not describe.
+        let (shot, scene) = painted_at(&state, CONFORMANCE_SIZE);
+        judge("enum_row", &scene, &shot);
+        judge("controls", &scene, &shot);
+
+        // Open the roster, through the row the way a hand does.
+        let control = *shot
+            .tags
+            .get(&format!("lab.form.control.{}", spec::ENUM_KEY))
+            .expect("the row is painted");
+        let (px, py) = centre(control);
+        super::move_cursor(&state, px, py);
+        super::press(&state);
+        super::release(&state);
+        assert!(
+            state.picking.get().is_some(),
+            "★ a press on the collapsed control opens its roster",
+        );
+        let (shot, scene) = painted_at(&state, CONFORMANCE_SIZE);
+        judge("enum_roster", &scene, &shot);
+
+        // And every surface the file declares was judged — a gate that judged
+        // two of three would report the third as reproduced by not looking.
+        let judged = ["enum_row", "controls", "enum_roster"];
+        let declared: Vec<&str> = doc.surfaces().collect();
+        for surface in &declared {
+            assert!(
+                judged.contains(surface),
+                "{surface} is specified and this gate never reads it",
+            );
+        }
+        assert_eq!(declared.len(), judged.len());
+    });
+}
+
+/// ★★★★★ R1732 — the gesture the reference's control answers, end to end:
+/// press to open, press an option to choose, and the value the row holds
+/// changes to it.
+///
+/// Driven through the screen's own pointer path over the PAINTED rectangles, so
+/// what is proved is that a hand can do it.
+#[test]
+fn r1732_pressing_an_option_writes_it_and_shuts_the_roster() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        card_with_enum_row(&state);
+        let node = state.active_card().expect("a card is selected");
+        let held = || {
+            state
+                .forms
+                .borrow()
+                .get(&node)
+                .and_then(|form| form.field(spec::ENUM_KEY).map(|f| f.value().into_owned()))
+                .unwrap_or_default()
+        };
+        let opening = held();
+
+        let press_at = |rect: Rect| {
+            let (px, py) = centre(rect);
+            super::move_cursor(&state, px, py);
+            super::press(&state);
+            super::release(&state);
+        };
+
+        let shot = painted_at(&state, CONFORMANCE_SIZE).0;
+        press_at(
+            *shot
+                .tags
+                .get(&format!("lab.form.control.{}", spec::ENUM_KEY))
+                .expect("the row is painted"),
+        );
+
+        let shot = painted_at(&state, CONFORMANCE_SIZE).0;
+        // A word that is NOT the one the row holds, so the write is visible.
+        let wanted = state
+            .picking
+            .get()
+            .as_ref()
+            .expect("the roster is open")
+            .1
+            .options()
+            .iter()
+            .map(std::string::ToString::to_string)
+            .find(|word| *word != opening)
+            .expect("the roster offers more than the word already held");
+        let option = *shot
+            .tags
+            .get(&format!("lab.form.option.{}.{wanted}", spec::ENUM_KEY))
+            .unwrap_or_else(|| panic!("the roster paints {wanted}"));
+        press_at(option);
+
+        assert_eq!(held(), wanted, "★ the press wrote the word it was aimed at");
+        assert!(
+            state.picking.get().is_none(),
+            "★★ and shut the roster, so the row it changed is what a reader sees",
+        );
+        let shot = painted_at(&state, CONFORMANCE_SIZE).0;
+        assert!(
+            !shot
+                .tags
+                .contains_key(&format!("lab.form.option.{}.{wanted}", spec::ENUM_KEY)),
+            "★★★ the roster is gone from the PAINT too, not only from the state",
+        );
+        assert_eq!(
+            shot.said
+                .get(&format!("lab.form.shown.{}", spec::ENUM_KEY))
+                .map(String::as_str),
+            Some(wanted.as_str()),
+            "★★★★ and the collapsed control shows the new word",
+        );
+    });
+}
+
+/// ★★★★★ R1732 — **one editor at a time**, and the round's own defect.
+///
+/// A roster takes the keyboard while it is open. The first draft let it open
+/// over a field that was already taking keystrokes, so a person half-way
+/// through typing a name lost every key after the press with nothing said — two
+/// editors on one form, and the reader could not tell which had their input.
+/// Both directions are checked, because a rule kept on one side only is the
+/// same state reached the other way.
+#[test]
+fn r1732_opening_a_roster_and_opening_a_field_each_shut_the_other() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        card_with_enum_row(&state);
+        let node = state.active_card().expect("a card is selected");
+        let held = || {
+            state
+                .forms
+                .borrow()
+                .get(&node)
+                .and_then(|form| form.field(spec::ENUM_KEY).map(|f| f.value().into_owned()))
+                .unwrap_or_default()
+        };
+
+        // A field first, then the roster: the field's text is APPLIED, the way
+        // moving between two rows applies it.
+        super::begin_edit(
+            &state,
+            super::Editing::Value {
+                node,
+                key: "id".to_owned(),
+                element: None,
+            },
+        )
+        .expect("the row takes an editor");
+        state.buffer.set_text("aa11".to_owned());
+        super::open_roster(&state, spec::ENUM_KEY);
+        assert!(
+            state.editing.get().is_none(),
+            "★ opening the roster shut the field",
+        );
+        assert_eq!(
+            state
+                .forms
+                .borrow()
+                .get(&node)
+                .and_then(|form| form.field("id").map(|f| f.value().into_owned())),
+            Some("aa11".to_owned()),
+            "★★ and applied what was in it rather than dropping it",
+        );
+        assert!(state.picking.get().is_some(), "and the roster is open");
+
+        // The other way: a field over an open roster shuts it and writes
+        // nothing, because dismissing is not choosing.
+        let before = held();
+        super::begin_edit(
+            &state,
+            super::Editing::Value {
+                node,
+                key: "id".to_owned(),
+                element: None,
+            },
+        )
+        .expect("the row takes an editor");
+        assert!(
+            state.picking.get().is_none(),
+            "★★★ opening a field shut the roster",
+        );
+        assert_eq!(
+            held(),
+            before,
+            "★★★★ and wrote nothing into the row it left"
+        );
+    });
+}
+
+/// ★★★★★ R1732 — the keyboard path, which the reference does not have at all.
+///
+/// Measured: zero key handlers across the whole prototype. This is the second
+/// pass over what the first left pointer-only, and it is an ADDITION — the
+/// pointer path above is unchanged and still proved.
+#[test]
+fn r1732_the_roster_is_driveable_from_the_keyboard_without_writing_as_it_moves() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        card_with_enum_row(&state);
+        let node = state.active_card().expect("a card is selected");
+        let held = || {
+            state
+                .forms
+                .borrow()
+                .get(&node)
+                .and_then(|form| form.field(spec::ENUM_KEY).map(|f| f.value().into_owned()))
+                .unwrap_or_default()
+        };
+        let opening = held();
+
+        let shot = painted_at(&state, CONFORMANCE_SIZE).0;
+        let (px, py) = centre(
+            *shot
+                .tags
+                .get(&format!("lab.form.control.{}", spec::ENUM_KEY))
+                .expect("the row is painted"),
+        );
+        super::move_cursor(&state, px, py);
+        super::press(&state);
+        super::release(&state);
+
+        // Two steps down the roster, and the document must not have moved.
+        assert!(super::key(&state, "ArrowDown"));
+        assert!(super::key(&state, "ArrowDown"));
+        assert_eq!(
+            held(),
+            opening,
+            "★★★★★ moving is not writing — the floor's collapsed control \
+             commits on every arrow press",
+        );
+        let highlighted = state
+            .picking
+            .get()
+            .as_ref()
+            .expect("still open")
+            .1
+            .highlighted()
+            .to_owned();
+        assert_ne!(highlighted, opening, "the reader has moved off the value");
+
+        assert!(super::key(&state, "Enter"));
+        assert_eq!(held(), highlighted, "★ and Enter writes what was under it");
+        assert!(state.picking.get().is_none());
+
+        // Escape leaves the value alone.
+        super::move_cursor(&state, px, py);
+        super::press(&state);
+        super::release(&state);
+        assert!(super::key(&state, "ArrowDown"));
+        assert!(super::key(&state, "Escape"));
+        assert_eq!(held(), highlighted, "★★ dismissing is not choosing");
+        assert!(state.picking.get().is_none());
+    });
+}
+
 /// The slot that moves when a scope is put back — read off the operation table
 /// rather than restated here, so a scope whose witness changes moves this too.
 fn scope_witness(scope: super::ResetScope) -> &'static str {

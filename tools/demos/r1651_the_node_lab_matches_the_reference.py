@@ -331,6 +331,21 @@ def body() -> None:
             declared.add(f"lab.form.applies.{field['key']}")
             declared.add(f"lab.form.defect.{field['key']}")
             declared.add(f"lab.form.remove.{field['key']}")
+            # ★★ R1732 — the row's own two read-outs, which had never carried
+            # tags at all: the configuration path, and the type word with how
+            # many words are on offer. This backward check is what said so —
+            # fourteen tags the specification did not declare, on the first run
+            # after they were given names.
+            declared.add(f"lab.form.key.{field['key']}")
+            declared.add(f"lab.form.type.{field['key']}")
+            # ★★★★★ R1732 — a collapsed roster: the word it holds and the arrow
+            # that opens it. The roster's own options are `option.<key>.<word>`
+            # below, which is the vocabulary the expanded row already used — a
+            # driver that could press an option before this round presses the
+            # same name now.
+            declared.add(f"lab.form.shown.{field['key']}")
+            declared.add(f"lab.form.pick.{field['key']}")
+            declared.add(f"lab.form.roster.{field['key']}")
             # ★★ R1716 — the regions a row nobody wrote has: where its value
             # came from, whether it is configuration at all, and the seat that
             # takes it over. Declared per family here for the same reason the

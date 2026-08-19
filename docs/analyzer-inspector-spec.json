@@ -1,0 +1,141 @@
+{
+  "$comment": [
+    "R1732 — the analysis tool's NODE INSPECTOR, written down once, in neutral",
+    "vocabulary, as the behaviour reference draws it.",
+    "",
+    "WHY THIS IS A FILE AND NOT A RUST CONSTANT. The reason the two spec files",
+    "beside it are, applied to a third surface. The screen's own `spec` module",
+    "is what a RUNNING screen needs — paint tags, row data, the wording of a",
+    "refusal. A specification written there would be written by the same hand in",
+    "the same edit as the thing under test, so a conformance check would be",
+    "asking the subject for the answer.",
+    "",
+    "EXTRACTION. The reference is not in this repository and must not be. The",
+    "procedure is the recorded one: the document is a single JSON string line",
+    "holding the whole application as one inline script, and the inspector is",
+    "one block of markup fed by one derivation. Measured 2026-08-19: the",
+    "derivation gives each field FIVE mutually exclusive control kinds, and the",
+    "markup draws exactly one of them per row, in the order recorded below. The",
+    "row's header line carries the path, a type word that appends how many words",
+    "are on offer when the field has a roster, one badge saying when an edit",
+    "lands, and a seat that takes the row away when it is the reader's to take.",
+    "",
+    "THE ENUMERATION ROW IS WHAT THIS ROUND IS ABOUT. The reference draws it as",
+    "a COLLAPSED control carrying the word the row holds and an arrow that opens",
+    "the rest — styled identically to the text field beside it, so the two read",
+    "as the same kind of thing. This build drew every option side by side until",
+    "R1732: measured, a six-word roster overran its own control by 50px and a",
+    "seven-word one by 113px, with no wrap, no clip and no scroll.",
+    "",
+    "VOCABULARY. The reference's product, protocol and resource words are",
+    "replaced by the words the tool class uses generally. Structure and",
+    "behaviour are what is being reproduced; the wording is not. The titles",
+    "below are this file's words for what is drawn — the reference labels almost",
+    "none of these parts — and the file says so rather than pretending otherwise.",
+    "",
+    "THE TWO HALVES. Each surface carries `canon` — what the reference has — and",
+    "`owed` — where this build differs, each entry carrying the round that",
+    "accepted it and why. The gate asserts the difference between the built",
+    "surface and `canon` is EXACTLY `owed`, so a new divergence fails and so",
+    "does an owed one that has been paid off without this file being told.",
+    "",
+    "OWED RUNS IN BOTH DIRECTIONS. A part this build has and the reference does",
+    "not is a divergence too, and is recorded here rather than deleted: the",
+    "standing order rule is that the reference is what must be REPRODUCED and",
+    "not a ceiling, so something present here and absent there stays and says",
+    "why."
+  ],
+  "controls": {
+    "$comment": [
+      "The kinds of value control the inspector draws, in the order the",
+      "reference's markup tests for them. Exactly one is drawn per row, and",
+      "which one is a function of the field's declared type — the reference says",
+      "so in a comment of its own on that derivation.",
+      "",
+      "A build's side of this is read back from the PAINT: a form holding one row",
+      "of each kind is laid out and each row is classified by the affordances",
+      "actually drawn inside its control. A table of intentions would pass while",
+      "the painter drew something else."
+    ],
+    "canon": [
+      { "ordinal": 1, "key": "text", "title": "a box holding the value as text" },
+      {
+        "ordinal": 2,
+        "key": "enum",
+        "title": "a collapsed control holding one word, and an arrow that opens the roster"
+      },
+      { "ordinal": 3, "key": "bool", "title": "a switch, and the word it is set to" },
+      { "ordinal": 4, "key": "perm", "title": "one chip per permission word, each on or off" },
+      { "ordinal": 5, "key": "derived", "title": "a read-out with no way to write into it" }
+    ],
+    "owed": [
+      {
+        "key": "int",
+        "sentence": "part 5 `int` is on the surface and no specification declares it",
+        "since": "R1732",
+        "why": "A second-pass improvement, kept deliberately. The reference draws a whole number in the plain text box — its text-kind list names the numeric types — so a value outside the range the configuration accepts is typed in and refused later. R1651 gave the shape its bounds and R1652 gave it a stepper that clamps, so the control cannot leave the range at all. The standing order rule keeps what the reference lacks."
+      },
+      {
+        "key": "list",
+        "sentence": "part 6 `list` is on the surface and no specification declares it",
+        "since": "R1732",
+        "why": "The same, one kind over. The reference draws an array of addresses as one comma-separated text box, so a person editing the third element counts commas. R1652.1 gives a list one row per element and a row that appends one. Kept for the same reason."
+      }
+    ]
+  },
+  "enum_row": {
+    "$comment": [
+      "One enumeration row while its roster is SHUT, in reading order: the header",
+      "line the reference lays across the top, then the collapsed control below",
+      "it. The reference draws the badges conditionally — a derived row shows one",
+      "badge and an authored one shows another — so this surface is specified for",
+      "the row a reader meets most: one somebody wrote, whose edit needs a",
+      "restart.",
+      "",
+      "`applies` is ONE part here where the reference has two badge sites. That",
+      "is not a difference in what is drawn: the reference's own condition makes",
+      "them mutually exclusive, so exactly one is ever on a row, and one part",
+      "carrying the word is the same surface."
+    ],
+    "canon": [
+      { "ordinal": 1, "key": "key", "title": "the configuration path this row is about" },
+      { "ordinal": 2, "key": "type", "title": "the type word, and how many words are on offer" },
+      { "ordinal": 3, "key": "applies", "title": "when an edit to this row lands" },
+      { "ordinal": 4, "key": "remove", "title": "the seat that takes the row out of the form" },
+      { "ordinal": 5, "key": "control", "title": "the box the value is entered in" },
+      { "ordinal": 6, "key": "shown", "title": "the word the row holds" },
+      { "ordinal": 7, "key": "pick", "title": "the arrow that opens the roster" }
+    ],
+    "owed": []
+  },
+  "enum_roster": {
+    "$comment": [
+      "The roster the collapsed control opens, in the order the configuration",
+      "offers the words — which is the reference's order too: it maps the",
+      "field's own option list and marks the one equal to the value.",
+      "",
+      "The words are the routing-mode roster this tool's option surface declares.",
+      "They are the specification's here because the surface being reproduced is",
+      "an ordered one: a roster that quietly reordered itself would move the",
+      "option under a reader's finger between one opening and the next.",
+      "",
+      "EACH TITLE IS THE WORD ITSELF, and that is the reference's own",
+      "construction rather than a shortcut here: it draws each option with its",
+      "value as the option's text, so what a row is CALLED and what it is",
+      "ADDRESSED BY are one string. The build's side reads the title back out of",
+      "the run painted inside that option's box, so a roster whose third row drew",
+      "the second word fails — which a key-only comparison could not see.",
+      "",
+      "What the words mean, for a reader of this file rather than for the gate:",
+      "peer-to-peer is every node talking to every other, client is a node that",
+      "talks only to a router, and router is a node that carries other nodes'",
+      "traffic."
+    ],
+    "canon": [
+      { "ordinal": 1, "key": "peer_to_peer", "title": "peer_to_peer" },
+      { "ordinal": 2, "key": "client", "title": "client" },
+      { "ordinal": 3, "key": "router", "title": "router" }
+    ],
+    "owed": []
+  }
+}

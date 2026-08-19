@@ -36,6 +36,7 @@ pub(crate) mod menu_nav;
 pub mod modal;
 pub mod order_memo;
 pub mod pagination;
+pub mod picker;
 pub mod progress_bar;
 pub mod radio;
 pub mod radio_group;

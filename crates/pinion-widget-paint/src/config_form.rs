@@ -53,6 +53,7 @@ use pinion_core::voice::Silence;
 use pinion_core::widgets::config_form::{
     Applies, ConfigDefect, ConfigField, ConfigForm, FieldType, Source,
 };
+use pinion_core::widgets::picker::Picker;
 use pinion_core::{Scene, measured_text_extent};
 
 /// R1654 §5.36 — the base style every run in this form carries.
@@ -330,6 +331,55 @@ impl RowBox {
     }
 }
 
+/// ★★★★★ R1732 — **the row a picker is open on, and the room it has.**
+///
+/// The three things a laid-out popup is a function of, and no more: which row
+/// it belongs to, where the reader is in the roster, and the rectangle it has
+/// to stay inside. The last one is the caller's because it is the only thing
+/// that knows — a form is laid into a pane it cannot see the bottom of, so a
+/// popup that decided its own direction against the form's own extent would
+/// open downward off the end of a scrolled viewport.
+#[derive(Debug, Clone, Copy)]
+pub struct OpenPicker<'a> {
+    /// The configuration path whose row is open.
+    pub key: &'a str,
+    /// Where the picking is. The roster and the highlight both come from here,
+    /// so the paint and a driver read one fact.
+    pub picker: &'a Picker,
+    /// The room the popup may use, in the same coordinates the geometry is laid
+    /// in. It opens downward from the control and flips upward when downward
+    /// would leave this rectangle.
+    pub room: Rect,
+}
+
+/// ★★★★★ R1732 — **where an open picker's roster landed**, as its own layer.
+///
+/// A separate field on [`FormGeometry`] rather than more entries in the open
+/// row's [`RowBox::parts`], because a popup is *over* the rows below it and a
+/// hit test that walked the rows in order would resolve a press on the roster
+/// to whatever row it happens to cover. Publishing it apart makes the layering
+/// a declared fact instead of a consequence of iteration order — and
+/// [`FormGeometry::option_at`] then has one place to consult first.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PickerPopup {
+    /// The configuration path this roster belongs to.
+    pub key: String,
+    /// The whole roster's box, which is what the paint fills and outlines.
+    pub rect: Rect,
+    /// Each option, as the tag suffix it is pressed by and where it landed.
+    ///
+    /// The suffix vocabulary is the one the expanded row used —
+    /// `option.<key>.<word>` — so a driver that could press an option before
+    /// this round presses the same name now. What changed is where it is, not
+    /// what it is called.
+    pub options: Vec<(String, Rect)>,
+    /// Whether the roster opened **upward** because there was no room below.
+    ///
+    /// Derived from [`OpenPicker::room`], published because a test that has to
+    /// re-derive it is a test that can agree with a wrong answer.
+    pub above: bool,
+}
+
 /// Where every part of a form landed.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct FormGeometry {
@@ -345,7 +395,13 @@ pub struct FormGeometry {
     pub rows: Vec<RowBox>,
     /// The offered keys, as the chips that add them.
     pub chips: Vec<(String, Rect)>,
+    /// The open picker's roster, when one is open — the layer over the rows.
+    pub popup: Option<PickerPopup>,
     /// How tall the whole form came out.
+    ///
+    /// The popup is **not** in it: a roster floats over the rows and reflowing
+    /// the form every time one opened would move everything a reader was
+    /// looking at.
     pub height: u32,
 }
 
@@ -413,6 +469,22 @@ impl FormGeometry {
                 .iter()
                 .filter_map(|(k, r)| Some((k.clone(), moved(*r)?)))
                 .collect(),
+            // A roster whose box the shift would move off the top is dropped
+            // whole, options and all — the same truthful answer the rows get,
+            // and half a popup is worse than none because a press would still
+            // land on the options that survived.
+            popup: self.popup.as_ref().and_then(|popup| {
+                Some(PickerPopup {
+                    key: popup.key.clone(),
+                    rect: moved(popup.rect)?,
+                    options: popup
+                        .options
+                        .iter()
+                        .filter_map(|(s, r)| Some((s.clone(), moved(*r)?)))
+                        .collect(),
+                    above: popup.above,
+                })
+            }),
             height: self.height,
         }
     }
@@ -421,6 +493,37 @@ impl FormGeometry {
     #[must_use]
     pub fn row(&self, key: &str) -> Option<&RowBox> {
         self.rows.iter().find(|r| r.key == key)
+    }
+
+    /// ★★★★★ R1732 — the option an open roster has at that point, if any.
+    ///
+    /// The layer a consumer's hit test must consult **before** the rows, and
+    /// the reason the popup is published apart from them. Answers the tag
+    /// suffix, which is the same name the press had when the roster was drawn
+    /// in the row.
+    #[must_use]
+    pub fn option_at(&self, x: u32, y: u32) -> Option<&str> {
+        let popup = self.popup.as_ref()?;
+        popup
+            .options
+            .iter()
+            .find(|(_, rect)| {
+                x >= rect.x && x < rect.x + rect.w && y >= rect.y && y < rect.y + rect.h
+            })
+            .map(|(suffix, _)| suffix.as_str())
+    }
+
+    /// Whether that point is anywhere on an open roster.
+    ///
+    /// Distinct from [`Self::option_at`] on purpose: a press inside the box but
+    /// between two options is still the picker's, and letting it fall through
+    /// to the row underneath is how a reader dismisses a menu by accident.
+    #[must_use]
+    pub fn on_popup(&self, x: u32, y: u32) -> bool {
+        self.popup.as_ref().is_some_and(|popup| {
+            let r = popup.rect;
+            x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h
+        })
     }
 
     /// The chip that adds that key, if it is offered.
@@ -486,12 +589,14 @@ fn control_height(field: &ConfigField, style: &FormStyle) -> u32 {
 ///
 /// R1716 — a derived row is a read-out whatever its shape, so it takes the box
 /// a read-out takes.
+///
+/// ★★★★★ R1732 — a [`FieldType::Choice`] moved to the hungry side, because it
+/// stopped being a row of chips and became a **collapsed** control: it holds
+/// one word and an affordance to open the rest, which is the same shape a text
+/// box has, and the reference draws it at the full width of the pane exactly as
+/// it draws the text box. Only a set stays unhungry.
 fn control_is_hungry(field: &ConfigField) -> bool {
-    !field.source().writable()
-        || !matches!(
-            field.shape(),
-            FieldType::Choice { .. } | FieldType::Flags { .. }
-        )
+    !field.source().writable() || !matches!(field.shape(), FieldType::Flags { .. })
 }
 
 /// The natural width of a field's control, before any growth policy.
@@ -500,7 +605,7 @@ fn control_hint(field: &ConfigField, style: &FormStyle) -> u32 {
         return style.control_hint_w;
     }
     match field.shape() {
-        FieldType::Choice { of } | FieldType::Flags { of } => {
+        FieldType::Flags { of } => {
             let text_style = form_run_style().with_size_px(style.key_px);
             let chips: u32 = of
                 .iter()
@@ -511,6 +616,16 @@ fn control_hint(field: &ConfigField, style: &FormStyle) -> u32 {
         _ => style.control_hint_w,
     }
 }
+
+/// The outline an open roster draws inside its own box, and so the inset its
+/// options are laid within — the popup's answer to [`CONTROL_FRAME`].
+const POPUP_FRAME: u32 = 1;
+
+/// The gap between a collapsed control and the roster it opens.
+const POPUP_GAP: u32 = 2;
+
+/// The width of the chevron seat at a collapsed control's trailing edge.
+const CHEVRON_W: u32 = 22;
 
 /// Horizontal padding inside an option chip.
 const CHIP_PAD: u32 = 10;
@@ -536,6 +651,24 @@ const LIST_GAP: u32 = 4;
 /// source both [`view_config_form`] and a consumer's hit test read.
 #[must_use]
 pub fn form_geometry(form: &ConfigForm, origin: (u32, u32), style: &FormStyle) -> FormGeometry {
+    form_geometry_showing(form, origin, style, None)
+}
+
+/// Lay a form out with one row's picker open.
+///
+/// ★★★★★ R1732 — the same layout, plus the roster's own layer. `open` names
+/// the row and carries the room the popup has; `None` is [`form_geometry`].
+///
+/// A row whose key `open` names but whose shape offers no roster lays no popup
+/// — the caller is describing a state the form cannot be in, and inventing a
+/// roster for it would put options on a row that has none.
+#[must_use]
+pub fn form_geometry_showing(
+    form: &ConfigForm,
+    origin: (u32, u32),
+    style: &FormStyle,
+    open: Option<OpenPicker<'_>>,
+) -> FormGeometry {
     let (x0, y0) = origin;
     let key_col = key_column_width(form, style);
     let mut y = y0;
@@ -550,11 +683,66 @@ pub fn form_geometry(form: &ConfigForm, origin: (u32, u32), style: &FormStyle) -
     let (chips, after) = lay_chips(form, (x0, y), style);
     y = after;
 
+    let popup = open.and_then(|open| {
+        let row = rows.iter().find(|r| r.key == open.key)?;
+        let picks = form
+            .field(open.key)
+            .is_some_and(|field| matches!(field.shape(), FieldType::Choice { .. }));
+        picks.then(|| lay_popup(row, open, style))
+    });
+
     FormGeometry {
         origin,
         rows,
         chips,
+        popup,
         height: y.saturating_sub(y0),
+    }
+}
+
+/// One open roster's rectangles, over the row it belongs to.
+///
+/// The direction is **derived, not chosen**: downward from the control unless
+/// the whole roster would leave [`OpenPicker::room`], and upward when it would.
+/// A roster taller than the room stays downward and is reported at its full
+/// height — clamping it would publish a box the paint does not draw, and the
+/// consumer that has to scroll it needs the real number.
+fn lay_popup(row: &RowBox, open: OpenPicker<'_>, style: &FormStyle) -> PickerPopup {
+    let n = u32::try_from(open.picker.len()).unwrap_or(u32::MAX);
+    let height = n * style.control_h + POPUP_FRAME * 2;
+    let control = row.control;
+    let below = control.y + control.h + POPUP_GAP;
+    let room_bottom = open.room.y + open.room.h;
+    let above = below + height > room_bottom && control.y >= height + POPUP_GAP;
+    let top = if above {
+        control.y - height - POPUP_GAP
+    } else {
+        below
+    };
+    let rect = Rect::new(control.x, top, control.w, height);
+    let options = open
+        .picker
+        .options()
+        .iter()
+        .enumerate()
+        .map(|(n, word)| {
+            let n = u32::try_from(n).unwrap_or(u32::MAX);
+            (
+                format!("option.{}.{word}", row.key),
+                Rect::new(
+                    rect.x + POPUP_FRAME,
+                    rect.y + POPUP_FRAME + n * style.control_h,
+                    rect.w.saturating_sub(POPUP_FRAME * 2),
+                    style.control_h,
+                ),
+            )
+        })
+        .collect();
+    PickerPopup {
+        key: row.key.clone(),
+        rect,
+        options,
+        above,
     }
 }
 
@@ -716,7 +904,24 @@ fn lay_parts(field: &ConfigField, control: Rect, style: &FormStyle) -> Vec<(Stri
             format!("toggle.{key}"),
             Rect::new(control.x, control.y, control.h, control.h),
         )],
-        FieldType::Choice { of } | FieldType::Flags { of } => {
+        // ★★★★★ R1732 — one part, the chevron that opens the roster, at the
+        // trailing edge where the reference draws it. The roster itself is not
+        // in this list: it is a layer over the rows below, so it is published
+        // as [`FormGeometry::popup`] and pressed through
+        // [`FormGeometry::option_at`].
+        FieldType::Choice { .. } => {
+            let w = CHEVRON_W.min(control.w);
+            vec![(
+                format!("pick.{key}"),
+                Rect::new(
+                    control.x + control.w.saturating_sub(w),
+                    control.y,
+                    w,
+                    control.h,
+                ),
+            )]
+        }
+        FieldType::Flags { of } => {
             let mut x = control.x;
             let mut placed = Vec::new();
             for word in of {
@@ -884,6 +1089,28 @@ pub fn view_config_form(
     geometry: &FormGeometry,
     theme: &Theme,
 ) -> Scene {
+    view_config_form_showing(tag_prefix, form, geometry, theme, None)
+}
+
+/// Paint a form with one row's roster open over it.
+///
+/// ★★★★★ R1732 — `picker` must be the one [`form_geometry_showing`] laid the
+/// popup from. The two halves are separate arguments because they answer
+/// different questions — where the options landed, and where the reader is —
+/// and a painter that re-derived the second from the first could not draw a
+/// reader moving away from the value the document holds.
+///
+/// A popup in the geometry with no picker here paints nothing but the rows: the
+/// caller has described half a state, and drawing a roster with no highlight
+/// would invent the missing half.
+#[must_use]
+pub fn view_config_form_showing(
+    tag_prefix: &str,
+    form: &ConfigForm,
+    geometry: &FormGeometry,
+    theme: &Theme,
+    picker: Option<&Picker>,
+) -> Scene {
     let defects = form.defects();
     let mut children: Vec<Scene> = Vec::new();
 
@@ -925,6 +1152,23 @@ pub fn view_config_form(
             tag_prefix,
             key,
             *rect,
+            geometry.origin,
+            theme,
+        ));
+    }
+
+    // Last, so it is over everything the form drew — the layering the popup's
+    // own field exists to make explicit.
+    if let (Some(popup), Some(picker)) = (geometry.popup.as_ref(), picker) {
+        let chosen = form
+            .field(&popup.key)
+            .map(|field| field.value().into_owned())
+            .unwrap_or_default();
+        children.push(view_picker_popup(
+            tag_prefix,
+            popup,
+            picker,
+            &chosen,
             geometry.origin,
             theme,
         ));
@@ -972,6 +1216,14 @@ fn view_header(
         // what shrinking one costs), the key is allowed to shrink below its
         // content, and the shaper then elides it to the width it was actually
         // given. No number in this file has to be right.
+        let said = format!("{tag_prefix}.said.{}", row.key);
+        // ★★★★ R1732 — the key run is ADDRESSED now, and declares its silence.
+        // It was an untagged run for its whole life, which meant the one thing
+        // on the row that says what the row is about could not be found by a
+        // driver, read back by a conformance check, or seen by the census at
+        // all. Its words are the control's accessible name, so the honest
+        // classification is `NameOf` rather than a second node saying the same
+        // path over again.
         let mut header: Vec<Scene> = vec![Scene::Text(
             TextNode::styled(
                 field.key().to_owned(),
@@ -980,19 +1232,30 @@ fn view_header(
                     .with_size_px(11)
                     .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
             )
+            .with_tag(format!("{tag_prefix}.key.{}", row.key))
             .with_layout(
                 LayoutStyle::new()
                     .with_min_size(Size::px(0, 0))
-                    .with_flex_shrink(1.0),
+                    .with_flex_shrink(1.0)
+                    // Caught by R1655's gate the moment the tag was added: a
+                    // tagged node that is an ADDRESS rather than a primitive
+                    // swallows the press and forwards nothing.
+                    .with_pointer_transparent(true)
+                    .with_silence(Silence::name_of(format!(
+                        "{tag_prefix}.control.{}",
+                        row.key
+                    ))),
             ),
         )];
         header.push(badge(
-            field.ty(),
+            &type_word(field),
             theme.resolve(ColorRole::OnSurfaceMuted),
             theme,
-            None,
+            Some((
+                format!("{tag_prefix}.type.{}", row.key),
+                Silence::name_of(said.clone()),
+            )),
         ));
-        let said = format!("{tag_prefix}.said.{}", row.key);
         // What an edit costs, and where the value came from — see
         // [`provenance_badges`], which is where the rule for the pair lives.
         header.extend(provenance_badges(tag_prefix, field, &row.key, &said, theme));
@@ -1037,6 +1300,24 @@ fn view_header(
                 origin,
             )),
         )
+    }
+}
+
+/// ★★★★★ R1732 — what the type badge says: the word the configuration calls
+/// this kind of value, and **how many words are on offer** when the value is
+/// one of a set.
+///
+/// The count is the reference's own, and the two halves of this round need each
+/// other: while every option was on screen a reader could see how many there
+/// were, and a collapsed control hides exactly that. Derived here rather than
+/// authored on the field, because a roster that grew and a badge that did not
+/// would be a number going stale in the one place a reader trusts it.
+fn type_word(field: &ConfigField) -> String {
+    match field.shape() {
+        FieldType::Choice { of } | FieldType::Flags { of } => {
+            format!("{} \u{b7} {}", field.ty(), of.len())
+        }
+        _ => field.ty().to_owned(),
     }
 }
 
@@ -1185,7 +1466,13 @@ fn view_control(
             return derived_control(tag_prefix, row, field, origin, theme);
         }
         match field.shape() {
-            FieldType::Choice { .. } | FieldType::Flags { .. } => {
+            // ★★★★★ R1732 — one word and a chevron, where a row of every
+            // option used to be. The roster is drawn by
+            // [`view_picker_popup`], over the rows, only while it is open.
+            FieldType::Choice { .. } => {
+                picker_control(tag_prefix, row, field, worst, origin, theme)
+            }
+            FieldType::Flags { .. } => {
                 let shown = field.value();
                 let chosen: Vec<&str> = FieldType::elements(&shown).collect();
                 option_chips(tag_prefix, row, &chosen, origin, theme)
@@ -1242,14 +1529,19 @@ const fn control_frame(shape: &FieldType) -> u32 {
     match shape {
         // The control container IS the box: it draws [`control_skin`], and
         // whatever it owns sits inside that stroke.
-        FieldType::Text | FieldType::Formatted { .. } | FieldType::Integer { .. } => CONTROL_FRAME,
+        //
+        // ★ R1732 — a `Choice` joined them when it collapsed. Its one part is
+        // the chevron seat at the trailing edge, and before the inset was
+        // applied that seat stood on the control's own outline, which is
+        // exactly the escape R1672 measured for the stepper pair.
+        FieldType::Text
+        | FieldType::Formatted { .. }
+        | FieldType::Integer { .. }
+        | FieldType::Choice { .. } => CONTROL_FRAME,
         // These paint into an unstyled container — a checkbox and its word, a
         // row of option pills, a column of self-skinned item boxes. There is no
         // outline of their own for a part to stand on.
-        FieldType::Boolean
-        | FieldType::Choice { .. }
-        | FieldType::Flags { .. }
-        | FieldType::List { .. } => 0,
+        FieldType::Boolean | FieldType::Flags { .. } | FieldType::List { .. } => 0,
     }
 }
 
@@ -1354,6 +1646,181 @@ fn part_pill(
             seat,
             origin,
         )),
+    )
+}
+
+/// The arrow at a collapsed control's trailing edge, and its **declared
+/// silence**.
+///
+/// No pill skin, unlike every other part: the reference draws the arrow inside
+/// the field's own box rather than as a button beside it, and a bordered pill
+/// here would read as a second control on a row that has one.
+///
+/// The silence is the load-bearing half. This rectangle is published, painted
+/// and pressable, so the voice census asks about it — and the honest answer is
+/// that its content is already in the combo box's announcement, which carries
+/// the same open/closed state the arrow draws. The framework's part-of class of
+/// silence says exactly that, and names the node a reader receives it at.
+fn chevron(
+    tag: String,
+    control_tag: String,
+    seat: Rect,
+    origin: (u32, u32),
+    theme: &Theme,
+) -> Scene {
+    // `placed` makes it pointer-transparent, which is what keeps a press
+    // reaching the consumer's hit test over the published rectangle rather than
+    // dying on a tag that has no `External`.
+    Scene::Container(
+        ContainerNode::new(vec![Scene::Text(TextNode::styled(
+            "\u{25be}".to_owned(),
+            Rect::default(),
+            form_run_style()
+                .with_size_px(10)
+                .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
+        ))])
+        .with_tag(tag)
+        .with_layout(placed(
+            LayoutStyle::new()
+                .flex(FlexDirection::Row)
+                .with_align_items(AlignItems::Center)
+                .with_justify(JustifyContent::Center)
+                .with_silence(Silence::part_of(control_tag)),
+            seat,
+            origin,
+        )),
+    )
+}
+
+/// ★★★★★ R1732 — a choice row **collapsed**: the word it holds, and the
+/// chevron that opens the rest.
+///
+/// The same box a text row wears, which is the reference's own decision — its
+/// inspector gives the enumeration control the text field's style verbatim, so
+/// the two read as the same kind of thing and only the chevron says one of them
+/// has a roster.
+fn picker_control(
+    tag_prefix: &str,
+    row: &RowBox,
+    field: &ConfigField,
+    worst: Option<&ConfigDefect>,
+    origin: (u32, u32),
+    theme: &Theme,
+) -> Scene {
+    let seat = part_seat(row, &format!("pick.{}", row.key));
+    let shown = Rect::new(
+        10,
+        0,
+        row.control.w.saturating_sub(CHEVRON_W + 16),
+        row.control.h,
+    );
+    Scene::Container(
+        ContainerNode::new(vec![
+            // ★★★★ R1732 — the word the row holds, ADDRESSED. The reference's
+            // control shows its value inside itself and so does this one; a run
+            // nothing can name is a run a conformance check reads back as a
+            // missing part and a driver cannot ask about. Its words are the
+            // control's announced value, so it is folded into it rather than
+            // said twice.
+            Scene::Text(
+                TextNode::styled(
+                    field.value().into_owned(),
+                    shown,
+                    form_run_style()
+                        .with_size_px(12)
+                        .with_fg(theme.resolve(ColorRole::OnSurface)),
+                )
+                .with_tag(format!("{tag_prefix}.shown.{}", row.key))
+                .with_layout(
+                    LayoutStyle::new()
+                        .with_absolute_position(shown.x, shown.y)
+                        .with_size(Size::px(shown.w, shown.h))
+                        .with_pointer_transparent(true)
+                        .with_silence(Silence::part_of(format!(
+                            "{tag_prefix}.control.{}",
+                            row.key
+                        ))),
+                ),
+            ),
+            chevron(
+                format!("{tag_prefix}.pick.{}", row.key),
+                format!("{tag_prefix}.control.{}", row.key),
+                seat,
+                (row.control.x, row.control.y),
+                theme,
+            ),
+        ])
+        .with_tag(format!("{tag_prefix}.control.{}", row.key))
+        .with_style(control_skin(worst, theme))
+        .with_layout(placed(
+            framed(LayoutStyle::new().with_focusable(true)),
+            row.control,
+            origin,
+        )),
+    )
+}
+
+/// ★★★★★ R1732 — **an open roster, over the rows it covers.**
+///
+/// Painted after the form so it is on top, and from
+/// [`FormGeometry::popup`] so the rectangles a press is resolved against and
+/// the rectangles a reader sees are the same value. The highlight comes from
+/// the [`Picker`], the mark from the field's own word: those are two different
+/// facts — where the reader is, and what the document holds — and a roster that
+/// drew one of them twice would be unable to show a reader moving away from the
+/// value.
+#[must_use]
+pub fn view_picker_popup(
+    tag_prefix: &str,
+    popup: &PickerPopup,
+    picker: &Picker,
+    chosen: &str,
+    origin: (u32, u32),
+    theme: &Theme,
+) -> Scene {
+    let rows: Vec<Scene> = popup
+        .options
+        .iter()
+        .enumerate()
+        .map(|(n, (suffix, rect))| {
+            let word = suffix.rsplit('.').next().unwrap_or_default();
+            let here = n == picker.at();
+            let ink = if word == chosen {
+                theme.resolve(ColorRole::Accent)
+            } else {
+                theme.resolve(ColorRole::OnSurface)
+            };
+            let mut node = ContainerNode::new(vec![Scene::Text(TextNode::styled(
+                word.to_owned(),
+                Rect::new(10, 0, rect.w.saturating_sub(20), rect.h),
+                form_run_style().with_size_px(12).with_fg(ink),
+            ))])
+            .with_tag(format!("{tag_prefix}.{suffix}"))
+            .with_layout(placed(
+                LayoutStyle::new()
+                    .flex(FlexDirection::Row)
+                    .with_align_items(AlignItems::Center),
+                *rect,
+                (popup.rect.x, popup.rect.y),
+            ));
+            if here {
+                node = node.with_style(
+                    BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh))
+                        .with_corner_radius(6),
+                );
+            }
+            Scene::Container(node)
+        })
+        .collect();
+    Scene::Container(
+        ContainerNode::new(rows)
+            .with_tag(format!("{tag_prefix}.roster.{}", popup.key))
+            .with_style(
+                BoxStyle::filled(theme.resolve(ColorRole::Surface))
+                    .with_corner_radius(8)
+                    .with_border(Border::new(theme.resolve(ColorRole::Outline), POPUP_FRAME)),
+            )
+            .with_layout(placed(framed(LayoutStyle::new()), popup.rect, origin)),
     )
 }
 
@@ -1689,7 +2156,13 @@ pub fn row_access_nodes(
         let Some(field) = form.field(&row.key) else {
             continue;
         };
-        let mut said = vec![format!("{}, {}", field.ty(), field.applies().wire())];
+        // ★★★★★ R1732 — [`type_word`], not `field.ty()`, and a gate is what
+        // said so. The badge declares its silence as "my text is that region's
+        // name"; the moment the badge started carrying the option count and
+        // this sentence did not, the redirect pointed at a node that speaks and
+        // says something else — a reader following the label aloud arrives
+        // nowhere. One derivation, two readers.
+        let mut said = vec![format!("{}, {}", type_word(field), field.applies().wire())];
         // ★★★ R1716 — a reader who cannot see the badge is the reader who most
         // needs what it says: without this they meet a control that answers
         // nothing they type and are told only its type. Measured at 6.11, a
@@ -1708,14 +2181,27 @@ pub fn row_access_nodes(
         // A boolean row was announced as a text box for its whole life: a
         // reader was told to type into a control that only toggles, which is
         // the accessibility half of a defect a person reported about its ink.
-        let control = AccessNode::new(
-            format!("{tag_prefix}.control.{}", row.key),
-            control_role(field),
-        )
-        .with_name(field.key())
-        .with_bounds(row.control)
-        .with_state(control_state(field))
-        .with_value(control_value(field));
+        let control_tag = format!("{tag_prefix}.control.{}", row.key);
+        let mut control = AccessNode::new(control_tag.clone(), control_role(field))
+            .with_name(field.key())
+            .with_bounds(row.control)
+            .with_state(control_state(field))
+            .with_value(control_value(field));
+        // ★★★★★ R1732 — a collapsed roster says whether it is open, and names
+        // the roster it opens. Both are the combo box's own contract, and
+        // `expanded` is derived from the geometry rather than passed in: the
+        // popup being laid IS the roster being open, so the announcement and
+        // the paint cannot disagree about it.
+        if matches!(control_role(field), AriaRole::ComboBox) {
+            let open = geometry
+                .popup
+                .as_ref()
+                .is_some_and(|popup| popup.key == row.key);
+            control = control.with_expanded(open);
+            if open {
+                control = control.with_controls(format!("{tag_prefix}.roster.{}", row.key));
+            }
+        }
         nodes.extend(describedby_region(
             control,
             format!("{tag_prefix}.said.{}", row.key),
@@ -1745,8 +2231,41 @@ pub fn row_access_nodes(
         //
         // Derived from `row.parts` rather than re-enumerated, so a shape that
         // grows an affordance gets a voice in the same act it gets a rectangle.
-        for (suffix, seat) in &row.parts {
+        //
+        // ★★★★★ R1732 — except the chevron. It is not a second affordance: it
+        // is the collapsed control's own arrow, and the control above already
+        // announces as a combo box carrying the state it draws. A node here
+        // would read the same act out twice on every focus move, which is the
+        // duplicate `Silence` exists to stop — so the painter declares it
+        // folded into the control and this list leaves it out. The two have to
+        // agree, and a test below asserts they do.
+        for (suffix, seat) in row.parts.iter().filter(|(s, _)| !s.starts_with("pick.")) {
             nodes.push(part_access_node(tag_prefix, field, suffix, *seat));
+        }
+    }
+    // ★★★★★ R1732 — an open roster, as the listbox the combo box controls.
+    // Built from the geometry the paint came from, so a reader is offered
+    // exactly the options that are on screen.
+    if let Some(popup) = &geometry.popup {
+        if let Some(field) = form.field(&popup.key) {
+            let shown = field.value();
+            nodes.push(
+                AccessNode::new(
+                    format!("{tag_prefix}.roster.{}", popup.key),
+                    AriaRole::Listbox,
+                )
+                .with_name(format!("{} options", popup.key))
+                .with_bounds(popup.rect),
+            );
+            for (suffix, seat) in &popup.options {
+                let word = suffix.rsplit('.').next().unwrap_or_default();
+                nodes.push(
+                    AccessNode::new(format!("{tag_prefix}.{suffix}"), AriaRole::ListBoxOption)
+                        .with_name(format!("{word}, {}", popup.key))
+                        .with_bounds(*seat)
+                        .with_selected(shown.trim() == word),
+                );
+            }
         }
     }
     // The chips that offer a key the form does not hold yet.
@@ -1779,9 +2298,14 @@ fn control_role(field: &ConfigField) -> AriaRole {
     match field.shape() {
         FieldType::Boolean => AriaRole::CheckBox,
         FieldType::Integer { .. } => AriaRole::SpinButton,
-        // Exactly one of a fixed set — the radio group's own semantics, which
-        // is what tells a reader that picking one un-picks another.
-        FieldType::Choice { .. } => AriaRole::RadioGroup,
+        // ★★★★★ R1732 — exactly one of a fixed set, from a control that is
+        // **collapsed**. A radio group was right while every option was on
+        // screen: a reader met the whole roster and picking one un-picked
+        // another. It is wrong now — there is nothing to move between until the
+        // roster is opened, and a reader told "radio group" would go looking
+        // for members that are not there. A combo box is the role whose
+        // contract is exactly this one: a value, and a roster that appears.
+        FieldType::Choice { .. } => AriaRole::ComboBox,
         // A plain group in both cases, and for one reason: what the shape
         // paints is a row of independent controls rather than members of a
         // collection. `Flags` paints checkboxes; `List` paints editable text
@@ -1932,6 +2456,274 @@ pub fn row_description(nodes: &[AccessNode], tag_prefix: &str, key: &str) -> Opt
 
 #[cfg(test)]
 mod tests {
+
+    /// A form holding one choice row over `words`, for the picker checks.
+    fn choosing(words: &[&'static str]) -> ConfigForm {
+        ConfigForm::new(
+            vec![
+                ConfigField::new("severity", "level", Applies::Hot, words[0]).with_shape(
+                    FieldType::Choice {
+                        of: words.iter().map(|w| (*w).into()).collect(),
+                    },
+                ),
+            ],
+            Vec::new(),
+        )
+    }
+
+    /// The room a pane the form's own size would give it.
+    const ROOMY: Rect = Rect::new(0, 0, 400, 900);
+
+    /// ★★★★★ R1732 — **the defect this round is about, as a number.**
+    ///
+    /// Before this round a choice row laid one chip per option from the
+    /// control's left edge, with no wrap, no clip and no scroll: measured, a
+    /// six-word roster ran 50 px past its own control and a seven-word one 113
+    /// px, while the analysis tool's own three-word row spent 229 px of a 284
+    /// px pane saying one word.
+    ///
+    /// The collapsed control cannot do that at any length, and the assertion is
+    /// written over a range so a roster nobody thought of is covered too.
+    #[test]
+    fn r1732_a_choice_row_stays_inside_its_control_however_long_the_roster() {
+        let style = FormStyle::default();
+        for n in 1..=12 {
+            let words: Vec<&'static str> = [
+                "trace", "debug", "info", "warn", "error", "fatal", "silent", "verbose", "audit",
+                "notice", "alert", "panic",
+            ][..n]
+                .to_vec();
+            let form = choosing(&words);
+            let geometry = form_geometry(&form, (14, 40), &style);
+            let row = geometry.row("severity").expect("shown");
+            for (suffix, rect) in &row.parts {
+                assert!(
+                    rect.x >= row.control.x && rect.x + rect.w <= row.control.x + row.control.w,
+                    "{suffix} with {n} options is laid outside its own control \
+                     ({rect:?} vs {:?})",
+                    row.control,
+                );
+            }
+            assert_eq!(
+                row.control.w, style.width,
+                "★ and the control is one field wide whatever the roster holds",
+            );
+        }
+    }
+
+    /// ★★★★★ R1732 — the roster is a **layer**, and the layering is a declared
+    /// fact rather than a consequence of what a hit test happens to iterate
+    /// first.
+    #[test]
+    fn r1732_an_open_roster_is_over_the_rows_it_covers() {
+        let style = FormStyle::default();
+        let form = ConfigForm::new(
+            vec![
+                ConfigField::new("severity", "level", Applies::Hot, "warn").with_shape(
+                    FieldType::Choice {
+                        of: vec!["info".into(), "warn".into(), "error".into()],
+                    },
+                ),
+                ConfigField::new("note", "text", Applies::Hot, "anything"),
+            ],
+            Vec::new(),
+        );
+        let picker = Picker::over(["info", "warn", "error"], "warn").expect("a roster");
+        let geometry = form_geometry_showing(
+            &form,
+            (14, 40),
+            &style,
+            Some(OpenPicker {
+                key: "severity",
+                picker: &picker,
+                room: ROOMY,
+            }),
+        );
+        let popup = geometry.popup.as_ref().expect("a roster is open");
+        assert!(!popup.above, "there is room below");
+        assert_eq!(popup.options.len(), 3);
+        let under = geometry.row("note").expect("shown");
+        let (_, second) = &popup.options[1];
+        assert!(
+            second.y >= under.row.y && second.y < under.row.y + under.row.h,
+            "★ the roster really does cover the row below — {second:?} over {:?}",
+            under.row,
+        );
+        assert_eq!(
+            geometry.option_at(second.x + 2, second.y + 2),
+            Some("option.severity.warn"),
+            "★★ and the layer answers first, under the name the press always had",
+        );
+        assert!(
+            geometry.on_popup(popup.rect.x + 1, popup.rect.y + 1),
+            "★ a press between two options is still the roster's",
+        );
+        assert!(!geometry.on_popup(under.row.x, under.row.y + under.row.h + 40));
+    }
+
+    /// The direction is derived from the room, not chosen — and both answers
+    /// are checked, because a flip that never fires is a flip nobody has.
+    #[test]
+    fn r1732_a_roster_with_no_room_below_opens_upward() {
+        let style = FormStyle::default();
+        let form = choosing(&["info", "warn", "error", "fatal"]);
+        let picker = Picker::over(["info", "warn", "error", "fatal"], "info").expect("a roster");
+        let open = |room: Rect| {
+            form_geometry_showing(
+                &form,
+                (14, 200),
+                &style,
+                Some(OpenPicker {
+                    key: "severity",
+                    picker: &picker,
+                    room,
+                }),
+            )
+        };
+        let roomy = open(ROOMY);
+        let popup = roomy.popup.as_ref().expect("open");
+        let row = roomy.row("severity").expect("shown");
+        assert!(!popup.above);
+        assert!(popup.rect.y > row.control.y);
+
+        let cramped = open(Rect::new(0, 0, 400, 260));
+        let popup = cramped.popup.as_ref().expect("open");
+        assert!(popup.above, "★ no room below, so it opens up");
+        assert!(
+            popup.rect.y + popup.rect.h < row.control.y,
+            "★★ and it is wholly above the control, not overlapping it",
+        );
+    }
+
+    /// A shift moves the roster with everything else — the property R1662 wrote
+    /// for the rows, which a new layer would otherwise quietly not have.
+    #[test]
+    fn r1732_a_shift_moves_the_roster_too() {
+        let form = choosing(&["info", "warn"]);
+        let picker = Picker::over(["info", "warn"], "info").expect("a roster");
+        let local = form_geometry_showing(
+            &form,
+            (14, 40),
+            &FormStyle::default(),
+            Some(OpenPicker {
+                key: "severity",
+                picker: &picker,
+                room: ROOMY,
+            }),
+        );
+        let moved = local.translated(300, -10);
+        let here = local.popup.as_ref().expect("open");
+        let there = moved.popup.as_ref().expect("still open");
+        assert_eq!(there.rect.x, here.rect.x + 300);
+        assert_eq!(there.rect.y, here.rect.y - 10);
+        assert_eq!(there.options.len(), here.options.len());
+        assert_eq!(there.options[1].1.x, here.options[1].1.x + 300);
+    }
+
+    /// A key that names a row with no roster describes a state the form cannot
+    /// be in, and nothing is invented for it.
+    #[test]
+    fn r1732_a_row_with_no_roster_opens_none() {
+        let form = ConfigForm::new(
+            vec![ConfigField::new("note", "text", Applies::Hot, "anything")],
+            Vec::new(),
+        );
+        let picker = Picker::over(["info"], "info").expect("a roster");
+        let geometry = form_geometry_showing(
+            &form,
+            (14, 40),
+            &FormStyle::default(),
+            Some(OpenPicker {
+                key: "note",
+                picker: &picker,
+                room: ROOMY,
+            }),
+        );
+        assert!(geometry.popup.is_none());
+        assert_eq!(geometry.option_at(20, 60), None);
+    }
+
+    /// ★★★★ The roster shows two different facts and must not derive one from
+    /// the other: **where the reader is** and **what the document holds**.
+    #[test]
+    fn r1732_the_roster_says_which_option_is_held_and_which_is_highlighted() {
+        let form = choosing(&["info", "warn", "error"]);
+        let mut picker = Picker::over(["info", "warn", "error"], "info").expect("a roster");
+        picker.key("ArrowDown");
+        picker.key("ArrowDown");
+        assert_eq!(picker.highlighted(), "error");
+        let geometry = form_geometry_showing(
+            &form,
+            (14, 40),
+            &FormStyle::default(),
+            Some(OpenPicker {
+                key: "severity",
+                picker: &picker,
+                room: ROOMY,
+            }),
+        );
+        let nodes = row_access_nodes("f", &form, &geometry);
+        let control = nodes
+            .iter()
+            .find(|n| n.tag == "f.control.severity")
+            .expect("announced");
+        assert_eq!(control.expanded, Some(true));
+        assert_eq!(control.controls.as_deref(), Some("f.roster.severity"));
+        let held = nodes
+            .iter()
+            .find(|n| n.tag == "f.option.severity.info")
+            .expect("announced");
+        assert_eq!(
+            held.selected,
+            Some(true),
+            "★ the document still holds `info` — moving is not writing",
+        );
+        let moved_to = nodes
+            .iter()
+            .find(|n| n.tag == "f.option.severity.error")
+            .expect("announced");
+        assert_eq!(moved_to.selected, Some(false));
+        // And a shut control says so rather than saying nothing.
+        let shut = row_access_nodes(
+            "f",
+            &form,
+            &form_geometry(&form, (14, 40), &FormStyle::default()),
+        );
+        let control = shut
+            .iter()
+            .find(|n| n.tag == "f.control.severity")
+            .expect("announced");
+        assert_eq!(control.expanded, Some(false));
+        assert_eq!(control.controls, None);
+        assert!(
+            !shut.iter().any(|n| n.tag == "f.roster.severity"),
+            "★★ and no roster is announced when none is drawn",
+        );
+    }
+
+    /// ★★★ R1732 — the count the reference puts on the type badge, which a
+    /// collapsed control is exactly what makes necessary.
+    #[test]
+    fn r1732_the_type_badge_says_how_many_words_are_on_offer() {
+        for (shape, want) in [
+            (
+                FieldType::Choice {
+                    of: vec!["a".into(), "b".into(), "c".into()],
+                },
+                "level \u{b7} 3",
+            ),
+            (
+                FieldType::Flags {
+                    of: vec!["read".into(), "write".into()],
+                },
+                "level \u{b7} 2",
+            ),
+            (FieldType::Text, "level"),
+        ] {
+            let field = ConfigField::new("k", "level", Applies::Hot, "a").with_shape(shape);
+            assert_eq!(super::type_word(&field), want);
+        }
+    }
 
     /// ★ R1662 — one piece of arithmetic relates the pane frame to the window
     /// frame, so a press and a paint cannot read two facts.
@@ -2443,9 +3235,12 @@ mod tests {
 
     use pinion_core::Scene;
 
+    use pinion_core::widgets::picker::Picker;
+
     use super::{
-        CONTROL_FRAME, FieldGrowth, FormStyle, RowWrap, control_frame, form_geometry, inset_by,
-        row_access_nodes, row_description, view_config_form,
+        CONTROL_FRAME, FieldGrowth, FormStyle, OpenPicker, Rect, RowWrap, Theme, control_frame,
+        form_geometry, form_geometry_showing, inset_by, row_access_nodes, row_description,
+        view_config_form, view_config_form_showing,
     };
 
     fn inspector() -> ConfigForm {
@@ -2780,7 +3575,39 @@ mod tests {
             "{tags:?}"
         );
         assert!(has("f.toggle.on"), "a boolean is a checkbox: {tags:?}");
-        assert!(has("f.option.mode.a") && has("f.option.mode.b"), "{tags:?}");
+        // ★★★★★ R1732 — a choice is COLLAPSED: one chevron, and no option in
+        // the row at all. The roster is a layer of its own and is drawn only
+        // while it is open, which is what the two assertions below are about.
+        assert!(has("f.pick.mode"), "{tags:?}");
+        assert!(
+            !has("f.option.mode.a") && !has("f.option.mode.b"),
+            "★ the roster is not in the row while the control is shut: {tags:?}",
+        );
+        let open = Picker::over(["a", "b"], "b").expect("a roster");
+        let shown = form_geometry_showing(
+            &form,
+            (0, 0),
+            &FormStyle::default(),
+            Some(OpenPicker {
+                key: "mode",
+                picker: &open,
+                room: Rect::new(0, 0, 400, 900),
+            }),
+        );
+        let mut open_tags = Vec::new();
+        view_config_form_showing("f", &form, &shown, &Theme::dark(), Some(&open)).for_each_node(
+            &mut |node| {
+                if let Some(tag) = node.node.tag() {
+                    open_tags.push(tag.to_string());
+                }
+            },
+        );
+        assert!(
+            open_tags.iter().any(|t| t == "f.option.mode.a")
+                && open_tags.iter().any(|t| t == "f.option.mode.b"),
+            "★★ and it IS there once it is opened, under the names it always had: {open_tags:?}",
+        );
+        // A set stays a set: every option on screen, always.
         assert!(
             has("f.option.perm.read") && has("f.option.perm.write"),
             "{tags:?}"
@@ -3379,6 +4206,16 @@ mod tests {
         control: pinion_a11y::AriaRole,
         value: &'static str,
         parts: &'static [(&'static str, pinion_a11y::AriaRole)],
+        /// ★★★★★ R1732 — painted parts that deliberately have **no** node,
+        /// and are folded into the control's announcement instead.
+        ///
+        /// Declared rather than implied by absence. A part that quietly fell
+        /// out of `parts` would look exactly like this, and the difference —
+        /// a reader who receives it at the control, versus a reader who never
+        /// receives it at all — is the whole of what the census is for. Each
+        /// one is checked twice below: no node under its own tag, and a
+        /// declared silence on the node the painter drew.
+        silent: &'static [&'static str],
     }
 
     /// Every shape a configuration document can hold, and the voice its editor
@@ -3397,6 +4234,7 @@ mod tests {
                 control: AriaRole::TextInput,
                 value: "free",
                 parts: &[],
+                silent: &[],
             },
             ShapeVoice {
                 shape: FieldType::Formatted {
@@ -3405,6 +4243,7 @@ mod tests {
                 control: AriaRole::TextInput,
                 value: "7",
                 parts: &[],
+                silent: &[],
             },
             ShapeVoice {
                 shape: FieldType::Integer { min: 0, max: 9 },
@@ -3414,23 +4253,26 @@ mod tests {
                     ("step.k.down", AriaRole::Button),
                     ("step.k.up", AriaRole::Button),
                 ],
+                silent: &[],
             },
             ShapeVoice {
                 shape: FieldType::Boolean,
                 control: AriaRole::CheckBox,
                 value: "true",
                 parts: &[("toggle.k", AriaRole::CheckBox)],
+                silent: &[],
             },
             ShapeVoice {
                 shape: FieldType::Choice {
                     of: vec!["a".into(), "b".into()],
                 },
-                control: AriaRole::RadioGroup,
+                // ★★★★★ R1732 — a combo box, because the control is now
+                // COLLAPSED. A radio group promises members a reader can move
+                // between, and until the roster is opened there are none.
+                control: AriaRole::ComboBox,
                 value: "a",
-                parts: &[
-                    ("option.k.a", AriaRole::RadioButton),
-                    ("option.k.b", AriaRole::RadioButton),
-                ],
+                parts: &[],
+                silent: &["pick.k"],
             },
             ShapeVoice {
                 shape: FieldType::Flags {
@@ -3442,6 +4284,7 @@ mod tests {
                     ("option.k.r", AriaRole::CheckBox),
                     ("option.k.w", AriaRole::CheckBox),
                 ],
+                silent: &[],
             },
             ShapeVoice {
                 shape: FieldType::List {
@@ -3457,6 +4300,7 @@ mod tests {
                     ("item.k.1", AriaRole::TextInput),
                     ("item.k.add", AriaRole::Button),
                 ],
+                silent: &[],
             },
         ]
     }
@@ -3469,6 +4313,7 @@ mod tests {
             control: want,
             value,
             parts,
+            silent,
         } in shape_voices()
         {
             let word = shape.clone();
@@ -3496,11 +4341,43 @@ mod tests {
                 .iter()
                 .map(|(suffix, _)| suffix.as_str())
                 .collect();
-            let declared: Vec<&str> = parts.iter().map(|(suffix, _)| *suffix).collect();
+            let declared: Vec<&str> = parts
+                .iter()
+                .map(|(suffix, _)| *suffix)
+                .chain(silent.iter().copied())
+                .collect();
             assert_eq!(
                 painted, declared,
                 "a {word:?} row paints affordances this test does not name",
             );
+            // ★★★★★ R1732 — the folded ones, checked in BOTH directions: no
+            // node of their own, and a declared silence on the node the painter
+            // drew. Either check alone passes for a part that was simply
+            // forgotten, which is the case this pair exists to tell apart.
+            let scene = view_config_form("f", &form, &geometry, &Theme::dark());
+            for suffix in silent {
+                let tag = format!("f.{suffix}");
+                assert!(
+                    !nodes.iter().any(|n| n.tag == tag),
+                    "{tag} is folded into its control and must not be announced twice",
+                );
+                let mut declared_silence = None;
+                scene.for_each_node(&mut |node| {
+                    if node.node.tag() == Some(tag.as_str()) {
+                        declared_silence = node
+                            .node
+                            .layout_style()
+                            .and_then(|layout| layout.silence.clone());
+                    }
+                });
+                let silence = declared_silence
+                    .unwrap_or_else(|| panic!("{tag} is painted and declares no silence"));
+                assert_eq!(
+                    silence.relay_target(),
+                    Some("f.control.k"),
+                    "{tag} says a reader receives it at the control, and names which",
+                );
+            }
             for (suffix, part_role) in parts {
                 let tag = format!("f.{suffix}");
                 let part = nodes

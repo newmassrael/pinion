@@ -1347,3 +1347,33 @@ pub const KEPT: &[KeptSpec] = &[
         why: "an artifact belongs to the moment it was taken, not to the graph",
     },
 ];
+
+// ── The inspector, as the behaviour reference draws it (R1732) ──────────────
+
+/// The pinned specification of the node inspector's rows.
+///
+/// `include_str!` rather than a read at run time so the gate cannot pass by
+/// finding no file: a specification that goes missing must break the build, not
+/// silently stop judging. The same decision the two sibling sections' pins
+/// carry, for the same reason.
+const INSPECTOR_SPEC_JSON: &str = include_str!("../../../docs/analyzer-inspector-spec.json");
+
+/// The inspector specification, as the framework's own document.
+///
+/// # Panics
+///
+/// If the pin is not a specification — unreadable JSON, no surfaces, a
+/// duplicate part key, a remainder entry naming no round. All are defects in
+/// the pin rather than states the running screen can reach.
+#[must_use]
+pub fn inspector_document() -> pinion_core::conformance::SpecDocument {
+    pinion_core::conformance::SpecDocument::parse(INSPECTOR_SPEC_JSON)
+        .unwrap_or_else(|e| panic!("the inspector specification is readable: {e:?}"))
+}
+
+/// The configuration path whose roster the conformance gate drives.
+///
+/// One of the keys the palette offers, so the gate reaches it the way a session
+/// does — press the chip, and the row is there. Named here rather than spelled
+/// in the gate so the two cannot part.
+pub const ENUM_KEY: &str = "routing.mode";

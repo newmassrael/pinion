@@ -88,6 +88,7 @@ use pinion_core::voice::Silence;
 use pinion_core::widgets::config_form::{
     Applies, ConfigDefect, ConfigField, ConfigForm, FieldType, FormError, Source, Verdict,
 };
+use pinion_core::widgets::picker::{Picked, Picker};
 use pinion_core::widgets::radio::RadioState;
 use pinion_core::widgets::scroll::{AutoScroll, ScrollState};
 use pinion_core::widgets::text_edit::{TextEditState, use_text_edit_state};
@@ -101,8 +102,8 @@ use pinion_node_graph::{
 use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use pinion_widget_paint::config_form::{
-    FieldGrowth, FormGeometry, FormStyle, RowWrap, Seat, form_geometry, row_access_nodes,
-    view_config_form,
+    FieldGrowth, FormGeometry, FormStyle, OpenPicker, RowWrap, Seat, form_geometry_showing,
+    row_access_nodes, view_config_form_showing,
 };
 use pinion_widget_paint::pane::{PanePointer, scroll_pane};
 use pinion_widget_paint::run::text_run;
@@ -760,6 +761,19 @@ struct LabState {
     toast: Signal<Option<Utterance>>,
     /// ★★ R1683 — what the shared field is editing, or `None` while it is shut.
     editing: Signal<Option<Editing>>,
+    /// ★★★★★ R1732 — the inspector row whose roster is open, and where in it
+    /// the reader is.
+    ///
+    /// `None` is "nothing is open", which is the only way to express it: a
+    /// [`Picker`] exists exactly while a roster does, so "shut and highlighting
+    /// the fourth option" has no spelling. The pair is the row's key and the
+    /// picking, because a picker does not know which row it belongs to and a
+    /// key does not know where the reader is — two facts, and a screen that
+    /// derived either from the other could not show a reader moving away from
+    /// the word the document holds.
+    ///
+    /// A signal rather than a `RefCell`, because opening one has to repaint.
+    picking: Signal<Option<(String, Picker)>>,
     /// The buffer that field holds.
     ///
     /// ★★★ **The hook's own object, taken once when the screen is built — not
@@ -998,6 +1012,7 @@ impl LabState {
             pressed: RefCell::new(None),
             toast: Signal::new(None),
             editing: Signal::new(None),
+            picking: Signal::new(None),
             buffer: use_text_edit_state(EDIT_TAG),
             palette_scroll: Rc::new(ScrollState::with_tag(PALETTE_SCROLL)),
             inspector_scroll: Rc::new(ScrollState::with_tag(INSPECTOR_SCROLL)),
@@ -2862,6 +2877,24 @@ impl Hit {
                 return Self::Nothing;
             }
             let geometry = inspector_geometry(state);
+            // ★★★★★ R1732 — the open roster is a LAYER and is asked first.
+            // Walking the rows first would resolve a press on an option to
+            // whichever row the roster happens to cover, which is why the
+            // popup is published apart from `rows` rather than as more of
+            // them. A press inside the roster's box but between two options is
+            // still the roster's — letting it fall through is how a reader
+            // dismisses a menu by accident.
+            if let Some(popup) = &geometry.popup {
+                if let Some(part) = geometry.option_at(px, py) {
+                    return Self::Part {
+                        key: popup.key.clone(),
+                        part: part.to_owned(),
+                    };
+                }
+                if geometry.on_popup(px, py) {
+                    return Self::Nothing;
+                }
+            }
             for row in &geometry.rows {
                 // ★★ R1686 — the seat that takes the row away, asked FIRST
                 // because it is cut out of the header and a header that
@@ -4456,7 +4489,32 @@ const NODE_ACT_GAP: u32 = 6;
 /// by hand every time the offset moves.
 fn inspector_geometry_local(state: &LabState) -> FormGeometry {
     let form = selected_form(state).unwrap_or_default();
-    form_geometry(&form, (PAD, INSP_HEAD_H), &form_style())
+    let picking = state.picking.get();
+    let open = picking.as_ref().map(|(key, picker)| OpenPicker {
+        key,
+        picker,
+        room: inspector_room(state),
+    });
+    form_geometry_showing(&form, (PAD, INSP_HEAD_H), &form_style(), open)
+}
+
+/// ★★★★★ R1732 — **the room an open roster has**, in the frame the form's
+/// rectangles are stated in.
+///
+/// The pane is what knows, which is why the widget asks instead of deciding:
+/// the form is taller than its viewport and scrolls inside it, so a roster that
+/// flipped against the form's own extent would open downward off the bottom of
+/// the visible pane for every row but the last few. Derived from the two facts
+/// that make the viewport — where the body has been scrolled to, and how tall
+/// it is — so a reader who scrolls gets the direction their screen justifies.
+fn inspector_room(state: &LabState) -> Rect {
+    let body = panel_content(inspector_rect());
+    let (ox, oy) = state.inspector_scroll.offset();
+    #[allow(
+        clippy::cast_sign_loss,
+        reason = "a scroll offset is never negative; the type is signed for the shift"
+    )]
+    Rect::new(ox.max(0) as u32, oy.max(0) as u32, body.w, body.h)
 }
 
 /// The same geometry in WINDOW coordinates — where a pointer meets it and
@@ -6730,7 +6788,17 @@ fn inspector_pane(
     // inspector's scrolling body, so it is placed in the body's frame and the
     // window-coordinate consumers derive theirs from it.
     let geometry = inspector_geometry_local(state);
-    let painted = view_config_form("lab.form", &form, &geometry, theme);
+    // ★★★★★ R1732 — the picking is handed to the painter as well as to the
+    // layout, because the two halves answer different questions: where the
+    // options landed, and where the reader is among them.
+    let picking = state.picking.get();
+    let painted = view_config_form_showing(
+        "lab.form",
+        &form,
+        &geometry,
+        theme,
+        picking.as_ref().map(|(_, picker)| picker),
+    );
 
     let note_y = geometry.origin.1 + geometry.height + 16;
 
@@ -7107,6 +7175,21 @@ const FIELDS: &[SchemaField] = &{
         ),
         SchemaField::action("add_field", "string"),
         SchemaField::action("remove_field", "string"),
+        // ★★★★★ R1732 — the collapsed roster, on the wire. Two members and not
+        // one, because they answer different questions: `picking` is WHERE THE
+        // READER IS and `pick` is what opens or shuts the thing they are in.
+        //
+        // The read is the member the reference toolkit's own chooser does not
+        // have at any maturity: measured at 6.11.1, of its 123 members the only
+        // two naming the highlight are signals, so an agent that was not
+        // already subscribed cannot ask what committing would choose.
+        SchemaField::new("picking", "string"),
+        SchemaField::action_with(
+            "pick",
+            "string",
+            ArgForm::Scalar,
+            const { &[SchemaArg::key("key", "string", "form")] },
+        ),
         // ★★ R1716 — take a row over. Declared beside its twin because they are
         // the two halves of one question: who owns this row's value.
         SchemaField::action("author_field", "string"),
@@ -7355,6 +7438,25 @@ impl ExternalIntrospect for LabOracle {
                         form.fields()
                             .iter()
                             .map(|f| {
+                                // ★★★★★ R1732 — **the words this row will
+                                // take**, when it takes only certain ones.
+                                // Absent until now, so an agent looking at an
+                                // enumeration could read the value and had no
+                                // way at all to learn what else was allowed: it
+                                // had to guess and be refused. `null` where the
+                                // shape has no roster, spelled out rather than
+                                // omitted so "this takes anything" and "this
+                                // build does not say" do not read the same.
+                                let of = f.shape().options();
+                                let options = if of.is_empty() {
+                                    serde_json::Value::Null
+                                } else {
+                                    serde_json::Value::Array(
+                                        of.iter()
+                                            .map(|w| serde_json::Value::String(w.to_string()))
+                                            .collect(),
+                                    )
+                                };
                                 serde_json::json!({
                                     "key": f.key(),
                                     "ty": f.ty(),
@@ -7385,6 +7487,7 @@ impl ExternalIntrospect for LabOracle {
                                     // silently disagree with the screen.
                                     "written": f.written(),
                                     "derived_elements": f.derived_elements(),
+                                    "options": options,
                                 })
                             })
                             .collect(),
@@ -7392,6 +7495,29 @@ impl ExternalIntrospect for LabOracle {
                     .to_string(),
                 )
             }
+            // ★★★★★ R1732 — where the reader is in an open roster, as a value.
+            //
+            // `null` when nothing is open, which is the whole of "shut": there
+            // is no `open` flag to disagree with, because a picker exists for
+            // exactly as long as a roster does. `holding` is the word the
+            // document has when the roster does not offer it — a named
+            // difference rather than the silent substitution the floor makes.
+            "picking" => text(
+                match state.picking.get().as_ref() {
+                    Some((key, picker)) => serde_json::json!({
+                        "key": key,
+                        "at": picker.at(),
+                        "highlighted": picker.highlighted(),
+                        "options": picker.options()
+                            .iter()
+                            .map(std::string::ToString::to_string)
+                            .collect::<Vec<_>>(),
+                        "holding": picker.holding(),
+                    }),
+                    None => serde_json::Value::Null,
+                }
+                .to_string(),
+            ),
             "document" => {
                 let form = selected_form(state)
                 .ok_or_else(|| ReadRefusal::unavailable("no node is selected"))?;
@@ -7848,6 +7974,36 @@ impl ExternalIntrospect for LabOracle {
                 state.say(Utterance::done(format!("added {}", key.trim())));
                 Ok(IntrospectValue::Text(key.trim().to_owned()))
             }
+            // ★★★★★ R1732 — open the roster on a row, or shut whatever is
+            // open. One verb rather than two, because the reader's act is the
+            // same one: the control is a thing you are either in or not, and
+            // an empty argument is the way out of it.
+            //
+            // It REFUSES rather than doing nothing when the row cannot be
+            // picked from — a row nobody wrote, or one whose shape has no
+            // roster — because an agent that got silence back would read it as
+            // an open roster with nothing in it.
+            "pick" => {
+                let key = Self::text(&args)?;
+                let key = key.trim();
+                if key.is_empty() {
+                    close_roster(&state);
+                    return Ok(IntrospectValue::Text(String::new()));
+                }
+                state
+                    .active_card()
+                    .ok_or_else(|| InvokeError::rejected("no node is selected"))?;
+                open_roster(&state, key);
+                match state.picking.get().as_ref() {
+                    Some((open, picker)) if open == key => {
+                        Ok(IntrospectValue::Text(picker.highlighted().to_owned()))
+                    }
+                    _ => Err(InvokeError::rejected(format!(
+                        "{key} is not a row this screen can pick from: it takes one of a \
+                         fixed set of words, and somebody has to own it"
+                    ))),
+                }
+            }
             // ★★★ R1716 — take a row over. The act the floor performs by
             // assigning to the value, with no name, no news and no way back.
             "author_field" => {
@@ -8241,7 +8397,51 @@ fn spec_json() -> serde_json::Value {
         // move. It is never below the floor — see [`WIN_W`], where that stopped
         // being something a round could get wrong.
         "design": [WIN_W, WIN_H],
+        // ★★★★★ R1732 — **the inspector's own specification**, straight out of
+        // the pin, and the configuration path whose roster the gates drive.
+        //
+        // Published for the reason every table above it is: a demo that wrote
+        // down what the reference's row is made of would be checking its own
+        // copy, and R1730 measured what that costs — five demos broke on
+        // hand-written rosters in one round, one of which had been red for
+        // three. The `owed` half travels with it, because "this part is not
+        // there and here is why" is exactly the thing a reader cannot get any
+        // other way.
+        "inspector": inspector_spec_json(),
+        "enum_key": spec::ENUM_KEY,
     })
+}
+
+/// The inspector specification, as the wire publishes it: each surface's canon
+/// and the remainder this build declares against it.
+fn inspector_spec_json() -> serde_json::Value {
+    let doc = spec::inspector_document();
+    let mut out = serde_json::Map::new();
+    for surface in doc.surfaces() {
+        let canon = doc.canon(surface).expect("the document names it");
+        let ledger = doc.ledger(surface).expect("and its remainder");
+        out.insert(
+            surface.to_owned(),
+            serde_json::json!({
+                "canon": canon
+                    .parts()
+                    .iter()
+                    .map(|part| serde_json::json!({ "key": part.key, "title": part.title }))
+                    .collect::<Vec<_>>(),
+                "owed": ledger
+                    .owed()
+                    .iter()
+                    .map(|entry| serde_json::json!({
+                        "key": entry.key,
+                        "says": entry.sentence,
+                        "since": entry.since,
+                        "why": entry.why,
+                    }))
+                    .collect::<Vec<_>>(),
+            }),
+        );
+    }
+    serde_json::Value::Object(out)
 }
 
 /// Re-derive what a node's *pins* mean from its form.
@@ -8630,6 +8830,11 @@ fn begin_edit(state: &Rc<LabState>, what: Editing) -> Result<String, InvokeError
     if state.editing.get().is_some_and(|open| open != what) {
         commit_edit(state)?;
     }
+    // ★★★★★ R1732 — and the mirror of the rule `open_roster` keeps. A roster
+    // standing open while a field takes the keyboard is the same two-editors
+    // state seen from the other side. Shutting it writes NOTHING: dismissing is
+    // not choosing, so the row keeps the word it had.
+    close_roster(state);
     let buffer = &state.buffer;
     let seed = match &what {
         Editing::Name(node) => state.name_of(*node),
@@ -10014,6 +10219,15 @@ fn press_row(state: &Rc<LabState>, key: &str) {
         flip_boolean(state, key);
         return;
     }
+    // ★★★★★ R1732 — a collapsed roster opens on a press ANYWHERE on the row,
+    // not only on the chevron, which is what the reference's own control does
+    // and what a person aiming at a 284-wide box expects. Opening a text box
+    // over it would be worse than useless: the only words it accepts are in
+    // the roster, so typing is a way to write a value the form will refuse.
+    if matches!(shape, FieldType::Choice { .. }) {
+        open_roster(state, key);
+        return;
+    }
     let _ = begin_edit(
         state,
         Editing::Value {
@@ -10071,9 +10285,21 @@ fn press_element(state: &Rc<LabState>, key: &str, at: usize) {
 fn act_on_part(state: &Rc<LabState>, key: &str, part: &str) {
     let family = part.split('.').next().unwrap_or_default();
     match family {
+        // ★★★★★ R1732 — the chevron on a collapsed control opens its roster.
+        "pick" => open_roster(state, key),
         "option" => {
             if let Some(word) = part.rsplit('.').next() {
-                toggle_option(state, key, word);
+                // ★★★★★ R1732 — an option belongs to one of two shapes now,
+                // and they mean different things: a set's chip TOGGLES, and a
+                // roster's row CHOOSES and shuts. Which one this is comes from
+                // the field's shape rather than from whether a roster happens
+                // to be open, so a driver pressing the same name gets the same
+                // act whatever the screen was showing.
+                if chooses_one(state, key) {
+                    choose_option(state, key, word);
+                } else {
+                    toggle_option(state, key, word);
+                }
             }
         }
         "toggle" => flip_boolean(state, key),
@@ -10190,6 +10416,95 @@ fn toggle_option(state: &Rc<LabState>, key: &str, word: &str) {
     sync_node(state, node);
 }
 
+/// Whether that row holds **exactly one** of a fixed set — the shape whose
+/// control collapsed at R1732.
+///
+/// Read from the field rather than from whether a roster is open, so a press on
+/// `option.<key>.<word>` means the same thing however it arrived.
+fn chooses_one(state: &Rc<LabState>, key: &str) -> bool {
+    state
+        .active_card()
+        .and_then(|node| {
+            state
+                .forms
+                .borrow()
+                .get(&node)
+                .and_then(|form| form.field(key))
+                .map(|field| matches!(field.shape(), FieldType::Choice { .. }))
+        })
+        .unwrap_or(false)
+}
+
+/// ★★★★★ R1732 — open the roster on that row, highlighting the word the
+/// document holds.
+///
+/// A word the roster no longer offers is **kept**: [`Picker::over`] records it
+/// and the highlight starts at the first option, so the value stands until the
+/// reader chooses. The floor replaces it, silently and with no signal — which
+/// is the behaviour a configuration editor can least afford, because the value
+/// it quietly drops is the one somebody typed.
+fn open_roster(state: &Rc<LabState>, key: &str) {
+    let Some(node) = state.active_card() else {
+        return;
+    };
+    // ★★★★★ R1732 — **opening a roster is opening the form somewhere else**,
+    // so it applies what is in the field, exactly as [`begin_edit`] does when a
+    // press moves between rows. Without this the two editors are open at once
+    // and the roster takes the keyboard, so a person half-way through typing a
+    // name loses every keystroke after the press with nothing said.
+    //
+    // A REFUSED commit refuses the move, for `begin_edit`'s reason: the field
+    // stays where it is holding the text, the toast says why, and opening
+    // anyway would destroy the thing the refusal was about.
+    if state.editing.get().is_some() && commit_edit(state).is_err() {
+        return;
+    }
+    let opened = {
+        let forms = state.forms.borrow();
+        let Some(field) = forms.get(&node).and_then(|form| form.field(key)) else {
+            return;
+        };
+        // A derived row refuses every write, so offering to pick into it would
+        // be the invitation R1716 took the chips away to stop making.
+        if !field.source().writable() {
+            return;
+        }
+        let FieldType::Choice { of } = field.shape() else {
+            return;
+        };
+        Picker::over(of.clone(), field.value().trim()).ok()
+    };
+    let Some(picker) = opened else { return };
+    state.picking.set(Some((key.to_owned(), picker)));
+}
+
+/// Shut the roster, whatever it was showing.
+fn close_roster(state: &Rc<LabState>) {
+    if state.picking.get().is_some() {
+        state.picking.set(None);
+    }
+}
+
+/// Write one word into a single-choice row and shut the roster.
+///
+/// The write and the shut are one act because choosing IS the end of the
+/// picking, and a roster left standing over the value it just wrote would hide
+/// the row whose change a reader came to see.
+fn choose_option(state: &Rc<LabState>, key: &str, word: &str) {
+    let Some(node) = state.active_card() else {
+        return;
+    };
+    {
+        let mut forms = state.forms.borrow_mut();
+        let Some(form) = forms.get_mut(&node) else {
+            return;
+        };
+        form.set(key, word).ok();
+    }
+    close_roster(state);
+    sync_node(state, node);
+}
+
 /// Put a new node of that role at the middle of the canvas.
 /// Where a new card can go without covering one that is already there, in the
 /// CANVAS coordinates a node is stored in.
@@ -10287,7 +10602,45 @@ fn add_node(state: &Rc<LabState>, role: Role) {
     state.say(Utterance::done(format!("added {name}")));
 }
 
+/// ★★★★★ R1732 — **the keyboard half of the collapsed roster**, and the one
+/// place both doors onto it go through.
+///
+/// Returns whether the key was the roster's. Answered before every other
+/// binding on this screen, because an open roster is what the keyboard is
+/// pointed at: `Space` runs the graph while nothing is open and chooses the
+/// highlighted word while something is, and a screen that asked in the other
+/// order would launch a deployment from inside a menu.
+///
+/// The reference has **no keyboard bindings at all** — measured, zero
+/// `keydown` handlers across the whole prototype — so this is not reproduction,
+/// it is the second pass over what the first one left pointer-only. It is
+/// written as an addition and not a replacement: every act here is still
+/// reachable by pointer and by wire.
+fn roster_key(state: &Rc<LabState>, chord: &str) -> bool {
+    let Some((key, mut picker)) = state.picking.get() else {
+        return false;
+    };
+    match picker.key(chord) {
+        Picked::Moved => {
+            state.picking.set(Some((key, picker)));
+            true
+        }
+        Picked::Chose(word) => {
+            choose_option(state, &key, &word);
+            true
+        }
+        Picked::Dismissed => {
+            close_roster(state);
+            true
+        }
+        Picked::Ignored => false,
+    }
+}
+
 fn key(state: &Rc<LabState>, chord: &str) -> bool {
+    if roster_key(state, chord) {
+        return true;
+    }
     match chord {
         "Escape" => {
             state.drag.set(None);
@@ -10542,10 +10895,28 @@ impl WidgetCore for NodeLabView {
         key: &str,
         modifiers: Modifiers,
     ) -> bool {
+        let state = use_lab_state();
+        // ★★★★★ R1732 — an OPEN roster owns the keyboard, ahead of the focus
+        // test below: it is drawn over the pane and a reader who opened it is
+        // aiming at it. Shut, the control it belongs to opens on the same keys
+        // it would then answer, so nothing has to be learned twice.
+        if roster_key(&state, key) {
+            return true;
+        }
+        if let Some(row) = focused.and_then(|tag| tag.strip_prefix("lab.form.control.")) {
+            if state.picking.get().is_none() && Picker::opens(key) && chooses_one(&state, row) {
+                open_roster(&state, row);
+                // A letter that opened the roster also moves in it, so the
+                // reader's first keystroke is not swallowed by the opening.
+                if key.chars().count() == 1 && key != " " {
+                    roster_key(&state, key);
+                }
+                return state.picking.get().is_some();
+            }
+        }
         if focused != Some(EDIT_TAG) {
             return false;
         }
-        let state = use_lab_state();
         let kind = state
             .editing
             .get()

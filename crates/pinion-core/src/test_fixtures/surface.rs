@@ -116,9 +116,66 @@ pub fn painted_surface(
         .collect()
 }
 
+/// ★★★★★ R1732 — the same reading, for a surface whose parts are addressed
+/// **family first**: `<prefix><part>.<address>`.
+///
+/// [`painted_parts`] reads the other convention — an address, then the part
+/// under it — and takes the remainder holding no dot as the part's name. A form
+/// row is tagged the other way round, because the thing being addressed is a
+/// configuration path and every one of them contains dots: `form.applies.qos.
+/// congestion` is the applies badge of `qos.congestion`, and no rule about
+/// counting dots can find the seam.
+///
+/// So the seam is given rather than guessed: `address` is the exact suffix, and
+/// what is left between the prefix and it is the part. Which convention a
+/// surface uses is a property of how it was tagged
+/// ([[debt-a-rail-tag-prefix-holds-seats-and-chrome-alike]] is the same
+/// question, tree-wide) — what must *not* fork is the ordering, and both
+/// readings go through [`in_reading_order`].
+#[must_use]
+pub fn painted_parts_of(scene: &Scene, prefix: &str, address: &str) -> Vec<(String, Rect)> {
+    let tail = format!(".{address}");
+    let mut found: Vec<(String, Rect)> = Vec::new();
+    scene.for_each_node(&mut |visit| {
+        let (Some(rect), Some(tag)) = (visit.absolute_rect(), visit.node.tag()) else {
+            return;
+        };
+        let Some(key) = tag
+            .strip_prefix(prefix)
+            .and_then(|rest| rest.strip_suffix(tail.as_str()))
+        else {
+            return;
+        };
+        if key.is_empty() || found.iter().any(|(seen, _)| seen == key) {
+            return;
+        }
+        found.push((key.to_owned(), rect));
+    });
+    in_reading_order(found)
+}
+
+/// One family-first surface, as the paint has it — [`painted_surface`]'s twin
+/// for the other tagging convention.
+#[must_use]
+pub fn painted_surface_of(
+    scene: &Scene,
+    prefix: &str,
+    address: &str,
+    titles: &dyn Fn(&str) -> Option<String>,
+) -> Vec<Part> {
+    painted_parts_of(scene, prefix, address)
+        .into_iter()
+        .map(|(key, _)| {
+            let title =
+                titles(&key).unwrap_or_else(|| format!("<{key} is painted and no table names it>"));
+            Part::new(key, title)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{in_reading_order, painted_parts, painted_surface};
+    use super::{in_reading_order, painted_parts, painted_parts_of, painted_surface};
     use crate::scene::{ContainerNode, Rect, Scene, TextNode};
     use crate::style::{LayoutStyle, Size, TextStyle};
 
@@ -195,6 +252,30 @@ mod tests {
         assert_eq!(
             ordered.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
             ["by", "direction", "matches", "rate"],
+        );
+    }
+
+    /// ★★★★★ R1732 — the family-first reading finds the seam a dot count
+    /// cannot: the address it is given, however many dots that address holds.
+    #[test]
+    fn a_family_first_surface_is_read_by_its_address() {
+        let painted = painted_parts_of(
+            &scene(vec![
+                at("f.key.qos.congestion", Rect::new(10, 0, 60, 12)),
+                at("f.type.qos.congestion", Rect::new(80, 0, 30, 12)),
+                at("f.applies.qos.congestion", Rect::new(120, 0, 40, 12)),
+                at("f.pick.qos.congestion", Rect::new(240, 20, 22, 30)),
+                // Another row entirely, and the same families.
+                at("f.key.id", Rect::new(10, 60, 60, 12)),
+                at("f.type.id", Rect::new(80, 60, 30, 12)),
+            ]),
+            "f.",
+            "qos.congestion",
+        );
+        assert_eq!(
+            painted.iter().map(|(k, _)| k.as_str()).collect::<Vec<_>>(),
+            ["key", "type", "applies", "pick"],
+            "★ the row's own parts, in reading order, and none of the row below",
         );
     }
 
