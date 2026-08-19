@@ -514,8 +514,14 @@ struct FloatGrab {
 // board already had. Reproducing the reference's palette gesture meant carrying
 // something that is NOT on the board, and the cheap way to do that is a second
 // nullable field beside this one — which is precisely how the reference spells
-// it, and why three of its handlers each have to remember to check the other.
-// Two nullable fields can be set at once and that state has no meaning.
+// it, and why each of its handlers has to remember to check the other. Two
+// nullable fields can be set at once and that state has no meaning.
+//
+// ★ Measured in that prototype rather than assumed, and it had already decayed:
+// its held-card field is read by TWO guards and assigned a non-null value
+// NOWHERE, because the reorder gesture moved onto another field and the guards
+// were left behind. The cost of the shape shows up before the forgotten check
+// does.
 //
 // The framework type is one value with two arms, so the check is a `match` and
 // the compiler performs it; and its landing is read by both the preview and the

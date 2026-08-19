@@ -626,6 +626,14 @@ def body() -> None:
         # four parts are drawn inside the row and the ROW is what a press
         # answers for, so each of them declares its silence — sixteen regions,
         # none of which had to be named here.
+        #
+        # ⚠ What this trades, stated rather than hidden: a real control that is
+        # WRONGLY declared silent now leaves this population instead of failing
+        # here. That is not unwatched — the voice census's own arms are what
+        # judge a mis-declaration (`ghost`, `dangling`, `mumbled`), and
+        # `r1694_a_locked_seat_is_heard` asserts every one of them is zero. The
+        # alternative was a fourth hand-written exclusion, which is the shape
+        # R1728 measured as only being as good as whoever last updated it.
         quiet = {
             node["tag"]
             for node in tf.request("scene/voice").result["nodes"]

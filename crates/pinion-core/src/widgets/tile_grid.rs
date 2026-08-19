@@ -1297,10 +1297,16 @@ impl TileGrid {
 /// and that state has no meaning.
 ///
 /// The behaviour reference spells it the other way — a held card id and a held
-/// palette kind, each nullable — and so every handler has to remember to check
-/// the other one before acting. Measured in that prototype: three do, and the
-/// fourth handler anyone adds is a defect nothing can catch. Here the check is
-/// a `match`, and the compiler is what performs it.
+/// palette kind, each nullable — so every handler has to remember to check the
+/// other one before acting. ★ Measured in that prototype, and it had already
+/// decayed: the held-card field appears **three** times and **two** of those
+/// are guards reading it, while **nothing in the whole script ever assigns it a
+/// non-null value** — the reorder gesture was moved onto another field and the
+/// guards it left behind were never removed. That is what a pair of nullable
+/// fields costs in practice, ahead of the forgotten-check it also invites.
+///
+/// Here the check is a `match`, the compiler performs it, and a guard on a case
+/// that cannot arise does not compile into silence — it is an arm.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum Carried {
     /// A tile the board already holds, gripped `dx` columns and `dy` rows
@@ -1807,9 +1813,10 @@ mod tests {
     ///
     /// The behaviour reference keeps a held card id and a held palette kind as
     /// two nullable fields, so every handler must remember to check the other
-    /// before acting; three do. This asserts the property that makes the fourth
-    /// handler safe: reading what is carried is a match with no third case and
-    /// no both-at-once case, and each arm names the id a drop would use.
+    /// before acting — and measured there, two guards read a field nothing ever
+    /// sets. This asserts the property that makes such a guard impossible:
+    /// reading what is carried is a match with no third case and no
+    /// both-at-once case, and each arm names the id a drop would use.
     #[test]
     fn r1733_a_board_carries_one_thing_and_it_names_itself() {
         use super::{Carried, Tile, TileDrag, TileGrid, TileId};

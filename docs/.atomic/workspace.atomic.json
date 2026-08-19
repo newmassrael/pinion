@@ -52226,6 +52226,94 @@
         "announced inert region into five — which the harness's own gate caught."
       ]
     },
+    "R1733.1": {
+      "decision_summary": "The close audit measured a count R1733 had written from memory, and the truth\nwas both different and stronger.\n\nR1733 justified `Carried`'s two arms against the behaviour reference's two\nnullable fields, and said of that prototype: *three of its handlers each have to\nremember to check the other, and the fourth anyone adds is a defect nothing can\ncatch.* Three files carried that sentence — the framework type's own\ndocumentation, the screen's comment where its hand-rolled struct had been, and\nthe demo's docstring.\n\nMeasured, in the prototype's script: the held-card field occurs **three times in\ntotal**, of which **two are guards reading it**, and **nothing anywhere assigns\nit a non-null value**. The reorder gesture it was written for moved onto another\nfield, and the guards it left behind were never removed.\n\nSo the count was wrong, and the argument it was making was weaker than what is\nactually there. The claim is not \"a pair of nullable fields invites a forgotten\ncheck\"; it is that this pair had **already** decayed into two live guards on a\nvalue that is always null. A type with two arms cannot reach that state: a guard\non a case that cannot arise is an arm, and an arm nothing constructs is dead\ncode the compiler names — which is the event R1729 and R1731 both recorded when\nit happened to them.\n\nWHY THIS IS ITS OWN ENTRY. The ledger is frozen, so R1733's decision cannot be\namended, and a corrected number that only exists in the source would leave the\nstore saying something this tree knows to be false.\n\nTHE LESSON, which is the reason to file it rather than quietly fix it: this\nproject measures its own numbers and re-measures them at the close, and R1733\ndid that faithfully for everything it built. The number it got wrong was about\nsomebody ELSE's code, where \"I read that earlier\" felt like measurement and was\nnot. Re-running the count cost thirty seconds. A count about a reference is a\ncount, and it is owed the same discipline as a count about this tree — the same\nrule R1732 wrote for a debt file's premise, one source over.",
+      "changes_bullets": [
+        "* `pinion_core::widgets::tile_grid::Carried` — its documentation now states the",
+        "measurement rather than a remembered count, and states the sharper fact: the",
+        "reference's held-card field is read by two guards and assigned a non-null",
+        "value nowhere at all.",
+        "* The same correction in the test that asserts the property",
+        "(`r1733_a_board_carries_one_thing_and_it_names_itself`), in",
+        "`hello-analyzer-shell`'s comment where its hand-rolled `Drag` struct had been,",
+        "and in the R1733 demo's docstring.",
+        "* `tools/demos/r1649_...py` — the trade the R1733 derivation makes is written",
+        "down beside it: a real control WRONGLY declared silent now leaves that",
+        "population instead of failing there. It is not unwatched — the voice census's",
+        "`ghost` / `dangling` / `mumbled` arms judge a mis-declaration and",
+        "`r1694_a_locked_seat_is_heard` asserts all three are zero — but a check that",
+        "narrows its own population owes the reader that sentence."
+      ],
+      "verification_bullets": [
+        "The count was re-derived from the extracted prototype script twice, by two",
+        "different queries: every occurrence of the held-card identifier with its",
+        "surrounding text (3 occurrences: one guard in the drag-over handler, one guard",
+        "and one clear in the drop handler), and every assignment to it (1, the clear).",
+        "Against the palette-kind field for contrast: 8 occurrences, with a declaration,",
+        "an assignment in the drag-start handler, four reads across the two canvas",
+        "handlers and a clear after the widget is added.",
+        "Documentation only — no behaviour changed, so the round's own gates stand.",
+        "Re-run after the edits: `cargo test -p pinion-core` (3803 lib, 0 failed),",
+        "`cargo doc -p pinion-core --no-deps --document-private-items` (clean), and",
+        "`cargo fmt --all --check`."
+      ],
+      "impact_refs": [
+        "5.21",
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "None. The correction is complete across every file that carried the sentence,",
+        "and the audit that found it is the standing close-audit obligation rather than",
+        "anything new.",
+        "The one thing it leaves for the next round is a habit, not a task: a count about",
+        "a REFERENCE is a count. This tree re-measures its own numbers at every close and",
+        "had no rule pointing the same discipline outward, because the numbers that go",
+        "stale are usually its own. This one did not go stale — it was never measured."
+      ],
+      "publishable_decision_summary": "The close audit measured a count R1733 had written from memory, and the truth\nwas both different and stronger.\n\nR1733 justified `Carried`'s two arms against the behaviour reference's two\nnullable fields, and said of that prototype: *three of its handlers each have to\nremember to check the other, and the fourth anyone adds is a defect nothing can\ncatch.* Three files carried that sentence — the framework type's own\ndocumentation, the screen's comment where its hand-rolled struct had been, and\nthe demo's docstring.\n\nMeasured, in the prototype's script: the held-card field occurs **three times in\ntotal**, of which **two are guards reading it**, and **nothing anywhere assigns\nit a non-null value**. The reorder gesture it was written for moved onto another\nfield, and the guards it left behind were never removed.\n\nSo the count was wrong, and the argument it was making was weaker than what is\nactually there. The claim is not \"a pair of nullable fields invites a forgotten\ncheck\"; it is that this pair had **already** decayed into two live guards on a\nvalue that is always null. A type with two arms cannot reach that state: a guard\non a case that cannot arise is an arm, and an arm nothing constructs is dead\ncode the compiler names — which is the event R1729 and R1731 both recorded when\nit happened to them.\n\nWHY THIS IS ITS OWN ENTRY. The ledger is frozen, so R1733's decision cannot be\namended, and a corrected number that only exists in the source would leave the\nstore saying something this tree knows to be false.\n\nTHE LESSON, which is the reason to file it rather than quietly fix it: this\nproject measures its own numbers and re-measures them at the close, and R1733\ndid that faithfully for everything it built. The number it got wrong was about\nsomebody ELSE's code, where \"I read that earlier\" felt like measurement and was\nnot. Re-running the count cost thirty seconds. A count about a reference is a\ncount, and it is owed the same discipline as a count about this tree — the same\nrule R1732 wrote for a debt file's premise, one source over.",
+      "publishable_changes_bullets": [
+        "* `pinion_core::widgets::tile_grid::Carried` — its documentation now states the",
+        "measurement rather than a remembered count, and states the sharper fact: the",
+        "reference's held-card field is read by two guards and assigned a non-null",
+        "value nowhere at all.",
+        "* The same correction in the test that asserts the property",
+        "(`r1733_a_board_carries_one_thing_and_it_names_itself`), in",
+        "`hello-analyzer-shell`'s comment where its hand-rolled `Drag` struct had been,",
+        "and in the R1733 demo's docstring.",
+        "* `tools/demos/r1649_...py` — the trade the R1733 derivation makes is written",
+        "down beside it: a real control WRONGLY declared silent now leaves that",
+        "population instead of failing there. It is not unwatched — the voice census's",
+        "`ghost` / `dangling` / `mumbled` arms judge a mis-declaration and",
+        "`r1694_a_locked_seat_is_heard` asserts all three are zero — but a check that",
+        "narrows its own population owes the reader that sentence."
+      ],
+      "publishable_verification_bullets": [
+        "The count was re-derived from the extracted prototype script twice, by two",
+        "different queries: every occurrence of the held-card identifier with its",
+        "surrounding text (3 occurrences: one guard in the drag-over handler, one guard",
+        "and one clear in the drop handler), and every assignment to it (1, the clear).",
+        "Against the palette-kind field for contrast: 8 occurrences, with a declaration,",
+        "an assignment in the drag-start handler, four reads across the two canvas",
+        "handlers and a clear after the widget is added.",
+        "Documentation only — no behaviour changed, so the round's own gates stand.",
+        "Re-run after the edits: `cargo test -p pinion-core` (3803 lib, 0 failed),",
+        "`cargo doc -p pinion-core --no-deps --document-private-items` (clean), and",
+        "`cargo fmt --all --check`."
+      ],
+      "publishable_impact_refs": [
+        "5.21",
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "None. The correction is complete across every file that carried the sentence,",
+        "and the audit that found it is the standing close-audit obligation rather than",
+        "anything new.",
+        "The one thing it leaves for the next round is a habit, not a task: a count about",
+        "a REFERENCE is a count. This tree re-measures its own numbers at every close and",
+        "had no rule pointing the same discipline outward, because the numbers that go",
+        "stale are usually its own. This one did not go stale — it was never measured."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

@@ -18,6 +18,13 @@ bindings, and moving its pointer-only gesture over instead of the click would
 take the palette away from a reader who cannot drag. Section C is that
 assertion, and it is the one worth the round.
 
+★ And what it holds is ONE thing. The reference keeps a held card id and a held
+palette kind as two nullable fields; measured in its script, the held-card field
+is read by two guards and assigned a non-null value nowhere at all, because the
+reorder gesture moved onto another field and the guards were left behind. Two
+nullable fields can be set at once and that state has no meaning; `Carried` has
+two arms and the compiler is what checks them.
+
 # The floor, measured rather than remembered
 
 Two probes built against 6.11.1 and run offscreen:
