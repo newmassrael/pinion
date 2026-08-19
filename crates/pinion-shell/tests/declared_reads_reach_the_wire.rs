@@ -162,7 +162,6 @@ fn catalog() -> Vec<(&'static str, Box<dyn pinion_core::external::External>)> {
         row_dissect::{RowDissectionExternal, RowDissectionState},
         row_search::{RowSearchExternal, RowSearchState},
         row_style::{RowStyleExternal, RowStyleState},
-        scroll::ScrollState,
         scrollbar::ScrollBarExternal,
         slider::SliderExternal,
         spin_button::SpinButtonExternal,
@@ -190,12 +189,7 @@ fn catalog() -> Vec<(&'static str, Box<dyn pinion_core::external::External>)> {
         ("ColorAreaExternal", ext_scene(ColorAreaExternal::new())),
         (
             "ColumnResizeExternal",
-            ext_scene(ColumnResizeExternal::new(
-                widths(),
-                0,
-                Rc::new(ScrollState::new()),
-                "grid",
-            )),
+            ext_scene(ColumnResizeExternal::new(widths(), 0, "grid")),
         ),
         (
             "ColumnWidthExternal",

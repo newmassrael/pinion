@@ -177,7 +177,7 @@ use pinion_core::external::{
     ReadRefusal, RepaintOwner, SchemaArg, SchemaField, ThreadOwnership, int_of,
     selection_copy_payload,
 };
-use pinion_core::input::{DRAG_CLICK_THRESHOLD_PX, DragCalibration};
+use pinion_core::input::{DRAG_CLICK_THRESHOLD_PX, DragCalibration, PointerReading};
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode, TextRole};
 use pinion_core::style::{
@@ -2914,8 +2914,8 @@ impl External for DataGridExternal {
 
     /// R914 — drive the live numeric cell scrub from the captured cursor's
     /// horizontal fraction; `y_rel` is ignored (scrub is the X axis only).
-    fn pointer_move(&mut self, x_rel: f32, _y_rel: f32) {
-        self.scrub_to(f64::from(x_rel));
+    fn pointer_move(&mut self, at: PointerReading) {
+        self.scrub_to(f64::from(at.u()));
     }
 
     /// R937 — arm a row drag-to-reorder. Returns a payload (so the router opens a
@@ -7909,7 +7909,8 @@ mod tests {
         let node = scene
             .find_external_with_tag_mut(GRID_TAG)
             .expect("grid present");
-        node.handle.pointer_move(x, 0.0);
+        node.handle
+            .pointer_move(PointerReading::over_unit((x, 0.0)));
     }
 
     /// R914 — send a composite cell event (`<row>_<col>:<Event>`) to the grid:

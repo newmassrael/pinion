@@ -40,6 +40,7 @@ use pinion_core::external::{
     IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
     ThreadOwnership,
 };
+use pinion_core::input::PointerReading;
 use pinion_core::scene::{ContainerNode, TextGridNode};
 use pinion_core::style::{AlignItems, FlexDirection, LayoutStyle, Size};
 use pinion_core::{CellMetric, Frame, GridBuffer, Scene, TermCell, TermColor, WidgetCore};
@@ -164,9 +165,9 @@ impl External for GridPointerExternal {
         self.rows = self.metric.rows_for(self.height_px);
     }
 
-    fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
-        let x_px = CellMetric::frac_to_px(x_rel, self.width_px);
-        let y_px = CellMetric::frac_to_px(y_rel, self.height_px);
+    fn pointer_move(&mut self, at: PointerReading) {
+        let x_px = CellMetric::frac_to_px(at.u(), self.width_px);
+        let y_px = CellMetric::frac_to_px(at.v(), self.height_px);
         self.cell = Some(self.cell_at_px(x_px, y_px));
     }
 }
@@ -443,13 +444,13 @@ mod tests {
         assert_eq!(e.cell, None, "no cell before the first move");
         // The centre of the window: 0.5 × 640 = 320 px = col 40; 0.5 × 384 = 192
         // px = row 12.
-        e.pointer_move(0.5, 0.5);
+        e.pointer_move(PointerReading::over_unit((0.5, 0.5)));
         assert_eq!(e.cell, Some((40, 12)));
         // The far corner fraction lands on the last cell, never one past it.
-        e.pointer_move(1.0, 1.0);
+        e.pointer_move(PointerReading::over_unit((1.0, 1.0)));
         assert_eq!(e.cell, Some((79, 23)));
         // The origin.
-        e.pointer_move(0.0, 0.0);
+        e.pointer_move(PointerReading::over_unit((0.0, 0.0)));
         assert_eq!(e.cell, Some((0, 0)));
     }
 
@@ -466,14 +467,14 @@ mod tests {
             let px = u32::from(col) * 8; // leading-edge pixel of column `col`
             #[allow(clippy::cast_possible_truncation)]
             let frac = (f64::from(px) / f64::from(WIN_W)) as f32;
-            e.pointer_move(frac, 0.0);
+            e.pointer_move(PointerReading::over_unit((frac, 0.0)));
             assert_eq!(e.cell, Some((col, 0)), "column {col} leading pixel {px}");
         }
         for row in 0..ROWS {
             let py = u32::from(row) * 16; // leading-edge pixel of row `row`
             #[allow(clippy::cast_possible_truncation)]
             let frac = (f64::from(py) / f64::from(WIN_H)) as f32;
-            e.pointer_move(0.0, frac);
+            e.pointer_move(PointerReading::over_unit((0.0, frac)));
             assert_eq!(e.cell, Some((0, row)), "row {row} leading pixel {py}");
         }
     }
@@ -485,7 +486,7 @@ mod tests {
         assert_eq!(e.query("cell_col"), Ok(IntrospectValue::Null));
         assert_eq!(e.query("cols"), Ok(IntrospectValue::Int(80)));
         assert_eq!(e.query("rows"), Ok(IntrospectValue::Int(24)));
-        e.pointer_move(0.5, 0.5);
+        e.pointer_move(PointerReading::over_unit((0.5, 0.5)));
         assert_eq!(e.query("cell"), Ok(IntrospectValue::Text("40,12".into())));
         assert_eq!(e.query("cell_col"), Ok(IntrospectValue::Int(40)));
         assert_eq!(e.query("cell_row"), Ok(IntrospectValue::Int(12)));

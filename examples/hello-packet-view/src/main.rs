@@ -58,6 +58,7 @@ use pinion_core::external::{
     SchemaArg, SchemaField, ThreadOwnership,
 };
 use pinion_core::focus_state;
+use pinion_core::input::PointerReading;
 use pinion_core::reactive::Signal;
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::shrink::ShrinkPolicy;
@@ -2459,7 +2460,7 @@ impl External for ViewOracle {
         true
     }
 
-    fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
+    fn pointer_move(&mut self, at: PointerReading) {
         let Some(state) = self.state.clone() else {
             return;
         };
@@ -2472,7 +2473,7 @@ impl External for ViewOracle {
         // This screen does not pan, and the pan term is the identity for a
         // screen that does not — which is why adopting it is free here and why
         // it will keep being right if this screen ever declares one.
-        let (px, py) = pinion_core::external::layout_point(VIEW_TAG, (x_rel, y_rel));
+        let (px, py) = pinion_core::external::layout_point(VIEW_TAG, at.at);
         move_cursor(&state, px, py);
     }
 

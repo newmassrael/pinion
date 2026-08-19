@@ -59,6 +59,7 @@ use crate::external::{
     ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
     ReadRefusal, RepaintOwner, SchemaArg, SchemaField, ThreadOwnership,
 };
+use crate::input::PointerReading;
 use crate::intent::Intent;
 use crate::widgets::slider::{SliderAxis, SliderEvent, SliderPolicy, SliderState};
 use crate::widgets::{IntentEmitter, Widget};
@@ -450,10 +451,13 @@ impl External for RangeSliderExternal {
     /// Horizontal reads `x_rel`; vertical reads `1.0 - y_rel` (top = 1.0,
     /// ARIA `aria-orientation="vertical"` convention) — identical to the
     /// single slider's mapping.
-    fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
+    ///
+    /// R1727 — the FRACTION, for the single slider's reason: the divisor is the
+    /// track, which a thumb drag does not resize.
+    fn pointer_move(&mut self, at: PointerReading) {
         let pos = match self.em.inner.axis() {
-            SliderAxis::Horizontal => x_rel,
-            SliderAxis::Vertical => 1.0 - y_rel,
+            SliderAxis::Horizontal => at.u(),
+            SliderAxis::Vertical => 1.0 - at.v(),
         }
         .clamp(0.0, 1.0);
         if self.em.inner.drive_drag(pos) {
@@ -698,7 +702,7 @@ mod tests {
         rx.send(SliderEvent::PointerDown);
         assert!(matches!(rx.state(), SliderState::Dragging));
         // Drag the low thumb to 0.35.
-        rx.pointer_move(0.35, 0.0);
+        rx.pointer_move(PointerReading::over_unit((0.35, 0.0)));
         assert!(approx(rx.low(), 0.35));
         assert_eq!(rx.active(), ThumbId::Low);
         // Harvest the value_changing stream.
@@ -722,7 +726,7 @@ mod tests {
         let mut rx = RangeSliderExternal::with_values(0.2, 0.8);
         rx.send(SliderEvent::PointerEnter);
         rx.send(SliderEvent::PointerDown);
-        rx.pointer_move(0.3, 0.0);
+        rx.pointer_move(PointerReading::over_unit((0.3, 0.0)));
         let mut drained = Vec::new();
         rx.drain_intents(&mut |i| drained.push(i));
         rx.send(SliderEvent::PointerCancel);
@@ -795,14 +799,14 @@ mod tests {
         rx.send(SliderEvent::PointerDown);
         // Top of the track (y_rel 0.0) → pos 1.0 → nearest is the high
         // thumb, driven up to 1.0 (a real move from 0.8).
-        rx.pointer_move(0.0, 0.0);
+        rx.pointer_move(PointerReading::over_unit((0.0, 0.0)));
         assert!(approx(rx.high(), 1.0), "top maps to value 1.0 (high thumb)");
         assert_eq!(rx.active(), ThumbId::High);
         // End the gesture and start a new one at the bottom (y_rel 1.0 →
         // pos 0.0): nearest is the low thumb, driven down to 0.0.
         rx.send(SliderEvent::PointerUp);
         rx.send(SliderEvent::PointerDown);
-        rx.pointer_move(0.0, 1.0);
+        rx.pointer_move(PointerReading::over_unit((0.0, 1.0)));
         assert!(
             approx(rx.low(), 0.0),
             "bottom maps to value 0.0 (low thumb)"

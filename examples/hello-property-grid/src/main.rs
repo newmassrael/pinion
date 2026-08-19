@@ -118,7 +118,7 @@ use pinion_core::external::{
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
     SchemaArg, SchemaField, ThreadOwnership,
 };
-use pinion_core::input::{DRAG_CLICK_THRESHOLD_PX, DragCalibration};
+use pinion_core::input::{DRAG_CLICK_THRESHOLD_PX, DragCalibration, PointerReading};
 use pinion_core::reactive::{Owner, Signal, batch};
 use pinion_core::scene::ScrollAxis;
 use pinion_core::scene::{ContainerNode, Rect, ScrollNode, TextNode};
@@ -2374,8 +2374,8 @@ impl External for PropertyGridExternal {
 
     /// R875 — drive the live numeric scrub from the captured cursor's horizontal
     /// fraction across the grid; `y_rel` is ignored (scrub is the X axis only).
-    fn pointer_move(&mut self, x_rel: f32, _y_rel: f32) {
-        self.scrub_to(f64::from(x_rel));
+    fn pointer_move(&mut self, at: PointerReading) {
+        self.scrub_to(f64::from(at.u()));
     }
 
     fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
@@ -5896,7 +5896,8 @@ mod tests {
                 .unwrap()
                 .invoke("send", IntrospectValue::Text("6:PointerDown".to_owned()))
                 .unwrap();
-            node.handle.pointer_move(0.5, 0.5); // calibrate (no mutation)
+            node.handle
+                .pointer_move(PointerReading::over_unit((0.5, 0.5))); // calibrate (no mutation)
             assert_eq!(
                 node.handle.introspect().unwrap().query("value.6"),
                 Ok(IntrospectValue::Float(12.5)),
@@ -5907,7 +5908,8 @@ mod tests {
                 Ok(IntrospectValue::Bool(false)),
                 "R915: the calibration frame is a click so far, not yet a scrub"
             );
-            node.handle.pointer_move(0.75, 0.5); // apply +100px (past the 4px dead zone)
+            node.handle
+                .pointer_move(PointerReading::over_unit((0.75, 0.5))); // apply +100px (past the 4px dead zone)
             assert_eq!(
                 node.handle.introspect().unwrap().query("scrubbing"),
                 Ok(IntrospectValue::Bool(true)),
@@ -6023,14 +6025,17 @@ mod tests {
                 .unwrap()
                 .invoke("send", IntrospectValue::Text("8:PointerDown".to_owned()))
                 .unwrap();
-            node.handle.pointer_move(0.5, 0.5); // calibrate (base = 1.0)
-            node.handle.pointer_move(0.6, 0.5); // +40px → 1.0 + 0.4 = 1.4 → clamp 1.0
+            node.handle
+                .pointer_move(PointerReading::over_unit((0.5, 0.5))); // calibrate (base = 1.0)
+            node.handle
+                .pointer_move(PointerReading::over_unit((0.6, 0.5))); // +40px → 1.0 + 0.4 = 1.4 → clamp 1.0
             assert_eq!(
                 node.handle.introspect().unwrap().query("value.8"),
                 Ok(IntrospectValue::Float(1.0)),
                 "scrub past the top clamps to max"
             );
-            node.handle.pointer_move(0.45, 0.5); // −20px from press → 1.0 − 0.2 = 0.8
+            node.handle
+                .pointer_move(PointerReading::over_unit((0.45, 0.5))); // −20px from press → 1.0 − 0.2 = 0.8
             let IntrospectValue::Float(v) =
                 node.handle.introspect().unwrap().query("value.8").unwrap()
             else {
@@ -6062,8 +6067,10 @@ mod tests {
                 .unwrap()
                 .invoke("send", IntrospectValue::Text("4:PointerDown".to_owned()))
                 .unwrap();
-            node.handle.pointer_move(0.5, 0.5);
-            node.handle.pointer_move(0.7, 0.5); // +0.2·400 = 80px → +10
+            node.handle
+                .pointer_move(PointerReading::over_unit((0.5, 0.5)));
+            node.handle
+                .pointer_move(PointerReading::over_unit((0.7, 0.5))); // +0.2·400 = 80px → +10
             assert_eq!(
                 node.handle.introspect().unwrap().query("value.4"),
                 Ok(IntrospectValue::Int(13))
@@ -6079,8 +6086,10 @@ mod tests {
                 .unwrap()
                 .invoke("send", IntrospectValue::Text("4:PointerDown".to_owned()))
                 .unwrap();
-            node.handle.pointer_move(0.5, 0.5);
-            node.handle.pointer_move(0.3, 0.5); // −80px → −10 → 3
+            node.handle
+                .pointer_move(PointerReading::over_unit((0.5, 0.5)));
+            node.handle
+                .pointer_move(PointerReading::over_unit((0.3, 0.5))); // −80px → −10 → 3
             assert_eq!(
                 node.handle.introspect().unwrap().query("value.4"),
                 Ok(IntrospectValue::Int(3))
@@ -6103,8 +6112,10 @@ mod tests {
                 .unwrap()
                 .invoke("send", IntrospectValue::Text("6:PointerDown".to_owned()))
                 .unwrap();
-            node.handle.pointer_move(0.5, 0.5);
-            node.handle.pointer_move(0.6, 0.5);
+            node.handle
+                .pointer_move(PointerReading::over_unit((0.5, 0.5)));
+            node.handle
+                .pointer_move(PointerReading::over_unit((0.6, 0.5)));
             node.handle
                 .introspect_mut()
                 .unwrap()
@@ -6122,8 +6133,10 @@ mod tests {
                 .unwrap()
                 .invoke("send", IntrospectValue::Text("2:PointerDown".to_owned()))
                 .unwrap();
-            node.handle.pointer_move(0.5, 0.5);
-            node.handle.pointer_move(0.8, 0.5); // no-op (non-numeric armed → none)
+            node.handle
+                .pointer_move(PointerReading::over_unit((0.5, 0.5)));
+            node.handle
+                .pointer_move(PointerReading::over_unit((0.8, 0.5))); // no-op (non-numeric armed → none)
             assert_eq!(
                 node.handle.introspect().unwrap().query("scrubbing"),
                 Ok(IntrospectValue::Bool(false)),

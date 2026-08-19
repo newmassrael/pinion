@@ -68,6 +68,7 @@ use crate::external::{
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
     SchemaArg, SchemaField, ThreadOwnership,
 };
+use crate::input::PointerReading;
 use crate::intent::Intent;
 use crate::widgets::wheel::WheelSteps;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
@@ -466,10 +467,13 @@ impl External for SliderExternal {
     /// Clamping here preserves the `value_changing` intent's
     /// gate-by-effect semantics — strays past the saturated value
     /// are silent.
-    fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
+    /// R1727 — the FRACTION is the right reading here: a slider's divisor is the
+    /// track it is measured over, and dragging the thumb does not resize the
+    /// track. This is the case [`PointerReading::at`] exists for.
+    fn pointer_move(&mut self, at: PointerReading) {
         let value_axis = match self.em.inner.axis() {
-            SliderAxis::Horizontal => x_rel,
-            SliderAxis::Vertical => 1.0 - y_rel,
+            SliderAxis::Horizontal => at.u(),
+            SliderAxis::Vertical => 1.0 - at.v(),
         };
         self.set_value(value_axis.clamp(0.0, 1.0));
     }
@@ -881,11 +885,11 @@ mod tests {
         // y_rel is ignored (horizontal slider). Coordinates outside
         // [0, 1] clamp.
         let mut sx = SliderExternal::new();
-        sx.pointer_move(0.25, 0.99);
+        sx.pointer_move(PointerReading::over_unit((0.25, 0.99)));
         assert!((sx.value() - 0.25).abs() < 1e-4);
-        sx.pointer_move(1.7, -0.4); // x clamps to 1.0
+        sx.pointer_move(PointerReading::over_unit((1.7, -0.4))); // x clamps to 1.0
         assert!((sx.value() - 1.0).abs() < 1e-4);
-        sx.pointer_move(-0.3, 0.5); // x clamps to 0.0
+        sx.pointer_move(PointerReading::over_unit((-0.3, 0.5))); // x clamps to 0.0
         assert!((sx.value() - 0.0).abs() < f32::EPSILON);
     }
 
@@ -896,9 +900,9 @@ mod tests {
         // channel — same gate-by-effect path as intervene("value", ...)
         // because both flow through set_value.
         let mut sx = SliderExternal::new();
-        sx.pointer_move(0.3, 0.0);
-        sx.pointer_move(0.7, 0.0);
-        sx.pointer_move(0.7, 0.0); // no-op (same value)
+        sx.pointer_move(PointerReading::over_unit((0.3, 0.0)));
+        sx.pointer_move(PointerReading::over_unit((0.7, 0.0)));
+        sx.pointer_move(PointerReading::over_unit((0.7, 0.0))); // no-op (same value)
         let mut harvested = Vec::new();
         sx.drain_intents(&mut |i| harvested.push(i));
         assert_eq!(harvested.len(), 2);
@@ -914,7 +918,7 @@ mod tests {
         let mut sx = SliderExternal::new();
         sx.send(SliderEvent::PointerEnter);
         sx.send(SliderEvent::PointerDown);
-        sx.pointer_move(0.42, 0.0);
+        sx.pointer_move(PointerReading::over_unit((0.42, 0.0)));
         sx.send(SliderEvent::PointerUp);
         let mut harvested = Vec::new();
         sx.drain_intents(&mut |i| harvested.push(i));
@@ -960,10 +964,10 @@ mod tests {
         // Default Horizontal axis: x_rel drives the value, y_rel is
         // ignored. Regression guard against the R51.35 contract.
         let mut sx = SliderExternal::new();
-        sx.pointer_move(0.7, 0.2);
+        sx.pointer_move(PointerReading::over_unit((0.7, 0.2)));
         assert!((sx.value() - 0.7).abs() < 1e-4);
         // Vary y_rel — value must not move.
-        sx.pointer_move(0.7, 0.9);
+        sx.pointer_move(PointerReading::over_unit((0.7, 0.9)));
         assert!((sx.value() - 0.7).abs() < 1e-4);
     }
 
@@ -972,14 +976,14 @@ mod tests {
         // Vertical axis: value = 1.0 - y_rel (ARIA convention, top
         // = max). x_rel is ignored.
         let mut sx = SliderExternal::with_axis(SliderAxis::Vertical);
-        sx.pointer_move(0.0, 0.0); // top edge
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.0))); // top edge
         assert!((sx.value() - 1.0).abs() < 1e-4);
-        sx.pointer_move(0.0, 1.0); // bottom edge
+        sx.pointer_move(PointerReading::over_unit((0.0, 1.0))); // bottom edge
         assert!((sx.value() - 0.0).abs() < 1e-4);
-        sx.pointer_move(0.0, 0.3); // 30% from top → value 0.7
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.3))); // 30% from top → value 0.7
         assert!((sx.value() - 0.7).abs() < 1e-4);
         // Vary x_rel — value must not move.
-        sx.pointer_move(0.5, 0.3);
+        sx.pointer_move(PointerReading::over_unit((0.5, 0.3)));
         assert!((sx.value() - 0.7).abs() < 1e-4);
     }
 
@@ -989,9 +993,9 @@ mod tests {
         // resulting `1.0 - y_rel` may go negative or exceed 1.0;
         // the `clamp(0.0, 1.0)` in pointer_move saturates.
         let mut sx = SliderExternal::with_axis(SliderAxis::Vertical);
-        sx.pointer_move(0.0, -0.5); // above top → 1.5, clamps to 1.0
+        sx.pointer_move(PointerReading::over_unit((0.0, -0.5))); // above top → 1.5, clamps to 1.0
         assert!((sx.value() - 1.0).abs() < 1e-4);
-        sx.pointer_move(0.0, 1.7); // below bottom → -0.7, clamps to 0.0
+        sx.pointer_move(PointerReading::over_unit((0.0, 1.7))); // below bottom → -0.7, clamps to 0.0
         assert!((sx.value() - 0.0).abs() < 1e-4);
     }
 

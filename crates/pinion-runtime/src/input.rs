@@ -87,7 +87,8 @@ use pinion_core::external::{
     OUTER_DOCK_MARGIN, OUTER_DOCK_ZONE_TAG,
 };
 use pinion_core::input::{
-    GesturePhase, PointerButton, PointerButtons, PointerEdge, PointerWireEvent, RawPointerButton,
+    GesturePhase, PointerButton, PointerButtons, PointerEdge, PointerReading, PointerWireEvent,
+    RawPointerButton,
 };
 use pinion_core::scene::{ExternalNode, Rect, Scene};
 use pinion_core::widgets::scroll::ScrollState;
@@ -3129,12 +3130,12 @@ impl InputRouter {
         let Some(external) = state_scene.find_external_with_tag_mut(primary) else {
             return;
         };
-        let Some((x_rel, y_rel)) =
+        let Some(reading) =
             capture_rel_coords(paint, external, primary, target_tag, cursor_x, cursor_y)
         else {
             return;
         };
-        external.handle.pointer_move(x_rel, y_rel);
+        external.handle.pointer_move(reading);
         // R1430 §5.35 — every non-positional axis (pressure / tilt / twist /
         // tangential / height) travels WITH the move (the W3C `pointermove`
         // model), forwarded as ONE bundle so a new axis is a struct field, not a
@@ -4670,12 +4671,15 @@ fn offer_to_hovered_external(
     let Some(external) = state_scene.find_external_with_tag_mut(primary) else {
         return false;
     };
-    let Some((x_rel, y_rel)) =
+    let Some(reading) =
         capture_rel_coords(paint, external, primary, target_tag, cursor.0, cursor.1)
     else {
         return false;
     };
-    offer(external.handle.as_mut(), x_rel, y_rel)
+    // R1727 — the wheel and the two-finger gestures take the FRACTION and are
+    // right to: a notch does not resize what it is measured over. Only the
+    // captured drag needed the rect, so only it reads the whole reading.
+    offer(external.handle.as_mut(), reading.u(), reading.v())
 }
 
 /// R877 / R881 §5.35 §5.49 — the wheel-vocabulary `External` offer, stage 1 of
@@ -4731,12 +4735,8 @@ pub fn wheel_intent_at(
     let target_tag = resolve_pointer_tag(paint, cursor.0, cursor.1)?;
     let (primary, _) = split_subindex(&target_tag);
     let external = state_scene.find_external_with_tag(primary)?;
-    let (x_rel, y_rel) =
-        capture_rel_coords(paint, external, primary, &target_tag, cursor.0, cursor.1)?;
-    Some((
-        primary.to_owned(),
-        external.handle.wheel_intent((x_rel, y_rel)),
-    ))
+    let reading = capture_rel_coords(paint, external, primary, &target_tag, cursor.0, cursor.1)?;
+    Some((primary.to_owned(), external.handle.wheel_intent(reading.at)))
 }
 
 /// R1432 §5.35 — the External-offer leg for a native PINCH gesture, the
@@ -4826,14 +4826,25 @@ fn capture_rel_coords(
     target_tag: &str,
     cursor_x: f64,
     cursor_y: f64,
-) -> Option<(f32, f32)> {
+) -> Option<PointerReading> {
     let norm_tag = match external.handle.capture_normalize() {
         CaptureNormalize::Tag(tag) => tag,
         CaptureNormalize::Primary => primary,
         CaptureNormalize::Target => target_tag,
     };
     let rect = rect_for_tag(paint, norm_tag)?;
-    Some(normalize_cursor(rect, cursor_x, cursor_y))
+    // R1727 §5.35 — the rect travels WITH the fraction. It was resolved here and
+    // dropped on the floor, which left every consumer to supply a divisor of its
+    // own; a divisor the gesture itself moves is then a defect nobody can see
+    // (see [`PointerReading`] for the measurement that opened this).
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "a logical-pixel rect is small enough to round-trip f32 exactly"
+    )]
+    Some(PointerReading::new(
+        normalize_cursor(rect, cursor_x, cursor_y),
+        (rect.w as f32, rect.h as f32),
+    ))
 }
 
 /// R51.34 §5.35 — normalise a winit cursor `(f64, f64)` into
@@ -5413,11 +5424,8 @@ mod tests {
                 event.click_count,
             ));
         }
-        fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
-            self.moves
-                .lock()
-                .expect("mutex poisoned")
-                .push((x_rel, y_rel));
+        fn pointer_move(&mut self, at: PointerReading) {
+            self.moves.lock().expect("mutex poisoned").push(at.at);
         }
     }
 
@@ -7545,11 +7553,8 @@ mod tests {
                 CaptureNormalize::Target
             }
         }
-        fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
-            self.moves
-                .lock()
-                .expect("mutex poisoned")
-                .push((x_rel, y_rel));
+        fn pointer_move(&mut self, at: PointerReading) {
+            self.moves.lock().expect("mutex poisoned").push(at.at);
         }
         fn wants_bare_send_modifiers(&self) -> bool {
             self.opt_ins.has(OptIns::BARE_SEND_MODIFIERS)
@@ -8601,6 +8606,95 @@ mod tests {
             c.rect = Rect::new(0, 0, viewport_w, viewport_h);
         }
         root
+    }
+
+    /// A capture widget that keeps the WHOLE reading, not just its fraction.
+    struct ReadingExternal(Arc<Mutex<Vec<PointerReading>>>);
+
+    impl std::fmt::Debug for ReadingExternal {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("ReadingExternal").finish()
+        }
+    }
+
+    impl pinion_core::external::External for ReadingExternal {
+        fn backends(&self) -> BackendSupport {
+            BackendSupport::new(&[Backend::Gui], BackendFallback::Skip)
+        }
+        fn repaint_ownership(&self) -> RepaintOwner {
+            RepaintOwner::Framework
+        }
+        fn thread_ownership(&self) -> ThreadOwnership {
+            ThreadOwnership::UiThreadSync
+        }
+        fn wants_pointer_capture(&self) -> bool {
+            true
+        }
+        fn capture_normalize(&self) -> CaptureNormalize<'_> {
+            CaptureNormalize::Primary
+        }
+        fn pointer_move(&mut self, at: PointerReading) {
+            self.0.lock().expect("mutex poisoned").push(at);
+        }
+    }
+
+    /// ★★★★★ R1727 — **the law that makes a captured reading frame-independent.**
+    ///
+    /// `px()` is the cursor's offset inside the rectangle the reading was taken
+    /// over, and therefore does NOT depend on that rectangle's size. Asserted by
+    /// painting the SAME origin at two different sizes and requiring the same
+    /// pixel out of both — which is exactly the situation a gesture that grows
+    /// its own container creates between one frame and the next, and exactly
+    /// what a consumer scaling the fraction by a live model count gets wrong.
+    #[test]
+    fn r1727_px_is_the_offset_in_the_rect_whatever_size_the_rect_is() {
+        let mut readings = Vec::new();
+        for height in [40_u32, 400_u32] {
+            let log = Arc::new(Mutex::new(Vec::new()));
+            let mut state = Scene::External(
+                ExternalNode::new(Box::new(ReadingExternal(Arc::clone(&log)))).with_tag("board"),
+            );
+            let mut router = InputRouter::new();
+            router.update_paint_scene(
+                paint_with_primary_and_subtag(
+                    600,
+                    600,
+                    Rect::new(80, 80, 40, height),
+                    Rect::new(96, 80, 8, 8),
+                    "board",
+                    "cell",
+                ),
+                &mut state,
+            );
+            router.cursor_moved(PointerId::MOUSE, 98.0, 100.0, &mut state);
+            router.pointer_down(PointerId::MOUSE, &mut state);
+            let seen = log.lock().expect("mutex poisoned").clone();
+            assert_eq!(seen.len(), 1, "one forwarded move per press");
+            readings.push(seen[0]);
+        }
+
+        let (short, tall) = (readings[0], readings[1]);
+        assert_eq!(
+            short.extent,
+            (40.0, 40.0),
+            "the reading carries the rect it was normalised over"
+        );
+        assert_eq!(tall.extent, (40.0, 400.0), "and reports the taller one");
+        // The FRACTION disagrees, which is the whole hazard: the same pixel is
+        // half-way down a short board and a twentieth of the way down a tall one.
+        assert!(
+            (short.v() - 0.5).abs() < 1e-4 && (tall.v() - 0.05).abs() < 1e-4,
+            "the fraction moves with the rect: {} vs {}",
+            short.v(),
+            tall.v(),
+        );
+        // And `px` does not.
+        assert_eq!(
+            short.px(),
+            tall.px(),
+            "px is cursor - origin, so it is the same pixel in both",
+        );
+        assert_eq!(short.px(), (18.0, 20.0), "cursor (98,100) - origin (80,80)");
     }
 
     #[test]

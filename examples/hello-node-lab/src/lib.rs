@@ -71,6 +71,7 @@ use pinion_core::external::{
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, PointerTarget, ReadRefusal,
     RepaintOwner, SchemaArg, SchemaField, ThreadOwnership,
 };
+use pinion_core::input::PointerReading;
 use pinion_core::reactive::{Signal, Tracked};
 use pinion_core::scene::{
     ContainerNode, PathCommand, PathNode, PathPoint, Rect, ScrollAxis, ScrollNode, TextNode,
@@ -10405,7 +10406,7 @@ impl External for LabOracle {
         contains(canvas_rect(), px, py).then_some(pinion_core::widgets::wheel::WheelIntent::Zoom)
     }
 
-    fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
+    fn pointer_move(&mut self, at: PointerReading) {
         let Some(state) = self.state.clone() else {
             return;
         };
@@ -10434,7 +10435,15 @@ impl External for LabOracle {
         // however far the reader has panned. Measured with the offset ignored:
         // `scene/pointer_target` fell from 46 addressable rectangles to 28 and
         // eight became addressable at no point inside themselves.
-        let (px, py) = pinion_core::external::layout_point(VIEW_TAG, (x_rel, y_rel));
+        // ★★★★★ R1727 — and the rect is no longer missing. The comment above is
+        // the one this round's type was built from: `pointer_move` handed a
+        // fraction and not the rectangle, so a screen that wanted pixels had to
+        // find a basis elsewhere, and the basis it found was wrong for two
+        // rounds. `at.extent` is that rectangle, carried by the reading itself.
+        // This screen keeps `layout_point` because it needs the PAN term too,
+        // and the two agree — asserted rather than assumed, by
+        // `r1727_the_readings_extent_is_the_surface_the_screen_was_told_about`.
+        let (px, py) = pinion_core::external::layout_point(VIEW_TAG, at.at);
         move_cursor(&state, px, py);
     }
 

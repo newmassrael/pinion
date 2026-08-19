@@ -1612,8 +1612,8 @@ fn r838_capture_drag_moves_grabbed_node() {
             let node = scene
                 .find_external_with_tag_mut(GRAPH_TAG)
                 .expect("present");
-            node.handle.pointer_move(0.10, 0.10); // anchor
-            node.handle.pointer_move(0.30, 0.10); // +0.20 * WIN_W to the right
+            node.handle.pointer_move(over_canvas((0.10, 0.10))); // anchor
+            node.handle.pointer_move(over_canvas((0.30, 0.10))); // +0.20 * WIN_W right
         }
         let x1 = query_int(&scene, "node.0.x");
         assert!(
@@ -1879,6 +1879,27 @@ fn mem_storage() -> Rc<AppStorage> {
         .cache(STORAGE_CACHE_KEY, || {
             AppStorage::new(Box::new(pinion_core::storage::InMemoryStorage::new()))
         })
+}
+
+/// A reading at fraction `at` over the **canvas** rect, which is the rectangle
+/// [`CaptureNormalize::Tag(GRAPH_TAG)`] names and therefore the one a captured
+/// pointer here is normalised over.
+///
+/// ★★★★★ R1727 — and it is `WIN_W`, not the window. Until this round the
+/// editor multiplied the canvas fraction by `self.surface`, which `on_resize`
+/// fills with the size of the WHOLE surface — palette and detail panel
+/// included. Those are two different rectangles, so the pixel travel the
+/// click-versus-drag dead zone was measured in came out scaled by
+/// `TOTAL_W / WIN_W`, and nothing could see it: the fraction was right, the
+/// basis was a plausible number, and no test stated which rectangle it meant.
+/// `PointerReading::px` ends the choice — the extent is the rect the fraction
+/// came from, and it is not a second value anybody supplies.
+#[allow(
+    clippy::cast_precision_loss,
+    reason = "the design canvas size round-trips f32 exactly"
+)]
+fn over_canvas(at: (f32, f32)) -> pinion_core::input::PointerReading {
+    pinion_core::input::PointerReading::new(at, (WIN_W as f32, WIN_H as f32))
 }
 
 fn coordinator() -> NodeGraphExternal {
@@ -2790,7 +2811,7 @@ fn r839_background_press_probe_selects_a_wire() {
             let node = scene
                 .find_external_with_tag_mut(GRAPH_TAG)
                 .expect("present");
-            node.handle.pointer_move(0.328_125, 0.319); // ~ (210, 134) = edge 0 midpoint
+            node.handle.pointer_move(over_canvas((0.328_125, 0.319))); // (210,134) edge 0 mid
         }
         send(&mut scene, "PointerUp");
         assert_eq!(query_int(&scene, "selected_edge"), 0, "wire selected");
@@ -2804,7 +2825,7 @@ fn r839_background_press_probe_selects_a_wire() {
             let node = scene
                 .find_external_with_tag_mut(GRAPH_TAG)
                 .expect("present");
-            node.handle.pointer_move(0.95, 0.95); // empty corner
+            node.handle.pointer_move(over_canvas((0.95, 0.95))); // empty corner
         }
         send(&mut scene, "PointerUp");
         assert_eq!(
@@ -2821,10 +2842,10 @@ fn bg_move(scene: &mut Scene, gx: f64, gy: f64) {
     let node = scene
         .find_external_with_tag_mut(GRAPH_TAG)
         .expect("present");
-    node.handle.pointer_move(
+    node.handle.pointer_move(over_canvas((
         (gx / f64::from(WIN_W)) as f32,
         (gy / f64::from(WIN_H)) as f32,
-    );
+    )));
 }
 
 fn selected_ids_of(scene: &Scene) -> String {
@@ -4695,8 +4716,8 @@ fn r877_drag_at_zoom_moves_in_graph_units() {
         coord.grabbed_node.set(Some(id));
         // Press at rel (0.1, 0.1), move to rel (0.2, 0.1): 64 canvas px =
         // 32 graph units at 2x zoom.
-        coord.pointer_move(0.1, 0.1);
-        coord.pointer_move(0.2, 0.1);
+        coord.pointer_move(over_canvas((0.1, 0.1)));
+        coord.pointer_move(over_canvas((0.2, 0.1)));
         let after = pos_of(&coord, id);
         assert_eq!(
             after.0 - before.0,
@@ -5270,14 +5291,14 @@ fn r879_grabbing_a_selected_node_drags_the_group() {
         use_selection().set(sel_set(&[0, 1]));
         coord.grabbed_node.set(Some(NodeId(0)));
         // First capture move snapshots the member set (both selected).
-        coord.pointer_move(0.5, 0.5);
+        coord.pointer_move(over_canvas((0.5, 0.5)));
         assert_eq!(
             coord.node_drag.borrow().as_ref().map(|d| d.members.len()),
             Some(2),
             "grabbing a selected node snapshots the whole selection",
         );
         // Second move drags the group rigidly.
-        coord.pointer_move(0.6, 0.5);
+        coord.pointer_move(over_canvas((0.6, 0.5)));
         let b0 = pos_of(&coord, NodeId(0));
         let b1 = pos_of(&coord, NodeId(1));
         assert_eq!(
@@ -5304,13 +5325,13 @@ fn r879_grabbing_an_unselected_node_drags_only_it() {
         use_selection().set(sel_set(&[0, 1]));
         // Grab node 2 — NOT a member.
         coord.grabbed_node.set(Some(NodeId(2)));
-        coord.pointer_move(0.5, 0.5);
+        coord.pointer_move(over_canvas((0.5, 0.5)));
         assert_eq!(
             coord.node_drag.borrow().as_ref().map(|d| d.members.len()),
             Some(1),
             "an unselected grab drags just the grabbed node",
         );
-        coord.pointer_move(0.6, 0.6);
+        coord.pointer_move(over_canvas((0.6, 0.6)));
         assert_eq!(
             pos_of(&coord, NodeId(1)),
             a1,
@@ -5436,8 +5457,8 @@ fn r879_jitter_click_neither_moves_nor_suppresses_select() {
         let stack = use_undo();
         let p0 = pos_of(&coord, NodeId(0));
         coord.grabbed_node.set(Some(NodeId(0)));
-        coord.pointer_move(0.5, 0.5); // capture seed (press point)
-        coord.pointer_move(0.503, 0.5); // ~1.9 px — inside the dead zone
+        coord.pointer_move(over_canvas((0.5, 0.5))); // capture seed (press point)
+        coord.pointer_move(over_canvas((0.503, 0.5))); // ~1.9 px — inside the dead zone
         assert_eq!(
             pos_of(&coord, NodeId(0)),
             p0,
@@ -5453,6 +5474,53 @@ fn r879_jitter_click_neither_moves_nor_suppresses_select() {
             use_selection().get(),
             Selection::single(NodeId(0)),
             "the click selects"
+        );
+    });
+}
+
+/// ★★★★★ R1727 — **the dead zone is measured in the rectangle the cursor was
+/// measured in, and no other.**
+///
+/// The editor's captured pointer is normalised over `Tag(GRAPH_TAG)` — the
+/// canvas — while `on_resize` fills `self.surface` with the WHOLE surface,
+/// palette and detail panel included. Multiplying the canvas fraction by the
+/// surface is what this did until R1727, and the click-versus-drag threshold
+/// came out inflated: a wiggle that is inside the dead zone reads as outside
+/// it, so a click becomes a drag.
+///
+/// ★ And the error GREW WITH THE WINDOW, which is why nobody could pin it to a
+/// number. Measured by driving a real resize: the canvas rect is `640x420` at
+/// every window size (the three panes are fixed and the window pans), while
+/// `self.surface` follows the window — so the threshold was 1.5x too large at
+/// the design size and 2.2x too large at 1400 wide.
+///
+/// The two rectangles are told apart HERE by making them differ: the surface is
+/// announced as the full width while the reading is taken over the canvas. A
+/// fraction of 0.006 is 3.84 canvas px (inside the 4 px threshold) and 5.78 px
+/// against the full 964 px surface (outside it), so the two answers are
+/// opposite and the test can only pass if the reading's own extent is used.
+#[test]
+fn r1727_the_dead_zone_is_measured_in_the_canvas_the_cursor_came_from() {
+    Owner::new().run(|| {
+        let _ = boot_scene();
+        let mut coord = coordinator();
+        // The window is wider than the canvas — the shape every run of this
+        // screen has, and the one the old basis could not tell apart.
+        coord.on_resize(TOTAL_W, WIN_H);
+        let p0 = pos_of(&coord, NodeId(0));
+        coord.grabbed_node.set(Some(NodeId(0)));
+        coord.pointer_move(over_canvas((0.5, 0.5)));
+        coord.pointer_move(over_canvas((0.506, 0.5)));
+        assert_eq!(
+            pos_of(&coord, NodeId(0)),
+            p0,
+            "3.84 canvas px is inside the dead zone, so the node holds still — \
+             against the whole surface the same fraction is 5.78 px and would \
+             have moved it"
+        );
+        assert!(
+            !coord.gesture_moved(),
+            "and the gesture is still a click, not a drag"
         );
     });
 }

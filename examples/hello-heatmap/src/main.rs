@@ -46,6 +46,7 @@ use pinion_core::external::{
     IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
     ThreadOwnership,
 };
+use pinion_core::input::PointerReading;
 use pinion_core::scene::{ContainerNode, Rect, TextGridNode, TextNode};
 use pinion_core::style::{BoxStyle, Color, LayoutStyle, Size, TextStyle};
 use pinion_core::theme::{ColorRole, use_theme};
@@ -403,8 +404,8 @@ impl External for HeatmapOracle {
     /// [`CellMetric::frac_to_cell`] turns it into a character cell, and
     /// [`cell_at_char`] maps that to the data cell under the pointer (or `None`
     /// off the matrix).
-    fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
-        let (gcol, grow) = CellMetric::DEFAULT.frac_to_cell(x_rel, y_rel, GRID_W, GRID_H);
+    fn pointer_move(&mut self, at: PointerReading) {
+        let (gcol, grow) = CellMetric::DEFAULT.frac_to_cell(at.u(), at.v(), GRID_W, GRID_H);
         self.hover = cell_at_char(usize::from(gcol), usize::from(grow));
     }
 
@@ -718,10 +719,10 @@ mod tests {
         let mut o = HeatmapOracle::new();
         assert_eq!(o.hover, None, "no hover before any pointer");
         // A hover over data cell (row 0, col 0)'s centre resolves to it.
-        o.pointer_move(0.0, 0.0);
+        o.pointer_move(PointerReading::over_unit((0.0, 0.0)));
         assert_eq!(o.hover, Some(Hover { row: 0, col: 0 }));
         // The far corner resolves to the last data cell.
-        o.pointer_move(1.0, 1.0);
+        o.pointer_move(PointerReading::over_unit((1.0, 1.0)));
         assert_eq!(
             o.hover,
             Some(Hover {

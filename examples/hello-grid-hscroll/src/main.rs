@@ -275,18 +275,15 @@ impl WidgetCore for GridHscrollView {
         let widths = use_column_widths(COLS_KEY, || vec![COL_W; NCOLS]);
         // The resize handles normalize their pixel drag against the horizontal
         // scroll viewport (a stable width — the dragged cell resizes, the
-        // viewport does not), so they share the grid's h-scroll state + tag.
-        let h_scroll = use_scroll_state(H_SCROLL_KEY);
+        // viewport does not), so they name the grid's h-scroll TAG. R1727 —
+        // they no longer take its `ScrollState` too: the pixel basis used to be
+        // read back from there and is now the extent of the very rectangle the
+        // cursor fraction was taken over.
         let mut externals = vec![ExtraExternal::new(
             COLS_KEY,
             Box::new(ColumnWidthExternal::new(Rc::clone(&widths))),
         )];
-        externals.extend(column_resize_externals(
-            TABLE_TAG,
-            &widths,
-            &h_scroll,
-            H_SCROLL_KEY,
-        ));
+        externals.extend(column_resize_externals(TABLE_TAG, &widths, H_SCROLL_KEY));
         externals
     }
 

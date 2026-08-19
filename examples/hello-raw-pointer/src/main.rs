@@ -64,6 +64,7 @@ use pinion_core::external::{
     IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
     ThreadOwnership,
 };
+use pinion_core::input::PointerReading;
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode, capture_surface};
 use pinion_core::style::{Border, BoxStyle, LayoutStyle, Size, TextStyle};
 use pinion_core::theme::{ColorRole, use_theme};
@@ -672,9 +673,9 @@ impl External for RawPointerSink {
         true
     }
 
-    fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
-        self.x_frac = Some(x_rel.clamp(0.0, 1.0));
-        self.y_frac = Some(y_rel.clamp(0.0, 1.0));
+    fn pointer_move(&mut self, at: PointerReading) {
+        self.x_frac = Some(at.u().clamp(0.0, 1.0));
+        self.y_frac = Some(at.v().clamp(0.0, 1.0));
     }
 
     /// R1423 — record the live pointer pressure (W3C `PointerEvent.pressure`).
@@ -1070,7 +1071,7 @@ mod tests {
         // sink exposes it as `last_clicks` and the readout badges it "×2" so the
         // double is visible as data AND on screen.
         let mut sink = RawPointerSink::new();
-        sink.pointer_move(0.5, 0.5);
+        sink.pointer_move(PointerReading::over_unit((0.5, 0.5)));
         sink.raw_pointer_button(RawPointerButton {
             button: PointerButton::Left,
             edge: PointerEdge::Down,
@@ -1107,7 +1108,7 @@ mod tests {
     fn a_single_click_is_not_badged() {
         // A plain first click (click_count = 1) carries no "×N" badge.
         let mut sink = RawPointerSink::new();
-        sink.pointer_move(0.5, 0.5);
+        sink.pointer_move(PointerReading::over_unit((0.5, 0.5)));
         edge(
             &mut sink,
             PointerButton::Left,
@@ -1209,7 +1210,7 @@ mod tests {
     fn the_readout_surfaces_the_live_pressure() {
         // R1423 — the readout names the live pressure so a pen force reads as data.
         let mut sink = RawPointerSink::new();
-        sink.pointer_move(0.4, 0.4);
+        sink.pointer_move(PointerReading::over_unit((0.4, 0.4)));
         edge(
             &mut sink,
             PointerButton::Left,
@@ -1330,7 +1331,7 @@ mod tests {
         // R1429 — the readout names the live tilt so a pen's lean reads as data,
         // and only when the pen is off the perpendicular.
         let mut sink = RawPointerSink::new();
-        sink.pointer_move(0.4, 0.4);
+        sink.pointer_move(PointerReading::over_unit((0.4, 0.4)));
         edge(
             &mut sink,
             PointerButton::Left,
@@ -1494,7 +1495,7 @@ mod tests {
     fn r1430_the_readout_surfaces_the_scalar_axes() {
         // R1430 — the readout names twist / tangential / height when off rest.
         let mut sink = RawPointerSink::new();
-        sink.pointer_move(0.4, 0.4);
+        sink.pointer_move(PointerReading::over_unit((0.4, 0.4)));
         edge(
             &mut sink,
             PointerButton::Left,
@@ -1559,7 +1560,7 @@ mod tests {
         assert_ne!(pen, mouse, "a pen and a mouse paint different tips");
 
         // The readout badges a non-mouse device, but not a plain mouse.
-        sink.pointer_move(0.4, 0.4);
+        sink.pointer_move(PointerReading::over_unit((0.4, 0.4)));
         edge(
             &mut sink,
             PointerButton::Left,
@@ -1633,7 +1634,7 @@ mod tests {
     #[test]
     fn the_position_is_stamped_onto_each_report() {
         let mut sink = RawPointerSink::new();
-        sink.pointer_move(0.25, 0.75);
+        sink.pointer_move(PointerReading::over_unit((0.25, 0.75)));
         edge(
             &mut sink,
             PointerButton::Left,
@@ -1654,7 +1655,7 @@ mod tests {
     #[test]
     fn leaving_the_pane_clears_the_live_position_but_not_the_log() {
         let mut sink = RawPointerSink::new();
-        sink.pointer_move(0.5, 0.5);
+        sink.pointer_move(PointerReading::over_unit((0.5, 0.5)));
         edge(
             &mut sink,
             PointerButton::Left,
@@ -1719,7 +1720,7 @@ mod tests {
     #[test]
     fn the_readout_names_the_last_report() {
         let mut sink = RawPointerSink::new();
-        sink.pointer_move(0.3, 0.4);
+        sink.pointer_move(PointerReading::over_unit((0.3, 0.4)));
         edge(
             &mut sink,
             PointerButton::Middle,

@@ -35,7 +35,7 @@ use std::rc::Rc;
 use serde_json::value::RawValue;
 
 use crate::Event;
-use crate::input::{GesturePhase, Modifiers, PointerKind, RawPointerButton};
+use crate::input::{GesturePhase, Modifiers, PointerKind, PointerReading, RawPointerButton};
 use crate::intent::Intent;
 use crate::utterance::{Announced, Utterance};
 
@@ -3080,9 +3080,17 @@ pub trait External: core::fmt::Debug {
     /// framework's [`InputRouter`](crate#) calls this whenever the
     /// cursor moves while this widget holds capture (i.e. after a
     /// `pointer_down` on a `wants_pointer_capture` = true widget and
-    /// before the matching `pointer_up`). `x_rel` / `y_rel` are
-    /// normalised over the widget's post-layout rect: `0.0` is the
-    /// left / top edge, `1.0` is the right / bottom edge.
+    /// before the matching `pointer_up`).
+    ///
+    /// R1727 §5.35 — the reading arrives as a [`PointerReading`], which carries
+    /// the fraction this used to take as two bare `f32`s **and the rectangle it
+    /// was taken over**. One argument rather than two, because the pair was
+    /// never self-contained: a fraction whose divisor the caller has to guess is
+    /// only meaningful with the rect, and the widgets that most want a captured
+    /// pointer are the ones whose gesture *moves* what they scale it by. Read
+    /// [`at`](PointerReading::at) when the divisor is the rectangle itself (a
+    /// slider's track) and [`px`](PointerReading::px) when it is anything else —
+    /// the type's own documentation carries the measurement that forced this.
     ///
     /// Coordinates may exceed `[0.0, 1.0]` (or be negative) when the
     /// cursor strays outside the rect under capture lock — the
@@ -3095,7 +3103,7 @@ pub trait External: core::fmt::Debug {
     /// without `pointer_move` is a valid stance (e.g. a future
     /// long-press widget that only cares about the dwell time, not
     /// the cursor X).
-    fn pointer_move(&mut self, _x_rel: f32, _y_rel: f32) {}
+    fn pointer_move(&mut self, _at: PointerReading) {}
 
     /// ★★★★★ R1700 §5.15 §5.35 §2 #7 — **what a press at this point
     /// addresses**, in this surface's own vocabulary. Half of the pair the
@@ -5114,8 +5122,8 @@ mod tests {
         // Default impl drops both coords — exercising it is the
         // assertion that the trait signature remains dyn-safe and
         // the no-op body compiles for the StubExternal baseline.
-        stub.pointer_move(0.5, 0.5);
-        stub.pointer_move(-0.1, 1.3);
+        stub.pointer_move(PointerReading::over_unit((0.5, 0.5)));
+        stub.pointer_move(PointerReading::over_unit((-0.1, 1.3)));
     }
 
     #[test]

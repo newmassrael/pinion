@@ -80,7 +80,7 @@ use pinion_core::external::{
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
     SchemaArg, SchemaField, ThreadOwnership,
 };
-use pinion_core::input::{DragCalibration, PointerWireEvent};
+use pinion_core::input::{DragCalibration, PointerReading, PointerWireEvent};
 use pinion_core::intent::Intent;
 use pinion_core::reactive::Signal;
 use pinion_core::scene::{ContainerNode, Scene};
@@ -830,7 +830,16 @@ impl External for SplitterExternal {
                   f64 delta narrows to f32 with no meaningful precision loss for a \
                   ratio in [0, 1]"
     )]
-    fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
+    /// R1727 — the FRACTION is the right reading: a splitter's value IS a
+    /// fraction of its pane container, and dragging the handle does not resize
+    /// that container. What the reading newly makes possible here is the
+    /// question [`DragCalibration::traveled_beyond`] documents as
+    /// unanswerable from a fraction — a pixel dead zone — because
+    /// [`PointerReading::extent`] is now the basis it wanted. Left unasked:
+    /// this widget has no click action on the same press, so it has no
+    /// click-versus-drag to decide.
+    fn pointer_move(&mut self, at: PointerReading) {
+        let (x_rel, y_rel) = at.at;
         let cursor_fraction = match self.orientation {
             SplitterOrientation::Horizontal => x_rel,
             SplitterOrientation::Vertical => y_rel,
@@ -1151,6 +1160,7 @@ mod tests {
         handle_fill_for_dragging, view_splitter,
     };
     use pinion_core::external::{External, ExternalIntrospect, IntrospectValue};
+    use pinion_core::input::PointerReading;
     use pinion_core::reactive::{Owner, Signal};
     use pinion_core::scene::{ContainerNode, Scene};
     use pinion_core::style::FlexDirection;
@@ -1671,7 +1681,7 @@ mod tests {
         let mut ext =
             SplitterExternal::new(SplitterOrientation::Horizontal).attach_ratio(Rc::clone(&ratio));
         assert!(!ext.is_dragging());
-        ext.pointer_move(0.5, 0.0);
+        ext.pointer_move(PointerReading::over_unit((0.5, 0.0)));
         assert!(ext.is_dragging(), "first pointer_move arms is_dragging");
         assert!(
             (ratio.get() - 0.5).abs() < f32::EPSILON,
@@ -1684,9 +1694,9 @@ mod tests {
         let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.5));
         let mut ext =
             SplitterExternal::new(SplitterOrientation::Horizontal).attach_ratio(Rc::clone(&ratio));
-        ext.pointer_move(0.5, 0.0);
+        ext.pointer_move(PointerReading::over_unit((0.5, 0.0)));
         // Cursor moves +0.2 along x — ratio becomes 0.5 + 0.2 = 0.7.
-        ext.pointer_move(0.7, 0.0);
+        ext.pointer_move(PointerReading::over_unit((0.7, 0.0)));
         assert!(
             (ratio.get() - 0.7).abs() < 1e-5,
             "expected ratio 0.7, got {}",
@@ -1699,11 +1709,11 @@ mod tests {
         let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.5));
         let mut ext =
             SplitterExternal::new(SplitterOrientation::Horizontal).attach_ratio(Rc::clone(&ratio));
-        ext.pointer_move(0.5, 0.0);
+        ext.pointer_move(PointerReading::over_unit((0.5, 0.0)));
         // Cursor strays past the right edge under capture lock —
         // x_rel reaches 1.5 (0.5 + 1.0). Ratio should saturate at
         // max_ratio = 0.95.
-        ext.pointer_move(1.5, 0.0);
+        ext.pointer_move(PointerReading::over_unit((1.5, 0.0)));
         assert!(
             (ratio.get() - 0.95).abs() < f32::EPSILON,
             "ratio must clamp at max_ratio = 0.95, got {}",
@@ -1716,10 +1726,10 @@ mod tests {
         let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.5));
         let mut ext =
             SplitterExternal::new(SplitterOrientation::Horizontal).attach_ratio(Rc::clone(&ratio));
-        ext.pointer_move(0.5, 0.0);
+        ext.pointer_move(PointerReading::over_unit((0.5, 0.0)));
         // Cursor strays past the left edge — x_rel reaches -0.5.
         // Ratio = 0.5 + (-0.5 - 0.5) = -0.5 → clamps to min 0.05.
-        ext.pointer_move(-0.5, 0.0);
+        ext.pointer_move(PointerReading::over_unit((-0.5, 0.0)));
         assert!(
             (ratio.get() - 0.05).abs() < f32::EPSILON,
             "ratio must clamp at min_ratio = 0.05, got {}",
@@ -1732,7 +1742,7 @@ mod tests {
         let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.5));
         let mut ext =
             SplitterExternal::new(SplitterOrientation::Horizontal).attach_ratio(Rc::clone(&ratio));
-        ext.pointer_move(0.5, 0.0);
+        ext.pointer_move(PointerReading::over_unit((0.5, 0.0)));
         assert!(ext.is_dragging());
         // PointerUp clears via the framework's invoke("send", ...)
         // dispatch (the R51.41 §5.35 channel the InputRouter
@@ -1743,7 +1753,7 @@ mod tests {
         // A new pointer_move after release starts a fresh
         // calibration cycle (no ratio mutation on the press-time
         // frame).
-        ext.pointer_move(0.8, 0.0);
+        ext.pointer_move(PointerReading::over_unit((0.8, 0.0)));
         assert!(
             (ratio.get() - 0.5).abs() < f32::EPSILON,
             "post-release press-time frame must not mutate ratio",
@@ -1755,7 +1765,7 @@ mod tests {
         let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.5));
         let mut ext =
             SplitterExternal::new(SplitterOrientation::Horizontal).attach_ratio(Rc::clone(&ratio));
-        ext.pointer_move(0.5, 0.0);
+        ext.pointer_move(PointerReading::over_unit((0.5, 0.0)));
         assert!(ext.is_dragging());
         ext.invoke("send", IntrospectValue::Text("PointerCancel".to_string()))
             .expect("invoke send PointerCancel returns Ok");
@@ -1782,8 +1792,8 @@ mod tests {
             SplitterExternal::new(SplitterOrientation::Horizontal).attach_ratio(Rc::clone(&ratio));
         // Calibrate, then drag to 0.7. The live channel writes the
         // Signal on every move; nothing is committed mid-drag.
-        ext.pointer_move(0.5, 0.0);
-        ext.pointer_move(0.7, 0.0);
+        ext.pointer_move(PointerReading::over_unit((0.5, 0.0)));
+        ext.pointer_move(PointerReading::over_unit((0.7, 0.0)));
         assert!(
             !ext.is_dirty(),
             "the live Signal stream is the preview channel — an in-flight drag commits nothing",
@@ -1823,8 +1833,8 @@ mod tests {
         let ratio: Rc<Signal<f32>> = Rc::new(Signal::new(0.5));
         let mut ext =
             SplitterExternal::new(SplitterOrientation::Horizontal).attach_ratio(Rc::clone(&ratio));
-        ext.pointer_move(0.5, 0.0);
-        ext.pointer_move(0.7, 0.0);
+        ext.pointer_move(PointerReading::over_unit((0.5, 0.0)));
+        ext.pointer_move(PointerReading::over_unit((0.7, 0.0)));
 
         ext.invoke("send", IntrospectValue::Text("PointerCancel".to_string()))
             .expect("invoke send PointerCancel returns Ok");
@@ -1873,10 +1883,10 @@ mod tests {
         // somewhere new", not "did the cursor travel" — a round trip
         // leaves nothing to persist, so the channel stays silent even
         // though a very real drag ran.
-        ext.pointer_move(0.5, 0.0);
-        ext.pointer_move(0.7, 0.0);
+        ext.pointer_move(PointerReading::over_unit((0.5, 0.0)));
+        ext.pointer_move(PointerReading::over_unit((0.7, 0.0)));
         assert!((ratio.get() - 0.7).abs() < f32::EPSILON);
-        ext.pointer_move(0.5, 0.0);
+        ext.pointer_move(PointerReading::over_unit((0.5, 0.0)));
         assert!(
             (ratio.get() - 0.5).abs() < f32::EPSILON,
             "back to the press ratio"
@@ -1899,9 +1909,9 @@ mod tests {
         // Press while already saturated at max_ratio and shove further
         // right: every move clamps back to 0.95, so the ratio never
         // leaves the press snapshot and there is nothing new to write.
-        ext.pointer_move(0.5, 0.0);
-        ext.pointer_move(0.9, 0.0);
-        ext.pointer_move(1.4, 0.0);
+        ext.pointer_move(PointerReading::over_unit((0.5, 0.0)));
+        ext.pointer_move(PointerReading::over_unit((0.9, 0.0)));
+        ext.pointer_move(PointerReading::over_unit((1.4, 0.0)));
         assert!(
             (ratio.get() - 0.95).abs() < f32::EPSILON,
             "pinned at max_ratio"
@@ -1921,8 +1931,8 @@ mod tests {
         // drag wire is inert, so the release channel stays silent
         // rather than committing a ratio that does not exist.
         let mut ext = SplitterExternal::new(SplitterOrientation::Horizontal);
-        ext.pointer_move(0.5, 0.0);
-        ext.pointer_move(0.7, 0.0);
+        ext.pointer_move(PointerReading::over_unit((0.5, 0.0)));
+        ext.pointer_move(PointerReading::over_unit((0.7, 0.0)));
         ext.invoke("send", IntrospectValue::Text("PointerUp".to_string()))
             .expect("invoke send PointerUp returns Ok");
         assert!(!ext.is_dirty(), "paint-only mode has no ratio to commit");
@@ -1935,8 +1945,8 @@ mod tests {
         let mut ext =
             SplitterExternal::new(SplitterOrientation::Horizontal).attach_ratio(Rc::clone(&ratio));
         // First drag: 0.5 → 0.7.
-        ext.pointer_move(0.5, 0.0);
-        ext.pointer_move(0.7, 0.0);
+        ext.pointer_move(PointerReading::over_unit((0.5, 0.0)));
+        ext.pointer_move(PointerReading::over_unit((0.7, 0.0)));
         ext.invoke("send", IntrospectValue::Text("PointerUp".to_string()))
             .expect("invoke send PointerUp returns Ok");
         let first = harvest(&mut ext);
@@ -1945,8 +1955,8 @@ mod tests {
         // Second drag re-calibrates from the settled ratio: 0.7 + (0.3
         // - 0.5) = 0.5. The release must commit again — the teardown
         // left no stale calibration that would swallow the next edge.
-        ext.pointer_move(0.5, 0.0);
-        ext.pointer_move(0.3, 0.0);
+        ext.pointer_move(PointerReading::over_unit((0.5, 0.0)));
+        ext.pointer_move(PointerReading::over_unit((0.3, 0.0)));
         ext.invoke("send", IntrospectValue::Text("PointerUp".to_string()))
             .expect("invoke send PointerUp returns Ok");
         let second = harvest(&mut ext);
@@ -2239,9 +2249,9 @@ mod tests {
         let mut ext =
             SplitterExternal::new(SplitterOrientation::Vertical).attach_ratio(Rc::clone(&ratio));
         // Press with y_rel = 0.5; x_rel ignored.
-        ext.pointer_move(0.0, 0.5);
+        ext.pointer_move(PointerReading::over_unit((0.0, 0.5)));
         // Move y_rel to 0.8 — ratio = 0.5 + 0.3 = 0.8.
-        ext.pointer_move(0.0, 0.8);
+        ext.pointer_move(PointerReading::over_unit((0.0, 0.8)));
         assert!(
             (ratio.get() - 0.8).abs() < 1e-5,
             "vertical splitter uses y_rel; got ratio = {}",
@@ -2255,9 +2265,9 @@ mod tests {
         let mut ext =
             SplitterExternal::new(SplitterOrientation::Horizontal).attach_ratio(Rc::clone(&ratio));
         // Press with x_rel = 0.5.
-        ext.pointer_move(0.5, 0.5);
+        ext.pointer_move(PointerReading::over_unit((0.5, 0.5)));
         // Cursor jitters along y only — ratio stays at 0.5.
-        ext.pointer_move(0.5, 0.9);
+        ext.pointer_move(PointerReading::over_unit((0.5, 0.9)));
         assert!(
             (ratio.get() - 0.5).abs() < f32::EPSILON,
             "horizontal splitter must ignore y_rel; ratio drifted to {}",
@@ -2272,8 +2282,8 @@ mod tests {
         // before arming the flag because the ratio handle is what
         // makes the wire meaningful).
         let mut ext = SplitterExternal::new(SplitterOrientation::Horizontal);
-        ext.pointer_move(0.5, 0.5);
-        ext.pointer_move(0.8, 0.5);
+        ext.pointer_move(PointerReading::over_unit((0.5, 0.5)));
+        ext.pointer_move(PointerReading::over_unit((0.8, 0.5)));
         assert!(!ext.is_dragging());
         assert!(ext.ratio_signal().is_none());
     }
@@ -2284,10 +2294,10 @@ mod tests {
         let mut ext = SplitterExternal::new(SplitterOrientation::Horizontal)
             .attach_ratio(Rc::clone(&ratio))
             .attach_bounds(0.25, 0.75);
-        ext.pointer_move(0.5, 0.0);
+        ext.pointer_move(PointerReading::over_unit((0.5, 0.0)));
         // Drag past 0.75 (delta +0.5 from press), clamps at 0.75
         // not 0.95.
-        ext.pointer_move(1.0, 0.0);
+        ext.pointer_move(PointerReading::over_unit((1.0, 0.0)));
         assert!(
             (ratio.get() - 0.75).abs() < f32::EPSILON,
             "expected clamp at 0.75 from attach_bounds, got {}",

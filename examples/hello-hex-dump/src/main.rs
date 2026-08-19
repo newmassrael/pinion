@@ -78,6 +78,7 @@ use pinion_core::external::{
     IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
     ThreadOwnership, selection_copy_payload,
 };
+use pinion_core::input::PointerReading;
 use pinion_core::marks::{Mark, MarkSet, MarkedGrid, domain};
 use pinion_core::scene::{ContainerNode, Rect, TextGridNode, TextNode};
 use pinion_core::style::{BoxStyle, LayoutStyle, Size, TextStyle};
@@ -599,10 +600,10 @@ impl External for HexDumpOracle {
     /// or no prior selection) latches an anchor; a continued drag extends the
     /// focus. A non-byte cell deselects a fresh press but is ignored mid-drag
     /// (dragging over the gutter never collapses the selection).
-    fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
+    fn pointer_move(&mut self, at: PointerReading) {
         // R1408 — the router's rect fraction → cell in one call (the lifted
         // `frac_to_px` + `px_to_cell` composite).
-        let (col, row) = CellMetric::DEFAULT.frac_to_cell(x_rel, y_rel, GRID_W, GRID_H);
+        let (col, row) = CellMetric::DEFAULT.frac_to_cell(at.u(), at.v(), GRID_W, GRID_H);
         let fresh = self.pending_anchor || self.selection.is_none();
         match byte_at_cell(usize::from(col), usize::from(row)) {
             Some(b) if fresh => self.select_byte(b),
@@ -1290,12 +1291,12 @@ mod tests {
         // A press then a move over byte 8's hex cell selects it (collapsed).
         press(&mut o);
         let (fx, fy) = byte_frac(8);
-        o.pointer_move(fx, fy);
+        o.pointer_move(PointerReading::over_unit((fx, fy)));
         assert_eq!(o.focus(), Some(8), "click on byte 8's hex cell");
         assert_eq!(o.range(), Some((8, 9)), "a click is a 1-byte selection");
         // A fresh press on the offset column deselects.
         press(&mut o);
-        o.pointer_move(0.0, frac(8, GRID_H));
+        o.pointer_move(PointerReading::over_unit((0.0, frac(8, GRID_H))));
         assert_eq!(o.focus(), None, "click on the offset column deselects");
     }
 
@@ -1305,29 +1306,29 @@ mod tests {
         // Press on byte 4, drag to byte 9 (same row) -> range [4, 10).
         press(&mut o);
         let (ax, ay) = byte_frac(4);
-        o.pointer_move(ax, ay);
+        o.pointer_move(PointerReading::over_unit((ax, ay)));
         assert_eq!(o.range(), Some((4, 5)), "anchor at byte 4");
         let (bx, by) = byte_frac(9);
-        o.pointer_move(bx, by);
+        o.pointer_move(PointerReading::over_unit((bx, by)));
         assert_eq!(o.range(), Some((4, 10)), "drag to byte 9 extends the range");
         assert_eq!(o.focus(), Some(9), "the focus is the drag's live end");
         // A backward drag (before the anchor) normalises the range.
         let (cx, cy) = byte_frac(1);
-        o.pointer_move(cx, cy);
+        o.pointer_move(PointerReading::over_unit((cx, cy)));
         assert_eq!(o.range(), Some((1, 5)), "backward drag keeps anchor 4");
         assert_eq!(o.focus(), Some(1));
         // Dragging onto a non-byte cell (the gutter) does NOT collapse it.
-        o.pointer_move(
+        o.pointer_move(PointerReading::over_unit((
             frac(LAYOUT.ascii_bar_left() * 8 + 4, GRID_W),
             frac(8, GRID_H),
-        );
+        )));
         assert_eq!(o.range(), Some((1, 5)), "gutter drag keeps the last range");
         // A NEW press (after release) starts a fresh selection.
         o.invoke("send", IntrospectValue::Text("PointerUp".into()))
             .unwrap();
         press(&mut o);
         let (dx, dy) = byte_frac(18); // row 1
-        o.pointer_move(dx, dy);
+        o.pointer_move(PointerReading::over_unit((dx, dy)));
         assert_eq!(o.range(), Some((18, 19)), "new press = fresh 1-byte range");
     }
 

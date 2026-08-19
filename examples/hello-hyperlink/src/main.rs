@@ -49,6 +49,7 @@ use pinion_core::external::{
     IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
     ThreadOwnership,
 };
+use pinion_core::input::PointerReading;
 use pinion_core::scene::{ContainerNode, Rect, TextGridNode, TextNode};
 use pinion_core::style::{BoxStyle, CursorHint, LayoutStyle, Size, TextStyle};
 use pinion_core::term_grid::{CellAttrs, Hyperlink, HyperlinkId, UnderlineStyle};
@@ -379,10 +380,10 @@ impl External for HyperlinkOracle {
     /// Each hover move (or drag move) delivers a `[0, 1]` rect fraction:
     /// reconstruct the cell and set the hovered link index (or `None` off a
     /// link).
-    fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
+    fn pointer_move(&mut self, at: PointerReading) {
         // R1408 — the router's rect fraction → cell in one call (the lifted
         // `frac_to_px` + `px_to_cell` composite).
-        let (col, row) = CellMetric::DEFAULT.frac_to_cell(x_rel, y_rel, GRID_W, GRID_H);
+        let (col, row) = CellMetric::DEFAULT.frac_to_cell(at.u(), at.v(), GRID_W, GRID_H);
         self.hovered = self.link_at(col, row);
     }
 

@@ -144,11 +144,17 @@ jobs:
           # R1688 — libxml2-dev + libclang-dev: the SCE build's `libxml`
           # build-dependency probes pkg-config and runs bindgen. See the
           # lint-and-test job for the full note.
+          # R1727 — xdotool: the harness can now drive the machine's OWN pointer
+          # (`rpc_verify.RealPointer`), which is the only way to exercise a
+          # gesture the way a hand makes it. Without it that demo prints a loud
+          # line and skips its real-pointer sections, which is how the shape
+          # R1726 shipped — a green belonging to a gesture nobody performs —
+          # comes back. Arming it here is what keeps it out.
           sudo apt-get install -y \
             pkg-config libfontconfig1-dev libxkbcommon-dev \
             libxkbcommon-x11-0 libwayland-dev \
             xvfb mesa-vulkan-drivers vulkan-tools libvulkan1 \
-            ffmpeg x11-utils gcc libxtst-dev libx11-dev python3 \
+            ffmpeg x11-utils gcc libxtst-dev libx11-dev python3 xdotool \
             libasound2-dev libasound2-plugins alsa-utils \
             libxml2-dev libclang-dev \
             pulseaudio pulseaudio-utils

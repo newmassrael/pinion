@@ -91,6 +91,7 @@ use pinion_core::external::{
     RepaintOwner, SchemaArg, SchemaField, ThreadOwnership,
 };
 use pinion_core::focus_state;
+use pinion_core::input::PointerReading;
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, PathCommand, PathNode, PathPoint, Rect, TextNode};
 use pinion_core::shrink::ShrinkPolicy;
@@ -3749,7 +3750,7 @@ impl External for ShellOracle {
         })
     }
 
-    fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
+    fn pointer_move(&mut self, at: PointerReading) {
         let Some(state) = self.state.clone() else {
             return;
         };
@@ -3762,7 +3763,7 @@ impl External for ShellOracle {
         // BASIS here; R1714 moved the clamp and the multiplication with it, so
         // every self-hit-testing screen resolves a pointer the same way and a
         // screen that later declares a pan gets that term for free.
-        let (px, py) = pinion_core::external::layout_point(VIEW_TAG, (x_rel, y_rel));
+        let (px, py) = pinion_core::external::layout_point(VIEW_TAG, at.at);
         Self::move_cursor(&state, px, py);
     }
 

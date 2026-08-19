@@ -43,6 +43,8 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 import rpc_verify  # noqa: E402
 from rpc_verify import (  # noqa: E402
     Png,
+    RealPointer,
+    RealPointerUnavailable,
     Response,
     RpcError,
     RpcSubprocess,
@@ -265,6 +267,45 @@ def deliver(tf: RpcSubprocess, frame: dict) -> None:
 
 def sent(tf: RpcSubprocess) -> list[dict]:
     return [json.loads(line) for line in tf._proc.stdin.written]  # type: ignore[union-attr]
+
+
+def test_real_pointer_refuses_a_window_nobody_can_see() -> None:
+    """R1727 — a hidden window is not drivable, and saying so is the point.
+
+    ★ The refusal is the feature. A driver that quietly fell back to the wire
+    would reproduce exactly the shape this class exists to end: a green
+    belonging to a gesture nobody performs.
+    """
+    tf = wired()
+    try:
+        RealPointer(tf)
+    except RealPointerUnavailable as exc:
+        check("visible_window" in str(exc), "the refusal names what is missing")
+    else:
+        check(False, "a hidden window was accepted as drivable")
+
+
+def test_real_pointer_refuses_with_no_display() -> None:
+    """R1727 — no display, no pointer; a clear refusal, never a silent skip."""
+    tf = wired()
+    tf.visible_window = True
+    saved = os.environ.pop("DISPLAY", None)
+    try:
+        RealPointer(tf)
+    except RealPointerUnavailable as exc:
+        check("DISPLAY" in str(exc), "the refusal names the missing display")
+    else:
+        check(False, "a displayless host was accepted as drivable")
+    finally:
+        if saved is not None:
+            os.environ["DISPLAY"] = saved
+
+
+def test_real_pointer_button_names_are_the_harness_vocabulary() -> None:
+    """R1727 — the three buttons this harness names everywhere else, and only
+    those: a typo must raise rather than silently press button 1."""
+    names = sorted(rpc_verify._REAL_POINTER_BUTTONS)
+    check(names == ["left", "middle", "right"], f"button vocabulary is {names}")
 
 
 def test_request_matches_its_own_id() -> None:

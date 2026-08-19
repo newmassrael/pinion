@@ -89,8 +89,8 @@ use pinion_core::external::{
     SchemaArg, SchemaField, ThreadOwnership, read_only_or_unknown,
 };
 use pinion_core::input::{
-    DRAG_CLICK_THRESHOLD_PX, DragCalibration, Modifiers, MultiSelectKeyOp, SelectionChord,
-    edit_field_keymap, is_activation_event,
+    DRAG_CLICK_THRESHOLD_PX, DragCalibration, Modifiers, MultiSelectKeyOp, PointerReading,
+    SelectionChord, edit_field_keymap, is_activation_event,
 };
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -1496,8 +1496,8 @@ impl External for InspectorExternal {
 
     /// R1373 — drive the live numeric scrub from the captured cursor's horizontal
     /// fraction across the Details panel; `y_rel` is ignored (scrub is the X axis).
-    fn pointer_move(&mut self, x_rel: f32, _y_rel: f32) {
-        self.scrub_to(f64::from(x_rel));
+    fn pointer_move(&mut self, at: PointerReading) {
+        self.scrub_to(f64::from(at.u()));
     }
 
     fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
@@ -3544,8 +3544,8 @@ mod tests {
         )
         .unwrap();
         assert_eq!(e.scrub_armed.get(), Some(4), "the send wire armed Speed");
-        e.pointer_move(0.0, 0.0); // calibrate
-        e.pointer_move(frac(100.0) as f32, 0.0); // +1.0
+        e.pointer_move(PointerReading::over_unit((0.0, 0.0))); // calibrate
+        e.pointer_move(PointerReading::over_unit((frac(100.0) as f32, 0.0))); // +1.0
         assert_eq!(
             e.query("scrubbing"),
             Ok(IntrospectValue::Bool(true)),
@@ -3601,8 +3601,8 @@ mod tests {
             .unwrap();
         assert_eq!(e.scrub_armed.get(), None, "the leaked arm is abandoned");
         // Proof it cannot phantom-scrub: a drive now declines (nothing armed).
-        e.pointer_move(0.0, 0.0);
-        e.pointer_move(0.5, 0.0);
+        e.pointer_move(PointerReading::over_unit((0.0, 0.0)));
+        e.pointer_move(PointerReading::over_unit((0.5, 0.0)));
         assert!(
             !e.is_scrubbing(),
             "no phantom scrub after the leak was cleared"

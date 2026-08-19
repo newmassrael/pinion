@@ -48,6 +48,7 @@ use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, ReadRefusal, RepaintOwner, SchemaField, ThreadOwnership,
 };
+use pinion_core::input::PointerReading;
 use pinion_core::scene::{ContainerNode, Rect, TextNode, capture_surface};
 use pinion_core::style::{BoxStyle, LayoutStyle, Size, TextStyle};
 use pinion_core::theme::{ColorRole, use_theme};
@@ -245,8 +246,8 @@ impl External for CrosshairExternal {
     /// Each hover move delivers a `[0, 1]` fraction across the plot rect: store
     /// it as the inspect x. `wants_pointer_capture` is left at its default
     /// `false` — a crosshair reads on hover, it does not capture a drag.
-    fn pointer_move(&mut self, x_rel: f32, _y_rel: f32) {
-        self.x_frac = Some(x_rel.clamp(0.0, 1.0));
+    fn pointer_move(&mut self, at: PointerReading) {
+        self.x_frac = Some(at.u().clamp(0.0, 1.0));
     }
 
     fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
@@ -507,7 +508,7 @@ mod tests {
     fn a_hover_move_sets_the_fraction_and_a_leave_clears_it() {
         let mut ext = CrosshairExternal::new();
         assert_eq!(ext.query("x_frac"), Ok(IntrospectValue::Null), "boot: none");
-        ext.pointer_move(0.42, 0.5);
+        ext.pointer_move(PointerReading::over_unit((0.42, 0.5)));
         assert_eq!(
             ext.query("x_frac"),
             Ok(IntrospectValue::Float(0.42_f32.into())),

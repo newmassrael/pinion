@@ -276,6 +276,7 @@ use pinion_core::external::{
     ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
     ReadRefusal, RepaintOwner, SchemaArg, SchemaField, ThreadOwnership, int_of,
 };
+use pinion_core::input::PointerReading;
 use pinion_core::reactive::{Owner, Signal, batch};
 use pinion_core::region::{Point, Region, RegionFit};
 use pinion_core::scene::{
@@ -5990,17 +5991,27 @@ impl External for NodeGraphExternal {
         self.surface = (width.max(1), height.max(1));
     }
 
-    fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
-        let (gx, gy) = self.cursor_graph(f64::from(x_rel), f64::from(y_rel));
+    fn pointer_move(&mut self, at: PointerReading) {
+        let (gx, gy) = self.cursor_graph(f64::from(at.u()), f64::from(at.v()));
         // The cursor in screen px (the dead-zone metric space — the same
         // logical-pixel space the router's click-vs-drag latch measures).
+        //
         // ★ R1656 — see `on_resize`: the basis is the live surface, not the
         // design size, so a dead-zone measured here is pixels at any window
         // size rather than only at the opening one.
-        let screen = (
-            f64::from(x_rel) * f64::from(self.surface.0),
-            f64::from(y_rel) * f64::from(self.surface.1),
-        );
+        //
+        // ★★★★★ R1727 — and the basis is no longer a DIFFERENT RECTANGLE. It
+        // was `self.surface`, which `on_resize` fills with the whole surface —
+        // palette and detail panel included — while the fraction is taken over
+        // the CANVAS (`capture_normalize` names `Tag(GRAPH_TAG)`). Measured by
+        // driving a real resize: the canvas is `640x420` at every window size
+        // and `self.surface` follows the window, so the dead zone was 1.5x too
+        // large at the design size and 2.2x too large at 1400 wide. `px()` is
+        // the extent of the very rectangle this fraction came from, so the two
+        // cannot be different rectangles any more — and it agrees with
+        // `cursor_graph_at`, which was already using the canvas.
+        let (sx, sy) = at.px();
+        let screen = (f64::from(sx), f64::from(sy));
         let Some(node) = self.grabbed_node.get() else {
             // Not dragging a node. A background press drives the marquee
             // gesture; every other non-drag press (port / palette) is
@@ -6069,7 +6080,7 @@ impl External for NodeGraphExternal {
                     latch: DragLatch::new(screen),
                     // R1183 — seed the auto-pan rim probe with the press cursor;
                     // each latched move below refreshes it.
-                    cursor: Cell::new((f64::from(x_rel), f64::from(y_rel))),
+                    cursor: Cell::new((f64::from(at.u()), f64::from(at.v()))),
                 });
             }
             return;
@@ -6091,7 +6102,7 @@ impl External for NodeGraphExternal {
             // R1183 — refresh the auto-pan rim probe (co-located in the drag) so
             // the driver can keep scrolling toward the rim once the cursor is
             // pinned at the window edge and no further `pointer_move` fires.
-            start.cursor.set((f64::from(x_rel), f64::from(y_rel)));
+            start.cursor.set((f64::from(at.u()), f64::from(at.v())));
             // Live preview: every member re-derives from the *current*
             // cursor + its own grab anchor (zoom/pan-robust, R877); the
             // per-frame writes batch into one atomic group move (the shared

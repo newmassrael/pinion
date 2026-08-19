@@ -89,7 +89,7 @@ use pinion_core::external::{
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
     SchemaField, ThreadOwnership,
 };
-use pinion_core::input::Modifiers;
+use pinion_core::input::{Modifiers, PointerReading};
 use pinion_core::reactive::{Owner, Signal};
 use pinion_core::scene::{ContainerNode, Rect, TextNode};
 use pinion_core::style::{
@@ -278,10 +278,36 @@ impl DashboardOracle {
         grid.rows().max(MIN_ROWS)
     }
 
-    /// The cell a `[0, 1]` fraction over the grid's rect lands on.
+    /// The cell a reading over the board's rect lands on.
     ///
     /// This is the snap: a pointer anywhere inside a cell means that cell, which
     /// is what makes a dashboard's drag land on a slot rather than a pixel.
+    ///
+    /// ★★★★★ R1727 — **the two axes read the reading differently, and that is
+    /// the whole repair.** A column is a twelfth of the board however wide the
+    /// board is, so the horizontal axis is a FRACTION. A row is
+    /// [`ROW_H`] pixels tall whatever the board's height is, so the vertical
+    /// axis is [`PointerReading::px`] divided by that height — NOT the fraction
+    /// times a row count.
+    ///
+    /// The fraction times a row count is what this did until R1727, and it was
+    /// wrong in a way nothing could see: the fraction is taken over the rect the
+    /// last **paint** produced and `rows` is read from the **model**, which this
+    /// very drag has already grown by displacing cards downward. The two are
+    /// only equal when a frame happened in between. Measured, dragging one card
+    /// from the same pixel to the same pixel:
+    ///
+    /// ```text
+    /// a frame between the moves    loss@0,4   latency@0,5   topology@0,6
+    /// no frame between the moves   loss@0,10  latency@0,7   topology@0,11
+    /// ```
+    ///
+    /// A hand usually supplies the frame, so the defect hid behind the right
+    /// answer and every wire-driven test agreed with a picture nobody sees.
+    /// `px()` is `cursor − board.origin` whatever the rect's size, so both
+    /// deliveries now answer the same thing —
+    /// [`assert_gesture_reads_one_fact`](../../../tools/rpc_verify.py) is the
+    /// gate that keeps it that way.
     #[allow(
         clippy::cast_precision_loss,
         clippy::cast_possible_truncation,
@@ -289,9 +315,9 @@ impl DashboardOracle {
         reason = "a dashboard's column and row counts round-trip f32 exactly, and \
                   both ends are clamped"
     )]
-    fn cell_at(rows: u32, x_rel: f32, y_rel: f32) -> (u32, u32) {
-        let col = (x_rel.clamp(0.0, 0.999) * COLUMNS as f32) as u32;
-        let row = (y_rel.clamp(0.0, 0.999) * rows as f32) as u32;
+    fn cell_at(rows: u32, at: PointerReading) -> (u32, u32) {
+        let col = (at.u().clamp(0.0, 0.999) * COLUMNS as f32) as u32;
+        let row = (at.px().1.max(0.0) / ROW_H as f32) as u32;
         (col.min(COLUMNS - 1), row.min(rows.saturating_sub(1)))
     }
 
@@ -349,9 +375,14 @@ impl DashboardOracle {
         clippy::cast_precision_loss,
         reason = "a dashboard's column and row counts round-trip f32 exactly"
     )]
-    fn card_fraction(tile: &Tile, rows: u32, x_rel: f32, y_rel: f32) -> (f32, f32) {
-        let u = (x_rel * COLUMNS as f32 - tile.col as f32) / tile.w as f32;
-        let v = (y_rel * rows.max(1) as f32 - tile.row as f32) / tile.h as f32;
+    ///
+    /// R1727 — the vertical half reads [`PointerReading::px`] for the reason
+    /// [`cell_at`](Self::cell_at) does: a row's height is a constant, and
+    /// scaling by a row COUNT the drag itself changes is the defect that round
+    /// removed. `rows` is no longer needed here at all.
+    fn card_fraction(tile: &Tile, at: PointerReading) -> (f32, f32) {
+        let u = (at.u() * COLUMNS as f32 - tile.col as f32) / tile.w as f32;
+        let v = (at.px().1 / ROW_H as f32 - tile.row as f32) / tile.h as f32;
         (u, v)
     }
 
@@ -665,13 +696,13 @@ impl External for DashboardOracle {
 
     /// Snap to a cell, then either latch (a fresh press) or move the latched
     /// card so the grabbed cell stays under the cursor.
-    fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
+    fn pointer_move(&mut self, at: PointerReading) {
         let Some(state) = self.bound() else {
             return;
         };
         let grid = state.grid.get();
         let rows = Self::painted_rows(&grid);
-        let (col, row) = Self::cell_at(rows, x_rel, y_rel);
+        let (col, row) = Self::cell_at(rows, at);
         if state.pending.get() {
             state.pending.set(false);
             let selected = Self::current_id(state);
@@ -695,7 +726,7 @@ impl External for DashboardOracle {
                 // board does.
                 handle: (selected.as_ref() == Some(&tile.id))
                     .then(|| {
-                        let (u, v) = Self::card_fraction(tile, rows, x_rel, y_rel);
+                        let (u, v) = Self::card_fraction(tile, at);
                         TileHandle::at(u, v, HANDLE_BAND)
                     })
                     .flatten(),
@@ -1381,6 +1412,28 @@ mod tests {
             .unwrap();
     }
 
+    /// The width the board paints at in a 760px window — only the horizontal
+    /// axis reads it, and only as a fraction, so it is the one measured number
+    /// these readings need.
+    const BOARD_W: f32 = 736.0;
+
+    /// A reading at `at` over a board painting `rows` rows, the way the router
+    /// hands one over.
+    ///
+    /// ★ R1727 — `rows` is an ARGUMENT because it is a property of the
+    /// **rectangle**, not of the model. A test that states the wrong one is
+    /// describing a board that was never painted, which is precisely the
+    /// confusion the round removed from the widget: it used to take the fraction
+    /// from the paint and the row count from the model and multiply them
+    /// together.
+    #[allow(
+        clippy::cast_precision_loss,
+        reason = "a dashboard's row count round-trips f32 exactly"
+    )]
+    fn over(rows: u32, at: (f32, f32)) -> PointerReading {
+        PointerReading::new(at, (BOARD_W, rows as f32 * ROW_H as f32))
+    }
+
     #[test]
     fn the_seed_board_is_the_arrangement_the_layout_measurement_lays_out() {
         drive(|oracle| {
@@ -1503,10 +1556,10 @@ mod tests {
         // narrow enough to have somewhere to go.
         drive(|oracle| {
             press(oracle);
-            oracle.pointer_move(2.5 / 12.0, 2.5 / 5.0);
+            oracle.pointer_move(over(5, (2.5 / 12.0, 2.5 / 5.0)));
             assert_eq!(text(oracle, "dragging"), "topology");
 
-            oracle.pointer_move(5.5 / 12.0, 2.5 / 5.0);
+            oracle.pointer_move(over(5, (5.5 / 12.0, 2.5 / 5.0)));
             assert!(
                 text(oracle, "tiles").contains("topology@3,2+4x2"),
                 "the grab offset moved with the card — a corner-snap would have \
@@ -1519,7 +1572,7 @@ mod tests {
                 .unwrap();
             assert_eq!(text(oracle, "dragging"), "", "the release let go");
             let settled = text(oracle, "tiles");
-            oracle.pointer_move(0.05, 0.05);
+            oracle.pointer_move(over(5, (0.05, 0.05)));
             assert_eq!(
                 text(oracle, "tiles"),
                 settled,
@@ -1533,10 +1586,10 @@ mod tests {
         drive(|oracle| {
             press(oracle);
             // Row 4 is below every card.
-            oracle.pointer_move(0.5, 4.5 / 5.0);
+            oracle.pointer_move(over(5, (0.5, 4.5 / 5.0)));
             assert_eq!(text(oracle, "dragging"), "");
             let before = text(oracle, "tiles");
-            oracle.pointer_move(0.1, 0.1);
+            oracle.pointer_move(over(5, (0.1, 0.1)));
             assert_eq!(text(oracle, "tiles"), before);
         });
     }
@@ -1545,9 +1598,9 @@ mod tests {
     fn a_drag_displaces_and_the_board_stays_legal() {
         drive(|oracle| {
             press(oracle);
-            oracle.pointer_move(0.02, 2.5 / 5.0); // grab `topology` at its corner
+            oracle.pointer_move(over(5, (0.02, 2.5 / 5.0))); // grab `topology`'s corner
             assert_eq!(text(oracle, "dragging"), "topology");
-            oracle.pointer_move(0.02, 0.02); // drag it to the top-left
+            oracle.pointer_move(over(5, (0.02, 0.02))); // drag it to the top-left
             assert!(text(oracle, "tiles").contains("topology@0,0"));
             assert_ne!(text(oracle, "last_reflow"), "clean");
             assert_eq!(oracle.query("violations"), Ok(IntrospectValue::Int(0)));
@@ -1802,6 +1855,62 @@ mod tests {
         });
     }
 
+    /// ★★★★★ R1727 — **the grab band is read in pixels too, and a board that
+    /// has GROWN is the only fixture that can tell.**
+    ///
+    /// Found by a counterfactual that PASSED: putting the old expression back
+    /// into [`card_fraction`](DashboardOracle::card_fraction) — a fraction times
+    /// a frozen row count — changed nothing any test or demo could see. Every
+    /// existing fixture drives a five-row board, where `v * 5` and
+    /// `px / ROW_H` are the same number by construction, so the whole class was
+    /// invisible one function over from where the round found it.
+    ///
+    /// Here the board is pushed to EIGHT rows first, and the press goes in the
+    /// card's BOTTOM band. `v = 0.4844` of an eight-row board is 0.9375 of the
+    /// card read as pixels — its bottom quarter — and 0.2109 read as `v * 5`,
+    /// which is its TOP quarter. The two answers name opposite edges.
+    ///
+    /// ★ The first draft pressed the top band and could not tell them apart:
+    /// the broken reading gave `-0.336`, and a band test asking `v < 0.25` says
+    /// Top for that as happily as for `0.06`. A fixture has to make the two
+    /// expressions land on DIFFERENT answers, not merely on different numbers.
+    #[test]
+    fn r1727_the_grab_band_is_read_in_pixels_on_a_board_that_has_grown() {
+        drive(|oracle| {
+            oracle
+                .invoke("move_to", IntrospectValue::Text("alarms,4,7".to_owned()))
+                .expect("the board has room at row 7");
+            assert_eq!(
+                oracle.query("row_count"),
+                Ok(IntrospectValue::Int(8)),
+                "the board now paints eight rows, not the seed's five"
+            );
+
+            // Select `topology` (columns 0..4, rows 2..4) by its middle.
+            press(oracle);
+            oracle.pointer_move(over(8, (2.0 / 12.0, 192.0 / 512.0)));
+            assert_eq!(text(oracle, "dragging"), "topology");
+            assert_eq!(text(oracle, "handle"), "", "the middle is not a band");
+            oracle
+                .invoke("send", IntrospectValue::Text("PointerUp".to_owned()))
+                .unwrap();
+            assert_eq!(text(oracle, "current"), "topology");
+
+            // Now 8 px above its bottom edge — inside the card's BOTTOM band.
+            press(oracle);
+            oracle.pointer_move(over(8, (2.0 / 12.0, 248.0 / 512.0)));
+            assert_eq!(text(oracle, "dragging"), "topology");
+            assert_eq!(
+                text(oracle, "handle"),
+                "Bottom",
+                "the press is in the card's bottom quarter read as pixels \
+                 (0.9375 of it) and in its TOP quarter read as a fraction of \
+                 five rows (0.2109) — only the pixel reading names the edge \
+                 the person aimed at on a board that has grown"
+            );
+        });
+    }
+
     #[test]
     fn r1609_a_press_on_a_handle_resizes_and_a_press_in_the_middle_moves() {
         drive(|oracle| {
@@ -1809,7 +1918,7 @@ mod tests {
             // ★ A grip is live only where one is PAINTED, so the first press on
             // an unselected card is a move even on its edge — select, then grab.
             press(oracle);
-            oracle.pointer_move(3.9 / 12.0, 2.5 / 5.0);
+            oracle.pointer_move(over(5, (3.9 / 12.0, 2.5 / 5.0)));
             assert_eq!(text(oracle, "dragging"), "topology");
             assert_eq!(
                 text(oracle, "handle"),
@@ -1823,7 +1932,7 @@ mod tests {
 
             // Now its RIGHT edge: u lands past 1 - HANDLE_BAND.
             press(oracle);
-            oracle.pointer_move(3.9 / 12.0, 2.5 / 5.0);
+            oracle.pointer_move(over(5, (3.9 / 12.0, 2.5 / 5.0)));
             assert_eq!(
                 text(oracle, "handle"),
                 "Right",
@@ -1831,7 +1940,7 @@ mod tests {
             );
 
             // Drag to column 7: the right edge follows and the left holds.
-            oracle.pointer_move(7.5 / 12.0, 2.5 / 5.0);
+            oracle.pointer_move(over(5, (7.5 / 12.0, 2.5 / 5.0)));
             assert!(
                 text(oracle, "tiles").contains("topology@0,2+8x2"),
                 "a resize needs no grab offset — the dragged side tracks the \
@@ -1844,13 +1953,13 @@ mod tests {
 
             // Now the middle of the same card: no handle, so it moves.
             press(oracle);
-            oracle.pointer_move(4.0 / 12.0, 2.5 / 5.0);
+            oracle.pointer_move(over(5, (4.0 / 12.0, 2.5 / 5.0)));
             assert_eq!(
                 text(oracle, "handle"),
                 "",
                 "the interior is a drag, not a resize"
             );
-            oracle.pointer_move(5.0 / 12.0, 2.5 / 5.0);
+            oracle.pointer_move(over(5, (5.0 / 12.0, 2.5 / 5.0)));
             assert!(
                 text(oracle, "tiles").contains("topology@1,2+8x2"),
                 "the card moved and kept its size. Got {}",
@@ -1865,9 +1974,9 @@ mod tests {
         drive(|oracle| {
             let before = text(oracle, "tiles");
             press(oracle);
-            oracle.pointer_move(0.02, 2.5 / 5.0);
+            oracle.pointer_move(over(5, (0.02, 2.5 / 5.0)));
             assert_eq!(text(oracle, "editing"), "topology");
-            oracle.pointer_move(0.02, 0.02);
+            oracle.pointer_move(over(5, (0.02, 0.02)));
             assert_ne!(text(oracle, "tiles"), before);
             assert!(key(oracle, "Escape"));
             assert_eq!(

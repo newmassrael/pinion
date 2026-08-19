@@ -361,6 +361,7 @@ use crate::external::{
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
     SchemaArg, SchemaField, ThreadOwnership,
 };
+use crate::input::PointerReading;
 use crate::intent::Intent;
 use crate::reactive::{Owner, Signal};
 use crate::widgets::scroll::ScrollState;
@@ -795,7 +796,10 @@ impl External for ScrollBarExternal {
     /// preview before the application wires up the reactive state)
     /// or outside the `Dragging` state (capture chatter while the
     /// framework is still resolving a release path stays silent).
-    fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
+    /// R1727 — the FRACTION is the right reading here: a scroll bar's divisor is
+    /// its own track, and dragging the thumb does not resize it.
+    fn pointer_move(&mut self, at: PointerReading) {
+        let (x_rel, y_rel) = at.at;
         if !matches!(self.state(), ScrollBarState::Dragging) {
             return;
         }
@@ -1528,6 +1532,7 @@ mod r55_d3_tests {
         ScrollBar, ScrollBarEvent, ScrollBarExternal, ScrollBarOrientation, ScrollBarState,
     };
     use crate::external::External;
+    use crate::input::PointerReading;
     use crate::widgets::scroll::ScrollState;
 
     fn fresh_state(max_x: i32, max_y: i32) -> Rc<ScrollState> {
@@ -1580,8 +1585,8 @@ mod r55_d3_tests {
         // panic" plus the bar still surfaces no scroll_state.
         let mut sx = ScrollBarExternal::new();
         drag(&mut sx);
-        sx.pointer_move(0.0, 0.5);
-        sx.pointer_move(0.0, 0.8);
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.5)));
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.8)));
         assert!(sx.scroll_state().is_none());
     }
 
@@ -1595,10 +1600,10 @@ mod r55_d3_tests {
         // for a sibling widget that lost focus). Capture lock would
         // not even be open here in production but the routing must
         // stay defensive.
-        sx.pointer_move(0.0, 0.5);
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.5)));
         assert_eq!(state.offset(), (0, 0));
         sx.send(ScrollBarEvent::PointerEnter);
-        sx.pointer_move(0.0, 0.5);
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.5)));
         assert_eq!(state.offset(), (0, 0));
     }
 
@@ -1613,7 +1618,7 @@ mod r55_d3_tests {
         let mut sx = ScrollBarExternal::new().attach_state(Rc::clone(&state));
         drag(&mut sx);
         // Press-time cursor fraction y_rel = 0.3.
-        sx.pointer_move(0.0, 0.3);
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.3)));
         // No offset change on press frame.
         assert_eq!(state.offset(), (0, 80));
     }
@@ -1627,8 +1632,8 @@ mod r55_d3_tests {
         state.scroll_to(0, 80);
         let mut sx = ScrollBarExternal::new().attach_state(Rc::clone(&state));
         drag(&mut sx);
-        sx.pointer_move(0.0, 0.2); // press
-        sx.pointer_move(0.0, 0.5); // drag
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.2))); // press
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.5))); // drag
         assert_eq!(state.offset(), (0, 200));
     }
 
@@ -1641,8 +1646,8 @@ mod r55_d3_tests {
         let mut sx = ScrollBarExternal::with_orientation(ScrollBarOrientation::Horizontal)
             .attach_state(Rc::clone(&state));
         drag(&mut sx);
-        sx.pointer_move(0.1, 0.7); // press; y ignored
-        sx.pointer_move(0.4, 0.9); // drag; y ignored
+        sx.pointer_move(PointerReading::over_unit((0.1, 0.7))); // press; y ignored
+        sx.pointer_move(PointerReading::over_unit((0.4, 0.9))); // drag; y ignored
         assert_eq!(state.offset(), (100, 0));
     }
 
@@ -1653,8 +1658,8 @@ mod r55_d3_tests {
         state.scroll_to(50, 80);
         let mut sx = ScrollBarExternal::new().attach_state(Rc::clone(&state));
         drag(&mut sx);
-        sx.pointer_move(0.1, 0.2); // press
-        sx.pointer_move(0.9, 0.2); // x changed, y same → no offset change
+        sx.pointer_move(PointerReading::over_unit((0.1, 0.2))); // press
+        sx.pointer_move(PointerReading::over_unit((0.9, 0.2))); // x changed, y same → no offset change
         assert_eq!(state.offset(), (50, 80));
     }
 
@@ -1665,8 +1670,8 @@ mod r55_d3_tests {
         state.scroll_to(0, 200);
         let mut sx = ScrollBarExternal::new().attach_state(Rc::clone(&state));
         drag(&mut sx);
-        sx.pointer_move(0.0, 0.6); // press
-        sx.pointer_move(0.0, 0.2); // drag back (delta = -0.4 × 400 = -160)
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.6))); // press
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.2))); // drag back (delta = -0.4 × 400 = -160)
         assert_eq!(state.offset(), (0, 40));
     }
 
@@ -1678,8 +1683,8 @@ mod r55_d3_tests {
         state.scroll_to(0, 50);
         let mut sx = ScrollBarExternal::new().attach_state(Rc::clone(&state));
         drag(&mut sx);
-        sx.pointer_move(0.0, 0.5); // press
-        sx.pointer_move(0.0, 0.0); // drag to top (delta = -0.5 × 400 = -200)
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.5))); // press
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.0))); // drag to top (delta = -0.5 × 400 = -200)
         // 50 + (-200) = -150 → clamps to 0.
         assert_eq!(state.offset(), (0, 0));
     }
@@ -1691,8 +1696,8 @@ mod r55_d3_tests {
         state.scroll_to(0, 200);
         let mut sx = ScrollBarExternal::new().attach_state(Rc::clone(&state));
         drag(&mut sx);
-        sx.pointer_move(0.0, 0.0); // press at top
-        sx.pointer_move(0.0, 1.0); // drag to bottom (delta = +1.0 × 400 = +400)
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.0))); // press at top
+        sx.pointer_move(PointerReading::over_unit((0.0, 1.0))); // drag to bottom (delta = +1.0 × 400 = +400)
         // 200 + 400 = 600 → clamps to scroll_max=400.
         assert_eq!(state.offset(), (0, 400));
     }
@@ -1705,14 +1710,14 @@ mod r55_d3_tests {
         let mut sx = ScrollBarExternal::new().attach_state(Rc::clone(&state));
         // First drag: 0.0 → 0.25 = +100 offset.
         drag(&mut sx);
-        sx.pointer_move(0.0, 0.0);
-        sx.pointer_move(0.0, 0.25);
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.0)));
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.25)));
         sx.send(ScrollBarEvent::PointerUp);
         assert_eq!(state.offset(), (0, 100));
         // Second drag from the new offset 100: 0.5 → 0.75 = +100 offset.
         sx.send(ScrollBarEvent::PointerDown);
-        sx.pointer_move(0.0, 0.5);
-        sx.pointer_move(0.0, 0.75);
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.5)));
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.75)));
         assert_eq!(
             state.offset(),
             (0, 200),
@@ -1728,8 +1733,8 @@ mod r55_d3_tests {
         let state = fresh_state(0, 400);
         let mut sx = ScrollBarExternal::new().attach_state(Rc::clone(&state));
         drag(&mut sx);
-        sx.pointer_move(0.0, 0.0);
-        sx.pointer_move(0.0, 0.5);
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.0)));
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.5)));
         assert_eq!(state.offset(), (0, 200));
         sx.send(ScrollBarEvent::PointerLeave);
         // Restart the drag — the bar must re-snapshot, not carry
@@ -1737,8 +1742,8 @@ mod r55_d3_tests {
         // cancel.
         sx.send(ScrollBarEvent::PointerEnter);
         sx.send(ScrollBarEvent::PointerDown);
-        sx.pointer_move(0.0, 0.5); // press (post-cancel) at y=0.5
-        sx.pointer_move(0.0, 0.6); // drag (delta = +0.1 × 400 = +40)
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.5))); // press (post-cancel) at y=0.5
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.6))); // drag (delta = +0.1 × 400 = +40)
         assert_eq!(state.offset(), (0, 240));
     }
 
@@ -1748,15 +1753,15 @@ mod r55_d3_tests {
         let state = fresh_state(0, 400);
         let mut sx = ScrollBarExternal::new().attach_state(Rc::clone(&state));
         drag(&mut sx);
-        sx.pointer_move(0.0, 0.0);
-        sx.pointer_move(0.0, 0.4); // +160 offset
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.0)));
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.4))); // +160 offset
         sx.send(ScrollBarEvent::PointerCancel);
         assert_eq!(sx.state(), ScrollBarState::Idle);
         // Press again — fresh snapshot.
         sx.send(ScrollBarEvent::PointerEnter);
         sx.send(ScrollBarEvent::PointerDown);
-        sx.pointer_move(0.0, 0.5);
-        sx.pointer_move(0.0, 0.5); // no delta
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.5)));
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.5))); // no delta
         assert_eq!(state.offset(), (0, 160), "no drift on stationary repress");
     }
 
@@ -1769,12 +1774,12 @@ mod r55_d3_tests {
         let state = fresh_state(0, 400);
         let mut sx = ScrollBarExternal::new().attach_state(Rc::clone(&state));
         drag(&mut sx);
-        sx.pointer_move(0.0, 0.1);
-        sx.pointer_move(0.0, 0.3); // +80 offset
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.1)));
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.3))); // +80 offset
         sx.send(ScrollBarEvent::Disable);
         assert_eq!(sx.state(), ScrollBarState::Disabled);
         // Late pointer_move: silent (state != Dragging).
-        sx.pointer_move(0.0, 0.9);
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.9)));
         assert_eq!(state.offset(), (0, 80), "disabled bar must not move offset");
     }
 
@@ -1789,14 +1794,14 @@ mod r55_d3_tests {
         state.scroll_to(0, 100);
         let mut sx = ScrollBarExternal::new().attach_state(Rc::clone(&state));
         drag(&mut sx);
-        sx.pointer_move(0.0, 0.0); // press; pinned scroll_max = 400
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.0))); // press; pinned scroll_max = 400
         // Caller shrinks max mid-drag (e.g. content shrank). Note:
         // `ScrollState::set_max` will clamp the existing offset to
         // the new max if the offset exceeds it — but our offset
         // here (100) is still inside the new max (200), so no
         // mid-call clamp fires.
         state.set_max(0, 200);
-        sx.pointer_move(0.0, 0.5);
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.5)));
         // Press-time max=400 → delta = 0.5 × 400 = +200. press
         // offset was 100 → new = 300. `ScrollState::scroll_to`
         // then clamps against the *new* max=200 → final = 200.
@@ -1812,15 +1817,15 @@ mod r55_d3_tests {
         let mut sx = ScrollBarExternal::new().attach_state(Rc::clone(&state));
         // First drag: offset 0 → 80.
         drag(&mut sx);
-        sx.pointer_move(0.0, 0.5);
-        sx.pointer_move(0.0, 0.7); // +0.2 × 400 = +80
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.5)));
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.7))); // +0.2 × 400 = +80
         sx.send(ScrollBarEvent::PointerUp);
         assert_eq!(state.offset(), (0, 80));
         // Second drag: must use post-first-drag offset 80 as the
         // press-time snapshot, NOT 0.
         sx.send(ScrollBarEvent::PointerDown);
-        sx.pointer_move(0.0, 0.0); // press
-        sx.pointer_move(0.0, 0.1); // +0.1 × 400 = +40
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.0))); // press
+        sx.pointer_move(PointerReading::over_unit((0.0, 0.1))); // +0.1 × 400 = +40
         // 80 + 40 = 120.
         assert_eq!(
             state.offset(),

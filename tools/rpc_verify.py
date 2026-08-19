@@ -5461,6 +5461,264 @@ def assert_pixel_eq(
         )
 
 
+class RealPointerUnavailable(RuntimeError):
+    """The host cannot drive a real pointer, and the demo must say so out loud.
+
+    Raised rather than silently degrading to the wire path. A demo whose whole
+    claim is "a person's gesture does this" must fail visibly when it could not
+    make a person's gesture, because the alternative is the exact shape R1726
+    shipped: a green that belonged to a gesture nobody performs.
+    """
+
+
+class RealPointer:
+    """★★★★★ R1727 §5.35 §2 #2 — **drive the machine's own pointer, and read
+    the scene while the button is down.**
+
+    Every gesture assertion in this tree was made through `scene/drag`, which
+    hands the router a press, a march and a release from inside one RPC. R1726
+    measured what that costs: on the analysis tool's dashboard the same press
+    from the same pixel to the same pixel left the board in two different
+    arrangements depending on which path drove it, and three defects were living
+    behind the difference — a drop preview that covered the widget under it, a
+    drop that missed after a scroll, and a missing cursor label. All three
+    needed a real pointer, a scroll, or a pair of eyes, and the harness had none
+    of them. The owner found all three by hand and asked why the harness could
+    not.
+
+    This is the answer. It moves the X server's pointer with `xdotool`, which is
+    the same event source a hand is, and every read in between is the ordinary
+    wire — so a demo can press, march, **stop while still holding**, ask the
+    surface what it looks like, and only then let go.
+
+    Requires a mapped window (`RpcSubprocess(visible_window=True)`) and an X
+    display. On a host without either it raises [`RealPointerUnavailable`]
+    rather than falling back, for the reason in that class's docstring.
+
+    ## Calibration is a measurement, not an assumption
+
+    Screen pixels and the surface's logical pixels differ by wherever the window
+    manager put the window (and by nothing at all under a bare `Xvfb`). The
+    offset is not guessed: the pointer is moved to a known screen point and the
+    surface is asked where it thinks the cursor is (`scene/input_state`). If the
+    surface reports no cursor, or reports one that does not move when the
+    pointer does, the constructor refuses — a demo must not be able to "drive" a
+    window that is not receiving anything.
+    """
+
+    #: Where the calibration probe lands, in screen pixels. Inside any window
+    #: a demo of ordinary size will occupy, and away from its edges.
+    PROBE = (400, 300)
+
+    def __init__(
+        self,
+        tf: "RpcSubprocess",
+        *,
+        settle: float = 0.12,
+        window: Optional[str] = None,
+    ) -> None:
+        if not getattr(tf, "visible_window", False):
+            raise RealPointerUnavailable(
+                "a real pointer needs a mapped window — launch with "
+                "RpcSubprocess(..., visible_window=True)"
+            )
+        if not os.environ.get("DISPLAY"):
+            raise RealPointerUnavailable("no DISPLAY: there is no pointer to move")
+        if shutil.which("xdotool") is None:
+            raise RealPointerUnavailable("xdotool is not installed")
+        self.tf = tf
+        self.settle = settle
+        self.window = window
+        self._held: set[str] = set()
+        self.offset = self._calibrate()
+
+    # -- the X server side -------------------------------------------------
+    def _xdo(self, *args: str) -> None:
+        subprocess.run(
+            ["xdotool", *args],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+
+    def _cursor(self) -> Optional[tuple[float, float]]:
+        """Where the SURFACE thinks the cursor is, in its own logical pixels."""
+        params: dict[str, Any] = {}
+        if self.window is not None:
+            params["window"] = self.window
+        resp = self.tf.request("scene/input_state", params)
+        assert resp is not None
+        cursor = resp.result.get("cursor")
+        if cursor is None:
+            return None
+        return (float(cursor["x"]), float(cursor["y"]))
+
+    def _calibrate(self) -> tuple[float, float]:
+        self._xdo("mousemove", str(self.PROBE[0]), str(self.PROBE[1]))
+        time.sleep(max(self.settle, 0.25))
+        first = self._cursor()
+        if first is None:
+            raise RealPointerUnavailable(
+                "the surface reports no cursor after a real pointer move — it is "
+                "not receiving pointer events, so nothing driven here would mean "
+                "anything"
+            )
+        # A second, DIFFERENT probe: a surface that answers a constant would
+        # pass the first check while receiving nothing.
+        second_screen = (self.PROBE[0] + 40, self.PROBE[1] + 30)
+        self._xdo("mousemove", str(second_screen[0]), str(second_screen[1]))
+        time.sleep(max(self.settle, 0.25))
+        second = self._cursor()
+        if second is None or second == first:
+            raise RealPointerUnavailable(
+                f"the surface's cursor did not move with the pointer "
+                f"({first} -> {second}): the window is not under it"
+            )
+        moved = (second[0] - first[0], second[1] - first[1])
+        if (round(moved[0]), round(moved[1])) != (40, 30):
+            raise RealPointerUnavailable(
+                f"the surface saw the pointer travel {moved}, not (40, 30): its "
+                "logical pixels are not the screen's, and this driver has no "
+                "scale factor"
+            )
+        return (float(second_screen[0]) - second[0], float(second_screen[1]) - second[1])
+
+    # -- the gesture -------------------------------------------------------
+    def move(self, at: tuple[float, float], *, confirm: bool = False) -> None:
+        """Put the real pointer at a point in the surface's logical pixels."""
+        sx = int(round(at[0] + self.offset[0]))
+        sy = int(round(at[1] + self.offset[1]))
+        self._xdo("mousemove", str(sx), str(sy))
+        time.sleep(self.settle)
+        if confirm:
+            got = self._cursor()
+            assert got is not None and (round(got[0]), round(got[1])) == (
+                round(at[0]),
+                round(at[1]),
+            ), f"aimed the real pointer at {at}, the surface received {got}"
+
+    def press(self, button: str = "left") -> None:
+        self._xdo("mousedown", _REAL_POINTER_BUTTONS[button])
+        self._held.add(button)
+        time.sleep(self.settle)
+
+    def release(self, button: str = "left") -> None:
+        self._xdo("mouseup", _REAL_POINTER_BUTTONS[button])
+        self._held.discard(button)
+        time.sleep(self.settle)
+
+    def drag(
+        self,
+        *,
+        from_at: tuple[float, float],
+        to_at: tuple[float, float],
+        steps: int = 8,
+        button: str = "left",
+        hold: Optional[Callable[["RealPointer"], None]] = None,
+    ) -> None:
+        """Press, march through `steps` points, optionally STOP, then release.
+
+        `hold` runs with the button still down and the pointer at `to_at`,
+        which is the whole point of this class: it is where a demo reads the
+        scene mid-gesture. Anything it raises still releases the button.
+        """
+        self.move(from_at)
+        self.press(button)
+        try:
+            for step in range(1, steps + 1):
+                t = step / steps
+                self.move(
+                    (
+                        from_at[0] + (to_at[0] - from_at[0]) * t,
+                        from_at[1] + (to_at[1] - from_at[1]) * t,
+                    )
+                )
+            if hold is not None:
+                hold(self)
+        finally:
+            self.release(button)
+
+    def __enter__(self) -> "RealPointer":
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        # ★ A held button outlives the process that pressed it. Leaving one down
+        # on a shared display makes every later window behave as if a hand were
+        # dragging across it, which is a failure mode a demo's own teardown must
+        # not be able to cause.
+        for button in list(self._held):
+            try:
+                self.release(button)
+            except Exception:  # noqa: BLE001 — teardown must not mask the body
+                pass
+
+
+#: xdotool's button numbers, named the way the rest of this harness names them.
+_REAL_POINTER_BUTTONS = {"left": "1", "middle": "2", "right": "3"}
+
+
+def assert_gesture_reads_one_fact(
+    example: str,
+    *,
+    from_at: tuple[float, float],
+    to_at: tuple[float, float],
+    read: Callable[["RpcSubprocess"], Any],
+    steps: int = 8,
+    label: str = "gesture",
+    env: Optional[dict[str, str]] = None,
+) -> Any:
+    """★★★★★ R1727 — the same press-march-release, delivered two ways, must
+    leave the same state.
+
+    The gate the class debt `paint-and-gesture-read-two-facts` never had. A
+    captured pointer arrives as a reading over a rectangle the last **paint**
+    produced; if the consumer scales it by anything read from the **model**, the
+    answer depends on whether a frame happened between two moves — and a real
+    pointer usually gets one, so the wrong reading hides behind the right
+    answer. Delivering the identical march with and without that frame is what
+    makes the difference observable without a display:
+
+    * **one call** — `scene/drag` marches inside a single drain, no frame
+      between the moves;
+    * **one call per move** — the shell paints between them, as a hand does.
+
+    Measured before the repair, on the analysis tool's dashboard: one call put
+    the dragged card on row 10 and the other on row 4. A consumer that reads
+    [`PointerReading::px`] answers the same either way, and this refuses the
+    round if it ever stops doing so.
+
+    Returns the (single, agreed) reading, so a caller can go on to assert what
+    it is as well as that it is one thing.
+    """
+    points = [
+        (
+            from_at[0] + (to_at[0] - from_at[0]) * i / steps,
+            from_at[1] + (to_at[1] - from_at[1]) * i / steps,
+        )
+        for i in range(1, steps + 1)
+    ]
+
+    with RpcSubprocess(example, env=env) as tf:
+        tf.drag(from_at=from_at, to_at=to_at, steps=steps, phase="begin")
+        tf.drag(from_at=to_at, to_at=to_at, steps=0, phase="end")
+        batched = read(tf)
+
+    with RpcSubprocess(example, env=env) as tf:
+        tf.drag(from_at=from_at, to_at=from_at, steps=0, phase="begin")
+        for point in points:
+            tf.drag(from_at=point, to_at=point, steps=0, phase="move")
+        tf.drag(from_at=to_at, to_at=to_at, steps=0, phase="end")
+        per_move = read(tf)
+
+    assert batched == per_move, (
+        f"{label}: the same gesture answered differently depending on whether a "
+        f"frame happened between its moves — one call gave {batched!r}, one call "
+        f"per move gave {per_move!r}. The reading is being scaled by something "
+        f"the gesture itself moves; see pinion_core::PointerReading::px"
+    )
+    return batched
+
+
 def run_demo(name: str, body) -> NoReturn:
     """Run one demo body and EXIT with its status. Never returns.
 

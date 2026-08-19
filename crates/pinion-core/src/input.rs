@@ -1914,6 +1914,126 @@ pub fn edit_field_keymap(
     }
 }
 
+/// ★★★★★ R1727 §5.35 §5.15 — **where the pointer is, and the rectangle that
+/// reading was taken over.**
+///
+/// A captured pointer used to arrive as a bare pair of fractions of the
+/// [`capture_normalize`](crate::external::External::capture_normalize) rect, and
+/// the rectangle itself was discarded. That is enough only while the divisor a
+/// consumer scales the fraction by cannot move during the gesture — and the
+/// gestures that most want a captured pointer are exactly the ones that move it.
+///
+/// # The defect this type removes, measured
+///
+/// A tile board maps a cursor to a cell as `fraction × row_count`. Both halves
+/// are true; they are true at *different times*. The fraction is taken over the
+/// rect the last **paint** produced, and `row_count` is read from the **model**,
+/// which the drag has already changed — a card pushed to a new row grows the
+/// board. Driven through the analysis tool's dashboard, one press-and-march from
+/// the same pixel to the same pixel left the board in two different
+/// arrangements depending on whether a frame happened between two moves:
+///
+/// ```text
+/// eight moves, a frame between each   loss@0,4  latency@0,5  topology@0,6
+/// the same eight, no frame between    loss@0,10 latency@0,7  topology@0,11
+/// ```
+///
+/// A real pointer usually gets a frame between moves, so the wrong reading hid
+/// behind the right answer, and every test that drove the gesture through the
+/// wire agreed with a picture nobody sees.
+///
+/// [`px`](Self::px) is the repair: the pointer's offset **inside the rectangle
+/// the reading was taken over**, in the pixels that rectangle was painted in. It
+/// is `cursor − rect.origin` however stale the rect is, because the fraction and
+/// the extent come from the same rect — so a consumer that divides it by a
+/// painted row height gets the same answer whenever the frame happened.
+///
+/// # Floor, measured by building a probe against 6.11.1 and running it
+///
+/// There a move event carries widget-local **pixels**, so this failure mode does
+/// not arise: a consumer deriving a fraction there divides by the live geometry,
+/// which is the same fact its own handler just changed. On that axis the floor
+/// was **above** us, and [`px`](Self::px) is the interface it has.
+///
+/// What it does not have is the other half. Across the six classes a scrolling,
+/// tabular, split or sliding surface is built from there — **441 declared
+/// properties and 274 declared methods** — not one names the extent a paint
+/// used, and none names whether an event was synthesised or came from the
+/// window system. So a consumer there cannot relate an event to the picture it
+/// was aimed at: measured in the same run, the live height had already reached
+/// 512 while the last paint had used 320, and nothing reports the 320. This
+/// type carries both, which is why it is a reading and not a coordinate.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct PointerReading {
+    /// The cursor as a fraction of [`extent`](Self::extent): `0.0` is the left /
+    /// top edge, `1.0` the right / bottom edge.
+    ///
+    /// May fall outside `[0.0, 1.0]` — a capture lock keeps forwarding moves
+    /// after the cursor leaves the rect, and whether to clamp or extrapolate is
+    /// the consumer's decision (a slider clamps because its value is normalised;
+    /// a canvas pan does not).
+    ///
+    /// ★ Read this when the consumer's divisor is the rectangle itself — a
+    /// slider's track, a colour area's square. Read [`px`](Self::px) when it is
+    /// anything else, because anything else can move while the gesture runs.
+    pub at: (f32, f32),
+    /// The size of the rectangle the fraction was taken over, in logical pixels,
+    /// **as the paint that produced it laid it out**.
+    ///
+    /// Zero on a degenerate rect, which is also when [`at`](Self::at) is
+    /// `(0.0, 0.0)` — the router collapses rather than dividing by zero, so
+    /// [`px`](Self::px) stays finite.
+    pub extent: (f32, f32),
+}
+
+impl PointerReading {
+    /// A reading of `at` taken over a rectangle measuring `extent`.
+    #[must_use]
+    pub const fn new(at: (f32, f32), extent: (f32, f32)) -> Self {
+        Self { at, extent }
+    }
+
+    /// A reading over a rectangle of **unit** size: the fraction is the whole
+    /// content, and [`px`](Self::px) hands the fraction straight back.
+    ///
+    /// For driving a consumer whose divisor IS the rectangle — a slider's track,
+    /// a colour area's square — where the rect's pixel size changes no answer
+    /// and stating one would be inventing a number.
+    ///
+    /// ★ Deliberately NOT a plausible extent. A consumer that starts reading
+    /// pixels gets `0.5` where it wanted `137.0`, so it fails its old tests
+    /// loudly instead of passing them by luck — which is the failure direction
+    /// this whole type exists to choose.
+    #[must_use]
+    pub const fn over_unit(at: (f32, f32)) -> Self {
+        Self::new(at, (1.0, 1.0))
+    }
+
+    /// The pointer's offset inside the rectangle, in the pixels it was painted
+    /// in — the reading a consumer wants whenever it scales by anything the
+    /// gesture can move.
+    ///
+    /// Equal to `cursor − rect.origin` for the rect this reading was taken over,
+    /// so it does not depend on that rect's size at all: a board that grew by
+    /// three rows since the last paint still answers the same pixel.
+    #[must_use]
+    pub fn px(&self) -> (f32, f32) {
+        (self.at.0 * self.extent.0, self.at.1 * self.extent.1)
+    }
+
+    /// The horizontal fraction — the axis a single-axis consumer names.
+    #[must_use]
+    pub const fn u(&self) -> f32 {
+        self.at.0
+    }
+
+    /// The vertical fraction.
+    #[must_use]
+    pub const fn v(&self) -> f32 {
+        self.at.1
+    }
+}
+
 #[cfg(test)]
 mod tests {
     //! R56.1.f.0 §5.13 — `Modifiers` regression battery. Covers the
@@ -3049,5 +3169,44 @@ mod key_arrival_tests {
         assert_eq!(press.arrival, arrival);
         assert_eq!(press.arrival.at(), arrival.at());
         assert_eq!(press.arrival.batch(), arrival.batch());
+    }
+
+    #[test]
+    fn r1727_px_is_the_fraction_scaled_by_the_rect_it_was_taken_over() {
+        let reading = super::PointerReading::new((0.25, 0.5), (400.0, 320.0));
+        assert_eq!(reading.px(), (100.0, 160.0));
+        assert_eq!((reading.u(), reading.v()), (0.25, 0.5));
+    }
+
+    #[test]
+    fn r1727_over_unit_is_a_unit_rect_so_a_pixel_reader_cannot_pass_by_luck() {
+        // ★ Found by a counterfactual that PASSED: giving `over_unit` a
+        // plausible extent (500x400) changed no test in the crate, because
+        // nothing asserted what the constructor MEANS. That is the direction
+        // that hides a defect — a widget migrating from the fraction to `px`
+        // would have kept passing its old tests against an invented rectangle.
+        // The constructor's contract is now a test rather than a docstring.
+        let reading = super::PointerReading::over_unit((0.25, 0.5));
+        assert_eq!(
+            reading.extent,
+            (1.0, 1.0),
+            "a UNIT rect, not a plausible one"
+        );
+        assert_eq!(
+            reading.px(),
+            reading.at,
+            "so a pixel reader gets the fraction back, which is visibly wrong \
+             rather than plausibly right"
+        );
+    }
+
+    #[test]
+    fn r1727_a_degenerate_rect_keeps_px_finite() {
+        // The router collapses a zero-size rect to a zero fraction rather than
+        // dividing by zero; `px` must stay finite through that, because a
+        // consumer dividing it by a row height would otherwise get a NaN cell.
+        let reading = super::PointerReading::new((0.0, 0.0), (0.0, 0.0));
+        assert_eq!(reading.px(), (0.0, 0.0));
+        assert!(reading.px().0.is_finite() && reading.px().1.is_finite());
     }
 }

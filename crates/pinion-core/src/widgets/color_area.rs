@@ -61,6 +61,7 @@ use crate::external::{
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
     SchemaArg, SchemaField, ThreadOwnership,
 };
+use crate::input::PointerReading;
 use crate::intent::Intent;
 use crate::widgets::{IntentEmitter, Widget, WidgetTransition};
 
@@ -289,8 +290,10 @@ impl External for ColorAreaExternal {
     /// off the rect (negative / past `1.0`); clamping preserves the
     /// `value_changing` gate-by-effect semantics so strays past a
     /// saturated axis are silent.
-    fn pointer_move(&mut self, x_rel: f32, y_rel: f32) {
-        self.set_xy(x_rel.clamp(0.0, 1.0), (1.0 - y_rel).clamp(0.0, 1.0));
+    /// R1727 — the FRACTION is the right reading here: the two axes ARE the
+    /// rect, so nothing else can drift from it.
+    fn pointer_move(&mut self, at: PointerReading) {
+        self.set_xy(at.u().clamp(0.0, 1.0), (1.0 - at.v()).clamp(0.0, 1.0));
     }
 
     fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
@@ -413,11 +416,11 @@ mod tests {
     fn pointer_move_inverts_value_axis() {
         // Top edge (y_rel = 0.0) is the brightest value (y = 1.0).
         let mut sx = ColorAreaExternal::new();
-        sx.pointer_move(0.25, 0.0);
+        sx.pointer_move(PointerReading::over_unit((0.25, 0.0)));
         assert!((sx.x() - 0.25).abs() < f32::EPSILON);
         assert!((sx.y() - 1.0).abs() < f32::EPSILON);
         // Bottom edge (y_rel = 1.0) is black (y = 0.0).
-        sx.pointer_move(0.25, 1.0);
+        sx.pointer_move(PointerReading::over_unit((0.25, 1.0)));
         assert!((sx.y() - 0.0).abs() < f32::EPSILON);
     }
 
