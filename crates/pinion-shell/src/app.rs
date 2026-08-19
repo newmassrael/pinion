@@ -674,6 +674,10 @@ pub struct AppShell<V: WidgetView> {
     /// `windows` / `spec_id_to_window_id` so it is invisible to `scene/windows`
     /// (§2 #7) and untouched by the reconcile / dispatch paths.
     drag_preview: Option<DragPreviewWindow<V::Renderer>>,
+    /// R1723 §5.51 §5.16 — whether the origins the core holds still stand.
+    /// See [`OriginFreshness`]; this is what keeps a drag from asking the
+    /// window system where every window is, once per pointer event.
+    origins: OriginFreshness,
 }
 
 impl<V: WidgetView> AppShell<V> {
@@ -757,6 +761,7 @@ impl<V: WidgetView> AppShell<V> {
             reconcile_effect: None,
             last_known_specs: Rc::new(RefCell::new(Vec::new())),
             drag_preview: None,
+            origins: OriginFreshness::default(),
         }
     }
 
@@ -788,7 +793,7 @@ impl<V: WidgetView> AppShell<V> {
     /// user-found "좌표 안 맞아" bug). Gated on an active drag this window owns, so
     /// idle hovers + single-window apps skip the `inner_position()` queries. Runs
     /// each `CursorMoved` BEFORE `cursor_moved_for_window` resolves the drop.
-    fn stamp_live_window_origins(&self, window_id: WindowId) {
+    fn stamp_live_window_origins(&mut self, window_id: WindowId) {
         let Some(spec_id) = self.windows.get(&window_id).map(|s| &*s.spec_id) else {
             return;
         };
@@ -796,6 +801,13 @@ impl<V: WidgetView> AppShell<V> {
             .core
             .drag_session_active_for_window(spec_id, PointerId::MOUSE)
         {
+            return;
+        }
+        // R1723 — the drag gate above is not enough: inside a drag this runs on
+        // every pointer event, and collecting is one display-server round trip
+        // per window. Nothing here has moved unless winit said so, and
+        // [`OriginFreshness`] is what remembers that.
+        if !self.origins.take_restamp() {
             return;
         }
         self.core
@@ -811,9 +823,13 @@ impl<V: WidgetView> AppShell<V> {
     /// winit path and making an AI's RPC drive unable to reproduce / diagnose the
     /// live coordinate behavior. Origins are static during a dispatch, so one
     /// unconditional stamp at dispatch entry covers the whole RPC drag drain.
-    fn stamp_all_window_origins(&self) {
+    fn stamp_all_window_origins(&mut self) {
         self.core
             .set_live_window_origins(self.collect_window_origins());
+        // R1723 — it just collected, so the core IS fresh at this generation.
+        // Recording that here is what keeps the next pointer event of an
+        // RPC-opened drag from collecting a second time for the same answer.
+        self.origins.take_restamp();
     }
 
     /// R1149 §5.51 → R1151 — collect every live window's ACTUAL CLIENT-area origin
@@ -867,7 +883,7 @@ impl<V: WidgetView> AppShell<V> {
     ///   emits no monitor-change event — a cached desk would have no
     ///   invalidation signal and would answer confidently with yesterday's
     ///   arrangement, which is the failure this axis exists to remove.
-    fn stamp_desktop_facts(&self) {
+    fn stamp_desktop_facts(&mut self) {
         if self.windows.len() > 1 {
             self.stamp_all_window_origins();
         }
@@ -3322,6 +3338,9 @@ impl<V: WidgetView + 'static> AppShell<V> {
                 // and the adapter drops with the slot since it's a
                 // field of the slot).
                 self.windows.remove(&window_id);
+                // R1723 — the origins are a list OF the live windows, so the
+                // set changing makes them stale as surely as a move does.
+                self.origins.note_changed();
                 if self.primary_window_id == Some(window_id) {
                     self.primary_window_id = None;
                 }
@@ -3682,6 +3701,8 @@ impl<V: WidgetView + 'static> AppShell<V> {
                         image_store,
                     ),
                 );
+                // R1723 — same reason as the live insert below: the set moved.
+                self.origins.note_changed();
                 self.spec_id_to_window_id.insert(spec.id.clone(), window_id);
                 event_loop.exit();
                 return;
@@ -3718,6 +3739,8 @@ impl<V: WidgetView + 'static> AppShell<V> {
         // WM-placed window leaves the latch empty.
         slot.last_commanded_position = spec.position;
         self.windows.insert(window_id, slot);
+        // R1723 — a new window joins the list the origins are OF.
+        self.origins.note_changed();
         self.spec_id_to_window_id.insert(spec.id.clone(), window_id);
         if make_primary {
             self.primary_window_id = Some(window_id);
@@ -3895,6 +3918,9 @@ impl<V: WidgetView + 'static> AppShell<V> {
     /// `inner_size_writer` is left untouched — pinion accepts winit's
     /// recommended physical size.
     fn note_scale_factor_changed(&mut self, window_id: WindowId, scale_factor: f64) {
+        // R1723 — the origins are LOGICAL px, so a scale change moves them
+        // without the window moving at all.
+        self.origins.note_changed();
         if let Some(slot) = self.windows.get_mut(&window_id) {
             slot.scale_factor = scale_factor;
             if let RenderState::Active { window, .. } = &slot.render {
@@ -3928,6 +3954,16 @@ impl<V: WidgetView + 'static> AppShell<V> {
     /// hits its `new == old` fast path: the OS window is NOT re-commanded
     /// back to where the user just put it.
     fn note_window_moved(&mut self, window_id: WindowId, position: PhysicalPosition<i32>) {
+        // R1723 — a move is what makes the core's origins stale, and the
+        // TRACKED test lives inside [`OriginFreshness::note_window_moved`]
+        // rather than out here, so this call is safe to make before the lookup:
+        // the shell-private drag preview window moves on every pointer event and
+        // must not invalidate anything. Noting it BEFORE the echo test below is
+        // deliberate — an echo of our own `set_outer_position` still moved the
+        // window; suppressing the write-back is about the DECLARED spec, not
+        // about where the window now is.
+        self.origins
+            .note_window_moved(self.windows.contains_key(&window_id));
         let Some(slot) = self.windows.get(&window_id) else {
             return;
         };
@@ -5652,6 +5688,94 @@ fn window_level_changes(old: &[WindowSpec], new: &[WindowSpec]) -> Vec<(String, 
 /// split out so the own-command-vs-user-drag classification is unit-testable
 /// without a live winit event loop (the `Moved` delivery + `set_outer_position`
 /// effect stay HW-gated, like every real-window behaviour).
+/// R1723 §5.51 §5.16 — whether the live window origins the core already holds
+/// still stand, or have to be asked of the window system again.
+///
+/// # The defect this exists for, measured
+///
+/// [`AppShell::stamp_live_window_origins`] runs on **every `CursorMoved` of a
+/// drag**, and it asked every live window where it is. On X11 that question is
+/// `XTranslateCoordinates` — a **synchronous round trip to the display server**,
+/// taken inside the pointer handler — plus a `String` allocation per window and
+/// a fresh `Vec` per event. So dragging cost `windows × pointer events` blocking
+/// round trips, and the cost is **linear in how many windows are open**: a
+/// single-window app never notices and a multi-window one drags through treacle.
+///
+/// Reported by a consumer dragging a terminal window between docks, and found
+/// by following the call path rather than by profiling: the query is three
+/// frames down from the event, behind a gate whose doc says it exists so that
+/// "idle hovers + single-window apps skip the `inner_position()` queries" — the
+/// author saw the cost and gated the case that is cheap to gate, leaving the
+/// expensive one running per event.
+///
+/// # Why this holds a generation and no coordinates
+///
+/// The coordinates are the core's (`set_live_window_origins`) and are already
+/// there. What was missing is the answer to *"is what you hold still true?"*,
+/// and that is a question about **events**, not geometry: a window's desktop
+/// origin changes only when the window system moves it, and winit says so. A
+/// cache of positions here would be a second copy of a fact the core owns, and
+/// the two could disagree; a generation cannot disagree with anything.
+///
+/// The residue, stated: this is only as correct as the events it is told about.
+/// A window origin that changes with **no** winit event would go unnoticed —
+/// which is true of every `Moved`-driven state in this shell, and is why
+/// [`Self::note_changed`] is called from the coarsest set of events that can
+/// possibly move one, not the narrowest.
+#[derive(Debug, Default)]
+struct OriginFreshness {
+    /// Bumped by anything that can move a window's origin or change which
+    /// windows exist.
+    generation: u64,
+    /// The generation the core's origins were last collected at. `None` = they
+    /// were never collected, so the first ask must collect.
+    stamped: Option<u64>,
+}
+
+impl OriginFreshness {
+    /// Something happened that can move a window's origin, or change the set of
+    /// windows. Cheap on purpose — it is called from event arms, not from a
+    /// pointer path, and being over-eager here only costs one extra collect.
+    fn note_changed(&mut self) {
+        self.generation = self.generation.wrapping_add(1);
+    }
+
+    /// A `Moved` arrived for a window that this shell **tracks** (`tracked`), or
+    /// for one it does not.
+    ///
+    /// ⚠ The condition lives HERE, not at the call site, and that is the whole
+    /// point of the method existing. The shell-private **drag preview window** is
+    /// moved by `set_outer_position` on every pointer event of a drag and is
+    /// deliberately kept out of the tracked set — so an invalidation that fires
+    /// for it fires once per pointer event and restores the entire defect this
+    /// type was built to remove.
+    ///
+    /// The first cut of R1723 guarded that by *line order* (note after the slot
+    /// lookup), and a counterfactual that moved the line back up **was caught by
+    /// nothing**. An ordering is not a gate. A condition inside a pure type is,
+    /// and `r1723_an_untracked_windows_move_changes_nothing` is it.
+    fn note_window_moved(&mut self, tracked: bool) {
+        if tracked {
+            self.note_changed();
+        }
+    }
+
+    /// Whether the origins have to be collected again — and if so, records that
+    /// they now have been.
+    ///
+    /// Taking the answer and marking in one call, rather than a `should()` plus
+    /// a `mark()`, because a caller that asked and then did not collect would
+    /// leave the core holding origins the generation claims are fresh. There is
+    /// no way to spell that mistake here.
+    fn take_restamp(&mut self) -> bool {
+        if self.stamped == Some(self.generation) {
+            return false;
+        }
+        self.stamped = Some(self.generation);
+        true
+    }
+}
+
 fn moved_is_command_echo(commanded: Option<(i32, i32)>, logical: (i32, i32)) -> bool {
     matches!(
         commanded,
@@ -6270,7 +6394,7 @@ mod r1088_moved_echo_tests {
     //! the testable decision cores.
     use pinion_core::display::{DisplayId, DisplayInfo, DisplayRect, DisplayTopology};
 
-    use super::{WindowSpec, moved_is_command_echo, user_move_writeback};
+    use super::{OriginFreshness, WindowSpec, moved_is_command_echo, user_move_writeback};
     use crate::SizeStrategy;
 
     /// A desk with no monitors — what an absolute-placement spec is resolved
@@ -6332,6 +6456,79 @@ mod r1088_moved_echo_tests {
     #[test]
     fn divergent_position_is_a_user_move() {
         assert!(!moved_is_command_echo(Some((120, 90)), (400, 300)));
+    }
+
+    // ── R1723 OriginFreshness — a drag stops asking the display server ──
+    //    where every window is, once per pointer event.
+
+    /// How many times a run of `moves` pointer events would collect the origins.
+    ///
+    /// The unit is a **count of collections**, not a duration, because that is
+    /// what the defect actually was — one display-server round trip per window
+    /// per pointer event — and because a wall-clock assertion over a
+    /// display-server round trip is a flake generator ([[zero-flake-policy]]).
+    fn collects_over_a_drag(moves: usize) -> usize {
+        let mut freshness = OriginFreshness::default();
+        (0..moves).filter(|_| freshness.take_restamp()).count()
+    }
+
+    #[test]
+    fn r1723_a_drag_that_moves_nothing_collects_the_origins_once() {
+        // ★ The headline. Before this, 240 pointer events in a two-second drag
+        // asked every live window for its position 240 times over — and the
+        // answer could not have changed, because nothing moved.
+        assert_eq!(collects_over_a_drag(1), 1, "the first ask has to collect");
+        assert_eq!(collects_over_a_drag(240), 1, "and only the first");
+    }
+
+    #[test]
+    fn r1723_a_window_moving_makes_the_origins_stale_again() {
+        // The other half: cheap is worthless if it is also wrong. A move is the
+        // one thing that can change the answer, and it must.
+        let mut freshness = OriginFreshness::default();
+        assert!(freshness.take_restamp(), "first ask collects");
+        assert!(!freshness.take_restamp(), "second does not");
+        freshness.note_changed();
+        assert!(freshness.take_restamp(), "a move collects again");
+        assert!(!freshness.take_restamp(), "and then settles again");
+    }
+
+    #[test]
+    fn r1723_an_untracked_windows_move_changes_nothing() {
+        // ★★ The one this round nearly shipped without. The shell-private drag
+        // preview window is moved on EVERY pointer event of a drag and is not in
+        // the tracked set; invalidating on it would fire once per event and put
+        // the whole cost straight back — during the very gesture the cache
+        // exists for. The first cut guarded this by line order, and a
+        // counterfactual that moved the line back was caught by nothing.
+        let mut freshness = OriginFreshness::default();
+        assert!(freshness.take_restamp(), "first ask collects");
+        for _ in 0..240 {
+            freshness.note_window_moved(false);
+        }
+        assert!(
+            !freshness.take_restamp(),
+            "240 preview-window moves must not have made the origins stale"
+        );
+        freshness.note_window_moved(true);
+        assert!(
+            freshness.take_restamp(),
+            "and a REAL window's move still must"
+        );
+    }
+
+    #[test]
+    fn r1723_two_changes_before_an_ask_still_collect_only_once() {
+        // A burst of `Moved` events between two pointer events is one staleness,
+        // not two: what matters is that the NEXT ask collects, not how many
+        // times the window moved while nobody was asking.
+        let mut freshness = OriginFreshness::default();
+        assert!(freshness.take_restamp());
+        freshness.note_changed();
+        freshness.note_changed();
+        freshness.note_changed();
+        assert!(freshness.take_restamp(), "the burst collects once");
+        assert!(!freshness.take_restamp(), "not once per event");
     }
 
     // ── user_move_writeback (R1091 S2) — the conservative-scope + ──────
