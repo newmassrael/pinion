@@ -4,12 +4,16 @@
 ## What forced this module
 
 R1728 made `docs/analyzer-rail-spec.json` the reviewed statement of what the
-tool's navigation is, and demos began reading it instead of carrying literals.
-By R1730 **six** of them did, each with its own copy of the loader and three
-with their own copy of "which seats does the specification say are shut" — and
-the round that paid a divergence off (`keys`, built) broke **five** demos at
-once, four of them on hand-written lists the loader was supposed to have
-replaced.
+tool's navigation is, and two demos began reading it instead of carrying
+literals. R1730 paid a divergence off — it built `keys` — and **five** demos
+broke at once, every one of them on a seat list somebody had written out by
+hand.
+
+The lift is what stopped that repair from being the disease. Fixing those five
+by teaching each of them to read the pin would have left **six** copies of the
+loader and four of "which seats does the specification say are shut", which is
+this project's mechanical-duplication case arrived at while repairing the
+consequences of not having done it.
 
 That is the mechanical-duplication case this project lifts on sight, and the
 sharper reason is what the copies were for: two demos disagreeing about which
