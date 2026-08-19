@@ -12,6 +12,7 @@
 use std::cell::Cell;
 use std::collections::BTreeMap;
 
+use pinion_core::chrome::{HostChrome, with_host_chrome};
 use pinion_core::external::with_surface_extent;
 use pinion_core::shrink::pan;
 use pinion_core::widget_core::ExtraExternal;
@@ -101,6 +102,15 @@ impl std::error::Error for MountDefect {}
 pub struct ScreenRoster {
     destinations: Destinations,
     screens: BTreeMap<String, Box<dyn Screen>>,
+    /// ★★★★★ R1725 — what this host already provides, which every screen it
+    /// shows is told before it builds anything.
+    ///
+    /// A field on the roster and not an argument at each call site: it is a
+    /// fact about the application, the roster is the only path to a screen, and
+    /// an argument would let the paint and the hit test be told different
+    /// things about the same frame — the failure this whole crate is shaped to
+    /// make unrepresentable.
+    chrome: HostChrome,
     /// The extent the page region was last laid out at, so every delegated
     /// call reads the rectangle the screen is actually in.
     ///
@@ -145,8 +155,34 @@ impl ScreenRoster {
         Ok(Self {
             destinations,
             screens,
+            chrome: HostChrome::NONE,
             placed_extent: Cell::new((0, 0)),
         })
+    }
+
+    /// ★★★★★ R1725 — declare what this host draws for every screen it shows,
+    /// so a guest can leave its own out.
+    ///
+    /// Measured on the first mount, before this existed: at the mounted
+    /// destination the shell's navigation ran x=0..52 and the guest painted its
+    /// own at x=52..106, and the accessibility tree published **both** as
+    /// `role=navigation`. The guest was not wrong to have one — it runs
+    /// standalone too — and neither was the host. What was missing is that
+    /// "there is already a navigation here" is a fact about **the place**, and
+    /// nothing carried it.
+    ///
+    /// Default [`HostChrome::NONE`], so a host that declares nothing gets what
+    /// it got before: every guest draws everything it has.
+    #[must_use]
+    pub fn providing(mut self, chrome: HostChrome) -> Self {
+        self.chrome = chrome;
+        self
+    }
+
+    /// What this host declared it provides.
+    #[must_use]
+    pub fn chrome(&self) -> HostChrome {
+        self.chrome
     }
 
     /// The destinations, which are what the rail is painted from and what
@@ -249,13 +285,17 @@ impl ScreenRoster {
     ) -> Option<R> {
         let screen = self.screens.get(journey.at())?;
         let extent = self.placed_extent.get();
-        if extent.0 == 0 || extent.1 == 0 {
-            // Nothing has placed the region yet, so there is no rectangle to
-            // grant and the pre-R1724 reading is the honest one.
-            return Some(body(screen.as_ref()));
-        }
-        Some(with_surface_extent(screen.tag(), extent, || {
-            body(screen.as_ref())
+        // ★ R1725 — the chrome declaration wraps EVERY hook and not only the
+        // view, for the reason the extent grant does: a guest that omits its
+        // rail while painting must omit it from its accessibility tree and its
+        // keyboard too, and those are different calls.
+        Some(with_host_chrome(self.chrome, || {
+            if extent.0 == 0 || extent.1 == 0 {
+                // Nothing has placed the region yet, so there is no rectangle
+                // to grant and the pre-R1724 reading is the honest one.
+                return body(screen.as_ref());
+            }
+            with_surface_extent(screen.tag(), extent, || body(screen.as_ref()))
         }))
     }
 

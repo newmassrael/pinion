@@ -116,6 +116,7 @@ use pinion_core::widgets::transport::{TransportClock, TransportStatus, use_trans
 use pinion_core::{Frame, Scene, WidgetCore};
 // ★★★★★ R1724 — the axis that makes this file an application rather than a
 // screen: a destination's page can be another binding, mounted whole.
+use pinion_core::chrome::{HostChrome, Part as ChromePart};
 use pinion_screen::{Mount, Screen, ScreenRoster, ScreenState};
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{self, ButtonColors, ButtonStyle};
@@ -655,6 +656,16 @@ fn screen_roster() -> ScreenRoster {
         )],
     )
     .expect("the mounted screens sit at open destinations of this rail")
+    // ★★★★★ R1725 — **this application has a navigation, so its pages must not
+    // each bring one.** Declared here, beside the roster it is a fact about:
+    // the rail this shell paints IS `spec::RAIL`, and a screen shown inside it
+    // is in a place that already answers "where can I go".
+    //
+    // Not `ApplicationBar`: this shell's bar carries the capture source, the
+    // capture state and the global search, and a mounted screen's own bar
+    // carries that screen's subject. Those are different sentences, and only
+    // the first is chrome a page should leave to its host.
+    .providing(HostChrome::NONE.with(ChromePart::Navigation))
 }
 
 impl ShellState {

@@ -20,6 +20,56 @@ fn state() -> LabState {
     LabState::opening()
 }
 
+/// ★★★★★ R1725 — **this screen draws its own navigation only where it is the
+/// one providing it, and every rectangle follows from that one fact.**
+///
+/// Driven here rather than only from the shell because the property is this
+/// screen's, and because the direction that must NOT change is the standalone
+/// one: this binding still runs as its own window, where its rail is the only
+/// navigation there is. A guard that got the sense backwards would take the
+/// rail away from the standalone screen, and every rectangle assertion in
+/// `painted.rs` is written against the standalone layout — so this pins the
+/// hosted side, which nothing there can see.
+#[test]
+fn r1725_the_rail_is_drawn_only_where_this_screen_is_the_one_providing_it() {
+    use pinion_core::chrome::{HostChrome, Part, with_host_chrome};
+
+    let owner = Owner::new();
+    owner.run(|| {
+        // Standalone: the rail is this screen's to draw, and the palette sits
+        // beside it exactly where it always did.
+        assert!(super::draws_own_rail(), "nothing is providing a navigation");
+        assert_eq!(super::rail_w(), RAIL_W);
+        assert_eq!(
+            super::palette_rect().x,
+            RAIL_W,
+            "the palette starts after the rail it drew"
+        );
+
+        // Placed inside an application that already has one.
+        with_host_chrome(HostChrome::NONE.with(Part::Navigation), || {
+            assert!(!super::draws_own_rail());
+            assert_eq!(super::rail_w(), 0, "no width is reserved for it");
+            assert_eq!(
+                super::palette_rect().x,
+                0,
+                "and the room is USED -- the palette moves to the page's own \
+                 left edge rather than leaving a blank strip where a rail was"
+            );
+            assert_eq!(
+                super::rail_rect().w,
+                0,
+                "the rail's own rectangle is empty, so nothing can be laid out \
+                 into it by a reader that asks"
+            );
+        });
+
+        // …and the declaration does not leak back out.
+        assert!(super::draws_own_rail());
+        assert_eq!(super::palette_rect().x, RAIL_W);
+    });
+}
+
 /// ★★★★★ R1716 — **a card told where it runs runs there, in the plan.**
 ///
 /// The screen shows the placement row, the row can be taken over, and the

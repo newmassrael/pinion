@@ -31,6 +31,7 @@ pub mod app;
 pub mod availability;
 pub mod cell_metric;
 pub mod cell_value;
+pub mod chrome;
 pub mod clipboard;
 pub mod command;
 pub mod composite_tag;

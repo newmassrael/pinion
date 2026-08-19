@@ -9,6 +9,7 @@ use std::cell::Cell;
 use std::rc::Rc;
 
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
+use pinion_core::chrome::{HostChrome, Part as ChromePart, host_chrome};
 use pinion_core::external::{External, StubExternal, layout_size};
 use pinion_core::reactive::{Owner, VIEWPORT_SIZE};
 use pinion_core::scene::{ContainerNode, Rect};
@@ -41,6 +42,8 @@ const LAB_SHRINK: ShrinkPolicy = ShrinkPolicy::panning(LAB_COMFORTABLE, (600, 30
 
 const LAB_TAG: &str = "fixture_lab";
 const LAB_FIELD_TAG: &str = "fixture_lab.field";
+/// The navigation the lab fixture draws for itself when nothing else does.
+const LAB_RAIL_TAG: &str = "fixture_lab.rail";
 const VIEWER_TAG: &str = "fixture_viewer";
 
 struct LabFixture;
@@ -108,8 +111,19 @@ impl WidgetCore for LabFixture {
 }
 
 impl WidgetA11y for LabFixture {
+    /// ★★★★★ R1725 — the fixture behaves like the real guest: it contributes a
+    /// navigation of its own **only where it is the one providing it**. The
+    /// accessibility half is the one the reference toolkit cannot get right —
+    /// measured at 6.11.1, a placed application window's menu bar, tool bar and
+    /// status bar all stay in the tree beside the host's, so a reader is told
+    /// the application has two of each.
     fn access_node(state: &u32, _focused: Option<&str>) -> Vec<AccessNode> {
-        vec![AccessNode::new(LAB_TAG, AriaRole::Group).with_name(format!("lab {state}"))]
+        let mut nodes =
+            vec![AccessNode::new(LAB_TAG, AriaRole::Group).with_name(format!("lab {state}"))];
+        if !host_chrome().provides(ChromePart::Navigation) {
+            nodes.push(AccessNode::new(LAB_RAIL_TAG, AriaRole::Navigation).with_name("sections"));
+        }
+        nodes
     }
 }
 
@@ -268,6 +282,86 @@ fn r1724_only_the_screen_you_are_at_has_externals() {
 
 /// A destination the host paints itself is not a screen, and every accessor
 /// says so rather than guessing.
+/// ★★★★★ R1725 — **a screen is told what the place it was put in already
+/// provides, and it is told at every hook.**
+///
+/// Both halves are load-bearing and they fail differently. Told only at
+/// `view`, a guest would omit its navigation from the picture and keep it in
+/// the accessibility tree — a landmark a screen reader walks to and a pointer
+/// cannot reach, which is worse than drawing two. Told nothing at all, it draws
+/// its own beside its host's, which is what the first mount did and what the
+/// reference toolkit does by construction (measured at 6.11.1: the placed
+/// window's menu bar, tool bar and status bar all keep drawing, its tree
+/// carries 2 of each, and there is no property, method or event by which the
+/// guest could have asked).
+#[test]
+fn r1725_a_screen_is_told_what_its_place_already_provides() {
+    let bare = roster();
+    let hosted = roster().providing(HostChrome::NONE.with(ChromePart::Navigation));
+
+    assert!(
+        bare.chrome().is_empty(),
+        "a host that declares nothing must provide nothing, so every existing \
+         host keeps the behaviour it had"
+    );
+
+    // Outside the roster nothing is declared, which is the standalone reading.
+    assert!(!host_chrome().provides(ChromePart::Navigation));
+
+    let rails = |roster: &ScreenRoster| -> usize {
+        roster
+            .with_current(&at("catalog"), |screen| screen.access_node(None))
+            .expect("catalog is a mounted screen")
+            .iter()
+            .filter(|n| n.tag == LAB_RAIL_TAG)
+            .count()
+    };
+    assert_eq!(
+        rails(&bare),
+        1,
+        "a screen whose host provides nothing keeps its own navigation -- it \
+         may be the only one there is"
+    );
+    assert_eq!(
+        rails(&hosted),
+        0,
+        "and it leaves it out where the place already has one. This is the \
+         ACCESSIBILITY hook, not the view: it is reached through the same \
+         `with_current`, so a declaration that only wrapped the paint would \
+         pass a picture test and fail here"
+    );
+
+    // …and the declaration does not outlive the call.
+    assert!(
+        !host_chrome().provides(ChromePart::Navigation),
+        "a declaration left standing would make the NEXT screen omit a \
+         navigation nothing is drawing"
+    );
+}
+
+/// ★★ R1725 — the extent grant and the chrome declaration are two facts about
+/// one place, and a screen that reads both must get both from one call.
+///
+/// They were added a round apart and are wrapped at the same site for that
+/// reason; this pins it, because the cheap way to add the second was to wrap
+/// only the branch that already had a grant — which would silently tell a
+/// screen nothing on the first frame, before anything has been placed.
+#[test]
+fn r1725_the_place_is_stated_before_anything_has_been_placed() {
+    let hosted = roster().providing(HostChrome::NONE.with(ChromePart::Navigation));
+    // No `page_scene` yet, so no extent has ever been recorded.
+    let told = hosted
+        .with_current(&at("catalog"), |_| {
+            host_chrome().provides(ChromePart::Navigation)
+        })
+        .expect("catalog is a mounted screen");
+    assert!(
+        told,
+        "the chrome declaration must not be conditional on a region having \
+         been measured: a host lays a rail seat out before it paints a page"
+    );
+}
+
 #[test]
 fn r1724_an_unmounted_destination_is_the_hosts_own_page() {
     let roster = roster();
@@ -569,7 +663,12 @@ fn r1724_a_mounted_binding_keeps_the_hooks_it_overrode() {
         .expect("the lab is mounted");
     assert_eq!(
         nodes.iter().map(|n| n.name.clone()).collect::<Vec<_>>(),
-        vec![Some("lab 4".to_owned())],
+        // ★ R1725 — the second node is the fixture's OWN navigation, and it is
+        // here because this roster declares no chrome: nothing else is
+        // providing one, so the screen keeps its. The exact list is kept exact
+        // rather than relaxed to a `contains`, because what this assertion is
+        // for is that a node nobody expected cannot appear unnoticed.
+        vec![Some("lab 4".to_owned()), Some("sections".to_owned())],
         "the accessibility tree is built from the latched projection"
     );
 

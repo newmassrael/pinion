@@ -166,6 +166,32 @@ const INSPECTOR_SCROLL: &str = match spec::PANES[3].body {
 const THEME_TAG: &str = "app";
 
 const RAIL_W: u32 = spec::PANES[0].width;
+
+/// ★★★★★ R1725 — **the rail's width where it is being drawn**, which is zero
+/// when the place this screen was put in already has a navigation.
+///
+/// [`RAIL_W`] stays a constant because it is also a *window policy* number —
+/// `MIN_W` and `FLOOR_W` are what this screen asks an operating system for when
+/// it owns a window, and that ask does not change with where a page happens to
+/// be. What changes is the layout, so only the layout reads this.
+///
+/// Standalone it answers `RAIL_W` and every rectangle is what it was, which is
+/// why the standalone screen's own rectangle assertions still hold unedited.
+fn rail_w() -> u32 {
+    if draws_own_rail() { RAIL_W } else { 0 }
+}
+
+/// ★★★★★ R1725 — **the one question every half of the rail asks.**
+///
+/// The paint, the accessibility tree, the keyboard ring, the hit test and the
+/// width above are five readers of one fact, and this project's recurring
+/// defect is exactly what happens when two of them read it separately: a screen
+/// that publishes a rule it does not keep. So the question is asked once, here,
+/// and the five derive from it.
+fn draws_own_rail() -> bool {
+    !pinion_core::chrome::host_chrome().provides(pinion_core::chrome::Part::Navigation)
+}
+
 const PALETTE_W: u32 = spec::PANES[1].width;
 const INSP_W: u32 = spec::PANES[3].width;
 const APP_BAR_H: u32 = spec::APP_BAR_H;
@@ -383,15 +409,15 @@ const SHRINK: ShrinkPolicy = ShrinkPolicy::panning((MIN_W, MIN_H), (FLOOR_W, MIN
 fn canvas_rect() -> Rect {
     let (w, h) = window_size();
     Rect::new(
-        RAIL_W + PALETTE_W,
+        rail_w() + PALETTE_W,
         APP_BAR_H + TOOLBAR_H,
-        w - RAIL_W - PALETTE_W - INSP_W,
+        w - rail_w() - PALETTE_W - INSP_W,
         h - APP_BAR_H - TOOLBAR_H,
     )
 }
 
 fn palette_rect() -> Rect {
-    Rect::new(RAIL_W, APP_BAR_H, PALETTE_W, window_size().1 - APP_BAR_H)
+    Rect::new(rail_w(), APP_BAR_H, PALETTE_W, window_size().1 - APP_BAR_H)
 }
 
 fn inspector_rect() -> Rect {
@@ -400,15 +426,15 @@ fn inspector_rect() -> Rect {
 }
 
 fn rail_rect() -> Rect {
-    Rect::new(0, APP_BAR_H, RAIL_W, window_size().1 - APP_BAR_H)
+    Rect::new(0, APP_BAR_H, rail_w(), window_size().1 - APP_BAR_H)
 }
 
 fn toolbar_rect() -> Rect {
     let (w, _) = window_size();
     Rect::new(
-        RAIL_W + PALETTE_W,
+        rail_w() + PALETTE_W,
         APP_BAR_H,
-        w - RAIL_W - PALETTE_W - INSP_W,
+        w - rail_w() - PALETTE_W - INSP_W,
         TOOLBAR_H,
     )
 }
@@ -3214,7 +3240,7 @@ fn palette_row(n: usize) -> Rect {
     let group = n / 4;
     let within = n % 4;
     Rect::new(
-        RAIL_W + PAD,
+        rail_w() + PAD,
         APP_BAR_H
             + 56
             + group * (PAL_HEAD_H + 4 * PAL_ROW_H + 12)
@@ -3232,7 +3258,7 @@ fn legend_top() -> u32 {
 
 fn legend_row(n: usize) -> Rect {
     Rect::new(
-        RAIL_W + PAD,
+        rail_w() + PAD,
         legend_top() + PAL_HEAD_H + u32::try_from(n).unwrap_or(0) * 20,
         PALETTE_W - PAD * 2,
         18,
@@ -3241,7 +3267,7 @@ fn legend_row(n: usize) -> Rect {
 
 fn protocol_chip(n: usize) -> Rect {
     Rect::new(
-        RAIL_W + PAD + u32::try_from(n).unwrap_or(0) * 40,
+        rail_w() + PAD + u32::try_from(n).unwrap_or(0) * 40,
         legend_top() + PAL_HEAD_H + 3 * 20 + 6,
         36,
         18,
@@ -3250,7 +3276,7 @@ fn protocol_chip(n: usize) -> Rect {
 
 fn discovery_rect() -> Rect {
     Rect::new(
-        RAIL_W + PAD,
+        rail_w() + PAD,
         legend_top() + PAL_HEAD_H + 3 * 20 + 6 + 18 + 20 + PAL_HEAD_H,
         PALETTE_W - PAD * 2,
         58,
@@ -6705,20 +6731,29 @@ fn view(field: (TextFieldState, u32), _frame: Frame) -> Scene {
     // and the framework builds it, once, for every binding that says so — see
     // `pinion_core::shrink::pan`. A screen that wrapped its own would be the
     // second place the rule lives, and the first one to drift.
+    // ★★★★★ R1725 — the rail is built only where this screen is the one
+    // providing it. Not painted-and-hidden and not zero-width: a page inside an
+    // application that already has a navigation must not contribute a second
+    // one to the tree either, and the only way that is a property rather than a
+    // rule is for the node not to exist.
+    let mut panes = vec![app_bar(&state, ink)];
+    if draws_own_rail() {
+        panes.push(rail(ink));
+    }
+    panes.extend([
+        palette(&state, ink),
+        toolbar(&state, ink),
+        canvas(&state, ink),
+        inspector(&state, field, &theme, ink),
+    ]);
+
     Scene::Container(
-        ContainerNode::new(vec![
-            app_bar(&state, ink),
-            rail(ink),
-            palette(&state, ink),
-            toolbar(&state, ink),
-            canvas(&state, ink),
-            inspector(&state, field, &theme, ink),
-        ])
-        .with_tag(VIEW_TAG)
-        .with_style(BoxStyle::filled(ink.bg))
-        // The root fills the surface the shell gave it, so a resize reflows
-        // instead of leaving the rest of the window unpainted.
-        .with_layout(LayoutStyle::new().with_size(Size::px(win.0, win.1))),
+        ContainerNode::new(panes)
+            .with_tag(VIEW_TAG)
+            .with_style(BoxStyle::filled(ink.bg))
+            // The root fills the surface the shell gave it, so a resize reflows
+            // instead of leaving the rest of the window unpainted.
+            .with_layout(LayoutStyle::new().with_size(Size::px(win.0, win.1))),
     )
 }
 
@@ -10491,7 +10526,16 @@ impl WidgetA11y for NodeLabView {
                 ))),
         ];
         nodes.extend(appbar_access(&state));
-        nodes.extend(rail_access());
+        // ★★★★★ R1725 — and out of the TREE too, from the same one question the
+        // paint asks. Measured at 6.11.1: a placed application window's menu
+        // bar, tool bar and status bar all stay in the tree beside the host's,
+        // so a reader is told the application has two of each — and there is no
+        // API by which the guest could have known. This is the half that
+        // measurement makes non-negotiable: omitting the paint alone would
+        // leave a navigation a screen reader can walk to and a pointer cannot.
+        if draws_own_rail() {
+            nodes.extend(rail_access());
+        }
         nodes.extend(palette_access(&state));
         nodes.extend(canvas_access(&state));
         nodes.extend(gate_access(&state));

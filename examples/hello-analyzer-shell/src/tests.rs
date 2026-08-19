@@ -2099,6 +2099,95 @@ fn r1724_only_the_showing_section_has_surfaces() {
     });
 }
 
+/// ★★★★★ R1725 — **one application, one navigation.**
+///
+/// The defect this pins was visible the moment the first screen was mounted and
+/// no gate could see it: at Catalog the shell's rail ran x=0..52 and the mounted
+/// screen painted its own at x=52..106 — two rails side by side — and the
+/// accessibility tree published **both**, `role=navigation`, named *Destinations*
+/// and *sections*.
+///
+/// Measured at 6.11.1 by building a probe and running it: a complete
+/// application window placed inside another application's page container keeps
+/// its menu bar (23 px of it), its tool bar and its status bar, and its tree
+/// carries **2 of each**. There is no property, method or event by which the
+/// placed window could learn what its container already provides — the nearest
+/// signal is `window()`, which answers the *host's* window, so a guest can
+/// learn that it is embedded and nothing about what that place has.
+///
+/// Both halves are asserted because they fail differently: paint-only would
+/// leave a landmark a screen reader walks to and a pointer cannot reach.
+#[test]
+fn r1725_one_application_has_one_navigation() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = super::use_shell_state();
+        state.go("catalog").expect("Catalog is reachable");
+
+        // --- the tree ---------------------------------------------------
+        let nodes = super::AnalyzerShellView::access_node(&ScreenState::default(), None);
+        let navigations: Vec<&str> = nodes
+            .iter()
+            .filter(|n| n.role == pinion_a11y::AriaRole::Navigation)
+            .map(|n| n.tag.as_str())
+            .collect();
+        assert_eq!(
+            navigations,
+            vec!["shell.rail"],
+            "a reader must be told this application has ONE navigation. Before \
+             R1725 the mounted screen contributed a second one named `sections` \
+             beside the shell's `Destinations`, which is what the reference \
+             toolkit does by construction (2 menu bars, 2 tool bars and 2 \
+             status bars in its tree, measured at 6.11.1)"
+        );
+
+        // --- the picture ------------------------------------------------
+        let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
+        let mut cache = pinion_runtime::LayoutCache::new();
+        pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
+        // ★★★★★ Asked of the scene's TAGS and not of a rectangle, and a
+        // counterfactual is what said so. `rect_for_tag` answers `None` both
+        // for a tag no node carries AND for a node whose rect does not resolve
+        // — so the first draft of this assertion could not tell "not built"
+        // from "built at zero width", which is exactly the distinction this
+        // round's design turns on. Restoring the unconditional rail was caught
+        // by NOTHING, because the width still came from the same predicate and
+        // the node was painted zero-wide: the mechanism was half broken and the
+        // gate could not see it. Presence is the property; geometry is a
+        // consequence.
+        let tags = scene.tags();
+        assert!(
+            tags.iter().any(|t| t == "shell.rail"),
+            "the host's own rail is still painted"
+        );
+        assert!(
+            !tags.iter().any(|t| t == "lab.rail"),
+            "and the guest's is not built AT ALL -- not painted-and-hidden and \
+             not zero-width, because a hidden node is still a node in the tree \
+             and a zero-width one is still a node a census counts"
+        );
+        assert!(
+            !tags.iter().any(|t| t.starts_with("lab.rail.")),
+            "nor any of its seats"
+        );
+
+        // --- and the room it left is USED, not left blank ----------------
+        // The guest's panes shift left by the rail it no longer draws, which is
+        // the difference between omitting a pane and merely not drawing it.
+        let region = pinion_runtime::rect_for_tag(&scene, "shell.canvas")
+            .expect("the page region is painted");
+        let pan = pinion_runtime::rect_for_tag(&scene, "window.pan");
+        let palette = pinion_runtime::rect_for_tag(&scene, "lab.palette")
+            .expect("the mounted screen paints its palette");
+        let page_x = pan.map_or(region.x, |p| p.x);
+        assert_eq!(
+            palette.x, page_x,
+            "the palette starts at the page's own left edge, where the guest's \
+             rail used to be"
+        );
+    });
+}
+
 /// ★★★★★ R1724 — **the accessibility tree follows the rail into the section.**
 ///
 /// The row the reference toolkit fails twice over: measured at 6.11.1, its
