@@ -3,7 +3,7 @@
 
 R1724 mounted a whole screen at one of this application's seats. The first
 thing that mount made visible was a defect neither screen had on its own: at
-the Catalog destination the shell's navigation rail ran x=0..52 and the mounted
+the node lab destination the shell's navigation rail ran x=0..52 and the mounted
 screen painted **its own** at x=52..106 — two rails, side by side, for one
 application — and the accessibility tree published both of them, `role
 navigation`, named *Destinations* and *sections*.
@@ -17,7 +17,7 @@ out what is already there.
 
 What this script drives, and why it needs TWO processes:
 
-* **A** — the integrated application at Catalog. One rail painted, one
+* **A** — the integrated application at the node lab seat. One rail painted, one
   navigation in the tree, and the guest's panes shifted into the room its own
   rail no longer takes.
 * **B** — the SAME binding as its own window. Its rail is back, because there
@@ -79,11 +79,11 @@ def navigations(app: RpcSubprocess) -> list:
 
 def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
     # ── (A) the integrated application ────────────────────────────────────
-    banner("A — the application at Catalog: one rail, one navigation")
+    banner("A — the application at the node lab: one rail, one navigation")
     with RpcSubprocess(SHELL, boot_grace=1.5) as app:
-        app.intervene(f"{EXT}/nav", "catalog")
+        app.intervene(f"{EXT}/nav", "lab")
         app.tick(16)
-        assert_eq(app.query(f"{EXT}/nav"), "catalog", "A: the journey reached Catalog")
+        assert_eq(app.query(f"{EXT}/nav"), "lab", "A: the journey reached the node lab")
 
         rects = abs_rects_of(app.snapshot(source="paint"))
         rails = sorted(t for t in rects if t in ("shell.rail", "lab.rail"))
@@ -97,7 +97,17 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         ok("A: the host's rail is still there", "shell.rail" in rects)
         # Every destination the application declares still has its seat: the
         # repair must not have cost the host anything either.
-        for seat in ("dashboard", "stream", "decode", "catalog", "settings", "topology", "sessions"):
+        # ★ R1728 — the reference's eight, rather than the seven this had.
+        for seat in (
+            "dashboard",
+            "packets",
+            "keys",
+            "logs",
+            "lab",
+            "topology",
+            "sessions",
+            "settings",
+        ):
             ok(f"A: the host's {seat} seat is painted", f"shell.rail.{seat}" in rects)
         ok(
             "A: none of the guest's rail seats is painted",
@@ -154,7 +164,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             "C: and the guest left with it",
             not [t for t in after if t == "node_lab" or t.startswith("lab.")],
         )
-        app.intervene(f"{EXT}/nav", "catalog")
+        app.intervene(f"{EXT}/nav", "lab")
         app.tick(16)
         back = abs_rects_of(app.snapshot(source="paint"))
         ok("C: returning brings the guest back", "lab.canvas" in back)

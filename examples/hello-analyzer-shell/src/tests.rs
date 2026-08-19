@@ -189,23 +189,151 @@ fn r1668_every_reserved_seat_names_what_it_waits_for() {
         .iter()
         .filter_map(|seat| match seat.seat {
             spec::Seat::Elsewhere(surface) => Some((seat.key, surface)),
-            spec::Seat::Page | spec::Seat::Reserved(_) => None,
+            spec::Seat::Page | spec::Seat::Reserved(_) | spec::Seat::Unbuilt(_) => None,
         })
         .collect();
-    // ★★★★★ R1724 — **three, then two.** Catalog stopped saying *elsewhere*
-    // because the node graph lab is mounted here now
+    // ★★★★★ R1724 — **three, then two.** The node lab's seat stopped saying
+    // *elsewhere* because the lab is mounted here now
     // (`pinion_screen::Mount<NodeLabView>`), so the tool is one application at
-    // that seat rather than two executables. The two that remain are the
-    // capture viewer's, and they are a later round's: they are one screen
-    // behind two seats, and what `decode` is has to be settled before it can be
-    // mounted at all.
-    assert_eq!(elsewhere.len(), 2, "{elsewhere:?}");
+    // that seat rather than two executables.
+    //
+    // ★★★★★ R1728 — **two, then one.** The other two were never one screen
+    // behind two seats: measured against the reference, `stream` and `decode`
+    // were this application's invention. The reference's second seat is the
+    // capture viewer, which is still an executable of its own, and its third is
+    // a section this build has not written — a different sentence, and the one
+    // `Unbuilt` was added for. The count is not written down here: it is
+    // derived from the seats, so a seat that changes arm moves it.
+    assert_eq!(
+        elsewhere.len(),
+        1,
+        "one screen of this tool is still a separate executable: {elsewhere:?}",
+    );
     for (key, surface) in elsewhere {
         assert!(
             surface.starts_with("the ") && surface.len() > 8,
             "the {key} seat points at {surface:?}, which names no surface",
         );
     }
+    // ★★ R1728 — and the mirror: a seat that is neither a page, nor booked, nor
+    // somewhere else names *what specifies it*, so a reader is told the thing
+    // exists in the plan rather than being left with a dead icon.
+    let unbuilt: Vec<_> = spec::RAIL
+        .iter()
+        .filter_map(|seat| match seat.seat {
+            spec::Seat::Unbuilt(specified_by) => Some((seat.key, specified_by)),
+            spec::Seat::Page | spec::Seat::Reserved(_) | spec::Seat::Elsewhere(_) => None,
+        })
+        .collect();
+    assert!(!unbuilt.is_empty(), "the fourth arm has no seat using it");
+    for (key, specified_by) in unbuilt {
+        assert!(
+            specified_by.starts_with("the ") && specified_by.len() > 8,
+            "the {key} seat cites {specified_by:?}, which names no specification",
+        );
+    }
+}
+
+/// ★★★★★ R1728 — **the rail this application runs on IS the rail the reference
+/// draws**, and where it is not, the difference is one somebody wrote down.
+///
+/// The population is the specification's, loaded from
+/// `docs/analyzer-rail-spec.json`, and the comparison runs in **both**
+/// directions: a seat the reference has and this build lacks, and a seat this
+/// build has that the reference does not, are both failures. The one-directional
+/// version of this check is what let three invented keys sit on the rail for
+/// several hundred rounds.
+///
+/// The assertion is *equality* with the declared remainder rather than
+/// containment. Equality is what makes paying a divergence off fail too — the
+/// gate then says "you fixed it, record it", which is the direction a floor
+/// cannot see.
+#[test]
+fn r1728_the_rail_reproduces_the_reference_or_says_where_it_does_not() {
+    let built = spec::destinations();
+    let found: Vec<String> = spec::canon_spec()
+        .diff(&built)
+        .iter()
+        .map(pinion_core::widgets::destination::Divergence::sentence)
+        .collect();
+    let owed = spec::owed();
+    let declared: Vec<String> = owed.iter().map(|o| o.sentence.clone()).collect();
+    assert_eq!(
+        found, declared,
+        "the rail's difference from the reference is not the difference \
+         `docs/analyzer-rail-spec.json` declares",
+    );
+    // Every accepted divergence carries its reason and the round that took it,
+    // because an exception list nobody has to justify becomes a list of
+    // everything.
+    for entry in &owed {
+        assert!(
+            entry.sentence.contains(&format!("`{}`", entry.key)),
+            "the owed entry for {} does not describe {}",
+            entry.key,
+            entry.key,
+        );
+        assert!(
+            entry.since.starts_with('R') && entry.since.len() >= 3,
+            "the owed entry for {} names no round: {:?}",
+            entry.key,
+            entry.since,
+        );
+        assert!(
+            entry.why.len() > 40,
+            "the owed entry for {} states no reason",
+            entry.key,
+        );
+    }
+    // And the reproduction is a number rather than an impression.
+    let reproduced = spec::canon_spec().len() - owed.len();
+    assert_eq!(
+        reproduced + owed.len(),
+        built.len(),
+        "every seat is either reproduced or owed, and none is both",
+    );
+}
+
+/// ★★ R1728 — the specification itself is a roster, and it is the reference's
+/// eight seats rather than whatever this application happens to hold.
+///
+/// Separate from the conformance test above on purpose: if the pin were
+/// malformed or truncated, a diff against it could come out empty and read as
+/// success. This asserts the thing being compared against is the right size and
+/// shape first.
+#[test]
+fn r1728_the_specification_is_the_references_own_rail() {
+    let canon = spec::canon_spec();
+    assert_eq!(
+        canon.len(),
+        8,
+        "the reference draws eight seats on every one of its screens",
+    );
+    let keys: Vec<&str> = canon.seats().iter().map(|s| s.key.as_ref()).collect();
+    assert_eq!(
+        keys,
+        [
+            "dashboard",
+            "packets",
+            "keys",
+            "logs",
+            "lab",
+            "topology",
+            "sessions",
+            "settings"
+        ],
+        "the specification is the reference's rail in the reference's order",
+    );
+    // Two seats the reference draws locked itself, and the rest it opens. This
+    // is a fact about the REFERENCE, not about this build — which is why it
+    // belongs here and not in the diff.
+    let locked: Vec<&str> = canon
+        .seats()
+        .iter()
+        .filter(|s| s.required != pinion_core::widgets::destination::Required::Open)
+        .map(|s| s.key.as_ref())
+        .collect();
+    assert_eq!(locked, ["topology", "sessions"]);
 }
 
 /// R1668 — the header controls the specification names all map onto an
@@ -828,10 +956,15 @@ fn the_locked_table_is_derived_from_the_tier_and_the_reservation() {
     // release, FIVE rail destinations this application cannot take you to, and
     // the settings page's two key rows. Derived rather than listed, so a seat
     // that is unlocked leaves the table by being unlocked.
-    // ★★★★★ R1724 — **fifteen now, and this is the assertion that shows the
-    // derivation works.** Catalog's page is the node graph lab, mounted, so
-    // that rail seat is open — and it left this table without anybody editing
-    // this table, which is exactly what "derived rather than listed" was for.
+    // ★★★★★ R1724 — **fifteen then, and this is the assertion that shows the
+    // derivation works.** The node lab's seat has a page now, mounted, so that
+    // rail seat is open — and it left this table without anybody editing this
+    // table, which is exactly what "derived rather than listed" was for.
+    // ★★ R1728 — **sixteen now**, and the same derivation is why: the rail
+    // became the reference's eight seats, so it carries five closed ones rather
+    // than four. The total is not written down twice — the three assertions
+    // below account for every tag by where it comes from, and the length is
+    // their sum.
     let tags: Vec<String> = spec::LOCKED
         .iter()
         .flat_map(|(template, population, _)| {
@@ -841,7 +974,6 @@ fn the_locked_table_is_derived_from_the_tier_and_the_reservation() {
                 .map(move |member| template.replace("{}", &member))
         })
         .collect();
-    assert_eq!(tags.len(), 15, "{tags:?}");
     assert_eq!(
         tags.iter()
             .filter(|t| t.starts_with("shell.palette."))
@@ -857,6 +989,14 @@ fn the_locked_table_is_derived_from_the_tier_and_the_reservation() {
             .filter(|t| t.starts_with("shell.settings."))
             .count(),
         spec::KEY_ROWS.len(),
+    );
+    // ★ R1728 — and the three account for all of them, so the table has no
+    // member from a fourth source that the assertions above cannot see. This is
+    // what the hand-written total used to be doing, minus the hand.
+    assert_eq!(
+        tags.len(),
+        spec::reserved_count() + spec::destinations().closed().count() + spec::KEY_ROWS.len(),
+        "{tags:?}",
     );
 }
 
@@ -1939,14 +2079,18 @@ fn lab_tags(tags: &std::collections::BTreeSet<String>) -> Vec<String> {
         .collect()
 }
 
-/// ★★★★★ R1724 — **arriving at Catalog shows the node graph lab.**
+/// ★★★★★ R1724 — **arriving at the node lab seat shows the node graph lab.**
 ///
 /// The seat said `elsewhere` — *built, shipping, and not here* — for as long as
 /// the tool was three executables. It is here now, and this is what that means:
 /// the same binding the standalone `hello-node-lab` binary runs paints inside
 /// this window's page region.
+///
+/// ★ R1728 renamed the seat from `catalog` to `lab`: the reference has a node
+/// graph section and has no catalogue section, so the page was right and the
+/// address was this application's invention.
 #[test]
-fn r1724_the_catalog_destination_is_the_node_lab_itself() {
+fn r1724_the_lab_destination_is_the_node_lab_itself() {
     let owner = Owner::new();
     owner.run(|| {
         let state = super::use_shell_state();
@@ -1962,8 +2106,8 @@ fn r1724_the_catalog_destination_is_the_node_lab_itself() {
         );
 
         state
-            .go("catalog")
-            .expect("Catalog is a destination we can reach");
+            .go("lab")
+            .expect("the node lab is a destination we can reach");
         let catalog = painted_tags(&super::view(
             ScreenState::default(),
             pinion_core::Frame::default(),
@@ -2011,7 +2155,7 @@ fn r1724_a_press_inside_the_mounted_section_resolves_to_it() {
     let owner = Owner::new();
     owner.run(|| {
         let state = super::use_shell_state();
-        state.go("catalog").expect("Catalog is reachable");
+        state.go("lab").expect("the node lab seat is reachable");
         let mut scene = super::view(ScreenState::default(), pinion_core::Frame::default());
         let mut cache = pinion_runtime::LayoutCache::new();
         pinion_runtime::compute_layout(&mut scene, &mut cache, super::WIN_W, super::WIN_H);
@@ -2083,7 +2227,7 @@ fn r1724_only_the_showing_section_has_surfaces() {
             "the dashboard is this application's own page, so it mounts nothing"
         );
 
-        state.go("catalog").expect("Catalog is reachable");
+        state.go("lab").expect("the node lab seat is reachable");
         let live = tags();
         assert!(
             live.iter().any(|t| t == "node_lab"),
@@ -2349,7 +2493,7 @@ fn r1725_one_application_has_one_navigation() {
     let owner = Owner::new();
     owner.run(|| {
         let state = super::use_shell_state();
-        state.go("catalog").expect("Catalog is reachable");
+        state.go("lab").expect("the node lab seat is reachable");
 
         // --- the tree ---------------------------------------------------
         let nodes = super::AnalyzerShellView::access_node(&ScreenState::default(), None);
@@ -2444,7 +2588,7 @@ fn r1724_the_tree_holds_the_showing_section_and_only_it() {
             "nothing of the lab on the dashboard"
         );
 
-        state.go("catalog").expect("Catalog is reachable");
+        state.go("lab").expect("the node lab seat is reachable");
         let nodes = super::AnalyzerShellView::access_node(&ScreenState::default(), None);
         let region = nodes
             .iter()
@@ -2478,7 +2622,7 @@ fn r1724_the_hosts_state_moves_when_the_rail_does() {
         let empty =
             pinion_core::Scene::Container(pinion_core::scene::ContainerNode::new(Vec::new()));
         let here = super::AnalyzerShellView::read_state(&empty);
-        state.go("catalog").expect("Catalog is reachable");
+        state.go("lab").expect("the node lab seat is reachable");
         let there = super::AnalyzerShellView::read_state(&empty);
         assert_ne!(
             here, there,

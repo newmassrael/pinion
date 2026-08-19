@@ -182,8 +182,10 @@ def body() -> None:
         assert_eq(q(tf, "preset"), "Overview", "A: the layout it opens on")
         assert_eq(
             q(tf, "rail"),
-            "dashboard,stream,decode,catalog,settings,topology,sessions",
-            "A: the rail, its two reserved seats last",
+            "dashboard,packets,keys,logs,lab,topology,sessions,settings",
+            "A: ★ R1728 -- the reference's EIGHT seats, in the reference's own "
+            "order. This read seven until this round, three of whose keys the "
+            "reference does not have",
         )
         assert_eq(q(tf, "tabs"), "Dashboard,Design System", "A: the two view tabs")
         assert q(tf, "source").startswith("eth0"), "A: the app bar opens on a source"
@@ -253,7 +255,9 @@ def body() -> None:
             assert_eq(row["recourse"], "await_release", f"B2: {kind} derives its recourse")
         for kind in ("packet", "decode", "keymap", "filter"):
             assert f"shell.palette.{kind}" not in inert, f"B2: {kind} is placeable and live"
-        for seat, booking in (("topology", "requirement 12"), ("sessions", "requirement 14")):
+        # ★ R1728 — requirement 18, not 14. The reference names the requirement
+        # in the seat's own tooltip, and 14 is not among the six it defers.
+        for seat, booking in (("topology", "requirement 12"), ("sessions", "requirement 18")):
             row = inert.get(f"shell.rail.{seat}")
             assert row is not None, f"B2: the {seat} rail seat is reserved and reported live"
             assert_eq(row["detail"], booking, f"B2: and names what it waits for")
@@ -267,20 +271,52 @@ def body() -> None:
             for row in tf.request("scene/disabled", {}).result["disabled"]
             if row["reason"] == "elsewhere"
         ]
-        # ★★★★★ R1724 — **three, then two.** Catalog's page is the node graph
-        # lab, mounted whole through `pinion_screen::Mount<NodeLabView>`, so the
-        # seat stopped saying *built, shipping, and not here* — it is here. The
-        # two that remain are the capture viewer's.
+        # ★★★★★ R1724 — **three, then two.** The node lab's page is mounted
+        # whole through `pinion_screen::Mount<NodeLabView>`, so that seat
+        # stopped saying *built, shipping, and not here* — it is here.
+        # ★★★★★ R1728 — **two, then one.** The other two were never one screen
+        # behind two seats: measured against the reference, `stream` and
+        # `decode` were this application's invention. What is genuinely built
+        # and elsewhere is the capture viewer, and it is one seat.
         assert_eq(
             sorted(elsewhere),
-            ["shell.rail.decode", "shell.rail.stream"],
-            "B2: two destinations are built and not here",
+            ["shell.rail.packets"],
+            "B2: one destination is built and not here",
         )
+        # ★★★★★ R1728 — and a THIRD reason joined, for the two seats the
+        # reference has working and this build has not written. Neither existing
+        # word fits: *reserved* would claim they are deferred to a later release
+        # when they are in this one, and *elsewhere* would send a reader to open
+        # a window nobody has built. A seat that cannot say why it is inert gets
+        # left off the rail, which is exactly what had happened to both of them.
+        unbuilt = [
+            row["tag"]
+            for row in tf.request("scene/disabled", {}).result["disabled"]
+            if row["reason"] == "unbuilt"
+        ]
+        assert_eq(
+            sorted(unbuilt),
+            ["shell.rail.keys", "shell.rail.logs"],
+            "B2: two sections are specified and not built, and say so",
+        )
+        for tag in unbuilt:
+            row = next(
+                r
+                for r in tf.request("scene/disabled", {}).result["disabled"]
+                if r["tag"] == tag
+            )
+            assert_eq(
+                row["recourse"],
+                "await_release",
+                f"B2: {tag} derives waiting -- the same ACTION a reserved seat "
+                "asks for, from a different reason, which is why the kinds stay "
+                "apart while the recourse merges",
+            )
         assert_eq(
             [
                 row["tag"]
                 for row in tf.request("scene/disabled", {}).result["disabled"]
-                if row["reason"] not in ("reserved", "elsewhere")
+                if row["reason"] not in ("reserved", "elsewhere", "unbuilt")
             ],
             [],
             "B2: nothing on this screen is inert for any other reason",

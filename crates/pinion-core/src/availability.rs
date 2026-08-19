@@ -112,6 +112,37 @@ pub enum UnavailableKind {
     /// module states for adding an arm is met — **the reader's next action is
     /// its own**, which is why it derives its own [`Recourse`].
     Elsewhere,
+    /// ★★ R1728 — it is in the **specification of the release being built**,
+    /// and this build has not built it yet.
+    /// [`detail`](Unavailable::detail) names what specifies it.
+    ///
+    /// The three neighbouring arms each say something false about it, which is
+    /// the test this module sets for spending one:
+    ///
+    /// * [`Reserved`](Self::Reserved) says *booked for a later release*. A
+    ///   reader told that stops expecting it in this one, and a planner reading
+    ///   the same word takes it out of the current scope. It is in the scope.
+    /// * [`Elsewhere`](Self::Elsewhere) says *built, on another surface*. It
+    ///   sends a reader to go and open something that does not exist.
+    /// * [`Unsupported`](Self::Unsupported) says *no action changes this*.
+    ///   Building it changes it.
+    ///
+    /// General beyond the screen that forced it, and the reason to spend an
+    /// arm: any product assembled against a written specification passes
+    /// through a state where a surface is **specified, declared, and absent**,
+    /// and a shell that shows it rather than hiding it is telling the truth
+    /// about the shape of the finished product. What has had no vocabulary is
+    /// the sentence that makes showing it honest — without one, such a seat is
+    /// either hidden (and the specification's shape is invisible) or it claims
+    /// one of the three falsehoods above.
+    ///
+    /// It shares [`AwaitRelease`](Recourse::AwaitRelease) with
+    /// [`Reserved`](Self::Reserved) because the reader's *action* is the same
+    /// one — wait — and the kinds stay apart because what they are waiting for
+    /// is not. That is the same split
+    /// [`Unsupported`](Self::Unsupported)/[`Unstated`](Self::Unstated) already
+    /// makes on [`Nothing`](Recourse::Nothing).
+    Unbuilt,
     /// A region was declared unavailable and no reason was given.
     ///
     /// Deliberately an arm rather than an absence. Every declaration that
@@ -132,6 +163,7 @@ impl UnavailableKind {
             UnavailableKind::Reserved => "reserved",
             UnavailableKind::Unsupported => "unsupported",
             UnavailableKind::Elsewhere => "elsewhere",
+            UnavailableKind::Unbuilt => "unbuilt",
             UnavailableKind::Unstated => "unstated",
         }
     }
@@ -150,13 +182,14 @@ impl UnavailableKind {
     ///
     /// A member list rather than a count: R1650 measured that proving a set is
     /// complete by searching for what is missing yields zero every time.
-    pub const ALL: [UnavailableKind; 7] = [
+    pub const ALL: [UnavailableKind; 8] = [
         UnavailableKind::Precondition,
         UnavailableKind::Permission,
         UnavailableKind::Busy,
         UnavailableKind::Reserved,
         UnavailableKind::Unsupported,
         UnavailableKind::Elsewhere,
+        UnavailableKind::Unbuilt,
         UnavailableKind::Unstated,
     ];
 
@@ -174,7 +207,10 @@ impl UnavailableKind {
             UnavailableKind::Precondition => Recourse::Satisfy,
             UnavailableKind::Permission => Recourse::Authorize,
             UnavailableKind::Busy => Recourse::Wait,
-            UnavailableKind::Reserved => Recourse::AwaitRelease,
+            // Waiting, both — for a release that has not started and for one
+            // that has. Same action, different subject, which is why the kinds
+            // stay apart even though the recourse merges.
+            UnavailableKind::Reserved | UnavailableKind::Unbuilt => Recourse::AwaitRelease,
             UnavailableKind::Elsewhere => Recourse::OpenElsewhere,
             // Nothing today and nothing later — but for different reasons, which
             // is why the kinds stay apart even though the recourse merges.
@@ -332,6 +368,24 @@ impl Unavailable {
         Self::new(UnavailableKind::Elsewhere, detail)
     }
 
+    /// ★★ R1728 — in the specification of the release being built, and not
+    /// built yet; `detail` names what specifies it.
+    ///
+    /// ```
+    /// use pinion_core::availability::{Recourse, Unavailable};
+    ///
+    /// let seat = Unavailable::unbuilt("the behaviour specification");
+    /// assert_eq!(seat.sentence(), "specified and not built yet: the behaviour specification");
+    /// // The reader waits — and not for the same thing a reserved seat waits for.
+    /// assert_eq!(seat.recourse(), Recourse::AwaitRelease);
+    /// assert!(seat.recourse().resolves_by_itself());
+    /// assert_ne!(seat.kind(), Unavailable::reserved("the second release").kind());
+    /// ```
+    #[must_use]
+    pub fn unbuilt(detail: impl Into<Cow<'static, str>>) -> Self {
+        Self::new(UnavailableKind::Unbuilt, detail)
+    }
+
     /// Declared unavailable with no reason given — what
     /// [`with_disabled(true)`](crate::style::LayoutStyle::with_disabled)
     /// produces, and what every declaration written before this module means.
@@ -393,6 +447,7 @@ impl Unavailable {
                 UnavailableKind::Reserved => "reserved for a later release",
                 UnavailableKind::Unsupported => "not available in this build",
                 UnavailableKind::Elsewhere => "on another surface of this product",
+                UnavailableKind::Unbuilt => "specified and not built yet",
                 UnavailableKind::Unstated => "unavailable",
             }
             .to_owned();
@@ -404,6 +459,7 @@ impl Unavailable {
             UnavailableKind::Reserved => "reserved for",
             UnavailableKind::Unsupported => "not available in this build:",
             UnavailableKind::Elsewhere => "in",
+            UnavailableKind::Unbuilt => "specified and not built yet:",
             UnavailableKind::Unstated => "unavailable:",
         };
         format!("{lead} {detail}")
@@ -449,8 +505,62 @@ mod tests {
                 "{recourse:?} publishes a name its own reader does not accept"
             );
         }
-        assert_eq!(UnavailableKind::ALL.len(), 7);
+        // Written out rather than derived, deliberately: this is the line that
+        // makes growing the vocabulary a considered act. R1728 is what it is
+        // for — it moved 7 to 8, and the arm it added had to argue for itself
+        // in `r1728_unbuilt_is_none_of_the_three_it_sits_between` below.
+        assert_eq!(UnavailableKind::ALL.len(), 8);
         assert_eq!(Recourse::ALL.len(), 6);
+    }
+
+    /// ★★★★★ R1728 — **specified and not built yet** is none of the three
+    /// answers it sits between.
+    ///
+    /// The rule this module states for spending an arm is that the reader's
+    /// next action is its own, and this arm is the case where that rule needs
+    /// care: its action — wait — is one `Reserved` already asks for. What
+    /// separates them is *what is being waited for*, and a product cannot plan
+    /// against a word that conflates "we deferred this" with "we have not
+    /// finished this".
+    ///
+    /// Measured on the analysis tool: two of its reference's sections were left
+    /// **off the navigation entirely** because no arm could describe them, and
+    /// a seat that is not drawn is a seat nothing can compare.
+    #[test]
+    fn r1728_unbuilt_is_none_of_the_three_it_sits_between() {
+        let unbuilt = Unavailable::unbuilt("the behaviour specification");
+        assert_eq!(unbuilt.kind(), UnavailableKind::Unbuilt);
+        assert!(unbuilt.is_stated());
+        assert_eq!(
+            unbuilt.sentence(),
+            "specified and not built yet: the behaviour specification"
+        );
+        assert_eq!(
+            Unavailable::new(UnavailableKind::Unbuilt, "").sentence(),
+            "specified and not built yet"
+        );
+
+        // Not `Elsewhere`: there is nowhere to send the reader.
+        assert_ne!(
+            unbuilt.recourse(),
+            Unavailable::elsewhere("the other window").recourse()
+        );
+        // Not `Unsupported`: building it is exactly what changes it, so the
+        // recourse must not be "nothing".
+        assert_ne!(
+            unbuilt.recourse(),
+            Unavailable::unsupported("this platform").recourse()
+        );
+        assert!(unbuilt.recourse().resolves_by_itself());
+
+        // And `Reserved` is the near miss: the same ACTION, deliberately, and a
+        // different kind — the split `Unsupported`/`Unstated` already makes on
+        // `Nothing`. A reader waits either way; a planner must not read
+        // "deferred to a later release" off a section that is in this one.
+        let reserved = Unavailable::reserved("the second release");
+        assert_eq!(unbuilt.recourse(), reserved.recourse());
+        assert_ne!(unbuilt.kind(), reserved.kind());
+        assert_ne!(unbuilt.sentence(), reserved.sentence());
     }
 
     /// ★★ R1695 — **available today, and not from here** is its own answer.

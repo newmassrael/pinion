@@ -425,6 +425,378 @@ impl Journey {
     }
 }
 
+// --- The specification half ---------------------------------------------------
+
+/// ★★★★★ R1728 — **what a specification fixes about one destination.**
+///
+/// Not [`Standing`], and the difference is the whole reason this is a separate
+/// type. A specification says *this seat is closed, and it is closed because
+/// nobody has built it*; it does not say *"specified and not built yet: the
+/// behaviour specification"*. The wording is the application's, the **kind** is
+/// the specification's, and a checker that demanded both would fail on prose
+/// and pass on a seat closed for entirely the wrong reason.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Required {
+    /// The specification says a reader arrives here.
+    Open,
+    /// The specification says the seat is on the rail and not arrivable, for
+    /// this reason.
+    Closed(crate::availability::UnavailableKind),
+}
+
+impl Required {
+    /// What this reads as in a divergence sentence.
+    #[must_use]
+    pub fn phrase(self) -> String {
+        match self {
+            Required::Open => "open".to_owned(),
+            Required::Closed(kind) => format!("closed ({})", kind.name()),
+        }
+    }
+
+    /// What a live destination's standing *is*, in the same vocabulary, so the
+    /// two sides of a comparison are the same kind of sentence.
+    #[must_use]
+    pub fn of(standing: &Standing) -> Self {
+        match standing {
+            Standing::Open => Required::Open,
+            Standing::Closed(why) => Required::Closed(why.kind()),
+        }
+    }
+}
+
+/// One destination as a written-down specification states it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SeatSpec {
+    /// The key the application must address it by.
+    pub key: Cow<'static, str>,
+    /// What a reader must be able to call it.
+    pub title: Cow<'static, str>,
+    /// Whether it must be arrivable, and if not, why not.
+    pub required: Required,
+}
+
+impl SeatSpec {
+    /// A seat the specification says a reader arrives at.
+    #[must_use]
+    pub fn open(key: impl Into<Cow<'static, str>>, title: impl Into<Cow<'static, str>>) -> Self {
+        Self {
+            key: key.into(),
+            title: title.into(),
+            required: Required::Open,
+        }
+    }
+
+    /// A seat the specification says is present and not arrivable, for a
+    /// stated kind of reason.
+    #[must_use]
+    pub fn closed(
+        key: impl Into<Cow<'static, str>>,
+        title: impl Into<Cow<'static, str>>,
+        kind: crate::availability::UnavailableKind,
+    ) -> Self {
+        Self {
+            key: key.into(),
+            title: title.into(),
+            required: Required::Closed(kind),
+        }
+    }
+}
+
+/// ★★★★★ R1728 — **one way an application's navigation differs from the
+/// navigation that was specified for it.**
+///
+/// Every arm names the key it is about and both sides of the disagreement, so a
+/// report is readable without the specification in the other hand.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Divergence {
+    /// The specification has this seat and the application does not.
+    Absent {
+        /// The key the specification declares.
+        key: String,
+        /// What the specification calls it.
+        title: String,
+        /// Where in the specified order it belongs.
+        at: usize,
+    },
+    /// The application has this seat and the specification does not.
+    ///
+    /// Reported rather than tolerated: a rail that invents a seat is a rail
+    /// that has stopped being the specified one, and *which* direction a
+    /// difference runs in is exactly what a one-directional check cannot say.
+    Unspecified {
+        /// The key the application declares.
+        key: String,
+        /// Where it sits in the application's order.
+        at: usize,
+    },
+    /// Both have the seat, in different places.
+    OutOfOrder {
+        /// The key.
+        key: String,
+        /// Where the specification puts it.
+        specified_at: usize,
+        /// Where the application puts it.
+        at: usize,
+    },
+    /// Both have the seat, under different names.
+    Retitled {
+        /// The key.
+        key: String,
+        /// What the specification calls it.
+        specified: String,
+        /// What the application calls it.
+        found: String,
+    },
+    /// Both have the seat; one can be arrived at and the other cannot, or both
+    /// are closed for different kinds of reason.
+    Standing {
+        /// The key.
+        key: String,
+        /// What the specification requires.
+        specified: Required,
+        /// What the application offers.
+        found: Required,
+    },
+}
+
+impl Divergence {
+    /// The key this divergence is about.
+    #[must_use]
+    pub fn key(&self) -> &str {
+        match self {
+            Divergence::Absent { key, .. }
+            | Divergence::Unspecified { key, .. }
+            | Divergence::OutOfOrder { key, .. }
+            | Divergence::Retitled { key, .. }
+            | Divergence::Standing { key, .. } => key,
+        }
+    }
+
+    /// The divergence as one sentence, for a report a person reads.
+    #[must_use]
+    pub fn sentence(&self) -> String {
+        match self {
+            Divergence::Absent { key, title, at } => {
+                format!(
+                    "seat {at} `{key}` ({title}) is specified and the application has no such destination"
+                )
+            }
+            Divergence::Unspecified { key, at } => {
+                format!("seat {at} `{key}` is on the rail and no specification declares it")
+            }
+            Divergence::OutOfOrder {
+                key,
+                specified_at,
+                at,
+            } => format!("`{key}` is specified at seat {specified_at} and sits at seat {at}"),
+            Divergence::Retitled {
+                key,
+                specified,
+                found,
+            } => format!("`{key}` is specified as \"{specified}\" and reads \"{found}\""),
+            Divergence::Standing {
+                key,
+                specified,
+                found,
+            } => format!(
+                "`{key}` is specified {} and is {}",
+                specified.phrase(),
+                found.phrase()
+            ),
+        }
+    }
+}
+
+/// ★★★★★ R1728 — **a navigation, written down, that an application can be
+/// checked against.**
+///
+/// # What was missing, measured
+///
+/// [`Destinations`] made a rail a value, so a screen can no longer disagree
+/// with itself about what it contains. It cannot say whether that value is the
+/// *right* one. Measured on the analysis tool this project assembles: its
+/// behaviour reference is one application with **eight** sections, drawn in one
+/// order, identical on every screen — and the shell reproducing it offered
+/// seven, three of whose keys the reference does not have, with one seat
+/// wearing another seat's icon. Every one of those is a difference a person had
+/// to notice by opening two things side by side, and for several hundred rounds
+/// nobody did.
+///
+/// A specification is only a specification if something fails when the product
+/// stops matching it. This is that something.
+///
+/// # The shape
+///
+/// A [`RosterSpec`] is a list of [`SeatSpec`]s, and [`diff`](Self::diff)
+/// compares it with a live [`Destinations`] **in both directions at once**: a
+/// seat the specification has and the application lacks, and a seat the
+/// application has and no specification declares, are both reported, as are
+/// order, title and standing. A one-directional check passes an application
+/// that has quietly grown a section, which is the drift that actually happens.
+///
+/// What it deliberately does *not* fix is the wording of a closed seat's
+/// reason: see [`Required`].
+///
+/// # Against the reference toolkit at 6.11
+///
+/// There is no row to compare. A paged container there addresses its pages by
+/// ordinal, has one bool per page and no vocabulary for why a page is inert, so
+/// the *statement* this type checks cannot be written down in the first place —
+/// and reordering the rail and changing where a press goes are the same edit.
+///
+/// # Examples
+///
+/// ```
+/// use pinion_core::availability::{Unavailable, UnavailableKind};
+/// use pinion_core::widgets::destination::{Destination, Destinations, RosterSpec, SeatSpec};
+///
+/// let spec = RosterSpec::new(vec![
+///     SeatSpec::open("home", "Home"),
+///     SeatSpec::closed("reports", "Reports", UnavailableKind::Unbuilt),
+/// ])
+/// .expect("a specification is a navigable roster");
+///
+/// let built = Destinations::new(vec![
+///     Destination::open("home", "Home"),
+///     Destination::closed("reports", "Reports", Unavailable::unbuilt("the plan")),
+/// ])
+/// .expect("the rail is navigable");
+/// assert!(spec.diff(&built).is_empty());
+///
+/// // The application ships the page early: same seat, different standing.
+/// let shipped = Destinations::new(vec![
+///     Destination::open("home", "Home"),
+///     Destination::open("reports", "Reports"),
+/// ])
+/// .expect("the rail is navigable");
+/// assert_eq!(
+///     spec.diff(&shipped)[0].sentence(),
+///     "`reports` is specified closed (unbuilt) and is open",
+/// );
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RosterSpec {
+    seats: Vec<SeatSpec>,
+}
+
+impl RosterSpec {
+    /// Write down a navigation, refusing one no application could reproduce.
+    ///
+    /// The same three defects [`Destinations::new`] refuses, checked here too
+    /// rather than only on the built side: a specification that declares one
+    /// key twice cannot be conformed to, and a checker that discovered that
+    /// only by way of a confusing diff would blame the application for a defect
+    /// in the specification.
+    ///
+    /// # Errors
+    ///
+    /// [`RosterDefect`] — empty, a blank key, two seats sharing a key, or
+    /// nothing open to arrive at.
+    pub fn new(seats: Vec<SeatSpec>) -> Result<Self, RosterDefect> {
+        if seats.is_empty() {
+            return Err(RosterDefect::NoDestinations);
+        }
+        for (at, seat) in seats.iter().enumerate() {
+            if seat.key.is_empty() {
+                return Err(RosterDefect::BlankKey { at });
+            }
+            if let Some(first) = seats[..at].iter().position(|s| s.key == seat.key) {
+                return Err(RosterDefect::DuplicateKey {
+                    key: seat.key.clone().into_owned(),
+                    first,
+                    again: at,
+                });
+            }
+        }
+        if !seats.iter().any(|s| s.required == Required::Open) {
+            return Err(RosterDefect::NoOpenDestination);
+        }
+        Ok(Self { seats })
+    }
+
+    /// The seats, in the order the specification draws them.
+    #[must_use]
+    pub fn seats(&self) -> &[SeatSpec] {
+        &self.seats
+    }
+
+    /// How many destinations the specification declares.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.seats.len()
+    }
+
+    /// Whether the specification declares no seats. Never true of a
+    /// [`RosterSpec`] that exists — [`new`](Self::new) refuses one — and
+    /// present because a length without it reads as an invitation to compare
+    /// against zero.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.seats.is_empty()
+    }
+
+    /// Every way `roster` differs from this specification, in both directions.
+    ///
+    /// Ordered by the specification's seats first, then by the application's,
+    /// so a report reads in the order a person looks down the rail. A seat that
+    /// diverges in more than one way reports each way once: *renamed and
+    /// moved* is two facts and a reader fixing one still needs the other.
+    #[must_use]
+    pub fn diff(&self, roster: &Destinations) -> Vec<Divergence> {
+        let mut out = Vec::new();
+        let built = roster.all();
+        for (specified_at, seat) in self.seats.iter().enumerate() {
+            let Some(at) = built.iter().position(|d| d.key == seat.key) else {
+                out.push(Divergence::Absent {
+                    key: seat.key.clone().into_owned(),
+                    title: seat.title.clone().into_owned(),
+                    at: specified_at,
+                });
+                continue;
+            };
+            let found = &built[at];
+            if at != specified_at {
+                out.push(Divergence::OutOfOrder {
+                    key: seat.key.clone().into_owned(),
+                    specified_at,
+                    at,
+                });
+            }
+            if found.title != seat.title {
+                out.push(Divergence::Retitled {
+                    key: seat.key.clone().into_owned(),
+                    specified: seat.title.clone().into_owned(),
+                    found: found.title.clone().into_owned(),
+                });
+            }
+            let standing = Required::of(&found.standing);
+            if standing != seat.required {
+                out.push(Divergence::Standing {
+                    key: seat.key.clone().into_owned(),
+                    specified: seat.required,
+                    found: standing,
+                });
+            }
+        }
+        for (at, destination) in built.iter().enumerate() {
+            if !self.seats.iter().any(|s| s.key == destination.key) {
+                out.push(Divergence::Unspecified {
+                    key: destination.key.clone().into_owned(),
+                    at,
+                });
+            }
+        }
+        out
+    }
+
+    /// Whether `roster` reproduces this specification exactly.
+    #[must_use]
+    pub fn conforms(&self, roster: &Destinations) -> bool {
+        self.diff(roster).is_empty()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{Arrival, Destination, Destinations, Detour, Journey, RosterDefect, Standing};
@@ -651,5 +1023,309 @@ mod tests {
             ),
         ];
         assert_speaks("Detour", 2, &said, &[]);
+    }
+
+    // --- The specification half -----------------------------------------------
+
+    use super::{Divergence, Required, RosterSpec, SeatSpec};
+    use crate::availability::UnavailableKind;
+
+    /// The specification the divergence tests measure against: three seats, one
+    /// of each standing a rail actually has.
+    fn spec() -> RosterSpec {
+        RosterSpec::new(vec![
+            SeatSpec::open("dashboard", "Dashboard"),
+            SeatSpec::open("lab", "Node Lab"),
+            SeatSpec::closed("logs", "Logs", UnavailableKind::Unbuilt),
+        ])
+        .expect("the specification is a navigable roster")
+    }
+
+    /// The application that reproduces it exactly.
+    fn conforming() -> Destinations {
+        Destinations::new(vec![
+            Destination::open("dashboard", "Dashboard"),
+            Destination::open("lab", "Node Lab"),
+            Destination::closed(
+                "logs",
+                "Logs",
+                Unavailable::unbuilt("the behaviour reference"),
+            ),
+        ])
+        .expect("the rail is navigable")
+    }
+
+    #[test]
+    fn a_reproduction_diverges_in_no_way() {
+        let spec = spec();
+        assert!(spec.conforms(&conforming()));
+        assert_eq!(spec.diff(&conforming()), Vec::new());
+        assert_eq!(spec.len(), 3);
+        assert!(!spec.is_empty());
+    }
+
+    /// ★ The wording of a closed seat's reason is the application's and the
+    /// KIND is the specification's — so the same seat closed with entirely
+    /// different prose still conforms, and the same prose under a different
+    /// kind does not. Both directions, because a checker that fixed the wording
+    /// would fail on translation and one that ignored the kind would pass a
+    /// seat closed for the wrong reason.
+    #[test]
+    fn a_specification_fixes_the_kind_of_a_reason_and_not_its_wording() {
+        let differently_worded = Destinations::new(vec![
+            Destination::open("dashboard", "Dashboard"),
+            Destination::open("lab", "Node Lab"),
+            Destination::closed(
+                "logs",
+                "Logs",
+                Unavailable::unbuilt("nobody has written it"),
+            ),
+        ])
+        .expect("the rail is navigable");
+        assert!(spec().conforms(&differently_worded));
+
+        let wrong_kind = Destinations::new(vec![
+            Destination::open("dashboard", "Dashboard"),
+            Destination::open("lab", "Node Lab"),
+            // Same words, and it now tells a reader to wait for a release the
+            // seat is not booked into.
+            Destination::closed(
+                "logs",
+                "Logs",
+                Unavailable::reserved("the behaviour reference"),
+            ),
+        ])
+        .expect("the rail is navigable");
+        assert_eq!(
+            spec()
+                .diff(&wrong_kind)
+                .iter()
+                .map(Divergence::sentence)
+                .collect::<Vec<_>>(),
+            ["`logs` is specified closed (unbuilt) and is closed (reserved)"],
+        );
+    }
+
+    /// ★★ The direction a one-sided check cannot see: the application grew a
+    /// seat. Nothing is absent, nothing moved, nothing was renamed — and the
+    /// rail is no longer the specified one.
+    #[test]
+    fn a_seat_the_specification_does_not_declare_is_reported() {
+        let grown = Destinations::new(vec![
+            Destination::open("dashboard", "Dashboard"),
+            Destination::open("lab", "Node Lab"),
+            Destination::closed(
+                "logs",
+                "Logs",
+                Unavailable::unbuilt("the behaviour reference"),
+            ),
+            Destination::open("scratch", "Scratch"),
+        ])
+        .expect("the rail is navigable");
+        let found = spec().diff(&grown);
+        assert_eq!(
+            found,
+            [Divergence::Unspecified {
+                key: "scratch".to_owned(),
+                at: 3,
+            }],
+        );
+        assert_eq!(
+            found[0].sentence(),
+            "seat 3 `scratch` is on the rail and no specification declares it",
+        );
+        assert_eq!(found[0].key(), "scratch");
+    }
+
+    #[test]
+    fn a_seat_the_application_lacks_is_reported_with_where_it_belongs() {
+        let missing = Destinations::new(vec![
+            Destination::open("dashboard", "Dashboard"),
+            Destination::open("lab", "Node Lab"),
+        ])
+        .expect("the rail is navigable");
+        assert_eq!(
+            spec()
+                .diff(&missing)
+                .iter()
+                .map(Divergence::sentence)
+                .collect::<Vec<_>>(),
+            ["seat 2 `logs` (Logs) is specified and the application has no such destination"],
+        );
+    }
+
+    /// ★ Order is part of the statement. The reference draws one rail in one
+    /// order on every screen, and a rail with the right seats in the wrong
+    /// places is a different rail to the hand that reaches for one.
+    #[test]
+    fn two_seats_that_swapped_places_are_both_reported() {
+        let swapped = Destinations::new(vec![
+            Destination::open("lab", "Node Lab"),
+            Destination::open("dashboard", "Dashboard"),
+            Destination::closed(
+                "logs",
+                "Logs",
+                Unavailable::unbuilt("the behaviour reference"),
+            ),
+        ])
+        .expect("the rail is navigable");
+        assert_eq!(
+            spec()
+                .diff(&swapped)
+                .iter()
+                .map(Divergence::sentence)
+                .collect::<Vec<_>>(),
+            [
+                "`dashboard` is specified at seat 0 and sits at seat 1",
+                "`lab` is specified at seat 1 and sits at seat 0",
+            ],
+        );
+    }
+
+    /// ★★★ A seat that diverges in more than one way reports each way. The
+    /// fixture is built so that fixing either one alone still leaves the rail
+    /// wrong — which is what a report collapsing them into one finding would
+    /// hide.
+    #[test]
+    fn one_seat_can_diverge_in_three_ways_at_once() {
+        let mangled = Destinations::new(vec![
+            Destination::open("dashboard", "Dashboard"),
+            Destination::open("logs", "Log Viewer"),
+            Destination::open("lab", "Node Lab"),
+        ])
+        .expect("the rail is navigable");
+        assert_eq!(
+            spec()
+                .diff(&mangled)
+                .iter()
+                .map(Divergence::sentence)
+                .collect::<Vec<_>>(),
+            [
+                "`lab` is specified at seat 1 and sits at seat 2",
+                "`logs` is specified at seat 2 and sits at seat 1",
+                "`logs` is specified as \"Logs\" and reads \"Log Viewer\"",
+                "`logs` is specified closed (unbuilt) and is open",
+            ],
+        );
+    }
+
+    /// A specification is refused for the same three defects a roster is, so a
+    /// confusing diff never has to stand in for "the specification is wrong".
+    #[test]
+    fn a_specification_that_cannot_be_conformed_to_is_refused() {
+        assert_eq!(
+            RosterSpec::new(Vec::new()),
+            Err(RosterDefect::NoDestinations)
+        );
+        assert_eq!(
+            RosterSpec::new(vec![SeatSpec::open("", "Nameless")]),
+            Err(RosterDefect::BlankKey { at: 0 }),
+        );
+        assert_eq!(
+            RosterSpec::new(vec![
+                SeatSpec::open("home", "Home"),
+                SeatSpec::open("home", "Home again"),
+            ]),
+            Err(RosterDefect::DuplicateKey {
+                key: "home".to_owned(),
+                first: 0,
+                again: 1,
+            }),
+        );
+        assert_eq!(
+            RosterSpec::new(vec![SeatSpec::closed(
+                "logs",
+                "Logs",
+                UnavailableKind::Unbuilt
+            )]),
+            Err(RosterDefect::NoOpenDestination),
+        );
+    }
+
+    /// ★★★★ R1728 — **every way a rail can differ from its specification is
+    /// said, and no two of them read alike.**
+    ///
+    /// The producer this drives is the one a person reads when a conformance
+    /// gate fails, so a wording that collapsed two situations into one sentence
+    /// would send whoever is fixing it after the wrong thing — the exact
+    /// failure R1718 built this fixture after. *Renamed* and *moved* in
+    /// particular must not read alike: a seat can be both at once, and the
+    /// report says so twice.
+    #[test]
+    fn r1728_every_way_a_rail_can_diverge_is_said_and_distinct() {
+        use crate::test_fixtures::speech::assert_speaks;
+
+        let said = [
+            (
+                "Absent",
+                Divergence::Absent {
+                    key: "logs".to_owned(),
+                    title: "Logs".to_owned(),
+                    at: 3,
+                }
+                .sentence(),
+            ),
+            (
+                "Unspecified",
+                Divergence::Unspecified {
+                    key: "scratch".to_owned(),
+                    at: 8,
+                }
+                .sentence(),
+            ),
+            (
+                "OutOfOrder",
+                Divergence::OutOfOrder {
+                    key: "settings".to_owned(),
+                    specified_at: 7,
+                    at: 4,
+                }
+                .sentence(),
+            ),
+            (
+                "Retitled",
+                Divergence::Retitled {
+                    key: "packets".to_owned(),
+                    specified: "Packets".to_owned(),
+                    found: "Stream".to_owned(),
+                }
+                .sentence(),
+            ),
+            (
+                "Standing",
+                Divergence::Standing {
+                    key: "keys".to_owned(),
+                    specified: Required::Open,
+                    found: Required::Closed(UnavailableKind::Unbuilt),
+                }
+                .sentence(),
+            ),
+        ];
+        assert_speaks("Divergence", 5, &said, &[]);
+        // ★ And each names the seat it is about, so a report is readable
+        // without the specification in the other hand.
+        for (arm, sentence) in &said {
+            assert!(
+                sentence.contains('`'),
+                "Divergence::{arm} says {sentence:?} without naming a seat",
+            );
+        }
+    }
+
+    /// `Required::of` is what makes the two sides of a comparison the same kind
+    /// of sentence, so it is checked against every standing a rail can hold
+    /// rather than the two this file's fixtures happen to use.
+    #[test]
+    fn a_live_standing_reads_in_the_specifications_vocabulary() {
+        assert_eq!(Required::of(&Standing::Open), Required::Open);
+        for kind in UnavailableKind::ALL {
+            let standing = Standing::Closed(Unavailable::new(kind, "why"));
+            assert_eq!(Required::of(&standing), Required::Closed(kind));
+            assert_eq!(
+                Required::Closed(kind).phrase(),
+                format!("closed ({})", kind.name()),
+            );
+        }
+        assert_eq!(Required::Open.phrase(), "open");
     }
 }

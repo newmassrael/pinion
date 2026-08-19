@@ -8,13 +8,17 @@ the shell's own rail said so: three of its seven seats were declared
 a destination here could be finished and still unreachable.
 
 This round mounts the first of them. `hello-node-lab` — 20,655 lines, unedited —
-is the Catalog destination's page, through `pinion_screen::Mount<NodeLabView>`.
+is the node lab destination's page, through `pinion_screen::Mount<NodeLabView>`.
+(R1728 renamed that seat from `catalog` to `lab`: the reference has a node graph
+section and no catalogue section, so the page was right and the address was this
+application's invention.)
 
 What this script drives, on the running application:
 
-* **A** — the rail. Catalog is open, and `elsewhere` is down from three to two.
+* **A** — the rail. The node lab seat is open, and `elsewhere` is down from
+  three to one.
 * **B** — arriving paints the node lab. The lab's own panes are inside the page
-  region at Catalog and absent at Dashboard.
+  region at the node lab seat and absent at Dashboard.
 * **C** — the lab lays out in the REGION, not the window. The page it paints
   fits inside the rectangle the shell placed it at, which is what
   `pinion_core::external::with_surface_extent` is for: before it, the in-view
@@ -99,41 +103,49 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         roster = q(app, "destinations")
         rows = {row["key"]: row for row in roster["destinations"]}
         ok("A: the shell publishes its roster", isinstance(roster, dict))
-        assert_eq(rows["catalog"]["open"], True, "A: Catalog is a place you arrive at")
-        assert_eq(rows["catalog"]["kind"], None, "A: and carries no closure reason")
+        assert_eq(rows["lab"]["open"], True, "A: the node lab is a place you arrive at")
+        assert_eq(rows["lab"]["kind"], None, "A: and carries no closure reason")
         elsewhere = sorted(k for k, r in rows.items() if r["kind"] == "elsewhere")
         assert_eq(
             elsewhere,
-            ["decode", "stream"],
-            "A: two seats are still on another surface, and Catalog is not one",
+            ["packets"],
+            "A: ★ R1728 -- ONE seat is still on another surface. It read two "
+            "until this round, and neither was a seat the reference has",
+        )
+        unbuilt = sorted(k for k, r in rows.items() if r["kind"] == "unbuilt")
+        assert_eq(
+            unbuilt,
+            ["keys", "logs"],
+            "A: ★ R1728 -- and two the reference has working that this build "
+            "has not written. They were absent from the rail entirely before",
         )
         opens = sorted(k for k, r in rows.items() if r["open"])
         assert_eq(
             opens,
-            ["catalog", "dashboard", "settings"],
+            ["dashboard", "lab", "settings"],
             "A: three destinations this ONE application hosts",
         )
         # ★★★★★ §2 #2 — which destinations are whole screens is PUBLISHED, not
         # inferred from tag prefixes. An agent that had to guess would be
         # guessing at a rule nobody wrote down.
         mounted = sorted(k for k, r in rows.items() if r["mounted"])
-        assert_eq(mounted, ["catalog"], "A: one section is a whole screen")
+        assert_eq(mounted, ["lab"], "A: one section is a whole screen")
         assert_eq(
-            rows["catalog"]["screen"]["tag"],
+            rows["lab"]["screen"]["tag"],
             LAB_ROOT,
             "A: and it says how to address that screen's surfaces",
         )
         ok("A: an unmounted destination says so", rows["dashboard"]["screen"] is None)
 
         # ── (B) arriving paints the node lab ──────────────────────────────
-        banner("B — arriving at Catalog shows the node graph lab")
+        banner("B — arriving at the node lab seat shows the node graph lab")
         go(app, "dashboard")
         at_dashboard = abs_rects_of(app.snapshot(source="paint"))
         assert_eq(lab_tags(at_dashboard), set(), "B: no lab anywhere on the dashboard")
 
-        go(app, "catalog")
-        at_catalog = abs_rects_of(app.snapshot(source="paint"))
-        painted = lab_tags(at_catalog)
+        go(app, "lab")
+        at_lab = abs_rects_of(app.snapshot(source="paint"))
+        painted = lab_tags(at_lab)
         ok("B: the lab's own root is painted", LAB_ROOT in painted)
         for pane in ("lab.palette", "lab.canvas", "lab.inspector"):
             ok(f"B: the lab's {pane} pane is painted", pane in painted)
@@ -145,13 +157,13 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
 
         # The shell's own chrome is still there — this is a section of an
         # application, not a second window.
-        for chrome in ("shell.appbar", "shell.rail", REGION, "shell.rail.catalog"):
-            ok(f"B: the shell's {chrome} is still painted", chrome in at_catalog)
+        for chrome in ("shell.appbar", "shell.rail", REGION, "shell.rail.lab"):
+            ok(f"B: the shell's {chrome} is still painted", chrome in at_lab)
 
         # ── (C) the lab lays out in the REGION, not the window ────────────
         banner("C — a mounted screen reads the rectangle it was placed in")
-        region = at_catalog[REGION]
-        root = at_catalog[LAB_ROOT]
+        region = at_lab[REGION]
+        root = at_lab[LAB_ROOT]
         window = q(app, "spec")["window"]
         ok("C: the region is narrower than the window", region[2] < window["w"])
         ok("C: and shorter than it", region[3] < window["h"])
@@ -172,7 +184,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         # window that ends at 1440.
         outside = [
             tag
-            for tag, r in at_catalog.items()
+            for tag, r in at_lab.items()
             if (tag == LAB_ROOT or tag.startswith("lab."))
             and (r[0] + r[2] > region[0] + region[2] + 1 or r[1] + r[3] > region[1] + region[3] + 1)
         ]
@@ -208,7 +220,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
 
         # ── (E) a press inside the page reaches the lab ───────────────────
         banner("E — the pointer reaches the section that is showing")
-        go(app, "catalog")
+        go(app, "lab")
         rects = abs_rects_of(app.snapshot(source="paint"))
         cards = sorted(tag for tag in rects if tag.startswith("lab.node."))
         ok(f"E: the lab painted {len(cards)} node card(s)", len(cards) >= 2)
@@ -235,15 +247,15 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
 
         # ── (F) the tree follows the rail ─────────────────────────────────
         banner("F — the accessibility tree follows the rail")
-        go(app, "catalog")
+        go(app, "lab")
         tree = nodes_by_tag(app)
         ok("F: the region is in the tree", REGION in tree)
         ok("F: the lab's root hangs under it", LAB_ROOT in tree[REGION]["children"])
         announced = [t for t in tree if t == LAB_ROOT or t.startswith("lab.")]
         ok(f"F: the lab announces {len(announced)} nodes of its own", len(announced) > 20)
-        assert_eq(tree[REGION]["name"], "Catalog", "F: the region names its destination")
+        assert_eq(tree[REGION]["name"], "Node Lab", "F: the region names its destination")
         assert_eq(
-            tree["shell.rail.catalog"]["current"],
+            tree["shell.rail.lab"]["current"],
             "page",
             "F: and the seat is the current one",
         )
@@ -255,7 +267,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         press_at(app, rects[target])
         chosen = abs_rects_of(app.snapshot(source="paint"))
         go(app, "dashboard")
-        go(app, "catalog")
+        go(app, "lab")
         again = abs_rects_of(app.snapshot(source="paint"))
         assert_eq(
             frozenset(again),

@@ -1,0 +1,126 @@
+{
+  "$comment": [
+    "R1728 — the analysis tool's navigation, written down once, in neutral",
+    "vocabulary, as the behaviour reference draws it.",
+    "",
+    "WHY THIS IS A FILE AND NOT A RUST CONSTANT. The application's rail is a",
+    "Rust table (`spec::RAIL`) because a seat needs facts a specification does",
+    "not fix: its icon, its page, the wording of its refusal. If the",
+    "specification lived beside it, written by the same hand in the same edit,",
+    "a conformance test would be asking the thing under test for the answer.",
+    "It is a separate artifact, reviewed as a claim about the reference rather",
+    "than as code.",
+    "",
+    "EXTRACTION. The reference is not in this repository and must not be. The",
+    "procedure is thirty seconds and is recorded in the session memory note on",
+    "the behaviour reference: the three delivered screens each draw the same",
+    "rail, so pulling the seat list off any one of them and checking the other",
+    "two agree is the whole of it. Measured 2026-08-19: eight seats, identical",
+    "order on all three screens, and the only difference between the screens is",
+    "which seat is marked current.",
+    "",
+    "VOCABULARY. The reference's product, protocol and resource words are",
+    "replaced by the words the tool class uses generally. Structure and",
+    "behaviour are what is being reproduced; the wording is not.",
+    "",
+    "THE TWO HALVES. `canon` is what the reference does. `owed` is where this",
+    "build does not do it yet, each entry carrying why. The gate asserts the",
+    "difference between the built rail and `canon` is EXACTLY `owed` — so a new",
+    "divergence fails, and so does an owed one that has been paid off without",
+    "this file being told. The second direction is the one that keeps the",
+    "number honest."
+  ],
+  "canon": [
+    {
+      "ordinal": 1,
+      "key": "dashboard",
+      "title": "Dashboard",
+      "standing": "open"
+    },
+    {
+      "ordinal": 2,
+      "key": "packets",
+      "title": "Packets",
+      "standing": "open"
+    },
+    {
+      "ordinal": 3,
+      "key": "keys",
+      "title": "Key Patterns",
+      "standing": "open"
+    },
+    {
+      "ordinal": 4,
+      "key": "logs",
+      "title": "Logs",
+      "standing": "open"
+    },
+    {
+      "ordinal": 5,
+      "key": "lab",
+      "title": "Node Lab",
+      "standing": "open"
+    },
+    {
+      "ordinal": 6,
+      "key": "topology",
+      "title": "Topology",
+      "standing": "closed",
+      "kind": "reserved",
+      "$note": "Drawn locked by the reference itself, booked under requirement 12."
+    },
+    {
+      "ordinal": 7,
+      "key": "sessions",
+      "title": "Sessions",
+      "standing": "closed",
+      "kind": "reserved",
+      "$note": "Drawn locked by the reference itself, booked under requirement 18."
+    },
+    {
+      "ordinal": 8,
+      "key": "settings",
+      "title": "Settings",
+      "standing": "open"
+    }
+  ],
+  "$owed_comment": [
+    "`sentence` is the divergence VERBATIM, as the framework renders it. That",
+    "is deliberate and it is the ratchet: any change to the built rail, and any",
+    "change to how a divergence is worded, makes the gate fail until somebody",
+    "reads this file and decides what the new sentence should be. A looser",
+    "match — the key alone, or a substring — would let a seat drift from",
+    "`elsewhere` to `unbuilt`, or from renamed to absent, without a word."
+  ],
+  "owed": [
+    {
+      "key": "packets",
+      "sentence": "`packets` is specified open and is closed (elsewhere)",
+      "since": "R1728",
+      "why": [
+        "The capture viewer is built and shipping as its own executable, so the",
+        "seat tells a reader to open it rather than claiming it is missing.",
+        "Paying this off is a mount, not a build: the screen becomes a page the",
+        "way the node lab did, and the seat opens."
+      ]
+    },
+    {
+      "key": "keys",
+      "sentence": "`keys` is specified open and is closed (unbuilt)",
+      "since": "R1728",
+      "why": [
+        "The reference implements this section — it has rows and a detail pane.",
+        "This build has not. The seat is drawn, named and inert, and says so."
+      ]
+    },
+    {
+      "key": "logs",
+      "sentence": "`logs` is specified open and is closed (unbuilt)",
+      "since": "R1728",
+      "why": [
+        "As above: the reference implements it, with severity and type columns",
+        "and a detail pane, and this build has not."
+      ]
+    }
+  ]
+}

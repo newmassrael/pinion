@@ -652,7 +652,10 @@ fn screen_roster() -> ScreenRoster {
     ScreenRoster::new(
         spec::destinations(),
         vec![(
-            "catalog",
+            // ★ R1728 — `lab`, not `catalog`. The reference's fifth seat is its
+            // node graph section and this is it; `catalog` was a key the
+            // reference does not have.
+            "lab",
             Box::new(Mount::<hello_node_lab::NodeLabView>::new()) as Box<dyn Screen>,
         )],
     )
@@ -2459,6 +2462,11 @@ const FIELDS: &[SchemaField] = const {
         // ★★ R1695 — where the rail can take you, what each seat's standing is,
         // and which one is showing. `nav` above says only the last of those.
         SchemaField::new("destinations", "json"),
+        // ★★ R1728 — how much of the reference's navigation this build
+        // reproduces, and every place it does not, with the reason each
+        // difference was accepted. `destinations` reports what IS on the rail;
+        // this reports the rail against the rail it is supposed to be.
+        SchemaField::new("conformance", "json"),
         // The Settings destination's switches.
         SchemaField::new("options", "json"),
         SchemaField::new("editing", "bool"),
@@ -2639,7 +2647,9 @@ impl ExternalIntrospect for ShellOracle {
             "theme" => text(theme_word(&state.theme)),
             "tab" => text(state.tab.get()),
             "tabs" => text(TABS.join(",")),
-            "spec" | "rail" | "reserved_rail" | "catalogue" => read_specification(path),
+            "spec" | "rail" | "reserved_rail" | "catalogue" | "conformance" => {
+                read_specification(path)
+            }
             "nav" => text(state.at()),
             // ★★ R1695 — the roster and the position, in one published value
             // built by the framework so two screens of one product cannot
@@ -4131,8 +4141,82 @@ fn affordance_mark(
     }
 }
 
+/// A framed pane, split once across and once down: a list of messages beside
+/// what one of them contains.
+fn pane_mark(rect: Rect, ink: Color) -> Scene {
+    let (cx, cy) = (rect.w / 2, rect.h / 2);
+    strokes(
+        rect,
+        &[
+            vec![
+                (cx - 7, cy - 6),
+                (cx + 7, cy - 6),
+                (cx + 7, cy + 6),
+                (cx - 7, cy + 6),
+                (cx - 7, cy - 6),
+            ],
+            vec![(cx - 7, cy - 2), (cx + 7, cy - 2)],
+            vec![(cx - 2, cy - 2), (cx - 2, cy + 6)],
+        ],
+        ink,
+        1,
+    )
+}
+
+/// Two nodes and a wire from the first's output to the second's input — the
+/// graph the section authors, at icon size.
+fn graph_mark(rect: Rect, ink: Color) -> Scene {
+    let (cx, cy) = (rect.w / 2, rect.h / 2);
+    strokes(
+        rect,
+        &[
+            vec![
+                (cx - 7, cy - 7),
+                (cx - 2, cy - 7),
+                (cx - 2, cy - 3),
+                (cx - 7, cy - 3),
+                (cx - 7, cy - 7),
+            ],
+            vec![
+                (cx + 2, cy + 3),
+                (cx + 7, cy + 3),
+                (cx + 7, cy + 7),
+                (cx + 2, cy + 7),
+                (cx + 2, cy + 3),
+            ],
+            vec![(cx - 2, cy - 5), (cx + 4, cy - 5), (cx + 4, cy + 3)],
+        ],
+        ink,
+        1,
+    )
+}
+
+/// Two sliders with their handles at different offsets.
+fn slider_mark(rect: Rect, ink: Color) -> Vec<Scene> {
+    let (cx, cy) = (rect.w / 2, rect.h / 2);
+    vec![
+        strokes(
+            rect,
+            &[
+                vec![(cx - 6, cy - 3), (cx + 6, cy - 3)],
+                vec![(cx - 6, cy + 3), (cx + 6, cy + 3)],
+            ],
+            ink,
+            1,
+        ),
+        dot(cx - 3, cy - 5, 4, ink),
+        dot(cx + 1, cy + 1, 4, ink),
+    ]
+}
+
 /// The rail's icon for one section, drawn rather than set in a font — a glyph
 /// this project does not ship is a box, and a box is not an icon.
+///
+/// ★★ R1728 — the fallback arm below is the reason two adjacent seats were
+/// drawn identically for as long as this function has existed. It stays,
+/// because a rail key with no arm should still paint *something*; what changed
+/// is that a gate now compares every seat's drawing with every other seat's, so
+/// a second seat falling through fails instead of shipping.
 fn rail_mark(key: &str, rect: Rect, ink: Color) -> Vec<Scene> {
     let (cx, cy) = (rect.w / 2, rect.h / 2);
     match key {
@@ -4142,43 +4226,65 @@ fn rail_mark(key: &str, rect: Rect, ink: Color) -> Vec<Scene> {
             dot(cx - 6, cy + 1, 5, ink),
             dot(cx + 1, cy + 1, 5, ink),
         ],
+        // Three nodes and the links between them — the reference's own mark for
+        // this section, which this had never been. ★ R1728 redrew it: what was
+        // here was a bracket under a dot, which is not a topology and is not
+        // what the reference draws.
         "topology" => vec![
+            dot(cx - 7, cy - 7, 5, ink),
+            dot(cx + 3, cy - 6, 5, ink),
+            dot(cx - 2, cy + 3, 5, ink),
             strokes(
                 rect,
                 &[
-                    vec![(cx, cy - 4), (cx, cy + 1)],
-                    vec![
-                        (cx - 5, cy + 5),
-                        (cx - 5, cy + 1),
-                        (cx + 5, cy + 1),
-                        (cx + 5, cy + 5),
-                    ],
+                    vec![(cx - 3, cy - 5), (cx + 3, cy - 4)],
+                    vec![(cx - 4, cy - 3), (cx - 1, cy + 3)],
+                    vec![(cx + 4, cy - 2), (cx + 1, cy + 3)],
                 ],
                 ink,
                 1,
             ),
-            dot(cx - 2, cy - 8, 4, ink),
         ],
-        "stream" => vec![strokes(
+        // ★★★★★ R1728 — these two had **no arm at all** and fell through to the
+        // fallback below, so the rail drew them identically: two adjacent seats
+        // a reader could not tell apart, on a screen whose whole subject is
+        // telling things apart. Nothing caught it because nothing had ever
+        // compared one seat's drawing with another's.
+        //
+        // A list of session rows, the last one short.
+        "sessions" => vec![strokes(
             rect,
             &[
-                vec![(cx - 7, cy - 4), (cx + 7, cy - 4)],
-                vec![(cx - 7, cy), (cx + 3, cy)],
-                vec![(cx - 7, cy + 4), (cx + 6, cy + 4)],
+                vec![(cx - 6, cy - 4), (cx + 6, cy - 4)],
+                vec![(cx - 6, cy), (cx + 6, cy)],
+                vec![(cx - 6, cy + 4), (cx + 2, cy + 4)],
             ],
             ink,
             1,
         )],
-        "decode" => vec![strokes(
+        "settings" => slider_mark(rect, ink),
+        // ★★★★★ R1728 — the seat each of these belongs to is not the seat it
+        // was under. Measured against the reference's own rail markup: the
+        // chevrons are its **key-pattern** section and were keyed `decode`, and
+        // the bulleted list is its **log** section and was keyed `catalog` —
+        // which is where the node graph lab had been mounted, so the one
+        // section this application had finished was wearing another's face.
+        // A seat and its icon are one fact and nothing had ever compared them.
+        //
+        "packets" => vec![pane_mark(rect, ink)],
+        // Two chevrons facing outward — a pattern standing in for what it
+        // matches.
+        "keys" => vec![strokes(
             rect,
             &[
-                vec![(cx - 2, cy - 5), (cx - 7, cy), (cx - 2, cy + 5)],
-                vec![(cx + 2, cy - 5), (cx + 7, cy), (cx + 2, cy + 5)],
+                vec![(cx - 2, cy - 5), (cx - 6, cy), (cx - 2, cy + 5)],
+                vec![(cx + 2, cy - 5), (cx + 6, cy), (cx + 2, cy + 5)],
             ],
             ink,
             1,
         )],
-        "catalog" => vec![
+        // Bulleted lines: entries, each with a marker, the last one short.
+        "logs" => vec![
             dot(cx - 7, cy - 5, 3, ink),
             dot(cx - 7, cy - 1, 3, ink),
             dot(cx - 7, cy + 3, 3, ink),
@@ -4187,12 +4293,13 @@ fn rail_mark(key: &str, rect: Rect, ink: Color) -> Vec<Scene> {
                 &[
                     vec![(cx - 2, cy - 4), (cx + 7, cy - 4)],
                     vec![(cx - 2, cy), (cx + 7, cy)],
-                    vec![(cx - 2, cy + 4), (cx + 7, cy + 4)],
+                    vec![(cx - 2, cy + 4), (cx + 5, cy + 4)],
                 ],
                 ink,
                 1,
             ),
         ],
+        "lab" => vec![graph_mark(rect, ink)],
         _ => vec![
             strokes(
                 rect,
@@ -6040,8 +6147,48 @@ fn read_specification(path: &str) -> Result<IntrospectValue, ReadRefusal> {
                 .collect::<Vec<_>>()
                 .join(","),
         )),
+        // ★★★★★ R1728 — **the application says how much of its own
+        // specification it reproduces**, and where it does not.
+        //
+        // Not a test fixture: this is the sentence an agent driving the tool
+        // needs before it plans anything. "Open the log section" is a
+        // reasonable next move and the answer is *no, and here is why, and it
+        // is not the same why as the two seats that are waiting for a later
+        // release*. Nothing on the wire could say that — `destinations` reports
+        // the standing of what IS on the rail, and a seat missing from the rail
+        // reports nothing at all, which is why three invented keys and two
+        // absent ones went unremarked for several hundred rounds.
+        //
+        // The comparison runs against `docs/analyzer-rail-spec.json`, which is
+        // a reviewed artifact rather than a second copy of the table above.
+        "conformance" => {
+            let built = spec::destinations();
+            let divergences: Vec<serde_json::Value> = spec::canon_spec()
+                .diff(&built)
+                .iter()
+                .map(|d| serde_json::json!({ "key": d.key(), "says": d.sentence() }))
+                .collect();
+            let owed: Vec<serde_json::Value> = spec::owed()
+                .iter()
+                .map(|o| {
+                    serde_json::json!({
+                        "key": o.key,
+                        "says": o.sentence,
+                        "since": o.since,
+                        "why": o.why,
+                    })
+                })
+                .collect();
+            let specified = spec::canon_spec().len();
+            Ok(IntrospectValue::Json(serde_json::json!({
+                "specified": specified,
+                "reproduced": specified - divergences.len(),
+                "divergences": divergences,
+                "owed": owed,
+            })))
+        }
         // Unreachable through the caller's match, which routes exactly the
-        // four paths above. Stated rather than unwrapped: a fifth path added to
+        // five paths above. Stated rather than unwrapped: a sixth path added to
         // that arm and not to this one refuses in the schema's own vocabulary
         // instead of panicking a shell.
         _ => Err(ReadRefusal::UnknownPath),

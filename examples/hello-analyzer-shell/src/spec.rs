@@ -31,12 +31,14 @@
 //! plain ordinals. The structure and the behaviour are what is being
 //! reproduced, and those are what this table holds.
 
-use pinion_core::availability::Unavailable;
+use pinion_core::availability::{Unavailable, UnavailableKind};
 /// R1697 — the operations table's shape, from the framework rather than from a
 /// second copy of the sibling screen's (see [`OPERATIONS`]).
 pub use pinion_core::operation::Operation as OperationSpec;
 use pinion_core::widgets::chip_group::Choice;
-use pinion_core::widgets::destination::{Destination, Destinations};
+use pinion_core::widgets::destination::{
+    Destination, Destinations, Required, RosterSpec, SeatSpec,
+};
 pub use pinion_core::widgets::roving::{Activation, Axis, Ends, RovingSpec};
 
 /// The window the screen is specified at.
@@ -109,6 +111,24 @@ pub enum Seat {
     /// destination can be finished and still not be here. Saying *reserved*
     /// would send a reader off to wait for something that already exists.
     Elsewhere(&'static str),
+    /// ★★★★★ R1728 — in the reference's **first** release, and this build has
+    /// not built it; the detail names what specifies it.
+    ///
+    /// The fourth arm, and the one the rail could not be made faithful without.
+    /// Measured: the reference draws eight seats and this application drew
+    /// seven, and the two it lacked were absent for a reason none of the three
+    /// arms above could say. [`Reserved`](Self::Reserved) says *wait for a
+    /// later release* and would be a lie about the scope — the reference
+    /// implements both sections today, each with a row list and a detail pane.
+    /// [`Elsewhere`](Self::Elsewhere) says *go and open it* and would send a
+    /// reader after a window nobody has written. So the seats were simply left
+    /// off — and a rail that omits a seat cannot be compared with one that has
+    /// it, which is how the divergence stayed invisible.
+    ///
+    /// The framework's own vocabulary gained the matching arm in the same
+    /// round, so this lowers to a stated reason on the wire and in the
+    /// accessibility tree rather than to a bare disabled bit.
+    Unbuilt(&'static str),
 }
 
 /// One seat on the icon rail.
@@ -127,12 +147,28 @@ impl RailSpec {
     pub const fn reserved_for(&self) -> Option<&'static str> {
         match self.seat {
             Seat::Reserved(why) => Some(why),
-            Seat::Page | Seat::Elsewhere(_) => None,
+            Seat::Page | Seat::Elsewhere(_) | Seat::Unbuilt(_) => None,
         }
     }
 }
 
 /// The rail, top to bottom.
+///
+/// ★★★★★ R1728 — **the reference's eight seats, in the reference's order.**
+/// Before this round it was seven, three of whose keys the reference does not
+/// have, and it is worth recording how a divergence that large stayed
+/// invisible: nothing compared the two. Measured at this round's open, by
+/// pulling the seat list off each of the reference's three delivered screens —
+/// they draw the *same* eight in the same order, and differ only in which one
+/// is marked current. What this table had instead was one seat of the
+/// reference's split into two under invented names, one seat missing outright,
+/// and the node lab mounted at a seat drawn with a *different* seat's icon.
+///
+/// The specification is now a reviewed artifact of its own,
+/// `docs/analyzer-rail-spec.json`, and [`canon`] loads it. This table stays
+/// because a running seat needs what a specification does not fix — its icon,
+/// its page, the wording of its refusal — and because a specification written
+/// beside the thing it judges is not a specification.
 pub const RAIL: &[RailSpec] = &[
     RailSpec {
         key: "dashboard",
@@ -140,30 +176,38 @@ pub const RAIL: &[RailSpec] = &[
         seat: Seat::Page,
     },
     RailSpec {
-        key: "stream",
-        title: "Stream",
+        key: "packets",
+        title: "Packets",
         seat: Seat::Elsewhere("the capture viewer"),
     },
+    // ★★ R1728 — the two seats the fourth arm exists for. The reference has
+    // both, working, in its first release; this build has neither. They are
+    // drawn, named, inert and honest about why, rather than left off the rail.
     RailSpec {
-        key: "decode",
-        title: "Decode",
-        seat: Seat::Elsewhere("the capture viewer"),
+        key: "keys",
+        title: "Key Patterns",
+        seat: Seat::Unbuilt("the behaviour reference"),
+    },
+    RailSpec {
+        key: "logs",
+        title: "Logs",
+        seat: Seat::Unbuilt("the behaviour reference"),
     },
     // ★★★★★ R1724 — **the first seat to stop saying *elsewhere*.**
     //
     // Its page is `hello-node-lab`, mounted through
-    // `pinion_screen::Mount<NodeLabView>` — the same 20,655-line binding the
-    // standalone `hello-node-lab` binary runs, unedited. Which destinations
-    // have a screen behind them is the `ScreenRoster`'s fact and is not
-    // written down a second time here: a seat only says whether it is open.
+    // `pinion_screen::Mount<NodeLabView>` — the same binding the standalone
+    // `hello-node-lab` binary runs, unedited. Which destinations have a screen
+    // behind them is the `ScreenRoster`'s fact and is not written down a second
+    // time here: a seat only says whether it is open.
+    //
+    // ★ R1728 renamed it. It was `catalog`, which is not a seat the reference
+    // has, and it was drawn with the icon the reference gives *Logs* — a list
+    // of bulleted lines — so the one seat this application had actually
+    // finished was wearing another section's face.
     RailSpec {
-        key: "catalog",
-        title: "Catalog",
-        seat: Seat::Page,
-    },
-    RailSpec {
-        key: "settings",
-        title: "Settings",
+        key: "lab",
+        title: "Node Lab",
         seat: Seat::Page,
     },
     RailSpec {
@@ -171,10 +215,18 @@ pub const RAIL: &[RailSpec] = &[
         title: "Topology",
         seat: Seat::Reserved("requirement 12"),
     },
+    // ★ R1728 — booked under requirement 18, not 14. The reference names the
+    // requirement in the seat's own tooltip and 14 is not among the six it
+    // defers; this said 14 from the round the seat was written.
     RailSpec {
         key: "sessions",
         title: "Sessions",
-        seat: Seat::Reserved("requirement 14"),
+        seat: Seat::Reserved("requirement 18"),
+    },
+    RailSpec {
+        key: "settings",
+        title: "Settings",
+        seat: Seat::Page,
     },
 ];
 
@@ -203,6 +255,9 @@ pub fn destinations() -> Destinations {
                 Seat::Elsewhere(where_) => {
                     Destination::closed(seat.key, seat.title, Unavailable::elsewhere(where_))
                 }
+                Seat::Unbuilt(spec) => {
+                    Destination::closed(seat.key, seat.title, Unavailable::unbuilt(spec))
+                }
             })
             .collect(),
     )
@@ -211,6 +266,141 @@ pub fn destinations() -> Destinations {
 
 /// Which rail seat this screen opens at.
 pub const RAIL_ACTIVE: &str = "dashboard";
+
+// --- The reference's navigation, and where this build does not reproduce it ---
+
+/// The specification, as text, compiled in.
+///
+/// `include_str!` rather than a read at run time so the gate cannot pass by
+/// finding no file: a specification that goes missing must break the build, not
+/// silently stop judging. It is the same posture the census pins take.
+const RAIL_SPEC_JSON: &str = include_str!("../../../docs/analyzer-rail-spec.json");
+
+/// ★★★★★ R1728 — **the reference's rail, as `docs/analyzer-rail-spec.json`
+/// states it.**
+///
+/// The specification half of this screen. [`RAIL`] above is what the
+/// application runs on; this is what it is supposed to be, and the two are
+/// separate artifacts on purpose — a specification written in the same file, in
+/// the same edit, by the same hand as the thing it judges is a gate asking the
+/// subject for the answer.
+///
+/// # Panics
+///
+/// If the specification is not readable as a roster — a malformed pin, a
+/// duplicate key, a standing this vocabulary does not have. All of them are
+/// defects in the pin rather than states the running screen can reach, and all
+/// of them must stop the build rather than quietly weaken the comparison.
+#[must_use]
+pub fn canon() -> Destinations {
+    let doc: serde_json::Value =
+        serde_json::from_str(RAIL_SPEC_JSON).expect("the rail specification is readable JSON");
+    let seats = doc["canon"]
+        .as_array()
+        .expect("the rail specification declares a canon array")
+        .iter()
+        .map(|seat| {
+            let key = seat["key"].as_str().expect("a specified seat has a key");
+            let title = seat["title"]
+                .as_str()
+                .expect("a specified seat has a title");
+            match seat["standing"].as_str() {
+                Some("open") => Destination::open(key.to_owned(), title.to_owned()),
+                Some("closed") => {
+                    let kind = seat["kind"]
+                        .as_str()
+                        .expect("a closed seat states its kind");
+                    let kind = UnavailableKind::from_name(kind)
+                        .expect("a closed seat's kind is one the framework has");
+                    Destination::closed(
+                        key.to_owned(),
+                        title.to_owned(),
+                        Unavailable::new(kind, "the behaviour reference"),
+                    )
+                }
+                other => panic!("a specified seat's standing is open or closed, not {other:?}"),
+            }
+        })
+        .collect();
+    Destinations::new(seats).expect("the specification is a navigable roster")
+}
+
+/// The same specification as the framework's comparable form.
+///
+/// # Panics
+///
+/// As [`canon`] — a pin this cannot be built from is a defect in the pin.
+#[must_use]
+pub fn canon_spec() -> RosterSpec {
+    RosterSpec::new(
+        canon()
+            .all()
+            .iter()
+            .map(|seat| SeatSpec {
+                key: seat.key.clone(),
+                title: seat.title.clone(),
+                required: Required::of(&seat.standing),
+            })
+            .collect(),
+    )
+    .expect("the specification is a navigable roster")
+}
+
+/// One difference from the reference this build has declared and accepted, with
+/// the sentence it must produce.
+pub struct Owed {
+    /// The seat it is about.
+    pub key: String,
+    /// The divergence verbatim — see the pin's own note on why this is exact.
+    pub sentence: String,
+    /// The round that accepted it.
+    pub since: String,
+    /// Why it is accepted, as the pin states it.
+    pub why: String,
+}
+
+/// The declared, reviewed remainder: where this build does not yet reproduce
+/// the reference's navigation.
+///
+/// A list rather than a count, and a *closed* list rather than a floor: the
+/// gate asserts the live difference is EXACTLY this, so a new divergence fails
+/// and so does an accepted one that has quietly been paid off. The second
+/// direction is what keeps the number from drifting up on its own.
+///
+/// # Panics
+///
+/// If the pin's `owed` entries are malformed — a defect in the pin.
+#[must_use]
+pub fn owed() -> Vec<Owed> {
+    let doc: serde_json::Value =
+        serde_json::from_str(RAIL_SPEC_JSON).expect("the rail specification is readable JSON");
+    doc["owed"]
+        .as_array()
+        .expect("the rail specification declares an owed array")
+        .iter()
+        .map(|entry| Owed {
+            key: entry["key"]
+                .as_str()
+                .expect("an owed divergence names its seat")
+                .to_owned(),
+            sentence: entry["sentence"]
+                .as_str()
+                .expect("an owed divergence carries the sentence verbatim")
+                .to_owned(),
+            since: entry["since"]
+                .as_str()
+                .expect("an owed divergence names the round that accepted it")
+                .to_owned(),
+            why: entry["why"]
+                .as_array()
+                .expect("an owed divergence states why")
+                .iter()
+                .filter_map(serde_json::Value::as_str)
+                .collect::<Vec<_>>()
+                .join(" "),
+        })
+        .collect()
+}
 
 // --- The Settings destination -------------------------------------------------
 //

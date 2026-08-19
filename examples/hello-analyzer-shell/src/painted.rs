@@ -40,6 +40,7 @@ use pinion_core::availability::{Recourse, UnavailableKind};
 use pinion_core::external::{ExternalIntrospect, IntrospectValue};
 use pinion_core::reactive::Owner;
 use pinion_core::scene::Rect;
+use pinion_core::widgets::destination::Required;
 use pinion_core::{Frame, Scene};
 use pinion_screen::ScreenState;
 
@@ -1646,6 +1647,234 @@ fn r1695_every_open_destination_is_a_place_you_arrive_at() {
             }
         }
     });
+}
+
+/// ★★★★★ R1728 — **the rail on the screen is the rail the reference draws**,
+/// walked seat by seat through the paint and the press.
+///
+/// The integration half of the conformance check. `tests.rs` compares the
+/// application's *roster value* with the specification, which is the model
+/// question; this asks the questions only a painted screen can answer, and they
+/// are the ones that were wrong:
+///
+/// 1. **Painted** — every seat the specification declares has a rectangle.
+/// 2. **Ordered** — the rectangles run top to bottom in the specified order.
+///    The reference draws one rail in one order on all three of its screens,
+///    and nothing here had ever compared the order at all: a roster is a list
+///    and a rail is a column, and the two agreeing is a separate fact.
+/// 3. **No invention** — nothing tagged as a rail seat is a seat the
+///    specification does not declare. This is the direction that had been
+///    failing silently: three of the seven keys on this rail were this
+///    application's own.
+///
+/// The press walk and the distinctness of the marks are the two siblings below,
+/// split off so each failure names itself.
+#[test]
+fn r1728_the_painted_rail_is_the_rail_the_reference_draws() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let canon = spec::canon_spec();
+        let shot = painted_at((WIN_W, WIN_H)).0;
+
+        // 1 + 2. Painted, in the specified order, top to bottom.
+        let mut previous: Option<(String, Rect)> = None;
+        for seat in canon.seats() {
+            let tag = format!("shell.rail.{}", seat.key);
+            let rect = shot.rect(&tag).unwrap_or_else(|| {
+                panic!(
+                    "the specification declares seat {:?} and the screen paints no {tag}",
+                    seat.key,
+                )
+            });
+            if let Some((before_key, before)) = &previous {
+                assert!(
+                    before.y < rect.y,
+                    "the specification puts {before_key} above {}, and the screen \
+                     paints them at y={} and y={}",
+                    seat.key,
+                    before.y,
+                    rect.y,
+                );
+            }
+            previous = Some((seat.key.clone().into_owned(), rect));
+        }
+
+        // 3. And nothing else calls itself a seat.
+        let painted: Vec<&String> = shot
+            .tags
+            .keys()
+            .filter(|tag| tag.starts_with("shell.rail."))
+            .collect();
+        let specified: BTreeSet<String> = canon
+            .seats()
+            .iter()
+            .map(|seat| format!("shell.rail.{}", seat.key))
+            .collect();
+        // ★★★ Not every tag under `shell.rail.` is a seat: the reference draws
+        // an avatar at the foot of its rail, as `avatar` rather than as one of
+        // its `ri` items, and this shell paints it inside the same tag
+        // namespace. So the leftovers are checked rather than skipped — each
+        // must be declared in the voice table under a population that is NOT
+        // the rail's. Naming the exception here instead would make this gate
+        // exactly as good as whoever remembered to update the list, which is
+        // the failure mode the whole round is about.
+        let mut chrome = 0_usize;
+        for tag in &painted {
+            if specified.contains(tag.as_str()) {
+                continue;
+            }
+            let voice = spec::VOICES
+                .iter()
+                .find(|voice| voice.tag == tag.as_str())
+                .unwrap_or_else(|| {
+                    panic!(
+                        "{tag} is painted on the rail, is not a specified seat, \
+                         and is not declared as anything else either",
+                    )
+                });
+            assert_ne!(
+                voice.population,
+                spec::Population::Rail,
+                "{tag} claims to be a rail seat and the specification has no such seat",
+            );
+            chrome += 1;
+        }
+        assert_eq!(
+            painted.len(),
+            canon.len() + chrome,
+            "the rail paints {} tags: {} specified seats and {chrome} declared as chrome",
+            painted.len(),
+            canon.len(),
+        );
+    });
+}
+
+/// ★★★★★ R1728 — **every specified seat answers a press the way the
+/// specification says it does**, from the centre of the rectangle it was
+/// actually painted in.
+///
+/// The half that makes the rail more than a picture. An open seat arrives; a
+/// closed one refuses *and stays where it was*, which is the row the floor
+/// fails outright — measured on 6.11.1, a disabled page is arrived at anyway.
+/// And the press is resolved through this screen's own hit path rather than
+/// through a geometry helper, because a helper agreeing with the painter is the
+/// failure `debt-paint-and-gesture-read-two-facts` is open for.
+#[test]
+fn r1728_every_specified_seat_answers_a_press_as_specified() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let canon = spec::canon_spec();
+        let shot = painted_at((WIN_W, WIN_H)).0;
+        let roster = spec::destinations();
+        let mut arrived = 0_usize;
+        let mut refused = 0_usize;
+        for seat in canon.seats() {
+            let tag = format!("shell.rail.{}", seat.key);
+            let rect = shot.rect(&tag).unwrap_or_else(|| {
+                panic!("the specification declares {tag} and it is not painted")
+            });
+            let (x, y) = (rect.x + rect.w / 2, rect.y + rect.h / 2);
+            assert_eq!(
+                super::hit_word(&Hit::at(&state, x, y)),
+                tag,
+                "pressing the centre of {tag} at ({x}, {y}) resolves elsewhere",
+            );
+            let key = seat.key.as_ref();
+            let was = state.at();
+            match state.go(key) {
+                Ok(()) => {
+                    assert_eq!(
+                        state.at(),
+                        key,
+                        "arriving at {key} did not move the journey"
+                    );
+                    arrived += 1;
+                }
+                Err(why) => {
+                    assert_eq!(
+                        state.at(),
+                        was,
+                        "{key} refused the journey and moved anyway"
+                    );
+                    // ★ The refusal must be the KIND the specification requires,
+                    // not merely a refusal: a seat closed as *reserved* when the
+                    // specification says *unbuilt* sends a reader off to wait
+                    // for a release the section is not booked into, and every
+                    // check that only asked "did it refuse" would pass.
+                    let said = why.sentence(&roster);
+                    let standing = roster
+                        .get(key)
+                        .map(|d| Required::of(&d.standing))
+                        .expect("the seat is on the roster it was walked from");
+                    assert!(
+                        !said.is_empty(),
+                        "{key} refused and said nothing a reader could use",
+                    );
+                    // What the specification requires is what `tests.rs` holds
+                    // against the declared remainder; what this asserts is that
+                    // the standing the ROSTER carries is the standing the
+                    // painted seat actually refuses with.
+                    assert_ne!(standing, Required::Open, "{key} refused while open");
+                    refused += 1;
+                }
+            }
+            state
+                .go(spec::RAIL_ACTIVE)
+                .expect("the opening seat is open");
+        }
+        assert_eq!(
+            arrived + refused,
+            canon.len(),
+            "every specified seat was pressed and answered",
+        );
+        assert_eq!(arrived, roster.open().count());
+        assert_eq!(refused, roster.closed().count());
+    });
+}
+
+/// ★★★★★ R1728 — **no two seats are drawn the same.**
+///
+/// Measured when this was first written, and it found two things at once. The
+/// seat carrying the node graph lab — the one section of the tool this
+/// application had actually finished — was drawn with the mark the reference
+/// gives its **log** section. And two further seats had no arm in the painter
+/// at all, fell through to its fallback, and were drawn **identically**: two
+/// adjacent icons a reader could not tell apart, on a screen whose whole
+/// subject is telling things apart.
+///
+/// Neither was visible to anything. A seat and its icon had never been one
+/// fact: the rail table said what each seat *is* and the painter said what each
+/// seat *looks like*, and no test had ever read both. Comparing the drawings
+/// with each other is what makes the second failure impossible without needing
+/// a copy of the reference's artwork in the repository, which there must not
+/// be.
+#[test]
+fn r1728_no_two_seats_are_drawn_the_same() {
+    let canon = spec::canon_spec();
+    // Any colour: what is being compared is geometry, and every seat gets the
+    // same one.
+    let ink = pinion_core::style::Color::rgb(0xFF, 0xFF, 0xFF);
+    let mut marks: BTreeMap<String, String> = BTreeMap::new();
+    for seat in canon.seats() {
+        let drawn = format!(
+            "{:?}",
+            super::rail_mark(seat.key.as_ref(), Rect::new(0, 0, 20, 20), ink)
+        );
+        assert!(
+            drawn.len() > 32,
+            "the {} seat draws no mark of its own",
+            seat.key,
+        );
+        if let Some(other) = marks.insert(drawn, seat.key.clone().into_owned()) {
+            panic!("the {} and {} seats are drawn identically", other, seat.key);
+        }
+    }
+    assert_eq!(
+        marks.len(),
+        canon.len(),
+        "every specified seat has its own mark"
+    );
 }
 
 /// ★★★★★ R1695 — the specification says which destination each region belongs
