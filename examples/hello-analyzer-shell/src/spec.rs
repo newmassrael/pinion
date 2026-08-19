@@ -32,6 +32,7 @@
 //! reproduced, and those are what this table holds.
 
 use pinion_core::availability::{Unavailable, UnavailableKind};
+use pinion_core::conformance::Ledger;
 /// R1697 — the operations table's shape, from the framework rather than from a
 /// second copy of the sibling screen's (see [`OPERATIONS`]).
 pub use pinion_core::operation::Operation as OperationSpec;
@@ -194,14 +195,23 @@ pub const RAIL: &[RailSpec] = &[
         title: "Packets",
         seat: Seat::Page,
     },
-    // ★★ R1728 — the two seats the fourth arm exists for. The reference has
-    // both, working, in its first release; this build has neither. They are
-    // drawn, named, inert and honest about why, rather than left off the rail.
+    // ★★★★★ R1730 — **the first seat this rail ever opened by BUILDING one.**
+    //
+    // R1724 and R1729 each opened a seat by mounting a screen that already
+    // existed somewhere else; this section existed nowhere. Its page is
+    // `hello-key-patterns`, whose own three surfaces are checked against
+    // `docs/analyzer-keys-spec.json` the way this rail is checked against the
+    // pin beside it — so the seat being open is one claim and the section
+    // behind it reproducing the reference is another, and both are gated.
     RailSpec {
         key: "keys",
         title: "Key Patterns",
-        seat: Seat::Unbuilt("the behaviour reference"),
+        seat: Seat::Page,
     },
+    // ★★ R1728 — the seat the fourth arm exists for. The reference has this
+    // section, working, in its first release; this build has not built it. It
+    // is drawn, named, inert and honest about why, rather than left off the
+    // rail.
     RailSpec {
         key: "logs",
         title: "Logs",
@@ -357,19 +367,6 @@ pub fn canon_spec() -> RosterSpec {
     .expect("the specification is a navigable roster")
 }
 
-/// One difference from the reference this build has declared and accepted, with
-/// the sentence it must produce.
-pub struct Owed {
-    /// The seat it is about.
-    pub key: String,
-    /// The divergence verbatim — see the pin's own note on why this is exact.
-    pub sentence: String,
-    /// The round that accepted it.
-    pub since: String,
-    /// Why it is accepted, as the pin states it.
-    pub why: String,
-}
-
 /// The declared, reviewed remainder: where this build does not yet reproduce
 /// the reference's navigation.
 ///
@@ -378,39 +375,23 @@ pub struct Owed {
 /// and so does an accepted one that has quietly been paid off. The second
 /// direction is what keeps the number from drifting up on its own.
 ///
+/// ★★★ R1730 — **the framework's [`Ledger`] rather than a struct and a loop
+/// here.** R1728 wrote both, plus the three per-entry conditions, inside this
+/// application's own test — an entry whose sentence does not name its key, an
+/// entry with no round, an entry with no reason. The key-pattern section needed
+/// the same mechanism for three surfaces of its own, which is the third
+/// consumer and the lift trigger, and the conditions now refuse a malformed pin
+/// at load rather than being remembered per consumer.
+///
 /// # Panics
 ///
-/// If the pin's `owed` entries are malformed — a defect in the pin.
+/// If the pin's `owed` entries are malformed, name no round, state no reason or
+/// do not name their own seat — all defects in the pin.
 #[must_use]
-pub fn owed() -> Vec<Owed> {
+pub fn owed() -> Ledger {
     let doc: serde_json::Value =
         serde_json::from_str(RAIL_SPEC_JSON).expect("the rail specification is readable JSON");
-    doc["owed"]
-        .as_array()
-        .expect("the rail specification declares an owed array")
-        .iter()
-        .map(|entry| Owed {
-            key: entry["key"]
-                .as_str()
-                .expect("an owed divergence names its seat")
-                .to_owned(),
-            sentence: entry["sentence"]
-                .as_str()
-                .expect("an owed divergence carries the sentence verbatim")
-                .to_owned(),
-            since: entry["since"]
-                .as_str()
-                .expect("an owed divergence names the round that accepted it")
-                .to_owned(),
-            why: entry["why"]
-                .as_array()
-                .expect("an owed divergence states why")
-                .iter()
-                .filter_map(serde_json::Value::as_str)
-                .collect::<Vec<_>>()
-                .join(" "),
-        })
-        .collect()
+    Ledger::from_json(&doc).expect("the rail's declared remainder is a readable ledger")
 }
 
 // --- The Settings destination -------------------------------------------------

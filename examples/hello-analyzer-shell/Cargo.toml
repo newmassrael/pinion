@@ -38,6 +38,11 @@ hello-node-lab = { path = "../hello-node-lab" }
 # — and that one is a section the reference implements and this build has not,
 # so it says `unbuilt` rather than `elsewhere`.
 hello-packet-view = { path = "../hello-packet-view" }
+# ★★★★★ R1730 — the key-pattern destination's page. Unlike the two above, this
+# one was BUILT for the seat rather than mounted into it: the section existed
+# nowhere in this tree, and its own surfaces are checked against
+# `docs/analyzer-keys-spec.json`.
+hello-key-patterns = { path = "../hello-key-patterns" }
 vello = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

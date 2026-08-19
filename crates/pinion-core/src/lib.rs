@@ -35,6 +35,7 @@ pub mod chrome;
 pub mod clipboard;
 pub mod command;
 pub mod composite_tag;
+pub mod conformance;
 pub mod containment;
 pub mod contrast;
 pub mod derivation;

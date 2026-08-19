@@ -98,21 +98,20 @@
     "binding gained a `pub`, and the shell mounted it. Not one line of the",
     "screen changed.",
     "",
-    "The entry is DELETED rather than marked done, because the gate asserts the",
+    "R1730 paid off `keys`, and that one was a BUILD: the section did not exist",
+    "in this tree in any form. `hello-key-patterns` is it — a section header",
+    "with a derived summary and a live filter, a seven-column declaration list,",
+    "and a record pane of eleven parts whose last is the reference's own action",
+    "out of the section, drawn and refused with the reason THIS file gives the",
+    "seat it leads to. Its own surfaces are checked the same way this rail is,",
+    "against `docs/analyzer-keys-spec.json`.",
+    "",
+    "An entry is DELETED rather than marked done, because the gate asserts the",
     "live difference EQUALS this list. A paid divergence left here would fail",
     "just as loudly as a new one — which is the point: the list cannot quietly",
     "describe a worse build than the one that exists."
   ],
   "owed": [
-    {
-      "key": "keys",
-      "sentence": "`keys` is specified open and is closed (unbuilt)",
-      "since": "R1728",
-      "why": [
-        "The reference implements this section — it has rows and a detail pane.",
-        "This build has not. The seat is drawn, named and inert, and says so."
-      ]
-    },
     {
       "key": "logs",
       "sentence": "`logs` is specified open and is closed (unbuilt)",

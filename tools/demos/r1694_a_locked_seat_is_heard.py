@@ -66,6 +66,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+from analyzer_spec import closed_keys  # noqa: E402
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
@@ -78,6 +79,12 @@ VIEW = "analyzer_shell"
 EXT = f"/{VIEW}/external"
 
 CHECKS: list[str] = []
+
+
+#: The rail seats the specification says are shut, read from the reviewed
+#: artifact rather than written out — so a round that builds a section moves
+#: this demo's expectation by itself.
+closed_rail_keys = closed_keys
 
 
 def banner(what: str) -> None:
@@ -118,15 +125,41 @@ def body() -> None:
         # live and refusing nothing until then) and the settings page's own two
         # booked affordances. Each row now says WHICH destination it belongs to,
         # so this demo can ask about the one the screen opens at.
-        # ★★★★★ R1724 — fifteen: Catalog's page is the node graph lab, mounted
+        # ★★★★★ R1724 — Catalog's page is the node graph lab, mounted
         # (`pinion_screen::Mount<NodeLabView>`), so that rail seat is open and
         # left this table by being open. Nobody edited the table — it is derived
         # from the seat's own standing, which is what "derived rather than
         # listed" was for.
-        assert_eq(len(locked), 15, "A: fifteen regions are declared unavailable")
+        # ★★★★★ R1730 — and the COUNT is derived now too. It was written out
+        # (sixteen, then fifteen, each edited by hand in the round that moved
+        # it), and the round that built the key-pattern section broke it: a
+        # number in a demo goes stale exactly like a number in prose.
+        rail_locked = sorted(r["tag"] for r in locked if r["tag"].startswith("shell.rail."))
+        assert_eq(
+            rail_locked,
+            sorted(f"shell.rail.{k}" for k in closed_rail_keys()),
+            "A: the rail seats declared unavailable are the ones the "
+            "specification says are shut, and no others",
+        )
+        others = [r for r in locked if not r["tag"].startswith("shell.rail.")]
+        assert_eq(
+            len(others),
+            11,
+            "A: and the rest are the settings page's booked affordances, which "
+            "no rail change touches",
+        )
         here = spec["rail_active"]
-        locked = [row["tag"] for row in locked if row["at"] in ("*", here)]
-        assert_eq(len(locked), 13, "A: thirteen of them are on the opening screen")
+        on_screen = [row["tag"] for row in locked if row["at"] in ("*", here)]
+        ok(
+            "A: every locked rail seat is one the opening screen shows",
+            all(tag in on_screen for tag in rail_locked),
+        )
+        ok(
+            "A: and some locked regions belong to a destination this screen is "
+            "not at, which is why the table says WHERE each one lives",
+            len(on_screen) < len(locked),
+        )
+        locked = on_screen
         assert_eq(
             len(spec["catalogue"]),
             13,

@@ -319,6 +319,30 @@ pub mod census {
                 if trimmed.starts_with("impl ") || trimmed.starts_with("impl<") {
                     current = Some(impl_subject(trimmed));
                 }
+                // ★★★★★ R1730 — a TRAIT header opens a subject too, and until
+                // this round it did not.
+                //
+                // Measured: a trait declaring `fn sentence(&self) -> String;`
+                // was attributed to whichever `impl` block happened to be
+                // above it in the file, so the census reported a type that
+                // cannot speak — `SurfaceSpec`, whose neighbour declared the
+                // vocabulary — and would have accepted a drive naming it. A
+                // census that attributes a sentence to the wrong owner is worse
+                // than one that misses it: the drive it demands proves nothing
+                // and the real speaker stays unchecked.
+                if trimmed.starts_with("trait ")
+                    || trimmed.starts_with("pub trait ")
+                    || trimmed.starts_with("pub(crate) trait ")
+                {
+                    current = Some(
+                        trimmed
+                            .rsplit("trait ")
+                            .next()
+                            .and_then(|rest| rest.split(['<', '{', ':', ' ']).next())
+                            .map(str::to_owned)
+                            .filter(|name| !name.is_empty()),
+                    );
+                }
                 // ★★ R1719 — `self` as well as `&self`. A `Copy` vocabulary
                 // takes its receiver by value (clippy asks it to), and the
                 // first such speaker written after this census existed slipped
@@ -348,7 +372,14 @@ pub mod census {
                     trimmed
                         .strip_prefix(head)
                         .is_some_and(|rest| rest.starts_with("&self") || rest.starts_with("self"))
-                }) {
+                })
+                // ★★★★★ R1730 — a trait method DECLARATION says nothing. It
+                // ends in `;` and has no body, so there is no wording to drive;
+                // what speaks is each implementor, and each is censused where
+                // it is written. A default body is a different thing and stays
+                // a speaker, attributed to the trait by the header rule above.
+                    && !trimmed.ends_with(';')
+                {
                     match current.clone() {
                         Some(Some(owner)) => {
                             found.insert(owner);
@@ -678,6 +709,41 @@ mod tests {
             )
             .is_empty(),
             "★★ and a longer name is not this convention"
+        );
+
+        // ★★★★★ R1730 — a TRAIT is a subject too, and a method it merely
+        // DECLARES says nothing.
+        //
+        // Both halves were measured: a trait declaring `fn sentence(&self) ->
+        // String;` after an impl block was attributed to that impl, so the
+        // census reported a type that cannot speak and would have accepted a
+        // drive naming it. Attributing a sentence to the wrong owner is worse
+        // than missing it — the drive it demands proves nothing and the real
+        // speaker stays unchecked.
+        let declared = "impl SurfaceSpec {\n    \
+                        pub fn parts(&self) -> &[Part] { &self.parts }\n}\n\
+                        pub trait Divergent {\n    \
+                        fn key(&self) -> &str;\n    \
+                        fn sentence(&self) -> String;\n}\n";
+        assert!(
+            speakers_in("d.rs", declared).is_empty(),
+            "★★★★★ a trait method DECLARATION is not a speaker, and it is not \
+             the impl above it either: {:?}",
+            speakers_in("d.rs", declared),
+        );
+
+        // …and a default body IS one, attributed to the trait that carries it.
+        let defaulted = "impl SurfaceSpec {\n    \
+                         pub fn parts(&self) -> &[Part] { &self.parts }\n}\n\
+                         pub trait Divergent {\n    \
+                         fn sentence(&self) -> String { String::new() }\n}\n";
+        assert_eq!(
+            speakers_in("b.rs", defaulted)
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>(),
+            ["Divergent"],
+            "★★★ a trait that carries a wording of its own is the speaker"
         );
 
         // A nested generic bound closes before the impl's own list does.

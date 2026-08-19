@@ -66,6 +66,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from analyzer_spec import rail_spec  # noqa: E402
 from rpc_verify import (  # noqa: E402
     RealPointer,
     RealPointerUnavailable,
@@ -77,7 +78,6 @@ from rpc_verify import (  # noqa: E402
 
 SHELL = "hello-analyzer-shell"
 EXT = "/external"
-SPEC_PATH = Path(__file__).resolve().parent.parent.parent / "docs" / "analyzer-rail-spec.json"
 
 CHECKS: list[str] = []
 
@@ -101,11 +101,12 @@ def q(app: RpcSubprocess, path: str):
     return app.query(f"{EXT}/{path}")
 
 
-def specification() -> dict:
-    """The reviewed artifact, read from the repository rather than from the
-    application. Both sides of every comparison below must come from different
-    places or the comparison is the application agreeing with itself."""
-    return json.loads(SPEC_PATH.read_text(encoding="utf-8"))
+#: ★ R1730 — the loader moved to `tools/analyzer_spec.py`. Six demos had grown a
+#: copy of it, and the round that paid `keys` off broke five of them at once.
+#: The reviewed artifact is read from the repository rather than from the
+#: application: both sides of every comparison below must come from different
+#: places, or the comparison is the application agreeing with itself.
+specification = rail_spec
 
 
 def pointer(app: RpcSubprocess):
@@ -239,8 +240,13 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             "mounted, and its absence is the measurement: no section of this "
             "tool is built-and-unreachable any more",
         )
-        assert_eq(sorted(by_reason["reserved"]), ["sessions", "topology"])
-        assert_eq(sorted(by_reason["unbuilt"]), ["keys", "logs"])
+        # ★ R1730 — DERIVED from the specification rather than written out. The
+        # first round to pay a divergence off broke both of the literals that
+        # used to be here, which is the same class as a stale number in prose.
+        reserved_keys = sorted(s["key"] for s in canon if s.get("kind") == "reserved")
+        owed_keys = sorted(entry["key"] for entry in owed)
+        assert_eq(sorted(by_reason["reserved"]), reserved_keys)
+        assert_eq(sorted(by_reason["unbuilt"]), owed_keys)
         # ★★ The recourse is DERIVED, and these two kinds legitimately share
         # one: the reader's action is the same (wait) and what they are waiting
         # for is not, which is why the kinds stay apart while the recourse
@@ -252,9 +258,15 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
                 f"C: {tag} derives its recourse",
             )
         ok(
-            "C: ★ and the two that share a recourse do NOT share a sentence, "
-            "so a reader is not told to wait for the wrong thing",
-            len({disabled[f"shell.rail.{k}"]["detail"] for k in ("topology", "keys")}) == 2,
+            "C: ★ and the two kinds that share a recourse do NOT share a "
+            "sentence, so a reader is not told to wait for the wrong thing",
+            len(
+                {
+                    disabled[f"shell.rail.{k}"]["detail"]
+                    for k in (reserved_keys[0], owed_keys[0])
+                }
+            )
+            == 2,
         )
 
         # ── (D) and a reader hears it ─────────────────────────────────────
@@ -263,7 +275,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         for seat in canon:
             tag = f"shell.rail.{seat['key']}"
             ok(f"D: the {seat['key']} seat is in the tree", tag in tree)
-        for key in ("keys", "logs"):
+        for key in owed_keys:
             node = tree[f"shell.rail.{key}"]
             reason = node.get("unavailable")
             ok(
@@ -286,8 +298,12 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         # is the whole point of spending an arm rather than reusing one: both
         # seats are inert, both ask the reader to wait, and they are waiting for
         # different things.
+        # ★ R1730 — one seat of each kind, derived. Written out, this named
+        # `keys`, and the round that BUILT that section left the demo asking a
+        # page for its reason.
         heard = {
-            tree[f"shell.rail.{k}"]["unavailable"]["kind"] for k in ("topology", "keys")
+            tree[f"shell.rail.{k}"]["unavailable"]["kind"]
+            for k in (reserved_keys[0], owed_keys[0])
         }
         assert_eq(
             sorted(heard),

@@ -235,43 +235,28 @@ fn r1668_every_reserved_seat_names_what_it_waits_for() {
 /// containment. Equality is what makes paying a divergence off fail too — the
 /// gate then says "you fixed it, record it", which is the direction a floor
 /// cannot see.
+/// ★ R1730 — the *judgement* is the framework's now
+/// ([`pinion_core::conformance::Ledger`]), which reports WHICH direction failed
+/// instead of leaving a reader to compare two vectors. The three per-entry
+/// conditions this test used to assert inline — the sentence names its key, the
+/// entry names a round, the entry states a reason — are refused at load, so
+/// every specification written from now on gets them without remembering to.
 #[test]
 fn r1728_the_rail_reproduces_the_reference_or_says_where_it_does_not() {
     let built = spec::destinations();
-    let found: Vec<String> = spec::canon_spec()
-        .diff(&built)
-        .iter()
-        .map(pinion_core::widgets::destination::Divergence::sentence)
-        .collect();
+    let found = spec::canon_spec().diff(&built);
     let owed = spec::owed();
-    let declared: Vec<String> = owed.iter().map(|o| o.sentence.clone()).collect();
-    assert_eq!(
-        found, declared,
+    let unreconciled: Vec<String> = owed
+        .judge(&found)
+        .iter()
+        .map(pinion_core::conformance::Unreconciled::sentence)
+        .collect();
+    assert!(
+        unreconciled.is_empty(),
         "the rail's difference from the reference is not the difference \
-         `docs/analyzer-rail-spec.json` declares",
+         `docs/analyzer-rail-spec.json` declares:\n  {}",
+        unreconciled.join("\n  "),
     );
-    // Every accepted divergence carries its reason and the round that took it,
-    // because an exception list nobody has to justify becomes a list of
-    // everything.
-    for entry in &owed {
-        assert!(
-            entry.sentence.contains(&format!("`{}`", entry.key)),
-            "the owed entry for {} does not describe {}",
-            entry.key,
-            entry.key,
-        );
-        assert!(
-            entry.since.starts_with('R') && entry.since.len() >= 3,
-            "the owed entry for {} names no round: {:?}",
-            entry.key,
-            entry.since,
-        );
-        assert!(
-            entry.why.len() > 40,
-            "the owed entry for {} states no reason",
-            entry.key,
-        );
-    }
     // And the reproduction is a number rather than an impression.
     let reproduced = spec::canon_spec().len() - owed.len();
     assert_eq!(

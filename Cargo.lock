@@ -1788,6 +1788,7 @@ dependencies = [
 name = "hello-analyzer-shell"
 version = "0.0.1"
 dependencies = [
+ "hello-key-patterns",
  "hello-node-lab",
  "hello-packet-view",
  "pinion-a11y",
@@ -3052,6 +3053,22 @@ dependencies = [
  "pinion-derive",
  "pinion-forge",
  "pinion-gpu",
+ "pinion-shell",
+ "pinion-widget-paint",
+ "serde",
+ "serde_json",
+ "vello",
+]
+
+[[package]]
+name = "hello-key-patterns"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-gpu",
+ "pinion-runtime",
  "pinion-shell",
  "pinion-widget-paint",
  "serde",

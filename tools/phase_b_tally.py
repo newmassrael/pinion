@@ -242,6 +242,19 @@ AXES = [
                 # — and whose other two panes are the `row-dissect` and
                 # `hex-dump` artifacts this list already holds, assembled.
                 "packet-view",
+                # R1730, added WITH the round for the reason the two entries
+                # above give — the census has now caught six artifacts arriving
+                # with no axis and the remedy every time was this list.
+                # `hello-key-patterns` is the tool's key-pattern section: a
+                # seven-column declaration list with a live query over named
+                # columns, beside a record pane derived from the selected row.
+                # That is this axis's data-grid family plus the master-detail
+                # relation `row-dissect` holds, assembled — and it is the first
+                # screen in the tree whose three surfaces are checked against a
+                # written specification of the reference's own
+                # (`docs/analyzer-keys-spec.json`, through
+                # `pinion_core::conformance`).
+                "key-patterns",
             ]),
         ],
         # R1532 re-judgment, demanded by this axis's round count going 0 -> 1

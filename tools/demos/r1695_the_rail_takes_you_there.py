@@ -53,6 +53,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from analyzer_spec import closed_keys, owed_keys  # noqa: E402
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
@@ -65,6 +66,9 @@ from rpc_verify import (  # noqa: E402
 EXAMPLE = "hello-analyzer-shell"
 EXT = "/external"
 CHECKS: list[str] = []
+
+
+closed_rail_keys = closed_keys
 
 
 def banner(text: str) -> None:
@@ -119,24 +123,54 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
                 assert_eq(row["detail"], seat["reserved_for"], f"A: {key} booking")
                 assert_eq(row["recourse"], "await_release", f"A: {key} recourse")
             elif not seat["open"]:
-                # ★★ The arm this round added. `reserved` would send a reader
-                # off to wait for something that has already shipped, and
-                # `unsupported` would tell them to give up on it.
-                assert_eq(row["kind"], "elsewhere", f"A: {key} is on another surface")
-                assert_eq(row["recourse"], "open_elsewhere", f"A: {key} recourse")
-                ok(f"A: {key} names the surface that has it", bool(row["detail"]))
+                # ★★★★★ R1730 — this asserted `elsewhere` and had done since
+                # R1695, when every non-reserved shut seat WAS built on another
+                # surface. R1728 replaced that kind with `unbuilt` for the
+                # sections the reference has and this build has not, and R1729
+                # mounted the last real `elsewhere` — so this demo had been RED
+                # for two rounds and nothing ran it. That is the finding, and
+                # the repair is not a new literal: the kind comes from
+                # `docs/analyzer-rail-spec.json` and the recourse from the
+                # framework's own derivation, so the next kind to appear here
+                # moves this expectation by itself.
+                assert_eq(
+                    row["kind"],
+                    "unbuilt" if key in owed_keys() else "elsewhere",
+                    f"A: {key} says WHICH kind of shut it is",
+                )
+                assert_eq(
+                    row["recourse"],
+                    "await_release" if key in owed_keys() else "open_elsewhere",
+                    f"A: {key} recourse",
+                )
+                ok(f"A: {key} names what would open it", bool(row["detail"]))
         opens = [k for k, r in rows.items() if r["open"]]
         closed = [k for k, r in rows.items() if not r["open"]]
-        # ★★★★★ R1724 — **two, then three.** Catalog's page is now the node
-        # graph lab, mounted whole (`pinion_screen::Mount<NodeLabView>`), so
-        # what this application hosts grew by a destination without a line of
-        # that screen changing. `assert_every_destination_arrives` below drives
-        # it like any other seat — which is the point: a mounted screen is a
-        # destination, not a special case.
-        assert_eq(len(opens), 3, "A: three destinations this application hosts")
-        assert_eq(len(closed), 4, "A: four it declares and cannot take you to")
+        # ★★★★★ R1724 — Catalog's page is now the node graph lab, mounted whole
+        # (`pinion_screen::Mount<NodeLabView>`), so what this application hosts
+        # grew by a destination without a line of that screen changing.
+        # `assert_every_destination_arrives` below drives it like any other seat
+        # — which is the point: a mounted screen is a destination, not a special
+        # case.
+        # ★★★★★ R1730 — and the two counts are DERIVED. Written out they were
+        # 3 and 4, both stale since R1728, and nothing ran this demo to say so.
+        assert_eq(
+            sorted(closed),
+            closed_rail_keys(),
+            "A: what it declares and cannot take you to is exactly what its "
+            "specification says is shut",
+        )
+        assert_eq(
+            len(opens),
+            len(rows) - len(closed),
+            "A: and everything else is a destination this application hosts",
+        )
         kinds = sorted({rows[k]["kind"] for k in closed})
-        assert_eq(kinds, ["elsewhere", "reserved"], "A: two ways to be closed")
+        assert_eq(
+            kinds,
+            sorted({"reserved", *(("unbuilt",) if owed_keys() else ())}),
+            "A: the ways to be closed, derived from the specification",
+        )
         print(f"[demo] roster: {len(rows)} destination(s), {len(opens)} open, {kinds}")
 
         # ── (B) the law, driven through the router ─────────────────────────

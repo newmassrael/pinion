@@ -663,6 +663,18 @@ fn screen_roster() -> ScreenRoster {
                 "packets",
                 Box::new(Mount::<hello_packet_view::PacketView>::new()) as Box<dyn Screen>,
             ),
+            // ★★★★★ R1730 — **the first page this shell gained by building a
+            // section rather than by placing one that already existed.**
+            //
+            // The key-pattern section is the reference's third seat and was in
+            // this tree in no form at all. What it brings back is a screen
+            // whose own surfaces are checked against a written specification —
+            // `docs/analyzer-keys-spec.json` — so mounting it makes the rail's
+            // claim and the section's claim two separate gated facts.
+            (
+                "keys",
+                Box::new(Mount::<hello_key_patterns::KeyPatternView>::new()) as Box<dyn Screen>,
+            ),
             // ★ R1728 — `lab`, not `catalog`. The reference's fifth seat is its
             // node graph section and this is it; `catalog` was a key the
             // reference does not have.
@@ -6181,7 +6193,9 @@ fn read_specification(path: &str) -> Result<IntrospectValue, ReadRefusal> {
                 .iter()
                 .map(|d| serde_json::json!({ "key": d.key(), "says": d.sentence() }))
                 .collect();
-            let owed: Vec<serde_json::Value> = spec::owed()
+            let ledger = spec::owed();
+            let owed: Vec<serde_json::Value> = ledger
+                .owed()
                 .iter()
                 .map(|o| {
                     serde_json::json!({

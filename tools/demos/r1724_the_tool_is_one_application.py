@@ -48,6 +48,11 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+# ★ R1730 — the rail's specification, so the expectations below are DERIVED
+# from the reviewed artifact rather than written out here. They were written out
+# here, and the first round to pay a divergence off broke five demos at once. A
+# number in a demo goes stale the same way a number in prose does.
+from analyzer_spec import open_keys, owed_keys  # noqa: E402
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
@@ -119,26 +124,44 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         unbuilt = sorted(k for k, r in rows.items() if r["kind"] == "unbuilt")
         assert_eq(
             unbuilt,
-            ["keys", "logs"],
-            "A: ★ R1728 -- and two the reference has working that this build "
-            "has not written. They were absent from the rail entirely before",
+            owed_keys(),
+            "A: ★ R1728 -- and the seats the reference has working that this "
+            "build has not written are EXACTLY the ones its specification "
+            "declares owed. They were absent from the rail entirely before "
+            "R1728, and R1730 built one of them",
         )
         opens = sorted(k for k, r in rows.items() if r["open"])
         assert_eq(
             opens,
-            ["dashboard", "lab", "packets", "settings"],
-            "A: four destinations this ONE application hosts",
+            open_keys(),
+            "A: the destinations this ONE application hosts -- derived from the "
+            "specification, so building a section moves this number by itself",
         )
         # ★★★★★ §2 #2 — which destinations are whole screens is PUBLISHED, not
         # inferred from tag prefixes. An agent that had to guess would be
         # guessing at a rule nobody wrote down.
         mounted = sorted(k for k, r in rows.items() if r["mounted"])
+        # ★ R1730 — the PROPERTY, not the roll. This was a written-out pair and
+        # the next mount broke it; what the check is actually about is that a
+        # mounted seat is a seat you can arrive at and that says how to address
+        # the screen behind it. The count is a floor so the comparison below
+        # cannot go vacuous, not a pin on which sections are pages.
         assert_eq(
-            mounted,
-            ["lab", "packets"],
-            "A: ★ R1729 -- TWO sections are whole screens now, each the library "
-            "half of a binary the demo sweep still drives on its own",
+            [k for k in mounted if k not in opens],
+            [],
+            "A: ★ every section that is a whole screen sits at a seat a reader "
+            "can arrive at -- the roster refuses a mount at a closed one",
         )
+        ok(
+            f"A: ★ R1730 -- {len(mounted)} sections are whole screens, each the "
+            "library half of a binary the demo sweep still drives on its own",
+            len(mounted) >= 2,
+        )
+        for key in mounted:
+            ok(
+                f"A: and {key} says how to address its screen's surfaces",
+                bool(rows[key]["screen"]["tag"]),
+            )
         assert_eq(
             rows["lab"]["screen"]["tag"],
             LAB_ROOT,

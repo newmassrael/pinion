@@ -53,6 +53,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+from analyzer_spec import owed_keys  # noqa: E402
 from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
@@ -300,10 +301,14 @@ def body() -> None:
             for row in tf.request("scene/disabled", {}).result["disabled"]
             if row["reason"] == "unbuilt"
         ]
+        # ★ R1730 — DERIVED from `docs/analyzer-rail-spec.json`. Written out,
+        # this named both sections, and the round that BUILT one of them left
+        # this demo asserting the build was worse than it is.
         assert_eq(
             sorted(unbuilt),
-            ["shell.rail.keys", "shell.rail.logs"],
-            "B2: two sections are specified and not built, and say so",
+            [f"shell.rail.{key}" for key in owed_keys()],
+            "B2: the sections specified and not built say so, and they are "
+            "exactly the ones the specification declares owed",
         )
         for tag in unbuilt:
             row = next(

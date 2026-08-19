@@ -1,0 +1,98 @@
+{
+  "$comment": [
+    "R1730 — the analysis tool's KEY PATTERN section, written down once, in",
+    "neutral vocabulary, as the behaviour reference draws it.",
+    "",
+    "WHY THIS IS A FILE AND NOT A RUST CONSTANT. The same reason",
+    "`analyzer-rail-spec.json` is one, applied a level down. The screen's own",
+    "`spec` module is what a RUNNING screen needs — paint tags, column widths,",
+    "row data, the wording of a refusal. If the specification lived beside it,",
+    "written by the same hand in the same edit, a conformance test would be",
+    "asking the thing under test for the answer.",
+    "",
+    "EXTRACTION. The reference is not in this repository and must not be. The",
+    "procedure is recorded in the session memory note on the behaviour",
+    "reference: the section is one method producing the rows, one producing the",
+    "detail, and one block of markup drawing both. Measured 2026-08-19: seven",
+    "columns in one order, a 320-wide detail pane with eleven parts, and a",
+    "46-high section header carrying a name, a derived summary and a filter box.",
+    "",
+    "VOCABULARY. The reference's product, protocol and resource words are",
+    "replaced by the words the tool class uses generally. Structure and",
+    "behaviour are what is being reproduced; the wording is not. Two titles",
+    "below name a part the reference draws WITHOUT a label — `standing` and",
+    "`summary` — and one, `pattern`, labels the pane's subject line. Those three",
+    "titles are this file's words for what is there, and the file says so rather",
+    "than pretending the reference wrote them.",
+    "",
+    "THE TWO HALVES. Each surface carries `canon` — what the reference has — and",
+    "`owed` — where this build does not have it, each entry carrying the round",
+    "that accepted it and why. The gate asserts the difference between the built",
+    "surface and `canon` is EXACTLY `owed`, so a new divergence fails and so",
+    "does an owed one that has been paid off without this file being told."
+  ],
+  "header": {
+    "$comment": [
+      "The section header the reference draws across the top of the list, 46",
+      "high: what the section is called, how much is in it, and the box that",
+      "narrows it. The summary is DERIVED in the reference too — it counts the",
+      "rows and the ones needing attention — so a build that hard-codes the",
+      "sentence has not reproduced it."
+    ],
+    "canon": [
+      { "ordinal": 1, "key": "title", "title": "Key Patterns" },
+      { "ordinal": 2, "key": "summary", "title": "Summary" },
+      { "ordinal": 3, "key": "filter", "title": "Filter" }
+    ],
+    "owed": []
+  },
+  "columns": {
+    "$comment": [
+      "The list's columns, left to right. The reference fixes six widths and",
+      "lets the pattern take the rest, which is the column a reader is actually",
+      "reading — so the widths are the screen's and the ORDER is the",
+      "specification's."
+    ],
+    "canon": [
+      { "ordinal": 1, "key": "id", "title": "ID" },
+      { "ordinal": 2, "key": "pattern", "title": "Pattern" },
+      { "ordinal": 3, "key": "by", "title": "By" },
+      { "ordinal": 4, "key": "direction", "title": "Direction" },
+      { "ordinal": 5, "key": "matches", "title": "Match" },
+      { "ordinal": 6, "key": "rate", "title": "Msg/s" },
+      { "ordinal": 7, "key": "status", "title": "Status" }
+    ],
+    "owed": []
+  },
+  "detail": {
+    "$comment": [
+      "The 320-wide pane on the right, top to bottom. It is a record rendered as",
+      "labelled parts rather than a tree, which is what distinguishes it from",
+      "the capture viewer's decode pane: four of its parts are a two-by-two grid",
+      "of single facts, one is a chip list, and the last is an action that",
+      "leaves the section.",
+      "",
+      "`declarer` is drawn by the reference as a live button leading to its",
+      "topology section. The scope reference draws that section LOCKED — it is",
+      "booked under a requirement of a later release, which is what",
+      "`analyzer-rail-spec.json` records — so reproducing the affordance",
+      "faithfully means drawing it and refusing it with that reason. Leaving it",
+      "off would be a divergence; making it navigate would be a promise the",
+      "specification does not keep."
+    ],
+    "canon": [
+      { "ordinal": 1, "key": "subject", "title": "Key Pattern" },
+      { "ordinal": 2, "key": "ordinal", "title": "Number" },
+      { "ordinal": 3, "key": "pattern", "title": "Pattern" },
+      { "ordinal": 4, "key": "standing", "title": "Standing" },
+      { "ordinal": 5, "key": "declared_by", "title": "Declared by" },
+      { "ordinal": 6, "key": "direction", "title": "Direction" },
+      { "ordinal": 7, "key": "matches", "title": "Matches" },
+      { "ordinal": 8, "key": "rate", "title": "Msg rate" },
+      { "ordinal": 9, "key": "endpoints", "title": "Matched endpoints" },
+      { "ordinal": 10, "key": "first_seen", "title": "First seen" },
+      { "ordinal": 11, "key": "declarer", "title": "Show declarer in Topology" }
+    ],
+    "owed": []
+  }
+}
