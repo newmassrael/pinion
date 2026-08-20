@@ -313,6 +313,16 @@ def f_a_refused_read_is_not_announced(tf, example: str) -> None:
 
 def g_the_person_can_see_it(tf) -> None:
     banner("G — the node lab: the agent's refusal, painted")
+    # ★★★★★ R1737.1 — the selection has to MOVE for the screen to say anything.
+    # R1736 made "an act that changed nothing says nothing" a property of the
+    # one place a selection changes, and `R-01` is the card this screen OPENS
+    # WITH — so `select R-01` at boot is a no-op and is now correctly silent,
+    # leaving no toast to find. Measured: at boot `selected` is `R-01` and
+    # `said` is null. The screen is right; this fixture was leaning on a
+    # re-selection speaking, which is the behaviour that round removed on
+    # purpose. Parking on another card first makes the act a change.
+    if tf.query(f"{EXT}/selected") == "R-01":
+        tf.invoke(f"{EXT}/select", "T-02")
     tf.invoke(f"{EXT}/select", "R-01")
     rects = abs_rects_of(tf.snapshot(source="paint", viewport=(1600, 900)))
     ok(

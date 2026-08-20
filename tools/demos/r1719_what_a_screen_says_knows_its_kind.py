@@ -115,6 +115,31 @@ def said(tf) -> dict | None:
     return json.loads(answer) if isinstance(answer, str) else answer
 
 
+#: A card the node lab does NOT open with, for parking the selection on.
+PARK = "T-02"
+
+
+def select_afresh(tf, card: str) -> None:
+    """Select `card` as a CHANGE, so the screen has something to say.
+
+    ★★★★★ R1737.1 — R1736 made "an act that changed nothing says nothing" a
+    property of the one place a selection changes, and `R-01` is the card the
+    node lab OPENS WITH: selecting it again is a no-op and is now correctly
+    silent. Every fixture here that wants the done tone therefore has to move
+    the selection first. Measured: at boot `selected` is `R-01` and `said` is
+    null, and `select R-01` leaves it null while `select T-02` then `select
+    R-01` both speak.
+
+    The screen is right and the fixture was wrong: it was leaning on a
+    re-selection speaking, which is exactly the behaviour R1736 removed on
+    purpose. Written as one helper rather than a park at each site so a later
+    reader cannot restore the assumption at one of them.
+    """
+    if tf.query(f"{EXT}/selected") == card:
+        tf.invoke(f"{EXT}/select", PARK if card != PARK else "R-01")
+    tf.invoke(f"{EXT}/select", card)
+
+
 def live_of(tf, tag: str):
     node = access_node_by_tag(tf.request("scene/access").result, tag)
     return node and node.get("live")
@@ -158,7 +183,7 @@ def refuse(tf, path: str, args) -> str:
 
 def make_done(tf, example: str) -> None:
     if example == "hello-node-lab":
-        tf.invoke(f"{EXT}/select", "R-01")
+        select_afresh(tf, "R-01")
     elif example == "hello-packet-view":
         tf.invoke(f"{EXT}/select_message", 2)
     else:
@@ -175,7 +200,7 @@ def make_refused(tf, example: str) -> str:
     meets is the one the box announces as they type, which is what this drives.
     """
     if example == "hello-node-lab":
-        tf.invoke(f"{EXT}/select", "R-01")
+        select_afresh(tf, "R-01")
         return refuse(tf, "rename", "R-01,P-01")
     if example == "hello-packet-view":
         focus_by_tab(tf, "pv.filter.query")
@@ -281,7 +306,7 @@ def c_the_frame_is_not_in_the_clause(tf, example: str, agent_words: str) -> None
 
 def d_an_act_that_changed_nothing_says_so(tf) -> None:
     banner("D — the node lab: renaming a card to its own name")
-    tf.invoke(f"{EXT}/select", "R-01")
+    select_afresh(tf, "R-01")
     refuse(tf, "rename", "R-01,P-01")
     stale = said(tf)
     assert_eq(stale["tone"], "refused", "D: a refusal is standing on the toast")
@@ -323,7 +348,7 @@ def e_the_bullet_changes_colour(tf) -> None:
         assert "lab.toast.dot" in found, "the toast's bullet is painted"
         return found["lab.toast.dot"]
 
-    tf.invoke(f"{EXT}/select", "R-01")
+    select_afresh(tf, "R-01")
     confirmed = bullet()
     refuse(tf, "rename", "R-01,P-01")
     refused = bullet()
@@ -379,7 +404,12 @@ def f_the_rule_is_the_types(tf) -> None:
         ("fit", ""),
     ]:
         try:
-            tf.invoke(f"{EXT}/{path}", args)
+            # ★ R1737.1 — through the same helper, because a re-selection is
+            # now correctly silent and this section reads what the act SAID.
+            if path == "select":
+                select_afresh(tf, args)
+            else:
+                tf.invoke(f"{EXT}/{path}", args)
         except Exception:  # noqa: BLE001 — a refusal still says something
             pass
         value = said(tf)
@@ -403,7 +433,7 @@ def f_the_rule_is_the_types(tf) -> None:
 
 def g_the_value_survives_the_wire(tf) -> None:
     banner("G — the value read back is the value")
-    tf.invoke(f"{EXT}/select", "R-01")
+    select_afresh(tf, "R-01")
     value = said(tf)
     again = said(tf)
     assert_eq(again, value, "G: reading twice answers the same value")

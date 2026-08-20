@@ -324,11 +324,19 @@ def a_press_lands_where_it_is_drawn(app: RpcSubprocess, name: str, sizes: list) 
     published cursor. Nothing here is derived from the hit test, so this cannot
     pass by the screen agreeing with a copy of itself.
 
-    ★ One pixel of tolerance, and the reason is not laziness: the router divides
-    to a float and the surface multiplies back, so the round trip is genuinely
-    inexact. The defect this guards produces errors of hundreds of pixels —
-    measured, a rectangle painted at x=2445 resolved as if the window were 1440
-    wide — so a sub-pixel allowance costs nothing here.
+    ★★★★★ R1737 — **the tolerance is gone, and it was the size of a defect.**
+
+    This used to allow one pixel either way, on the stated grounds that "the
+    router divides to a float and the surface multiplies back, so the round trip
+    is genuinely inexact". That was true when it was written and it is exactly
+    the error R1736 then found a person reporting: a press delivered one pixel
+    left or up, at some coordinates and not others, which on a nine-pixel pin is
+    an eighth of the target. The allowance could not have caught it.
+
+    `pinion_core::external::pixel_of` makes the round trip exact — asserted over
+    the whole range of five extents, and measured over 6,015 real-pointer
+    arrivals on five screens with zero drift (R1737) — so a tolerance calibrated
+    to the old inexactness is now a blindfold rather than a kindness.
     """
     big = sizes[1]
     resize_and_settle(app, big)
@@ -346,7 +354,7 @@ def a_press_lands_where_it_is_drawn(app: RpcSubprocess, name: str, sizes: list) 
         app.tick(16)
         want = (row["x"] - origin[0], row["y"] - origin[1])
         got = cursor_of(app)
-        if abs(got[0] - want[0]) > 1 or abs(got[1] - want[1]) > 1:
+        if got != want:
             wrong.append(f"{row['tag']} aimed at {want} and arrived at {got}")
     assert_eq(wrong, [], f"C/{name}: a real press arrives where the paint put it")
     print(f"[demo] C/{name}: {len(sample)} real press(es) at {big[0]}x{big[1]}, all landed")
