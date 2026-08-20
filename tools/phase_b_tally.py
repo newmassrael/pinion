@@ -1812,9 +1812,49 @@ AXES = [
         #   * PER-MARK a11y is not counted against this axis (R1622): the
         #     whole crate has no `AccessNode`, so it is one accessibility
         #     question with its own debt file rather than a charting one.
-        "judged_at": 1629,
-        "completion": 96,
-        "evidence_snapshot": {"example-name": 28, "round-axis": 13},
+        #
+        # R1744 re-judged 96 -> 97, DEMANDED by the tool (`round-axis` 13 -> 17,
+        # +31%, past the band; R1633, R1634, R1636 and R1722 each declared this
+        # axis and none re-judged). The look was made against the four rounds'
+        # OWN recorded reference measurements rather than by re-reading the
+        # reference here, and that is stated because it is the weaker of the two
+        # (each of those rounds says in its row what it measured and where).
+        #
+        # +1, and the accounting is what makes it +1 and not more:
+        #
+        #   * R1722 closed HALF of one listed item — the polar chart's LEGEND
+        #     INTERACTION, unchanged since R1568 and named again at R1629. It
+        #     closed it past what the list asked for: `ChartLegend` is answered
+        #     by every chart kind, so a board holding several kinds can ASK
+        #     before offering the gesture, and the three kinds that hold one set
+        #     over a category axis answer with an empty roster, which is the
+        #     truthful answer a board could not previously get. The polar
+        #     CROSS-FILTER LEG remains, so the item is half open.
+        #   * R1633 added a dimension NO list this axis has kept had named:
+        #     which tick labels are drawn and what that cost (`fit` — Along /
+        #     Room / Fitted / FitRule; a ladder axis coarsens, a category axis
+        #     strides). By the R1528 rule that is worth a point rather than
+        #     more — naming a dimension reveals more absent surface than the
+        #     round that named it fills, and this one revealed that ticks and
+        #     labels had to be separated at all.
+        #   * R1634 is NOT counted here. It projects a chart as table / row /
+        #     cell for a screen reader, which is the R1622 carve-out — the
+        #     accessibility question with its own debt file — and crediting it
+        #     to charting would take a point this axis is not judged on. It
+        #     also covers two chart kinds of ten.
+        #   * R1636 DELETED a field (`ChartStyle::label_advance_px`) that
+        #     outlived its reason. Removing a way to be wrong restores what the
+        #     axis was already credited for; it adds no capability.
+        #
+        # The remainder is otherwise unchanged from the R1629 audit: the
+        # y-window, the plot zoom's a11y and its second consumer; the polar
+        # cross-filter leg; 3D-surface (Phase C's); the five chart builders
+        # with nothing to derive, of which a treemap's TILING and a timeline's
+        # LANE PACKING are the two that a reader genuinely cannot recover. Drag
+        # pan / rubber-band zoom is still buildable and still unbuilt.
+        "judged_at": 1744,
+        "completion": 97,
+        "evidence_snapshot": {"example-name": 29, "round-axis": 17},
     },
     {
         "key": "text",
@@ -2291,9 +2331,48 @@ AXES = [
         # still has no GENERAL reader, and R1550's two modelled arenas
         # (`hash_table_bytes` / `lru_table_bytes`) are still unpinned against
         # the crates whose layouts they model.
-        "judged_at": 1558,
+        #
+        # R1744 re-judged and the number HELD AT 90, DEMANDED by the tool
+        # (`round-axis` 11 -> 14, +27%, past the band; R1705, R1708 and R1723
+        # each declared this axis and none re-judged). Holding still is the
+        # finding here, and it is not a shrug — it is the second thing the look
+        # found:
+        #
+        #   * FIRST, on this axis's OWN stated remainder, nothing moved. Present
+        #     latency is still external, the footprint is still what the
+        #     allocator was asked for, per-node replay is still absent by
+        #     construction, the profile row's address still has no general
+        #     reader, and the two modelled arenas are still unpinned. All five
+        #     are exactly where R1558 left them.
+        #   * SECOND, and this is why the number does not go UP: all three
+        #     rounds fixed costs the remainder list HAD NEVER NAMED, each found
+        #     by a person using the tool rather than by any check here. A canvas
+        #     grid was 95,131 painted nodes and a zoom step 155 ms because there
+        #     was no repeating fill at all (R1705); an interactive window resize
+        #     cost 81 blocking paints where 80 were superseded microseconds
+        #     after they began (R1708); dragging a window asked EVERY live
+        #     window for its position on EVERY pointer event, which on X11 is a
+        #     synchronous round trip, so the cost was linear in how many windows
+        #     were open (R1723). A tree with those three properties was not at
+        #     90% of a professional tool's performance. The number was
+        #     OVERSTATED before these rounds, and what they did is bring the
+        #     tree up to what 90 already claimed — the R1628 shape, where
+        #     repayment restores credit rather than adding it.
+        #
+        # So the remainder gains the dimension those three revealed, which is
+        # the actionable half of this look: the axis has no way to state that a
+        # repeated or superseded unit of work is cheap. `BoxStyle::lattice`,
+        # `resize_batch` and `OriginFreshness` are three answers to that
+        # question written three times, against a repeating fill, an event storm
+        # and a per-event query — and there is no fourth thing that asks it, so
+        # this is a dimension rather than a duplication to lift. Its absence is
+        # what made three separate consumer reports necessary to find three
+        # instances, and it is now the largest UNMEASURED item on the axis: the
+        # other five are instruments this tree knows it lacks, and this is a
+        # cost model nobody has audited.
+        "judged_at": 1744,
         "completion": 90,
-        "evidence_snapshot": {"example-name": 5, "demo-body": 15, "round-axis": 11},
+        "evidence_snapshot": {"example-name": 5, "demo-body": 17, "round-axis": 14},
     },
     {
         "key": "osnative",
