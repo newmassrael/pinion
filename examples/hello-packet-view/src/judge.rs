@@ -47,7 +47,7 @@
 //! and reading the byte pane after each. **Two** rows hold a value the decoder
 //! worked out rather than read, and the tree marks them. **One** more was read
 //! from the reassembled payload, which is a second byte source the pane is not
-//! showing. The pane says the same six words in both cases; the tree is what
+//! showing. The pane says `no bytes here` in both cases; the tree is what
 //! tells them apart, so [`selection`] answers `away` with the reason that
 //! applies and names which. That the reader's own sentence cannot distinguish
 //! them is a defect this round found and did not repair — see

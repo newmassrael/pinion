@@ -309,10 +309,16 @@
       "out of the pane and call it an explanation instead of a defect.",
       "",
       "★ AND THE MEASUREMENT LEFT A DEBT RATHER THAN A REPAIR: the pane's",
-      "readout says the same six words for both reasons, so the screen can tell",
+      "readout says `no bytes here` for both reasons, so the screen can tell",
       "them apart and the sentence a reader sees cannot. The tree is what",
       "distinguishes them, which is why the away sentences below can. Recorded",
-      "as `debt-no-bytes-here-names-two-different-facts`."
+      "as `debt-no-bytes-here-names-two-different-facts`.",
+      "",
+      "(R1747's own closing audit corrected this paragraph: it said `the same SIX",
+      "words`, and the phrase is three. The round's ledger entry and its",
+      "`docs/phase-b-rounds.tsv` row carry the wrong count and cannot be amended",
+      "— a frozen ledger is append-only — so the correction lives here, where a",
+      "reader of the specification meets it.)"
     ],
     "canon": [
       {
