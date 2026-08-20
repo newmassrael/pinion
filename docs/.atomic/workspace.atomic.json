@@ -52698,6 +52698,80 @@
         "missed."
       ]
     },
+    "R1734.1": {
+      "decision_summary": "The closing audit found two things R1734 itself did not, and neither is a wrong\nnumber in the entry above — both are about the round's own conduct.\n\n1. THE GATE-REPAIR PHASE IS CODE EDITING, AND IT HAPPENS AFTER THE TEST PHASE.\n\nR1734 ran its full changed-crate suite, and THEN fixed four clippy findings and\nthree doc-link findings. One of those repairs renamed a public method\n(`DropActions::len` → `count`, which edits a test assertion) and another rewrote\na rendering function whole (`refusal_value`, to remove an `expect` a `# Panics`\nsection would otherwise have owed). The round committed and pushed in that\nstate.\n\nThe commit hook runs `validate-workspace`, clippy and `cargo doc`. IT DOES NOT\nRUN THE TESTS. Neither does the push hook — this workspace's own 2026-07-21\ndirective puts the suite in CI, and the local gate is the round's own\ndiscipline. So nothing between the last test run and the published commit was\nchecking the repairs.\n\nRe-measured after the fact at the pushed commit: `pinion-core` 3,816,\n`pinion-rpc` 1,285, `pinion-runtime` 579, `hello-analyzer-shell` 96,\n`hello-node-editor` 257 — all green, so the numbers the entry above publishes\nare TRUE of the commit they describe. That is luck rather than procedure, and\nrecording it as luck is the point.\n\n★ The standing lesson \"a number measured mid-round is re-measured at the end\"\nalready existed (R1724, R1727, R1728) and had only ever been applied to COUNTS.\nThis is the same lesson reaching the SEQUENCE: a repair is an edit, so the\ngates that repaired something are not the gates that verified it.\n\n2. THE ROUND ADDED A PER-MOVE COST AND NOTHING MEASURED IT.\n\nBefore R1734 a drag move performed ONE scene lookup — the source's. It now\nperforms TWO: `offer_drag_to_target` resolves the surface under the cursor\nthrough `declared_drop_contract`, and only then does the source's own update\nrun. The release path is the same shape.\n\nThe second lookup happens whether or not the surface declares anything: an\nempty contract is the RESULT of the lookup, not a condition for skipping it. In\nthis tree exactly one surface declares a contract, so every pre-existing drag\nnow pays the cost and receives none of the benefit.\n\n`find_external_with_tag` is a depth-first walk of the state scene, and a drag\nruns it per cursor sample. Registered as\n`debt-a-drag-move-now-walks-the-scene-twice-and-nobody-measured-it` rather than\nfixed here, and registered rather than left silent because a drag-performance\nquestion is ALREADY open — R1723's carry asks the owner whether dragging is\nstill slow, and R1734 added work to that exact path before that question was\nanswered.\n\nDeliberately NOT called a regression: nobody has measured it as slow. It is an\nunmeasured cost, the debt says how to measure it (`perf record` during a drag,\nnot reasoning), and it says what the repair would be if the measurement earns\none — collapse the two lookups where the tags coincide, which for a\nself-hit-testing screen is always.",
+      "changes_bullets": [
+        "No source change. This entry is the closing audit's own record.",
+        "`memory/debt-a-drag-move-now-walks-the-scene-twice-and-nobody-measured-it.md`",
+        "— NEW. The per-move lookup R1734 added, what it costs in principle, why it is",
+        "registered rather than fixed, and how to measure it before repairing it.",
+        "`memory/r1734-a-drop-target-is-asked-before-the-drag.md` — gains the audit's",
+        "two findings under their own heading.",
+        "`memory/MEMORY.md` — the repeated-lesson line now says the re-measure rule",
+        "reaches the gate-repair phase, not only counts."
+      ],
+      "verification_bullets": [
+        "Re-run at the pushed commit `86eb6790`, AFTER the clippy and doc repairs that",
+        "the round's own test phase had not covered:",
+        "* `pinion-core` 3,816 passed / 0 failed",
+        "* `pinion-rpc` 1,285 passed / 0 failed",
+        "* `pinion-runtime` 579 passed / 0 failed",
+        "* `hello-analyzer-shell` 96 passed / 0 failed",
+        "* `hello-node-editor` 257 passed / 0 failed",
+        "So the entry above publishes true numbers. The finding is that nothing had",
+        "established that before the push.",
+        "The second finding is a reading of the code rather than a measurement, and the",
+        "debt says so in its own text: the extra lookup is visible in",
+        "`offer_drag_to_target` / `release_drop_target`, and NOBODY HAS TIMED IT. The",
+        "debt's first instruction is to measure before repairing, because this workspace",
+        "has repeatedly been wrong about what is slow by reading."
+      ],
+      "impact_refs": [
+        "5.51"
+      ],
+      "carry_forward_bullets": [
+        "One new debt, stated in the decision above and registered in memory:",
+        "`debt-a-drag-move-now-walks-the-scene-twice-and-nobody-measured-it`. It is a",
+        "measurement owed, not a repair owed — the round that picks it up profiles first",
+        "and only then decides whether there is anything to collapse."
+      ],
+      "publishable_decision_summary": "The closing audit found two things R1734 itself did not, and neither is a wrong\nnumber in the entry above — both are about the round's own conduct.\n\n1. THE GATE-REPAIR PHASE IS CODE EDITING, AND IT HAPPENS AFTER THE TEST PHASE.\n\nR1734 ran its full changed-crate suite, and THEN fixed four clippy findings and\nthree doc-link findings. One of those repairs renamed a public method\n(`DropActions::len` → `count`, which edits a test assertion) and another rewrote\na rendering function whole (`refusal_value`, to remove an `expect` a `# Panics`\nsection would otherwise have owed). The round committed and pushed in that\nstate.\n\nThe commit hook runs `validate-workspace`, clippy and `cargo doc`. IT DOES NOT\nRUN THE TESTS. Neither does the push hook — this workspace's own 2026-07-21\ndirective puts the suite in CI, and the local gate is the round's own\ndiscipline. So nothing between the last test run and the published commit was\nchecking the repairs.\n\nRe-measured after the fact at the pushed commit: `pinion-core` 3,816,\n`pinion-rpc` 1,285, `pinion-runtime` 579, `hello-analyzer-shell` 96,\n`hello-node-editor` 257 — all green, so the numbers the entry above publishes\nare TRUE of the commit they describe. That is luck rather than procedure, and\nrecording it as luck is the point.\n\n★ The standing lesson \"a number measured mid-round is re-measured at the end\"\nalready existed (R1724, R1727, R1728) and had only ever been applied to COUNTS.\nThis is the same lesson reaching the SEQUENCE: a repair is an edit, so the\ngates that repaired something are not the gates that verified it.\n\n2. THE ROUND ADDED A PER-MOVE COST AND NOTHING MEASURED IT.\n\nBefore R1734 a drag move performed ONE scene lookup — the source's. It now\nperforms TWO: `offer_drag_to_target` resolves the surface under the cursor\nthrough `declared_drop_contract`, and only then does the source's own update\nrun. The release path is the same shape.\n\nThe second lookup happens whether or not the surface declares anything: an\nempty contract is the RESULT of the lookup, not a condition for skipping it. In\nthis tree exactly one surface declares a contract, so every pre-existing drag\nnow pays the cost and receives none of the benefit.\n\n`find_external_with_tag` is a depth-first walk of the state scene, and a drag\nruns it per cursor sample. Registered as\n`debt-a-drag-move-now-walks-the-scene-twice-and-nobody-measured-it` rather than\nfixed here, and registered rather than left silent because a drag-performance\nquestion is ALREADY open — R1723's carry asks the owner whether dragging is\nstill slow, and R1734 added work to that exact path before that question was\nanswered.\n\nDeliberately NOT called a regression: nobody has measured it as slow. It is an\nunmeasured cost, the debt says how to measure it (`perf record` during a drag,\nnot reasoning), and it says what the repair would be if the measurement earns\none — collapse the two lookups where the tags coincide, which for a\nself-hit-testing screen is always.",
+      "publishable_changes_bullets": [
+        "No source change. This entry is the closing audit's own record.",
+        "`memory/debt-a-drag-move-now-walks-the-scene-twice-and-nobody-measured-it.md`",
+        "— NEW. The per-move lookup R1734 added, what it costs in principle, why it is",
+        "registered rather than fixed, and how to measure it before repairing it.",
+        "`memory/r1734-a-drop-target-is-asked-before-the-drag.md` — gains the audit's",
+        "two findings under their own heading.",
+        "`memory/MEMORY.md` — the repeated-lesson line now says the re-measure rule",
+        "reaches the gate-repair phase, not only counts."
+      ],
+      "publishable_verification_bullets": [
+        "Re-run at the pushed commit `86eb6790`, AFTER the clippy and doc repairs that",
+        "the round's own test phase had not covered:",
+        "* `pinion-core` 3,816 passed / 0 failed",
+        "* `pinion-rpc` 1,285 passed / 0 failed",
+        "* `pinion-runtime` 579 passed / 0 failed",
+        "* `hello-analyzer-shell` 96 passed / 0 failed",
+        "* `hello-node-editor` 257 passed / 0 failed",
+        "So the entry above publishes true numbers. The finding is that nothing had",
+        "established that before the push.",
+        "The second finding is a reading of the code rather than a measurement, and the",
+        "debt says so in its own text: the extra lookup is visible in",
+        "`offer_drag_to_target` / `release_drop_target`, and NOBODY HAS TIMED IT. The",
+        "debt's first instruction is to measure before repairing, because this workspace",
+        "has repeatedly been wrong about what is slow by reading."
+      ],
+      "publishable_impact_refs": [
+        "5.51"
+      ],
+      "publishable_carry_forward_bullets": [
+        "One new debt, stated in the decision above and registered in memory:",
+        "`debt-a-drag-move-now-walks-the-scene-twice-and-nobody-measured-it`. It is a",
+        "measurement owed, not a repair owed — the round that picks it up profiles first",
+        "and only then decides whether there is anything to collapse."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
