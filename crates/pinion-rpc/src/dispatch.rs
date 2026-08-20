@@ -10122,30 +10122,14 @@ fn refusal_to_rpc<E>(
     RpcError::new(code, message).with_data(Value::Object(data))
 }
 
+/// R1735 — one projection, and it lives beside the type.
+///
+/// The body moved to [`IntrospectValue::to_json`] the round `pinion-core`
+/// needed the same conversion for a drag standing's landing; this stays as the
+/// name the transport's call sites already use. Only a result a handler returns
+/// whole reaches the wire raw — see [`introspect_value_to_body`].
 pub(crate) fn introspect_value_to_json(value: IntrospectValue) -> Value {
-    match value {
-        IntrospectValue::Bool(b) => Value::Bool(b),
-        IntrospectValue::Int(n) => Value::Number(n.into()),
-        IntrospectValue::Float(f) => {
-            serde_json::Number::from_f64(f).map_or(Value::Null, Value::Number)
-        }
-        IntrospectValue::Text(s) => Value::String(s),
-        IntrospectValue::Json(v) => v,
-        // R1480 §5.15 — a raw answer nested inside a `Value` the
-        // envelope is assembling (a snapshot node's `introspect` map, a
-        // dry-run step, an intent payload) has to become a tree: the
-        // enclosing document is one, and there is no splice point part
-        // way down a `Value`. Only a result the handler returns whole
-        // reaches the wire raw — see [`introspect_value_to_body`]. The
-        // failure arm is a number outside `f64` range, which `Value` has
-        // no slot for; it reports the §5.12 present-but-empty `null`,
-        // the same answer every other unrepresentable payload gets.
-        IntrospectValue::Raw(raw) => raw.to_value().unwrap_or(Value::Null),
-        // `IntrospectValue::Null` collapses into the non_exhaustive
-        // wildcard; future additive variants also land as JSON null
-        // until §5.12 schema settles a richer projection.
-        _ => Value::Null,
-    }
+    value.to_json()
 }
 
 /// R1480 §5.15 — project an [`IntrospectValue`] into a response body.

@@ -86,12 +86,13 @@ use pinion_a11y::{
 use pinion_chart::{ChartStyle, Sparkline};
 use pinion_core::availability::Unavailable;
 use pinion_core::drop_target::{
-    BOARD_WIDGET_DRAG_KIND, DropAction, DropActions, DropClause, DropContract,
+    BOARD_WIDGET_DRAG_KIND, DropAccept, DropAction, DropActions, DropClause, DropContract,
+    DropOffer, DropStanding, DropVerdict, standing_value,
 };
 use pinion_core::external::{
-    ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
-    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, PointerTarget, ReadRefusal,
-    RepaintOwner, SchemaArg, SchemaField, ThreadOwnership,
+    ArgForm, Backend, BackendFallback, BackendSupport, DragPayload, DragUpdate, External,
+    ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+    PointerTarget, ReadRefusal, RepaintOwner, SchemaArg, SchemaField, ThreadOwnership,
 };
 use pinion_core::focus_state;
 use pinion_core::input::PointerReading;
@@ -610,6 +611,15 @@ struct ShellState {
     cursor: Signal<(u32, u32)>,
     pressed: RefCell<Option<Hit>>,
     drag: Signal<Option<TileDrag>>,
+    /// ★★★★★ R1735 — **what the router says a release would do right now**, as
+    /// the framework handed it over.
+    ///
+    /// Not derived here, and that is the point. The board's own preview lives on
+    /// `drag` above; this is the same judgement travelling back from the router,
+    /// so the sentence this screen publishes about a refusal is the framework's
+    /// own words and a client asking the wire "can I let go here" reads the
+    /// answer the release will act on rather than one this file re-computed.
+    standing: RefCell<DropStanding>,
     /// ★★★★★ R1698 — **one keyboard cursor per composite**, keyed by the tag
     /// that owns the Tab stop.
     ///
@@ -781,6 +791,7 @@ impl ShellState {
             cursor: Signal::new((0, 0)),
             pressed: RefCell::new(None),
             drag: Signal::new(None),
+            standing: RefCell::new(DropStanding::Nowhere),
             cursors: RefCell::new(
                 spec::FOCUS_RING
                     .iter()
@@ -2696,6 +2707,10 @@ const FIELDS: &[SchemaField] = const {
         SchemaField::new("config_open", "string"),
         // the catalogue and the board
         SchemaField::new("catalogue", "string"),
+        // ★★ R1735 — what a release would do RIGHT NOW, as the router judged
+        // it. `drag` below says where the board would put the carry; this says
+        // whether the drop happens at all, and when it does not, why.
+        SchemaField::new("drop_standing", "json"),
         SchemaField::new("cards", "string"),
         SchemaField::new("card_count", "int"),
         SchemaField::new("placed_count", "int"),
@@ -2919,6 +2934,17 @@ impl ExternalIntrospect for ShellOracle {
             "options" => Ok(IntrospectValue::Json(options_json(state))),
             "editing" => Ok(IntrospectValue::Bool(state.editing.get())),
             "config_open" => text(state.config_open.get().unwrap_or_default()),
+            // ★★★★★ R1735 — **what letting go right now would do**, in the
+            // framework's own words, for a client that is holding something.
+            //
+            // The peer of `scene/drop_targets`, which answers the same question
+            // with nothing in hand. This one is the LIVE answer, and it is the
+            // value the router handed this surface rather than a re-derivation:
+            // a reader that sees `accepted` here and then releases gets that
+            // landing, because the release commits the same acceptance.
+            "drop_standing" => Ok(IntrospectValue::Json(standing_value(
+                &state.standing.borrow(),
+            ))),
             "cards" => text(state.card_ids()),
             "card_count" => Ok(IntrospectValue::Int(i64::from(u(state.cards.get().len())))),
             "placed_count" => Ok(IntrospectValue::Int(i64::from(u(state.placed().len())))),
@@ -3221,34 +3247,92 @@ impl ExternalIntrospect for ShellOracle {
 
 impl ShellOracle {
     /// Move the cursor, and update the snap preview if a drag is in flight.
+    /// ★★★★★ R1735 — where the cursor is, out of a live drag update, in this
+    /// screen's own frame.
+    ///
+    /// The drop point's `x_rel` / `y_rel` are the cursor normalised over the tag
+    /// it is on, which is exactly the fraction
+    /// [`pointer_move`](External::pointer_move) is handed — so passing it to the
+    /// same [`layout_point`](pinion_core::external::layout_point) makes this the
+    /// SAME derivation rather than a second one that could disagree by a pan or
+    /// a resize. The fallback is for a cursor that resolved onto some other
+    /// surface, where the absolute window position is all there is; this screen
+    /// fills its window, so it is a guard rather than a live path.
+    fn drag_cursor(update: &DragUpdate) -> (u32, u32) {
+        match update.over.as_ref() {
+            Some(point) if pinion_core::composite_tag::split_subindex(&point.tag).0 == VIEW_TAG => {
+                pinion_core::external::layout_point(VIEW_TAG, (point.x_rel, point.y_rel))
+            }
+            _ => {
+                #[allow(
+                    clippy::cast_possible_truncation,
+                    clippy::cast_sign_loss,
+                    reason = "a window-logical cursor is a pixel inside the window"
+                )]
+                let at = (
+                    update.cursor.0.max(0.0) as u32,
+                    update.cursor.1.max(0.0) as u32,
+                );
+                pinion_core::external::into_layout(VIEW_TAG, at)
+            }
+        }
+    }
+
     fn move_cursor(state: &Rc<ShellState>, px: u32, py: u32) {
         state.cursor.set((px, py));
         if let Some(grab) = state.float_grab.get() {
             Self::carry_float_grab(state, &grab, px, py);
             return;
         }
+        // ★★★★★ R1735 — through the ONE preview body. The router's
+        // `drop_offered` runs the same call, so a carry driven by the router and
+        // a carry driven by this screen's own cursor cannot land in different
+        // cells — which is the class this screen has now paid for twice.
+        let _ = Self::preview_carry(state, px, py);
+    }
+
+    /// ★★★★★ R1735 — **preview the live carry at a window point, and say what a
+    /// release there would do.**
+    ///
+    /// The single body behind two callers: this screen's own cursor path (a card
+    /// gripped on the board, whose gesture never leaves the surface) and the
+    /// router's [`External::drop_offered`] (a palette carry, whose gesture is a
+    /// real drag session). Written once because it is one question — R1668's
+    /// finding, which R1733 answered by giving the carry one landing and this
+    /// round answers again one layer up, where a second body had just appeared.
+    ///
+    /// `Ok` is the cell a release would use. `Err` is why it would not place
+    /// anything, in words a person reads — the reason the router forwards to the
+    /// source as [`DropStanding::Refused`] and the wire publishes at
+    /// `drop_standing`.
+    ///
+    /// ★ The `leave` half is the one a card drag never needed: a footprint
+    /// carried out over the palette has no landing, so releasing there is an
+    /// abandon rather than a placement at whatever cell the clamp last produced.
+    fn preview_carry(state: &Rc<ShellState>, px: u32, py: u32) -> Result<(u32, u32), &'static str> {
         let Some(mut drag) = state.drag.get() else {
-            return;
+            return Err("nothing is being carried");
         };
         let before = drag.landing();
-        // ★★★★★ R1733 — the drag is told where the pointer IS, and works out
-        // the rest. The grip offset and the column clamp both live in the
-        // framework type now, so this file does no arithmetic that could differ
-        // from what the release does — R1668's finding, made structural.
-        //
-        // ★ And it is told when the pointer is NOT on the board, which is the
-        // half a card drag never needed: a footprint carried out over the
-        // palette has no landing, so releasing there is an abandon rather than
-        // a placement at whatever cell the clamp last produced.
-        if on_board(state, px, py) {
+        // The grip offset and the column clamp both live in the framework type,
+        // so this file does no arithmetic that could differ from what the
+        // release does.
+        let outcome = if on_board(state, px, py) {
             let (col, row) = cell_at_window(state, px, py);
             drag.hover(&state.board.get(), col, row);
+            drag.landing()
+                .ok_or("this footprint does not fit at that cell")
+        } else if state.at() == "dashboard" {
+            drag.leave();
+            Err("the board is the canvas, and the cursor is not over it")
         } else {
             drag.leave();
-        }
+            Err("a widget lands on the dashboard's board, and that is not the page showing")
+        };
         if drag.landing() != before {
             state.drag.set(Some(drag));
         }
+        outcome
     }
 
     /// R1698 — what a composite's cursor landing somewhere does besides move.
@@ -3523,15 +3607,25 @@ impl ShellOracle {
     /// Here the middle case has a name and the `match` is what demands it.
     fn commit_drag(state: &Rc<ShellState>, drag: TileDrag) -> bool {
         if !drag.carried().is_placed() {
-            // Carried off the board and let go: the palette's action performs
-            // instead, from the latch.
-            if drag.landing().is_none() {
-                return true;
-            }
-            if let Err(why) = Self::place_carried(state, drag) {
-                state.say(Utterance::refused(&why));
-            }
-            return false;
+            // ★★★★★ R1735 — a FRESH carry does not reach here any more, and the
+            // change is a behaviour the framework already owned.
+            //
+            // A palette press opens a ROUTER drag session
+            // ([`External::begin_drag`]), so its release is committed by
+            // `drop_commit` and cleared by `drag_release_at` before this runs.
+            // What R1733 wrote here — an abandoned carry falling through to the
+            // latch, so a drag that wandered off and came back still added a
+            // card — was this screen re-deriving click-vs-drag, and it decided
+            // the opposite of the framework's own rule (a real drag suppresses
+            // the trailing click; R794). Measured on the floor at 6.11.1: a
+            // source that ran a drag receives **zero** mouse releases for that
+            // gesture, so a dragged row's click does not fire there either.
+            //
+            // Total rather than a panic: answering "the latch may act" is the
+            // arm that cannot be wrong about a case this build has never seen,
+            // and the claim that it is unreachable is a test rather than a
+            // comment — `r1735_a_fresh_carry_is_not_the_shells_to_commit`.
+            return true;
         }
         let mut board = state.board.get();
         let label = label_of(drag.carried().id().as_str());
@@ -4086,6 +4180,189 @@ impl External for ShellOracle {
         // screen that later declares a pan gets that term for free.
         let (px, py) = pinion_core::external::layout_point(VIEW_TAG, at.at);
         Self::move_cursor(&state, px, py);
+    }
+
+    /// ★★★★★ R1735 §5.51 — **a palette press opens a real drag session.**
+    ///
+    /// R1733 built the palette→board carry inside this screen: the press picked
+    /// a footprint up, `pointer_move` previewed it and `release` placed it. That
+    /// worked because one surface owned both ends, and it is exactly the shape
+    /// R1734's target contract was built to replace. This is the screen joining
+    /// that contract: from here the ROUTER drives the gesture, asks this
+    /// surface's own published declaration whether the drop is admissible, and
+    /// hands the acceptance back as the commit's witness.
+    ///
+    /// Only a palette carry. A card gripped on the board and a detached panel
+    /// being moved are this screen's own capture gestures — they never leave
+    /// the surface and have no destination to ask — so returning `None` keeps
+    /// them on the pointer path they already run on.
+    ///
+    /// `Copy`, and it is measured rather than chosen: the behaviour reference's
+    /// palette declares its drag a copy at drag start (the row stays, the board
+    /// gains a card).
+    fn begin_drag(&self) -> Option<DragPayload> {
+        let state = self.state.as_ref()?;
+        let Some(Hit::Palette(kind)) = *state.pressed.borrow() else {
+            return None;
+        };
+        // `press` has already run `pick_up`, whose three refusals are the
+        // palette's own. No carry means it refused, and a refused pick-up must
+        // not open a session — otherwise the router would drive a drag with
+        // nothing in hand.
+        let drag = state.drag.get()?;
+        if drag.carried().is_placed() {
+            return None;
+        }
+        Some(
+            DragPayload::new(
+                BOARD_WIDGET_DRAG_KIND,
+                IntrospectValue::Text(kind.to_owned()),
+            )
+            .with_actions(DropActions::one(DropAction::Copy)),
+        )
+    }
+
+    /// ★★★★★ R1735 §5.51 — **the cursor keeps arriving while the drag runs.**
+    ///
+    /// This is the half that made the move a debt rather than a refactor. A
+    /// router with a session open stops calling
+    /// [`pointer_move`](External::pointer_move), and this screen hit-tests
+    /// itself from `state.cursor` — so every gesture that reads the cursor (a
+    /// card grip, a floating panel's move, its resize) would freeze the moment
+    /// a palette drag started. The floor has the same shape and no way out of
+    /// it: measured at 6.11.1, a source's pointer handler runs **zero** times
+    /// while its own drag is in flight and no member of the drag object carries
+    /// a point, so a self-hit-testing screen there simply has no live cursor.
+    ///
+    /// Through [`layout_point`](pinion_core::external::layout_point) and the
+    /// drop point's own fractions, which is the SAME expression
+    /// [`pointer_move`](External::pointer_move) resolves a pointer with — R1714.1's
+    /// rule, so a screen that later declares a pan gets that term here for free.
+    fn drag_to_at(&mut self, _payload: &DragPayload, update: &DragUpdate) {
+        let Some(state) = self.state.clone() else {
+            return;
+        };
+        *state.standing.borrow_mut() = update.standing.clone();
+        let (px, py) = Self::drag_cursor(update);
+        state.cursor.set((px, py));
+    }
+
+    /// R1735 §5.51 — the gesture is over: nothing is in hand and no latch is
+    /// left behind.
+    ///
+    /// The commit (or the refusal) has already happened in
+    /// [`drop_commit`](External::drop_commit) — the router runs the target half
+    /// first — so this is only the source's own tidying. It clears the latch
+    /// when the press became a real drag, because the router then synthesises no
+    /// trailing press-release and `release` never runs to clear it.
+    ///
+    /// ★ And when the press did NOT become a drag, the latch is left alone on
+    /// purpose: the router synthesises the release, `release` acts on the latch,
+    /// and a click on a palette row still adds a card. That is R1733's rule kept
+    /// by the framework's own click-vs-drag verdict instead of by a second one
+    /// written here.
+    fn drag_release_at(&mut self, _payload: &DragPayload, update: &DragUpdate) {
+        let Some(state) = self.state.clone() else {
+            return;
+        };
+        let (px, py) = Self::drag_cursor(update);
+        state.cursor.set((px, py));
+        state.drag.set(None);
+        // ★★★★★ R1735 — and a refused release SAYS SO, in the framework's own
+        // words rather than in a second wording written here.
+        //
+        // R1720's rule is that a refusal reaches the person, and this gesture
+        // had no way to keep it: before this round an abandoned carry fell
+        // through to the latch and announced whatever the latch did, which is
+        // an announcement about a different act. A release the board would not
+        // take now says why the board would not take it — and the sentence is
+        // the one the standing carried, which is the one the wire published,
+        // which is the one `drop_offered` produced. One refusal, three readers.
+        //
+        // Only for a real drag: a click that never moved is not a refused drop,
+        // it is the palette's action, and it announces its own outcome.
+        if update.became_drag {
+            state.pressed.borrow_mut().take();
+            if let Some(refusal) = update.standing.refusal() {
+                state.say(Utterance::refused(&refusal.sentence()));
+            }
+        }
+        *state.standing.borrow_mut() = DropStanding::Nowhere;
+    }
+
+    /// ★★★★★ R1735 §5.51 — **the board answers for itself.**
+    ///
+    /// The router has already checked this screen's published declaration
+    /// ([`ShellOracle::declared_drop_contract`]) before calling here, so the
+    /// three structural refusals never reach this body. What is left is what
+    /// only live state knows: whether the dashboard is the page showing, and
+    /// whether the cursor is over the canvas rather than over a floating panel.
+    ///
+    /// The acceptance carries the cell as its landing, and that cell comes from
+    /// the ONE [`TileDrag`] this screen carries — the same object
+    /// [`ShellOracle::place_carried`] later drops. So the preview, the published
+    /// standing and the commit are one arithmetic, which is R1733's property
+    /// restated at the input contract.
+    fn drop_offered(&mut self, offer: &DropOffer) -> DropVerdict {
+        let Some(state) = self.state.clone() else {
+            return DropVerdict::decline("no capture is loaded");
+        };
+        let (px, py) =
+            pinion_core::external::layout_point(VIEW_TAG, (offer.at.x_rel, offer.at.y_rel));
+        match Self::preview_carry(&state, px, py) {
+            Ok((col, row)) => DropVerdict::accept(
+                offer.actions.first(),
+                IntrospectValue::Json(serde_json::json!({ "col": col, "row": row })),
+            ),
+            // The refusal is the preview's own sentence, so what a person is
+            // told and what the board did are one string.
+            Err(why) => DropVerdict::decline(why),
+        }
+    }
+
+    /// R1735 §5.51 — the cursor left, so the preview goes.
+    ///
+    /// Only the preview. What is in hand stays in hand: a carry that wanders off
+    /// the board and back must still be carrying something, which is what
+    /// [`TileDrag::leave`] expresses and a `None` here would destroy.
+    fn drop_left(&mut self) {
+        let Some(state) = self.state.clone() else {
+            return;
+        };
+        if let Some(mut drag) = state.drag.get() {
+            drag.leave();
+            state.drag.set(Some(drag));
+        }
+    }
+
+    /// ★★★★★ R1735 §5.51 — **put it down where the preview showed.**
+    ///
+    /// The witness is asserted against the live carry rather than re-read from
+    /// the cursor: `place_carried` drops the very [`TileDrag`] whose `landing`
+    /// produced `accept.landing`, so the two cannot describe different cells.
+    /// The check is here because the framework's guarantee is that the commit
+    /// RECEIVES what the preview produced — a screen still has to be the one
+    /// that applies it, and this is that application saying so out loud.
+    fn drop_commit(&mut self, _offer: &DropOffer, accept: &DropAccept) {
+        let Some(state) = self.state.clone() else {
+            return;
+        };
+        let Some(drag) = state.drag.get() else {
+            return;
+        };
+        debug_assert_eq!(
+            drag.landing()
+                .map(|(col, row)| serde_json::json!({"col": col, "row": row})),
+            match &accept.landing {
+                IntrospectValue::Json(v) => Some(v.clone()),
+                _ => None,
+            },
+            "the acceptance the router hands back is the carry's own landing",
+        );
+        state.drag.set(None);
+        if let Err(why) = Self::place_carried(&state, drag) {
+            state.say(Utterance::refused(&why));
+        }
     }
 
     fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
@@ -7268,7 +7545,24 @@ fn view(_state: ScreenState, frame: Frame) -> Scene {
         ContainerNode::new(children)
             .with_tag(VIEW_TAG)
             .with_style(BoxStyle::filled(palette.canvas))
-            .with_layout(LayoutStyle::new().with_size(Size::px(win_w(), win_h()))),
+            .with_layout(
+                LayoutStyle::new()
+                    .with_size(Size::px(win_w(), win_h()))
+                    // ★★★★★ R1735 — **this screen is the drop region**, so the
+                    // router resolves a drag over it to the surface that
+                    // declared, not to whichever inner label happened to be the
+                    // deepest tag under the cursor.
+                    //
+                    // R1734 declared what the board accepts and nothing could
+                    // route to it: the fallback resolution names the deepest
+                    // painted tag, and there is no `External` behind
+                    // `shell.canvas` or `shell.palette.<kind>` to ask. This is
+                    // the opt-in the dock panels have had since R1080, said by
+                    // the one node that IS the surface — which is also why the
+                    // declaration can only be `DropRegion::Surface`: the point
+                    // that arrives is normalised over this whole rectangle.
+                    .with_drop_target(true),
+            ),
     )
 }
 

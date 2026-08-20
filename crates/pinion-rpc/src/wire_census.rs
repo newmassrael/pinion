@@ -470,6 +470,23 @@ pub const WIRE_TYPES: &[WireType] = &[
             ],
         },
     },
+    // ★ R1735 — the five `scene/drop_targets` shapes. R1734 published the
+    // method and left them out of this census, so the surface an agent
+    // discovers stopped at the method's name; found by running this crate's
+    // `--test` targets, which R1734's local gate (`--lib`) cannot see.
+    WireType {
+        name: "ClauseReport",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("kind", WireTy::String, None),
+                WireField::new("actions", WireTy::Array, None),
+                // Empty means the whole surface, which is a different claim
+                // from "no parts" — hence the word beside it.
+                WireField::new("parts", WireTy::Array, None),
+                WireField::new("region", WireTy::String, None).accepting(&["surface", "parts"]),
+            ],
+        },
+    },
     WireType {
         name: "CmapSubtableInfo",
         shape: WireShape::Object {
@@ -926,6 +943,21 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("layers", WireTy::Integer, None),
                 WireField::new("glyph_runs", WireTy::Integer, None),
                 WireField::new("glyphs", WireTy::Integer, None),
+            ],
+        },
+    },
+    WireType {
+        name: "DropTargetsReport",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("surfaces", WireTy::Array, Some("SurfaceReport")),
+                WireField::new("declared", WireTy::Integer, None),
+                // Null when no kind was named: nothing was judged, and a zero
+                // there would be a claim nobody made.
+                WireField::new("admitting", WireTy::Integer, None).nullable(),
+                WireField::new("kind", WireTy::String, None).nullable(),
+                WireField::new("actions", WireTy::Array, None),
+                WireField::new("at", WireTy::Object, Some("PointReport")).nullable(),
             ],
         },
     },
@@ -1688,6 +1720,18 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "PointReport",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("x", WireTy::Number, None),
+                WireField::new("y", WireTy::Number, None),
+                WireField::new("surface", WireTy::String, None).nullable(),
+                WireField::new("part", WireTy::String, None).nullable(),
+                WireField::new("verdict", WireTy::Object, Some("VerdictReport")).nullable(),
+            ],
+        },
+    },
+    WireType {
         name: "PointerReachReport",
         shape: WireShape::Object {
             fields: &[
@@ -2048,6 +2092,19 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "SurfaceReport",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("surface", WireTy::String, None),
+                WireField::new("clauses", WireTy::Array, Some("ClauseReport")),
+                WireField::new("part", WireTy::String, None).nullable(),
+                WireField::new("asked_x", WireTy::Number, None),
+                WireField::new("asked_y", WireTy::Number, None),
+                WireField::new("verdict", WireTy::Object, Some("VerdictReport")).nullable(),
+            ],
+        },
+    },
+    WireType {
         name: "SurfaceTargets",
         shape: WireShape::Object {
             fields: &[
@@ -2377,6 +2434,26 @@ pub const WIRE_TYPES: &[WireType] = &[
                 // it cannot go stale against the type it describes.
                 WireField::new("provenance", WireTy::String, None)
                     .accepting(&pinion_core::display::UsableRegion::WIRE_NAMES),
+            ],
+        },
+    },
+    WireType {
+        name: "VerdictReport",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("admits", WireTy::Boolean, None),
+                WireField::new("actions", WireTy::Array, None),
+                // The pair a refusal always carries: one word an agent matches,
+                // one sentence a person reads. Both null on an acceptance.
+                WireField::new("refused", WireTy::String, None)
+                    .nullable()
+                    .accepting(&[
+                        "kind-not-accepted",
+                        "part-not-accepted",
+                        "no-common-action",
+                        "declined",
+                    ]),
+                WireField::new("why", WireTy::String, None).nullable(),
             ],
         },
     },

@@ -152,16 +152,19 @@ def a_palette_kind(app: RpcSubprocess) -> str:
 def section_a(app: RpcSubprocess, spec: dict, kind: str) -> None:
     banner("A — what a carry puts on screen is what the specification declares")
     named = surfaces(spec)
-    # R1734 added a fourth — `drop_contract`, what the board SAYS it accepts.
-    # It is not painted, so the paint-side loop below skips it by name; the
-    # count is read from the document rather than written here, because the
-    # number in a demo goes stale the round after somebody adds a surface, and
-    # this line is that lesson's own evidence.
-    ok("the specification fixes the painted surfaces plus the declared one", len(named) == 4)
+    # R1734 added `drop_contract` (what the board SAYS it accepts) and R1735
+    # added `drop_standing` (what it says about the carry actually in hand).
+    # Neither is painted, so the paint-side loop below skips them BY DERIVATION
+    # rather than by a written count: the number in a demo goes stale the round
+    # after somebody adds a surface, and this line is that lesson's own evidence
+    # — it was written as `== 4` and R1735 made it false.
+    unpainted = [s for s in named if s.startswith("drop_")]
+    painted = [s for s in named if s not in unpainted]
     ok(
-        "and the three PAINTED ones are the gesture's",
-        [s for s in named if s != "drop_contract"] == ["carry", "palette_row", "slot"],
+        "the specification fixes the painted surfaces plus the declared ones",
+        len(named) == len(painted) + len(unpainted) and len(unpainted) == 2,
     )
+    ok("and the three PAINTED ones are the gesture's", painted == ["carry", "palette_row", "slot"])
     ok(
         "and every one declares an ordered roster of named parts",
         all(
@@ -307,7 +310,7 @@ def section_c(app: RpcSubprocess, kind: str) -> None:
 
 
 def section_d(app: RpcSubprocess, kind: str) -> None:
-    banner("D — a carry let go off the board places nothing where the cursor was")
+    banner("D — a carry let go off the board places nothing at all")
     rects = abs_rects_of(app.snapshot(source="paint"))
     row = rects[f"shell.palette.{kind}"]
     canvas = rects["shell.canvas"]
@@ -335,12 +338,22 @@ def section_d(app: RpcSubprocess, kind: str) -> None:
     app.drag(from_at=centre(row), to_at=centre(row), phase="end")
     app.tick(16)
     after = tiles(app)
-    fresh = sorted(set(after) - before)
-    assert_eq(len(fresh), 1, "D: the release over the row acted as the row's click")
     assert_eq(
-        (after[fresh[0]]["col"], after[fresh[0]]["row"]),
-        (0, bottom),
-        "D: ★ at the bottom, not at the cell the carry had been over",
+        sorted(after),
+        sorted(before),
+        "D: ★★★★★ R1735 — and NOTHING is placed. Until R1735 this release added "
+        "a card at the bottom, because the screen re-derived click-vs-drag and "
+        "decided the opposite of the framework's own rule: a press that became "
+        "a real drag suppresses the trailing click (R794). The palette carry "
+        "now runs as a router drag session, so that verdict is the one that "
+        "applies. Measured on the floor at 6.11.1: a source that ran a drag "
+        "receives ZERO mouse releases for that gesture, so a dragged row does "
+        "not also click there either. The click path is unharmed — section C "
+        "above is the check, and it is a press and release that never moved",
+    )
+    ok(
+        f"D: ★ the board still holds the {len(before)} card(s) it held before",
+        len(after) == len(before) and rows(app) == bottom,
     )
 
 

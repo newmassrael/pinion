@@ -689,6 +689,175 @@ impl DropVerdict {
     }
 }
 
+/// R1735 §5.51 §5.15 — what letting go **right now** would do, told to the
+/// surface that STARTED the drag.
+///
+/// [`DropVerdict`] is a target's answer to one offer, travelling inward. This
+/// is that same answer travelling back out, on every move, to the source — so a
+/// drag can draw the outcome its release will actually have instead of
+/// predicting one.
+///
+/// # Where the floor stands, measured
+///
+/// Built and run against the 6.11.1 release, driven by a real pointer stream on
+/// a platform that owns a real cursor. A source whose own drag is in flight is
+/// told exactly two things: **which object** is under the cursor, and **which
+/// action** would be taken. Crossing an accepting region, then bare background,
+/// then a refusing region — eleven pointer samples — produced **four**
+/// notifications in total, and the source's own pointer handler ran **zero**
+/// times for the whole gesture. That leaves three holes this type is shaped
+/// around:
+///
+/// 1. **No position.** Not one member of the drag object carries a point (the
+///    runtime census of its declared members reports zero), and the call that
+///    runs the drag returns an action and nothing else. A source that wants to
+///    draw anything under the cursor has to track a cursor it is no longer
+///    being sent.
+/// 2. **No reason.** A refusal is the absence of an acceptance; nothing says
+///    what would have worked.
+/// 3. **A refusing target and bare background are the same answer.** Both
+///    report the null object with the ignore action, so "there is something
+///    here and it said no" is indistinguishable from "there is nothing here".
+///    Measured: the crossing above emitted one object, then one null, and the
+///    refusing region added nothing at all.
+///
+/// [`Nowhere`](Self::Nowhere) and [`Refused`](Self::Refused) are separate arms
+/// for exactly the third hole; [`Refused`](Self::Refused) carries a
+/// [`DropRefusal`] for the second; and [`Accepted`](Self::Accepted) carries the
+/// target's own [`DropAccept`] — the *same value* the router will hand to
+/// [`drop_commit`](crate::external::External::drop_commit) — for the first. The
+/// landing a source paints is therefore the landing that will happen, because
+/// it is one value and not two computations.
+///
+/// **Exhaustive**, like [`DropVerdict`] and unlike [`DropRefusal`]. Three arms
+/// are the whole trichotomy — is a target here, and does it say yes — and a
+/// source has to handle all three to paint anything correct. A `#[non_exhaustive]`
+/// enum would push every source onto a `_ =>` catch-all, which is precisely the
+/// arm that would quietly do the wrong thing if a fourth case ever appeared.
+/// The round that needs a fourth gets a compile error at every painter, which is
+/// where the decision belongs.
+#[derive(Debug, Clone, PartialEq)]
+pub enum DropStanding {
+    /// Nothing under the cursor is a drop target: no tagged region, or one
+    /// whose surface publishes no [`DropContract`] at all.
+    ///
+    /// Distinct from [`Refused`](Self::Refused) on purpose — see the type's own
+    /// documentation for the measurement that makes the distinction worth an
+    /// arm.
+    Nowhere,
+    /// A surface that DOES declare is under the cursor, and this drag is not
+    /// one of the things it takes — or its live state says no right now.
+    Refused {
+        /// The primary tag of the surface that refused.
+        tag: String,
+        /// Why, in the shape the read channel already refuses in: one word an
+        /// agent matches and one sentence a person reads.
+        refusal: DropRefusal,
+    },
+    /// A surface is under the cursor and it will take this.
+    Accepted {
+        /// The primary tag of the surface that accepted.
+        tag: String,
+        /// The action it will perform and the landing it just previewed —
+        /// byte-for-byte what [`drop_commit`](crate::external::External::drop_commit)
+        /// receives if the person lets go now.
+        accept: DropAccept,
+    },
+}
+
+impl DropStanding {
+    /// The one word an agent matches on: `nowhere`, `refused` or `accepted`.
+    #[must_use]
+    pub const fn as_wire_name(&self) -> &'static str {
+        match self {
+            Self::Nowhere => "nowhere",
+            Self::Refused { .. } => "refused",
+            Self::Accepted { .. } => "accepted",
+        }
+    }
+
+    /// The surface this standing is about, or `None` when there is none.
+    #[must_use]
+    pub fn tag(&self) -> Option<&str> {
+        match self {
+            Self::Nowhere => None,
+            Self::Refused { tag, .. } | Self::Accepted { tag, .. } => Some(tag),
+        }
+    }
+
+    /// Would a release right now place anything?
+    #[must_use]
+    pub const fn is_accepted(&self) -> bool {
+        matches!(self, Self::Accepted { .. })
+    }
+
+    /// The acceptance, when this is one — the landing a preview should draw.
+    #[must_use]
+    pub const fn accepted(&self) -> Option<&DropAccept> {
+        match self {
+            Self::Accepted { accept, .. } => Some(accept),
+            Self::Nowhere | Self::Refused { .. } => None,
+        }
+    }
+
+    /// The refusal, when a target refused. `None` for both other arms, and
+    /// that is the point: "nothing is here" is not a refusal.
+    #[must_use]
+    pub const fn refusal(&self) -> Option<&DropRefusal> {
+        match self {
+            Self::Refused { refusal, .. } => Some(refusal),
+            Self::Nowhere | Self::Accepted { .. } => None,
+        }
+    }
+
+    /// A sentence a **person** reads, for every arm.
+    ///
+    /// The floor's source-side notification has no sentence to offer at all, so
+    /// a drag that wants to say why it cannot land has to invent wording per
+    /// site. This is that wording, once.
+    #[must_use]
+    pub fn sentence(&self) -> String {
+        match self {
+            Self::Nowhere => "there is nothing here that takes a drop".to_owned(),
+            Self::Refused { refusal, .. } => refusal.sentence(),
+            Self::Accepted { accept, .. } => {
+                format!("this would {} here", accept.action.as_wire_name())
+            }
+        }
+    }
+}
+
+/// Render a standing as a wire object: its one word, the surface it is about,
+/// and the arm's own facts.
+///
+/// The peer of [`refusal_value`], and it delegates to it for the refused arm
+/// rather than restating the four refusal shapes — one rendering of one fact.
+#[must_use]
+pub fn standing_value(standing: &DropStanding) -> serde_json::Value {
+    let mut map = serde_json::Map::new();
+    map.insert(
+        "standing".into(),
+        serde_json::Value::from(standing.as_wire_name()),
+    );
+    map.insert("why".into(), serde_json::Value::from(standing.sentence()));
+    match standing {
+        DropStanding::Nowhere => {}
+        DropStanding::Refused { tag, refusal } => {
+            map.insert("tag".into(), serde_json::json!(tag));
+            map.insert("refusal".into(), refusal_value(refusal));
+        }
+        DropStanding::Accepted { tag, accept } => {
+            map.insert("tag".into(), serde_json::json!(tag));
+            map.insert(
+                "action".into(),
+                serde_json::Value::from(accept.action.as_wire_name()),
+            );
+            map.insert("landing".into(), accept.landing.clone().to_json());
+        }
+    }
+    serde_json::Value::Object(map)
+}
+
 /// The reserved introspect path a surface's [`DropContract`] is published at,
 /// the drop-side peer of the schema path.
 ///
@@ -769,8 +938,8 @@ pub const BOARD_WIDGET_DRAG_KIND: &str = "board-widget";
 mod tests {
     use super::{
         BOARD_WIDGET_DRAG_KIND, DROP_PATH, DropAccept, DropAction, DropActions, DropClause,
-        DropContract, DropOffer, DropRefusal, DropRegion, DropVerdict, contract_value,
-        refusal_value,
+        DropContract, DropOffer, DropRefusal, DropRegion, DropStanding, DropVerdict,
+        contract_value, refusal_value, standing_value,
     };
     use crate::external::{DragPayload, DropPoint, IntrospectValue};
     use crate::input::Modifiers;
@@ -1014,5 +1183,157 @@ mod tests {
         assert!(!parts.admits_part(None));
         assert!(parts.admits_part(Some("a")));
         assert!(!parts.admits_part(Some("b")));
+    }
+
+    #[test]
+    fn r1735_every_refusal_and_every_standing_says_something_a_reader_can_tell_apart() {
+        // ★★ Found by the speech gate, and it was already red: R1734 gave
+        // `DropRefusal` four sentences and drove none of them, so four wordings
+        // a person reads were unchecked from the round that wrote them. This
+        // round adds the drive it owed as well as its own, because a gate that
+        // was red before the change is still red after it.
+        use crate::test_fixtures::speech::assert_speaks;
+        let refusals: Vec<(&str, String)> = vec![
+            (
+                "KindNotAccepted",
+                BOARD.admits("packet-row", COPY_MOVE, None).unwrap_err(),
+            ),
+            (
+                "PartNotAccepted",
+                BOARD
+                    .admits("saved-layout", COPY_MOVE, Some("body"))
+                    .unwrap_err(),
+            ),
+            (
+                "NoCommonAction",
+                BOARD
+                    .admits(
+                        BOARD_WIDGET_DRAG_KIND,
+                        DropActions::one(DropAction::Link),
+                        None,
+                    )
+                    .unwrap_err(),
+            ),
+            (
+                "Declined",
+                DropRefusal::declined("every slot on this board is taken"),
+            ),
+        ]
+        .into_iter()
+        .map(|(arm, refusal)| (arm, refusal.sentence()))
+        .collect();
+        assert_speaks("DropRefusal", 4, &refusals, &[]);
+
+        let standings: Vec<(&str, String)> = vec![
+            ("Nowhere", DropStanding::Nowhere),
+            (
+                "Refused",
+                DropStanding::Refused {
+                    tag: "board".to_owned(),
+                    refusal: DropRefusal::declined("every slot on this board is taken"),
+                },
+            ),
+            (
+                "Accepted",
+                DropStanding::Accepted {
+                    tag: "board".to_owned(),
+                    accept: DropAccept::bare(DropAction::Copy),
+                },
+            ),
+        ]
+        .into_iter()
+        .map(|(arm, standing)| (arm, standing.sentence()))
+        .collect();
+        assert_speaks("DropStanding", 3, &standings, &[]);
+    }
+
+    // ── R1735 — what the SOURCE is told ────────────────────────────────────
+
+    #[test]
+    fn r1735_nothing_here_is_not_a_refusal() {
+        // ★ The distinction the floor cannot make. Measured against 6.11.1
+        // with a real pointer stream: a refusing widget and bare background
+        // both report the null object with the ignore action, so a source
+        // there cannot tell them apart. Here they are separate arms, and only
+        // one of them has a reason to give.
+        let nowhere = DropStanding::Nowhere;
+        assert_eq!(nowhere.as_wire_name(), "nowhere");
+        assert!(nowhere.tag().is_none());
+        assert!(nowhere.refusal().is_none());
+        assert!(!nowhere.is_accepted());
+
+        let refused = DropStanding::Refused {
+            tag: "board".to_owned(),
+            refusal: DropRefusal::declined("every slot is taken"),
+        };
+        assert_eq!(refused.as_wire_name(), "refused");
+        assert_eq!(refused.tag(), Some("board"));
+        assert!(refused.refusal().is_some());
+        assert!(!refused.is_accepted());
+        assert_ne!(nowhere.sentence(), refused.sentence());
+    }
+
+    #[test]
+    fn r1735_an_acceptance_carries_the_landing_the_commit_receives() {
+        // The value a source paints from IS the value the commit gets, so a
+        // preview cannot describe an outcome the release will not produce.
+        let accept = DropAccept::new(
+            DropAction::Copy,
+            IntrospectValue::Json(serde_json::json!({"col": 2, "row": 1})),
+        );
+        let standing = DropStanding::Accepted {
+            tag: "board".to_owned(),
+            accept: accept.clone(),
+        };
+        assert!(standing.is_accepted());
+        assert_eq!(standing.accepted(), Some(&accept));
+        assert!(standing.refusal().is_none());
+        assert!(standing.sentence().contains("copy"));
+    }
+
+    #[test]
+    fn r1735_a_standing_renders_for_both_readers() {
+        let refused = DropStanding::Refused {
+            tag: "board".to_owned(),
+            refusal: BOARD.admits("packet-row", COPY_MOVE, None).unwrap_err(),
+        };
+        let value = standing_value(&refused);
+        assert_eq!(value["standing"], "refused");
+        assert_eq!(value["tag"], "board");
+        // Delegated, not restated: the refusal renders exactly as it does on
+        // its own, so there is one rendering of one fact.
+        assert_eq!(
+            value["refusal"],
+            refusal_value(&BOARD.admits("packet-row", COPY_MOVE, None).unwrap_err()),
+        );
+        assert!(value["why"].as_str().unwrap().contains("board-widget"));
+
+        let accepted = standing_value(&DropStanding::Accepted {
+            tag: "board".to_owned(),
+            accept: DropAccept::new(
+                DropAction::Move,
+                IntrospectValue::Json(serde_json::json!({"col": 2, "row": 1})),
+            ),
+        });
+        assert_eq!(accepted["standing"], "accepted");
+        assert_eq!(accepted["action"], "move");
+        assert_eq!(accepted["landing"], serde_json::json!({"col": 2, "row": 1}));
+
+        let nowhere = standing_value(&DropStanding::Nowhere);
+        assert_eq!(nowhere["standing"], "nowhere");
+        assert!(nowhere.get("tag").is_none(), "nothing to name: {nowhere}");
+    }
+
+    #[test]
+    fn r1735_a_bare_acceptance_still_renders_a_landing_slot() {
+        // `bare` is a legitimate answer for a single-outcome target, and it
+        // must reach the wire as `null` rather than as an absent key: an
+        // absent key is a silence a client cannot tell from an old build.
+        let value = standing_value(&DropStanding::Accepted {
+            tag: "trash".to_owned(),
+            accept: DropAccept::bare(DropAction::Move),
+        });
+        assert!(value["landing"].is_null());
+        assert!(value.get("landing").is_some());
     }
 }

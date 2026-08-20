@@ -146,5 +146,60 @@
       }
     ],
     "owed": []
+  },
+  "drop_standing": {
+    "$comment": [
+      "R1735 — WHAT LETTING GO RIGHT NOW WOULD DO, told to the surface that",
+      "started the drag while the drag is still in flight.",
+      "",
+      "The surface above pins what the board ACCEPTS before anything is",
+      "picked up. This one pins what it says about the carry actually in",
+      "hand — the answer the router computes from that same declaration plus",
+      "the board's own live state, and forwards to the source on every move.",
+      "",
+      "Where the floor stands, measured rather than asserted: built against",
+      "the 6.11.1 release and driven by a real pointer stream on a platform",
+      "with a real cursor, a source whose own drag is in flight is told two",
+      "things — which object is under the cursor and which action would be",
+      "taken. Crossing an accepting region, bare background and a refusing",
+      "region (eleven samples) produced FOUR notifications in total; the",
+      "source's own pointer handler ran ZERO times for the whole gesture;",
+      "and the refusing region reported identically to the bare background.",
+      "So there is no position, no reason, and no way to tell a target that",
+      "said no from no target at all.",
+      "",
+      "A second-pass surface by the standing order rule: the reference is a",
+      "browser prototype whose board raises its highlight from inside the",
+      "handler that is already drawing, so it has nothing here to reproduce.",
+      "It is pinned anyway, because a capability with no specification is a",
+      "capability the next round can quietly drop.",
+      "",
+      "Read back from the LIVE value the router handed the screen, published",
+      "at `drop_standing`, with each title DERIVED from the framework's own",
+      "value — the action for an acceptance, the refusal's wire tag for a",
+      "refusal. A landing that stopped naming a cell, or a refusal that",
+      "changed which of the four kinds it is, arrives with a different",
+      "sentence and this specification refuses it.",
+      "",
+      "Two entries, not three. `nowhere` — the arm that separates 'a target",
+      "is here and it said no' from 'there is no target here' — is",
+      "unreachable ON THIS SCREEN by construction: the shell is one External",
+      "covering the whole window, so a cursor inside the window is always",
+      "over a surface that declares. It is exercised where it can be, in the",
+      "router's own tests, over genuinely separate surfaces."
+    ],
+    "canon": [
+      {
+        "ordinal": 1,
+        "key": "accepted",
+        "title": "copy, naming the cell the commit will use"
+      },
+      {
+        "ordinal": 2,
+        "key": "refused",
+        "title": "declined, carrying the reason"
+      }
+    ],
+    "owed": []
   }
 }

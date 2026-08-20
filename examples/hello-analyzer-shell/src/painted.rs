@@ -2905,13 +2905,138 @@ fn carry_to_middle(state: &std::rc::Rc<ShellState>, shot: &Painted, kind: &str) 
     let (px, py) = aim(shot, &format!("shell.palette.{kind}"));
     ShellOracle::move_cursor(state, px, py);
     ShellOracle::press(state);
-    let canvas = super::canvas_rect();
-    ShellOracle::move_cursor(state, canvas.x + canvas.w / 2, canvas.y + canvas.h / 2);
+    let (mx, my) = board_middle();
+    ShellOracle::move_cursor(state, mx, my);
     state
         .drag
         .get()
         .and_then(|d| d.landing())
         .expect("a carry over the middle of the board has a landing")
+}
+
+/// ★★★★★ R1735 — a **real router drag session** against the running screen.
+///
+/// Not a helper called directly: an `InputRouter` is built over the paint this
+/// sweep just produced and a state scene holding this screen's own `External`,
+/// and the gesture goes in as cursor moves, a press and a release. So every
+/// link is exercised — the root's `drop_target` opt-in that makes the drop point
+/// resolve to this surface at all, the declaration that gates dispatch, this
+/// screen's `drop_offered`, the standing the router forwards back to the source,
+/// and the commit that takes the acceptance as its witness.
+///
+/// Before this round none of that could run against this screen: nothing routed
+/// a drop to it, because no node in its paint had opted in as a drop region.
+/// The screen-driven `press` / `move_cursor` / `release` path is still exercised
+/// wherever the claim is about the PAINT — but a claim about what a release
+/// DOES belongs here, because the router is what performs one.
+struct RouterDrag {
+    router: pinion_runtime::InputRouter,
+    model: Scene,
+}
+
+impl RouterDrag {
+    /// Open a session over `scene`, with this screen's own state behind it.
+    fn over(state: &std::rc::Rc<ShellState>, scene: Scene) -> Self {
+        use pinion_core::scene::ExternalNode;
+        let mut oracle = ShellOracle::new();
+        oracle.attach_state(std::rc::Rc::clone(state));
+        let mut model = Scene::External(
+            ExternalNode::new(Box::new(oracle)).with_tag(super::VIEW_TAG.to_string()),
+        );
+        let mut router = pinion_runtime::InputRouter::new();
+        router.update_paint_scene(scene, &mut model);
+        Self { router, model }
+    }
+
+    fn cursor(&mut self, at: (u32, u32)) {
+        self.router.cursor_moved(
+            pinion_runtime::PointerId::MOUSE,
+            f64::from(at.0),
+            f64::from(at.1),
+            &mut self.model,
+        );
+    }
+
+    fn press(&mut self) {
+        self.router
+            .pointer_down(pinion_runtime::PointerId::MOUSE, &mut self.model);
+    }
+
+    fn release(&mut self) {
+        self.router
+            .pointer_up(pinion_runtime::PointerId::MOUSE, &mut self.model);
+    }
+}
+
+/// The middle of the board, in window coordinates.
+fn board_middle() -> (u32, u32) {
+    let canvas = super::canvas_rect();
+    (canvas.x + canvas.w / 2, canvas.y + canvas.h / 2)
+}
+
+/// R1735 — the standings the source was handed over the board and back over the
+/// palette row it came from.
+fn router_standings(
+    state: &std::rc::Rc<ShellState>,
+    scene: Scene,
+    shot: &Painted,
+    kind: &str,
+) -> (
+    pinion_core::drop_target::DropStanding,
+    pinion_core::drop_target::DropStanding,
+) {
+    let row = aim(shot, &format!("shell.palette.{kind}"));
+    let mut drag = RouterDrag::over(state, scene);
+    drag.cursor(row);
+    drag.press();
+    drag.cursor(board_middle());
+    let accepted = state.standing.borrow().clone();
+    drag.cursor(row);
+    let refused = state.standing.borrow().clone();
+    // Let go where nothing takes it, so the sweep's next case starts with an
+    // empty hand rather than a session this one left open.
+    drag.release();
+    (accepted, refused)
+}
+
+/// R1735 — the two standings as the parts a specification is judged against.
+///
+/// Each title is DERIVED from the framework's own value — the action for an
+/// acceptance, the refusal's wire tag for a refusal — so a landing that stopped
+/// naming a cell, or a refusal that changed which of the four kinds it is,
+/// arrives with a different sentence and the pin refuses it.
+fn standing_parts(
+    accepted: &pinion_core::drop_target::DropStanding,
+    refused: &pinion_core::drop_target::DropStanding,
+) -> Vec<pinion_core::conformance::Part> {
+    use pinion_core::conformance::Part;
+    use pinion_core::drop_target::DropStanding;
+    let mut parts = Vec::new();
+    if let DropStanding::Accepted { accept, .. } = accepted {
+        let names_a_cell = matches!(
+            &accept.landing,
+            IntrospectValue::Json(v) if v.get("col").is_some() && v.get("row").is_some()
+        );
+        parts.push(Part::new(
+            accepted.as_wire_name(),
+            format!(
+                "{}, {}",
+                accept.action.as_wire_name(),
+                if names_a_cell {
+                    "naming the cell the commit will use"
+                } else {
+                    "naming nothing"
+                }
+            ),
+        ));
+    }
+    if let DropStanding::Refused { refusal, .. } = refused {
+        parts.push(Part::new(
+            refused.as_wire_name(),
+            format!("{}, carrying the reason", refusal.as_wire_name()),
+        ));
+    }
+    parts
 }
 
 /// ★★★★★ R1733 — **every surface the board specification declares is the one
@@ -2959,6 +3084,20 @@ fn r1733_every_specified_board_surface_is_the_one_the_paint_draws() {
                 // about every state: a board that stops accepting widgets once
                 // a card is maximised would be caught here and nowhere else.
                 "drop_contract" => declared_drop_parts(),
+                // ★★★★★ R1735 — the LIVE answer, driven through a real router
+                // session in this very case. `drop_contract` above is what the
+                // board says before anything is picked up; this is what it says
+                // about the carry actually in hand, and it is the value the
+                // router forwarded to the source rather than one this test
+                // re-derived. Swept with the rest for the same reason: whether
+                // a release lands is a claim about every state, and a board
+                // that stopped accepting once a card is maximised would be
+                // caught here.
+                "drop_standing" => {
+                    let (accepted, refused) =
+                        router_standings(state, painted_at(case.size).1, shot, kind);
+                    standing_parts(&accepted, &refused)
+                }
                 other => panic!("no surface named {other}"),
             };
             assert!(
@@ -3030,7 +3169,22 @@ fn r1733_a_carry_lands_where_its_preview_said_it_would() {
     let mut checked = 0;
     sweep(|state, shot, _, case| {
         let before = state.board.get().tiles().len();
-        let previewed = carry_to_middle(state, shot, kind);
+        // ★★★★★ R1735 — through the ROUTER, because the router is what performs
+        // a release now. Driven screen-first this asserted a path real input no
+        // longer takes, and it would have stayed green while the gesture a
+        // person makes did nothing.
+        let row = aim(shot, &format!("shell.palette.{kind}"));
+        let mut drag = RouterDrag::over(state, painted_at(case.size).1);
+        drag.cursor(row);
+        drag.press();
+        drag.cursor(board_middle());
+        let previewed = state
+            .drag
+            .get()
+            .and_then(|d| d.landing())
+            .unwrap_or_else(|| {
+                panic!("{case}: a carry over the middle of the board has a landing")
+            });
         let carrying = witness(state, "carrying");
         assert!(
             carrying.contains("fresh:"),
@@ -3047,6 +3201,21 @@ fn r1733_a_carry_lands_where_its_preview_said_it_would() {
             ),
             "{case}: the wire's landing is the carry's",
         );
+        // ★★★★★ R1735 — and the STANDING the router handed the source names
+        // that same cell, before anything is released. That is the half the
+        // floor has no room for: measured at 6.11.1, a source is told an object
+        // and an action and never a position.
+        assert_eq!(
+            state
+                .standing
+                .borrow()
+                .accepted()
+                .map(|a| a.landing.clone()),
+            Some(IntrospectValue::Json(
+                serde_json::json!({"col": previewed.0, "row": previewed.1})
+            )),
+            "{case}: the standing names the cell the preview drew",
+        );
 
         // The id the carry is holding, taken from the wire before the release:
         // the board may already hold cards of this kind, so "a card of that
@@ -3057,7 +3226,7 @@ fn r1733_a_carry_lands_where_its_preview_said_it_would() {
             "{kind}#{}",
             state.next_id.borrow()
         ));
-        ShellOracle::release(state);
+        drag.release();
         let board = state.board.get();
         assert_eq!(
             board.tiles().len(),
@@ -3086,12 +3255,16 @@ fn r1733_a_carry_lands_where_its_preview_said_it_would() {
 
 /// ★★★★★ R1733 — **the action survives the gesture.**
 ///
-/// A press and a release on the same palette row still adds at the bottom of
-/// the board, because an abandoned carry falls through to the latched control.
-/// This is the assertion that keeps a pointer-only reference from costing a
-/// reader the only path they have: the reference has zero keyboard bindings,
-/// so reproducing its drag INSTEAD of the click would be a regression wearing
-/// a reproduction's clothes.
+/// A press and a release **on the same spot** still adds at the bottom of the
+/// board. This is the assertion that keeps a pointer-only reference from
+/// costing a reader the only path they have: the reference has zero keyboard
+/// bindings, so reproducing its drag INSTEAD of the click would be a regression
+/// wearing a reproduction's clothes.
+///
+/// ★ R1735 — it survives because the router synthesises the trailing release
+/// only when the press did NOT become a drag, so the latch is still there for
+/// it. A press that travelled is a drag and nothing else, which is what
+/// `r1733_a_carry_let_go_off_the_board_is_not_a_placement` now asserts.
 #[test]
 fn r1733_a_click_on_a_palette_row_still_adds_at_the_bottom() {
     let kind = first_placeable();
@@ -3122,31 +3295,97 @@ fn r1733_a_click_on_a_palette_row_still_adds_at_the_bottom() {
     assert_eq!(checked, CASES);
 }
 
+/// ★★★★★ R1735 — **a fresh carry is not this screen's to commit.**
+///
+/// The claim `commit_drag`'s first arm makes in a comment, as a check. A
+/// palette press opens a router drag session, so the release is committed by
+/// `drop_commit` and the hand is emptied by `drag_release_at` — by the time
+/// this screen's own `release` runs there is nothing left for it to place, and
+/// running it a second time places nothing either.
+///
+/// Worth its own test because the alternative is a comment: an arm that is
+/// unreachable through real input, left total so a case nobody has seen cannot
+/// crash, reads exactly like an arm somebody forgot to delete.
+#[test]
+fn r1735_a_fresh_carry_is_not_the_shells_to_commit() {
+    let kind = first_placeable();
+    let mut checked = 0;
+    sweep(|state, shot, _, case| {
+        let before = state.board.get().tiles().len();
+        let row = aim(shot, &format!("shell.palette.{kind}"));
+        let mut drag = RouterDrag::over(state, painted_at(case.size).1);
+        drag.cursor(row);
+        drag.press();
+        drag.cursor(board_middle());
+        assert!(
+            state.drag.get().is_some_and(|d| !d.carried().is_placed()),
+            "{case}: a fresh carry is in hand mid-gesture",
+        );
+        drag.release();
+        assert!(
+            state.drag.get().is_none(),
+            "{case}: the router emptied the hand, so this screen's own release \
+             has no carry to find",
+        );
+        assert_eq!(
+            state.board.get().tiles().len(),
+            before + 1,
+            "{case}: and the drop committed exactly once",
+        );
+        // A second release with nothing in hand and no latch left: the arm the
+        // comment calls unreachable, driven, placing nothing.
+        ShellOracle::release(state);
+        assert_eq!(
+            state.board.get().tiles().len(),
+            before + 1,
+            "{case}: a release after the router's own places nothing more",
+        );
+        checked += 1;
+    });
+    assert_eq!(checked, CASES);
+}
+
 /// ★★★★★ R1733 — **a carry let go off the board places nothing where the
-/// cursor is.**
+/// cursor is**, and ★★★★★ R1735 — it places nothing anywhere else either.
 ///
 /// The half a card drag never needed and the reference does not have: its board
-/// drag listens on the whole document, so a release over the palette commits.
-/// Here the carry has no landing off the board, and a release with no landing
-/// is an abandon — which for a palette row means the latched control acts
-/// instead, so the row's click behaviour is what a person gets.
+/// drag listens on the whole document, so a release over its palette commits.
+/// Here the carry has no landing off the board and the release is refused, with
+/// a reason.
+///
+/// ★ R1735 changed the second half of this. R1733 let an abandoned carry fall
+/// through to the latched control, so a drag that wandered off and came back
+/// still added a card at the bottom — this screen re-deriving click-vs-drag and
+/// deciding the opposite of the framework's own rule, under which a press that
+/// became a real drag suppresses the trailing click (R794). The floor agrees
+/// with the framework: measured at 6.11.1, a source that ran a drag receives
+/// ZERO mouse releases for that gesture. The click path is untouched and is
+/// checked by `r1733_a_click_on_a_palette_row_still_adds_at_the_bottom`, which
+/// is a press and release that never moved.
 #[test]
 fn r1733_a_carry_let_go_off_the_board_is_not_a_placement() {
     let kind = first_placeable();
     let mut checked = 0;
     sweep(|state, shot, _, case| {
         let bottom = state.board.get().rows();
-        let (px, py) = aim(shot, &format!("shell.palette.{kind}"));
-        ShellOracle::move_cursor(state, px, py);
-        ShellOracle::press(state);
-        let canvas = super::canvas_rect();
+        let before: Vec<String> = state
+            .board
+            .get()
+            .tiles()
+            .iter()
+            .map(|t| t.id.as_str().to_owned())
+            .collect();
+        let row = aim(shot, &format!("shell.palette.{kind}"));
+        let mut drag = RouterDrag::over(state, painted_at(case.size).1);
+        drag.cursor(row);
+        drag.press();
         // Onto the board, so a landing exists...
-        ShellOracle::move_cursor(state, canvas.x + canvas.w / 2, canvas.y + canvas.h / 2);
+        drag.cursor(board_middle());
         let over = state
             .drag
             .get()
             .and_then(|d| d.landing())
-            .expect("a carry over the board has a landing");
+            .unwrap_or_else(|| panic!("{case}: a carry over the board has a landing"));
         assert_ne!(
             over,
             (0, bottom),
@@ -3154,30 +3393,33 @@ fn r1733_a_carry_let_go_off_the_board_is_not_a_placement() {
              so the two outcomes are distinguishable",
         );
         // ...and back onto the palette, where it is not.
-        ShellOracle::move_cursor(state, px, py);
+        drag.cursor(row);
         assert_eq!(
             state.drag.get().and_then(|d| d.landing()),
             None,
             "{case}: carried off the board, there is no cell a release would use",
         );
-        ShellOracle::release(state);
+        // ★★★★★ R1735 — and the source is told WHY, which is a different answer
+        // from "there is nothing here". On the floor those two are one answer.
+        let refusal = state.standing.borrow().sentence();
+        assert!(
+            refusal.contains("board"),
+            "{case}: the refusal says what would have worked: {refusal:?}",
+        );
+        drag.release();
 
-        let board = state.board.get();
-        let landed = board
+        let after: Vec<String> = state
+            .board
+            .get()
             .tiles()
             .iter()
-            .filter(|t| super::kind_of(t.id.as_str()) == kind)
-            .map(|t| (t.col, t.row))
-            .collect::<Vec<_>>();
-        assert!(
-            landed.contains(&(0, bottom)),
-            "{case}: the release over the row acted as the row's click, at the \
-             bottom of the board: {landed:?}",
-        );
-        assert!(
-            !landed.contains(&over),
-            "{case}: and nothing was placed at {over:?}, where the carry had \
-             been over the board",
+            .map(|t| t.id.as_str().to_owned())
+            .collect();
+        assert_eq!(
+            after, before,
+            "{case}: ★ a completed drag let go off the board places nothing — \
+             not at {over:?} where it had been over, and not at the bottom \
+             either, because a real drag is not also a click",
         );
         checked += 1;
     });

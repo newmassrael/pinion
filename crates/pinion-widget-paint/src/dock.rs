@@ -8017,6 +8017,7 @@ mod tests {
     };
     use crate::tabs::composite_tab_tag;
     use pinion_a11y::{AccessNode, AriaRole};
+    use pinion_core::drop_target::DropStanding;
     use pinion_core::external::{
         DragPayload, DragUpdate, DropPoint, External, ExternalIntrospect, InterveneError,
         IntrospectValue, InvokeError,
@@ -8196,6 +8197,10 @@ mod tests {
             // the press point defaults to the cursor (a degenerate in-place grab,
             // so `cursor - press_cursor` is 0 — irrelevant to the tear-off path).
             press_cursor: cursor,
+            // R1735 — no surface in these fixtures publishes a drop contract,
+            // so `Nowhere` is not a placeholder: it is what the router computes
+            // for them. A dock panel resolves its own zones from `over`.
+            standing: DropStanding::Nowhere,
         }
     }
 
@@ -9301,6 +9306,7 @@ mod tests {
             source_window: Some("torn-viewport"),
             became_drag: true,
             press_cursor: (40.0, 25.0),
+            standing: DropStanding::Nowhere,
         };
         ext.drag_to_at(&dummy_payload(), &update);
         // R1146 — the follow is emitted ONCE on release (not per move). Release off
@@ -9340,6 +9346,7 @@ mod tests {
                 source_window: Some("torn-viewport"),
                 became_drag: true,
                 press_cursor: (1.0, 1.0),
+                standing: DropStanding::Nowhere,
             },
         );
         assert_eq!(
@@ -9374,6 +9381,7 @@ mod tests {
                 source_window: Some("torn-viewport"),
                 became_drag: true,
                 press_cursor: (10.0, 10.0),
+                standing: DropStanding::Nowhere,
             },
         );
         let mut drained: Vec<Intent> = Vec::new();
@@ -9388,6 +9396,7 @@ mod tests {
                 source_window: Some("torn-viewport"),
                 became_drag: true,
                 press_cursor: (40.0, 25.0),
+                standing: DropStanding::Nowhere,
             },
         );
         let mut received: Vec<Intent> = Vec::new();
@@ -9947,6 +9956,7 @@ mod tests {
             source_window: Some("torn-a"),
             became_drag: true,
             press_cursor: (100.0, 10.0),
+            standing: DropStanding::Nowhere,
         }
     }
 
@@ -10015,6 +10025,7 @@ mod tests {
                 source_window: Some("torn-a"),
                 became_drag: false,
                 press_cursor: (50.0, 50.0),
+                standing: DropStanding::Nowhere,
             },
         );
         assert!(
@@ -10041,6 +10052,7 @@ mod tests {
                 source_window: Some("main"),
                 became_drag: false,
                 press_cursor: (10.0, 10.0),
+                standing: DropStanding::Nowhere,
             },
         );
         let mut after: Vec<Intent> = Vec::new();
@@ -10887,6 +10899,7 @@ mod tests {
             source_window: Some("torn-viewport"),
             became_drag: true,
             press_cursor: press,
+            standing: DropStanding::Nowhere,
         };
         // Two mid-drag moves: the chart drives the preview, but NOTHING relocates
         // the OS window (no WINDOW_MOVE, no tear_off_follow).
@@ -10944,6 +10957,7 @@ mod tests {
             source_window: Some("main"),
             became_drag: true,
             press_cursor: (40.0, 8.0),
+            standing: DropStanding::Nowhere,
         };
         docked.drag_to_at(&dummy_payload(), &escaped); // escaped every zone
         let mut dmid: Vec<Intent> = Vec::new();
@@ -13221,6 +13235,7 @@ mod reorganize_tests {
             source_window: None,
             became_drag,
             press_cursor: (0.0, 0.0),
+            standing: pinion_core::drop_target::DropStanding::Nowhere,
         }
     }
 

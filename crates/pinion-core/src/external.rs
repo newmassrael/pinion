@@ -1746,6 +1746,46 @@ impl IntrospectValue {
         }
     }
 
+    /// R1735 §5.15 §5.12 — this answer as a JSON tree.
+    ///
+    /// Lifted here from the transport, which held the only implementation, the
+    /// round a `pinion-core` renderer needed it too
+    /// ([`standing_value`](crate::drop_target::standing_value) embeds a
+    /// target's landing). A second conversion written in this crate would have
+    /// been two spellings of one projection, which is the drift this workspace
+    /// has paid for repeatedly; the transport now delegates here, so there is
+    /// one.
+    ///
+    /// ```
+    /// # use pinion_core::external::IntrospectValue;
+    /// assert_eq!(IntrospectValue::Int(3).to_json(), serde_json::json!(3));
+    /// assert!(IntrospectValue::Null.to_json().is_null());
+    /// ```
+    #[must_use]
+    pub fn to_json(self) -> serde_json::Value {
+        match self {
+            Self::Bool(b) => serde_json::Value::Bool(b),
+            Self::Int(n) => serde_json::Value::Number(n.into()),
+            Self::Float(f) => serde_json::Number::from_f64(f)
+                .map_or(serde_json::Value::Null, serde_json::Value::Number),
+            Self::Text(s) => serde_json::Value::String(s),
+            Self::Json(v) => v,
+            // R1480 §5.15 — a raw answer nested inside a value the envelope is
+            // assembling (a snapshot node's introspect map, a dry-run step, an
+            // intent payload) has to become a tree: the enclosing document is
+            // one, and there is no splice point part way down it. Only a result
+            // the handler returns whole reaches the wire raw. The failure arm is
+            // a number outside `f64` range, which JSON has no slot for; it
+            // reports the §5.12 present-but-empty `null`, the same answer every
+            // other unrepresentable payload gets.
+            Self::Raw(raw) => raw.to_value().unwrap_or(serde_json::Value::Null),
+            // `Null` collapses into the non_exhaustive wildcard; future additive
+            // variants also land as JSON null until §5.12 schema settles a
+            // richer projection.
+            _ => serde_json::Value::Null,
+        }
+    }
+
     /// R51.155 §5.15 — extract a `bool` payload. Returns `Some(b)`
     /// only when the variant is [`Self::Bool`]; every other variant
     /// (including `Json(serde_json::Value::Bool(_))`) returns `None`
@@ -2833,6 +2873,20 @@ pub struct DragUpdate<'a> {
     /// router fills it from the cursor it held when `begin_drag` opened the
     /// session, so it is exact regardless of how far the first move strays.
     pub press_cursor: (f64, f64),
+    /// ★★★★★ R1735 §5.51 — **what letting go right now would do.**
+    ///
+    /// [`over`](Self::over) says which tag the cursor is on; this says what
+    /// that surface would DO with what is being carried — accept it (naming
+    /// the action and the landing it just previewed), refuse it (naming the
+    /// reason), or not be a drop target at all. The router fills it from the
+    /// very call that gates the commit, so a source painting from this cannot
+    /// draw an outcome the release will not produce.
+    ///
+    /// Measured on the floor at 6.11.1, a source in this position is told an
+    /// object identity and an action and nothing else — no position, no
+    /// reason, and a refusing target reported identically to bare background.
+    /// See [`DropStanding`](crate::drop_target::DropStanding) for the probe.
+    pub standing: crate::drop_target::DropStanding,
 }
 
 /// The 8-point integration contract (§5.15). Items 1-3 are required;
@@ -5245,6 +5299,7 @@ mod tests {
             source_window: None,
             became_drag: false,
             press_cursor: (12.0, 34.0),
+            standing: crate::drop_target::DropStanding::Nowhere,
         };
         let release_update = DragUpdate {
             over: None,
@@ -5253,6 +5308,7 @@ mod tests {
             source_window: None,
             became_drag: false,
             press_cursor: (56.0, 78.0),
+            standing: crate::drop_target::DropStanding::Nowhere,
         };
         src.drag_to_at(&payload, &to_update);
         src.drag_release_at(&payload, &release_update);

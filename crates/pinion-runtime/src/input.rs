@@ -81,7 +81,7 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use pinion_core::composite_tag::{compose_send_payload, split_subindex};
-use pinion_core::drop_target::{DropActions, DropContract, DropOffer, DropVerdict};
+use pinion_core::drop_target::{DropActions, DropContract, DropOffer, DropStanding, DropVerdict};
 use pinion_core::event::WheelDelta;
 use pinion_core::external::{
     CaptureNormalize, DOCK_PANEL_DRAG_KIND, DragPayload, DragUpdate, DropPoint, ExternalIntrospect,
@@ -975,7 +975,19 @@ pub fn drop_point_at(paint_scene: &Scene, x: f64, y: f64) -> Option<DropPoint> {
 pub fn declared_drop_contract(state_scene: &Scene, primary: &str) -> DropContract {
     state_scene
         .find_external_with_tag(primary)
-        .and_then(|node| node.handle.introspect())
+        .map_or(DropContract::EMPTY, published_contract)
+}
+
+/// R1735 — the contract a surface ALREADY RESOLVED publishes.
+///
+/// Split out at its second caller: the router now reads the declaration off the
+/// same node it is about to offer the drag to (one walk instead of two), while
+/// the wire's census resolves surfaces by name. Two lookups, and deliberately
+/// ONE reading — a second spelling of "what does this node declare" is the
+/// drift this module keeps its rule in a single `admits` to avoid.
+fn published_contract(node: &ExternalNode) -> DropContract {
+    node.handle
+        .introspect()
         .map_or(DropContract::EMPTY, ExternalIntrospect::drop_contract)
 }
 
@@ -997,6 +1009,10 @@ pub fn declared_drop_contract(state_scene: &Scene, primary: &str) -> DropContrac
 /// session (it was removed from the map before the commit) while the move path
 /// borrows one — and one behaviour written twice is the drift this file has
 /// paid for before.
+/// ★★★★★ R1735 — and it ANSWERS with the standing, so the source can be told
+/// what a release would do by the same call that decides it. A second
+/// derivation for the source's benefit would be the two-computations class this
+/// module's target half was built to close, one party over.
 fn offer_drag_to_target(
     state_scene: &mut Scene,
     target: &mut Option<DropTargetState>,
@@ -1004,38 +1020,82 @@ fn offer_drag_to_target(
     over: Option<&DropPoint>,
     cursor: (f64, f64),
     modifiers: Modifiers,
-) {
-    let admitted = over.and_then(|point| {
-        let (primary, part) = split_subindex(&point.tag);
-        declared_drop_contract(state_scene, primary)
-            .admits(&payload.kind, payload.actions, part)
-            .ok()
-            .map(|actions| (primary.to_owned(), actions))
-    });
+) -> DropStanding {
+    // ★★★★★ R1735 — leave the OLD target first, and only when it is a different
+    // surface. R1734 decided this from the admissibility verdict, which meant
+    // the verdict had to be computed before the node could be borrowed — and
+    // that forced a SECOND full walk of the state scene to reach the same node
+    // again for the offer. The change of surface is answerable from the tag
+    // alone; a surface that is still under the cursor but no longer admits the
+    // drag is the same node, so its preview is dropped below, inside the one
+    // borrow. Cost, per move sample with a target under the cursor: two
+    // depth-first walks became one.
     if let Some(previous) = target.as_ref()
-        && admitted
-            .as_ref()
-            .is_none_or(|(tag, _)| tag != &previous.tag)
+        && over
+            .map(|point| split_subindex(&point.tag).0)
+            .is_none_or(|primary| primary != previous.tag)
     {
         if let Some(node) = state_scene.find_external_with_tag_mut(&previous.tag) {
             node.handle.drop_left();
         }
         *target = None;
     }
-    let (Some((tag, actions)), Some(point)) = (admitted, over) else {
-        return;
+    let Some(point) = over else {
+        return DropStanding::Nowhere;
     };
-    let Some(node) = state_scene.find_external_with_tag_mut(&tag) else {
-        return;
+    let (primary, part) = split_subindex(&point.tag);
+    let Some(node) = state_scene.find_external_with_tag_mut(primary) else {
+        // Something is painted here and no surface stands behind it (or it
+        // vanished in a rebuild mid-gesture): nothing to offer anything to.
+        *target = None;
+        return DropStanding::Nowhere;
+    };
+    // The declaration is read off the SAME node that is about to be asked, so
+    // the contract that gated dispatch and the surface that received it cannot
+    // be two different resolutions of one tag.
+    let contract = published_contract(node);
+    // R1735 — the structural verdict is kept whole rather than discarded by
+    // `.ok()`: its `Err` half is the reason a refused source is now told, and
+    // the contract's emptiness is what separates "nothing here takes a drop"
+    // from "something here said no". The floor collapses those two.
+    let actions = match contract.admits(&payload.kind, payload.actions, part) {
+        Ok(actions) => actions,
+        Err(refusal) => {
+            // The same surface is still under the cursor and no longer admits
+            // this drag (the cursor crossed onto an undeclared part). Whatever
+            // it was previewing goes, and this is the node to tell.
+            if target.take().is_some() {
+                node.handle.drop_left();
+            }
+            return if contract.is_empty() {
+                DropStanding::Nowhere
+            } else {
+                DropStanding::Refused {
+                    tag: primary.to_owned(),
+                    refusal,
+                }
+            };
+        }
     };
     let verdict = node
         .handle
         .drop_offered(&DropOffer::new(payload, point, actions, cursor, modifiers));
+    let standing = match &verdict {
+        DropVerdict::Accept(accept) => DropStanding::Accepted {
+            tag: primary.to_owned(),
+            accept: accept.clone(),
+        },
+        DropVerdict::Refuse(refusal) => DropStanding::Refused {
+            tag: primary.to_owned(),
+            refusal: refusal.clone(),
+        },
+    };
     *target = Some(DropTargetState {
-        tag,
+        tag: primary.to_owned(),
         actions,
         verdict,
     });
+    standing
 }
 
 /// R1734 §5.51 — the release. Re-offer at the release point, commit when that
@@ -1058,15 +1118,18 @@ fn release_drop_target(
     over: Option<&DropPoint>,
     cursor: (f64, f64),
     modifiers: Modifiers,
-) {
-    offer_drag_to_target(state_scene, target, payload, over, cursor, modifiers);
+) -> DropStanding {
+    // R1735 — and it is the standing the SOURCE is told for the release: the
+    // same value the move path forwards, so "what would happen" and "what
+    // happened" are one vocabulary rather than two.
+    let standing = offer_drag_to_target(state_scene, target, payload, over, cursor, modifiers);
     // Nothing under the cursor declared for this drag; whatever was previewing
     // was already left by the offer above.
     let Some(state) = target.take() else {
-        return;
+        return standing;
     };
     let Some(node) = state_scene.find_external_with_tag_mut(&state.tag) else {
-        return;
+        return standing;
     };
     if let (DropVerdict::Accept(accept), Some(point)) = (&state.verdict, over) {
         let offer = DropOffer::new(payload, point, state.actions, cursor, modifiers);
@@ -1075,6 +1138,7 @@ fn release_drop_target(
     // Unconditional: a target that committed and a target that refused both
     // stop previewing, so no impl has to clear itself in two places.
     node.handle.drop_left();
+    standing
 }
 
 /// R1734 §5.51 — the drag ended without a drop over anybody (an OS cancel).
@@ -2545,7 +2609,7 @@ impl InputRouter {
             // is what the preview last showed. It runs FIRST because a source
             // that also owns the destination model (every pre-R1734 consumer)
             // must see the world the drop already changed, not the one before.
-            release_drop_target(
+            let standing = release_drop_target(
                 state_scene,
                 &mut session.drop_target,
                 &session.payload,
@@ -2582,6 +2646,9 @@ impl InputRouter {
                             // R1117 — the gesture's press point (Copy; unaffected
                             // by the `cross_window` partial move above).
                             press_cursor: session.press_cursor,
+                            // R1735 — what the release actually resolved to,
+                            // from the same call that performed it.
+                            standing,
                         },
                     ),
                     None => external.handle.drag_release(&session.payload, over),
@@ -3558,9 +3625,13 @@ impl InputRouter {
         // this sample is what the source's `drag_to_at` may then paint, so the
         // verdict has to exist before the painter reads it.
         let modifiers = self.held_modifiers;
+        // R1735 — the target's judgement of THIS sample, kept rather than
+        // dropped: it is what the source is told below, so the preview a source
+        // paints and the outcome a release commits are one value.
+        let mut standing = DropStanding::Nowhere;
         if let Some(session) = self.drag_sessions.get_mut(&id) {
             let payload = session.payload.clone();
-            offer_drag_to_target(
+            standing = offer_drag_to_target(
                 state_scene,
                 &mut session.drop_target,
                 &payload,
@@ -3585,6 +3656,7 @@ impl InputRouter {
                     source_window: self.window_id.as_deref(),
                     became_drag,
                     press_cursor,
+                    standing,
                 },
             );
         }
@@ -12489,6 +12561,48 @@ mod tests {
                 .push("palette:offered".to_owned());
             DropVerdict::decline("a palette is not a drop target")
         }
+        /// ★★★★★ R1735 — the SOURCE writes down what it was told a release
+        /// would do. The floor tells a source in this position an object
+        /// identity and an action; this records the whole standing, the
+        /// sentence it carries and the live cursor beside it, so a test can
+        /// assert each of the three things that measurement says are missing.
+        fn drag_to_at(&mut self, _payload: &DragPayload, update: &DragUpdate) {
+            let mut log = self.log.lock().expect("poisoned");
+            log.push(format!("palette:told:{}", standing_line(&update.standing)));
+            log.push(format!("palette:why:{}", update.standing.sentence()));
+            #[expect(
+                clippy::cast_possible_truncation,
+                reason = "fixture cursors are whole pixels"
+            )]
+            log.push(format!(
+                "palette:cursor:{}:{}",
+                update.cursor.0 as i64, update.cursor.1 as i64
+            ));
+        }
+        fn drag_release_at(&mut self, _payload: &DragPayload, update: &DragUpdate) {
+            self.log.lock().expect("poisoned").push(format!(
+                "palette:release-told:{}",
+                standing_line(&update.standing)
+            ));
+        }
+    }
+
+    /// R1735 — one line naming everything a standing carries, so an assertion
+    /// reads as the sentence the source was handed.
+    fn standing_line(standing: &DropStanding) -> String {
+        match standing {
+            DropStanding::Nowhere => "nowhere".to_owned(),
+            DropStanding::Refused { tag, refusal } => {
+                format!("refused:{tag}:{}", refusal.as_wire_name())
+            }
+            DropStanding::Accepted { tag, accept } => {
+                let landing = match &accept.landing {
+                    IntrospectValue::Text(t) => t.clone(),
+                    other => other.kind().to_owned(),
+                };
+                format!("accepted:{tag}:{}:{landing}", accept.action.as_wire_name())
+            }
+        }
     }
 
     /// How a target answers an offer its declaration already admitted.
@@ -12943,6 +13057,171 @@ mod tests {
         assert!(
             !log.iter().any(|s| s.contains(":commit")),
             "releasing over nothing commits nothing: {log:?}",
+        );
+    }
+
+    // ── R1735 §5.51 — what the SOURCE is told while its own drag is in
+    // flight ───────────────────────────────────────────────────────────────
+    //
+    // The same four-`External` fixture, read from the other end. The floor
+    // was built and driven for this axis against its 6.11.1 release: crossing
+    // an accepting region, bare background and a refusing region — eleven
+    // pointer samples — a source received FOUR notifications carrying an
+    // object identity and an action, its own pointer handler ran zero times,
+    // and the refusing region was reported identically to the bare
+    // background. These tests assert the three things that measurement says
+    // are missing.
+
+    /// Everything the source was told under one prefix, in order.
+    fn said(log: &[String], prefix: &str) -> Vec<String> {
+        log.iter()
+            .filter_map(|line| line.strip_prefix(prefix).map(ToOwned::to_owned))
+            .collect()
+    }
+
+    /// Every standing the source was told, in order.
+    fn told(log: &[String]) -> Vec<String> {
+        said(log, "palette:told:")
+    }
+
+    #[test]
+    fn r1735_the_source_is_told_the_landing_the_commit_will_receive() {
+        // ★ The claim. A source painting from this standing draws the landing
+        // the release will apply, because it is the SAME `DropAccept` value —
+        // not a second computation over the same pixel.
+        let mut router = InputRouter::new();
+        let (mut state, log) = r1734_state(COPY_ONLY);
+        router.update_paint_scene(r1734_paint(), &mut state);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 200.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 200.0, 60.0, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 200.0, 220.0, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        let log = read(&log);
+        assert_eq!(
+            told(&log),
+            [
+                "accepted:board:copy:landing-slot-a",
+                "accepted:board:copy:landing-slot-b",
+            ],
+            "the source is told a landing on every move: {log:?}",
+        );
+        // And the landing it was told LAST is the one that committed.
+        assert!(
+            log.contains(&"board:commit:landing-slot-b:copy:board-widget".to_owned()),
+            "{log:?}",
+        );
+    }
+
+    #[test]
+    fn r1735_a_refusing_target_and_bare_background_are_different_answers() {
+        // ★★ The hole the floor cannot fill. Measured there, a refusing
+        // widget and empty space both report the null object with the ignore
+        // action, so a source cannot tell "something is here and it said no"
+        // from "nothing is here". Here they are two arms, and only one of
+        // them carries a reason.
+        let mut router = InputRouter::new();
+        let (mut state, log) = r1734_state(COPY_ONLY);
+        router.update_paint_scene(r1734_paint(), &mut state);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 200.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        // `bin` declares this kind and its live state refuses…
+        router.cursor_moved(PointerId::MOUSE, 500.0, 200.0, &mut state);
+        // …`board#rim` is painted inside a declaring surface but is not a
+        // declared part — a structural refusal, derived, never asked…
+        router.cursor_moved(PointerId::MOUSE, 200.0, 350.0, &mut state);
+        // …`trash` declares the kind with no action in common…
+        router.cursor_moved(PointerId::MOUSE, 380.0, 200.0, &mut state);
+        // …and the palette itself declares nothing at all.
+        router.cursor_moved(PointerId::MOUSE, 50.0, 300.0, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        assert_eq!(
+            told(&read(&log)),
+            [
+                "refused:bin:declined",
+                "refused:board:part-not-accepted",
+                "refused:trash:no-common-action",
+                "nowhere",
+            ],
+            "four crossings, four distinct answers",
+        );
+    }
+
+    #[test]
+    fn r1735_a_refusal_reaches_the_source_as_a_sentence() {
+        // The reason travels, not just the fact. The floor's source-side
+        // notification has no room for one.
+        let mut router = InputRouter::new();
+        let (mut state, log) = r1734_state(COPY_ONLY);
+        router.update_paint_scene(r1734_paint(), &mut state);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 200.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 500.0, 200.0, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 380.0, 200.0, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        let why = said(&read(&log), "palette:why:");
+        assert!(
+            why.iter().any(|s| s.contains("every slot is taken")),
+            "the target's own words reach the source: {why:?}",
+        );
+        assert!(
+            why.iter().any(|s| s.contains("move") && s.contains("copy")),
+            "a derived refusal names what would have worked: {why:?}",
+        );
+    }
+
+    #[test]
+    fn r1735_the_release_tells_the_source_what_it_resolved_to() {
+        // The release is not a separate vocabulary: the source hears the same
+        // standing for "what happened" that it heard for "what would happen".
+        let mut router = InputRouter::new();
+        let (mut state, log) = r1734_state(COPY_ONLY);
+        router.update_paint_scene(r1734_paint(), &mut state);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 200.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 200.0, 60.0, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        let log = read(&log);
+        assert!(
+            log.contains(&"palette:release-told:accepted:board:copy:landing-slot-a".to_owned()),
+            "{log:?}",
+        );
+        // A release over nothing says so rather than repeating the last hover.
+        let mut router = InputRouter::new();
+        let (mut state, log) = r1734_state(COPY_ONLY);
+        router.update_paint_scene(r1734_paint(), &mut state);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 200.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 200.0, 60.0, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 300.0, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        let log = read(&log);
+        assert!(
+            log.contains(&"palette:release-told:nowhere".to_owned()),
+            "{log:?}",
+        );
+    }
+
+    #[test]
+    fn r1735_a_source_keeps_being_told_where_the_cursor_is() {
+        // Measured on the floor: a source's own pointer handler runs ZERO
+        // times while its drag is in flight, and no member of the drag object
+        // carries a point — so a self-hit-testing screen there has no live
+        // cursor at all. Here every move reaches the source with the absolute
+        // cursor beside the standing.
+        let mut router = InputRouter::new();
+        let (mut state, log) = r1734_state(COPY_ONLY);
+        router.update_paint_scene(r1734_paint(), &mut state);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 200.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        for x in [120.0, 200.0, 260.0, 340.0, 500.0] {
+            router.cursor_moved(PointerId::MOUSE, x, 200.0, &mut state);
+        }
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        assert_eq!(
+            said(&read(&log), "palette:cursor:"),
+            ["120:200", "200:200", "260:200", "340:200", "500:200"],
+            "one live cursor per move, for the whole gesture",
         );
     }
 
