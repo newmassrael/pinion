@@ -2861,6 +2861,107 @@ fn paint_cell_synthesis(
     false
 }
 
+/// R1748 — fill one run of same-coloured cells as a single rectangle.
+///
+/// `run` is the open run's `(first column, column after its last, colour)`, or
+/// `None` when there is nothing open — which is the ordinary state between
+/// runs and at the start of a row, so the caller flushes unconditionally
+/// rather than testing first.
+///
+/// `ground` is the colour pass 0 has already laid across the whole node rect,
+/// when painting it a second time is provably a no-op; a run in that colour is
+/// then not painted at all. See [`paint_cell_backgrounds`] for why that is an
+/// identity rather than an optimisation with a pixel cost.
+///
+/// The rectangle is the union of the run's cells and no wider: `end` is
+/// exclusive, and [`CellMetric::cell_to_px`] maps it even when it is one past
+/// the last column, which is exactly the run's right edge.
+fn fill_cell_run(
+    out: &mut VelloScene,
+    origin: Affine,
+    metric: CellMetric,
+    row: u16,
+    run: Option<(u16, u16, Color)>,
+    ground: Option<Color>,
+) {
+    let Some((start, end, colour)) = run else {
+        return;
+    };
+    if ground == Some(colour) {
+        return;
+    }
+    let (x0, y) = metric.cell_to_px(start, row);
+    let (x1, _) = metric.cell_to_px(end, row);
+    let rect = KurboRect::new(x0, y, x1, y + f64::from(metric.cell_h()));
+    out.fill(Fill::NonZero, origin, to_peniko(colour), None, &rect);
+}
+
+/// ★★★★★ R1748 — pass 1 of [`paint_text_grid`]: every cell's background, as
+/// **one fill per run of same-coloured neighbours**, and none at all for a run
+/// already standing on its own colour.
+///
+/// # What forced it
+///
+/// A consumer measured this tree at **4 fps** drawing two 100x50 panes and
+/// reported a frame of `draws 13,779 · paths 10,379 · glyph_runs 3,400`. This
+/// pass was 10,000 of those draws and every one of those paths: it filled one
+/// rectangle per cell, unconditionally, whatever the neighbours held and
+/// whatever was already underneath.
+///
+/// # Why both reductions are identities and not trade-offs
+///
+/// **Merging** emits the union of a run's cells. They abut exactly, so the
+/// covered pixels are the same pixels; if anything it removes the seam two
+/// abutting fills can leave between them.
+///
+/// **Skipping the ground** is sound because pass 0 has already filled the
+/// whole node rect in [`Palette::default_bg`] — this grid paints its own
+/// ground, so the colour underneath is known here rather than being a guess
+/// about a parent. ⚠ It is guarded on that colour being **opaque**: painting a
+/// translucent colour over itself composites twice and is a different pixel,
+/// so a terminal with a see-through background must keep paying for its cells.
+///
+/// A terminal screen is overwhelmingly its default background, so together
+/// these charge a row for the colour *changes* it actually has.
+fn paint_cell_backgrounds(
+    out: &mut VelloScene,
+    grid: &GridBuffer,
+    palette: &Palette,
+    metric: CellMetric,
+    origin: Affine,
+    extent: (u16, u16),
+) {
+    let (paint_cols, paint_rows) = extent;
+    let default_bg = palette.default_bg();
+    let ground = (default_bg.a == u8::MAX).then_some(default_bg);
+    for row in 0..paint_rows {
+        // The open run: the column it starts at, the column after its last,
+        // and the colour every cell in it resolved to. `None` between runs — a
+        // cell the buffer does not have breaks the run rather than extending
+        // it, which is what the old `continue` did one cell at a time.
+        let mut run: Option<(u16, u16, Color)> = None;
+        for col in 0..paint_cols {
+            let bg = grid.cell(col, row).map(|cell| {
+                let (_, bg_term) = effective_terms(cell);
+                palette.resolve(bg_term, ColorTarget::Background)
+            });
+            match (run, bg) {
+                // Same colour, still contiguous — widen.
+                (Some((start, end, colour)), Some(bg)) if colour == bg && end == col => {
+                    run = Some((start, col + 1, colour));
+                }
+                // A different colour, or a gap: close what was open and start
+                // again from this cell (or from nothing, for a missing cell).
+                (open, bg) => {
+                    fill_cell_run(out, origin, metric, row, open, ground);
+                    run = bg.map(|bg| (col, col + 1, bg));
+                }
+            }
+        }
+        fill_cell_run(out, origin, metric, row, run, ground);
+    }
+}
+
 /// R991 §5.41 §2 #6 — paint one retained [`Scene::TextGrid`] node: the
 /// cell-native terminal projection's GUI (Vello) glyph rasterisation.
 /// This is the deferred second half of the §5.41 cell-native axis —
@@ -2871,12 +2972,14 @@ fn paint_cell_synthesis(
 /// [`CellMetric`] (R968 ratify) and
 /// painted in **two grid-wide passes** — all backgrounds, then all glyphs:
 ///
-/// 1. **Background** — the cell's `bg` [`TermColor`],
-///    resolved through the node [`Palette`]
-///    ([`ColorTarget::Background`]), fills the whole cell. A
-///    [`CellWidth::Trailer`] carries the wide head's colours (R976), so
-///    filling every cell's own `bg` paints the head background across both
-///    columns with no special case.
+/// 1. **Background** — the cell's `bg` [`TermColor`], resolved through the
+///    node [`Palette`] ([`ColorTarget::Background`]), covers the whole cell.
+///    A [`CellWidth::Trailer`] carries the wide head's colours (R976), so
+///    resolving every cell's own `bg` paints the head background across both
+///    columns with no special case. ★ R1748 — *covers*, not *fills*: the
+///    pass emits one rectangle per RUN of same-coloured neighbours, and none
+///    at all for a run already standing on the ground pass 0 laid. Both are
+///    identities on the painted pixels; see [`paint_cell_backgrounds`].
 /// 2. **Glyph** — the grapheme `cluster` is shaped through the shared
 ///    [`LayoutCache`] (the same parley → [`vello::Scene::draw_glyphs`] path
 ///    [`paint_text`] uses — no bespoke rasteriser) and drawn in the
@@ -3119,18 +3222,14 @@ fn paint_text_grid(
     // effective fg / bg before resolution; a [`CellWidth::Trailer`] carries
     // the wide head's colours (R976), so filling each cell's own `bg` paints
     // the head background across both columns with no special case.
-    for row in 0..paint_rows {
-        for col in 0..paint_cols {
-            let Some(cell) = grid.cell(col, row) else {
-                continue;
-            };
-            let (_, bg_term) = effective_terms(cell);
-            let bg = palette.resolve(bg_term, ColorTarget::Background);
-            let (cx, cy) = metric.cell_to_px(col, row);
-            let rect = KurboRect::new(cx, cy, cx + cell_w, cy + cell_h);
-            out.fill(Fill::NonZero, origin, to_peniko(bg), None, &rect);
-        }
-    }
+    paint_cell_backgrounds(
+        out,
+        grid,
+        &palette,
+        metric,
+        origin,
+        (paint_cols, paint_rows),
+    );
     // Pass 2 — every cell's glyph + SGR decorations, painted on top of the
     // completed background layer. This is the draw-order that keeps an
     // overflowing wide head glyph (its natural ~1em advance spilling into the
@@ -5088,6 +5187,247 @@ mod tests {
             .root
             .expect("a painted scene has a root");
         (root, draw_work_of(&out))
+    }
+
+    /// Paint one scene with no profiler and hand back what it encoded.
+    fn work_of_scene(scene: &Scene) -> DrawWork {
+        let mut text_cache = LayoutCache::new();
+        let mut out = VelloScene::new();
+        to_vello(scene, &|_| None, &mut text_cache, &mut out);
+        draw_work_of(&out)
+    }
+
+    /// Wrap a finished cell buffer in a `TextGrid` node sized to hold it.
+    fn grid_node_scene(cols: u16, rows: u16, buffer: GridBuffer) -> Scene {
+        let metric = CellMetric::DEFAULT;
+        let mut node = TextGridNode::new(metric).with_cells(buffer);
+        node.rect = Rect::new(
+            0,
+            0,
+            u32::from(cols) * metric.cell_w(),
+            u32::from(rows) * metric.cell_h(),
+        );
+        Scene::TextGrid(node)
+    }
+
+    /// A `cols`x`rows` grid in one background, whose first `inked` cells of
+    /// row 0 carry a letter and whose every other cell is a blank.
+    fn grid_scene_bg(cols: u16, rows: u16, inked: u16, bg: TermColor) -> Scene {
+        let mut buffer = GridBuffer::new(cols, rows);
+        for row in 0..rows {
+            buffer = buffer.with_row(
+                row,
+                (0..cols).map(|col| {
+                    let cluster = if row == 0 && col < inked { "x" } else { " " };
+                    TermCell::new(cluster, TermColor::Default, bg)
+                }),
+            );
+        }
+        grid_node_scene(cols, rows, buffer)
+    }
+
+    /// The ordinary terminal case: every cell in the palette's own default
+    /// background, which pass 0 has already laid across the whole node.
+    fn grid_scene(cols: u16, rows: u16, inked: u16) -> Scene {
+        grid_scene_bg(cols, rows, inked, TermColor::Default)
+    }
+
+    /// ★★★★★ R1748 — **what one `Scene::TextGrid` costs a frame, as a count.**
+    ///
+    /// # What forced it
+    ///
+    /// A consumer measured this tree's renderer at **4 fps** drawing two
+    /// 100x50 panes and reported `draws 13,779 · paths 10,379 ·
+    /// path_segments 41,515 · glyph_runs 3,400`. It read the path count as
+    /// glyph outlines being re-encoded per frame and asked for a glyph
+    /// atlas. The arithmetic says otherwise — `41,515 / 10,379 = 4.00`, which
+    /// is a rectangle, and `10,379 + 3,400 = 13,779` exactly, so the frame's
+    /// draws are per-cell backgrounds plus per-cell glyph runs and nothing
+    /// else.
+    ///
+    /// **That reading was available to the consumer too, and it had the same
+    /// numbers.** What it did not have is this test: nothing in this
+    /// repository said what a `TextGrid`'s draws are *of*, so a correct
+    /// measurement supported a wrong conclusion. The optimisation is the next
+    /// round's; stating the cost is this one's, because an optimisation
+    /// nobody can count is a claim rather than a result.
+    ///
+    /// The population is the grid's own — every cell it paints — so a grid
+    /// that starts skipping or merging cells changes these numbers and must
+    /// change them *here*, deliberately.
+    /// ★★★★★ R1748 — **a uniform row costs ONE background path, whatever it
+    /// is wide.**
+    ///
+    /// The law this replaced was one path per cell, and it is what a consumer
+    /// measured at 4 fps: two 100x50 panes spent 10,000 of a frame's 13,779
+    /// draws, and every one of its paths, on backgrounds. Widening a grid
+    /// while its colours stay uniform now adds nothing at all, and that is the
+    /// statement — not "fewer", which any partial batching would also satisfy.
+    ///
+    /// ★ Differential, because a grid's frame also carries a small constant
+    /// (its clip and the chrome around it). Pinning that constant would make
+    /// this a test about the frame rather than about the per-run law.
+    #[test]
+    fn r1748_a_uniform_row_costs_one_background_path_whatever_its_width() {
+        const INKED: u16 = 3;
+        // Not the default background: that one is skipped outright, which the
+        // sibling below is about. This is the "one run" case.
+        let bg = TermColor::Indexed(4);
+
+        let narrow = work_of_scene(&grid_scene_bg(8, 4, INKED, bg));
+        let wide = work_of_scene(&grid_scene_bg(16, 4, INKED, bg));
+        let taller = work_of_scene(&grid_scene_bg(8, 8, INKED, bg));
+
+        assert_eq!(
+            wide.paths, narrow.paths,
+            "twice the columns in the same colour must cost no more paths"
+        );
+        assert_eq!(
+            wide.path_segments, narrow.path_segments,
+            "and no more segments — the run is one wider rectangle, not two"
+        );
+        // ★ And it is ONE per row, not zero: without this the assertions above
+        // are also satisfied by a pass that painted no backgrounds at all.
+        assert_eq!(
+            taller.paths - narrow.paths,
+            4,
+            "four more rows in a non-default colour are four more runs"
+        );
+        assert_eq!(
+            wide.glyph_runs, narrow.glyph_runs,
+            "the ink did not change, so the run count must not"
+        );
+    }
+
+    /// ★★★★★ R1748 — **a run already standing on its own colour is not
+    /// painted at all.**
+    ///
+    /// Pass 0 fills the whole node rect in [`Palette::default_bg`] before any
+    /// cell, so a default-background cell was painting that colour over itself
+    /// — and a terminal screen is overwhelmingly default background. Adding
+    /// rows of them now costs nothing, where the same rows in any other colour
+    /// cost one run each (the sibling above measures exactly that at 4).
+    ///
+    /// This is an identity, not a heuristic: the colour underneath is this
+    /// grid's own ground rather than a guess about a parent.
+    #[test]
+    fn r1748_a_default_background_run_is_not_painted_over_the_ground() {
+        const INKED: u16 = 3;
+
+        let short = work_of_scene(&grid_scene(8, 4, INKED));
+        let taller = work_of_scene(&grid_scene(8, 8, INKED));
+
+        assert_eq!(
+            taller.paths, short.paths,
+            "rows of default-background cells add no background paths"
+        );
+        assert_eq!(
+            taller.path_segments, short.path_segments,
+            "and no segments — nothing was emitted, not merely merged"
+        );
+    }
+
+    /// ★★★★★ R1748 — **and the merge is by COLOUR, so a row that changes
+    /// colour every cell still pays per cell.**
+    ///
+    /// Without this the sibling above is satisfied by a painter that merged
+    /// blindly — one rectangle per row in the first colour it saw — which
+    /// would be faster and wrong. Here every neighbouring pair differs, so the
+    /// run length is one and the cost returns to the per-cell figure: the
+    /// batching is an accounting change, never a pixel one.
+    #[test]
+    fn r1748_a_row_that_changes_colour_every_cell_pays_per_cell() {
+        const ROWS: u16 = 4;
+
+        let narrow = work_of_scene(&striped_grid_scene(8, ROWS));
+        let wide = work_of_scene(&striped_grid_scene(16, ROWS));
+        let added_cells = u32::from(16u16 - 8) * u32::from(ROWS);
+
+        assert_eq!(
+            wide.paths - narrow.paths,
+            added_cells,
+            "no two neighbours share a colour, so each added cell is its own \
+             run and its own path"
+        );
+        assert_eq!(
+            wide.path_segments - narrow.path_segments,
+            added_cells * 4,
+            "and each is a rectangle"
+        );
+    }
+
+    /// A `cols`x`rows` grid in which no two neighbouring cells share a
+    /// background, so no run is ever longer than one cell.
+    fn striped_grid_scene(cols: u16, rows: u16) -> Scene {
+        let mut buffer = GridBuffer::new(cols, rows);
+        for row in 0..rows {
+            buffer = buffer.with_row(
+                row,
+                (0..cols).map(|col| {
+                    // Two indexed entries that resolve to different colours,
+                    // neither of them the default; alternating them makes
+                    // every boundary a colour change and no run skippable.
+                    let bg = TermColor::Indexed(if (col + row) % 2 == 0 { 1 } else { 2 });
+                    TermCell::new(" ", TermColor::Default, bg)
+                }),
+            );
+        }
+        grid_node_scene(cols, rows, buffer)
+    }
+
+    /// ★★★★★ R1748 — **the background cost does not depend on the ink, and
+    /// glyphs do not become paths.**
+    ///
+    /// This is the test the consumer's report needed and did not have. Holding
+    /// the cells fixed at 8x4 and moving the ink 0 -> 3 -> 8 leaves `paths`
+    /// unmoved, which says the path stream is the BACKGROUNDS. Read the other
+    /// way, it says a glyph is not encoded as an outline path in this pipeline
+    /// — so a glyph atlas is not what a large `paths` is asking for, and the
+    /// blank cells are not free.
+    ///
+    /// ⚠ Measured rather than reasoned, and the reasoning had been wrong twice
+    /// before the measurement: first that `paths` could not include glyphs
+    /// (inferred from a segments-per-path ratio), then — when 8x4 with three
+    /// inked cells reported 35 rather than 32 — that the excess WAS the ink.
+    /// It is a constant. A fixture in which the ink count and the constant are
+    /// the same number cannot tell those apart, which is why the ink moves
+    /// three times here.
+    #[test]
+    fn r1748_the_background_count_does_not_depend_on_the_ink() {
+        const ROWS: u16 = 4;
+        const COLS: u16 = 8;
+
+        let works: Vec<(u16, DrawWork)> = [0, 3, 8]
+            .into_iter()
+            .map(|inked| (inked, work_of_scene(&grid_scene(COLS, ROWS, inked))))
+            .collect();
+
+        let (_, first) = &works[0];
+        for (inked, work) in &works {
+            assert_eq!(
+                work.paths, first.paths,
+                "{inked} inked cells must cost the same paths as none — a \
+                 glyph is not a path here"
+            );
+            assert_eq!(
+                work.path_segments, first.path_segments,
+                "{inked} inked cells must add no path segments either"
+            );
+            assert_eq!(
+                work.glyph_runs,
+                u32::from(*inked),
+                "one glyph run per inked cell, and none for a blank"
+            );
+            // The whole frame is those two terms. An identity rather than a
+            // third number, because it is the statement that a grid has no
+            // other source of draws — the thing the consumer could not check.
+            assert_eq!(
+                work.draws,
+                work.paths + work.glyph_runs,
+                "a grid's draws are its backgrounds plus its runs, and nothing \
+                 else"
+            );
+        }
     }
 
     #[test]
