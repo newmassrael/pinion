@@ -17,6 +17,50 @@ use sce_rust_runtime::{Engine, StatePolicy};
 
 use crate::intent::Intent;
 
+/// ★★★★★ R1739 — what driving an event through a statechart did.
+///
+/// Two arms because there are two outcomes and the difference is not visible in
+/// the configuration: an event some active state answered, and an event the
+/// machine discarded because no transition in any active state matched it. A
+/// self transition, a targetless internal transition and a discard all leave
+/// the state alone, so this is not a fact a caller can recover by looking.
+///
+/// **Deliberately not `#[must_use]`.** 507 call sites in this workspace drive a
+/// statechart and almost all of them are the widget acting on its own gesture,
+/// where the answer is already known from the gesture that produced it. The
+/// value exists for the callers that are *relaying somebody else's event* — the
+/// wire above all — and forcing 500 `let _ =` would be noise that teaches a
+/// reader to ignore exactly the thing worth reading.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Sent {
+    /// A transition in an active state matched the event.
+    Answered,
+    /// No transition in any active state matched it, so the machine discarded
+    /// it — which is what the clause requires and is why nothing was raised.
+    WentNowhere,
+}
+
+impl Sent {
+    /// Read the outcome out of the engine's discard counter, before and after.
+    ///
+    /// A counter difference rather than a flag on the event, because that is
+    /// the shape the engine publishes and re-deriving it here would be a second
+    /// account of one fact — the failure this workspace keeps finding.
+    fn from_discard_counts(before: u32, after: u32) -> Self {
+        if after > before {
+            Sent::WentNowhere
+        } else {
+            Sent::Answered
+        }
+    }
+
+    /// Whether the machine did anything with it.
+    #[must_use]
+    pub const fn answered(self) -> bool {
+        matches!(self, Sent::Answered)
+    }
+}
+
 /// Thin facade over [`Engine<P>`] that constructs, drives, and
 /// observes a generated SCXML state machine.
 ///
@@ -41,11 +85,43 @@ impl<P: StatePolicy> Widget<P> {
         Self { engine }
     }
 
-    /// Drive a `P::Event` through the engine. Pure forwarding to
-    /// [`Engine::process_event`]; placed on the facade so callers
-    /// never need to name the engine field.
-    pub fn send(&mut self, event: P::Event) {
+    /// Drive a `P::Event` through the engine, and say what the drive did.
+    ///
+    /// ★★★★★ R1739 — **it used to say nothing, and that was not a choice this
+    /// facade made.** The clause the engine implements requires an event no
+    /// transition matches to be *discarded*, and says nothing about telling
+    /// anybody; until the SCE revision this round adopts, the generated engines
+    /// had no accessor for it either, so "the machine answered me" and "the
+    /// machine threw it away" were the same `()`.
+    ///
+    /// They are not distinguishable from the outside for a good reason: a self
+    /// transition, a targetless internal transition and a discard all leave the
+    /// configuration alone, so a caller comparing [`state`](Self::state) before
+    /// and after cannot tell them apart either. The engine is the only thing
+    /// that knows, and now it can be asked.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use pinion_core::widgets::Sent;
+    /// use pinion_core::widgets::button::{Button, ButtonEvent, ButtonState};
+    ///
+    /// let mut button = Button::new();
+    /// assert_eq!(button.state(), ButtonState::Idle);
+    ///
+    /// // A targetless transition: the machine answers and stays where it is.
+    /// assert_eq!(button.send(ButtonEvent::KeyboardActivate), Sent::Answered);
+    /// assert_eq!(button.state(), ButtonState::Idle);
+    ///
+    /// // No transition out of `idle` matches this one, so it is discarded —
+    /// // and the state is the SAME state, which is why looking cannot tell.
+    /// assert_eq!(button.send(ButtonEvent::PointerUp), Sent::WentNowhere);
+    /// assert_eq!(button.state(), ButtonState::Idle);
+    /// ```
+    pub fn send(&mut self, event: P::Event) -> Sent {
+        let before = self.engine.discarded_external_events();
         self.engine.process_event(event);
+        Sent::from_discard_counts(before, self.engine.discarded_external_events())
     }
 
     /// Current SCXML state (the policy's `State` associated type).
@@ -368,5 +444,57 @@ mod tests {
         em.inner.state = 2;
         em.dispatch(1);
         assert!(!em.is_dirty(), "reverse transition must be silent");
+    }
+
+    // --- R1739: what the drive did, which the state cannot say ---------------
+
+    /// ★★★★★ The pair that makes this worth having: **one state, two
+    /// outcomes.**
+    ///
+    /// From `idle` a keyboard activation takes a TARGETLESS transition — the
+    /// machine answers it and stays where it is — while a pointer-up matches no
+    /// transition out of `idle` at all and is discarded. Both leave
+    /// [`Widget::state`] reading `Idle`, so a caller comparing the state before
+    /// and after gets the same answer for a handled event and a thrown-away
+    /// one. Before the SCE revision this round adopts, the generated engine had
+    /// no accessor that separated them either.
+    #[test]
+    fn r1739_a_targetless_answer_and_a_discard_leave_the_same_state() {
+        use crate::widgets::button::{Button, ButtonEvent, ButtonState};
+
+        let mut answered = Button::new();
+        assert_eq!(answered.state(), ButtonState::Idle);
+        let verdict = answered.send(ButtonEvent::KeyboardActivate);
+
+        let mut discarded = Button::new();
+        assert_eq!(discarded.state(), ButtonState::Idle);
+        let nowhere = discarded.send(ButtonEvent::PointerUp);
+
+        assert_eq!(
+            answered.state(),
+            discarded.state(),
+            "the two drives are indistinguishable by state, which is the point"
+        );
+        assert_eq!(verdict, Sent::Answered);
+        assert_eq!(nowhere, Sent::WentNowhere);
+        assert!(verdict.answered() && !nowhere.answered());
+    }
+
+    /// A drive that moves the configuration is answered, and the count does not
+    /// drift across a run of them.
+    #[test]
+    fn r1739_a_drive_that_moves_the_machine_is_answered_every_time() {
+        use crate::widgets::button::{Button, ButtonEvent, ButtonState};
+
+        let mut button = Button::new();
+        assert_eq!(button.send(ButtonEvent::PointerEnter), Sent::Answered);
+        assert_eq!(button.state(), ButtonState::Hover);
+        assert_eq!(button.send(ButtonEvent::PointerDown), Sent::Answered);
+        assert_eq!(button.send(ButtonEvent::PointerUp), Sent::Answered);
+        assert_eq!(button.state(), ButtonState::Hover);
+        // And one that goes nowhere in between does not make the next one lie.
+        assert_eq!(button.send(ButtonEvent::Enable), Sent::WentNowhere);
+        assert_eq!(button.send(ButtonEvent::PointerLeave), Sent::Answered);
+        assert_eq!(button.state(), ButtonState::Idle);
     }
 }

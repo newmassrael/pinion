@@ -72,4 +72,4 @@ pub mod wheel;
 pub mod widget;
 pub(crate) mod wire;
 
-pub use widget::{IntentEmitter, Widget, WidgetTransition};
+pub use widget::{IntentEmitter, Sent, Widget, WidgetTransition};

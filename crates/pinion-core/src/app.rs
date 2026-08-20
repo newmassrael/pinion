@@ -34,6 +34,7 @@ mod sm {
 use sce_rust_runtime::{Engine, StatePolicy};
 
 use crate::topology;
+use crate::widgets::Sent;
 
 use sm::AppPolicy;
 pub use sm::{AppEvent, AppState};
@@ -56,8 +57,21 @@ impl App {
         Self { engine }
     }
 
-    pub fn send(&mut self, event: AppEvent) {
+    /// Drive a topology event through the application machine, and say what the
+    /// drive did.
+    ///
+    /// ★ R1739 — the same repair as the widget facade's, one level up. A window
+    /// event this root configuration does not answer was discarded silently,
+    /// and a host cannot tell that from a handled one by looking at
+    /// [`state`](Self::state), because a discard leaves the configuration alone.
+    pub fn send(&mut self, event: AppEvent) -> Sent {
+        let before = self.engine.discarded_external_events();
         self.engine.process_event(event);
+        if self.engine.discarded_external_events() > before {
+            Sent::WentNowhere
+        } else {
+            Sent::Answered
+        }
     }
 
     #[must_use]
