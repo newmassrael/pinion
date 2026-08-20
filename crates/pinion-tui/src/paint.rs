@@ -51,7 +51,7 @@
 use crate::text_layout::{CellTextLayout, GapPad, grapheme_cells};
 use pinion_core::scene::{BoxNode, ContainerNode, Rect, Scene, TextGridNode, TextNode};
 use pinion_core::style::{BoxStyle, Color, FontStyle, FontWeight, TextStyle};
-use pinion_core::term_grid::{CellAttrs, CellWidth, TermColor};
+use pinion_core::term_grid::{CellAttrs, CellWidth, TermColor, effective_terms};
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect as TuiRect;
 use ratatui::style::{Color as TuiColor, Modifier, Style};
@@ -983,7 +983,14 @@ fn paint_text_grid_inner(
                     // resolved here (into `eff_bg`) rather than left to the
                     // REVERSED modifier, so the explicit colours land verbatim.
                     Some(cc) => {
-                        let eff_bg = if cell.attrs.reverse { cell.fg } else { cell.bg };
+                        // R1749 — the swap comes from `term_grid`, not from a
+                        // second spelling of it here. Measured at R1749: this
+                        // line and the Vello adapter's `effective_terms` were
+                        // the same rule written twice, and this one was the
+                        // half that only computed a background — so an
+                        // attribute that also swapped would have been honoured
+                        // by one renderer and silently ignored by this one.
+                        let (_, eff_bg) = effective_terms(cell);
                         bg = TermColor::Rgb(cc);
                         fg = eff_bg;
                         modifier.remove(Modifier::REVERSED);

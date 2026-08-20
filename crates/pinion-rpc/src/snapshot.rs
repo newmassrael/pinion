@@ -47,9 +47,10 @@
 use pinion_core::external::IntrospectValue;
 use pinion_core::scene::Rect;
 use pinion_core::style::{BoxStyle, ImageStyle, PathStyle, TextStyle};
+use pinion_core::term_grid::{for_each_row_run, style_key};
 use pinion_core::{
-    CellAttrs, CellWidth, ColorTarget, CursorShape, GridBuffer, GridCursor, HyperlinkId, Palette,
-    Scene, ScreenKind, TermColor,
+    CellAttrs, CellWidth, ColorTarget, CursorShape, GridBuffer, GridCursor, Palette, Scene,
+    ScreenKind, TermColor,
 };
 
 use crate::path::{self, PathError};
@@ -700,27 +701,25 @@ fn snapshot_root(scene: &Scene) -> SnapshotNode {
     }
 }
 
-/// R973 §5.41 — the run-coalescing key: the tuple of cell facts that must
-/// all match for two adjacent cells to fold into one [`GridStyleRun`]. A
-/// change in any component starts a new run — `(fg, bg)` colours (R973),
-/// `attrs` (R974), `width` role (R976), the SGR-58 `underline_color` (R1399),
-/// and the OSC-8 `hyperlink` index (R1403). The hyperlink component is the
-/// *index* (not the resolved URI): two cells at the same table entry are the
-/// same link instance.
-type RunKey = (
-    TermColor,
-    TermColor,
-    CellAttrs,
-    CellWidth,
-    Option<TermColor>,
-    Option<HyperlinkId>,
-);
+// R1749 — the run key moved to `pinion_core::term_grid::CellStyleKey`, and the
+// fold that used it to `for_each_row_run`.
+//
+// The tuple that stood here was one of THREE ideas of "these adjacent cells
+// are the same" over one `GridBuffer`: this one, the Vello painter's background
+// colour, and (since R1749) its ink. Nothing related them, so the run
+// boundaries an agent reads off this wire and the rectangles actually painted
+// could differ with no statement anywhere that they may. They now share one
+// fold and their keys sit together, where `term_grid`'s
+// `a_narrow_key_only_ever_splits_where_a_wide_one_does` asserts the relation:
+// every narrower key's run is a merge of whole runs of this one.
 
 /// R973 §5.41 — project a [`GridBuffer`] into per-row snapshots, resolving
 /// each cell's colours through `palette` (the R969 "resolve at paint
 /// time" contract — a snapshot is a paint-time readback). Consecutive
-/// cells with an identical [`RunKey`] collapse into one [`GridStyleRun`]
-/// (run-length style compression). A [`CellWidth::Trailer`] carries the
+/// cells whose `pinion_core::term_grid::style_key` agrees collapse into one
+/// [`GridStyleRun`] (run-length style compression) — R1749: through the fold
+/// the two paint passes share, so this readback's boundaries and the painted
+/// ones cannot drift apart. A [`CellWidth::Trailer`] carries the
 /// empty cluster, so a wide cluster contributes its glyph to `text` exactly
 /// once even across its two columns (R976). An empty buffer yields no rows.
 fn text_grid_rows(buffer: &GridBuffer, palette: &Palette) -> Vec<GridRowSnapshot> {
@@ -735,47 +734,42 @@ fn text_grid_rows(buffer: &GridBuffer, palette: &Palette) -> Vec<GridRowSnapshot
             // adjacent cells coalesce). The index, not the resolved uri, is
             // the key: two cells at the same table entry are the same link
             // instance.
-            let mut prev: Option<RunKey> = None;
             for col in 0..buffer.cols() {
                 // Every coordinate in `0..cols × 0..rows` is in bounds.
                 let cell = buffer.cell(col, row).expect("cell within buffer bounds");
                 text.push_str(&cell.cluster);
-                let style: RunKey = (
-                    cell.fg,
-                    cell.bg,
-                    cell.attrs,
-                    cell.width,
-                    cell.underline_color,
-                    cell.hyperlink,
-                );
-                match runs.last_mut() {
-                    Some(run) if prev == Some(style) => run.len += 1,
-                    _ => runs.push(GridStyleRun {
-                        start: col,
-                        len: 1,
-                        fg: term_color_snapshot(cell.fg, ColorTarget::Foreground, palette),
-                        bg: term_color_snapshot(cell.bg, ColorTarget::Background, palette),
-                        attrs: cell.attrs,
-                        // The underline colour resolves as a foreground slot
-                        // (it tints ink, not a background fill).
-                        underline_color: cell
-                            .underline_color
-                            .map(|c| term_color_snapshot(c, ColorTarget::Foreground, palette)),
-                        // R1403 — resolve the cell's index through the buffer's
-                        // interning table (a snapshot is a paint-time readback,
-                        // like colour resolution).
-                        hyperlink: cell
-                            .hyperlink
-                            .and_then(|id| buffer.hyperlink(id))
-                            .map(|link| HyperlinkSnapshot {
-                                uri: link.uri.clone(),
-                                id: link.id.clone(),
-                            }),
-                        width: cell_width_wire(cell.width),
-                    }),
-                }
-                prev = Some(style);
             }
+            // R1749 — the fold is `term_grid`'s, shared with the two paint
+            // passes; the row's `text` is a separate walk because it is a
+            // per-cell concatenation rather than a per-run fact.
+            for_each_row_run(buffer, row, buffer.cols(), style_key, |start, end, _| {
+                let cell = buffer
+                    .cell(start, row)
+                    .expect("a run starts on a cell the buffer has");
+                runs.push(GridStyleRun {
+                    start,
+                    len: end - start,
+                    fg: term_color_snapshot(cell.fg, ColorTarget::Foreground, palette),
+                    bg: term_color_snapshot(cell.bg, ColorTarget::Background, palette),
+                    attrs: cell.attrs,
+                    // The underline colour resolves as a foreground slot
+                    // (it tints ink, not a background fill).
+                    underline_color: cell
+                        .underline_color
+                        .map(|c| term_color_snapshot(c, ColorTarget::Foreground, palette)),
+                    // R1403 — resolve the cell's index through the buffer's
+                    // interning table (a snapshot is a paint-time readback,
+                    // like colour resolution).
+                    hyperlink: cell
+                        .hyperlink
+                        .and_then(|id| buffer.hyperlink(id))
+                        .map(|link| HyperlinkSnapshot {
+                            uri: link.uri.clone(),
+                            id: link.id.clone(),
+                        }),
+                    width: cell_width_wire(cell.width),
+                });
+            });
             // R978 — the row's monotonic damage generation (0 if untouched).
             let generation = buffer.row_generation(row).unwrap_or(0);
             GridRowSnapshot {

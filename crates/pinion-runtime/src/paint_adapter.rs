@@ -55,16 +55,21 @@ use pinion_core::style::{
     GenericFontFamily, Gradient, GradientKind, LineHeight, StrokeCap, TextOverflow, TextStyle,
 };
 use pinion_core::term_grid::{
-    CellWidth, ColorTarget, CursorShape, GridBuffer, Palette, TermCell, TermColor, UnderlineStyle,
+    CellInkKey, CellWidth, ColorTarget, CursorShape, GridBuffer, Palette, TermCell, TermColor,
+    UnderlineStyle, background_key, effective_terms, for_each_row_run, ink_key,
 };
 use pinion_text::LayoutCache;
 use pinion_text::PositionedRun;
 use vello::Glyph;
 use vello::Scene as VelloScene;
+// `parley::FontData = peniko::FontData` (see the module note): derives
+// `Clone + PartialEq` over an `Arc`-backed blob, so a batch can hold one and
+// compare faces without copying a font file.
 use vello::kurbo::{
     Affine, BezPath, Cap as KurboCap, Line, PathEl, Point as KurboPoint, Rect as KurboRect,
     RoundedRect as KurboRoundedRect, Stroke,
 };
+use vello::peniko::FontData;
 use vello::peniko::{
     Blob, Brush as PenikoBrush, Color as PenikoColor, Extend as PenikoExtend, Fill,
     Gradient as PenikoGradient, ImageAlphaType, ImageBrush, ImageData, ImageFormat, ImageQuality,
@@ -2182,19 +2187,17 @@ fn draw_cell_glyph(
     }
 }
 
-/// R994.1 §5.41 — the cell's effective `(fg, bg)` terms after SGR 7 reverse,
-/// the swap applied *before* palette resolution. The renderer owns the swap
-/// (a `scene/snapshot` reports the *stored* flag + colours, leaving it to "a
-/// renderer" per the [`CellAttrs`](pinion_core::term_grid::CellAttrs)
-/// contract), so this is a Vello-local SSOT shared by the cell pass and the
-/// cursor overlay — not a core method.
-fn effective_terms(cell: &TermCell) -> (TermColor, TermColor) {
-    if cell.attrs.reverse {
-        (cell.bg, cell.fg)
-    } else {
-        (cell.fg, cell.bg)
-    }
-}
+// R1749 — the SGR-7 swap moved to `pinion_core::term_grid::effective_terms`.
+//
+// The doc that stood here argued it belonged to the renderer, because a
+// `scene/snapshot` reports the stored flag and leaves the swap to "a renderer"
+// per the `CellAttrs` contract. That is still true about the SNAPSHOT and was
+// never true about the number of renderers: measured at R1749, the swap was
+// written twice — here, and inline in the terminal backend as a bg-only
+// half-copy (`pinion-tui`'s `eff_bg`). Two spellings of one rule, one of which
+// would silently keep the old behaviour if a future attribute also swapped.
+// It is a property of a cell, so it now lives beside the cell, and the fold
+// keys that need it live there too.
 
 /// R994.1 §5.41 — whether a cell carries a drawable glyph cluster: a
 /// [`CellWidth::Trailer`] has none (the wide head draws it) and an
@@ -2861,6 +2864,72 @@ fn paint_cell_synthesis(
     false
 }
 
+/// ★★★★★ R1749 — the glyphs of one ink run, held until the face changes or
+/// the run ends.
+///
+/// # Why an accumulator rather than a draw per cell
+///
+/// A cell's glyphs were emitted as their own `draw_glyphs` call: one per inked
+/// cell, 3,400 of them in the frame a consumer measured at 4 fps. They can be
+/// one call, because a terminal places glyphs at CELL ORIGINS and a batch does
+/// not change that — each glyph carries its own `x` / `y`, offset here by the
+/// cell's own position.
+///
+/// ⚠ **The shaper is never asked to lay out more than one cell.** Handing it a
+/// run's text instead would let kerning and ligatures move glyphs across cell
+/// boundaries, which is a different picture, and in a monospaced grid a wrong
+/// one. Shaping stays per-cluster and cached exactly as before; only the
+/// EMISSION is pooled.
+///
+/// The face is part of the pool's identity because a fallback face is chosen
+/// per cluster: a run whose text needs two faces flushes between them rather
+/// than drawing one face's ids against the other's tables.
+#[derive(Default)]
+struct GlyphBatch {
+    face: Option<(FontData, f32)>,
+    glyphs: Vec<Glyph>,
+}
+
+impl GlyphBatch {
+    /// Add one shaped cluster's glyphs, displaced to its cell.
+    fn add(&mut self, out: &mut VelloScene, brush: BrushAt, run: &PositionedRun, dx: f32, dy: f32) {
+        let face = (run.font.clone(), run.font_size);
+        if self.face.as_ref() != Some(&face) {
+            self.flush(out, brush);
+            self.face = Some(face);
+        }
+        self.glyphs.extend(run.glyphs.iter().map(|g| Glyph {
+            id: g.id,
+            x: g.x + dx,
+            y: g.y + dy,
+        }));
+    }
+
+    /// Emit what is pooled, if anything. Idempotent, so a caller can flush
+    /// before an unrelated draw without checking whether it needs to.
+    fn flush(&mut self, out: &mut VelloScene, brush: BrushAt) {
+        let Some((font, size)) = self.face.take() else {
+            return;
+        };
+        if self.glyphs.is_empty() {
+            return;
+        }
+        out.draw_glyphs(&font)
+            .transform(brush.transform)
+            .font_size(size)
+            .brush(brush.colour)
+            .draw(Fill::NonZero, self.glyphs.drain(..));
+    }
+}
+
+/// R1749 — where a batch draws and in what colour. One parameter rather than
+/// two threaded through every call, and constant for a whole ink run.
+#[derive(Clone, Copy)]
+struct BrushAt {
+    transform: Affine,
+    colour: PenikoColor,
+}
+
 /// R1748 — fill one run of same-coloured cells as a single rectangle.
 ///
 /// `run` is the open run's `(first column, column after its last, colour)`, or
@@ -2894,6 +2963,139 @@ fn fill_cell_run(
     let (x1, _) = metric.cell_to_px(end, row);
     let rect = KurboRect::new(x0, y, x1, y + f64::from(metric.cell_h()));
     out.fill(Fill::NonZero, origin, to_peniko(colour), None, &rect);
+}
+
+/// R1749 — what one row's ink pass needs that does not vary within it.
+///
+/// A parameter object rather than eight threaded arguments: the painter's
+/// helpers are held to seven, and every field here is constant for the whole
+/// grid except the cache, which is threaded because shaping mutates it.
+struct InkRun<'a> {
+    grid: &'a GridBuffer,
+    cache: &'a mut LayoutCache,
+    style: &'a TextStyle,
+    metric: CellMetric,
+    origin: Affine,
+    rule_w: f64,
+}
+
+/// ★★★★★ R1749 — paint one ink run: its glyphs pooled into as few
+/// `draw_glyphs` calls as its faces allow, then its rules as single spans.
+///
+/// # The order this preserves, stated because it is the whole difficulty
+///
+/// Per cell the old pass drew: synthesised geometry *or* a glyph, then that
+/// cell's underline, then its strikethrough. Within a run this now draws: the
+/// glyphs and any synthesised geometry in column order, then the run's
+/// underline, then its strikethrough. For one cell that is the same order. For
+/// two cells it differs only where one cell's ink overlaps the other's rule,
+/// which needs a glyph to overflow its cell — the wide-head case, and the case
+/// the pixel tests pin.
+///
+/// ⚠ A synthesised cell FLUSHES the pool before drawing, because its geometry
+/// is a fill and it used to be drawn before the following cell's glyph. Cheap
+/// in practice: the flush only happens for a cell whose cluster is a block,
+/// shade or box-drawing character, and the gate on that is
+/// [`synthesizable_char`] — the same first question [`paint_cell_synthesis`]
+/// asks, so a cell it would decline never costs a flush.
+fn paint_ink_run(
+    out: &mut VelloScene,
+    ink: &mut InkRun<'_>,
+    row: u16,
+    span: (u16, u16),
+    key: CellInkKey,
+) {
+    let (start, end) = span;
+    let (fg, bold, italic, underline, ul_colour, strikethrough) = key;
+    let fg_brush = to_peniko(fg);
+    let brush = BrushAt {
+        transform: ink.origin,
+        colour: fg_brush,
+    };
+    let cell_w = f64::from(ink.metric.cell_w());
+    let cell_h = f64::from(ink.metric.cell_h());
+    // SGR 1 bold / SGR 3 italic pick the weight / slant, and they are part of
+    // the run's key, so the face is resolved once for the run rather than per
+    // cell. Distinct `Layout` cache entries, so the colour-independent glyph
+    // cache stays intact — the brush is still applied at draw time.
+    let styled = if bold || italic {
+        let mut s = ink.style.clone();
+        if bold {
+            s.font_weight = FontWeight::BOLD;
+        }
+        if italic {
+            s.font_style = FontStyle::Italic;
+        }
+        s
+    } else {
+        ink.style.clone()
+    };
+    let mut batch = GlyphBatch::default();
+    for col in start..end {
+        let Some(cell) = ink.grid.cell(col, row) else {
+            continue;
+        };
+        let (cx, cy) = ink.metric.cell_to_px(col, row);
+        // R1178/R1179/R1180 §5.41 — a synthesised cell graphic (solid block,
+        // shade, or box-drawing) paints as cell-exact geometry in the effective
+        // foreground instead of a font glyph, so block / box art tiles its
+        // cells gap-free (the fitted glyph's bearing margin left the inter-cell
+        // gaps R1002 pins).
+        if synthesizable_char(&cell.cluster).is_some() {
+            batch.flush(out, brush);
+            let cell_rect = KurboRect::new(cx, cy, cx + cell_w, cy + cell_h);
+            if paint_cell_synthesis(out, ink.origin, fg, &cell.cluster, cell_rect) {
+                continue;
+            }
+        }
+        // A Trailer carries no independent glyph (R976); an all-whitespace
+        // cluster has nothing to ink — but both still take part in this run,
+        // because both still show its rules.
+        if !has_glyph_cluster(cell) {
+            continue;
+        }
+        #[allow(clippy::cast_possible_truncation)]
+        let (dx, dy) = (cx as f32, cy as f32);
+        // The cell's ink colour comes from the terminal palette (SGR + reverse
+        // + dim, resolved into this run's key), not from the shaped style, so a
+        // run's own `brush` is ignored — see [`PositionedRun::brush`].
+        for shaped in ink.cache.positioned_runs(&cell.cluster, &styled, &[], None) {
+            batch.add(out, brush, shaped, dx, dy);
+        }
+    }
+    batch.flush(out, brush);
+    // The rules span the whole run rather than each cell, which is what makes
+    // adjacent attributed cells one continuous rule instead of several that
+    // abut. R1399 — the SGR 4:x style (single / double / curly / dotted /
+    // dashed) is drawn in its own SGR-58 colour when set, else in the
+    // (dim-attenuated) effective foreground, so a plain underline still fades
+    // with `dim`.
+    let (x0, y) = ink.metric.cell_to_px(start, row);
+    let (x1, _) = ink.metric.cell_to_px(end, row);
+    if underline.is_on() {
+        let ul_brush = ul_colour.map_or(fg_brush, to_peniko);
+        paint_underline(
+            out,
+            ink.origin,
+            ul_brush,
+            x0,
+            x1,
+            y + cell_h,
+            ink.rule_w,
+            underline,
+        );
+    }
+    if strikethrough {
+        stroke_hrule(
+            out,
+            ink.origin,
+            fg_brush,
+            x0,
+            x1,
+            y + cell_h * 0.5,
+            ink.rule_w,
+        );
+    }
 }
 
 /// ★★★★★ R1748 — pass 1 of [`paint_text_grid`]: every cell's background, as
@@ -2935,30 +3137,19 @@ fn paint_cell_backgrounds(
     let default_bg = palette.default_bg();
     let ground = (default_bg.a == u8::MAX).then_some(default_bg);
     for row in 0..paint_rows {
-        // The open run: the column it starts at, the column after its last,
-        // and the colour every cell in it resolved to. `None` between runs — a
-        // cell the buffer does not have breaks the run rather than extending
-        // it, which is what the old `continue` did one cell at a time.
-        let mut run: Option<(u16, u16, Color)> = None;
-        for col in 0..paint_cols {
-            let bg = grid.cell(col, row).map(|cell| {
-                let (_, bg_term) = effective_terms(cell);
-                palette.resolve(bg_term, ColorTarget::Background)
-            });
-            match (run, bg) {
-                // Same colour, still contiguous — widen.
-                (Some((start, end, colour)), Some(bg)) if colour == bg && end == col => {
-                    run = Some((start, col + 1, colour));
-                }
-                // A different colour, or a gap: close what was open and start
-                // again from this cell (or from nothing, for a missing cell).
-                (open, bg) => {
-                    fill_cell_run(out, origin, metric, row, open, ground);
-                    run = bg.map(|bg| (col, col + 1, bg));
-                }
-            }
-        }
-        fill_cell_run(out, origin, metric, row, run, ground);
+        // R1749 — the fold is `term_grid`'s, and what makes this pass its own
+        // is only the KEY it folds on. The loop that used to be here is now
+        // shared with the snapshot readback and the glyph pass, so the three
+        // cannot drift apart about which neighbouring cells are "the same".
+        for_each_row_run(
+            grid,
+            row,
+            paint_cols,
+            |cell| background_key(cell, palette),
+            |start, end, colour| {
+                fill_cell_run(out, origin, metric, row, Some((start, end, colour)), ground);
+            },
+        );
     }
 }
 
@@ -2970,7 +3161,7 @@ fn paint_cell_backgrounds(
 ///
 /// Cells are placed by the node-local
 /// [`CellMetric`] (R968 ratify) and
-/// painted in **two grid-wide passes** — all backgrounds, then all glyphs:
+/// painted in **two grid-wide passes** — all backgrounds, then all ink:
 ///
 /// 1. **Background** — the cell's `bg` [`TermColor`], resolved through the
 ///    node [`Palette`] ([`ColorTarget::Background`]), covers the whole cell.
@@ -2980,12 +3171,19 @@ fn paint_cell_backgrounds(
 ///    pass emits one rectangle per RUN of same-coloured neighbours, and none
 ///    at all for a run already standing on the ground pass 0 laid. Both are
 ///    identities on the painted pixels; see [`paint_cell_backgrounds`].
-/// 2. **Glyph** — the grapheme `cluster` is shaped through the shared
+/// 2. **Ink** — the grapheme `cluster` is shaped through the shared
 ///    [`LayoutCache`] (the same parley → [`vello::Scene::draw_glyphs`] path
 ///    [`paint_text`] uses — no bespoke rasteriser) and drawn in the
 ///    resolved `fg` colour at the cell origin. The brush is applied at draw
 ///    time so the cache key stays colour-independent (one `Layout` per
-///    distinct cluster, reused across colours).
+///    distinct cluster, reused across colours). ★ R1749 — the pass is the
+///    cells' INK rather than their glyphs, and it is folded into runs: a run
+///    of cells sharing a brush, a face and a set of rules emits its glyphs as
+///    one pooled `draw_glyphs` and then its underline and strikethrough as
+///    single spans. Glyphs and rules fold TOGETHER because batching only the
+///    glyphs would reorder them against the rules; see [`paint_ink_run`].
+///    Shaping is still per-cluster and cached — only the emission is pooled,
+///    so no kerning or ligature can cross a cell boundary.
 ///
 /// R1013 §5.41 — the two passes are *grid-wide*, not interleaved per cell.
 /// A wide head's glyph renders at its natural ~1em advance and overflows into
@@ -3196,7 +3394,9 @@ fn paint_text_grid(
     // the "sub-grid margin" R1028's fill is responsible for.
     let paint_cols = grid.cols().min(n.cols());
     let paint_rows = grid.rows().min(n.rows());
-    let cell_w = f64::from(metric.cell_w());
+    // R1749 — the cell WIDTH is no longer needed here: every rectangle this
+    // painter draws now spans a run rather than a cell, so its width is
+    // derived from the run's end column inside the two run helpers.
     let cell_h = f64::from(metric.cell_h());
     // Glyphs paint in the grid-local frame translated to the node's
     // layout-resolved origin, composed with the inherited transform (e.g.
@@ -3230,81 +3430,38 @@ fn paint_text_grid(
         origin,
         (paint_cols, paint_rows),
     );
-    // Pass 2 — every cell's glyph + SGR decorations, painted on top of the
+    // Pass 2 — the cells' INK: glyphs and the SGR rules, painted on top of the
     // completed background layer. This is the draw-order that keeps an
     // overflowing wide head glyph (its natural ~1em advance spilling into the
-    // trailer column) visible: it now lands over the trailer background
-    // instead of under it.
+    // trailer column) visible: it lands over the trailer background instead of
+    // under it.
+    //
+    // ★★★★★ R1749 — folded into RUNS, and glyphs and rules fold TOGETHER.
+    // Batching the glyphs alone would reorder the frame: a cell's rules are
+    // stroked between its own glyph and the next cell's, so a pooled run of
+    // glyphs would land wholly under or wholly over rules it used to
+    // interleave with, and where a glyph overflows its cell that is a
+    // different pixel. Folding both on one key keeps the per-cell order at run
+    // granularity — and a run's rule is now ONE span, which is what this
+    // painter already wanted in words: adjacent attributed cells are meant to
+    // form one continuous rule, and abutting per-cell strokes were an
+    // approximation of that.
+    let mut ink = InkRun {
+        grid,
+        cache,
+        style: &style,
+        metric,
+        origin,
+        rule_w,
+    };
     for row in 0..paint_rows {
-        for col in 0..paint_cols {
-            let Some(cell) = grid.cell(col, row) else {
-                continue;
-            };
-            // SGR 8 hidden (conceal): the cell shows only its background —
-            // no glyph, no decoration.
-            if cell.attrs.hidden {
-                continue;
-            }
-            // SGR 7 reverse: swap the effective fg / bg before palette
-            // resolution. The effective foreground for this cell's ink (glyph
-            // + decorations): palette-resolved, then SGR 2 dim attenuates the
-            // alpha so the ink blends toward the background.
-            let (fg_term, _) = effective_terms(cell);
-            let mut fg = palette.resolve(fg_term, ColorTarget::Foreground);
-            if cell.attrs.dim {
-                // Half the alpha ~ the common terminal "faint" intensity.
-                fg = fg.with_alpha(fg.a / 2);
-            }
-            let fg_brush = to_peniko(fg);
-            let (cx, cy) = metric.cell_to_px(col, row);
-            // Glyph, unless suppressed. A Trailer carries no independent glyph
-            // (R976); an all-whitespace cluster has nothing to ink. SGR 1 bold
-            // / SGR 3 italic pick the weight / slant — distinct `Layout` cache
-            // entries, so the colour-independent glyph cache stays intact (the
-            // brush is still applied at draw time).
-            // R1178/R1179 §5.41 — a synthesised cell graphic (solid block,
-            // shade, or R1180 box-drawing) paints as cell-exact geometry in the
-            // effective foreground instead of a font glyph, so block / box art
-            // tiles its cells gap-free (the fitted glyph's bearing margin left
-            // the inter-cell gaps R1002 pins). Everything else falls through to
-            // the glyph path unchanged.
-            let cell_rect = KurboRect::new(cx, cy, cx + cell_w, cy + cell_h);
-            if paint_cell_synthesis(out, origin, fg, &cell.cluster, cell_rect) {
-                // synthesised geometry — no glyph
-            } else if has_glyph_cluster(cell) {
-                let glyph_transform = origin * Affine::translate((cx, cy));
-                draw_cell_glyph(out, cache, &style, cell, glyph_transform, fg_brush);
-            }
-            // Underline (R1399: the SGR 4:x style — single / double / curly /
-            // dotted / dashed — drawn in its own SGR-58 colour when set, else
-            // the effective foreground) + strikethrough rules spanning the
-            // full cell (so adjacent attributed cells, and a wide head +
-            // trailer, form one continuous rule; a blank cell still shows its
-            // rule).
-            if cell.attrs.underline.is_on() {
-                // An explicit underline colour (SGR 58) tints the rule at full
-                // intensity; the SGR-59 default follows the (dim-attenuated)
-                // effective foreground so a plain underline still fades with
-                // `dim`.
-                let ul_brush = cell.underline_color.map_or(fg_brush, |uc| {
-                    to_peniko(palette.resolve(uc, ColorTarget::Foreground))
-                });
-                paint_underline(
-                    out,
-                    origin,
-                    ul_brush,
-                    cx,
-                    cx + cell_w,
-                    cy + cell_h,
-                    rule_w,
-                    cell.attrs.underline,
-                );
-            }
-            if cell.attrs.strikethrough {
-                let y = cy + cell_h * 0.5;
-                stroke_hrule(out, origin, fg_brush, cx, cx + cell_w, y, rule_w);
-            }
-        }
+        for_each_row_run(
+            grid,
+            row,
+            paint_cols,
+            |cell| ink_key(cell, &palette),
+            |start, end, key| paint_ink_run(out, &mut ink, row, (start, end), key),
+        );
     }
     // Cursor overlay (R993) — drawn after the cells so it sits on top, inside
     // the same clip layer. Split into its own pass (the cursor's effective-
@@ -5413,14 +5570,25 @@ mod tests {
                 work.path_segments, first.path_segments,
                 "{inked} inked cells must add no path segments either"
             );
+            // ★★★★★ R1749 changed this line, and it is the round's whole
+            // point. R1748 asserted one glyph run PER INKED CELL, which was
+            // true and was the cost: three inked cells were three
+            // `draw_glyphs` calls. They are one now — the cells are
+            // contiguous and share a brush and a face, so they are one ink
+            // run — and eight are one as well. The fixture's ink is a single
+            // stretch of one style; a row of mixed styles pays per style, which
+            // is what `term_grid`'s own fold tests state.
             assert_eq!(
                 work.glyph_runs,
-                u32::from(*inked),
-                "one glyph run per inked cell, and none for a blank"
+                u32::from(*inked > 0),
+                "{inked} contiguous inked cells in one style are ONE glyph run"
             );
             // The whole frame is those two terms. An identity rather than a
             // third number, because it is the statement that a grid has no
             // other source of draws — the thing the consumer could not check.
+            // (This fixture carries no underline or strikethrough, so the ink
+            // runs contribute no rules; a row that had them would add those
+            // strokes to `draws` as well.)
             assert_eq!(
                 work.draws,
                 work.paths + work.glyph_runs,
@@ -5428,6 +5596,114 @@ mod tests {
                  else"
             );
         }
+    }
+
+    /// One row of `clusters`, all in one style, sized to hold them.
+    fn row_of_clusters(clusters: &[&'static str]) -> Scene {
+        let cols = u16::try_from(clusters.len()).expect("a short fixture row");
+        let buffer = GridBuffer::new(cols, 1).with_row(
+            0,
+            clusters
+                .iter()
+                .map(|c| TermCell::new(*c, TermColor::Default, TermColor::Default)),
+        );
+        grid_node_scene(cols, 1, buffer)
+    }
+
+    /// ★★★★★ R1749 — **a synthesised cell breaks the glyph pool**, because its
+    /// geometry is a fill that used to be drawn before the following cell's
+    /// glyph.
+    ///
+    /// Block and box-drawing characters paint as cell-exact geometry rather
+    /// than as a font glyph. Pooling glyphs across one would draw the pool
+    /// after the fill and put letters that came BEFORE it on top of it. The
+    /// flush is what keeps the order, and this is what sees the flush: letters,
+    /// a block, letters is **two** pools, where a pass that did not flush would
+    /// report one.
+    #[test]
+    fn r1749_a_synthesised_cell_splits_the_glyph_pool() {
+        let plain = work_of_scene(&row_of_clusters(&["a", "b", "c", "d"]));
+        let split = work_of_scene(&row_of_clusters(&["a", "b", "\u{2588}", "c", "d"]));
+
+        assert_eq!(
+            plain.glyph_runs, 1,
+            "four letters in one style are one pool"
+        );
+        assert_eq!(
+            split.glyph_runs, 2,
+            "a full block between them is a fill, so the letters before it must \
+             be emitted before it and the letters after it in a second pool"
+        );
+    }
+
+    /// ★★★★★ R1749 — **a glyph pool never outlives the face it was shaped
+    /// with.**
+    ///
+    /// A fallback face is chosen per cluster, so one ink run's text can need
+    /// two. Pooling across that would draw the second face's glyph ids against
+    /// the first face's tables, which is not a slower picture but a wrong one.
+    ///
+    /// ★★★ Two drafts were wrong before this one, and both are worth recording
+    /// because they are the two ways this test could have been useless.
+    ///
+    /// **The first read the host.** It fed a Latin letter beside a Hangul
+    /// syllable and asserted its premise — that two faces were needed — and the
+    /// premise was FALSE here: the resolved monospace face covers both, one face
+    /// came back, and the pool would have been one either way. A test whose
+    /// coverage depends on which fonts a machine has installed stops checking
+    /// without saying so, which is the debt R1573 measured at 40 of 94 tests.
+    ///
+    /// **The second invented faces.** Synthetic blobs are not font files, and
+    /// `draw_glyphs` parses the face it is handed — the flush panicked inside
+    /// vello with `OutOfBounds`. A pool cannot be exercised with a face nothing
+    /// can draw.
+    ///
+    /// So it drives the **size** half of the pool's identity over one real face.
+    /// That is the same `(face, size)` comparison and the same class of
+    /// mismatch: glyph ids are meaningful only against the face AND the size
+    /// they were shaped for.
+    #[test]
+    fn r1749_a_glyph_pool_is_split_by_the_face_it_needs() {
+        let mut cache = LayoutCache::new();
+        let mut style = TextStyle::new().with_generic_family(GenericFontFamily::Monospace);
+        style.font_size_px = 16;
+        let face = cache
+            .positioned_runs("a", &style, &[], None)
+            .first()
+            .expect("shaping a letter yields a run")
+            .clone();
+        let brush = BrushAt {
+            transform: Affine::IDENTITY,
+            colour: PenikoColor::BLACK,
+        };
+        let resized = |size: f32| PositionedRun {
+            font_size: size,
+            ..face.clone()
+        };
+
+        let mut same = VelloScene::new();
+        let mut batch = GlyphBatch::default();
+        batch.add(&mut same, brush, &resized(16.0), 0.0, 0.0);
+        batch.add(&mut same, brush, &resized(16.0), 8.0, 0.0);
+        batch.flush(&mut same, brush);
+
+        let mut split = VelloScene::new();
+        let mut batch = GlyphBatch::default();
+        batch.add(&mut split, brush, &resized(16.0), 0.0, 0.0);
+        batch.add(&mut split, brush, &resized(12.0), 8.0, 0.0);
+        batch.flush(&mut split, brush);
+
+        assert_eq!(
+            draw_work_of(&same).glyph_runs,
+            1,
+            "two clusters shaped the same way are one pool"
+        );
+        assert_eq!(
+            draw_work_of(&split).glyph_runs,
+            2,
+            "a change of face or size must split the pool — ids are only \
+             meaningful against what they were shaped for"
+        );
     }
 
     #[test]

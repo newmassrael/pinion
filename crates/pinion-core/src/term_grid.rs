@@ -1123,13 +1123,329 @@ impl GridBuffer {
     }
 }
 
+/// ★★★★★ R1749 §5.41 — **the one rule for folding a grid row into runs.**
+///
+/// # What forced it
+///
+/// Three places want to say "these neighbouring cells are the same, treat them
+/// as one": the `scene/snapshot` readback ([`style_key`]), the paint pass that
+/// fills backgrounds ([`background_key`]) and the paint pass that draws glyphs
+/// ([`ink_key`]). Before this they were separate loops with separate ideas of
+/// *the same*, and nothing said how those ideas relate — so the run boundaries
+/// an agent reads off the wire and the rectangles actually painted could differ
+/// with no statement anywhere that they may.
+///
+/// The rule is here, once; what differs between the three is the KEY, and the
+/// keys are here too, so the relation between them is a property of one module
+/// and can be tested. See `a_narrow_key_only_ever_splits_where_a_wide_one_does`.
+///
+/// # The contract
+///
+/// `key` answers `None` for a cell that takes part in no run — a cell the
+/// buffer does not have, or one this purpose has nothing to draw for. Such a
+/// cell **breaks** the open run rather than extending it, and is never emitted.
+/// `emit` receives each maximal run as `(start column, column after its last,
+/// the key every cell in it shares)`.
+///
+/// Allocation-free by construction: this is on the paint path, once per row per
+/// frame, and a `Vec` of runs there would be a per-frame allocation for a
+/// result nobody keeps.
+pub fn for_each_row_run<K, F, G>(buffer: &GridBuffer, row: u16, cols: u16, key: F, mut emit: G)
+where
+    K: PartialEq + Copy,
+    F: Fn(&TermCell) -> Option<K>,
+    G: FnMut(u16, u16, K),
+{
+    let mut run: Option<(u16, u16, K)> = None;
+    for col in 0..cols {
+        let next = buffer.cell(col, row).and_then(&key);
+        match (run, next) {
+            (Some((start, end, held)), Some(k)) if held == k && end == col => {
+                run = Some((start, col + 1, held));
+            }
+            (open, next) => {
+                if let Some((start, end, held)) = open {
+                    emit(start, end, held);
+                }
+                run = next.map(|k| (col, col + 1, k));
+            }
+        }
+    }
+    if let Some((start, end, held)) = run {
+        emit(start, end, held);
+    }
+}
+
+/// R1749 §5.41 — a cell's effective `(foreground, background)` terms.
+///
+/// SGR 7 (`reverse`) swaps the two before either is resolved. This is a
+/// property of a cell rather than of a painter, which is why it lives beside
+/// the cell: [`background_key`] and [`ink_key`] both need it, and a painter
+/// that kept its own copy is how two of them came to disagree about a grid.
+#[must_use]
+pub fn effective_terms(cell: &TermCell) -> (TermColor, TermColor) {
+    if cell.attrs.reverse {
+        (cell.bg, cell.fg)
+    } else {
+        (cell.fg, cell.bg)
+    }
+}
+
+/// R1749 §5.41 — everything about a cell that decides how it LOOKS, as the
+/// widest of the three run keys.
+///
+/// The `scene/snapshot` style run is folded on this: a change in any component
+/// starts a new run — the `(fg, bg)` terms (R973), `attrs` (R974), the
+/// [`CellWidth`] role (R976), the SGR-58 `underline_color` (R1399) and the
+/// OSC-8 `hyperlink` index (R1403). The hyperlink component is the *index*
+/// rather than the resolved URI: two cells at the same table entry are the
+/// same link instance.
+///
+/// It is the unresolved terms rather than palette colours, because a snapshot
+/// reports the terms and lets its reader resolve them; the narrower keys below
+/// resolve, because a fill and a brush are colours.
+pub type CellStyleKey = (
+    TermColor,
+    TermColor,
+    CellAttrs,
+    CellWidth,
+    Option<TermColor>,
+    Option<HyperlinkId>,
+);
+
+/// R1749 §5.41 — [`CellStyleKey`] for one cell. Never `None`: every cell has a
+/// look, so every cell takes part in a style run.
+#[must_use]
+pub fn style_key(cell: &TermCell) -> Option<CellStyleKey> {
+    Some((
+        cell.fg,
+        cell.bg,
+        cell.attrs,
+        cell.width,
+        cell.underline_color,
+        cell.hyperlink,
+    ))
+}
+
+/// R1749 §5.41 — what a BACKGROUND fill depends on, and nothing else: the
+/// cell's effective background, resolved.
+///
+/// Deliberately narrower than [`style_key`]. A fill cannot see a foreground, an
+/// underline colour or a link, so folding on those would split a rectangle for
+/// a difference it does not draw — which is the cost R1748 removed.
+#[must_use]
+pub fn background_key(cell: &TermCell, palette: &Palette) -> Option<Color> {
+    let (_, bg) = effective_terms(cell);
+    Some(palette.resolve(bg, ColorTarget::Background))
+}
+
+/// ★★★★★ R1749 §5.41 — what a cell's INK depends on: the glyphs and the
+/// decorations together, as one key.
+///
+/// # Why the two are one key and not two
+///
+/// A grid's second pass draws a cell's glyph and then that cell's underline and
+/// strikethrough, and then moves to the next cell. Batching only the glyphs
+/// reorders that: a run flushed as one `draw_glyphs` lands either wholly under
+/// or wholly over rules that used to interleave with it, and where a glyph
+/// overflows its cell that is a different pixel. So the fold covers both, and a
+/// run draws its glyphs and then its rules — which is also what the painter
+/// already wanted in words: adjacent attributed cells are meant to form **one
+/// continuous rule**, and per-cell strokes were only ever an approximation of
+/// that by abutment.
+///
+/// # What is in it
+///
+/// `(brush, bold, italic, underline, underline colour, strikethrough)`. SGR 2
+/// `dim` folds into the brush because it attenuates that colour's alpha; bold
+/// and italic select the face; the last three are the rules. An explicit SGR-58
+/// underline colour is resolved, and `None` means the rule follows the brush.
+///
+/// `None` — the cell takes part in no ink run at all — is **only** SGR 8
+/// `hidden`, which shows its background and nothing else. A blank cell is NOT
+/// excluded: it has no glyph to contribute but it still shows its rule, which
+/// is the terminal convention, so a space inside a word's run keeps the run
+/// whole instead of cutting it in two.
+pub type CellInkKey = (Color, bool, bool, UnderlineStyle, Option<Color>, bool);
+
+/// R1749 §5.41 — [`CellInkKey`] for one cell. See the type's own note.
+#[must_use]
+pub fn ink_key(cell: &TermCell, palette: &Palette) -> Option<CellInkKey> {
+    if cell.attrs.hidden {
+        return None;
+    }
+    let (fg_term, _) = effective_terms(cell);
+    let mut fg = palette.resolve(fg_term, ColorTarget::Foreground);
+    if cell.attrs.dim {
+        fg = fg.with_alpha(fg.a / 2);
+    }
+    Some((
+        fg,
+        cell.attrs.bold,
+        cell.attrs.italic,
+        cell.attrs.underline,
+        cell.underline_color
+            .map(|c| palette.resolve(c, ColorTarget::Foreground)),
+        cell.attrs.strikethrough,
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         CellAttrs, CellWidth, ColorTarget, CursorShape, GridBuffer, GridCursor, Hyperlink,
-        HyperlinkId, Palette, ScreenKind, TermCell, TermColor, UnderlineStyle,
+        HyperlinkId, Palette, ScreenKind, TermCell, TermColor, UnderlineStyle, background_key,
+        for_each_row_run, ink_key, style_key,
     };
     use crate::style::Color;
+
+    /// One row that changes in every way a run key can notice, so no two of
+    /// the three keys fold it the same way.
+    fn varied_row() -> GridBuffer {
+        let plain = |s: &'static str| TermCell::new(s, TermColor::Default, TermColor::Default);
+        let bold = CellAttrs {
+            bold: true,
+            ..CellAttrs::default()
+        };
+        let dim = CellAttrs {
+            dim: true,
+            ..CellAttrs::default()
+        };
+        GridBuffer::new(10, 1).with_row(
+            0,
+            [
+                plain("a"),
+                // Same look, so a style run continues; same brush and face, so
+                // a glyph run continues too.
+                plain("b"),
+                // A blank: no glyph, but the same background.
+                plain(" "),
+                // Foreground changes -- a style boundary and a glyph boundary,
+                // NOT a background one.
+                TermCell::new("c", TermColor::Indexed(3), TermColor::Default),
+                // Background changes -- a boundary for all three.
+                TermCell::new("d", TermColor::Indexed(3), TermColor::Indexed(5)),
+                TermCell::new("e", TermColor::Indexed(3), TermColor::Indexed(5)),
+                // Bold: a different face, so a glyph boundary; the background
+                // is unchanged.
+                TermCell::new("f", TermColor::Indexed(3), TermColor::Indexed(5)).with_attrs(bold),
+                // Dim attenuates the brush -- a glyph boundary, no fill change.
+                TermCell::new("g", TermColor::Indexed(3), TermColor::Indexed(5)).with_attrs(dim),
+                // A wide head and its trailer: the trailer carries the head's
+                // colours and draws no glyph of its own.
+                TermCell::new("\u{d55c}", TermColor::Indexed(3), TermColor::Indexed(5)).wide(),
+                TermCell::new("\u{d55c}", TermColor::Indexed(3), TermColor::Indexed(5))
+                    .wide()
+                    .trailer(),
+            ],
+        )
+    }
+
+    /// The boundaries `key` folds `row` at: the column each run starts on.
+    fn starts<K: PartialEq + Copy>(
+        buffer: &GridBuffer,
+        key: impl Fn(&TermCell) -> Option<K>,
+    ) -> Vec<u16> {
+        let mut out = Vec::new();
+        for_each_row_run(buffer, 0, buffer.cols(), key, |start, _, _| out.push(start));
+        out
+    }
+
+    /// ★★★★★ R1749 — **a narrow key only ever splits where a wide one does.**
+    ///
+    /// This is the relation between the three folds, and before this round
+    /// nothing stated it and nothing checked it. The `scene/snapshot` readback
+    /// folds on the whole look of a cell; the two paint passes fold on the
+    /// parts of that look each one can actually draw. Every part of the narrow
+    /// keys is a function of the wide key's components, so a narrow run can
+    /// only ever be a MERGE of whole style runs — which is what lets a reader
+    /// compare what the wire says with what was painted.
+    ///
+    /// A run that started where no style run started would mean the opposite:
+    /// a rectangle or a glyph run straddling a boundary the snapshot reports,
+    /// so the two accounts of one grid would disagree about the same cells.
+    #[test]
+    fn a_narrow_key_only_ever_splits_where_a_wide_one_does() {
+        let buffer = varied_row();
+        let palette = Palette::xterm_default();
+        let wide = starts(&buffer, style_key);
+
+        for (name, narrow) in [
+            (
+                "background",
+                starts(&buffer, |c| background_key(c, &palette)),
+            ),
+            ("ink", starts(&buffer, |c| ink_key(c, &palette))),
+        ] {
+            assert!(
+                !narrow.is_empty(),
+                "the {name} fold found no runs at all, so this proves nothing"
+            );
+            for start in &narrow {
+                assert!(
+                    wide.contains(start),
+                    "the {name} fold starts a run at column {start}, where the \
+                     style fold does not: {narrow:?} against {wide:?}"
+                );
+            }
+        }
+    }
+
+    /// R1749 — and the three keys are genuinely different, so the assertion
+    /// above is not vacuous.
+    ///
+    /// ★ Without this, one key accidentally equal to another would satisfy the
+    /// refinement trivially. Measured on the same row: the background fold is
+    /// the coarsest (it cannot see a foreground), the style fold the finest.
+    #[test]
+    fn the_three_keys_fold_the_same_row_differently() {
+        let buffer = varied_row();
+        let palette = Palette::xterm_default();
+        let style = starts(&buffer, style_key);
+        let background = starts(&buffer, |c| background_key(c, &palette));
+        let ink = starts(&buffer, |c| ink_key(c, &palette));
+
+        assert!(
+            background.len() < style.len(),
+            "a background fold must be coarser than a style fold: \
+             {background:?} against {style:?}"
+        );
+        assert_ne!(
+            ink, background,
+            "an ink fold splits on the face, the brush and the rules; a \
+             background fold on none of them"
+        );
+        assert!(
+            ink.len() < style.len(),
+            "an ink fold cannot see a background or a link, so it must be \
+             coarser than a style fold: {ink:?} against {style:?}"
+        );
+    }
+
+    /// R1749 — a cell the buffer does not have breaks a run.
+    ///
+    /// The fold is asked for more columns than the buffer holds, which is the
+    /// live case: the paint pass folds over the columns the NODE has, and an
+    /// in-flight resize can leave the node wider than the producer's buffer.
+    #[test]
+    fn a_missing_cell_breaks_a_run_rather_than_extending_it() {
+        let plain = |s: &'static str| TermCell::new(s, TermColor::Default, TermColor::Default);
+        let buffer = GridBuffer::new(2, 1).with_row(0, [plain("a"), plain("b")]);
+        let palette = Palette::xterm_default();
+        let mut runs: Vec<(u16, u16)> = Vec::new();
+        for_each_row_run(
+            &buffer,
+            0,
+            6,
+            |c| background_key(c, &palette),
+            |start, end, _| runs.push((start, end)),
+        );
+        assert_eq!(
+            runs,
+            vec![(0, 2)],
+            "the run must stop at the buffer's width, not run to the column count"
+        );
+    }
 
     #[test]
     fn default_term_color_is_default_variant() {

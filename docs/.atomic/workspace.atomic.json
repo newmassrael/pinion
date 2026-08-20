@@ -55124,6 +55124,102 @@
         "be the THIRD fold, so R1749 must read that file first."
       ]
     },
+    "R1749": {
+      "decision_summary": "One grid is folded into runs by ONE rule, and the second paint pass folds its\nglyphs and its rules together so that batching them changes no pixel.\n\nWHAT FORCED IT. R1748 made a background pass emit one rectangle per run of\nsame-coloured cells, and the self-grep it owes found that the same\n`GridBuffer` was already being folded into runs somewhere else, by a different\nidea of \"the same\": the `scene/snapshot` readback's six-tuple against the\npainter's single resolved background. Both were right for their purpose and\nnothing related them, so the run boundaries an agent reads off the wire and the\nrectangles actually painted could differ with no statement anywhere that they\nmay. That was registered as a debt with the deferral this project's rule\nallows for two opinionated copies. THE OWNER WITHDREW THE DEFERRAL -- \"do not\ndefer even mechanical duplication\" -- so it is paid in the round that follows\nthe one that found it.\n\nWHAT THE LIFT MEASURED THAT THE DEBT DID NOT KNOW. The SGR-7 reverse swap was\nduplicated too, and the second copy was a HALF: the terminal backend computed\nonly an effective background, inline. Its old doc argued the swap belonged to\nthe renderer because a snapshot reports the stored flag and leaves the swap to\n\"a renderer\" -- true about the snapshot, and never true about the NUMBER of\nrenderers. An attribute that also swapped would have been honoured by one and\nsilently ignored by the other.\n\nTHE CONSISTENCY CONDITION IS NOW A TEST, and it is what the debt asked for: a\nnarrow key's run boundaries are a subset of the wide key's, because every part\nof a narrow key is a function of the wide one's components. Its sibling asserts\nthe three keys fold one row DIFFERENTLY first, because two keys accidentally\nequal would satisfy the refinement trivially -- the vacuous-fixture failure\nthis project keeps meeting. And a counterfactual aims one level below both: a\nbackground key that reads the FOREGROUND term still refines the style key and\nstill folds, and paints the wrong colour. Refinement is not correctness.\n\nTHE DRAW-ORDER PROBLEM, SOLVED RATHER THAN AVOIDED. Batching glyphs alone\nreorders a frame: a cell's underline is stroked between its own glyph and the\nnext cell's, so a pooled run lands wholly under or wholly over rules it used to\ninterleave with, and where a glyph overflows its cell that is a different\npixel. So the fold covers glyphs AND rules, and a run draws its glyphs then its\nrules -- which is also what this painter already wanted in words, that adjacent\nattributed cells form one continuous rule. Abutting per-cell strokes were an\napproximation of that.\n\nWHAT THE POOL REFUSES TO DO. It never hands the shaper more than one cluster.\nShaping a run's text would let kerning and ligatures move glyphs across cell\nboundaries, which in a monospaced grid is a wrong picture, so shaping stays\nper-cluster and cached and only the EMISSION is pooled -- each glyph carries its\nown position, offset by its cell. The pool also breaks on the face and size it\nwas shaped for, and flushes before a synthesised block or box character, whose\ngeometry is a fill that used to precede the next cell's glyph.",
+      "changes_bullets": [
+        "`pinion_core::term_grid` gains the fold (`for_each_row_run`, callback-shaped so",
+        "the paint path allocates nothing) and the three keys beside it, plus",
+        "`effective_terms` moved in from the Vello painter.",
+        "Four consumers rewired: the snapshot readback, the background pass, the new ink",
+        "pass, and the terminal backend's half-copy of the swap.",
+        "`paint_ink_run` + `GlyphBatch` + `BrushAt` are the ink pass; the painter's own",
+        "two-pass doc paragraph, which R1749 made incomplete, now names the pass ink",
+        "rather than glyphs and says what folds with what."
+      ],
+      "verification_bullets": [
+        "Local gates, each judged by an rc written to a file: fmt clean; `cargo test -p",
+        "pinion-core -p pinion-runtime` green; `cargo test -p pinion-rpc -p pinion-tui",
+        "-p pinion-shell` green; clippy -D pedantic over all five crates clean.",
+        "The 12 TextGrid PIXEL tests run locally with `--ignored`, twice -- once for the",
+        "rewritten pass and once after the counterfactual driver restored the sources.",
+        "They are the only check on a draw-order change, and two of them are the cases",
+        "it could have broken: a wide head's overflow over its trailer, and the gutter",
+        "fill the ground-skip relies on.",
+        "Counterfactuals 4/4 CAUGHT, all written as wrong answers: the fold's sameness",
+        "test inverted, the pool's face check disabled, the synthesis flush removed, and",
+        "a background key reading the foreground term.",
+        "The mandatory self-grep re-run finds NO hand-rolled row fold left. The terminal",
+        "backend still writes cell by cell, which is not a third fold -- a terminal",
+        "buffer is per-cell by the medium."
+      ],
+      "impact_refs": [
+        "5.41"
+      ],
+      "carry_forward_bullets": [
+        "One test in this round was wrong TWICE before it was right, and both drafts are",
+        "recorded in its doc because both are recurring classes here. The first read the",
+        "host: it asserted that a Latin letter beside a Hangul syllable needs two faces,",
+        "and on this machine the resolved monospace face covers both -- one face, so the",
+        "pool would have been one either way and the test would have been green while",
+        "checking nothing. It failed loudly only because it asserted its own premise.",
+        "The second invented faces: synthetic blobs are not font files and vello parses",
+        "the face it is handed, so the flush panicked. The third drives the SIZE half of",
+        "the same `(face, size)` comparison over one real face.",
+        "STATED LIMIT carried from R1748, unchanged: the opacity guard on the",
+        "background pass's ground-skip cannot be falsified by a test, because `Palette`",
+        "exposes no mutator and a translucent default background cannot be constructed",
+        "from outside the crate.",
+        "NOT DONE HERE, and named rather than implied: the profile's 44% in font-table",
+        "parsing is untouched. That is the debt file's third item and its own round."
+      ],
+      "publishable_decision_summary": "One grid is folded into runs by ONE rule, and the second paint pass folds its\nglyphs and its rules together so that batching them changes no pixel.\n\nWHAT FORCED IT. R1748 made a background pass emit one rectangle per run of\nsame-coloured cells, and the self-grep it owes found that the same\n`GridBuffer` was already being folded into runs somewhere else, by a different\nidea of \"the same\": the `scene/snapshot` readback's six-tuple against the\npainter's single resolved background. Both were right for their purpose and\nnothing related them, so the run boundaries an agent reads off the wire and the\nrectangles actually painted could differ with no statement anywhere that they\nmay. That was registered as a debt with the deferral this project's rule\nallows for two opinionated copies. THE OWNER WITHDREW THE DEFERRAL -- \"do not\ndefer even mechanical duplication\" -- so it is paid in the round that follows\nthe one that found it.\n\nWHAT THE LIFT MEASURED THAT THE DEBT DID NOT KNOW. The SGR-7 reverse swap was\nduplicated too, and the second copy was a HALF: the terminal backend computed\nonly an effective background, inline. Its old doc argued the swap belonged to\nthe renderer because a snapshot reports the stored flag and leaves the swap to\n\"a renderer\" -- true about the snapshot, and never true about the NUMBER of\nrenderers. An attribute that also swapped would have been honoured by one and\nsilently ignored by the other.\n\nTHE CONSISTENCY CONDITION IS NOW A TEST, and it is what the debt asked for: a\nnarrow key's run boundaries are a subset of the wide key's, because every part\nof a narrow key is a function of the wide one's components. Its sibling asserts\nthe three keys fold one row DIFFERENTLY first, because two keys accidentally\nequal would satisfy the refinement trivially -- the vacuous-fixture failure\nthis project keeps meeting. And a counterfactual aims one level below both: a\nbackground key that reads the FOREGROUND term still refines the style key and\nstill folds, and paints the wrong colour. Refinement is not correctness.\n\nTHE DRAW-ORDER PROBLEM, SOLVED RATHER THAN AVOIDED. Batching glyphs alone\nreorders a frame: a cell's underline is stroked between its own glyph and the\nnext cell's, so a pooled run lands wholly under or wholly over rules it used to\ninterleave with, and where a glyph overflows its cell that is a different\npixel. So the fold covers glyphs AND rules, and a run draws its glyphs then its\nrules -- which is also what this painter already wanted in words, that adjacent\nattributed cells form one continuous rule. Abutting per-cell strokes were an\napproximation of that.\n\nWHAT THE POOL REFUSES TO DO. It never hands the shaper more than one cluster.\nShaping a run's text would let kerning and ligatures move glyphs across cell\nboundaries, which in a monospaced grid is a wrong picture, so shaping stays\nper-cluster and cached and only the EMISSION is pooled -- each glyph carries its\nown position, offset by its cell. The pool also breaks on the face and size it\nwas shaped for, and flushes before a synthesised block or box character, whose\ngeometry is a fill that used to precede the next cell's glyph.",
+      "publishable_changes_bullets": [
+        "`pinion_core::term_grid` gains the fold (`for_each_row_run`, callback-shaped so",
+        "the paint path allocates nothing) and the three keys beside it, plus",
+        "`effective_terms` moved in from the Vello painter.",
+        "Four consumers rewired: the snapshot readback, the background pass, the new ink",
+        "pass, and the terminal backend's half-copy of the swap.",
+        "`paint_ink_run` + `GlyphBatch` + `BrushAt` are the ink pass; the painter's own",
+        "two-pass doc paragraph, which R1749 made incomplete, now names the pass ink",
+        "rather than glyphs and says what folds with what."
+      ],
+      "publishable_verification_bullets": [
+        "Local gates, each judged by an rc written to a file: fmt clean; `cargo test -p",
+        "pinion-core -p pinion-runtime` green; `cargo test -p pinion-rpc -p pinion-tui",
+        "-p pinion-shell` green; clippy -D pedantic over all five crates clean.",
+        "The 12 TextGrid PIXEL tests run locally with `--ignored`, twice -- once for the",
+        "rewritten pass and once after the counterfactual driver restored the sources.",
+        "They are the only check on a draw-order change, and two of them are the cases",
+        "it could have broken: a wide head's overflow over its trailer, and the gutter",
+        "fill the ground-skip relies on.",
+        "Counterfactuals 4/4 CAUGHT, all written as wrong answers: the fold's sameness",
+        "test inverted, the pool's face check disabled, the synthesis flush removed, and",
+        "a background key reading the foreground term.",
+        "The mandatory self-grep re-run finds NO hand-rolled row fold left. The terminal",
+        "backend still writes cell by cell, which is not a third fold -- a terminal",
+        "buffer is per-cell by the medium."
+      ],
+      "publishable_impact_refs": [
+        "5.41"
+      ],
+      "publishable_carry_forward_bullets": [
+        "One test in this round was wrong TWICE before it was right, and both drafts are",
+        "recorded in its doc because both are recurring classes here. The first read the",
+        "host: it asserted that a Latin letter beside a Hangul syllable needs two faces,",
+        "and on this machine the resolved monospace face covers both -- one face, so the",
+        "pool would have been one either way and the test would have been green while",
+        "checking nothing. It failed loudly only because it asserted its own premise.",
+        "The second invented faces: synthetic blobs are not font files and vello parses",
+        "the face it is handed, so the flush panicked. The third drives the SIZE half of",
+        "the same `(face, size)` comparison over one real face.",
+        "STATED LIMIT carried from R1748, unchanged: the opacity guard on the",
+        "background pass's ground-skip cannot be falsified by a test, because `Palette`",
+        "exposes no mutator and a translucent default background cannot be constructed",
+        "from outside the crate.",
+        "NOT DONE HERE, and named rather than implied: the profile's 44% in font-table",
+        "parsing is untouched. That is the debt file's third item and its own round."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
