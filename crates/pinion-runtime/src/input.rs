@@ -14710,17 +14710,45 @@ fn record_painted_marks(paint_scene: &Scene, surfaces: &[(String, Rect)]) {
         .iter()
         .map(|(tag, _)| (tag.as_str(), Vec::new()))
         .collect();
+    // ★ R1742 — and what each of those marks READS. Same walk, because the
+    // words and the rectangles are one frame's facts and a second walk could
+    // report a word from a frame the rectangle did not come from.
+    let mut reads: BTreeMap<&str, BTreeMap<String, String>> = surfaces
+        .iter()
+        .map(|(tag, _)| (tag.as_str(), BTreeMap::new()))
+        .collect();
     paint_scene.for_each_node(&mut |visit| {
-        let Some(tag) = visit.node.tag() else { return };
+        let surface_of = |rect: Rect| {
+            let (cx, cy) = (rect.x + rect.w / 2, rect.y + rect.h / 2);
+            surfaces
+                .iter()
+                .filter(|(_, r)| cx >= r.x && cy >= r.y && cx < r.x + r.w && cy < r.y + r.h)
+                .min_by_key(|(_, r)| u64::from(r.w) * u64::from(r.h))
+        };
         let Some(rect) = visit.absolute_rect() else {
             return; // clipped entirely away: painted nowhere, so not painted
         };
-        let (cx, cy) = (rect.x + rect.w / 2, rect.y + rect.h / 2);
-        let Some((surface_tag, surface_rect)) = surfaces
-            .iter()
-            .filter(|(_, r)| cx >= r.x && cy >= r.y && cx < r.x + r.w && cy < r.y + r.h)
-            .min_by_key(|(_, r)| u64::from(r.w) * u64::from(r.h))
-        else {
+        if let Scene::Text(text) = visit.node {
+            // A run belongs to the nearest tagged ancestor when it carries no
+            // tag itself — the same attribution the painted-text report makes,
+            // so "what this widget reads" means one thing in both.
+            let owner = text
+                .tag
+                .as_deref()
+                .or_else(|| visit.ancestors.iter().rev().find_map(|a| a.tag()));
+            if let (Some(owner), Some((surface_tag, _))) = (owner, surface_of(rect))
+                && let Some(into) = reads.get_mut(surface_tag.as_str())
+            {
+                into.entry(owner.to_owned())
+                    .and_modify(|held| {
+                        held.push(' ');
+                        held.push_str(&text.content);
+                    })
+                    .or_insert_with(|| text.content.clone());
+            }
+        }
+        let Some(tag) = visit.node.tag() else { return };
+        let Some((surface_tag, surface_rect)) = surface_of(rect) else {
             return;
         };
         if surface_tag == tag {
@@ -14741,7 +14769,8 @@ fn record_painted_marks(paint_scene: &Scene, surfaces: &[(String, Rect)]) {
     for (tag, into) in marks {
         pinion_core::painted::record_painted_regions(
             tag,
-            pinion_core::painted::PaintedRegions::from_marks(into),
+            pinion_core::painted::PaintedRegions::from_marks(into)
+                .with_reads(reads.remove(tag).unwrap_or_default()),
         );
     }
 }

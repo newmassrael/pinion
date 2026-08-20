@@ -4854,180 +4854,24 @@ fn card_with_enum_row(state: &std::rc::Rc<LabState>) {
     super::release(state);
 }
 
-/// What this build calls each part of a form row — the SCREEN's words, against
-/// which the specification's are compared.
+/// ★★★★★ R1742 — the built surfaces this gate judges are **the running
+/// screen's own**, not this module's reading of the same paint.
 ///
-/// The screen's own table and not the pin's: a build that renamed what it draws
-/// while the pin kept the old word has to fail, and it can only fail if the two
-/// are written in two places by two hands. R1728 is the round that learned it.
-fn row_part_title(part: &str) -> Option<String> {
-    let said = match part {
-        "key" => "the configuration path this row is about",
-        "type" => "the type word, and how many words are on offer",
-        "applies" => "when an edit to this row lands",
-        "remove" => "the seat that takes the row out of the form",
-        "control" => "the box the value is entered in",
-        "author" => "the seat that takes the row's value over",
-        "disown" => "the seat that gives this row's half back",
-        "aside" => "that the row is not configuration",
-        "defect" => "what is wrong with the value",
-        "shown" => "the word the row holds",
-        "pick" => "the arrow that opens the roster",
-        "toggle" => "the switch a boolean row is set with",
-        "said" => "the row's spoken description",
-        _ => return None,
-    };
-    Some(said.to_owned())
-}
-
-/// One inspector surface, as the PAINT has it.
+/// R1732 wrote the readings here, where only a unit test could reach them. This
+/// round moved them into `judge`, where the binding's
+/// [`conformance`](pinion_shell::WidgetView::conformance) hook answers from
+/// them — so the standalone window, the page inside the assembled tool and this
+/// gate compare one build by one rule. A copy left here would be the second
+/// account whose disagreement nobody would notice, because the one running in a
+/// window is not the one anybody runs.
 ///
-/// # Panics
-///
-/// If asked for a surface the specification does not name, which is a defect in
-/// this file rather than a state the screen can reach.
-fn built_inspector(
-    scene: &Scene,
-    shot: &Painted,
-    surface: &str,
-) -> Vec<pinion_core::conformance::Part> {
-    use pinion_core::test_fixtures::surface::{painted_parts, painted_surface_of};
-    match surface {
-        "enum_row" => painted_surface_of(scene, "lab.form.", spec::ENUM_KEY, &|part| {
-            row_part_title(part)
-        }),
-        "enum_roster" => {
-            let stem = format!("lab.form.option.{}.", spec::ENUM_KEY);
-            painted_parts(scene, &stem)
-                .into_iter()
-                .map(|(word, _)| {
-                    // The title is the WORD THE ROSTER DREW, read back out of
-                    // the run inside that option's box — not the key repeated.
-                    // A roster whose third row drew the second word would
-                    // otherwise be a surface nothing could tell apart.
-                    let tag = format!("{stem}{word}");
-                    let drawn = shot
-                        .runs
-                        .iter()
-                        .find(|(_, _, owner)| owner.as_deref() == Some(tag.as_str()))
-                        .map_or_else(
-                            || "<nothing is drawn in this option>".to_owned(),
-                            |(text, _, _)| text.clone(),
-                        );
-                    pinion_core::conformance::Part::new(word, drawn)
-                })
-                .collect()
-        }
-        "controls" => control_kinds(scene),
-        other => panic!("no inspector surface named {other}"),
-    }
-}
-
-/// The kinds of value control this build draws, each titled by **what the paint
-/// actually put inside it**.
-///
-/// Classified from the painted affordances rather than from the field's shape,
-/// which is the whole point: a table of intentions passes while the painter
-/// draws something else, and the defect this round repaired — an enumeration
-/// drawn as a row of chips — is exactly a shape whose control was the wrong
-/// kind.
-///
-/// The order is the specification's, and this surface is the one place that is
-/// not a claim: the reference's five kinds are the order its markup TESTS them
-/// in, which no screen lays out. What is being judged here is which kinds exist
-/// and what each draws; a part out of place would say nothing, so nothing is
-/// arranged to make it say something.
-fn control_kinds(scene: &Scene) -> Vec<pinion_core::conformance::Part> {
-    let mut found: BTreeMap<&'static str, String> = BTreeMap::new();
-    let state = use_lab_state();
-    // The SHOWN form, not the stored one: the rows the screen works out for
-    // itself — the derived ones — are only in the first, and one of the five
-    // kinds under judgement is exactly those.
-    let Some(form) = super::selected_form(&state) else {
-        return Vec::new();
-    };
-    let keys: Vec<String> = form
-        .fields()
-        .iter()
-        .filter(|f| !f.hidden())
-        .map(|f| f.key().to_owned())
-        .collect();
-    for key in keys {
-        let parts = row_families(scene, &key);
-        let has = |p: &str| parts.contains(p);
-        let (kind, drawn) = if has("author") {
-            ("derived", "a read-out with no way to write into it")
-        } else if has("pick") {
-            (
-                "enum",
-                "a collapsed control holding one word, and an arrow that opens the roster",
-            )
-        } else if has("toggle") {
-            ("bool", "a switch, and the word it is set to")
-        } else if has("step") {
-            ("int", "a stepper that cannot leave the declared range")
-        } else if has("item") {
-            ("list", "one row per element, and a row that appends one")
-        } else if has("option") {
-            ("perm", "one chip per permission word, each on or off")
-        } else {
-            ("text", "a box holding the value as text")
-        };
-        found.entry(kind).or_insert_with(|| drawn.to_owned());
-    }
-    // The specification's order first, then anything this build has beyond it —
-    // which is where the two second-pass controls land, and where the ledger
-    // expects them.
-    let mut out = Vec::new();
-    for kind in ["text", "enum", "bool", "perm", "derived"] {
-        if let Some(drawn) = found.remove(kind) {
-            out.push(pinion_core::conformance::Part::new(kind, drawn));
-        }
-    }
-    for (kind, drawn) in found {
-        out.push(pinion_core::conformance::Part::new(kind, drawn));
-    }
-    out
-}
-
-/// Which part FAMILIES the paint gave the row keyed `key`.
-///
-/// ★★★ A second reading beside
-/// [`painted_parts_of`](pinion_core::test_fixtures::surface::painted_parts_of),
-/// and the difference is a fact about this widget's tag vocabulary rather than
-/// a preference: **a form row's parts come in two shapes.** Most are
-/// `<family>.<key>` exactly — the key, the type badge, the seat, the chevron —
-/// and the ones a shape can have several of carry a discriminator after the
-/// address: `option.<key>.<word>`, `step.<key>.up`, `item.<key>.<n>`. The
-/// address-suffix reading finds the first kind and cannot find the second, and
-/// the first draft of this gate reported `perm`, `int` and `list` absent for
-/// exactly that reason.
-///
-/// A family holds no dots, so the seam is the FIRST segment after the prefix,
-/// and what follows is the address with whatever the shape appended to it.
-/// ⇒ [[debt-a-rail-tag-prefix-holds-seats-and-chrome-alike]] is the same
-/// question one level up, and is still open.
-fn row_families(scene: &Scene, key: &str) -> BTreeSet<String> {
-    let mut found = BTreeSet::new();
-    scene.for_each_node(&mut |visit| {
-        let (Some(_), Some(tag)) = (visit.absolute_rect(), visit.node.tag()) else {
-            return;
-        };
-        let Some(rest) = tag.strip_prefix("lab.form.") else {
-            return;
-        };
-        let Some((family, address)) = rest.split_once('.') else {
-            return;
-        };
-        if address == key
-            || address
-                .strip_prefix(key)
-                .is_some_and(|t| t.starts_with('.'))
-        {
-            found.insert(family.to_owned());
-        }
-    });
-    found
+/// The regions come from the store the paint pass filled
+/// (`painted_at` records them exactly as the shell does), so this reads what
+/// the window would read.
+fn built_inspector(surface: &str) -> pinion_core::conformance::Built {
+    let regions =
+        pinion_core::painted::painted_regions(super::VIEW_TAG).expect("the sweep just painted");
+    super::judge::built(&regions, surface)
 }
 
 /// ★★★★★ R1732 — **the integration gate: the inspector the pipeline paints,
@@ -5046,10 +4890,20 @@ fn r1732_the_inspector_reproduces_the_specification_or_says_where_it_does_not() 
         let state = use_lab_state();
         card_with_enum_row(&state);
         let doc = spec::inspector_document();
-        let judge = |surface: &str, scene: &Scene, shot: &Painted| {
-            let built = built_inspector(scene, shot, surface);
+        let judge = |surface: &str| {
+            let built = built_inspector(surface);
+            let parts = built.parts().unwrap_or_else(|| {
+                panic!(
+                    "the {surface} surface was put on screen for this gate and the \
+                     screen says it is away: {}",
+                    match &built {
+                        pinion_core::conformance::Built::Away(why) => why.as_str(),
+                        pinion_core::conformance::Built::Standing(_) => unreachable!(),
+                    },
+                )
+            });
             let unreconciled: Vec<String> = doc
-                .unreconciled(surface, &built)
+                .unreconciled(surface, parts)
                 .iter()
                 .map(Unreconciled::sentence)
                 .collect();
@@ -5067,9 +4921,9 @@ fn r1732_the_inspector_reproduces_the_specification_or_says_where_it_does_not() 
         // open, because a shut one has no parts at all. Reading both from one
         // paint would make one of the two a claim about a state the file does
         // not describe.
-        let (shot, scene) = painted_at(&state, CONFORMANCE_SIZE);
-        judge("enum_row", &scene, &shot);
-        judge("controls", &scene, &shot);
+        let shot = painted_at(&state, CONFORMANCE_SIZE).0;
+        judge("enum_row");
+        judge("controls");
 
         // Open the roster, through the row the way a hand does.
         let control = *shot
@@ -5084,8 +4938,8 @@ fn r1732_the_inspector_reproduces_the_specification_or_says_where_it_does_not() 
             state.picking.get().is_some(),
             "★ a press on the collapsed control opens its roster",
         );
-        let (shot, scene) = painted_at(&state, CONFORMANCE_SIZE);
-        judge("enum_roster", &scene, &shot);
+        painted_at(&state, CONFORMANCE_SIZE);
+        judge("enum_roster");
 
         // And every surface the file declares was judged — a gate that judged
         // two of three would report the third as reproduced by not looking.
@@ -5098,6 +4952,239 @@ fn r1732_the_inspector_reproduces_the_specification_or_says_where_it_does_not() 
             );
         }
         assert_eq!(declared.len(), judged.len());
+    });
+}
+
+/// ★★★★★ R1742 — **the verdict this screen publishes is about the session it
+/// is in, and says so.**
+///
+/// The decision the round is named for, asserted where it can fail. The three
+/// specified surfaces of this screen do not exist until a session builds them,
+/// so a freshly painted lab must say *away* for all three — not `0 of 15
+/// reproduced`, which would report a working screen as broken, and not silence,
+/// which is what it did for ten rounds.
+///
+/// ★ The fixture asserts the **shortfall is the same number** in both readings
+/// before it separates them. A build that draws nothing and a session that
+/// opened nothing are indistinguishable by the count alone; if they were
+/// distinguishable that way, this would not be testing anything.
+#[test]
+fn r1742_an_untouched_lab_says_its_surfaces_are_away_rather_than_missing() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        // Painted, and nothing selected — the state a reader arriving at this
+        // section is in.
+        state.selection.set(Selection::default());
+        painted_at(&state, CONFORMANCE_SIZE);
+        let shut = super::judge::conformance();
+
+        assert_eq!(
+            shut.specified(),
+            15,
+            "what the inspector is specified to be does not depend on a session",
+        );
+        assert_eq!(shut.reproduced(), 0, "and none of it is on screen");
+        assert_eq!(shut.away(), 3, "★ all three surfaces, and each says why");
+        assert_eq!(shut.standing(), 0);
+        assert!(
+            !shut.reconciles(),
+            "★★★★★ declining to be judged is not passing",
+        );
+        for surface in shut.surfaces() {
+            let why = surface.why().expect("an away surface carries its reason");
+            assert!(
+                why.len() > 40 && surface.divergences().is_empty(),
+                "the {} surface accuses the build of nothing and says why it is \
+                 not on screen: {why}",
+                surface.surface(),
+            );
+        }
+
+        // ★ And the session puts them there. Same build, same rule.
+        card_with_enum_row(&state);
+        let frame = painted_at(&state, CONFORMANCE_SIZE).0;
+        let shut = super::judge::conformance();
+        assert_eq!(
+            shut.standing(),
+            2,
+            "the row and the controls are on screen; the roster is shut",
+        );
+        say_nothing_is_unreconciled(&shut);
+
+        // ★★★★★ And the state that measured the thing this test is really
+        // about: **two of the three surfaces are alternatives.** The pin
+        // specifies the row with its roster SHUT, so opening the roster takes
+        // the row's surface away and puts the roster's there. Asserted as a
+        // swap, in one frame, because that is the shape a reader has to know:
+        // this document cannot be fully judged at any one instant.
+        let control = *frame
+            .tags
+            .get(&format!("lab.form.control.{}", spec::ENUM_KEY))
+            .expect("the row is painted");
+        let (px, py) = centre(control);
+        super::move_cursor(&state, px, py);
+        super::press(&state);
+        super::release(&state);
+        painted_at(&state, CONFORMANCE_SIZE);
+
+        let open = super::judge::conformance();
+        assert_eq!(
+            open.standing(),
+            2,
+            "and it is still two — a swap, not a gain"
+        );
+        say_nothing_is_unreconciled(&open);
+        let standing = |report: &pinion_core::conformance::DocumentReport, name: &str| {
+            report
+                .surfaces()
+                .iter()
+                .find(|s| s.surface() == name)
+                .expect("the document names it")
+                .is_standing()
+        };
+        assert!(standing(&shut, "enum_row") && !standing(&open, "enum_row"));
+        assert!(!standing(&shut, "enum_roster") && standing(&open, "enum_roster"));
+        assert!(
+            standing(&shut, "controls") && standing(&open, "controls"),
+            "the controls surface does not depend on that state",
+        );
+        assert!(
+            open.surfaces()
+                .iter()
+                .find(|s| s.surface() == "enum_row")
+                .and_then(pinion_core::conformance::SurfaceStanding::why)
+                .is_some_and(|why| why.contains("shut")),
+            "★ and the row says WHICH state it is specified for, which is the \
+             only place that is said",
+        );
+
+        // Across the session, every surface the file declares was judged and
+        // none of them diverged unaccountably — which is the honest form of
+        // "this build reproduces its specification" for a document whose
+        // surfaces exclude each other.
+        let judged: BTreeSet<&str> = [&shut, &open]
+            .into_iter()
+            .flat_map(|report| {
+                report
+                    .surfaces()
+                    .iter()
+                    .filter(|s| s.is_standing())
+                    .map(pinion_core::conformance::SurfaceStanding::surface)
+            })
+            .collect();
+        let document = spec::inspector_document();
+        let declared: BTreeSet<&str> = document.surfaces().collect();
+        assert_eq!(
+            judged, declared,
+            "★★★★★ every surface the specification declares was judged somewhere \
+             in this session",
+        );
+    });
+}
+
+/// Every unreconciled sentence in a report, or nothing — as an assertion that
+/// prints what went wrong instead of a bare `false`.
+fn say_nothing_is_unreconciled(report: &pinion_core::conformance::DocumentReport) {
+    let said: Vec<String> = report
+        .surfaces()
+        .iter()
+        .flat_map(|s| {
+            s.unreconciled()
+                .iter()
+                .map(|u| format!("{}: {}", s.surface(), u.sentence()))
+        })
+        .collect();
+    assert!(
+        said.is_empty(),
+        "a standing surface is not what docs/analyzer-inspector-spec.json \
+         declares:\n  {}",
+        said.join("\n  "),
+    );
+}
+
+/// ★★★★★ R1742 — **the rows the verdict is computed over are the rows the form
+/// holds**, and this compares the paint's account with the model's.
+///
+/// Written because a counterfactual found the hole rather than because the code
+/// looked wrong: widening the row population — reading every part family as if
+/// it were a row — left the conformance verdict unchanged, because a spurious
+/// address carries no part family, classifies as the plain text control, and
+/// the surface is a SET that already has one. Only the narrowing direction was
+/// covered.
+///
+/// The model is the right second account here for the reason the classification
+/// is NOT allowed to use it: which rows exist is a fact the form owns, while
+/// what each row DREW is a fact only the paint has. Comparing the first and
+/// deriving the second from the paint keeps the two questions apart.
+#[test]
+fn r1742_the_rows_the_verdict_is_computed_over_are_the_rows_the_form_holds() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        card_with_enum_row(&state);
+        painted_at(&state, CONFORMANCE_SIZE);
+
+        let regions =
+            pinion_core::painted::painted_regions(super::VIEW_TAG).expect("the sweep just painted");
+        let from_paint: BTreeSet<String> = super::judge::shown_rows(&regions).into_iter().collect();
+
+        let form = super::selected_form(&state).expect("a card is selected");
+        let from_model: BTreeSet<String> = form
+            .fields()
+            .iter()
+            .filter(|f| !f.hidden())
+            .map(|f| f.key().to_owned())
+            .collect();
+
+        assert_eq!(
+            from_paint, from_model,
+            "★ the rows read out of the paint are the rows the form holds -- a \
+             population wider than this is invisible to the verdict, which is \
+             what this asserts against",
+        );
+        assert!(
+            from_paint.len() >= 5,
+            "and there are enough of them for the comparison to mean something",
+        );
+    });
+}
+
+/// ★ R1742 — and the roster's words are read from the PAINT, so a roster that
+/// drew the wrong word in the right box fails.
+///
+/// The property `Built` alone cannot show: three parts in the specified order
+/// whose *titles* come from the runs the frame drew. Asserted by naming what
+/// each drew rather than by counting, because a count passes when three boxes
+/// each hold the first word.
+#[test]
+fn r1742_the_roster_is_titled_by_the_words_the_frame_drew() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        card_with_enum_row(&state);
+        let shot = painted_at(&state, CONFORMANCE_SIZE).0;
+        let control = *shot
+            .tags
+            .get(&format!("lab.form.control.{}", spec::ENUM_KEY))
+            .expect("the row is painted");
+        let (px, py) = centre(control);
+        super::move_cursor(&state, px, py);
+        super::press(&state);
+        super::release(&state);
+        painted_at(&state, CONFORMANCE_SIZE);
+
+        let built = built_inspector("enum_roster");
+        let parts = built.parts().expect("the roster is open");
+        for part in parts {
+            assert_eq!(
+                part.key, part.title,
+                "★ the box addressed `{}` drew `{}` — the roster's word and the \
+                 box it is in are one fact and this is where they are compared",
+                part.key, part.title,
+            );
+        }
+        assert!(parts.len() >= 2, "a roster of one word proves no order");
     });
 }
 

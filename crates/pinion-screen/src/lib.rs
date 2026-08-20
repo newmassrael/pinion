@@ -149,6 +149,11 @@ pub trait Screen {
     ///
     /// See [`conformance`] for what a host does with it and for the
     /// measurement that forced it.
+    ///
+    /// ★ R1742 — a report may say a surface is **not on screen** rather than
+    /// absent, so a screen whose surfaces a session builds can answer honestly.
+    /// It costs the report nothing: an away surface reproduces 0 and does not
+    /// reconcile, so a section cannot pass by drawing less of itself.
     fn conformance(&self) -> Option<pinion_core::conformance::DocumentReport>;
 
     // --- state --------------------------------------------------------------

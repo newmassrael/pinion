@@ -60,7 +60,7 @@ use pinion_a11y::{
     AccessFocus, AccessLive, AccessNode, AccessValue, AriaRole, GridCell, GridColumn, GridRow,
     WidgetA11y, grid_table_nodes,
 };
-use pinion_core::conformance::Part;
+use pinion_core::conformance::{Built, Part};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, PointerTarget, ReadRefusal, RepaintOwner,
@@ -1149,9 +1149,14 @@ fn wire_bytes(at: Rect, record: &'static spec::RowSpec, ink: Ink) -> Vec<Scene> 
 ///
 /// If asked for a surface the specification does not name, which is a defect in
 /// this file.
+///
+/// ★ R1742 — every surface is [`Built::Standing`]: this section's three
+/// surfaces are drawn whenever it is showing, so none of them can be away. A
+/// screen whose surfaces come and go with a session says so instead; the node
+/// lab is that case.
 #[must_use]
-fn built(surface: &str) -> Vec<Part> {
-    match surface {
+fn built(surface: &str) -> Built {
+    Built::Standing(match surface {
         "header" => spec::HEADER
             .iter()
             .map(|p| Part::new(p.key, p.title))
@@ -1165,13 +1170,11 @@ fn built(surface: &str) -> Vec<Part> {
             .map(|p| Part::new(p.key, p.title))
             .collect(),
         other => panic!("no surface named {other}"),
-    }
+    })
 }
 
 fn conformance_json() -> serde_json::Value {
-    <LogView as WidgetView>::conformance()
-        .expect("this section answers a written specification")
-        .to_json()
+    pinion_shell::conformance_json::<LogView>()
 }
 
 /// The screen, as a table a client reads instead of a screenshot.

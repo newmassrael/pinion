@@ -48,8 +48,16 @@ fn oracle(state: &std::rc::Rc<super::ViewState>) -> ViewOracle {
 fn r1730_the_tables_reproduce_the_specification_or_say_where_they_do_not() {
     let doc = spec::document();
     for surface in doc.surfaces() {
+        // ★ R1742 — and `expect` here is a check, not plumbing: this section's
+        // surfaces are drawn whenever it is showing, so a build that started
+        // answering `away` for one of them would be declining a judgement it
+        // has no session-dependent reason to decline.
+        let parts = built(surface)
+            .parts()
+            .unwrap_or_else(|| panic!("the {surface} surface is always on this screen"))
+            .to_vec();
         let unreconciled: Vec<String> = doc
-            .unreconciled(surface, &built(surface))
+            .unreconciled(surface, &parts)
             .iter()
             .map(Unreconciled::sentence)
             .collect();

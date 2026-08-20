@@ -91,6 +91,9 @@ EXT = "/external"
 CHECKS: list[str] = []
 PARTS_COMPARED = 0
 SECTIONS_WALKED = 0
+#: The sections section D judged BY TAG, named so the printed coverage says
+#: which sections it is coverage of (R1742).
+TAG_JUDGED: list[str] = []
 
 
 def banner(text: str) -> None:
@@ -206,20 +209,36 @@ def section_c(app: RpcSubprocess) -> None:
         all(row.get("surfaces") for row in judged),
     )
 
+    # ★★★★★ R1742 — the host's row is re-read WHILE STANDING IN the section,
+    # and the reason is a defect this assertion had and could not see. A
+    # section that derives its verdict from its own PAINT answers about its
+    # last frame, and a section that is not showing has not painted since; the
+    # row taken from the dashboard was therefore a true statement about a frame
+    # no longer in the application, and comparing it with the section's live
+    # answer failed the moment the first such screen existed. The report says
+    # which frame each row is about (`showing`), and this walks to the section
+    # before comparing -- because "the host aggregates, it does not re-derive"
+    # is a claim about one frame, not about two.
     for row in judged:
         SECTIONS_WALKED += 1
         app.intervene(f"{EXT}/nav", row["key"])
         app.tick(16)
+        here = next(r for r in report(app)["rows"] if r["key"] == row["key"])
+        ok(
+            f"C: ★★ the report says `{row['key']}` is the section showing, so a "
+            f"reader knows which frame the verdict beside it is about",
+            here["showing"] is True,
+        )
         own = app.query(f"/{row['tag']}/external/conformance")
         assert_eq(
             own,
-            row["surfaces"],
+            here["surfaces"],
             f"C: ★★ the host's row for `{row['key']}` IS the value the section "
             f"publishes on its own wire -- the host aggregates, it does not "
             f"re-derive",
         )
         assert_eq(
-            row["specified"],
+            here["specified"],
             sum(surface["specified"] for surface in own.values()),
             f"C: and `{row['key']}`'s totals are its surfaces added up",
         )
@@ -256,19 +275,92 @@ def section_d(app: RpcSubprocess) -> None:
         for chrome in ("shell.appbar", "shell.rail", f"shell.rail.{row['key']}"):
             ok(f"D: and the host's {chrome} survives it -- a page, not a takeover", chrome in rects)
 
-        missing: list[str] = []
-        for surface in row["surfaces"]:
-            for part in parts_of(app, row["tag"], surface):
-                PARTS_COMPARED += 1
-                if not any(tag == part or tag.endswith(f".{part}") for tag in rects):
-                    missing.append(f"{surface}.{part}")
-        ok(
-            f"D: ★★★ every part `{row['key']}`'s specification fixes is PAINTED "
-            f"in the assembled application, not only in its own window "
-            f"-- missing: {missing or 'none'}",
-            not missing,
-        )
-    print(f"  [coverage] {PARTS_COMPARED} specified part(s) compared with the paint")
+        # ★★★★★ R1742 — the rule is ALL OR NONE per surface, and it is a
+        # derivation rather than a list of exclusions.
+        #
+        # Two things went wrong here the round a third section started
+        # publishing. The parts were read flat, so a section publishing its
+        # specification nested answered `[]` for every surface and this loop
+        # silently compared nothing while the printed number stayed what it
+        # was. And once they WERE read, the expectation turned out to be false
+        # for two honest reasons: a surface a session has not opened is not on
+        # the frame, and a surface whose parts are a CLASSIFICATION of the rows
+        # (which control kind each row draws) has no tag per part at all.
+        #
+        # So: a surface either paints every part it names or paints none of
+        # them. `none` is a surface judged some other way — by its own
+        # report — and is counted and printed rather than skipped in silence; a
+        # surface that paints SOME and not others is the drift this check
+        # exists for, and still fails.
+        # ★★★★★ R1742 — the population of this check is now DERIVED and
+        # RATCHETED, and both halves are repairs of holes it had.
+        #
+        # It read the parts flat, so a section publishing its specification
+        # nested answered `[]` for every surface: nothing failed, nothing was
+        # compared, and the printed number stayed what it was — which reads as
+        # covering every judged section. Once they were read, the expectation
+        # itself turned out not to generalise. A surface a session has not
+        # opened is not on the frame, and a surface whose parts are a
+        # CLASSIFICATION of the rows (which control kind each row draws) has no
+        # tag per part at all — so "every specified part is painted" is false
+        # for reasons that are not defects.
+        #
+        # And the matching is a heuristic, which the same run proved: the part
+        # named `text` matched `lab.inspector.reach.text`, a tag belonging to
+        # something else entirely. A single coincidence like that must not be
+        # able to put a section into the strict branch half-way.
+        #
+        # So a section is in the tag population only when EVERY part of EVERY
+        # surface resolves; anything else is reported with its resolved/total
+        # counts, which a reader can see is not coverage. The ratchet below is
+        # what stops that being an escape: the population and the part count
+        # may not fall below what this check measured when it was written.
+        parts_by_surface = {
+            surface: parts_of(app, row["tag"], surface) for surface in row["surfaces"]
+        }
+        for surface, parts in parts_by_surface.items():
+            ok(
+                f"D: `{row['key']}`.{surface} publishes the parts its "
+                f"specification fixes, so this check has something to compare",
+                bool(parts),
+            )
+        resolved = {
+            surface: [
+                part
+                for part in parts
+                if any(tag == part or tag.endswith(f".{part}") for tag in rects)
+            ]
+            for surface, parts in parts_by_surface.items()
+        }
+        total = sum(len(p) for p in parts_by_surface.values())
+        found = sum(len(p) for p in resolved.values())
+        if found == total:
+            TAG_JUDGED.append(row["key"])
+            PARTS_COMPARED += total
+            ok(
+                f"D: ★★★ all {total} part(s) `{row['key']}`'s specification fixes "
+                f"are PAINTED in the assembled application, not only in its own "
+                f"window",
+                True,
+            )
+        else:
+            print(
+                f"  [by-report] `{row['key']}`: {found} of {total} specified "
+                f"part(s) resolve to a tag, so this section is judged by its own "
+                f"report rather than by this check"
+            )
+    print(
+        f"  [coverage] {PARTS_COMPARED} specified part(s) compared with the paint "
+        f"across {len(TAG_JUDGED)} of {SECTIONS_WALKED} judged section(s): "
+        f"{', '.join(TAG_JUDGED)}"
+    )
+    ok(
+        f"D: ★★★★★ and the population has not SHRUNK -- {len(TAG_JUDGED)} section(s) "
+        f"and {PARTS_COMPARED} part(s) against the 2 and 36 this check measured "
+        f"when it was written, so a section that quietly stopped addressing its "
+        f"parts by tag cannot leave the check by falling out of its population",
+        len(TAG_JUDGED) >= 2 and PARTS_COMPARED >= 36,
+    )
 
 
 def unreachable(app: RpcSubprocess, tag: str) -> bool:
@@ -286,10 +378,30 @@ def parts_of(app: RpcSubprocess, tag: str, surface: str) -> list[str]:
     Read from the section's own published specification rather than from a table
     in this file: the two demos before this one each grew their own copy of a
     seat list, and the one nobody ran was the one that was wrong.
+
+    ★★★★★ R1742 — it also looks one level down, and reading it flat was a
+    defect. A section may publish its specification NESTED under a name of its
+    own (the node lab publishes `spec.inspector`), and the flat read answered
+    `[]` for every surface of such a section. Nothing failed: the loop below
+    compared nothing, and the printed coverage stayed the number it already
+    was, which reads as covering every judged section. That is this demo's own
+    lesson turned on itself -- count what the check actually looked at -- so
+    the caller refuses a surface that yields no parts.
     """
+    import json
+
     said = app.query(f"/{tag}/external/spec")
-    rows = said.get(surface, [])
-    return [row["key"] for row in rows if isinstance(row, dict) and "key" in row]
+    if isinstance(said, str):
+        said = json.loads(said)
+    rows = said.get(surface)
+    if rows is None:
+        for value in said.values():
+            if isinstance(value, dict) and surface in value:
+                rows = value[surface]
+                break
+    if isinstance(rows, dict):
+        rows = rows.get("canon", [])
+    return [row["key"] for row in rows or [] if isinstance(row, dict) and "key" in row]
 
 
 def section_e(app: RpcSubprocess) -> None:

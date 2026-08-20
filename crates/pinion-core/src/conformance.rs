@@ -117,6 +117,90 @@ impl Part {
     }
 }
 
+/// ★★★★★ R1742 — what a build can show of ONE specified surface **right now**.
+///
+/// # Why a comparison needs a third answer
+///
+/// [`SpecDocument::report`] used to ask a screen for a surface's parts and take
+/// a `Vec<Part>` back, so a screen had exactly two things it could say: *here
+/// are the parts*, or *here are no parts*. Those are not the only two facts a
+/// screen has.
+///
+/// A surface can be **specified and not on screen**. This tree's node lab is
+/// the case that forced it: the inspector's rows exist once a card is selected,
+/// and the roster one of them collapses exists once that row is opened — so a
+/// lab nobody has touched draws none of them. Handing back an empty roster
+/// there says *the build reproduces none of its specification*, which is false
+/// and is the loudest kind of false: a screen that is working reports as
+/// broken, and a reader learns to ignore the report. Handing back nothing at
+/// all — the alternative the tree actually had — says nothing, which is how the
+/// lab came to be the one section of this application that answers to a written
+/// specification and never published a verdict about it.
+///
+/// So a screen says which of the two it is, and [`Away`](Self::Away) carries
+/// **the screen's own sentence** for why. Only the screen knows whether its
+/// surface is absent because a session has not opened it, because the pane it
+/// lives in is collapsed, or because it is drawn for a mode nobody selected.
+///
+/// # It is not an escape hatch, by construction
+///
+/// A surface that is away **does not reconcile**
+/// ([`SurfaceStanding::reconciles`]), and it counts as **0 reproduced** rather
+/// than as its full specification. A screen therefore cannot report conformance
+/// by keeping its surfaces off screen; it can only report that its verdict is
+/// about a session nobody has put it into. That is R1738's rule one level down:
+/// *the count of what was judged is part of the verdict, not a footnote under
+/// it.*
+///
+/// # Examples
+///
+/// ```
+/// use pinion_core::conformance::{Built, Part, SpecDocument};
+///
+/// let doc = SpecDocument::parse(
+///     r#"{ "roster": { "canon": [ { "key": "one", "title": "One" } ], "owed": [] } }"#,
+/// )
+/// .expect("the fixture is a specification");
+///
+/// // Nobody opened it, so nothing is compared — and the report says so rather
+/// // than crediting the surface or accusing it.
+/// let shut = doc.report(&|_| Built::away("the roster is shut, so it has no parts"));
+/// assert_eq!(shut.specified(), 1);
+/// assert_eq!(shut.reproduced(), 0);
+/// assert_eq!(shut.away(), 1);
+/// assert!(!shut.reconciles());
+///
+/// let open = doc.report(&|_| Built::Standing(vec![Part::new("one", "One")]));
+/// assert_eq!(open.reproduced(), 1);
+/// assert!(open.reconciles());
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Built {
+    /// The surface is on screen, and these are the parts it is made of, in
+    /// reading order.
+    Standing(Vec<Part>),
+    /// The surface is not on screen, so there is nothing to compare its
+    /// specification with — and this is the screen's own reason.
+    Away(String),
+}
+
+impl Built {
+    /// A surface that is not on screen, and why.
+    #[must_use]
+    pub fn away(why: impl Into<String>) -> Self {
+        Built::Away(why.into())
+    }
+
+    /// The parts, when the surface is standing.
+    #[must_use]
+    pub fn parts(&self) -> Option<&[Part]> {
+        match self {
+            Built::Standing(parts) => Some(parts),
+            Built::Away(_) => None,
+        }
+    }
+}
+
 /// Why a roster of parts could not be built.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SurfaceDefect {
@@ -940,21 +1024,45 @@ impl SpecDocument {
     /// See [`DocumentReport`] for why this exists beside [`wire`](Self::wire),
     /// which now derives from it: the wire form was the only form, and a wire
     /// form is where a count goes to stop being a count.
+    ///
+    /// ★ R1742 — `built` answers with a [`Built`], so a screen whose surface is
+    /// not on screen says *that* instead of handing back an empty roster the
+    /// comparison would read as total failure. See [`Built`] for why the third
+    /// answer is not an escape hatch.
     #[must_use]
-    pub fn report(&self, built: &dyn Fn(&str) -> Vec<Part>) -> DocumentReport {
+    pub fn report(&self, built: &dyn Fn(&str) -> Built) -> DocumentReport {
         DocumentReport {
             surfaces: self
                 .surfaces()
                 .map(|surface| {
                     let canon = &self.canon[surface];
                     let ledger = &self.owed[surface];
-                    let divergences = canon.diff(&built(surface));
-                    SurfaceStanding {
-                        unreconciled: ledger.judge(&divergences),
-                        surface: surface.to_owned(),
-                        specified: canon.len(),
-                        divergences,
-                        owed: ledger.owed().to_vec(),
+                    match built(surface) {
+                        Built::Standing(parts) => {
+                            let divergences = canon.diff(&parts);
+                            SurfaceStanding {
+                                unreconciled: ledger.judge(&divergences),
+                                surface: surface.to_owned(),
+                                specified: canon.len(),
+                                away: None,
+                                divergences,
+                                owed: ledger.owed().to_vec(),
+                            }
+                        }
+                        // ★ Nothing is judged, so nothing is recorded as
+                        // judged: no divergences, no ledger verdict. A surface
+                        // that is away has not been compared with its ledger
+                        // either, and a report that quietly reconciled one
+                        // would let a screen retire a declared remainder by
+                        // never drawing the surface it is about.
+                        Built::Away(why) => SurfaceStanding {
+                            unreconciled: Vec::new(),
+                            surface: surface.to_owned(),
+                            specified: canon.len(),
+                            away: Some(why),
+                            divergences: Vec::new(),
+                            owed: ledger.owed().to_vec(),
+                        },
                     }
                 })
                 .collect(),
@@ -972,7 +1080,7 @@ impl SpecDocument {
     /// introduced; keeping them so is what stops the typed count and the
     /// published count from disagreeing about the same build.
     #[must_use]
-    pub fn wire(&self, built: &dyn Fn(&str) -> Vec<Part>) -> serde_json::Value {
+    pub fn wire(&self, built: &dyn Fn(&str) -> Built) -> serde_json::Value {
         self.report(built).to_json()
     }
 }
@@ -995,7 +1103,7 @@ impl SpecDocument {
 /// # Examples
 ///
 /// ```
-/// use pinion_core::conformance::{Part, SpecDocument};
+/// use pinion_core::conformance::{Built, Part, SpecDocument};
 ///
 /// let doc = SpecDocument::parse(
 ///     r#"{ "columns": {
@@ -1008,7 +1116,7 @@ impl SpecDocument {
 /// )
 /// .expect("the fixture is a specification");
 ///
-/// let report = doc.report(&|_| vec![Part::new("id", "ID")]);
+/// let report = doc.report(&|_| Built::Standing(vec![Part::new("id", "ID")]));
 /// assert_eq!(report.specified(), 2);
 /// assert_eq!(report.reproduced(), 1);
 /// assert!(!report.reconciles());
@@ -1017,6 +1125,14 @@ impl SpecDocument {
 pub struct SurfaceStanding {
     surface: String,
     specified: usize,
+    /// `None` while the surface is on screen; the screen's own reason for it
+    /// not being, otherwise.
+    ///
+    /// The invariant that makes the arms readable: while this is `Some`,
+    /// `divergences` and `unreconciled` are **empty** — nothing was compared,
+    /// so nothing can have diverged. Only [`SpecDocument::report`] constructs
+    /// this type, which is what enforces it.
+    away: Option<String>,
     divergences: Vec<PartDivergence>,
     unreconciled: Vec<Unreconciled>,
     owed: Vec<Owed>,
@@ -1030,16 +1146,66 @@ impl SurfaceStanding {
     }
 
     /// How many parts the specification fixes.
+    ///
+    /// The specification's count, so it is the same whether or not the surface
+    /// is on screen: what a surface is *supposed* to be made of does not depend
+    /// on whether anybody opened it.
     #[must_use]
     pub fn specified(&self) -> usize {
         self.specified
     }
 
-    /// How many of them the build has, in the place the specification puts
-    /// them.
+    /// ★ R1742 — whether the surface was on screen to be compared at all.
+    #[must_use]
+    pub const fn is_standing(&self) -> bool {
+        self.away.is_none()
+    }
+
+    /// Why the surface was not on screen, in the screen's own words, or `None`
+    /// when it was.
+    #[must_use]
+    pub fn why(&self) -> Option<&str> {
+        self.away.as_deref()
+    }
+
+    /// How many of the specified parts the build has, in the place the
+    /// specification puts them.
+    ///
+    /// ★ **Zero while the surface is away**, and that is the decision rather
+    /// than an omission: crediting a surface nobody opened is the direction of
+    /// error that inflates a report silently.
+    ///
+    /// ★★★★★ R1742 — **the specified parts that diverge, counted once each.**
+    /// It was `specified - divergences.len()`, and that is wrong in two
+    /// directions that had never met a build unequal enough to show either:
+    ///
+    /// * A part the surface has and the specification does not
+    ///   ([`PartDivergence::Unspecified`]) is not a specified part failing to
+    ///   be there, so subtracting it makes a build that grew a part report as
+    ///   having *lost* one.
+    /// * One part can diverge twice — *renamed and moved* is two facts
+    ///   [`SurfaceSpec::diff`] reports separately, on purpose — so it was
+    ///   subtracted twice.
+    ///
+    /// Together they can take the count below zero, and did: measured the first
+    /// time a screen answered this from a live frame, on a surface fixing
+    /// **five** parts whose session produced **six** divergences — `5 - 6`
+    /// panicked in a debug build. The value a running application publishes must
+    /// not be able to do that, and the arithmetic that could was the same
+    /// arithmetic that quietly under-reported every surface with a declared
+    /// extra.
     #[must_use]
     pub fn reproduced(&self) -> usize {
-        self.specified - self.divergences.len()
+        if self.away.is_some() {
+            return 0;
+        }
+        let troubled: std::collections::BTreeSet<&str> = self
+            .divergences
+            .iter()
+            .filter(|d| !matches!(d, PartDivergence::Unspecified { .. }))
+            .map(PartDivergence::key)
+            .collect();
+        self.specified - troubled.len()
     }
 
     /// Every way the build is not what was specified.
@@ -1069,9 +1235,13 @@ impl SurfaceStanding {
     /// divergences would make the ledger unusable the moment it held an entry.
     /// The failing condition is a difference **nobody accepted**, in either
     /// direction — which is [`Ledger::judge`]'s equality.
+    ///
+    /// ★★★★★ R1742 — **and a surface that is away does not reconcile.** It is
+    /// what stops [`Built::Away`] from being a way out: a screen may decline to
+    /// be judged, and declining is not passing.
     #[must_use]
     pub fn reconciles(&self) -> bool {
-        self.unreconciled.is_empty()
+        self.away.is_none() && self.unreconciled.is_empty()
     }
 }
 
@@ -1101,50 +1271,82 @@ impl DocumentReport {
     }
 
     /// How many of them the build has where they were specified.
+    ///
+    /// A surface that was not on screen contributes **0**, so this and
+    /// [`specified`](Self::specified) come apart exactly when
+    /// [`away`](Self::away) is not zero.
     #[must_use]
     pub fn reproduced(&self) -> usize {
         self.surfaces.iter().map(SurfaceStanding::reproduced).sum()
     }
 
+    /// ★ R1742 — how many of this specification's surfaces were on screen to be
+    /// compared.
+    #[must_use]
+    pub fn standing(&self) -> usize {
+        self.surfaces.iter().filter(|s| s.is_standing()).count()
+    }
+
+    /// ★ R1742 — how many were not, and so were not judged.
+    ///
+    /// The number a reader needs beside [`reproduced`](Self::reproduced) to
+    /// know what a low count means: a build that draws its surfaces wrongly and
+    /// a session nobody opened produce the same shortfall, and only this tells
+    /// them apart.
+    #[must_use]
+    pub fn away(&self) -> usize {
+        self.surfaces.iter().filter(|s| !s.is_standing()).count()
+    }
+
     /// Whether every surface's difference is the difference somebody wrote
     /// down.
+    ///
+    /// ★ R1742 — **false while any surface is away**, because an unjudged
+    /// surface is not a reconciled one. See [`Built`].
     #[must_use]
     pub fn reconciles(&self) -> bool {
         self.surfaces.iter().all(SurfaceStanding::reconciles)
     }
 
     /// The report as the value a running application publishes.
+    ///
+    /// ★ R1742 — every row carries `standing`, and a row that is not standing
+    /// carries `why`. The same shape a section row has one level up, for the
+    /// same reason: a reader who cannot tell *not reproduced* from *not on
+    /// screen* is reading two facts as one.
     #[must_use]
     pub fn to_json(&self) -> serde_json::Value {
         let mut out = serde_json::Map::new();
         for standing in &self.surfaces {
-            out.insert(
-                standing.surface.clone(),
-                serde_json::json!({
-                    "specified": standing.specified(),
-                    "reproduced": standing.reproduced(),
-                    "divergences": standing
-                        .divergences
-                        .iter()
-                        .map(|d| serde_json::json!({ "key": d.key(), "says": d.sentence() }))
-                        .collect::<Vec<_>>(),
-                    "owed": standing
-                        .owed
-                        .iter()
-                        .map(|entry| serde_json::json!({
-                            "key": entry.key,
-                            "says": entry.sentence,
-                            "since": entry.since,
-                            "why": entry.why,
-                        }))
-                        .collect::<Vec<_>>(),
-                    "unreconciled": standing
-                        .unreconciled
-                        .iter()
-                        .map(|u| serde_json::json!({ "key": u.key(), "says": u.sentence() }))
-                        .collect::<Vec<_>>(),
-                }),
-            );
+            let mut row = serde_json::json!({
+                "specified": standing.specified(),
+                "reproduced": standing.reproduced(),
+                "standing": standing.is_standing(),
+                "divergences": standing
+                    .divergences
+                    .iter()
+                    .map(|d| serde_json::json!({ "key": d.key(), "says": d.sentence() }))
+                    .collect::<Vec<_>>(),
+                "owed": standing
+                    .owed
+                    .iter()
+                    .map(|entry| serde_json::json!({
+                        "key": entry.key,
+                        "says": entry.sentence,
+                        "since": entry.since,
+                        "why": entry.why,
+                    }))
+                    .collect::<Vec<_>>(),
+                "unreconciled": standing
+                    .unreconciled
+                    .iter()
+                    .map(|u| serde_json::json!({ "key": u.key(), "says": u.sentence() }))
+                    .collect::<Vec<_>>(),
+            });
+            if let Some(why) = standing.why() {
+                row["why"] = serde_json::Value::String(why.to_owned());
+            }
+            out.insert(standing.surface.clone(), row);
         }
         serde_json::Value::Object(out)
     }
@@ -1153,7 +1355,8 @@ impl DocumentReport {
 #[cfg(test)]
 mod tests {
     use super::{
-        Ledger, LedgerDefect, Owed, Part, PartDivergence, SurfaceDefect, SurfaceSpec, Unreconciled,
+        Built, Ledger, LedgerDefect, Owed, Part, PartDivergence, SpecDocument, SurfaceDefect,
+        SurfaceSpec, Unreconciled,
     };
 
     fn spec() -> SurfaceSpec {
@@ -1659,8 +1862,8 @@ mod tests {
     #[test]
     fn a_document_publishes_one_shape_for_every_surface() {
         let built = |surface: &str| match surface {
-            "columns" => vec![Part::new("id", "ID"), Part::new("name", "Name")],
-            _ => vec![Part::new("subject", "Subject")],
+            "columns" => Built::Standing(vec![Part::new("id", "ID"), Part::new("name", "Name")]),
+            _ => Built::Standing(vec![Part::new("subject", "Subject")]),
         };
         let wire = document().wire(&built);
         assert_eq!(wire["columns"]["specified"], 2);
@@ -1739,14 +1942,175 @@ mod tests {
     #[test]
     fn r1738_a_report_is_every_surface_added_up() {
         let report = two_surface_document().report(&|surface| match surface {
-            "columns" => vec![Part::new("id", "ID"), Part::new("name", "Name")],
-            "detail" => vec![Part::new("summary", "Summary")],
+            "columns" => Built::Standing(vec![Part::new("id", "ID"), Part::new("name", "Name")]),
+            "detail" => Built::Standing(vec![Part::new("summary", "Summary")]),
             other => panic!("no surface named {other}"),
         });
         assert_eq!(report.surfaces().len(), 2);
         assert_eq!(report.specified(), 3);
         assert_eq!(report.reproduced(), 3);
+        assert_eq!(report.standing(), 2);
+        assert_eq!(report.away(), 0);
         assert!(report.reconciles());
+    }
+
+    /// ★★★★★ R1742 — a surface that is not on screen is neither reproduced nor
+    /// diverged, and a report holding one does not reconcile.
+    ///
+    /// The two directions are asserted together on purpose. Crediting an
+    /// unopened surface would inflate the count silently, and accusing it would
+    /// make a working screen report as broken; the fixture is one document with
+    /// one of each so neither repair can be made without the other showing.
+    #[test]
+    fn r1742_a_surface_that_is_not_on_screen_is_not_judged_either_way() {
+        let report = two_surface_document().report(&|surface| match surface {
+            "columns" => Built::Standing(vec![Part::new("id", "ID"), Part::new("name", "Name")]),
+            "detail" => Built::away("nobody selected a row, so there is no detail to read"),
+            other => panic!("no surface named {other}"),
+        });
+        assert_eq!(report.specified(), 3, "what it is supposed to be is fixed");
+        assert_eq!(report.reproduced(), 2, "and the away surface counts for 0");
+        assert_eq!(report.standing(), 1);
+        assert_eq!(report.away(), 1);
+        assert!(
+            !report.reconciles(),
+            "declining to be judged is not passing"
+        );
+
+        let detail = &report.surfaces()[1];
+        assert!(!detail.is_standing());
+        assert_eq!(
+            detail.why(),
+            Some("nobody selected a row, so there is no detail to read"),
+        );
+        assert!(
+            detail.divergences().is_empty() && detail.unreconciled().is_empty(),
+            "★ nothing was compared, so nothing can have diverged",
+        );
+        assert_eq!(
+            detail.specified(),
+            1,
+            "★ and what it is specified to be does not depend on being opened",
+        );
+
+        // The published form carries the distinction, which is what a client
+        // reads: `reproduced: 0` beside `standing: false` is a different fact
+        // from `reproduced: 0` beside `standing: true`.
+        let wire = report.to_json();
+        assert_eq!(wire["detail"]["standing"], serde_json::json!(false));
+        assert_eq!(wire["columns"]["standing"], serde_json::json!(true));
+        assert_eq!(
+            wire["detail"]["why"],
+            serde_json::json!("nobody selected a row, so there is no detail to read"),
+        );
+        assert!(wire["columns"].get("why").is_none());
+    }
+
+    /// ★★★★★ R1742 — **how many parts a build reproduces is a count of
+    /// SPECIFIED parts**, and neither an extra one nor a part that diverges
+    /// twice may be subtracted from it.
+    ///
+    /// Found by running: the node lab publishes a surface with a declared
+    /// extra, and the first frame with several parts absent underflowed
+    /// `specified - divergences.len()` and panicked. Both directions are
+    /// asserted here, and the panicking case is one of them, because a repair
+    /// that only clamped the subtraction would leave the under-report in place.
+    #[test]
+    fn r1742_reproduced_counts_specified_parts_and_not_divergences() {
+        let doc = SpecDocument::parse(
+            r#"{ "row": {
+                   "canon": [
+                     { "key": "a", "title": "A" },
+                     { "key": "b", "title": "B" },
+                     { "key": "c", "title": "C" }
+                   ],
+                   "owed": []
+                 } }"#,
+        )
+        .expect("the fixture is a specification");
+
+        // A build that GREW two parts and kept all three specified ones. The
+        // old arithmetic answered 1 of 3 for a surface that has everything.
+        let grown = doc.report(&|_| {
+            Built::Standing(vec![
+                Part::new("a", "A"),
+                Part::new("b", "B"),
+                Part::new("c", "C"),
+                Part::new("d", "D"),
+                Part::new("e", "E"),
+            ])
+        });
+        assert_eq!(
+            grown.reproduced(),
+            3,
+            "★ an extra part is not a missing one"
+        );
+        assert_eq!(grown.surfaces()[0].divergences().len(), 2);
+        assert!(!grown.reconciles(), "and the extras are still reported");
+
+        // One part, two divergences: moved AND renamed. It is one part failing
+        // to be reproduced, reported as two facts a reader needs both of.
+        let moved = doc.report(&|_| {
+            Built::Standing(vec![
+                Part::new("b", "B"),
+                Part::new("a", "renamed"),
+                Part::new("c", "C"),
+            ])
+        });
+        assert_eq!(
+            moved.surfaces()[0].divergences().len(),
+            3,
+            "a and b both moved, and a was renamed as well",
+        );
+        assert_eq!(
+            moved.reproduced(),
+            1,
+            "★ two parts diverge — `c` is the one still where it was specified",
+        );
+
+        // And the case that panicked: more divergences than the surface has
+        // specified parts.
+        let ruined = doc.report(&|_| {
+            Built::Standing(vec![
+                Part::new("x", "X"),
+                Part::new("y", "Y"),
+                Part::new("z", "Z"),
+            ])
+        });
+        assert_eq!(ruined.surfaces()[0].divergences().len(), 6);
+        assert_eq!(
+            ruined.reproduced(),
+            0,
+            "★★ nothing specified is there, and the count says 0 rather than \
+             refusing to be a number",
+        );
+    }
+
+    /// ★ And a declared remainder cannot be retired by never drawing the
+    /// surface it is about: an away surface keeps its ledger and reconciles
+    /// nothing.
+    #[test]
+    fn r1742_an_away_surface_does_not_reconcile_its_ledger() {
+        let doc = SpecDocument::parse(
+            r#"{ "columns": {
+                   "canon": [ { "key": "id", "title": "ID" } ],
+                   "owed": [ {
+                     "key": "id",
+                     "sentence": "`id` is specified and the surface has no such part",
+                     "since": "R1742",
+                     "why": "a fixture entry, so the ledger is not empty"
+                   } ]
+                 } }"#,
+        )
+        .expect("the fixture is a specification");
+        let report = doc.report(&|_| Built::away("the pane holding it is collapsed"));
+        let columns = &report.surfaces()[0];
+        assert_eq!(columns.owed().len(), 1, "the entry is still published");
+        assert!(
+            columns.unreconciled().is_empty(),
+            "and nothing was judged against it",
+        );
+        assert!(!report.reconciles());
     }
 
     /// ★ A difference **nobody accepted** is what fails, in either direction —
@@ -1756,8 +2120,8 @@ mod tests {
     #[test]
     fn r1738_a_difference_nobody_wrote_down_is_what_stops_a_report_reconciling() {
         let report = two_surface_document().report(&|surface| match surface {
-            "columns" => vec![Part::new("id", "ID")],
-            "detail" => vec![Part::new("summary", "Summary")],
+            "columns" => Built::Standing(vec![Part::new("id", "ID")]),
+            "detail" => Built::Standing(vec![Part::new("summary", "Summary")]),
             other => panic!("no surface named {other}"),
         });
         assert_eq!(report.specified(), 3);
@@ -1787,8 +2151,8 @@ mod tests {
     fn r1738_the_wire_form_publishes_what_the_report_counts() {
         let doc = two_surface_document();
         let built = |surface: &str| match surface {
-            "columns" => vec![Part::new("id", "ID")],
-            "detail" => vec![Part::new("summary", "Summary")],
+            "columns" => Built::Standing(vec![Part::new("id", "ID")]),
+            "detail" => Built::Standing(vec![Part::new("summary", "Summary")]),
             other => panic!("no surface named {other}"),
         };
         let wire = doc.wire(&built);

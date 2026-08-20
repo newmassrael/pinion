@@ -72,7 +72,7 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
-use crate::scene::Rect;
+use crate::scene::{Rect, Scene};
 
 thread_local! {
     /// Surface tag -> what that surface's last painted frame drew.
@@ -98,13 +98,62 @@ thread_local! {
 pub struct PaintedRegions {
     /// Tag and rectangle, in the order the frame drew them: earliest first.
     marks: Vec<(String, Rect)>,
+    /// ★ R1742 — tag -> what the text runs it owns read, joined in paint order.
+    ///
+    /// See [`reads`](Self::reads) for what this is for and what it is not.
+    reads: BTreeMap<String, String>,
 }
 
 impl PaintedRegions {
     /// Build from marks already in paint order, earliest first.
+    ///
+    /// The frame's words are not recorded by this constructor — see
+    /// [`with_reads`](Self::with_reads). Kept as the plain constructor because
+    /// most callers of this store are asking *where*, and a caller that has no
+    /// words to record should not have to say so with an empty map.
     #[must_use]
     pub fn from_marks(marks: Vec<(String, Rect)>) -> Self {
-        Self { marks }
+        Self {
+            marks,
+            reads: BTreeMap::new(),
+        }
+    }
+
+    /// ★ R1742 — the same marks, with what each tag's runs read.
+    #[must_use]
+    pub fn with_reads(mut self, reads: BTreeMap<String, String>) -> Self {
+        self.reads = reads;
+        self
+    }
+
+    /// ★★★★★ R1742 — **what `tag` reads**: the text the frame drew inside it,
+    /// in paint order, or `None` when it drew none.
+    ///
+    /// # Why the store holds this and not only rectangles
+    ///
+    /// The module's own sentence is *what a surface's last frame actually
+    /// painted, readable from anywhere*, and until this round it meant only
+    /// **where**. A caller asking what a surface says had two routes and both
+    /// are worse: walk a scene it does not have, or read a screenshot — which
+    /// is the pixels-carry-no-identity floor this module exists to be past.
+    ///
+    /// It is what lets a screen judge its own painted words. The node lab's
+    /// enumeration roster is specified by the words it draws, so a roster whose
+    /// third row drew the second word is a defect, and a check that read the
+    /// words out of the model instead would be a second account of the same
+    /// fact and would agree with the model by construction.
+    ///
+    /// ⚠ **The runs' content, not the glyphs.** A label the frame elided to
+    /// `"Conn…"` reads here as what it holds; what the shaper actually fitted is
+    /// `pinion_rpc`'s painted-text report, which needs the shape cache this
+    /// store does not have. Stated rather than left for a reader to discover:
+    /// this answers *what was given to be drawn under this name*.
+    ///
+    /// Several runs under one tag are joined with a single space, in paint
+    /// order, because that is the order a reader reads them in.
+    #[must_use]
+    pub fn reads(&self, tag: &str) -> Option<&str> {
+        self.reads.get(tag).map(String::as_str)
     }
 
     /// Every tag painted over `(x, y)`, **topmost first**.
@@ -156,6 +205,135 @@ impl PaintedRegions {
     pub fn is_empty(&self) -> bool {
         self.marks.is_empty()
     }
+
+    /// ★ R1742 — every tagged rectangle a scene paints, in paint order and in
+    /// the scene's own coordinates, with what each name reads.
+    ///
+    /// The entry point for a caller that *has* a scene rather than a recorded
+    /// surface — the in-process paint fixtures. It exists so the readings below
+    /// are one rule with two entry points instead of one rule written twice:
+    /// before this, a screen judged from a scene walk and the running window
+    /// resolved presses from the recorded store, which is the two-derivations
+    /// shape this whole module exists to remove.
+    #[must_use]
+    pub fn of_scene(scene: &Scene) -> Self {
+        let mut marks: Vec<(String, Rect)> = Vec::new();
+        let mut reads: BTreeMap<String, String> = BTreeMap::new();
+        scene.for_each_node(&mut |visit| {
+            let Some(rect) = visit.absolute_rect() else {
+                return;
+            };
+            if let Scene::Text(text) = visit.node {
+                let owner = text
+                    .tag
+                    .as_deref()
+                    .or_else(|| visit.ancestors.iter().rev().find_map(|a| a.tag()));
+                if let Some(owner) = owner {
+                    reads
+                        .entry(owner.to_owned())
+                        .and_modify(|held| {
+                            held.push(' ');
+                            held.push_str(&text.content);
+                        })
+                        .or_insert_with(|| text.content.clone());
+                }
+            }
+            if let Some(tag) = visit.node.tag() {
+                marks.push((tag.to_owned(), rect));
+            }
+        });
+        Self { marks, reads }
+    }
+
+    /// ★ R1742 — the parts under `stem` whose remainder names a part, in paint
+    /// order.
+    ///
+    /// **Which tags belong to a surface**: the ones whose remainder after
+    /// `stem` holds no further dot. A derivation rather than a list of
+    /// exclusions — a part's own decoration is tagged *inside* it, so it is
+    /// excluded by the shape of its name rather than by being remembered, and a
+    /// gate that named the chrome it had to skip was only ever as good as
+    /// whoever last updated the list (R1728 is that case).
+    ///
+    /// The first painted occurrence of a key wins, because a surface's parts
+    /// are its own and a decoration redrawing the same name later is not a
+    /// second part.
+    #[must_use]
+    pub fn parts_under(&self, stem: &str) -> Vec<(String, Rect)> {
+        let mut found: Vec<(String, Rect)> = Vec::new();
+        for (tag, rect) in self.marks() {
+            let Some(key) = tag.strip_prefix(stem) else {
+                continue;
+            };
+            if key.is_empty() || key.contains('.') || found.iter().any(|(seen, _)| seen == key) {
+                continue;
+            }
+            found.push((key.to_owned(), rect));
+        }
+        found
+    }
+
+    /// ★ R1742 — the parts of one `address`, for a surface tagged **family
+    /// first**: `<prefix><part>.<address>`. In reading order.
+    ///
+    /// [`parts_under`](Self::parts_under) reads the other convention — an
+    /// address, then the part under it — and takes the remainder holding no dot
+    /// as the part's name. A form row is tagged the other way round, because
+    /// the thing being addressed is a configuration path and every one of them
+    /// contains dots: no rule about counting dots can find the seam, so the
+    /// seam is given rather than guessed.
+    #[must_use]
+    pub fn parts_of(&self, prefix: &str, address: &str) -> Vec<(String, Rect)> {
+        let tail = format!(".{address}");
+        let mut found: Vec<(String, Rect)> = Vec::new();
+        for (tag, rect) in self.marks() {
+            let Some(key) = tag
+                .strip_prefix(prefix)
+                .and_then(|rest| rest.strip_suffix(tail.as_str()))
+            else {
+                continue;
+            };
+            if key.is_empty() || found.iter().any(|(seen, _)| seen == key) {
+                continue;
+            }
+            found.push((key.to_owned(), rect));
+        }
+        in_reading_order(found)
+    }
+}
+
+/// ★★★★★ R1742 — painted parts in **reading order**: parts whose rectangles
+/// overlap vertically are on one line and sort across it; lines sort down.
+///
+/// One rule for every kind of surface — a row of parts, a column of them, and a
+/// two-by-two grid of single facts, which is two parts on one line twice.
+///
+/// ★ The naive `(y, x)` sort was wrong and R1730's gate said so on its first
+/// run: a section header's three parts were vertically CENTRED against
+/// different heights, so the filter box's top edge sat seven pixels above the
+/// title's and it sorted first. Aligning the boxes to make the sort work would
+/// have been fixing the screen to suit the check.
+///
+/// Lives here rather than beside the paint fixtures because it is a rule about
+/// what a reader sees, and the running application now judges itself by it.
+#[must_use]
+pub fn in_reading_order(mut parts: Vec<(String, Rect)>) -> Vec<(String, Rect)> {
+    parts.sort_by_key(|(key, rect)| (rect.y, rect.x, key.clone()));
+    let mut ordered: Vec<(String, Rect)> = Vec::with_capacity(parts.len());
+    let mut line: Vec<(String, Rect)> = Vec::new();
+    let mut bottom = 0;
+    for (key, rect) in parts {
+        if !line.is_empty() && rect.y >= bottom {
+            line.sort_by_key(|(_, r)| r.x);
+            ordered.append(&mut line);
+            bottom = 0;
+        }
+        bottom = bottom.max(rect.y + rect.h);
+        line.push((key, rect));
+    }
+    line.sort_by_key(|(_, r)| r.x);
+    ordered.append(&mut line);
+    ordered
 }
 
 /// ★★★★★ R1736 — **the nine points a painted rectangle is judged at**: its
@@ -307,6 +485,98 @@ mod tests {
             ("row".to_owned(), Rect::new(50, 50, 10, 10)),
         ]);
         assert_eq!(r.rect_of("row"), Some(Rect::new(50, 50, 10, 10)));
+    }
+
+    /// ★ R1742 — the store answers what a tag READS, not only where it is.
+    #[test]
+    fn r1742_a_mark_says_what_was_drawn_inside_it() {
+        let r = regions().with_reads(
+            [
+                ("card".to_owned(), "peer_to_peer".to_owned()),
+                ("pin".to_owned(), "in out".to_owned()),
+            ]
+            .into_iter()
+            .collect(),
+        );
+        assert_eq!(r.reads("card"), Some("peer_to_peer"));
+        // Several runs under one name read in paint order, joined — because
+        // that is the order a reader reads them in.
+        assert_eq!(r.reads("pin"), Some("in out"));
+        // ★ A mark that drew no words says so, rather than saying it drew none:
+        // `Some("")` and `None` are different facts and a caller comparing a
+        // specified word with what was drawn needs the second one.
+        assert_eq!(r.reads("canvas"), None);
+        assert_eq!(r.reads("nothing-of-the-kind"), None);
+        // And the rectangles are untouched by carrying words.
+        assert_eq!(r.topmost_at(22, 26), Some("pin"));
+    }
+
+    /// ★★★★★ R1742 — reading a scene fills BOTH halves: where each name was
+    /// painted, and what it reads.
+    ///
+    /// The ancestor case is the one worth a fixture: a run carrying no tag of
+    /// its own belongs to the nearest tagged thing above it, which is the shape
+    /// almost every label in this tree has — a box with a name and a run inside
+    /// it that has none.
+    #[test]
+    fn r1742_reading_a_scene_gives_the_marks_and_the_words() {
+        use crate::scene::{ContainerNode, Scene, TextNode};
+        use crate::style::TextStyle;
+
+        let run = |text: &str, rect: Rect| {
+            Scene::Text(TextNode::styled(
+                text.to_owned(),
+                rect,
+                TextStyle::default(),
+            ))
+        };
+        let scene = Scene::Container(ContainerNode::new(vec![
+            // ★★★★★ A named box INSIDE another named box, so "the nearest
+            // tagged ancestor" and "the outermost one" are different answers.
+            //
+            // Written the second time, and the first version is the lesson: it
+            // put the named box directly under an untagged root, where the two
+            // coincide — and a counterfactual that walked the ancestors the
+            // wrong way round PASSED. A fixture that cannot tell two
+            // expressions apart is the same as having no gate.
+            Scene::Container(
+                ContainerNode::new(vec![Scene::Container(
+                    ContainerNode::new(vec![
+                        run("peer_to_peer", Rect::new(10, 10, 60, 12)),
+                        run("mode", Rect::new(10, 24, 30, 12)),
+                    ])
+                    .with_tag("option".to_owned()),
+                )])
+                .with_tag("panel".to_owned()),
+            ),
+            // And a run that carries its own name.
+            Scene::Text(
+                TextNode::styled(
+                    "router".to_owned(),
+                    Rect::new(80, 10, 40, 12),
+                    TextStyle::default(),
+                )
+                .with_tag("shown".to_owned()),
+            ),
+        ]));
+
+        let read = PaintedRegions::of_scene(&scene);
+        assert_eq!(
+            read.reads("option"),
+            Some("peer_to_peer mode"),
+            "★ two runs under one name read in paint order, joined",
+        );
+        assert_eq!(
+            read.reads("panel"),
+            None,
+            "★★★★★ and the box FURTHER OUT reads nothing -- a run belongs to the \
+             nearest name above it, and this is the assertion that can tell the \
+             two walks apart",
+        );
+        assert_eq!(read.reads("shown"), Some("router"));
+        assert_eq!(read.reads("nothing-of-the-kind"), None);
+        // The mark half is unchanged: a laid-out run carries its rectangle.
+        assert_eq!(read.rect_of("shown"), Some(Rect::new(80, 10, 40, 12)));
     }
 
     #[test]

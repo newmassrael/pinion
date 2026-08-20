@@ -7097,7 +7097,7 @@ fn floating_ids(state: &ShellState) -> String {
 /// section can fall off, and that is exactly what the round measured — four of
 /// six open sections had never been compared with anything and nothing said so.
 fn sections_json(state: &ShellState) -> serde_json::Value {
-    state.screens.conformance().to_json()
+    state.screens.conformance(&state.journey.get()).to_json()
 }
 
 /// ★ R1695 — the Settings switches, as the wire reads them.

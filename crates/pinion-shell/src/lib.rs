@@ -1376,6 +1376,30 @@ pub fn window_topology_toggle(
     signal.set(current);
 }
 
+/// ★★★ R1742 §5.27 §2 #7 — the verdict a binding publishes, as the value its
+/// wire carries.
+///
+/// Lifted the round a **third** section grew the slot: the expression was
+/// byte-identical in all three, panic message included, and the only thing that
+/// differed was the type in front of it. The obligation this workspace runs at
+/// every round close names three mechanical copies as the trigger, and this is
+/// what it is for — three sections publishing one framework fact should be one
+/// expression, or the fourth will publish it slightly differently and nobody
+/// will notice which is right.
+///
+/// # Panics
+///
+/// If the binding answers to no written specification. A section publishing a
+/// `conformance` slot with no verdict to put in it is a defect in that binding
+/// rather than a state a client can reach — a binding with none should not
+/// declare the slot, and the host's own report already has a row for saying so.
+#[must_use]
+pub fn conformance_json<V: WidgetView>() -> serde_json::Value {
+    V::conformance()
+        .expect("this section answers a written specification")
+        .to_json()
+}
+
 /// (R1107.1 §5.16 §5.41 §5.51) Convert a window-logical `cursor` (measured in
 /// `source_window`'s frame) to a DESKTOP outer position by adding that window's
 /// declared outer origin. The gap(b) desktop conversion a live tear-off follow
@@ -1481,6 +1505,15 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
     /// host assembling screens publishes it as a *row* saying this section has
     /// no specification, which is the difference between a section nobody
     /// judged and a section nobody noticed.
+    ///
+    /// ★ R1742 — **the answer may be about a session rather than about the
+    /// build**, and a screen whose specified surfaces come and go says so per
+    /// surface with [`Built::Away`](pinion_core::conformance::Built::Away)
+    /// rather than reporting them as absent. A hook that could only say *here
+    /// are the parts* forced a screen with session-dependent surfaces to choose
+    /// between accusing itself and staying silent; this tree's node lab stayed
+    /// silent for ten rounds. See that type for the two rules that stop the
+    /// third answer from being a way out.
     ///
     /// # Why this is a binding's hook and not a test's
     ///

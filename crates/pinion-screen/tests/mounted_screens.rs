@@ -10,7 +10,7 @@ use std::rc::Rc;
 
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
 use pinion_core::chrome::{HostChrome, Part as ChromePart, host_chrome};
-use pinion_core::conformance::{DocumentReport, Part, SpecDocument};
+use pinion_core::conformance::{Built, DocumentReport, Part, SpecDocument};
 use pinion_core::external::{External, StubExternal, layout_size};
 use pinion_core::reactive::{Owner, VIEWPORT_SIZE};
 use pinion_core::scene::{ContainerNode, Rect};
@@ -155,7 +155,7 @@ impl WidgetView for LabFixture {
             // the third — a real difference rather than a passing fixture,
             // because a report tested only against agreement cannot be shown to
             // report anything.
-            "rows" => vec![Part::new("id", "ID"), Part::new("name", "Name")],
+            "rows" => Built::Standing(vec![Part::new("id", "ID"), Part::new("name", "Name")]),
             other => panic!("the fixture specification does not name {other}"),
         }))
     }
@@ -882,7 +882,7 @@ fn r1724_a_roster_is_held_the_way_a_host_holds_it() {
 /// check, absent from the population, with nothing anywhere saying so.
 #[test]
 fn r1738_every_destination_is_a_row_whether_or_not_anything_judged_it() {
-    let said = roster().conformance();
+    let said = roster().conformance(&at("dashboard"));
     assert_eq!(
         said.rows()
             .iter()
@@ -904,7 +904,7 @@ fn r1738_every_destination_is_a_row_whether_or_not_anything_judged_it() {
 /// The four standings are four different facts and the roster tells them apart.
 #[test]
 fn r1738_a_section_that_answers_nothing_is_a_row_and_not_a_silence() {
-    let said = roster().conformance();
+    let said = roster().conformance(&at("dashboard"));
     let standing = |key: &str| {
         said.rows()
             .iter()
@@ -933,7 +933,7 @@ fn r1738_a_section_that_answers_nothing_is_a_row_and_not_a_silence() {
 /// for.
 #[test]
 fn r1738_an_application_with_unjudged_sections_does_not_conform() {
-    let said = roster().conformance();
+    let said = roster().conformance(&at("dashboard"));
     assert!(
         !said.conforms(),
         "two of its open sections were never judged, and that is part of the \
@@ -967,7 +967,7 @@ fn r1738_an_application_with_unjudged_sections_does_not_conform() {
 /// without a mapping nobody published.
 #[test]
 fn r1738_a_row_says_how_to_reach_the_section_it_is_about() {
-    let said = roster().conformance();
+    let said = roster().conformance(&at("dashboard"));
     let tag = |key: &str| {
         said.rows()
             .iter()
@@ -988,7 +988,7 @@ fn r1738_a_row_says_how_to_reach_the_section_it_is_about() {
 /// second wording of the closure written beside it.
 #[test]
 fn r1738_a_closed_seat_reports_the_reason_the_destination_gives() {
-    let said = roster().conformance();
+    let said = roster().conformance(&at("dashboard"));
     let row = said
         .rows()
         .iter()
@@ -1006,7 +1006,7 @@ fn r1738_a_closed_seat_reports_the_reason_the_destination_gives() {
 /// application about how much of it was judged.
 #[test]
 fn r1738_the_published_report_carries_its_own_counts() {
-    let said = roster().conformance();
+    let said = roster().conformance(&at("dashboard"));
     let wire = said.to_json();
     assert_eq!(wire["sections"], 4);
     assert_eq!(wire["judged"], 1);
@@ -1027,4 +1027,50 @@ fn r1738_the_published_report_carries_its_own_counts() {
             .all(|row| row.get("why").is_some()),
         "every row that is not judged publishes its reason"
     );
+}
+
+/// ★★★★★ R1742 — **every row says which frame its verdict is about.**
+///
+/// Found by running the assembled tool, not by design. A section that derives
+/// its verdict from its own paint answers about its LAST frame, and the paint
+/// store keeps that frame after the section stops showing — so read from
+/// another page, the node lab's row reported a surface *standing* while nothing
+/// of it was on screen. Nothing said which frame the number was about.
+///
+/// The population is deliberately unchanged: every destination is still a row
+/// wherever the reader stands, because withholding one would put the section
+/// back outside the population, which is the defect R1738 repaired. What is
+/// added is the fact a reader needs to interpret the number beside it.
+#[test]
+fn r1742_a_row_says_whether_its_section_was_the_one_showing() {
+    let here = roster().conformance(&at("catalog"));
+    let showing: Vec<(&str, bool)> = here
+        .rows()
+        .iter()
+        .map(|row| (row.key.as_str(), row.showing))
+        .collect();
+    assert_eq!(
+        showing,
+        [
+            ("dashboard", false),
+            ("catalog", true),
+            ("stream", false),
+            ("topology", false),
+        ],
+        "exactly the destination the journey is at is showing",
+    );
+
+    // ★ And it moves with the reader rather than with the report: the same
+    // roster read from elsewhere marks a different row, which is what makes
+    // this a fact about the frame and not a property of the section.
+    let elsewhere = roster().conformance(&at("dashboard"));
+    assert!(elsewhere.rows()[0].showing && !elsewhere.rows()[1].showing);
+    assert_eq!(
+        elsewhere.judged(),
+        here.judged(),
+        "★ and the verdicts themselves are unchanged -- this labels the report, \
+         it does not narrow it",
+    );
+    assert_eq!(elsewhere.to_json()["rows"][1]["showing"], false);
+    assert_eq!(here.to_json()["rows"][1]["showing"], true);
 }

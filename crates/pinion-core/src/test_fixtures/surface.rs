@@ -39,52 +39,24 @@
 //! have been fixing the screen to suit the check.
 
 use crate::conformance::Part;
+use crate::painted::PaintedRegions;
 use crate::scene::{Rect, Scene};
+
+pub use crate::painted::in_reading_order;
 
 /// Every tag in `scene` under `stem` whose remainder names a part, paired with
 /// the rectangle the layout pass gave it.
 ///
 /// Window-absolute, so two parts in different containers still compare.
+///
+/// ★ R1742 — the *rule* lives on [`PaintedRegions`], where the running
+/// application reads it from too. This is the entry point for a caller holding
+/// a scene rather than a recorded surface; before the move, a screen judged
+/// itself by one copy of this filter and the window resolved presses by
+/// another.
 #[must_use]
 pub fn painted_parts(scene: &Scene, stem: &str) -> Vec<(String, Rect)> {
-    let mut found: Vec<(String, Rect)> = Vec::new();
-    scene.for_each_node(&mut |visit| {
-        let (Some(rect), Some(tag)) = (visit.absolute_rect(), visit.node.tag()) else {
-            return;
-        };
-        let Some(key) = tag.strip_prefix(stem) else {
-            return;
-        };
-        if key.is_empty() || key.contains('.') {
-            return;
-        }
-        if found.iter().any(|(seen, _)| seen == key) {
-            return;
-        }
-        found.push((key.to_owned(), rect));
-    });
-    found
-}
-
-/// The same parts, in **reading order**.
-#[must_use]
-pub fn in_reading_order(mut parts: Vec<(String, Rect)>) -> Vec<(String, Rect)> {
-    parts.sort_by_key(|(key, rect)| (rect.y, rect.x, key.clone()));
-    let mut ordered: Vec<(String, Rect)> = Vec::with_capacity(parts.len());
-    let mut line: Vec<(String, Rect)> = Vec::new();
-    let mut bottom = 0;
-    for (key, rect) in parts {
-        if !line.is_empty() && rect.y >= bottom {
-            line.sort_by_key(|(_, r)| r.x);
-            ordered.append(&mut line);
-            bottom = 0;
-        }
-        bottom = bottom.max(rect.y + rect.h);
-        line.push((key, rect));
-    }
-    line.sort_by_key(|(_, r)| r.x);
-    ordered.append(&mut line);
-    ordered
+    PaintedRegions::of_scene(scene).parts_under(stem)
 }
 
 /// ★★★★★ One surface, as the paint has it: the parts under `stem`, in reading
@@ -168,24 +140,7 @@ pub fn painted_stack(
 /// readings go through [`in_reading_order`].
 #[must_use]
 pub fn painted_parts_of(scene: &Scene, prefix: &str, address: &str) -> Vec<(String, Rect)> {
-    let tail = format!(".{address}");
-    let mut found: Vec<(String, Rect)> = Vec::new();
-    scene.for_each_node(&mut |visit| {
-        let (Some(rect), Some(tag)) = (visit.absolute_rect(), visit.node.tag()) else {
-            return;
-        };
-        let Some(key) = tag
-            .strip_prefix(prefix)
-            .and_then(|rest| rest.strip_suffix(tail.as_str()))
-        else {
-            return;
-        };
-        if key.is_empty() || found.iter().any(|(seen, _)| seen == key) {
-            return;
-        }
-        found.push((key.to_owned(), rect));
-    });
-    in_reading_order(found)
+    PaintedRegions::of_scene(scene).parts_of(prefix, address)
 }
 
 /// One family-first surface, as the paint has it — [`painted_surface`]'s twin

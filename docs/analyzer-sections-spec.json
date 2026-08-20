@@ -37,13 +37,25 @@
     "THE TWO KINDS BELOW ARE DIFFERENT WORK. `inline` is a page the host paints",
     "itself, so the roster has no screen to ask; closing it means giving that",
     "page a `Screen` of its own, which is what the trait being public is for.",
-    "`unspecified` is a mounted screen that publishes no verdict — and the two",
-    "entries of that kind are themselves different: one has no written",
-    "specification at all, the other has one it checks itself against inside a",
-    "unit test of its own binary, where the assembled application cannot see",
-    "it. The framework cannot tell those apart, because only a screen knows;",
-    "that a screen has no way to say so is this round's own remainder and is",
-    "recorded at the bottom."
+    "`unspecified` is a mounted screen that publishes no verdict.",
+    "",
+    "R1742 CLOSED `lab`, which was the second kind of `unspecified` — a screen",
+    "with a written specification it compared itself against inside a unit test",
+    "of its own binary, where the assembled application could not see it. Its",
+    "entry is DELETED rather than marked done, because the entries here are",
+    "asserted equal to the application's unjudged rows and a paid entry left",
+    "behind fails as loudly as a section that went silent. What made it the",
+    "hardest of the four is what the round had to decide: its surfaces exist",
+    "only once a session has selected a card and opened a roster, so its verdict",
+    "is about a session rather than about the build. A screen now says which of",
+    "its specified surfaces are NOT ON SCREEN and why, that count is part of the",
+    "verdict, and a report holding one does not reconcile — so the honesty is",
+    "structural rather than a promise. See `pinion_core::conformance::Built`.",
+    "",
+    "One `unspecified` entry is left and it is the first kind: `packets` has no",
+    "written specification at all. The distinction the bottom remainder is about",
+    "therefore now has one live case rather than two, and it stays open because",
+    "the type still cannot carry a reason."
   ],
   "unjudged": {
     "owed": [
@@ -77,25 +89,6 @@
         ]
       },
       {
-        "key": "lab",
-        "kind": "unspecified",
-        "sentence": "a screen is here and it publishes no verdict about a specification",
-        "since": "R1738",
-        "why": [
-          "★ The one that is NOT missing a specification. The node lab has",
-          "`analyzer-inspector-spec.json` and already compares itself against",
-          "it — inside a unit test of its own binary, where the assembled",
-          "application cannot see it. It is also the hardest of the four to",
-          "publish, and for a reason worth keeping: its built parts are read",
-          "back out of a PAINTED scene through a test-only fixture, and the",
-          "surfaces it judges only exist once a card with an enumeration row is",
-          "selected. So its verdict is about a session rather than about the",
-          "build, and answering `conformance` honestly means deciding what a",
-          "screen says when the surface being judged is not on screen. That",
-          "decision is the round, not the wiring."
-        ]
-      },
-      {
         "key": "settings",
         "kind": "inline",
         "sentence": "the host paints this page itself, so there is no screen to ask",
@@ -121,11 +114,18 @@
           "specification or because one exists and is checked somewhere the",
           "application cannot reach is a fact only the screen has, and the hook",
           "it would answer through returns `Option<DocumentReport>` — which has",
-          "room for a report and no room for a reason. Two of the four entries",
-          "above are exactly this distinction, written here by hand because the",
-          "type cannot carry it. Stated rather than papered over: the honest",
-          "fix is a declared absence that carries its reason, the way a closed",
-          "destination's does."
+          "room for a report and no room for a reason.",
+          "",
+          "★ R1742 — the case that made the distinction live is closed rather",
+          "than the distinction: `lab` now publishes, so `packets` is the only",
+          "unspecified section left and it is the plain kind. Kept open because",
+          "the type is unchanged and the next screen with a specification it",
+          "cannot publish yet would be silent in exactly the same way. Worth",
+          "noting that the repair is now HALF built: a SURFACE can say why it",
+          "is not judged (`Built::Away`) and a SECTION still cannot. Stated",
+          "rather than papered over: the honest fix is a declared absence that",
+          "carries its reason, the way a closed destination's does — and the",
+          "shape to copy is one level down in the same module."
         ]
       },
       {
@@ -134,11 +134,19 @@
         "since": "R1738",
         "why": [
           "Every read walks the roster and asks each mounted screen, which for",
-          "the two answering sections re-parses nothing but does rebuild their",
-          "part rosters. It is a wire read at an agent's cadence rather than a",
-          "paint-time cost, so it is not on any frame budget measured so far —",
-          "but that is an argument from where it is called, not a measurement",
-          "of what it costs, and it is written down as such."
+          "the two table-backed sections re-parses nothing but does rebuild",
+          "their part rosters. It is a wire read at an agent's cadence rather",
+          "than a paint-time cost, so it is not on any frame budget measured so",
+          "far — but that is an argument from where it is called, not a",
+          "measurement of what it costs, and it is written down as such.",
+          "",
+          "⚠ R1742 made it heavier and says so rather than leaving the sentence",
+          "above to age: the third answering section now PARSES its pin on every",
+          "read (`include_str!` + a JSON parse) and then scans that surface's",
+          "recorded marks once per specified surface. Still a wire read and",
+          "still unmeasured — which is the entry, unchanged in kind. The cheap",
+          "half is obvious when somebody does measure: the parsed document is a",
+          "constant and belongs behind a `OnceCell`."
         ]
       }
     ]

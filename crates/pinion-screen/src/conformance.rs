@@ -97,7 +97,15 @@ pub enum SectionStanding {
     /// itself against inside a unit test of its own binary, where the assembled
     /// application cannot see it. A host cannot tell them apart because only
     /// the screen knows, and a screen has no way to say so yet — recorded as
-    /// this round's remainder rather than guessed at here.
+    /// R1738's remainder rather than guessed at here.
+    ///
+    /// ★ R1742 closed the second of those two by making the screen publish,
+    /// which leaves one live case rather than two — and leaves the remainder
+    /// open, because the type is unchanged and the next screen in that position
+    /// would be silent in exactly the same way. Worth noting that the repair is
+    /// now half built: a *surface* can say why it is not judged
+    /// ([`Built::Away`](pinion_core::conformance::Built::Away)) and a *section*
+    /// still cannot.
     Unspecified,
     /// The destination is open and its page is one the host paints itself, so
     /// this roster has no screen to ask.
@@ -175,6 +183,19 @@ pub struct SectionRow {
     /// nobody published is a client working from a list it maintains by hand —
     /// which is the failure this whole report exists to end.
     pub tag: Option<String>,
+    /// ★★★★★ R1742 — whether this is the section the reader is looking at,
+    /// which is **which frame the verdict beside it is about**.
+    ///
+    /// A section that derives its verdict from its own paint answers about its
+    /// LAST frame, and a section that is not showing has not painted since it
+    /// was left. Measured the round the first such screen was written: read
+    /// from another page, the node lab's row reported surfaces standing — a
+    /// true statement about a frame that is no longer in the application.
+    ///
+    /// The row is published either way, because withholding it would put the
+    /// section back outside the population — the defect R1738 repaired — and a
+    /// reader who needs a live verdict navigates there and reads again.
+    pub showing: bool,
     /// What it can say.
     pub standing: SectionStanding,
 }
@@ -188,25 +209,29 @@ pub struct SectionRow {
 /// # Examples
 ///
 /// ```
-/// use pinion_core::widgets::destination::{Destination, Destinations};
+/// use pinion_core::widgets::destination::{Destination, Destinations, Journey};
 /// use pinion_core::availability::Unavailable;
 /// use pinion_screen::{ScreenRoster, SectionStanding};
 ///
-/// let roster = ScreenRoster::new(
-///     Destinations::new(vec![
-///         Destination::open("home", "Home"),
-///         Destination::closed("later", "Later", Unavailable::reserved("requirement 12")),
-///     ])
-///     .expect("the fixture is a roster"),
-///     Vec::new(),
-/// )
-/// .expect("nothing is mounted, so nothing can be mounted wrongly");
+/// let destinations = Destinations::new(vec![
+///     Destination::open("home", "Home"),
+///     Destination::closed("later", "Later", Unavailable::reserved("requirement 12")),
+/// ])
+/// .expect("the fixture is a roster");
+/// let journey = Journey::begin(&destinations, "home").expect("`home` is open");
+/// let roster = ScreenRoster::new(destinations, Vec::new())
+///     .expect("nothing is mounted, so nothing can be mounted wrongly");
 ///
-/// let report = roster.conformance();
+/// let report = roster.conformance(&journey);
 /// assert_eq!(report.sections(), 2);
 /// assert_eq!(report.judged(), 0);
 /// assert_eq!(report.unjudged(), 1); // `home` — the host paints it itself
 /// assert!(matches!(report.rows()[0].standing, SectionStanding::Inline));
+///
+/// // ★ Every destination is a row, and each says which frame its verdict is
+/// // about: the one being read is showing, the other is not.
+/// assert!(report.rows()[0].showing);
+/// assert!(!report.rows()[1].showing);
 ///
 /// // And the rule: no section was judged, so the application does not conform.
 /// assert!(!report.conforms());
@@ -323,6 +348,7 @@ impl ApplicationConformance {
                     let mut value = serde_json::json!({
                         "key": row.key,
                         "title": row.title,
+                        "showing": row.showing,
                         "standing": row.standing.word(),
                     });
                     if let Some(tag) = &row.tag {

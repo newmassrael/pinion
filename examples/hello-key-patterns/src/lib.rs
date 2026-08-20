@@ -59,7 +59,7 @@ use pinion_a11y::{
     WidgetA11y, grid_table_nodes,
 };
 use pinion_core::availability::{Recourse, Unavailable, UnavailableKind};
-use pinion_core::conformance::Part;
+use pinion_core::conformance::{Built, Part};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, PointerTarget, ReadRefusal, RepaintOwner,
@@ -1305,9 +1305,14 @@ fn endpoint_chips(at: Rect, record: &'static spec::RowSpec, ink: Ink) -> Vec<Sce
 ///
 /// If asked for a surface `docs/analyzer-keys-spec.json` does not fix, which is
 /// a defect in this file.
+///
+/// ★ R1742 — every surface is [`Built::Standing`]: this section's three
+/// surfaces are drawn whenever it is showing, so none of them can be away. A
+/// screen whose surfaces come and go with a session says so instead; the node
+/// lab is that case.
 #[must_use]
-fn built(surface: &str) -> Vec<Part> {
-    match surface {
+fn built(surface: &str) -> Built {
+    Built::Standing(match surface {
         "header" => spec::HEADER
             .iter()
             .map(|p| Part::new(p.key, p.title))
@@ -1321,7 +1326,7 @@ fn built(surface: &str) -> Vec<Part> {
             .map(|p| Part::new(p.key, p.title))
             .collect(),
         other => panic!("no surface named {other}"),
-    }
+    })
 }
 
 /// How much of the specified section this build reproduces, and where it does
@@ -1330,9 +1335,7 @@ fn built(surface: &str) -> Vec<Part> {
 /// Not a test fixture: this is the sentence an agent driving the tool needs
 /// before it plans anything.
 fn conformance_json() -> serde_json::Value {
-    <KeyPatternView as WidgetView>::conformance()
-        .expect("this section answers a written specification")
-        .to_json()
+    pinion_shell::conformance_json::<KeyPatternView>()
 }
 
 /// The screen, as a table a client reads instead of a screenshot.

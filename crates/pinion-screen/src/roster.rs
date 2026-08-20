@@ -210,16 +210,34 @@ impl ScreenRoster {
     /// [`conformance`](crate::conformance) for the measurement that forced it
     /// and for what each arm means.
     ///
-    /// Not keyed by a [`Journey`], unlike every accessor that hands out a
-    /// *screen*. The rule this crate is built on — *the screen the journey is
-    /// at is the only one anything reaches* — is about reaching a screen's
-    /// behaviour: its paint, its keys, its windows. A verdict about what a
-    /// section is specified to contain is not behaviour and is not reached
-    /// through the page region; it is a fact about the assembled application,
-    /// and an application that could only report on the section somebody
-    /// happens to be standing in would be the defect this exists to repair.
+    /// The population is **not** keyed by the [`Journey`], unlike every
+    /// accessor that hands out a *screen*. The rule this crate is built on —
+    /// *the screen the journey is at is the only one anything reaches* — is
+    /// about reaching a screen's behaviour: its paint, its keys, its windows. A
+    /// verdict about what a section is specified to contain is not behaviour
+    /// and is not reached through the page region; it is a fact about the
+    /// assembled application, and an application that could only report on the
+    /// section somebody happens to be standing in would be the defect this
+    /// exists to repair.
+    ///
+    /// ★★★★★ R1742 — **but each row now says whether that section was SHOWING
+    /// when the verdict was taken**, and the journey is passed in for exactly
+    /// that. Measured the round a screen first derived its verdict from its own
+    /// paint: read from the dashboard, the node lab's row reported surfaces
+    /// *standing* — a verdict about a frame that had scrolled out of the
+    /// application entirely, because the paint store keeps a surface's LAST
+    /// frame and a section that is not showing has not painted since.
+    ///
+    /// Both halves are kept rather than one: withholding the row would put the
+    /// section back outside the population, which is the defect R1738 repaired,
+    /// and publishing it unlabelled says a section reproduces something it is
+    /// not currently drawing. So the verdict is published and the reader is
+    /// told which frame it is about. A section whose verdict does not depend on
+    /// a frame — one built from its own tables — reads the same either way, and
+    /// `showing` is how a client tells those two kinds apart without knowing
+    /// how any section computes itself.
     #[must_use]
-    pub fn conformance(&self) -> ApplicationConformance {
+    pub fn conformance(&self, journey: &Journey) -> ApplicationConformance {
         ApplicationConformance::new(
             self.destinations
                 .all()
@@ -236,6 +254,9 @@ impl ScreenRoster {
                     SectionRow {
                         key: destination.key.to_string(),
                         title: destination.title.to_string(),
+                        // The journey's own answer, so "showing" here and the
+                        // page the reader is looking at cannot disagree.
+                        showing: journey.at() == destination.key.as_ref(),
                         // A closed destination cannot have a screen mounted at
                         // it — `new` refuses that pairing — so this is `None`
                         // there for the same reason it is `None` for a page the

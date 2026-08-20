@@ -52,6 +52,7 @@
 
 mod deploy;
 mod graph;
+mod judge;
 mod persist;
 mod settings;
 mod spec;
@@ -7099,6 +7100,12 @@ const HOST_NAMES: [&str; spec::FRAMES.len()] = {
 const FIELDS: &[SchemaField] = &{
     [
         SchemaField::new("spec", "string"),
+        // ★★★★★ R1742 — how much of the inspector specification this build is
+        // showing, published beside the specification itself. `json` rather
+        // than the `string` its neighbours use because it is the framework's
+        // own shape: an agent asking two sections how much of themselves they
+        // are must not have to parse two answers.
+        SchemaField::new("conformance", "json"),
         SchemaField::new("graph", "string"),
         SchemaField::new("selected", "string"),
         SchemaField::new("selected_ids", "string"),
@@ -7369,6 +7376,12 @@ impl ExternalIntrospect for LabOracle {
         let text = |s: String| Ok(IntrospectValue::Text(s));
         match path {
             "spec" => text(spec_json().to_string()),
+            // ★ R1742 — the SAME value the host publishes for this section, so
+            // "one build, two placements" is a fact a client can check rather
+            // than a claim this file makes.
+            "conformance" => Ok(IntrospectValue::Json(pinion_shell::conformance_json::<
+                NodeLabView,
+            >())),
             "graph" => text(spec::GRAPH_NAME.to_owned()),
             "selected" => text(state.active_card().map(|n| state.name_of(n)).unwrap_or_default()),
             // ★★★ R1706 — the whole selection, in arrival order, beside the
@@ -11570,6 +11583,20 @@ impl WidgetView for NodeLabView {
 
     fn shrink_policy() -> Option<ShrinkPolicy> {
         Some(SHRINK)
+    }
+
+    /// ★★★★★ R1742 — the verdict this screen has always computed, answered
+    /// where the application it is a page of can reach it.
+    ///
+    /// R1732 wrote `docs/analyzer-inspector-spec.json` and compared the painted
+    /// inspector against it inside a unit test of this binary. R1738 then
+    /// measured that this was the one section of the assembled tool that had a
+    /// written specification and published no verdict about it — not failing a
+    /// check, absent from the population. See `judge` for the decision that
+    /// made publishing possible: what a screen says about a surface a session
+    /// has not put on screen.
+    fn conformance() -> Option<pinion_core::conformance::DocumentReport> {
+        Some(judge::conformance())
     }
 }
 
