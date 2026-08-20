@@ -59,8 +59,17 @@ failures of the *round*, for opposite reasons, and both are reported by name.
      code under `-D warnings` — R1697. `Self::open_float_grab` was called from
      exactly one arm; removing that call did not test the arm, it stopped the
      crate compiling;
-   * **a PARAMETER whose only use was the line you replaced** — R1712, and the
-     newest, walked into TWICE in one round. Replacing
+   * **an IMPORT whose only user was the line you replaced** — R1747, and the
+     newest. `if painted_regions(QUERY_TAG).is_some()` was rewritten to ask a
+     different store, which is a fine lie — and it left `use
+     pinion_core::painted::painted_regions` with no user, so the crate stopped
+     compiling under `-D warnings`. The eye is on the expression and the `use`
+     line is eighty lines above it. **Before writing a case, check whether the
+     replaced text is the last user of an import as well as of a binding.** The
+     repair was the usual one: invert the call instead of replacing it
+     (`.is_none()`), which keeps every name used and is still exactly one lie.
+   * **a PARAMETER whose only use was the line you replaced** — R1712, walked
+     into TWICE in one round. Replacing
      `declared.floor() != Some(policy.floor())` with `false` and
      `…(window_id, floor.0, floor.1)` with the ceiling each left an argument
      nothing read. A parameter is easy to miss here because the eye is on the

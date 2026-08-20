@@ -14685,12 +14685,47 @@ pub fn announce_external_sizes(
 ///
 /// Returns whether the surface was painted at all.
 pub fn record_painted_surface(paint_scene: &Scene, tag: &str) -> bool {
-    let Some(rect) = rect_for_tag(paint_scene, tag).filter(|r| r.w > 0 && r.h > 0) else {
-        pinion_core::painted::forget_painted_regions(tag);
-        return false;
-    };
-    record_painted_marks(paint_scene, &[(tag.to_owned(), rect)]);
-    true
+    record_painted_surfaces(paint_scene, &[tag]) == 1
+}
+
+/// ★★★★★ R1747 — record what SEVERAL surfaces painted, in one walk, for a
+/// caller that has the paint scene and not the state one.
+///
+/// # Why the plural is the real entry point
+///
+/// [`record_painted_surface`] above says it exists so an in-process fixture
+/// takes the same path a window does, and for one surface it does. Measured
+/// R1747, it stops being the same path the moment a screen embeds a framework
+/// widget that owns focus: that widget is an `External` of its own, so in a
+/// window it is a SURFACE and its host's store does not hold it or anything
+/// drawn inside it. Calling the singular form for the host alone files the
+/// nested widget's marks under the HOST, so the fixture and the window read two
+/// different surfaces and a screen that judges its own paint gets two answers.
+///
+/// The window has always done this correctly, because
+/// [`announce_external_sizes`] passes every registered surface to one walk and
+/// a mark goes to the SMALLEST surface containing it. This is that call, given
+/// a name, so a fixture can make it. The singular form is now one element of
+/// it rather than a second rule.
+///
+/// A surface the frame did not draw is forgotten rather than left holding an
+/// older frame's marks. Returns how many of `tags` were painted.
+pub fn record_painted_surfaces(paint_scene: &Scene, tags: &[&str]) -> usize {
+    let painted: Vec<(String, Rect)> = tags
+        .iter()
+        .filter_map(|tag| {
+            rect_for_tag(paint_scene, tag)
+                .filter(|r| r.w > 0 && r.h > 0)
+                .map(|rect| ((*tag).to_owned(), rect))
+        })
+        .collect();
+    for tag in tags {
+        if !painted.iter().any(|(painted, _)| painted == tag) {
+            pinion_core::painted::forget_painted_regions(tag);
+        }
+    }
+    record_painted_marks(paint_scene, &painted);
+    painted.len()
 }
 
 /// ★★★★★ R1736 — record, for each painted surface, the tagged rectangles drawn

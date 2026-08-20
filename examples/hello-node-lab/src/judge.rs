@@ -70,7 +70,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use pinion_core::conformance::{Built, DocumentReport, Part};
-use pinion_core::painted::{PaintedRegions, painted_regions};
+use pinion_core::painted::PaintedRegions;
 
 use crate::VIEW_TAG;
 use crate::spec;
@@ -89,14 +89,11 @@ const KEY_FAMILY: &str = "lab.form.key.";
 /// window and is never asked as a page cannot be two builds wearing one name.
 #[must_use]
 pub fn conformance() -> DocumentReport {
-    let regions = painted_regions(VIEW_TAG);
-    spec::inspector_document().report(&|surface| match regions.as_deref() {
-        Some(regions) => built(regions, surface),
-        // Not "reproduces nothing": a screen that has not painted has not been
-        // asked to draw anything yet, and the two are different facts a reader
-        // acts on differently.
-        None => Built::away("this screen has not painted a frame yet, so none of it is on screen"),
-    })
+    // ★ R1747 obligation-3b — this was four lines here, and the capture viewer
+    // copied them byte for byte, away sentence included. It is a fact about the
+    // framework's paint store rather than about either screen, so it lives in
+    // `SpecDocument::report_from_paint` now and both screens ask it.
+    spec::inspector_document().report_from_paint(VIEW_TAG, &built)
 }
 
 /// One inspector surface, as the last painted frame has it — or the reason it

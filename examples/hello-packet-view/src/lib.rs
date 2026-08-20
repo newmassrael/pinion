@@ -37,6 +37,7 @@
 //!
 //! See `tools/demos/r1663_a_field_says_which_bytes.py`.
 
+mod judge;
 mod spec;
 
 #[cfg(test)]
@@ -626,16 +627,30 @@ fn decode(row: usize) -> ByteMap {
     let frame = SourceId::new(0);
     let frame_len = spec::SOURCES[0].1;
     // The message's own length decides how much of the frame the message layer
-    // covers; the framing and transport headers are fixed.
-    let body = (message.len as usize).clamp(4, frame_len - 0x14);
+    // covers; the framing, transport and network headers are fixed.
+    let body = (message.len as usize).clamp(4, frame_len - 0x18);
+    // ★★★★★ R1747 — the network layer, which this stand-in decode did not have.
+    //
+    // Found by the conformance verdict rather than by reading the code: the
+    // capture viewer's own specification says the tree names four layers, and
+    // the context strip beside it says `low latency off · 4 layers` — and this
+    // decode drew THREE for fifteen of the sixteen messages. The screen was
+    // contradicting its own session context, and every check in this example
+    // was green because the only decode anything ever asserted about was the
+    // one message `spec::FIELDS` describes.
+    //
+    // The extent mirrors the described decode's, which is what makes it a
+    // stand-in rather than an invention: L2 is the four bytes between the
+    // transport header and the message body there too.
     let spans = vec![
         FieldSpan::bytes("l0", frame, ByteExtent::new(0x00, 0x0c)),
         FieldSpan::bytes("l0.link", frame, ByteExtent::new(0x00, 0x06)),
         FieldSpan::bytes("l0.stream", frame, ByteExtent::new(0x06, 0x06)),
         FieldSpan::bytes("l1", frame, ByteExtent::new(0x0c, 0x08)),
         FieldSpan::bytes("l1.sn", frame, ByteExtent::new(0x0e, 0x02)),
-        FieldSpan::bytes("l3", frame, ByteExtent::new(0x14, body)),
-        FieldSpan::bytes("l3.name_id", frame, ByteExtent::new(0x14, 0x02)),
+        FieldSpan::bytes("l2", frame, ByteExtent::new(0x14, 0x04)),
+        FieldSpan::bytes("l3", frame, ByteExtent::new(0x18, body)),
+        FieldSpan::bytes("l3.name_id", frame, ByteExtent::new(0x18, 0x02)),
         FieldSpan::derived("l3.resolved"),
     ];
     ByteMap::build(vec![ByteSource::new(spec::SOURCES[0].0, frame_len)], spans)
@@ -677,7 +692,25 @@ fn visible_fields(state: &ViewState) -> Vec<(String, String, String, usize)> {
             {
                 return None;
             }
-            let (name, value) = if described {
+            let (name, value) = if let Some(n) = layer.filter(|_| !path.contains('.')) {
+                // ★★★★★ R1747 — a layer heading names its LAYER, whatever
+                // message is open. Which layers a decode has is a fact about
+                // the capture; what each one is called is a fact about the
+                // protocol, and this line used to conflate them: for every
+                // message but the one `spec::FIELDS` describes, the heading
+                // fell through to the leaf of the path and a reader saw `l0`
+                // where the reference draws the layer's name. Found by the
+                // conformance verdict, which reads the words the frame drew.
+                let value = if described {
+                    spec::FIELDS
+                        .iter()
+                        .find(|f| f.path == path)
+                        .map_or_else(String::new, |f| f.value.to_owned())
+                } else {
+                    String::new()
+                };
+                (spec::LAYERS[n].1.to_owned(), value)
+            } else if described {
                 spec::FIELDS
                     .iter()
                     .find(|f| f.path == path)
@@ -2234,7 +2267,7 @@ fn bytes_pane(state: &Rc<ViewState>, ink: Ink) -> Scene {
         tagged_label(
             "pv.bytes.span",
             lit.map_or_else(
-                || format!("{selected} · no bytes here"),
+                || format!("{selected} · {}", spec::NO_BYTES),
                 |sel| {
                     format!(
                         "{selected} · 0x{:02x}..0x{:02x}",
@@ -2518,6 +2551,13 @@ impl ExternalIntrospect for ViewOracle {
             const {
                 &[
                     SchemaField::new("spec", "json"),
+                    // ★★★★★ R1747 — how much of the capture viewer's written
+                    // specification this build is showing, published beside the
+                    // screen's own table. `json` rather than the `string` some
+                    // of its neighbours use because it is the framework's own
+                    // shape: an agent asking two sections how much of
+                    // themselves they are must not have to parse two answers.
+                    SchemaField::new("conformance", "json"),
                     SchemaField::new("row_count", "int"),
                     SchemaField::new("selected_row", "int"),
                     SchemaField::new("selected_field", "string"),
@@ -2581,6 +2621,12 @@ impl ExternalIntrospect for ViewOracle {
         }
         match path {
             "spec" => Ok(IntrospectValue::Json(spec_json())),
+            // ★ R1747 — the SAME value the host publishes for this section, so
+            // "one build, two placements" is a fact a client can check rather
+            // than a claim this file makes.
+            "conformance" => Ok(IntrospectValue::Json(pinion_shell::conformance_json::<
+                PacketView,
+            >())),
             "row_count" => Ok(IntrospectValue::Int(
                 i64::try_from(spec::ROWS.len()).unwrap_or(i64::MAX),
             )),
@@ -2810,6 +2856,24 @@ impl ExternalIntrospect for ViewOracle {
 /// from the running application rather than keeping a second copy of it.
 fn spec_json() -> serde_json::Value {
     serde_json::json!({
+        // ★★★★★ R1747 — the specification this screen is JUDGED against,
+        // published beside the tables it is BUILT from, and they are two
+        // different documents on purpose.
+        //
+        // Everything else in here is `crate::spec` — the screen's own table,
+        // written in the same edit as the painter it feeds. This is
+        // `docs/analyzer-packets-spec.json`, extracted from the behaviour
+        // reference by another hand, and it is what `conformance` compares the
+        // paint with. Published because a report of counts cannot answer *what
+        // is your verdict about*: a surface's standing says how many parts were
+        // specified and not which.
+        //
+        // Nested under a name of its own rather than merged, for a reason this
+        // round measured: R1738's gate looks up a surface by name in whatever a
+        // section publishes, and the pin's `context` surface and this screen's
+        // own `context` table would have collided at the top level — two
+        // different documents answering to one word.
+        "packets": spec::packets_document().to_json(),
         "panes": spec::PANES.iter().map(|p| serde_json::json!({
             "tag": p.tag, "title": p.title, "width": p.width, "body": p.body,
         })).collect::<Vec<_>>(),
@@ -3538,6 +3602,20 @@ impl WidgetView for PacketView {
 
     fn shrink_policy() -> Option<ShrinkPolicy> {
         Some(SHRINK)
+    }
+
+    /// ★★★★★ R1747 — the verdict this screen has computed since R1663,
+    /// answered where the application it is a page of can reach it.
+    ///
+    /// R1663 wrote screen B's specification as a value and compared the painted
+    /// scene against it inside a unit test of this binary. R1738 then recorded
+    /// this section as unjudged and gave the reason as *no written
+    /// specification at all*, which was false; what was true is that the
+    /// comparison was `#[cfg(test)]` and this hook was not implemented. See
+    /// `judge` for what a screen says about a surface a session has not put on
+    /// screen, and for the two reasons a decode row can light no bytes.
+    fn conformance() -> Option<pinion_core::conformance::DocumentReport> {
+        Some(judge::conformance())
     }
 }
 

@@ -52,10 +52,30 @@
     "verdict, and a report holding one does not reconcile — so the honesty is",
     "structural rather than a promise. See `pinion_core::conformance::Built`.",
     "",
-    "One `unspecified` entry is left and it is the first kind: `packets` has no",
-    "written specification at all. The distinction the bottom remainder is about",
-    "therefore now has one live case rather than two, and it stays open because",
-    "the type still cannot carry a reason."
+    "★★★★★ R1747 CLOSED `packets`, AND CORRECTED WHAT THIS FILE SAID ABOUT IT.",
+    "The deleted entry read: *the capture viewer has no written specification at",
+    "all — not one unpublished, one unwritten*. That sentence was FALSE when",
+    "R1738 wrote it and stayed false for nine rounds. Re-measured 2026-08-20 by",
+    "listing the crate's modules and grepping the tree for the hook: R1663 wrote",
+    "screen B's specification as a value in that crate's `spec` module and its",
+    "`painted` module already ran the real view and layout passes and compared",
+    "the painted scene against it in both directions. Both predate the entry.",
+    "What was true is the OTHER half of the same sentence — those modules are",
+    "`#[cfg(test)]` and the binding implemented no `conformance` hook — so this",
+    "was *one unpublished*, the same shape `lab` was in, and the entry misnamed",
+    "which of the two kinds it was.",
+    "",
+    "The lesson is the one this project keeps paying for and it is written here",
+    "rather than only in a round's ledger: A REASON RECORDED IN A REMAINDER IS",
+    "NOT RE-MEASURED BY THE THING THAT ENFORCES IT. The gate below asserts the",
+    "KEYS equal the application's unjudged rows and can say nothing at all about",
+    "the `why` beside them, so a wrong reason survives every push that a right",
+    "one would. Anything acting on one of these entries re-measures it first.",
+    "",
+    "Both remaining entries are the `inline` kind, so the `unspecified` kind now",
+    "has no live case. The bottom remainder stays open anyway: the type is",
+    "unchanged, and the next screen with a specification it cannot publish yet",
+    "would be silent in exactly the same way."
   ],
   "unjudged": {
     "owed": [
@@ -71,21 +91,6 @@
           "inline page, and giving the board one would make it answerable the",
           "same way the four mounts are. It is a refactor of a 16.9k-line",
           "binding and is its own round."
-        ]
-      },
-      {
-        "key": "packets",
-        "kind": "unspecified",
-        "sentence": "a screen is here and it publishes no verdict about a specification",
-        "since": "R1738",
-        "why": [
-          "The capture viewer has no written specification at all — not one",
-          "unpublished, one unwritten. Its surfaces have never been extracted",
-          "from the behaviour reference the way the key-pattern and log",
-          "sections' were, which is the same gap already recorded as the",
-          "capture viewer having no operation table. Writing that pin is the",
-          "work, and it is a round of its own because the extraction is the",
-          "expensive half."
         ]
       },
       {
@@ -116,9 +121,9 @@
           "it would answer through returns `Option<DocumentReport>` — which has",
           "room for a report and no room for a reason.",
           "",
-          "★ R1742 — the case that made the distinction live is closed rather",
-          "than the distinction: `lab` now publishes, so `packets` is the only",
-          "unspecified section left and it is the plain kind. Kept open because",
+          "★ R1742 and then R1747 closed the two live cases rather than the",
+          "distinction: `lab` and `packets` both publish now, so no section is",
+          "`unspecified` at all. Kept open because",
           "the type is unchanged and the next screen with a specification it",
           "cannot publish yet would be silent in exactly the same way. Worth",
           "noting that the repair is now HALF built: a SURFACE can say why it",
@@ -146,7 +151,14 @@
           "recorded marks once per specified surface. Still a wire read and",
           "still unmeasured — which is the entry, unchanged in kind. The cheap",
           "half is obvious when somebody does measure: the parsed document is a",
-          "constant and belongs behind a `OnceCell`."
+          "constant and belongs behind a `OnceCell`.",
+          "",
+          "⚠ R1747 made it heavier again, by the same amount and for the same",
+          "reason: a FOURTH section now parses a pin per read, and its own",
+          "readings scan the recorded marks more than once per surface. Two",
+          "sections doing this was a note; four is a shape, and the shape is",
+          "that every section added from here will do it. Still unmeasured, and",
+          "the note is now the older of the two facts in this entry."
         ]
       }
     ]

@@ -1149,3 +1149,42 @@ pub const SILENCES: &[(&str, Population, &str)] = &[
     // The highlight behind a byte the open field was read from.
     ("pv.bytes.lit.{}", Population::LitBytes, "decorative"),
 ];
+
+// ── The reference screen, as a pin written by another hand (R1747) ──────────
+
+/// ★★★★★ R1747 — what the byte pane's readout says when it is showing none of
+/// the open row's bytes.
+///
+/// A constant rather than a literal in the painter because two things read this
+/// line now: the painter writes it, and `crate::judge` takes it as the screen's
+/// own statement that this is a state rather than a defect. Two spellings of
+/// one sentence would make the conformance verdict silently stop noticing the
+/// state it is about.
+pub const NO_BYTES: &str = "no bytes here";
+
+/// The pinned specification of the capture viewer's surfaces.
+///
+/// ★★★★★ Separate from everything above it, and that is the point rather than
+/// an accident of file layout. This module is **the screen's own table** — it
+/// was written in the same edit as the painter it feeds, so a check against it
+/// says this build is self-consistent. `docs/analyzer-packets-spec.json` is the
+/// other hand: extracted from the behaviour reference in neutral vocabulary,
+/// reviewable on its own, and what makes a verdict a claim about the REFERENCE.
+///
+/// `include_str!` rather than a read at run time so the gate cannot pass by
+/// finding no file: a specification that goes missing must break the build, not
+/// silently stop judging. The same decision every sibling pin carries.
+const PACKETS_SPEC_JSON: &str = include_str!("../../../docs/analyzer-packets-spec.json");
+
+/// The capture viewer's specification, as the framework's own document.
+///
+/// # Panics
+///
+/// If the pin is not a specification — unreadable JSON, no surfaces, a
+/// duplicate part key, a remainder entry naming no round. All are defects in
+/// the pin rather than states the running screen can reach.
+#[must_use]
+pub fn packets_document() -> pinion_core::conformance::SpecDocument {
+    pinion_core::conformance::SpecDocument::parse(PACKETS_SPEC_JSON)
+        .unwrap_or_else(|e| panic!("the capture viewer's specification is readable: {e:?}"))
+}

@@ -70,8 +70,8 @@ pub use image_cache::{MEMORY_SCHEME, MemoryImageStore, resolve_image_store, use_
 pub use input::{
     AutoRepeatHold, CrossWindowDrop, ExternalSizes, InputRouter, Modifiers, PanRelease, PointerId,
     PointerReach, PointerShadow, Touch, TouchPhase, announce_external_sizes, pointer_reach,
-    record_painted_surface, rect_for_tag, resolve_cross_window_drop, resolve_pointer_tag,
-    wheel_intent_at,
+    record_painted_surface, record_painted_surfaces, rect_for_tag, resolve_cross_window_drop,
+    resolve_pointer_tag, wheel_intent_at,
 };
 pub use intent_queue::{IntentQueue, walk_scene_and_drain, walk_scene_and_drain_immediate};
 pub use introspection_paint::IntrospectionPaint;

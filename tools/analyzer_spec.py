@@ -37,6 +37,7 @@ from pathlib import Path
 DOCS = Path(__file__).resolve().parent.parent / "docs"
 RAIL_SPEC_PATH = DOCS / "analyzer-rail-spec.json"
 KEYS_SPEC_PATH = DOCS / "analyzer-keys-spec.json"
+PACKETS_SPEC_PATH = DOCS / "analyzer-packets-spec.json"
 BOARD_SPEC_PATH = DOCS / "analyzer-board-spec.json"
 SECTIONS_SPEC_PATH = DOCS / "analyzer-sections-spec.json"
 
@@ -54,6 +55,17 @@ def board_spec() -> dict:
 def keys_spec() -> dict:
     """The key-pattern section's three surfaces, as their pin states them."""
     return json.loads(KEYS_SPEC_PATH.read_text(encoding="utf-8"))
+
+
+def packets_spec() -> dict:
+    """The capture viewer's six surfaces, as their pin states them (R1747).
+
+    Read through here rather than opened by the one demo that wants it, for the
+    reason in this module's own header: the first consumer of a pin is never the
+    last, and five copies of `json.loads(path)` is how two demos came to
+    disagree about one build.
+    """
+    return json.loads(PACKETS_SPEC_PATH.read_text(encoding="utf-8"))
 
 
 def sections_spec() -> dict:

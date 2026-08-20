@@ -189,6 +189,22 @@ fn painted_at(state: &std::rc::Rc<ViewState>, size: (u32, u32)) -> (Painted, Sce
     let mut scene = super::view((TextFieldState::Idle, 0), Frame::default());
     let mut cache = pinion_runtime::LayoutCache::new();
     pinion_runtime::compute_layout(&mut scene, &mut cache, size.0, size.1);
+    // ★★★★★ R1747 — recording what was painted, exactly as the shell does on
+    // the same pass it announces the sizes. The screen judges its own paint
+    // now, so a sweep that skipped this line would be asking the verdict of a
+    // store this frame never filled.
+    //
+    // BOTH surfaces, and the plural call is the whole point: the query box is
+    // an `External` of its own, so in a window it is a surface and the screen's
+    // own store holds neither it nor the run inside it. Recording only the
+    // screen would file that run under the screen, and the sweep would then be
+    // reading a surface the window does not have.
+    assert_eq!(
+        pinion_runtime::record_painted_surfaces(&scene, &[super::VIEW_TAG, super::QUERY_TAG]),
+        2,
+        "the screen and its query box are both painted, or the verdict below is \
+         asked of a store this frame never filled",
+    );
     let shot = Painted::of(&scene, size);
     assert!(
         std::rc::Rc::ptr_eq(state, &use_view_state()),
@@ -1315,5 +1331,218 @@ fn r1707_a_saved_filter_chip_runs_the_query_it_names() {
             toggle_saved(&state, n);
             assert_eq!(state.kept().len(), spec::ROWS.len());
         }
+    });
+}
+
+// ── 7. Judged: the screen against a specification another hand wrote ────────
+
+/// ★★★★★ R1747 — **the integration gate: the capture viewer the pipeline
+/// paints, against `docs/analyzer-packets-spec.json`, in every state and at
+/// every size the sweep drives.**
+///
+/// Everything above this line compares the screen with `crate::spec` — the
+/// screen's own table, written in the same edit as the painter it feeds. This
+/// one compares it with a pin extracted from the behaviour reference, and the
+/// difference is the whole reason both exist: the first says this build is
+/// self-consistent, and only the second can say it is the reference.
+///
+/// Judged as an equality in both directions, through
+/// [`crate::judge::built`] — the SAME function the running window and the
+/// assembled application answer from, so a copy of these readings kept here
+/// would be the second account whose disagreement nobody notices, because the
+/// one running in a window is not the one anybody runs.
+///
+/// ★ Two things are asserted about the ABSENCES rather than left implicit:
+/// that only the surface whose parts a session can take away is ever away, and
+/// that the sweep reaches **both** of the reasons it can be away for. A gate
+/// that tolerated any away would pass a screen that had stopped painting.
+///
+/// # 🟥★★★★★ What the size axis measured, and why the rule below is in two parts
+///
+/// At the size the screen opens in and maximised, the whole document
+/// reconciles. **At the floor this screen declares it does not**, and the
+/// reason is not a defect: the decode pane is short enough there that three of
+/// the four layer headings are below its fold, one scroll away. A verdict read
+/// from the PAINT is about the frame, so it reports them absent — and that is
+/// the honest reading, because they are not on that frame.
+///
+/// R1742 met the same thing on the sibling screen (a 74-pixel inspector) and
+/// **reported it rather than adding an away for it**, which is the precedent
+/// followed here: an away-condition of *the pane cannot show all of them at
+/// once* is a condition under which the verdict fails rather than a state the
+/// screen can point at, and it would swallow a pane that had genuinely stopped
+/// drawing its headings.
+///
+/// So the rule is two-part, and the second part is the one with teeth:
+///
+/// 1. at the size the specification describes, the document **reconciles**;
+/// 2. at every size, an undeclared difference is an **absence**, or a
+///    reordering with an absence beside it to explain it — shrinking a window
+///    may take a part off the frame, and it must never rename one or grow one
+///    the reference has not. (A part that goes off the frame shifts every part
+///    after it, so a reordering is a consequence rather than a claim; a
+///    reordering with nothing missing is a renaming in disguise.)
+///
+/// ⚠ The framework cannot yet close the gap: `pinion_core::reach` knows a mark
+/// that is one scroll away, and the paint store this verdict reads holds only
+/// what was drawn. A section judging itself has no scene to ask.
+#[test]
+fn r1747_the_capture_viewer_reproduces_its_specification_or_says_why_not() {
+    use pinion_core::conformance::{Built, PartDivergence, Unreconciled};
+
+    let mut reasons: BTreeSet<String> = BTreeSet::new();
+    let mut judged = 0usize;
+    let mut off_frame: BTreeSet<String> = BTreeSet::new();
+    sweep(|_, _, _, size, case| {
+        let regions =
+            pinion_core::painted::painted_regions(super::VIEW_TAG).expect("the sweep just painted");
+        let doc = spec::packets_document();
+        let opening = size == (WIN_W, WIN_H);
+        for surface in doc.surfaces() {
+            match super::judge::built(&regions, surface) {
+                Built::Away(why) => {
+                    assert_eq!(
+                        surface, "selection",
+                        "{case}: only the surface a session can take away may be \
+                         away, and `{surface}` said: {why}",
+                    );
+                    assert!(!why.is_empty(), "{case}: an away carries its own reason");
+                    reasons.insert(why);
+                }
+                Built::Standing(parts) => {
+                    let said: Vec<String> = doc
+                        .unreconciled(surface, &parts)
+                        .iter()
+                        .map(Unreconciled::sentence)
+                        .collect();
+                    assert!(
+                        !opening || said.is_empty(),
+                        "{case}: `{surface}` is not what \
+                         docs/analyzer-packets-spec.json declares:\n  {}",
+                        said.join("\n  "),
+                    );
+                    // Part 2: at ANY size, an UNDECLARED difference may only be
+                    // a part that is not on this frame. The ledger's own
+                    // entries are excluded here rather than everywhere: part 1
+                    // above is what holds them to being exactly right, and
+                    // re-reporting one as a forbidden reordering would make the
+                    // declared remainder impossible to declare.
+                    let canon = doc.canon(surface).expect("the document fixes it");
+                    let undeclared: BTreeSet<String> = doc
+                        .unreconciled(surface, &parts)
+                        .into_iter()
+                        .filter_map(|entry| match entry {
+                            Unreconciled::Undeclared { sentence, .. } => Some(sentence),
+                            Unreconciled::Paid { .. } | Unreconciled::Reworded { .. } => None,
+                        })
+                        .collect();
+                    let divergences: Vec<PartDivergence> = canon
+                        .diff(&parts)
+                        .into_iter()
+                        .filter(|d| undeclared.contains(&d.sentence()))
+                        .collect();
+                    // ★ A part that is off the frame necessarily shifts every
+                    // part after it, so a reordering is a CONSEQUENCE of an
+                    // absence rather than a claim of its own. Measured: at the
+                    // floor the decode row the tree draws open is off the frame,
+                    // and the pane's readout after it moves from part 1 to part
+                    // 0. What must never happen is a renaming or an arrival, and
+                    // a reordering with no absence beside it is one of those in
+                    // disguise.
+                    let short = divergences
+                        .iter()
+                        .any(|d| matches!(d, PartDivergence::Absent { .. }));
+                    for divergence in &divergences {
+                        match divergence {
+                            PartDivergence::Absent { key, .. } => {
+                                assert!(
+                                    !opening,
+                                    "{case}: `{surface}` is short `{key}` at the size \
+                                     the specification describes",
+                                );
+                                off_frame.insert(format!("{surface}.{key}"));
+                            }
+                            PartDivergence::OutOfOrder { key, .. } => assert!(
+                                short,
+                                "{case}: `{surface}` moved `{key}` with nothing off \
+                                 the frame to explain it",
+                            ),
+                            other => panic!(
+                                "{case}: shrinking the window may take a part off the \
+                                 frame and nothing else, and `{surface}` says: {}",
+                                other.sentence(),
+                            ),
+                        }
+                    }
+                    judged += 1;
+                }
+            }
+        }
+    });
+    assert_eq!(
+        reasons.len(),
+        2,
+        "★ the swept states reach BOTH reasons a decode row can light no bytes \
+         -- a value the decoder worked out, and one read from a source this \
+         pane is not showing. Reached: {reasons:?}",
+    );
+    assert!(
+        judged >= 100,
+        "and the sweep judged {judged} standing surface(s), which is enough for \
+         the sentence above to be about a screen rather than about one frame",
+    );
+    // ★ Measured rather than asserted as a bound: what the smaller sizes put
+    // out of the frame, printed so the number is a fact somebody can read
+    // rather than a threshold nobody re-derives.
+    assert!(
+        !off_frame.is_empty(),
+        "★ and at least one part IS off the frame at a smaller size -- if this \
+         ever becomes empty the two-part rule above has stopped distinguishing \
+         anything and should be collapsed into part 1",
+    );
+    println!("off the frame at a smaller size: {off_frame:?}");
+}
+
+/// ★★★★★ R1747 — the query box is judged as **its own surface**, and this is
+/// what says so.
+///
+/// The bar reported its query absent and its other two parts out of place the
+/// first time the verdict ran, because a widget that owns focus is an
+/// `External` and the paint store files an External as a SURFACE rather than as
+/// a mark inside its host. The working-around is one line in `judge`; this is
+/// the fact underneath it, asserted so a framework change that folded nested
+/// surfaces back into their host would fail here rather than silently make the
+/// bar report a fourth part.
+#[test]
+fn r1747_a_focus_owning_widget_is_a_surface_and_not_a_mark_of_its_host() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_view_state();
+        painted_at(&state, (WIN_W, WIN_H));
+        let screen =
+            pinion_core::painted::painted_regions(super::VIEW_TAG).expect("the sweep just painted");
+        assert!(
+            !screen
+                .marks()
+                .any(|(tag, _)| tag.starts_with("pv.filter.query")),
+            "the query box and everything drawn inside it belong to the query's \
+             own store, not to the screen's",
+        );
+        // ★ The presence of an ENTRY is the fact `judge::filter_bar` rests on,
+        // and it is a different fact from the entry holding anything. Measured
+        // when this test first ran: at rest the box holds an empty run, so its
+        // store is present and empty, and an assertion that it held a mark was
+        // asserting more than is true. What the verdict asks is whether the
+        // surface painted at all.
+        assert!(
+            pinion_core::painted::painted_regions(super::QUERY_TAG).is_some(),
+            "and the query box painted a surface of its own, which is what says \
+             the bar has a query on it",
+        );
+        assert!(
+            pinion_core::painted::painted_regions("pv.filter.saved").is_none(),
+            "while a part that is NOT a surface has no store of its own -- \
+             without this the assertion above would pass for any tag at all",
+        );
     });
 }

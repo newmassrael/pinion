@@ -73,6 +73,7 @@ then asks the toolkit about it.
 from __future__ import annotations
 
 import sys
+from collections.abc import Iterable
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -316,7 +317,8 @@ def section_d(app: RpcSubprocess) -> None:
         # what stops that being an escape: the population and the part count
         # may not fall below what this check measured when it was written.
         parts_by_surface = {
-            surface: parts_of(app, row["tag"], surface) for surface in row["surfaces"]
+            surface: parts_of(app, row["tag"], surface, row["surfaces"])
+            for surface in row["surfaces"]
         }
         for surface, parts in parts_by_surface.items():
             ok(
@@ -372,7 +374,9 @@ def unreachable(app: RpcSubprocess, tag: str) -> bool:
     return False
 
 
-def parts_of(app: RpcSubprocess, tag: str, surface: str) -> list[str]:
+def parts_of(
+    app: RpcSubprocess, tag: str, surface: str, surfaces: Iterable[str]
+) -> list[str]:
     """The part keys one surface of a section is specified to have.
 
     Read from the section's own published specification rather than from a table
@@ -387,18 +391,39 @@ def parts_of(app: RpcSubprocess, tag: str, surface: str) -> list[str]:
     was, which reads as covering every judged section. That is this demo's own
     lesson turned on itself -- count what the check actually looked at -- so
     the caller refuses a surface that yields no parts.
+
+    ★★★★★ R1747 — and the lookup takes the sub-document that holds EVERY
+    surface, which is a derivation replacing a coincidence. R1742's own comment
+    below predicted this class ("the matching is a heuristic") and the fourth
+    judged section is where it fired: the capture viewer's pin fixes a surface
+    called `context`, and that screen's own published tables ALSO have a
+    `context` -- a different document answering to the same word. Taking the
+    first key that matches would have compared the pin's surface against the
+    screen's negotiated-value table and reported a shortfall that is not one.
+
+    A section's specification is the one place where every surface it is judged
+    on appears together, so that -- and not a name match -- is what identifies
+    it. Ambiguity is refused rather than resolved by order: two candidates
+    holding every surface means this file cannot tell which document the
+    verdict is about, and guessing is what it is trying to stop.
     """
     import json
 
     said = app.query(f"/{tag}/external/spec")
     if isinstance(said, str):
         said = json.loads(said)
-    rows = said.get(surface)
-    if rows is None:
-        for value in said.values():
-            if isinstance(value, dict) and surface in value:
-                rows = value[surface]
-                break
+    wanted = set(surfaces)
+    candidates = [said] + [v for v in said.values() if isinstance(v, dict)]
+    holding = [c for c in candidates if wanted <= set(c)]
+    assert holding, (
+        f"`{tag}` publishes no document holding every surface it is judged on "
+        f"({sorted(wanted)}); the verdict is about something this file cannot find"
+    )
+    assert len(holding) == 1, (
+        f"`{tag}` publishes {len(holding)} documents holding every surface it is "
+        f"judged on, so which one the verdict is about is a guess"
+    )
+    rows = holding[0][surface]
     if isinstance(rows, dict):
         rows = rows.get("canon", [])
     return [row["key"] for row in rows or [] if isinstance(row, dict) and "key" in row]

@@ -8435,42 +8435,17 @@ fn spec_json() -> serde_json::Value {
         // three. The `owed` half travels with it, because "this part is not
         // there and here is why" is exactly the thing a reader cannot get any
         // other way.
-        "inspector": inspector_spec_json(),
+        "inspector": spec::inspector_document().to_json(),
         "enum_key": spec::ENUM_KEY,
     })
 }
 
-/// The inspector specification, as the wire publishes it: each surface's canon
-/// and the remainder this build declares against it.
-fn inspector_spec_json() -> serde_json::Value {
-    let doc = spec::inspector_document();
-    let mut out = serde_json::Map::new();
-    for surface in doc.surfaces() {
-        let canon = doc.canon(surface).expect("the document names it");
-        let ledger = doc.ledger(surface).expect("and its remainder");
-        out.insert(
-            surface.to_owned(),
-            serde_json::json!({
-                "canon": canon
-                    .parts()
-                    .iter()
-                    .map(|part| serde_json::json!({ "key": part.key, "title": part.title }))
-                    .collect::<Vec<_>>(),
-                "owed": ledger
-                    .owed()
-                    .iter()
-                    .map(|entry| serde_json::json!({
-                        "key": entry.key,
-                        "says": entry.sentence,
-                        "since": entry.since,
-                        "why": entry.why,
-                    }))
-                    .collect::<Vec<_>>(),
-            }),
-        );
-    }
-    serde_json::Value::Object(out)
-}
+// ★ R1747 — `inspector_spec_json` lived here and is now
+// `SpecDocument::to_json`. R1732 wrote it for this screen; the capture viewer
+// needed it verbatim, and two sections publishing one document in two shapes is
+// the defect R1738 exists to prevent one level up — a client walking a
+// section's published specification must not have to know which section it is
+// talking to.
 
 /// Re-derive what a node's *pins* mean from its form.
 ///

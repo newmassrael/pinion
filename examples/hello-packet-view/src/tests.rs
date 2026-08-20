@@ -1026,3 +1026,45 @@ fn r1699_every_cursor_member_resolves_to_the_hit_its_tag_names() {
         );
     });
 }
+
+/// ★★★★★ R1747 — **every message's decode has the layers this session says it
+/// has, named by their own names.**
+///
+/// Two defects in one assertion, and both were found by the conformance verdict
+/// rather than here — which is the argument for the verdict. Measured before
+/// the repair, on the message the list opens on and then on message 1:
+///
+/// * the stand-in decode this screen builds for a message `spec::FIELDS` does
+///   not describe had **three** layers, while the context strip beside it says
+///   the session negotiated four. The screen contradicted itself, and nothing
+///   noticed because the only decode anything asserted about was the described
+///   one — `r1693_a_tree_items_position_is_among_its_own_siblings` says in its
+///   own comment that the top level is the four layers, and only ever looked at
+///   the one message where that was true.
+/// * a layer HEADING fell through to the leaf of its path there, so a reader on
+///   any other message saw `l0` where the reference draws the layer's name.
+///
+/// The population is every row of the list, so a message added to the fixture
+/// is covered without this test being told.
+#[test]
+fn r1747_every_messages_decode_names_the_layers_the_session_declares() {
+    with_state(|state| {
+        for row in 0..spec::ROWS.len() {
+            super::select_message(state, row);
+            let headings: Vec<(String, String)> = super::visible_fields(state)
+                .into_iter()
+                .filter(|(_, _, _, depth)| *depth == 0)
+                .map(|(path, name, ..)| (path, name))
+                .collect();
+            let wanted: Vec<(String, String)> = spec::LAYERS
+                .iter()
+                .map(|(id, title)| ((*id).to_owned(), (*title).to_owned()))
+                .collect();
+            assert_eq!(
+                headings, wanted,
+                "message {row}'s decode does not name the layers this session \
+                 declares, in order",
+            );
+        }
+    });
+}

@@ -1069,6 +1069,44 @@ impl SpecDocument {
         }
     }
 
+    /// ★★★★★ R1747 — the report a screen answers **from its own last painted
+    /// frame**, which is the only evidence a `conformance` hook has.
+    ///
+    /// # Why the framework owns this and not each screen
+    ///
+    /// A screen judging itself has no scene: the hook is a question a host asks
+    /// between frames. What it does have is
+    /// [`painted_regions`](crate::painted::painted_regions), so every such
+    /// screen writes the same four lines — fetch the surface's marks, and if
+    /// the frame store has none, answer away.
+    ///
+    /// The second screen to write them wrote the away sentence **byte for byte
+    /// identical** to the first, which is the point at which a sentence stops
+    /// being a screen's own words. It is not one: *this surface has not painted*
+    /// is a fact about the framework's store, and a screen has no business
+    /// having an opinion about how to say it. A third screen phrasing it
+    /// slightly differently is the drift this lift exists to prevent, and the
+    /// distinction it would blur is load-bearing — **a screen that has not
+    /// painted has not been asked to draw anything yet, which is a different
+    /// fact from a screen that drew none of what it should**, and a reader acts
+    /// on the two differently.
+    ///
+    /// `built` is handed the marks, so a screen writes only its own readings.
+    #[must_use]
+    pub fn report_from_paint(
+        &self,
+        surface_tag: &str,
+        built: &dyn Fn(&crate::painted::PaintedRegions, &str) -> Built,
+    ) -> DocumentReport {
+        let regions = crate::painted::painted_regions(surface_tag);
+        self.report(&|surface| match regions.as_deref() {
+            Some(regions) => built(regions, surface),
+            None => {
+                Built::away("this screen has not painted a frame yet, so none of it is on screen")
+            }
+        })
+    }
+
     /// The whole comparison, as the value a running application publishes.
     ///
     /// One shape rather than one per screen, because an agent asking two
@@ -1082,6 +1120,56 @@ impl SpecDocument {
     #[must_use]
     pub fn wire(&self, built: &dyn Fn(&str) -> Built) -> serde_json::Value {
         self.report(built).to_json()
+    }
+
+    /// ★★★★★ R1747 — **the document itself, as a section publishes it**: each
+    /// surface's canon and the remainder this build declares against it.
+    ///
+    /// Not to be confused with [`wire`](Self::wire), which publishes what a
+    /// BUILD reproduces. This publishes what the SPECIFICATION declares, so a
+    /// client can ask a running section *what is your verdict about* without
+    /// reading this repository — which is the question a report of counts
+    /// cannot answer, because a `SurfaceStanding` carries how many parts were
+    /// specified and not which.
+    ///
+    /// # Why the framework owns the shape
+    ///
+    /// The node lab wrote this by hand at R1732 and the capture viewer needed
+    /// it verbatim at R1747. Two sections publishing one document in two
+    /// shapes is precisely the defect R1738 exists to prevent one level up: a
+    /// client that walks a section's published specification must not have to
+    /// know which section it is talking to. It also removes the reason the
+    /// second one would have been written slightly differently — the `owed`
+    /// half travels with the canon, because *this part is not there and here
+    /// is why* is the thing a reader cannot get any other way, and it is easy
+    /// to leave out when copying.
+    #[must_use]
+    pub fn to_json(&self) -> serde_json::Value {
+        let mut out = serde_json::Map::new();
+        for surface in self.surfaces() {
+            let canon = self.canon[surface].parts();
+            let ledger = &self.owed[surface];
+            out.insert(
+                surface.to_owned(),
+                serde_json::json!({
+                    "canon": canon
+                        .iter()
+                        .map(|part| serde_json::json!({ "key": part.key, "title": part.title }))
+                        .collect::<Vec<_>>(),
+                    "owed": ledger
+                        .owed()
+                        .iter()
+                        .map(|entry| serde_json::json!({
+                            "key": entry.key,
+                            "says": entry.sentence,
+                            "since": entry.since,
+                            "why": entry.why,
+                        }))
+                        .collect::<Vec<_>>(),
+                }),
+            );
+        }
+        serde_json::Value::Object(out)
     }
 }
 
@@ -2173,5 +2261,69 @@ mod tests {
         assert_eq!(report.specified(), 3);
         assert_eq!(report.reproduced(), 2);
         assert!(!report.reconciles());
+    }
+
+    /// ★★★★★ R1747 — a screen that has not painted has not been ASKED to draw
+    /// anything, and a screen that drew none of its specification has.
+    ///
+    /// The two are different facts a reader acts on differently, and this is
+    /// the assertion that keeps them apart: the report a screen answers from
+    /// its own last frame is `away` when the frame store has nothing for that
+    /// surface, and a comparison when it has. Written when the second screen to
+    /// need those four lines copied the first one's away sentence byte for
+    /// byte — at which point the sentence had stopped being either screen's
+    /// own words.
+    #[test]
+    fn r1747_a_surface_that_never_painted_is_away_rather_than_reproducing_nothing() {
+        use crate::painted::{PaintedRegions, forget_painted_regions, record_painted_regions};
+        use crate::scene::Rect;
+
+        let doc = two_surface_document();
+        let built = |regions: &PaintedRegions, surface: &str| match surface {
+            "columns" => Built::Standing(
+                regions
+                    .parts_under("row.")
+                    .into_iter()
+                    .map(|(key, _)| {
+                        let title = if key == "id" { "ID" } else { "Name" };
+                        Part::new(key, title)
+                    })
+                    .collect(),
+            ),
+            "detail" => Built::Standing(vec![Part::new("summary", "Summary")]),
+            other => panic!("no surface named {other}"),
+        };
+
+        forget_painted_regions("nothing-has-painted-this");
+        let unpainted = doc.report_from_paint("nothing-has-painted-this", &built);
+        assert_eq!(unpainted.reproduced(), 0);
+        assert_eq!(unpainted.away(), 2, "every surface, not only the first");
+        assert!(
+            !unpainted.reconciles(),
+            "declining to be judged is not passing"
+        );
+        assert_eq!(
+            unpainted.surfaces()[0].why(),
+            Some("this screen has not painted a frame yet, so none of it is on screen"),
+            "and the reason is the framework's own words rather than a screen's",
+        );
+
+        // The same document and the same closure, over a frame that DID paint.
+        record_painted_regions(
+            "a-surface-that-painted",
+            PaintedRegions::from_marks(vec![
+                ("row.id".to_owned(), Rect::new(0, 0, 10, 10)),
+                ("row.name".to_owned(), Rect::new(10, 0, 10, 10)),
+            ]),
+        );
+        let painted = doc.report_from_paint("a-surface-that-painted", &built);
+        assert_eq!(painted.away(), 0);
+        assert_eq!(painted.reproduced(), 3);
+        assert!(
+            painted.reconciles(),
+            "the fixture is built to reproduce the document exactly, so the two \
+             arms are told apart by more than one of them failing",
+        );
+        forget_painted_regions("a-surface-that-painted");
     }
 }
