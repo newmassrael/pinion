@@ -120,6 +120,16 @@ impl Toggle {
         self.inner.state()
     }
 
+    /// ★ R1740 — how many events this widget's machine has discarded.
+    ///
+    /// Forwarded for the same reason the checkbox forwards it: a sidecar
+    /// widget is still a statechart, and its `*External` needs the same
+    /// before/after reading the plain ones take.
+    #[must_use]
+    pub fn discarded(&self) -> u32 {
+        self.inner.discarded()
+    }
+
     /// Current Off / On value. Application code reads this to drive
     /// the visual (e.g. knob position, accent colour) and to expose
     /// the bound model state.
@@ -369,7 +379,17 @@ impl ExternalIntrospect for ToggleExternal {
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
                     let ev = crate::widget_core::require_event::<ToggleEvent>("toggle", name)?;
+                    // ★ R1740 — see `button`'s arm for why the state is read
+                    // before the drive rather than after it.
+                    let was = self.state().as_name();
+                    let before = self.em.inner.discarded();
                     self.send(ev);
+                    let sent = if self.em.inner.discarded() > before {
+                        crate::widgets::Sent::WentNowhere
+                    } else {
+                        crate::widgets::Sent::Answered
+                    };
+                    crate::widget_core::require_landed("toggle", name, was, sent)?;
                     Ok(IntrospectValue::Text(format!(
                         "state={}, value={}",
                         self.state().as_name(),

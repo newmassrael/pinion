@@ -129,6 +129,19 @@ impl<P: StatePolicy> Widget<P> {
     pub fn state(&self) -> P::State {
         self.engine.get_current_state()
     }
+
+    /// ★ R1740 — how many external events this machine has discarded so far.
+    ///
+    /// Monotone, so a caller that cannot reach [`send`](Self::send)'s return
+    /// value — an `*External` whose own `send` runs the intent pipeline in
+    /// between — can read it either side of a drive and get the same verdict.
+    /// That is the shape the engine publishes and the one its own
+    /// documentation recommends: *comparing the count across a drive is what
+    /// turns "the machine ignored what I sent" into something the program can
+    /// see*.
+    pub fn discarded(&self) -> u32 {
+        self.engine.discarded_external_events()
+    }
 }
 
 impl<P: StatePolicy + Default> Widget<P> {

@@ -318,7 +318,19 @@ impl ExternalIntrospect for ButtonExternal {
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
                     let ev = crate::widget_core::require_event::<ButtonEvent>("button", name)?;
+                    // ★ R1740 — the state BEFORE, because the refusal names the
+                    // configuration that did not answer and a discard leaves it
+                    // unchanged, so reading it after would be right by accident
+                    // rather than by construction.
+                    let was = self.state().as_name();
+                    let before = self.em.inner.discarded();
                     self.send(ev);
+                    let sent = if self.em.inner.discarded() > before {
+                        crate::widgets::Sent::WentNowhere
+                    } else {
+                        crate::widgets::Sent::Answered
+                    };
+                    crate::widget_core::require_landed("button", name, was, sent)?;
                     Ok(IntrospectValue::Text(self.state().as_name().to_string()))
                 }
                 _ => Err(InvokeError::TypeMismatch),
@@ -811,6 +823,56 @@ mod tests {
         // which is the difference between a refusal read and one acted on.
         assert_refused_saying(&r, "PointerDown");
         // State unchanged because the action did not fire.
+        assert_eq!(bx.state(), ButtonState::Idle);
+    }
+
+    /// ★★★★★ R1740 — **the second way a symbolic drive fails, which the wire
+    /// could not say.**
+    ///
+    /// `Teleport` above is not an event this widget has at all. `PointerUp` is
+    /// — it is in the accepted vocabulary the refusal above lists — and `idle`
+    /// simply has no transition on it. Before this round the wire answered that
+    /// with `Ok("Idle")`, which is exactly what a self transition would have
+    /// answered, so an agent could not tell *"nothing happened"* from
+    /// *"something happened and the state is the same"*.
+    ///
+    /// The two failures need different fixes — a typo or a stale client versus
+    /// a sequencing mistake — so they are two refusals, and this one names the
+    /// state that did not answer.
+    #[test]
+    fn r1740_an_event_this_configuration_does_not_answer_is_rejected() {
+        let mut bx = ButtonExternal::new();
+        assert_eq!(bx.state(), ButtonState::Idle);
+        let r = bx.invoke("send", IntrospectValue::Text("PointerUp".to_string()));
+        assert_refused_saying(&r, "matched no transition out of \"Idle\"");
+        assert_refused_saying(&r, "still in \"Idle\"");
+        assert_eq!(bx.state(), ButtonState::Idle);
+
+        // And the same event one state along IS answered, so the refusal is
+        // about the configuration and not about the event name.
+        bx.invoke("send", IntrospectValue::Text("PointerEnter".to_string()))
+            .expect("hover is reachable from idle");
+        bx.invoke("send", IntrospectValue::Text("PointerDown".to_string()))
+            .expect("pressed is reachable from hover");
+        let out = bx
+            .invoke("send", IntrospectValue::Text("PointerUp".to_string()))
+            .expect("the very event that was refused out of idle lands here");
+        assert_eq!(out, IntrospectValue::Text("Hover".to_string()));
+    }
+
+    /// A targetless transition is ANSWERED, and the wire must not mistake
+    /// *"the state did not change"* for *"nothing happened"* — which is the
+    /// error a refusal derived from comparing states would make.
+    #[test]
+    fn r1740_a_targetless_transition_is_not_a_refusal() {
+        let mut bx = ButtonExternal::new();
+        let out = bx
+            .invoke(
+                "send",
+                IntrospectValue::Text("KeyboardActivate".to_string()),
+            )
+            .expect("idle answers a keyboard activation without leaving idle");
+        assert_eq!(out, IntrospectValue::Text("Idle".to_string()));
         assert_eq!(bx.state(), ButtonState::Idle);
     }
 

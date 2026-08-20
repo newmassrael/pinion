@@ -76,11 +76,37 @@ def drive(tf: RpcSubprocess, example: str) -> list[str]:
     events = published_events(field)
     assert events, f"{example}: an empty vocabulary is a promise it cannot keep"
 
-    # (B) every published name is accepted. The widget's state may or may not
-    # change — what is under test is that the NAME is admitted, so a refusal is
-    # the failure and any answer is a pass.
+    # (B) every published name is ADMITTED. What is under test is the
+    # vocabulary, not the sequencing.
+    #
+    # ★★★★★ R1740 split this clause in two, and the split is the point. A
+    # published name can now fail for a SECOND reason: the configuration the
+    # widget is standing in has no transition on it, so the machine discards it
+    # and the wire says so instead of answering with the unchanged state. That
+    # is a different failure from "this widget has no such event" — a
+    # sequencing mistake rather than a typo or a stale client — and a caller
+    # needs to tell them apart.
+    #
+    # ⚠ Today they are distinguishable only by their PROSE: both arrive as
+    # `Rejected`, because `RefusalReason` is a bare sentence and `InvokeError`
+    # has exactly one refusal variant. So this asserts on the sentence, and
+    # that it has to is registered as the round's remainder.
+    discarded = 0
     for name in events:
-        tf.invoke(f"{EXT}/send", name)
+        try:
+            tf.invoke(f"{EXT}/send", name)
+        except Exception as refusal:  # noqa: BLE001
+            said = str(refusal)
+            assert "matched no transition out of" in said, (
+                f"{example}: {name!r} is published, so the only refusal it may "
+                f"draw is the discard one -- got: {said}"
+            )
+            assert name in said, f"a discard refusal names the event: {said}"
+            discarded += 1
+    assert discarded < len(events), (
+        f"{example}: every published name went nowhere, which would mean the "
+        f"vocabulary is not this configuration's at all"
+    )
 
     # (C) a name the set does not contain is refused, and the refusal still
     # names the set — the declaration adds a path, it does not remove one.

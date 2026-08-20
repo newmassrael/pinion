@@ -100,6 +100,15 @@ impl Checkbox {
         self.inner.state()
     }
 
+    /// ★ R1740 — how many events this widget's machine has discarded.
+    ///
+    /// Forwarded because a sidecar widget is still a statechart, and its
+    /// `*External` needs the same before/after reading the plain ones take.
+    #[must_use]
+    pub fn discarded(&self) -> u32 {
+        self.inner.discarded()
+    }
+
     /// `true` if checked.
     #[must_use]
     pub fn is_checked(&self) -> bool {
@@ -305,7 +314,18 @@ impl ExternalIntrospect for CheckboxExternal {
             "send" => match args {
                 IntrospectValue::Text(ref name) => {
                     let ev = crate::widget_core::require_event::<CheckboxEvent>("checkbox", name)?;
+                    // ★ R1740 — see `button`'s arm: the state is read BEFORE,
+                    // because a discard leaves it unchanged and the refusal
+                    // names the configuration that did not answer.
+                    let was = self.state().as_name();
+                    let before = self.em.inner.discarded();
                     self.send(ev);
+                    let sent = if self.em.inner.discarded() > before {
+                        crate::widgets::Sent::WentNowhere
+                    } else {
+                        crate::widgets::Sent::Answered
+                    };
+                    crate::widget_core::require_landed("checkbox", name, was, sent)?;
                     Ok(IntrospectValue::Text(self.state().as_name().to_string()))
                 }
                 _ => Err(InvokeError::TypeMismatch),

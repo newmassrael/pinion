@@ -1181,6 +1181,45 @@ pub fn require_event<E: WidgetEventName>(
     })
 }
 
+/// ★★★★★ R1740 — the refusal a widget owes a client whose event went nowhere.
+///
+/// [`require_event`] above answers the first of two questions a symbolic drive
+/// asks: *is this an event this widget has at all*. This is the second: *does
+/// the configuration it is in right now answer it*. They fail differently and a
+/// client needs to tell them apart — the first is a typo or a stale client, the
+/// second is a sequencing mistake, and the fix for one is not the fix for the
+/// other.
+///
+/// Until R1739 the second question had no answer anywhere in this framework:
+/// the clause requires an unmatched event to be discarded and says nothing
+/// about telling anybody, and the generated engines had no accessor for it.
+/// With [`Sent`](crate::widgets::Sent) they do, and this is the one place the
+/// whole tree decides what to do about it — thirty widget surfaces route their
+/// `send` path through here rather than each choosing for itself.
+///
+/// The reason names the state the widget was standing in, because *"nothing
+/// answered it"* without saying *where* leaves a client re-deriving the one
+/// fact that would explain it.
+///
+/// # Errors
+///
+/// [`InvokeError::Rejected`](crate::external::InvokeError::Rejected) when the
+/// machine discarded the event.
+pub fn require_landed(
+    widget: &str,
+    name: &str,
+    state: &str,
+    sent: crate::widgets::Sent,
+) -> Result<(), crate::external::InvokeError> {
+    if sent.answered() {
+        return Ok(());
+    }
+    Err(crate::external::InvokeError::rejected(format!(
+        "{widget}.send: {name:?} matched no transition out of {state:?}, so the \
+         machine discarded it — the widget is still in {state:?}"
+    )))
+}
+
 /// R644 §5.16 — type-safe single-source-of-truth tag identifier.
 ///
 /// Pre-R644 every binding spelled its tag as a bare `&'static str`
