@@ -109,16 +109,61 @@ pick_display() {
     return 1
 }
 
-# Displays currently held on this machine, as a space-separated list. X sockets
-# are the observable fact; a number with a socket is taken whether or not the
-# server behind it belongs to us.
-taken_displays() {
+# Displays with a RUNNING X server, as a space-separated list. A number with a
+# socket is taken whether or not the server behind it belongs to us.
+x_socket_displays() {
     local out=() sock
     for sock in /tmp/.X11-unix/X*; do
         [[ -e $sock ]] || continue
         out+=("${sock##*/X}")
     done
     printf '%s\n' "${out[*]:-}"
+}
+
+# Displays this script has already handed out, read back from its own state
+# files.
+#
+# THIS IS HALF THE ANSWER AND ITS ABSENCE WAS A BUG. Until R1745 `taken_displays`
+# was the socket scan alone, so a display allocated to a worktree whose Xvfb had
+# not been started yet still looked free: create two worktrees back to back and
+# BOTH were handed :90, which is the exact collision this allocation exists to
+# prevent. One worktree at a time could never surface it -- and the selftest
+# could not either, because it fed `pick_display` a taken list directly and so
+# never exercised how that list is BUILT.
+#
+# A state file whose worktree directory is gone holds nothing, so a hand-deleted
+# worktree releases its display instead of reserving it forever.
+allocated_displays() {
+    local f name key value out=()
+    for f in "$STATE_DIR"/*.env; do
+        [[ -e $f ]] || continue
+        name="$(basename "$f" .env)"
+        [[ -d "$(wt_dir_for "$name")" ]] || continue
+        while IFS='=' read -r key value; do
+            [[ $key == "PINION_WT_DISPLAY" ]] && out+=("$value")
+        done < "$f"
+    done
+    printf '%s\n' "${out[*]:-}"
+}
+
+# Union of two space-separated number lists, de-duplicated. Pure, so the
+# selftest can drive it.
+merge_displays() {
+    local n seen=" " out=()
+    # Word splitting on both arguments is the point here.
+    # shellcheck disable=SC2086
+    for n in $1 $2; do
+        [[ $seen == *" $n "* ]] && continue
+        seen+="$n "
+        out+=("$n")
+    done
+    printf '%s\n' "${out[*]:-}"
+}
+
+# Every display that must not be handed out: the ones a server holds AND the
+# ones this script has already promised.
+taken_displays() {
+    merge_displays "$(x_socket_displays)" "$(allocated_displays)"
 }
 
 # Classify one `git submodule status` run into a verdict token. Takes the exit
@@ -217,6 +262,10 @@ worktree '$name' ready.
   cd $wt
   export DISPLAY=:$display        # this worktree's own headless display
                                   # (Xvfb :$display must be started separately)
+
+Measured: '$name' is also what \`bx\` derives its REMOTE directory and lock from
+(\`basename \$(git rev-parse --show-toplevel)\`), so pick names that are
+distinctive across every repository on the build hosts -- 'jni-seam', not 'a'.
 
 This worktree is for EXPLORATION. It must not:
   * commit or push -- the round lands from $repo_root
@@ -424,6 +473,24 @@ cmd_selftest() {
     # A dash that is not in column 1 is a path character, not a status flag.
     check "dash inside a path is not a status flag" \
         "ok" "$(classify_submodule_status 0 " 183a17a5 vendor/some-dashed-name")"
+
+    # the union that feeds pick_display -- the composition the ORIGINAL selftest
+    # skipped, which is why the two-worktree collision survived it
+    check "union of two lists" "90 92 91" "$(merge_displays "90 92" "91")"
+    check "union de-duplicates" "90 91" "$(merge_displays "90 91" "90")"
+    check "union of empty and a list" "97" "$(merge_displays "" "97")"
+    check "union of a list and empty" "97" "$(merge_displays "97" "")"
+    check "union of two empties" "" "$(merge_displays "" "")"
+
+    # ★ THE REGRESSION TEST FOR THE BUG ITSELF: an allocation with no X server
+    # behind it yet must still take its display. Before R1745 the left operand
+    # was the whole answer and this returned 90.
+    DISPLAY_LOW=90; DISPLAY_HIGH=92
+    check "an allocated display with no socket is still taken" \
+        "91" "$(pick_display "$(merge_displays "" "90")")"
+    check "sockets and allocations are both honoured" \
+        "92" "$(pick_display "$(merge_displays "91" "90")")"
+    DISPLAY_LOW="$saved_low"; DISPLAY_HIGH="$saved_high"
 
     # path composition
     check "cache dir" "$CACHE_ROOT/pinion-x" "$(cache_dir_for x)"
