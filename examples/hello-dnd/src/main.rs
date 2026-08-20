@@ -664,10 +664,10 @@ mod tests {
     }
 
     fn payload(item: usize) -> DragPayload {
-        DragPayload {
-            kind: Cow::Borrowed("dnd-row"),
-            value: IntrospectValue::Int(i64::try_from(item).unwrap_or(0)),
-        }
+        DragPayload::new(
+            "dnd-row",
+            IntrospectValue::Int(i64::try_from(item).unwrap_or(0)),
+        )
     }
 
     fn drop_at(visual: usize, y_rel: f32) -> DropPoint {

@@ -27,7 +27,6 @@
 //!   `name.<i>` / `is_dir.<i>`; invoke `navigate` / `up` / `select` /
 //!   `open`.
 
-use std::borrow::Cow;
 use std::cell::Cell;
 use std::rc::Rc;
 
@@ -550,10 +549,10 @@ impl DirectoryState {
     pub fn begin_file_drag(&self) -> Option<DragPayload> {
         let idx = self.pressed.get()?;
         let name = self.entries.get().get(idx)?.name.clone();
-        Some(DragPayload {
-            kind: Cow::Borrowed(FILE_DRAG_KIND),
-            value: IntrospectValue::Text(name),
-        })
+        Some(DragPayload::new(
+            FILE_DRAG_KIND,
+            IntrospectValue::Text(name),
+        ))
     }
 
     /// R794 — the live [`FileDropTarget`] under the cursor during a drag, or

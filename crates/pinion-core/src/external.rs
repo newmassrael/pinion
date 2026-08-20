@@ -35,6 +35,9 @@ use std::rc::Rc;
 use serde_json::value::RawValue;
 
 use crate::Event;
+use crate::drop_target::{
+    DropAccept, DropAction, DropActions, DropContract, DropOffer, DropVerdict,
+};
 use crate::input::{GesturePhase, Modifiers, PointerKind, PointerReading, RawPointerButton};
 use crate::intent::Intent;
 use crate::utterance::{Announced, Utterance};
@@ -1903,7 +1906,15 @@ pub(crate) fn at_index<T>(
 /// [`IntrospectValue`]) so the in-flight drag is introspectable as
 /// scene-as-data (§2 #7) and a future cross-widget drop target can match
 /// on `kind` before interpreting `value`.
+/// R1734 §5.51 — `#[non_exhaustive]` plus [`new`](Self::new) since the round
+/// that gave a drag its ACTIONS. The pair `(kind, value)` had no room to say
+/// what a drop would *do*, and a struct literal is exactly the shape that
+/// cannot gain a dimension without breaking every site — the reasoning
+/// [`SchemaField`] already records. Constructors plus defaulted fields mean the
+/// next dimension lands additively; this one did not, and the 20-odd literals
+/// it cost are the last time that will be true here.
 #[derive(Debug, Clone, PartialEq)]
+#[non_exhaustive]
 pub struct DragPayload {
     /// Discriminator naming what is being dragged (e.g. `"dnd-row"`,
     /// `"dock-panel"`, `"tab"`). A drop target matches on this before
@@ -1913,6 +1924,54 @@ pub struct DragPayload {
     /// The dragged datum — typically the source item's stable id or
     /// index, addressed the same way an [`Intent`] payload is.
     pub value: IntrospectValue,
+    /// R1734 §5.51 — what this source can honour if a target takes it.
+    ///
+    /// On the payload rather than asked of the source separately, because a
+    /// second question about one fact is a second answer that can drift from
+    /// the first — the class this workspace has recorded repeatedly. The source
+    /// states its kind, its datum and its actions in ONE return, so there is
+    /// nothing to keep in sync.
+    ///
+    /// [`new`](Self::new) defaults it to [`DropAction::Move`], which is a
+    /// **default and not a survey**: every drag this tree had when the field
+    /// was introduced relocates something (a row, a panel, a tab, a tree node,
+    /// a column). A source that copies or links says so with
+    /// [`with_actions`](Self::with_actions), and the palette drags do.
+    pub actions: DropActions,
+}
+
+impl DragPayload {
+    /// A payload of `kind` carrying `value`, offering [`DropAction::Move`].
+    ///
+    /// ```
+    /// # use pinion_core::external::{DragPayload, IntrospectValue};
+    /// # use pinion_core::drop_target::DropAction;
+    /// let p = DragPayload::new("dnd-row", IntrospectValue::Int(3));
+    /// assert!(p.actions.contains(DropAction::Move));
+    /// ```
+    #[must_use]
+    pub fn new(kind: impl Into<Cow<'static, str>>, value: IntrospectValue) -> Self {
+        Self {
+            kind: kind.into(),
+            value,
+            actions: DropActions::one(DropAction::Move),
+        }
+    }
+
+    /// The same payload, offering `actions` instead of the default.
+    ///
+    /// ```
+    /// # use pinion_core::external::{DragPayload, IntrospectValue};
+    /// # use pinion_core::drop_target::{DropAction, DropActions};
+    /// let p = DragPayload::new("palette-entry", IntrospectValue::Text("chart".into()))
+    ///     .with_actions(DropActions::one(DropAction::Copy));
+    /// assert!(!p.actions.contains(DropAction::Move));
+    /// ```
+    #[must_use]
+    pub fn with_actions(mut self, actions: DropActions) -> Self {
+        self.actions = actions;
+        self
+    }
 }
 
 /// R742 §5.51 — the live drop location the router resolves under the
@@ -2382,6 +2441,44 @@ impl fmt::Display for InvokeError {
 pub trait ExternalIntrospect {
     /// Schema of introspectable state.
     fn schema(&self) -> IntrospectSchema;
+
+    /// R1734 §5.51 §2 #2 — what may be **dropped** on this surface, declared
+    /// as data ahead of any drag and published at
+    /// [`DROP_PATH`](crate::drop_target::DROP_PATH).
+    ///
+    /// # Why the declaration lives on the introspect surface
+    ///
+    /// Two reasons, and they are the same reason.
+    ///
+    /// The first is the tree's: §2 #2 makes RPC the agent's primary path, so a
+    /// drop target an agent cannot discover is a target that, for the
+    /// framework's principal client, does not exist. Putting the declaration
+    /// here means a surface cannot become a drop target without becoming
+    /// discoverable in the same breath — "accepts a drop" and "can say so" are
+    /// one act.
+    ///
+    /// The second is measured. Probed against a mature retained-mode toolkit
+    /// at 6.11.1, the accept decision is code inside an event handler: the
+    /// only reachable declaration is one boolean per widget, per-part
+    /// acceptance is a second boolean that names no kind, and the members that
+    /// *do* name kinds are plain virtuals absent from the runtime metaobject,
+    /// so a generic reader cannot reach them at all. The question "where could
+    /// I drop this?" is therefore unanswerable there until something is
+    /// already in flight. Here it is a read.
+    ///
+    /// # It is also the dispatch gate
+    ///
+    /// The router routes no drop event to a surface whose contract does not
+    /// admit the drag, and derives the structural refusals — wrong kind, wrong
+    /// part, no common action — from this declaration alone. So a surface
+    /// cannot quietly accept something it never declared, and cannot declare
+    /// something it then ignores: both halves are the same list.
+    ///
+    /// Default [`DropContract::EMPTY`] — not a drop target, which is what
+    /// every `External` written before R1734 is.
+    fn drop_contract(&self) -> DropContract {
+        DropContract::EMPTY
+    }
 
     /// Read the value at `path`, or say why not.
     ///
@@ -3688,6 +3785,70 @@ pub trait External: core::fmt::Debug {
     ///
     /// [`pointer_cancel`]: ../../pinion_runtime/input/struct.InputRouter.html#method.pointer_cancel
     fn drag_cancel(&mut self, _payload: &DragPayload) {}
+
+    // --- 5b. §5.51 target side of a drag (R1734) ---
+
+    /// R1734 §5.51 — a drag this surface did **not** start is over it: judge
+    /// the offer and update whatever preview it draws.
+    ///
+    /// Called on the surface under the cursor, on entry and on every move
+    /// while the cursor stays over it. The pre-R1734 contract routed the whole
+    /// gesture back to the source, which then had to decide on the
+    /// destination's behalf what a release would mean — workable exactly when
+    /// one coordinator owns both ends, and unable to express a drop between
+    /// two surfaces at all. This is that missing half.
+    ///
+    /// # The declaration is a precondition of this call
+    ///
+    /// The router asks nothing of a surface whose
+    /// [`ExternalIntrospect::drop_contract`] does not admit the drag. By the
+    /// time this runs, the kind is declared, the part under the cursor is
+    /// covered, and [`DropOffer::actions`] has already been narrowed to what
+    /// the source and this surface's declaration have in common. So an impl
+    /// judges only what a declaration could not: its own live state. Refusing
+    /// for a reason the declaration already covers is not wrong, merely
+    /// unreachable.
+    ///
+    /// # Answering
+    ///
+    /// [`DropVerdict::accept`] must name the action AND the landing — what the
+    /// drop would do, in this surface's own words. The router hands that same
+    /// [`DropAccept`] back to [`drop_commit`](Self::drop_commit) at the
+    /// release, so a surface cannot commit somewhere it did not just preview.
+    /// [`DropVerdict::decline`] must carry a sentence naming what would have
+    /// worked; a refused client that learns only "no" is the floor's behaviour
+    /// and the thing this contract exists to beat.
+    ///
+    /// Default: refuse. A surface reaches this method only by declaring a
+    /// contract, so the default is unreachable for anything that has not opted
+    /// in, and a surface that declares and forgets to implement is told so in
+    /// a sentence rather than silently accepting.
+    fn drop_offered(&mut self, _offer: &DropOffer) -> DropVerdict {
+        DropVerdict::decline("this surface declared a drop contract and judges no offer")
+    }
+
+    /// R1734 §5.51 — the drag that was over this surface has left it (moved to
+    /// another target, escaped every tag, was cancelled, or released
+    /// elsewhere). Clear the preview [`drop_offered`](Self::drop_offered) set.
+    ///
+    /// Paired with entry by the router exactly as `PointerLeave` is paired
+    /// with `PointerEnter`, and for the same reason: a preview that outlives
+    /// the gesture is a highlight nothing will ever clear. Default no-op, for
+    /// a target with no preview state.
+    fn drop_left(&mut self) {}
+
+    /// R1734 §5.51 — a drag was released over this surface and its last
+    /// verdict was an acceptance. Apply it.
+    ///
+    /// `accept` is the verdict [`drop_offered`](Self::drop_offered) *just*
+    /// returned for the release point — not a fresh computation. That is the
+    /// whole point of the signature: the preview and the commit read one
+    /// value, so they cannot disagree. An impl that recomputes the landing
+    /// here has re-opened the class this closes.
+    ///
+    /// The router clears the preview afterwards by calling
+    /// [`drop_left`](Self::drop_left), so an impl does not have to.
+    fn drop_commit(&mut self, _offer: &DropOffer, _accept: &DropAccept) {}
 
     // --- 6. DPI / resize notification ---
 
@@ -5076,10 +5237,7 @@ mod tests {
             to_calls: Cell::new(0),
             release_calls: Cell::new(0),
         };
-        let payload = DragPayload {
-            kind: Cow::Borrowed("dock-panel"),
-            value: IntrospectValue::Text("inspector".to_owned()),
-        };
+        let payload = DragPayload::new("dock-panel", IntrospectValue::Text("inspector".to_owned()));
         let to_update = DragUpdate {
             over: None,
             cursor: (12.0, 34.0),
@@ -5135,10 +5293,7 @@ mod tests {
         // and stays dyn-safe.
         let mut stub = StubExternal::new();
         assert!(stub.begin_drag().is_none());
-        let payload = DragPayload {
-            kind: Cow::Borrowed("dnd-row"),
-            value: IntrospectValue::Int(0),
-        };
+        let payload = DragPayload::new("dnd-row", IntrospectValue::Int(0));
         let over = DropPoint {
             tag: "dnd#1".to_string(),
             x_rel: 0.5,
@@ -5924,5 +6079,112 @@ mod conditional_argument_tests {
             ArgDomain::OneOf(&["a"]).cases().is_empty(),
             "and a plain closed set decides nothing about the rest of the call",
         );
+    }
+}
+
+#[cfg(test)]
+mod drop_target_default_tests {
+    //! R1734 §5.51 — what a surface that DECLARES a drop contract and never
+    //! implements the judgement does.
+    //!
+    //! Reachable only through the default, which is why it is tested here
+    //! rather than through the router: every fixture with a real target
+    //! overrides `drop_offered`, so the arm a forgetful author lands on would
+    //! otherwise be the one nothing runs.
+    use super::{
+        Backend, BackendFallback, BackendSupport, DragPayload, DropPoint, External,
+        ExternalIntrospect, InterveneError, IntrospectSchema, IntrospectValue, InvokeError,
+        ReadRefusal, RepaintOwner, ThreadOwnership,
+    };
+    use crate::drop_target::{
+        DropAction, DropActions, DropClause, DropContract, DropOffer, DropVerdict,
+    };
+    use crate::input::Modifiers;
+
+    #[derive(Debug)]
+    struct Forgetful;
+
+    impl External for Forgetful {
+        fn backends(&self) -> BackendSupport {
+            BackendSupport::new(&[Backend::Rpc], BackendFallback::Skip)
+        }
+        fn repaint_ownership(&self) -> RepaintOwner {
+            RepaintOwner::Framework
+        }
+        fn thread_ownership(&self) -> ThreadOwnership {
+            ThreadOwnership::UiThreadSync
+        }
+        fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+            Some(self)
+        }
+    }
+
+    impl ExternalIntrospect for Forgetful {
+        fn schema(&self) -> IntrospectSchema {
+            IntrospectSchema::new(&[])
+        }
+        fn drop_contract(&self) -> DropContract {
+            DropContract::new(
+                const {
+                    &[DropClause::surface(
+                        "card",
+                        DropActions::one(DropAction::Copy),
+                    )]
+                },
+            )
+        }
+        fn query(&self, _path: &str) -> Result<IntrospectValue, ReadRefusal> {
+            Err(ReadRefusal::UnknownPath)
+        }
+        fn intervene(
+            &mut self,
+            _path: &str,
+            _value: IntrospectValue,
+        ) -> Result<(), InterveneError> {
+            Err(InterveneError::UnknownPath)
+        }
+        fn invoke(
+            &mut self,
+            _method: &str,
+            _args: IntrospectValue,
+        ) -> Result<IntrospectValue, InvokeError> {
+            Err(InvokeError::UnknownPath)
+        }
+    }
+
+    #[test]
+    fn r1734_a_surface_that_declares_and_does_not_judge_says_so() {
+        // The DEFAULT refuses rather than accepting, and the refusal carries a
+        // sentence — so a declaration with no implementation behind it reaches
+        // a client as a stated fact instead of as a drop that silently does
+        // nothing. That direction is deliberate: a default `Accept` would make
+        // the missing half invisible, which is exactly what the floor's bare
+        // boolean does.
+        let mut surface = Forgetful;
+        let payload = DragPayload::new("card", IntrospectValue::Null);
+        let at = DropPoint {
+            tag: "well".to_owned(),
+            x_rel: 0.5,
+            y_rel: 0.5,
+        };
+        let verdict = surface.drop_offered(&DropOffer::new(
+            &payload,
+            &at,
+            DropActions::one(DropAction::Copy),
+            (0.0, 0.0),
+            Modifiers::empty(),
+        ));
+        let DropVerdict::Refuse(why) = verdict else {
+            panic!("an unimplemented judgement must not accept");
+        };
+        assert_eq!(why.as_wire_name(), "declined");
+        assert!(
+            why.sentence().contains("judges no offer"),
+            "the refusal names the missing half: {}",
+            why.sentence(),
+        );
+        // And the commit's default is inert, so even a caller that ignored the
+        // verdict changes nothing.
+        surface.drop_left();
     }
 }

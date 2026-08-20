@@ -2900,6 +2900,40 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                         HandlerKind::Read,
                     )
                 }
+                // ★★★★★ R1734 §5.51 §5.15 §2 #2 — WHERE could this be dropped,
+                // and why not there, asked before anything is picked up. The
+                // `wheel_intent` shape one gesture over: the judgement
+                // published is the one the router gates dispatch on (a surface
+                // whose declaration excludes a drag is never offered it), so
+                // the answer cannot drift from the behaviour. The floor cannot
+                // pose the question at all — measured, its acceptance is a
+                // boolean reachable only from inside a running drag.
+                "scene/drop_targets" => {
+                    let params = request.params.as_ref().unwrap_or(&Value::Null);
+                    let asks_a_point = params.get("at").is_some() || params.get("path").is_some();
+                    let at = if asks_a_point {
+                        #[allow(
+                            clippy::option_as_ref_deref,
+                            reason = "dyn FnMut is not DerefMut; manual reborrow required"
+                        )]
+                        let producer = paint_producer.as_mut().map(|p| &mut **p);
+                        resolve_at_or_path(params, producer, last_paint_scene).map(Some)
+                    } else {
+                        Ok(None)
+                    };
+                    (
+                        at.and_then(|at| {
+                            crate::drop_targets::handle_scene_drop_targets(
+                                last_paint_scene,
+                                scene,
+                                params.get("kind").and_then(Value::as_str),
+                                params.get("action").and_then(Value::as_str),
+                                at,
+                            )
+                        }),
+                        HandlerKind::Read,
+                    )
+                }
                 "scene/dry_run" => (
                     handle_scene_dry_run(scene, request.params.as_ref()),
                     HandlerKind::Read,

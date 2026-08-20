@@ -152,7 +152,16 @@ def a_palette_kind(app: RpcSubprocess) -> str:
 def section_a(app: RpcSubprocess, spec: dict, kind: str) -> None:
     banner("A — what a carry puts on screen is what the specification declares")
     named = surfaces(spec)
-    ok("the specification fixes three surfaces", len(named) == 3)
+    # R1734 added a fourth — `drop_contract`, what the board SAYS it accepts.
+    # It is not painted, so the paint-side loop below skips it by name; the
+    # count is read from the document rather than written here, because the
+    # number in a demo goes stale the round after somebody adds a surface, and
+    # this line is that lesson's own evidence.
+    ok("the specification fixes the painted surfaces plus the declared one", len(named) == 4)
+    ok(
+        "and the three PAINTED ones are the gesture's",
+        [s for s in named if s != "drop_contract"] == ["carry", "palette_row", "slot"],
+    )
     ok(
         "and every one declares an ordered roster of named parts",
         all(

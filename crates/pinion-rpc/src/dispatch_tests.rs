@@ -10096,6 +10096,10 @@ fn probe_params() -> serde_json::Value {
     // The few that are read as something other than a string. Each is the
     // shape the method's own refusal asked for.
     params.insert("args".to_owned(), serde_json::Value::Null);
+    // R1734 — `scene/drop_targets` refuses an action word outside its
+    // vocabulary rather than widening to all three, so the probe has to carry a
+    // real one to reach the body at all.
+    params.insert("action".to_owned(), serde_json::json!("copy"));
     params.insert("max_attempts".to_owned(), serde_json::json!(1));
     params.insert("preview_id".to_owned(), serde_json::json!(1));
     params.insert("ttl_ms".to_owned(), serde_json::json!(1));
@@ -10145,6 +10149,7 @@ fn probe_params() -> serde_json::Value {
 
 /// The names [`probe_params`] supplies. Asserted complete against the source.
 const PROBE_PARAM_NAMES: &[&str] = &[
+    "action",
     "args",
     "at",
     "button",

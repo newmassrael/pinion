@@ -270,6 +270,7 @@ use pinion_core::cell_value::{CellKind, CellValue};
 use pinion_core::composite_tag::{
     parse_pair as parse_typed_pair, split_send_payload, split_subindex,
 };
+use pinion_core::drop_target::{DropAction, DropActions};
 use pinion_core::event::LINE_HEIGHT_PX;
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, CaptureNormalize, DragPayload, DropPoint, External,
@@ -6180,10 +6181,13 @@ impl External for NodeGraphExternal {
         // follows a hovered pin; a palette drag's feedback is the title chip.
         if let PendingPress::Palette(kind) = self.pending_press.get() {
             let &(title, ..) = PALETTE.get(kind)?;
-            return Some(DragPayload {
-                kind: Cow::Borrowed(PALETTE_DRAG_KIND),
-                value: IntrospectValue::Text(title.to_string()),
-            });
+            // R1734 — a palette drag COPIES: the palette entry stays where it
+            // is and the canvas gains a node. Stating it is what lets a target
+            // narrow the offer against its own declaration.
+            return Some(
+                DragPayload::new(PALETTE_DRAG_KIND, IntrospectValue::Text(title.to_string()))
+                    .with_actions(DropActions::one(DropAction::Copy)),
+            );
         }
         let (from_node, from_port, reconnect) = match self.pending_press.get() {
             // A fresh wire pulled from an output port (the R742/R838 connect).
@@ -6210,10 +6214,10 @@ impl External for NodeGraphExternal {
             to: None,
             reconnect,
         }));
-        Some(DragPayload {
-            kind: Cow::Borrowed("node-edge"),
-            value: IntrospectValue::Text(format!("{from_node}_{from_port}")),
-        })
+        Some(DragPayload::new(
+            "node-edge",
+            IntrospectValue::Text(format!("{from_node}_{from_port}")),
+        ))
     }
 
     /// Live preview: snap the dragged wire's loose end to the hovered input

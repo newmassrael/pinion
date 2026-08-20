@@ -59,6 +59,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::RpcError;
+use crate::resolve::painted_surfaces;
 
 /// The point a surface's census row is asked about: its painted rectangle's
 /// centre.
@@ -146,23 +147,6 @@ fn words(intent: Option<WheelIntent>) -> (Option<&'static str>, Option<&'static 
             .and_then(WheelIntent::unit)
             .map(pinion_core::widgets::wheel::StepUnit::as_str),
     )
-}
-
-/// Every painted `External`, paired with the point its row is about.
-fn painted_surfaces(paint: &Scene, state_scene: &Scene) -> Vec<(String, Rect)> {
-    let painted = paint.absolute_rects_by_tag();
-    let mut found = Vec::new();
-    state_scene.for_each_node(&mut |visit| {
-        if let Scene::External(node) = visit.node
-            && let Some(tag) = node.tag.as_deref()
-            && let Some(rect) = painted.get(tag)
-            && rect.w > 0
-            && rect.h > 0
-        {
-            found.push((tag.to_owned(), *rect));
-        }
-    });
-    found
 }
 
 /// R1703 §5.45 §5.15 — compute the report.

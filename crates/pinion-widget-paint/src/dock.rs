@@ -4441,10 +4441,10 @@ impl External for TabWellExternal {
     fn begin_drag(&self) -> Option<DragPayload> {
         let index = self.pressed_tab.get()?;
         let panel = self.reorganizer.tab_well_panel_at(&self.well_id, index)?;
-        Some(DragPayload {
-            kind: Cow::Borrowed(DOCK_PANEL_DRAG_KIND),
-            value: IntrospectValue::Text(panel),
-        })
+        Some(DragPayload::new(
+            DOCK_PANEL_DRAG_KIND,
+            IntrospectValue::Text(panel),
+        ))
     }
 
     /// (R1348 §5.51 PR-57) The tab twin of
@@ -7225,10 +7225,10 @@ impl External for DockPanelExternal {
         *self.redock_pending.borrow_mut() = None;
         // R1107 — and the last follow-drag source window.
         *self.last_source_window.borrow_mut() = None;
-        Some(DragPayload {
-            kind: Cow::Borrowed(DOCK_PANEL_DRAG_KIND),
-            value: IntrospectValue::Text(self.panel_id.to_string()),
-        })
+        Some(DragPayload::new(
+            DOCK_PANEL_DRAG_KIND,
+            IntrospectValue::Text(self.panel_id.to_string()),
+        ))
     }
 
     /// (R1348 §5.51 PR-57) Refuse the router's OUTER perimeter claim at an edge
@@ -8169,10 +8169,7 @@ mod tests {
     }
 
     fn dummy_payload() -> DragPayload {
-        DragPayload {
-            kind: std::borrow::Cow::Borrowed("dock-panel"),
-            value: IntrospectValue::Text("a".to_string()),
-        }
+        DragPayload::new("dock-panel", IntrospectValue::Text("a".to_string()))
     }
 
     /// (R1101 §5.51) Build the [`DragUpdate`] the router forwards: the
@@ -12858,10 +12855,10 @@ mod reorganize_tests {
 
     /// (R1348) A dock-panel drag payload naming `panel`.
     fn r1348_payload(panel: &str) -> DragPayload {
-        DragPayload {
-            kind: std::borrow::Cow::Borrowed(DOCK_PANEL_DRAG_KIND),
-            value: IntrospectValue::Text(panel.to_string()),
-        }
+        DragPayload::new(
+            DOCK_PANEL_DRAG_KIND,
+            IntrospectValue::Text(panel.to_string()),
+        )
     }
 
     /// ★R1348 §5.51 PR-57 — a dock PANEL source REFUSES the router's perimeter
@@ -12975,10 +12972,7 @@ mod reorganize_tests {
         );
         assert!(
             well.accepts_outer_dock(
-                &DragPayload {
-                    kind: Cow::Borrowed(DOCK_PANEL_DRAG_KIND),
-                    value: IntrospectValue::Int(7),
-                },
+                &DragPayload::new(DOCK_PANEL_DRAG_KIND, IntrospectValue::Int(7)),
                 &outer_point(DockDropZone::Left),
             ),
             "an unreadable payload names no panel to judge → accept",

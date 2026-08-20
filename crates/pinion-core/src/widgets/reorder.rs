@@ -210,10 +210,10 @@ impl ReorderModel {
     pub fn begin_drag_payload(&self, kind: Cow<'static, str>) -> Option<DragPayload> {
         let visual = self.pressed.get()?;
         let item = self.order.borrow().get(visual).copied()?;
-        Some(DragPayload {
+        Some(DragPayload::new(
             kind,
-            value: IntrospectValue::Int(i64::try_from(item).unwrap_or(0)),
-        })
+            IntrospectValue::Int(i64::try_from(item).unwrap_or(0)),
+        ))
     }
 
     /// Live update: classify the cursor's drop gap (axis-aware) and store
@@ -611,10 +611,7 @@ mod tests {
     }
 
     fn pl() -> DragPayload {
-        DragPayload {
-            kind: Cow::Borrowed("w"),
-            value: IntrospectValue::Int(0),
-        }
+        DragPayload::new("w", IntrospectValue::Int(0))
     }
 
     fn press(m: &ReorderModel, visual: usize) {

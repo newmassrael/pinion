@@ -2859,6 +2859,42 @@ fn first_placeable() -> &'static str {
         .expect("the catalogue places at least one kind")
 }
 
+/// ★★★★★ R1734 — the board's DECLARED accept set, as the parts a
+/// specification is judged against.
+///
+/// Sourced from [`ShellOracle`]'s
+/// [`ExternalIntrospect::drop_contract`](pinion_core::external::ExternalIntrospect::drop_contract)
+/// impl — the same method `scene/query .../$drop` and `scene/drop_targets`
+/// read — rather than from the constant behind it, so a build whose published
+/// answer stopped matching its constant would fail here.
+///
+/// The title is DERIVED from the clause (its actions, then its region) rather
+/// than written beside it, which is what makes the pin a check: a clause that
+/// gained `link`, or narrowed to a part list, would arrive with a different
+/// sentence and the specification would refuse it.
+fn declared_drop_parts() -> Vec<pinion_core::conformance::Part> {
+    let contract = ShellOracle::new().drop_contract();
+    contract
+        .clauses
+        .iter()
+        .map(|clause| {
+            let actions = clause
+                .actions
+                .iter()
+                .map(pinion_core::drop_target::DropAction::as_wire_name)
+                .collect::<Vec<_>>()
+                .join(" or ");
+            let parts = clause.named_parts();
+            let region = if parts.is_empty() {
+                "anywhere on the surface".to_owned()
+            } else {
+                format!("on {}", parts.join(", "))
+            };
+            pinion_core::conformance::Part::new(clause.kind, format!("{actions}, {region}"))
+        })
+        .collect()
+}
+
 /// Pick a palette row up and carry it to the middle of the canvas, without
 /// letting go. Answers the cell the carry says it would land in.
 ///
@@ -2915,6 +2951,14 @@ fn r1733_every_specified_board_surface_is_the_one_the_paint_draws() {
                     kind,
                     &board_title("palette_row"),
                 ),
+                // ★★★★★ R1734 — the one surface here that is not painted. It is
+                // what the screen SAYS it accepts, read back through the same
+                // `ExternalIntrospect` method the wire's `$drop` answers with,
+                // so what an agent is told and what this pin judges are one
+                // call. Swept with the rest because a declaration is a claim
+                // about every state: a board that stops accepting widgets once
+                // a card is maximised would be caught here and nowhere else.
+                "drop_contract" => declared_drop_parts(),
                 other => panic!("no surface named {other}"),
             };
             assert!(

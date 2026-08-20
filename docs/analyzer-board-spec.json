@@ -107,5 +107,44 @@
       { "ordinal": 2, "key": "cell", "title": "the destination cell, in words" }
     ],
     "owed": []
+  },
+  "drop_contract": {
+    "$comment": [
+      "R1734 — WHAT THE BOARD ACCEPTS, declared as data and answerable before",
+      "anything is picked up.",
+      "",
+      "The three surfaces above pin what the gesture DRAWS. This one pins what",
+      "the board SAYS about the gesture, which is the half no prototype has:",
+      "the reference declares acceptance by attaching handlers, so the only way",
+      "to learn what its board takes is to drag something onto it and watch. A",
+      "mature retained-mode toolkit is no better here — probed offscreen at",
+      "6.11.1, a widget's acceptance is one boolean, per-part acceptance is a",
+      "second boolean that names no kind at all, and the members that do name",
+      "kinds are absent from the runtime metaobject a generic reader walks.",
+      "",
+      "So this surface is a SECOND-PASS addition by the standing order rule:",
+      "the reference has nothing here to reproduce, and we keep it. It is",
+      "pinned anyway, because a capability with no specification is a",
+      "capability the next round can quietly drop.",
+      "",
+      "Read back from the DECLARATION the running screen publishes at `$drop`,",
+      "not from a constant in the test — the point of the pin is that the",
+      "screen's answer is the reviewed one.",
+      "",
+      "One clause. Both of its actions are real: a palette row is COPIED (the",
+      "row stays and the board gains a card) and a card already placed is",
+      "MOVED. The region is the whole surface because this screen hit-tests",
+      "itself and paints one scene tag, so a drop point over it carries no",
+      "sub-part for a part clause to match — declaring parts the wire cannot",
+      "resolve would publish a promise the router could not keep."
+    ],
+    "canon": [
+      {
+        "ordinal": 1,
+        "key": "board-widget",
+        "title": "copy or move, anywhere on the surface"
+      }
+    ],
+    "owed": []
   }
 }

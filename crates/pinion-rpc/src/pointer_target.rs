@@ -114,6 +114,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::RpcError;
+use crate::resolve::painted_surfaces;
 
 /// How a painted rectangle's two answers stand against each other.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -255,24 +256,6 @@ pub fn handle_scene_pointer_target(
         |paint| build(paint, state_scene),
     );
     serde_json::to_value(&report).map_err(|e| RpcError::internal_error(e.to_string()))
-}
-
-/// The `External`s of the state scene that have a painted rectangle, in scene
-/// order, paired with it.
-fn painted_surfaces(paint: &Scene, state_scene: &Scene) -> Vec<(String, Rect)> {
-    let painted = paint.absolute_rects_by_tag();
-    let mut found: Vec<(String, Rect)> = Vec::new();
-    state_scene.for_each_node(&mut |visit| {
-        if let Scene::External(node) = visit.node
-            && let Some(tag) = node.tag.as_deref()
-            && let Some(rect) = painted.get(tag)
-            && rect.w > 0
-            && rect.h > 0
-        {
-            found.push((tag.to_owned(), *rect));
-        }
-    });
-    found
 }
 
 /// How the two answers stand, given whether any probe other than the centre

@@ -185,6 +185,7 @@ pub const RPC_METHODS: &[(&str, MethodOcc, MethodWindow)] = &[
     ("scene/drag", MethodOcc::Mutate, MethodWindow::Scope),
     ("scene/draw_profile", MethodOcc::Read, MethodWindow::Path),
     ("scene/drop_file", MethodOcc::Mutate, MethodWindow::Scope),
+    ("scene/drop_targets", MethodOcc::Read, MethodWindow::Scope),
     ("scene/dry_run", MethodOcc::Read, MethodWindow::Path),
     ("scene/export_pdf", MethodOcc::Read, MethodWindow::Scope),
     ("scene/frame_timings", MethodOcc::Read, MethodWindow::Scope),

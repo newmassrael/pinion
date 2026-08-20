@@ -41,6 +41,7 @@ pub mod contrast;
 pub mod derivation;
 pub mod directory;
 pub mod display;
+pub mod drop_target;
 pub mod event;
 pub mod external;
 pub mod file_dialog;

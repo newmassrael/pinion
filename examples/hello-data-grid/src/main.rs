@@ -2930,10 +2930,10 @@ impl External for DataGridExternal {
             return None;
         }
         let from = self.reorder_arm.get()?;
-        Some(DragPayload {
-            kind: Cow::Borrowed(REORDER_KIND),
-            value: IntrospectValue::Int(i64::try_from(from).ok()?),
-        })
+        Some(DragPayload::new(
+            REORDER_KIND,
+            IntrospectValue::Int(i64::try_from(from).ok()?),
+        ))
     }
 
     /// R937 — refresh the live drop-gap preview as the drag rides over rows. Over

@@ -9279,10 +9279,10 @@ mod r1113_drag_image_producer_tests {
             ThreadOwnership::UiThreadSync
         }
         fn begin_drag(&self) -> Option<DragPayload> {
-            Some(DragPayload {
-                kind: std::borrow::Cow::Borrowed("test-drag"),
-                value: IntrospectValue::Text(LABEL.to_string()),
-            })
+            Some(DragPayload::new(
+                "test-drag",
+                IntrospectValue::Text(LABEL.to_string()),
+            ))
         }
     }
 
@@ -10026,10 +10026,10 @@ mod r1138_redock_hint_injection_tests {
             ThreadOwnership::UiThreadSync
         }
         fn begin_drag(&self) -> Option<DragPayload> {
-            Some(DragPayload {
-                kind: std::borrow::Cow::Borrowed("dock-panel"),
-                value: IntrospectValue::Text(SRC_TAG.to_string()),
-            })
+            Some(DragPayload::new(
+                "dock-panel",
+                IntrospectValue::Text(SRC_TAG.to_string()),
+            ))
         }
     }
 

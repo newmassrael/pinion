@@ -57,8 +57,6 @@
 //! in-flight drop). The drag is driven by the existing `scene/drag` RPC — no
 //! new method. See `tools/demos/r935_tree_reparent.py`.
 
-use std::borrow::Cow;
-
 use pinion_a11y::{
     AccessAction, AccessFocus, AccessNode, WidgetA11y, tree_access_nodes, tree_row_tag,
 };
@@ -403,10 +401,7 @@ impl External for OutlinerExternal {
     /// Arm a drag from the pressed node, carrying its stable id as the payload.
     fn begin_drag(&self) -> Option<DragPayload> {
         let id = self.state.pressed.get()?;
-        Some(DragPayload {
-            kind: Cow::Borrowed(DRAG_KIND),
-            value: IntrospectValue::Text(id),
-        })
+        Some(DragPayload::new(DRAG_KIND, IntrospectValue::Text(id)))
     }
 
     /// Live update: classify the drop and store the preview the view reads.

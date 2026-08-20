@@ -26,6 +26,7 @@ pub mod disabled;
 pub mod dispatch;
 pub mod displays;
 pub mod draw_profile;
+pub mod drop_targets;
 pub mod dry_run;
 pub mod errors;
 pub mod export_pdf;

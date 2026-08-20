@@ -85,6 +85,9 @@ use pinion_a11y::{
 };
 use pinion_chart::{ChartStyle, Sparkline};
 use pinion_core::availability::Unavailable;
+use pinion_core::drop_target::{
+    BOARD_WIDGET_DRAG_KIND, DropAction, DropActions, DropClause, DropContract,
+};
 use pinion_core::external::{
     ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
     InterveneError, IntrospectSchema, IntrospectValue, InvokeError, PointerTarget, ReadRefusal,
@@ -2236,6 +2239,23 @@ impl ShellOracle {
     /// wording of "this row does not place a card" — which is the shape the
     /// R1668 comment right below warns about, one gesture over.
     fn offered(kind: &str) -> Result<(&'static spec::WidgetSpec, (u32, u32)), InvokeError> {
+        // ★★★★★ R1734 — the board's PUBLISHED declaration is asked first.
+        //
+        // Not because this path could otherwise take the wrong thing — every
+        // caller here is already inside the dashboard — but because the
+        // declaration is what `$drop` and `scene/drop_targets` answer with, and
+        // a declaration nothing consults is a claim rather than a contract. The
+        // list that tells an agent "yes, a widget footprint lands here" is now
+        // the list this refuses against, so the two cannot say different things
+        // about the same build. The refusal is the framework's own sentence,
+        // for the same reason: a second wording of one rule is a second rule.
+        if let Err(refusal) = Self::declared_drop_contract().admits(
+            BOARD_WIDGET_DRAG_KIND,
+            DropActions::one(DropAction::Copy),
+            None,
+        ) {
+            return Err(InvokeError::rejected(refusal.sentence()));
+        }
         let def = def_of(kind.trim()).ok_or_else(|| {
             InvokeError::rejected(format!(
                 "{kind:?} is not a widget kind; the palette offers {}",
@@ -2273,6 +2293,31 @@ impl ShellOracle {
     /// [`Self::add_at`], where a card is actually placed.
     fn prospective_id(state: &Rc<ShellState>, def: &spec::WidgetSpec) -> String {
         format!("{}#{}", def.kind, *state.next_id.borrow())
+    }
+
+    /// ★★★★★ R1734 — **what this screen accepts from a drag**, declared once.
+    ///
+    /// One clause, and the two actions are both real: a palette row is
+    /// **copied** (the row stays where it is and the board gains a card) and a
+    /// card already on the board is **moved**. Naming them separately is what
+    /// lets a client ask the narrower question — *can I move something here* —
+    /// and be answered without dragging anything.
+    ///
+    /// A whole-surface region rather than a part list, and the reason is
+    /// measured rather than a preference: this screen hit-tests itself, so it
+    /// paints one scene tag and a drop point over it carries no `#sub` half for
+    /// a part clause to match. Declaring parts the wire cannot resolve would
+    /// publish a promise the router could never keep. The board's own region
+    /// test stays where it is, inside the gesture — see `on_board`.
+    pub(crate) const fn declared_drop_contract() -> DropContract {
+        DropContract::new(
+            const {
+                &[DropClause::surface(
+                    BOARD_WIDGET_DRAG_KIND,
+                    DropActions::one(DropAction::Copy).with(DropAction::Move),
+                )]
+            },
+        )
     }
 
     /// ★★★★★ R1733 — pick a palette row's widget up: the drag the pointer will
@@ -2823,6 +2868,24 @@ fn floats_json(state: &ShellState) -> serde_json::Value {
 impl ExternalIntrospect for ShellOracle {
     fn schema(&self) -> IntrospectSchema {
         IntrospectSchema::new(FIELDS)
+    }
+
+    /// ★★★★★ R1734 §5.51 §2 #2 — **what may be handed to this screen**,
+    /// answerable before anything is picked up.
+    ///
+    /// The reference prototype's board takes its widgets by drag and drop, and
+    /// R1733 reproduced the gesture. What no prototype and no mature toolkit
+    /// can offer is this: the accept set as *data*, so an agent asks where a
+    /// thing can land instead of dragging it somewhere to find out. Measured on
+    /// the toolkit floor at 6.11.1, acceptance there is one boolean per widget
+    /// whose real decision lives inside an event handler that has to run — see
+    /// [`pinion_core::drop_target`] for the probe.
+    ///
+    /// [`ShellOracle::declared_drop_contract`] is the single name this and
+    /// [`ShellOracle::offered`] both read, so the answer published on the wire
+    /// is the rule the screen actually enforces.
+    fn drop_contract(&self) -> DropContract {
+        ShellOracle::declared_drop_contract()
     }
 
     fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {

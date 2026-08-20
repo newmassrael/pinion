@@ -91,6 +91,24 @@ fn introspect_or_schema(
     if introspect_path == SCHEMA_PATH {
         return Ok(schema_value(intro));
     }
+    // R1734 §5.51 §2 #2 — the drop-side declaration, at its own reserved path.
+    //
+    // Separate from `$schema` rather than a channel inside it because it
+    // answers a different question: `$schema` says what this surface's STATE
+    // is and what may be called on it, and this says what may be HANDED to it.
+    // Folding the two would have made every `SchemaField` carry a dimension
+    // only drop clauses use, which is the shape `SchemaField`'s own docstring
+    // argues against.
+    //
+    // A surface that declares nothing answers an empty array, which is an
+    // answer: a client can tell "not a drop target" from "an older build that
+    // does not know the path", and the toolkit floor can tell neither — its
+    // acceptance is a boolean reachable only from inside a running drag.
+    if introspect_path == pinion_core::drop_target::DROP_PATH {
+        return Ok(pinion_core::drop_target::contract_value(
+            intro.drop_contract(),
+        ));
+    }
     match intro.schema().field_for(introspect_path).map(|f| f.channel) {
         // R1667 — the surface's own refusal, forwarded. This used to be
         // `.ok_or(UnknownIntrospectPath)`: the transport manufactured one word
@@ -698,6 +716,94 @@ mod tests {
         assert_eq!(
             query(&scene, "/window[main]/external/$schema").unwrap(),
             IntrospectValue::Json(counted_contract()),
+        );
+    }
+
+    #[test]
+    fn r1734_drop_path_returns_the_declared_contract_beside_the_schema() {
+        // ★★★★★ R1734 — the drop-side declaration is a READ, answerable with
+        // nothing in flight. The two describing surfaces are deliberately
+        // separate: `$schema` says what this surface's state is and what may be
+        // called on it, `$drop` says what may be HANDED to it.
+        use pinion_core::drop_target::{DropAction, DropActions, DropClause, DropContract};
+        use pinion_core::external::InvokeError;
+
+        /// A surface that declares one clause, so the render has both halves —
+        /// the actions and the parts — to get wrong.
+        #[derive(Debug)]
+        struct Well;
+        impl pinion_core::external::ExternalIntrospect for Well {
+            fn schema(&self) -> IntrospectSchema {
+                IntrospectSchema::new(const { &[SchemaField::new("count", "int")] })
+            }
+            fn drop_contract(&self) -> DropContract {
+                DropContract::new(
+                    const {
+                        &[DropClause::parts(
+                            "card",
+                            DropActions::one(DropAction::Copy).with(DropAction::Move),
+                            const { &["slot-a"] },
+                        )]
+                    },
+                )
+            }
+            fn query(&self, _path: &str) -> Result<IntrospectValue, ReadRefusal> {
+                Err(ReadRefusal::UnknownPath)
+            }
+            fn intervene(
+                &mut self,
+                _path: &str,
+                _value: IntrospectValue,
+            ) -> Result<(), InterveneError> {
+                Err(InterveneError::UnknownPath)
+            }
+            fn invoke(
+                &mut self,
+                _method: &str,
+                _args: IntrospectValue,
+            ) -> Result<IntrospectValue, InvokeError> {
+                Err(InvokeError::UnknownPath)
+            }
+        }
+        impl pinion_core::external::External for Well {
+            fn backends(&self) -> pinion_core::external::BackendSupport {
+                pinion_core::external::BackendSupport::new(
+                    &[pinion_core::external::Backend::Rpc],
+                    pinion_core::external::BackendFallback::Skip,
+                )
+            }
+            fn repaint_ownership(&self) -> pinion_core::external::RepaintOwner {
+                pinion_core::external::RepaintOwner::Framework
+            }
+            fn thread_ownership(&self) -> pinion_core::external::ThreadOwnership {
+                pinion_core::external::ThreadOwnership::UiThreadSync
+            }
+            fn introspect(&self) -> Option<&dyn pinion_core::external::ExternalIntrospect> {
+                Some(self)
+            }
+        }
+
+        let scene = Scene::External(ExternalNode::new(Box::new(Well)));
+        assert_eq!(
+            query(&scene, "/external/$drop").unwrap(),
+            IntrospectValue::Json(serde_json::json!([
+                { "kind": "card", "actions": ["copy", "move"], "parts": ["slot-a"] },
+            ])),
+            "the reserved drop path answers the declaration, verbatim",
+        );
+        // And it is not the schema: a client asking one question is not handed
+        // the other one's answer.
+        assert_eq!(
+            query(&scene, "/external/$schema").unwrap(),
+            IntrospectValue::Json(serde_json::json!([{ "path": "count", "type": "int" }])),
+        );
+        // A surface that declares nothing answers an EMPTY ARRAY, which is an
+        // answer — a client can tell "not a drop target" from "an older build
+        // that does not know this path". The toolkit floor can tell neither.
+        let plain = counted_scene(0);
+        assert_eq!(
+            query(&plain, "/external/$drop").unwrap(),
+            IntrospectValue::Json(serde_json::json!([])),
         );
     }
 

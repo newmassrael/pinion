@@ -81,10 +81,11 @@ use std::rc::Rc;
 use std::time::Instant;
 
 use pinion_core::composite_tag::{compose_send_payload, split_subindex};
+use pinion_core::drop_target::{DropActions, DropContract, DropOffer, DropVerdict};
 use pinion_core::event::WheelDelta;
 use pinion_core::external::{
-    CaptureNormalize, DOCK_PANEL_DRAG_KIND, DragPayload, DragUpdate, DropPoint, IntrospectValue,
-    OUTER_DOCK_MARGIN, OUTER_DOCK_ZONE_TAG,
+    CaptureNormalize, DOCK_PANEL_DRAG_KIND, DragPayload, DragUpdate, DropPoint, ExternalIntrospect,
+    IntrospectValue, OUTER_DOCK_MARGIN, OUTER_DOCK_ZONE_TAG,
 };
 use pinion_core::input::{
     GesturePhase, PointerButton, PointerButtons, PointerEdge, PointerReading, PointerWireEvent,
@@ -892,6 +893,198 @@ struct DragSession {
     /// from the same `self.cursors[id]` at the same pointer-down, so they cannot
     /// diverge.
     press_cursor: (f64, f64),
+    /// R1734 §5.51 — the TARGET this drag is currently over: the primary paint
+    /// tag of the surface whose declared
+    /// [`pinion_core::drop_target::DropContract`] admitted the
+    /// drag, and the verdict that surface last returned.
+    ///
+    /// One field holding both, because they are one fact — "who is being
+    /// offered this, and what did they say" — and two fields could disagree.
+    /// `None` while the cursor is over no declaring surface, which is where
+    /// every pre-R1734 drag stays for its whole life.
+    ///
+    /// The verdict is retained rather than recomputed at the release for the
+    /// reason [`DropAccept`](pinion_core::drop_target::DropAccept) exists: the
+    /// commit takes the acceptance the preview produced, so a target cannot
+    /// commit somewhere it did not show.
+    drop_target: Option<DropTargetState>,
+}
+
+/// R1734 §5.51 — who a live drag is currently being offered to, and what they
+/// said about it.
+#[derive(Debug)]
+struct DropTargetState {
+    /// Primary paint tag of the surface receiving the offers.
+    tag: String,
+    /// The actions the source and this surface's declaration have in common,
+    /// as [`DropContract::admits`] narrowed them.
+    ///
+    /// Kept rather than re-derived at the release, because re-deriving is a
+    /// second reading of one fact and the whole shape of this contract is that
+    /// the preview and the commit read the same one.
+    actions: DropActions,
+    /// That surface's answer to the most recent offer.
+    verdict: DropVerdict,
+}
+
+/// R1734 §5.15 §5.51 — where a drop released at `(x, y)` would land, resolved
+/// exactly as an in-flight drag resolves it.
+///
+/// `InputRouter::resolve_drop_point` delegates here (it is private, so this
+/// names it in prose), so the point
+/// `scene/drop_targets` answers about is the point the router routes by rather
+/// than a second opinion about it. That is the property R1703 made
+/// load-bearing for the wheel: a published answer that is *computed* the same
+/// way cannot drift from the behaviour, and one that is merely *documented*
+/// the same way has drifted every time this workspace has measured it.
+///
+/// The negative guard, the opted-in-drop-target preference and the
+/// deepest-tag fallback are all R1099 / R1152 / R1080's, unchanged — this
+/// function is where they moved to, not a re-derivation of them.
+#[must_use]
+pub fn drop_point_at(paint_scene: &Scene, x: f64, y: f64) -> Option<DropPoint> {
+    // R1152 §5.51 — a cursor OUTSIDE this window has no own-window drop
+    // target; guard before the hit-test, whose clamp would resolve a spurious
+    // top-left hit.
+    if x < 0.0 || y < 0.0 {
+        return None;
+    }
+    // R1080 §5.51 — prefer the nearest opted-in drop target (a dock panel, a
+    // tab strip — `LayoutStyle::drop_target`) so the coordinator receives the
+    // semantic drop region with the cursor normalised over THAT region's rect.
+    // Falls back to the deepest tagged hit when no node in the path opted in
+    // (the reorder-row case, where the drop target is itself the deepest tag),
+    // so every pre-R1080 R742 consumer is bit-identical.
+    let tag = resolve_drop_target_tag(paint_scene, x, y)
+        .or_else(|| resolve_pointer_tag(paint_scene, x, y))?;
+    let rect = rect_for_tag(paint_scene, &tag)?;
+    let (x_rel, y_rel) = normalize_cursor(rect, x, y);
+    Some(DropPoint { tag, x_rel, y_rel })
+}
+
+/// R1734 §5.51 — the [`DropContract`] the surface at `primary` publishes, or
+/// [`DropContract::EMPTY`] when the tag resolves to nothing or the surface
+/// opted out of introspection.
+///
+/// Empty is the right answer for BOTH absences, and deliberately so: a surface
+/// that cannot say what it accepts is not a drop target, which is the same
+/// rule §2 #2 applies everywhere else in this tree. It is also what makes the
+/// pre-R1734 tree bit-identical under this round — nothing declares, so
+/// nothing is offered anything.
+#[must_use]
+pub fn declared_drop_contract(state_scene: &Scene, primary: &str) -> DropContract {
+    state_scene
+        .find_external_with_tag(primary)
+        .and_then(|node| node.handle.introspect())
+        .map_or(DropContract::EMPTY, ExternalIntrospect::drop_contract)
+}
+
+/// R1734 §5.51 — offer the live drag at `over` to whatever surface is under
+/// the cursor, maintaining the enter / leave pairing.
+///
+/// The order is leave-then-enter, matching
+/// [`InputRouter::refresh_hover`]'s `PointerLeave` before `PointerEnter`, so a
+/// target that clears its preview on leave cannot wipe the preview its
+/// successor has already drawn.
+///
+/// A surface is offered the drag **only** when its own published declaration
+/// admits it ([`DropContract::admits`] — right kind, covered part, an action in
+/// common). The three structural refusals are therefore derived from the
+/// declaration and never asked of the widget, which is what keeps a claim and
+/// its outcome from drifting: the list that says yes is the list that says no.
+///
+/// A free function rather than a method because the release path owns its
+/// session (it was removed from the map before the commit) while the move path
+/// borrows one — and one behaviour written twice is the drift this file has
+/// paid for before.
+fn offer_drag_to_target(
+    state_scene: &mut Scene,
+    target: &mut Option<DropTargetState>,
+    payload: &DragPayload,
+    over: Option<&DropPoint>,
+    cursor: (f64, f64),
+    modifiers: Modifiers,
+) {
+    let admitted = over.and_then(|point| {
+        let (primary, part) = split_subindex(&point.tag);
+        declared_drop_contract(state_scene, primary)
+            .admits(&payload.kind, payload.actions, part)
+            .ok()
+            .map(|actions| (primary.to_owned(), actions))
+    });
+    if let Some(previous) = target.as_ref()
+        && admitted
+            .as_ref()
+            .is_none_or(|(tag, _)| tag != &previous.tag)
+    {
+        if let Some(node) = state_scene.find_external_with_tag_mut(&previous.tag) {
+            node.handle.drop_left();
+        }
+        *target = None;
+    }
+    let (Some((tag, actions)), Some(point)) = (admitted, over) else {
+        return;
+    };
+    let Some(node) = state_scene.find_external_with_tag_mut(&tag) else {
+        return;
+    };
+    let verdict = node
+        .handle
+        .drop_offered(&DropOffer::new(payload, point, actions, cursor, modifiers));
+    *target = Some(DropTargetState {
+        tag,
+        actions,
+        verdict,
+    });
+}
+
+/// R1734 §5.51 — the release. Re-offer at the release point, commit when that
+/// verdict is an acceptance, and leave either way.
+///
+/// The re-offer is not a second opinion: it is the SAME call the last move
+/// made, at the point the person let go, and its acceptance is what
+/// [`External::drop_commit`](pinion_core::external::External::drop_commit)
+/// receives as its witness. So the target commits the landing it previewed,
+/// and there is no arithmetic here that could disagree with the arithmetic
+/// there — the class R1668 paid for, and the one a floor that hands its target
+/// a bare pixel leaves permanently open.
+///
+/// `drop_left` runs after a commit as well as after a refusal, so a target
+/// never has to clear its own preview in two places.
+fn release_drop_target(
+    state_scene: &mut Scene,
+    target: &mut Option<DropTargetState>,
+    payload: &DragPayload,
+    over: Option<&DropPoint>,
+    cursor: (f64, f64),
+    modifiers: Modifiers,
+) {
+    offer_drag_to_target(state_scene, target, payload, over, cursor, modifiers);
+    // Nothing under the cursor declared for this drag; whatever was previewing
+    // was already left by the offer above.
+    let Some(state) = target.take() else {
+        return;
+    };
+    let Some(node) = state_scene.find_external_with_tag_mut(&state.tag) else {
+        return;
+    };
+    if let (DropVerdict::Accept(accept), Some(point)) = (&state.verdict, over) {
+        let offer = DropOffer::new(payload, point, state.actions, cursor, modifiers);
+        node.handle.drop_commit(&offer, accept);
+    }
+    // Unconditional: a target that committed and a target that refused both
+    // stop previewing, so no impl has to clear itself in two places.
+    node.handle.drop_left();
+}
+
+/// R1734 §5.51 — the drag ended without a drop over anybody (an OS cancel).
+/// Whatever was previewing clears.
+fn cancel_drop_target(state_scene: &mut Scene, target: &mut Option<DropTargetState>) {
+    if let Some(state) = target.take()
+        && let Some(node) = state_scene.find_external_with_tag_mut(&state.tag)
+    {
+        node.handle.drop_left();
+    }
 }
 
 impl InputRouter {
@@ -2019,6 +2212,9 @@ impl InputRouter {
                         // it). A grab-offset window move anchors here, not on the
                         // first move sample. Degenerate (no held cursor) → origin.
                         press_cursor: self.cursors.get(&id).copied().unwrap_or_default(),
+                        // R1734 — nothing has been offered anything yet; the
+                        // first move resolves the target under the cursor.
+                        drop_target: None,
                     },
                 );
             }
@@ -2310,7 +2506,7 @@ impl InputRouter {
         // and `begin_drag` — is vestigial. Clear it here so the lock can
         // never outlive the gesture (no current widget sets both, but the
         // release must not depend on that staying true).
-        if let Some(session) = self.drag_sessions.remove(&id) {
+        if let Some(mut session) = self.drag_sessions.remove(&id) {
             self.captured_targets.remove(&id);
             let cursor = self.cursors.get(&id).copied();
             // R1167 §5.51 — same-window OUTER-dock override (dock-panel drag only),
@@ -2342,7 +2538,28 @@ impl InputRouter {
             // window here too (it needs the shell, which the per-window router
             // lacks — a slice-3 wiring once the redock executes).
             let (over, over_window) =
-                resolve_drag_targets(own_over, own_is_self_drop, session.cross_window);
+                resolve_drag_targets(own_over, own_is_self_drop, session.cross_window.take());
+            // R1734 §5.51 — the TARGET half of the release, before the source's
+            // own `drag_release_at`. The target re-judges the release point and
+            // commits the acceptance that judgement produced, so what it applies
+            // is what the preview last showed. It runs FIRST because a source
+            // that also owns the destination model (every pre-R1734 consumer)
+            // must see the world the drop already changed, not the one before.
+            release_drop_target(
+                state_scene,
+                &mut session.drop_target,
+                &session.payload,
+                over.as_ref(),
+                cursor.unwrap_or(session.press_cursor),
+                // The CACHE, not this arm's parameter, even though
+                // `set_held_modifiers` above has just made them equal. R1619's
+                // own note is why: the cache is the one source, and a reader
+                // that takes the parameter instead is a second reader that a
+                // later refactor can leave behind. The move path reads the same
+                // field, so the two halves of one gesture cannot disagree about
+                // a chord the person never changed.
+                self.held_modifiers,
+            );
             let (primary, _) = split_subindex(&session.source_tag);
             if let Some(external) = state_scene.find_external_with_tag_mut(primary) {
                 // R1093 §5.15 — forward the release cursor via the `_at`
@@ -3075,7 +3292,11 @@ impl InputRouter {
         // commits). The session-review caught this: pre-R937.1 the session +
         // the source's reactive drop-preview both leaked, leaving a ghost
         // insertion line and a stale arm after an OS gesture revoke.
-        if let Some(session) = self.drag_sessions.remove(&id) {
+        if let Some(mut session) = self.drag_sessions.remove(&id) {
+            // R1734 §5.51 — the TARGET's preview is revoked by the same cancel.
+            // A target that is left holding a highlight after the gesture is
+            // exactly the ghost this block was written for, one surface over.
+            cancel_drop_target(state_scene, &mut session.drop_target);
             let (primary, _) = split_subindex(&session.source_tag);
             if let Some(external) = state_scene.find_external_with_tag_mut(primary) {
                 external.handle.drag_cancel(&session.payload);
@@ -3331,6 +3552,23 @@ impl InputRouter {
             .as_ref()
             .is_some_and(|p| self.own_drop_is_self(p, &source));
         let (over, over_window) = resolve_drag_targets(own_over, own_is_self_drop, cross_window);
+        // R1734 §5.51 — the TARGET half, before the source's own update. The
+        // order matters for a surface that is both (the analysis shell's
+        // palette and board live in one composite): the target's judgement of
+        // this sample is what the source's `drag_to_at` may then paint, so the
+        // verdict has to exist before the painter reads it.
+        let modifiers = self.held_modifiers;
+        if let Some(session) = self.drag_sessions.get_mut(&id) {
+            let payload = session.payload.clone();
+            offer_drag_to_target(
+                state_scene,
+                &mut session.drop_target,
+                &payload,
+                over.as_ref(),
+                (x, y),
+                modifiers,
+            );
+        }
         let (primary, _) = split_subindex(&source);
         if let Some(external) = state_scene.find_external_with_tag_mut(primary) {
             // R1093 §5.15 — forward the full [`DragUpdate`] context (the `_at`
@@ -3383,21 +3621,7 @@ impl InputRouter {
         // resolved cross-window redock, so the drop free-moved instead of docking.
         // Beyond-right/bottom self-misses the hit-test, so only the negative side
         // needs the guard; the cross-window resolver already guards negatives.
-        if x < 0.0 || y < 0.0 {
-            return None;
-        }
-        // R1080 §5.51 — prefer the nearest opted-in drop target (a dock
-        // panel, a tab strip — `LayoutStyle::drop_target`) so the
-        // coordinator receives the semantic drop region with the cursor
-        // normalised over THAT region's rect. Falls back to the deepest
-        // tagged hit when no node in the path opted in (the reorder-row
-        // case, where the drop target is itself the deepest tag), so every
-        // pre-R1080 R742 consumer is bit-identical.
-        let tag =
-            resolve_drop_target_tag(paint, x, y).or_else(|| resolve_pointer_tag(paint, x, y))?;
-        let rect = rect_for_tag(paint, &tag)?;
-        let (x_rel, y_rel) = normalize_cursor(rect, x, y);
-        Some(DropPoint { tag, x_rel, y_rel })
+        drop_point_at(paint, x, y)
     }
 
     /// (R1167 §5.51) The SAME-window analog of [`resolve_outer_dock_zone`]: a
@@ -5019,6 +5243,7 @@ mod tests {
     use std::sync::{Arc, Mutex};
 
     use super::*;
+    use pinion_core::drop_target::{DropAccept, DropAction, DropClause};
     use pinion_core::external::{
         Backend, BackendFallback, BackendSupport, CaptureNormalize, ExternalIntrospect,
         InterveneError, IntrospectSchema, InvokeError, RepaintOwner, ThreadOwnership,
@@ -11583,7 +11808,6 @@ mod tests {
         use pinion_core::external::DOCK_SURFACE_TAG;
         use pinion_core::scene::{BoxNode, ContainerNode};
         use pinion_core::style::{Color, LayoutStyle};
-        use std::borrow::Cow;
 
         let content = Scene::Box(
             BoxNode::filled(Rect::new(0, 0, 400, 400), Color::default()).with_tag("panel#content"),
@@ -11604,14 +11828,8 @@ mod tests {
         let (mut state_scene, _) = state_with_button();
         router.update_paint_scene(scene, &mut state_scene);
 
-        let dock = DragPayload {
-            kind: Cow::Borrowed(DOCK_PANEL_DRAG_KIND),
-            value: IntrospectValue::Text("panel".into()),
-        };
-        let tree = DragPayload {
-            kind: Cow::Borrowed("tree-node"),
-            value: IntrospectValue::Text("n".into()),
-        };
+        let dock = DragPayload::new(DOCK_PANEL_DRAG_KIND, IntrospectValue::Text("panel".into()));
+        let tree = DragPayload::new("tree-node", IntrospectValue::Text("n".into()));
 
         // A cursor within OUTER_DOCK_MARGIN of the LEFT edge → the full-span OUTER
         // sentinel (normalised over the WHOLE window: 10/400, 200/400).
@@ -11694,10 +11912,10 @@ mod tests {
             ThreadOwnership::UiThreadSync
         }
         fn begin_drag(&self) -> Option<DragPayload> {
-            Some(DragPayload {
-                kind: std::borrow::Cow::Borrowed(DOCK_PANEL_DRAG_KIND),
-                value: IntrospectValue::Text("panel".into()),
-            })
+            Some(DragPayload::new(
+                DOCK_PANEL_DRAG_KIND,
+                IntrospectValue::Text("panel".into()),
+            ))
         }
         fn accepts_outer_dock(&self, _payload: &DragPayload, point: &DropPoint) -> bool {
             assert_eq!(
@@ -11749,13 +11967,9 @@ mod tests {
     #[test]
     fn r1348_a_vetoed_outer_claim_falls_through_to_the_panel_beneath() {
         use pinion_core::scene::ExternalNode;
-        use std::borrow::Cow;
 
         let paint = r1348_dock_paint_scene;
-        let dock = DragPayload {
-            kind: Cow::Borrowed(DOCK_PANEL_DRAG_KIND),
-            value: IntrospectValue::Text("panel".into()),
-        };
+        let dock = DragPayload::new(DOCK_PANEL_DRAG_KIND, IntrospectValue::Text("panel".into()));
 
         // ── ACCEPTING source: the claim stands (the R1167 baseline) ──────────
         let mut router = InputRouter::new();
@@ -11836,7 +12050,6 @@ mod tests {
         // dock panel, no dock-surface wrapper.
         use pinion_core::scene::{BoxNode, ContainerNode};
         use pinion_core::style::{Color, LayoutStyle};
-        use std::borrow::Cow;
 
         let content = Scene::Box(
             BoxNode::filled(Rect::new(0, 0, 420, 320), Color::default()).with_tag("panel#content"),
@@ -11858,10 +12071,7 @@ mod tests {
         // …so the own-over stays the plain hit-test, which `own_drop_is_self` recognises
         // as the dragged panel's own subtree and therefore yields to the cross-window
         // redock (the R1124 rule, reachable again).
-        let dock = DragPayload {
-            kind: Cow::Borrowed(DOCK_PANEL_DRAG_KIND),
-            value: IntrospectValue::Text("panel".into()),
-        };
+        let dock = DragPayload::new(DOCK_PANEL_DRAG_KIND, IntrospectValue::Text("panel".into()));
         assert_eq!(
             router
                 .resolve_drag_own_over(&dock, "panel", 6.0, 160.0, &mut state_scene)
@@ -12042,15 +12252,15 @@ mod tests {
                     .lock()
                     .expect("poisoned")
                     .push(format!("begin:{i}"));
-                DragPayload {
-                    kind: std::borrow::Cow::Borrowed("dnd-row"),
+                DragPayload::new(
+                    "dnd-row",
                     // R1113 — a labelled source emits a Text payload (dock-panel
                     // shape); the default reorder source keeps its Int row index.
-                    value: match self.label {
+                    match self.label {
                         Some(l) => IntrospectValue::Text(l.to_string()),
                         None => IntrospectValue::Int(i64::try_from(i).unwrap_or(0)),
                     },
-                }
+                )
             })
         }
         fn drag_to(&mut self, payload: &DragPayload, over: Option<DropPoint>) {
@@ -12222,6 +12432,517 @@ mod tests {
         assert!(
             !log[..drop_at].iter().any(|s| s.contains("PointerLeave")),
             "no stray leave mid-drag: {log:?}"
+        );
+    }
+
+    // ── R1734 §5.51 — the TARGET side of a drag ────────────────────────────
+    //
+    // Four SEPARATE `External`s in one scene: a palette that is only a source,
+    // a board and a bin that are only targets, and a trash well that declares
+    // an action the palette cannot offer. Before this round that arrangement
+    // could not be spelled at all — every event of a session went back to the
+    // surface that opened it, so a destination could not be asked anything,
+    // could not preview and could not receive a drop.
+    //
+    // Driven through the ROUTER's public entry points (a real press, real
+    // moves, a real release), never by calling the dispatch helpers: a helper
+    // called directly proves the helper, and the claim here is about routing.
+
+    /// The payload kind the fixture palette hands the fixture board.
+    const FIXTURE_KIND: &str = "board-widget";
+
+    /// A source and nothing else: it declares no drop contract, so the router
+    /// must never offer it anything — including its own drag, when the cursor
+    /// passes back over it.
+    struct PaletteExternal {
+        log: Arc<Mutex<Vec<String>>>,
+        actions: DropActions,
+    }
+
+    impl std::fmt::Debug for PaletteExternal {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("PaletteExternal").finish()
+        }
+    }
+
+    impl pinion_core::external::External for PaletteExternal {
+        fn backends(&self) -> BackendSupport {
+            BackendSupport::new(&[Backend::Gui], BackendFallback::Skip)
+        }
+        fn repaint_ownership(&self) -> RepaintOwner {
+            RepaintOwner::Framework
+        }
+        fn thread_ownership(&self) -> ThreadOwnership {
+            ThreadOwnership::UiThreadSync
+        }
+        fn begin_drag(&self) -> Option<DragPayload> {
+            self.log.lock().expect("poisoned").push("begin".to_owned());
+            Some(
+                DragPayload::new(FIXTURE_KIND, IntrospectValue::Text("throughput".to_owned()))
+                    .with_actions(self.actions),
+            )
+        }
+        fn drop_offered(&mut self, _offer: &DropOffer) -> DropVerdict {
+            self.log
+                .lock()
+                .expect("poisoned")
+                .push("palette:offered".to_owned());
+            DropVerdict::decline("a palette is not a drop target")
+        }
+    }
+
+    /// How a target answers an offer its declaration already admitted.
+    #[derive(Clone, Copy)]
+    enum BoardPolicy {
+        /// Accept, landing on the slot the cursor is over.
+        Land,
+        /// Decline for a reason only live state knows.
+        Full,
+    }
+
+    /// A target and nothing else. Declares a contract, previews a landing, and
+    /// commits the acceptance the router hands back.
+    struct BoardExternal {
+        name: &'static str,
+        log: Arc<Mutex<Vec<String>>>,
+        contract: DropContract,
+        policy: BoardPolicy,
+    }
+
+    impl std::fmt::Debug for BoardExternal {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("BoardExternal").finish()
+        }
+    }
+
+    impl BoardExternal {
+        fn new(
+            name: &'static str,
+            log: &Arc<Mutex<Vec<String>>>,
+            contract: DropContract,
+            policy: BoardPolicy,
+        ) -> Self {
+            Self {
+                name,
+                log: Arc::clone(log),
+                contract,
+                policy,
+            }
+        }
+
+        fn say(&self, line: String) {
+            self.log.lock().expect("poisoned").push(line);
+        }
+    }
+
+    impl pinion_core::external::External for BoardExternal {
+        fn backends(&self) -> BackendSupport {
+            BackendSupport::new(&[Backend::Gui], BackendFallback::Skip)
+        }
+        fn repaint_ownership(&self) -> RepaintOwner {
+            RepaintOwner::Framework
+        }
+        fn thread_ownership(&self) -> ThreadOwnership {
+            ThreadOwnership::UiThreadSync
+        }
+        fn introspect(&self) -> Option<&dyn ExternalIntrospect> {
+            Some(self)
+        }
+        fn drop_offered(&mut self, offer: &DropOffer) -> DropVerdict {
+            let part = offer.part().unwrap_or("surface").to_owned();
+            self.say(format!("{}:offered:{part}", self.name));
+            match self.policy {
+                BoardPolicy::Land => DropVerdict::accept(
+                    offer.actions.first(),
+                    IntrospectValue::Text(format!("landing-{part}")),
+                ),
+                BoardPolicy::Full => DropVerdict::decline("every slot is taken"),
+            }
+        }
+        fn drop_left(&mut self) {
+            self.say(format!("{}:left", self.name));
+        }
+        fn drop_commit(&mut self, offer: &DropOffer, accept: &DropAccept) {
+            // Deliberately reads the WITNESS and not the offer's geometry: the
+            // whole point of the signature is that the commit applies what the
+            // preview showed.
+            let landing = match &accept.landing {
+                IntrospectValue::Text(t) => t.clone(),
+                other => other.kind().to_owned(),
+            };
+            self.say(format!(
+                "{}:commit:{landing}:{}:{}",
+                self.name,
+                accept.action.as_wire_name(),
+                offer.kind(),
+            ));
+        }
+    }
+
+    impl ExternalIntrospect for BoardExternal {
+        fn schema(&self) -> pinion_core::external::IntrospectSchema {
+            pinion_core::external::IntrospectSchema::new(&[])
+        }
+        fn drop_contract(&self) -> DropContract {
+            self.contract
+        }
+        fn query(
+            &self,
+            _path: &str,
+        ) -> Result<IntrospectValue, pinion_core::external::ReadRefusal> {
+            Err(pinion_core::external::ReadRefusal::UnknownPath)
+        }
+        fn intervene(
+            &mut self,
+            _path: &str,
+            _value: IntrospectValue,
+        ) -> Result<(), InterveneError> {
+            Err(InterveneError::UnknownPath)
+        }
+        fn invoke(
+            &mut self,
+            _method: &str,
+            _args: IntrospectValue,
+        ) -> Result<IntrospectValue, InvokeError> {
+            Err(InvokeError::UnknownPath)
+        }
+    }
+
+    const FIXTURE_SLOTS: DropContract = DropContract::new(
+        const {
+            &[DropClause::parts(
+                FIXTURE_KIND,
+                DropActions::one(DropAction::Copy).with(DropAction::Move),
+                const { &["slot-a", "slot-b"] },
+            )]
+        },
+    );
+
+    const FIXTURE_MOVE_ONLY: DropContract = DropContract::new(
+        const {
+            &[DropClause::surface(
+                FIXTURE_KIND,
+                DropActions::one(DropAction::Move),
+            )]
+        },
+    );
+
+    const FIXTURE_WHOLE: DropContract = DropContract::new(
+        const {
+            &[DropClause::surface(
+                FIXTURE_KIND,
+                DropActions::one(DropAction::Copy).with(DropAction::Move),
+            )]
+        },
+    );
+
+    /// The paint scene the R1734 tests hit-test against.
+    ///
+    /// `palette#chart` 0..100 | `board` 100..300 (three sub-parts, only two of
+    /// them declared) | `trash` 300..450 | `bin` 450..600, all 400 tall.
+    fn r1734_paint() -> Scene {
+        fn tagged(tag: &str, rect: Rect) -> Scene {
+            let mut node = Scene::Container(ContainerNode::new(vec![]).with_tag(tag.to_string()));
+            if let Scene::Container(c) = &mut node {
+                c.rect = rect;
+            }
+            node
+        }
+        let mut board = Scene::Container(
+            ContainerNode::new(vec![
+                tagged("board#slot-a", Rect::new(100, 0, 200, 150)),
+                tagged("board#slot-b", Rect::new(100, 150, 200, 150)),
+                tagged("board#rim", Rect::new(100, 300, 200, 100)),
+            ])
+            .with_tag("board"),
+        );
+        if let Scene::Container(c) = &mut board {
+            c.rect = Rect::new(100, 0, 200, 400);
+        }
+        let mut root = Scene::Container(
+            ContainerNode::new(vec![
+                tagged("palette#chart", Rect::new(0, 0, 100, 400)),
+                board,
+                tagged("trash", Rect::new(300, 0, 150, 400)),
+                tagged("bin", Rect::new(450, 0, 150, 400)),
+            ])
+            .with_style(BoxStyle::filled(Color::default())),
+        );
+        if let Scene::Container(c) = &mut root {
+            c.rect = Rect::new(0, 0, 600, 400);
+        }
+        root
+    }
+
+    /// The state scene: four externals, one shared log.
+    fn r1734_state(source_actions: DropActions) -> (Scene, Arc<Mutex<Vec<String>>>) {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let scene = Scene::Container(ContainerNode::new(vec![
+            Scene::External(
+                ExternalNode::new(Box::new(PaletteExternal {
+                    log: Arc::clone(&log),
+                    actions: source_actions,
+                }))
+                .with_tag("palette"),
+            ),
+            Scene::External(
+                ExternalNode::new(Box::new(BoardExternal::new(
+                    "board",
+                    &log,
+                    FIXTURE_SLOTS,
+                    BoardPolicy::Land,
+                )))
+                .with_tag("board"),
+            ),
+            Scene::External(
+                ExternalNode::new(Box::new(BoardExternal::new(
+                    "trash",
+                    &log,
+                    FIXTURE_MOVE_ONLY,
+                    BoardPolicy::Land,
+                )))
+                .with_tag("trash"),
+            ),
+            Scene::External(
+                ExternalNode::new(Box::new(BoardExternal::new(
+                    "bin",
+                    &log,
+                    FIXTURE_WHOLE,
+                    BoardPolicy::Full,
+                )))
+                .with_tag("bin"),
+            ),
+        ]));
+        (scene, log)
+    }
+
+    const COPY_ONLY: DropActions = DropActions::one(DropAction::Copy);
+
+    #[test]
+    fn r1734_a_drag_between_two_externals_reaches_the_target() {
+        // ★ The claim of this round. The palette and the board are two
+        // separate `External`s; before R1734 the board received nothing at
+        // all, and the palette would have had to resolve and apply the drop on
+        // the board's behalf.
+        let mut router = InputRouter::new();
+        let (mut state, log) = r1734_state(COPY_ONLY);
+        router.update_paint_scene(r1734_paint(), &mut state);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 200.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 200.0, 60.0, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        let log = read(&log);
+        assert!(log.contains(&"begin".to_owned()), "{log:?}");
+        assert!(
+            log.contains(&"board:offered:slot-a".to_owned()),
+            "the board is asked about the drag it did not start: {log:?}",
+        );
+        assert!(
+            log.contains(&"board:commit:landing-slot-a:copy:board-widget".to_owned()),
+            "the board receives the drop, with the action IT chose: {log:?}",
+        );
+        assert!(
+            log.contains(&"board:left".to_owned()),
+            "the preview is cleared for the target by the router: {log:?}",
+        );
+    }
+
+    #[test]
+    fn r1734_the_commit_applies_the_landing_the_last_preview_produced() {
+        // The commit reads the acceptance, not the geometry. Moving from
+        // slot-a to slot-b and releasing there commits slot-b — and, more to
+        // the point, commits the STRING the preview built, so the two cannot
+        // be computed differently.
+        let mut router = InputRouter::new();
+        let (mut state, log) = r1734_state(COPY_ONLY);
+        router.update_paint_scene(r1734_paint(), &mut state);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 200.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 200.0, 60.0, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 200.0, 220.0, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        let log = read(&log);
+        let offers: Vec<&String> = log
+            .iter()
+            .filter(|s| s.starts_with("board:offered"))
+            .collect();
+        assert_eq!(
+            offers,
+            [
+                "board:offered:slot-a",
+                "board:offered:slot-b",
+                "board:offered:slot-b",
+            ],
+            "one offer per move, plus the release's own re-offer: {log:?}",
+        );
+        assert!(
+            log.contains(&"board:commit:landing-slot-b:copy:board-widget".to_owned()),
+            "{log:?}",
+        );
+        assert!(
+            !log.iter()
+                .any(|s| s.starts_with("board:commit:landing-slot-a")),
+            "the abandoned preview is not what commits: {log:?}",
+        );
+    }
+
+    #[test]
+    fn r1734_an_undeclared_part_is_refused_by_the_declaration_and_never_asked() {
+        // `board#rim` is painted and is NOT in the contract's part list. The
+        // router must not ask the board about it — the declaration is the
+        // gate, so a widget cannot accept somewhere it did not declare.
+        let mut router = InputRouter::new();
+        let (mut state, log) = r1734_state(COPY_ONLY);
+        router.update_paint_scene(r1734_paint(), &mut state);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 200.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 200.0, 60.0, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 200.0, 350.0, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        let log = read(&log);
+        assert!(
+            !log.iter().any(|s| s.contains("offered:rim")),
+            "an undeclared part is never offered: {log:?}",
+        );
+        assert!(
+            !log.iter().any(|s| s.starts_with("board:commit")),
+            "and nothing commits there: {log:?}",
+        );
+        // Leaving the declared part still paired, so no highlight is stranded.
+        assert_eq!(
+            log.iter().filter(|s| *s == "board:left").count(),
+            1,
+            "the slot-a preview is left exactly once: {log:?}",
+        );
+    }
+
+    #[test]
+    fn r1734_a_target_with_no_action_in_common_is_never_asked() {
+        // `trash` declares the kind and only `move`; the palette offers only
+        // `copy`. Refusing this from the DECLARATION is what keeps a claim and
+        // its outcome from drifting — the widget is not consulted at all.
+        let mut router = InputRouter::new();
+        let (mut state, log) = r1734_state(COPY_ONLY);
+        router.update_paint_scene(r1734_paint(), &mut state);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 200.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 380.0, 200.0, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        let log = read(&log);
+        assert!(
+            !log.iter().any(|s| s.starts_with("trash:")),
+            "no action in common → the widget is never reached: {log:?}",
+        );
+        // The same drag with a source that CAN move reaches it, which is what
+        // shows the silence above was the action check and not the wiring.
+        let mut router = InputRouter::new();
+        let (mut state, log) = r1734_state(DropActions::one(DropAction::Move));
+        router.update_paint_scene(r1734_paint(), &mut state);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 200.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 380.0, 200.0, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        let log = read(&log);
+        assert!(
+            log.contains(&"trash:commit:landing-surface:move:board-widget".to_owned()),
+            "{log:?}",
+        );
+    }
+
+    #[test]
+    fn r1734_a_targets_own_refusal_blocks_the_commit_and_still_clears() {
+        // `bin` declares the drag and its live state declines it. The
+        // declaration cannot predict that, so the widget IS asked — and its
+        // refusal must stop the commit while still ending the preview.
+        let mut router = InputRouter::new();
+        let (mut state, log) = r1734_state(COPY_ONLY);
+        router.update_paint_scene(r1734_paint(), &mut state);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 200.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 520.0, 200.0, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        let log = read(&log);
+        assert!(log.contains(&"bin:offered:surface".to_owned()), "{log:?}");
+        assert!(
+            !log.iter().any(|s| s.starts_with("bin:commit")),
+            "a declined offer does not commit: {log:?}",
+        );
+        assert!(log.contains(&"bin:left".to_owned()), "{log:?}");
+    }
+
+    #[test]
+    fn r1734_crossing_from_one_target_to_another_leaves_before_it_enters() {
+        // The pairing rule the hover path already keeps: the surface being
+        // abandoned clears BEFORE the next one previews, so a late leave
+        // cannot wipe a highlight its successor has already drawn.
+        let mut router = InputRouter::new();
+        let (mut state, log) = r1734_state(COPY_ONLY);
+        router.update_paint_scene(r1734_paint(), &mut state);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 200.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 200.0, 60.0, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 520.0, 200.0, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        let log = read(&log);
+        let left = log
+            .iter()
+            .position(|s| s == "board:left")
+            .expect("the board is left");
+        let entered = log
+            .iter()
+            .position(|s| s == "bin:offered:surface")
+            .expect("the bin is entered");
+        assert!(left < entered, "leave precedes enter: {log:?}");
+    }
+
+    #[test]
+    fn r1734_a_cancelled_drag_leaves_the_target_it_was_over() {
+        // An OS revoke must revoke the TARGET's preview too — the ghost R937.1
+        // fixed for the source, one surface over.
+        let mut router = InputRouter::new();
+        let (mut state, log) = r1734_state(COPY_ONLY);
+        router.update_paint_scene(r1734_paint(), &mut state);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 200.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 200.0, 60.0, &mut state);
+        router.pointer_cancel(PointerId::MOUSE, &mut state);
+        let log = read(&log);
+        assert!(log.contains(&"board:offered:slot-a".to_owned()), "{log:?}");
+        assert!(
+            log.contains(&"board:left".to_owned()),
+            "a cancel clears the target's preview: {log:?}",
+        );
+        assert!(
+            !log.iter().any(|s| s.starts_with("board:commit")),
+            "a cancel is not a drop: {log:?}",
+        );
+    }
+
+    #[test]
+    fn r1734_a_surface_that_declares_nothing_is_offered_nothing() {
+        // The palette declares no contract, so dragging back over itself
+        // offers it nothing — which is also why every `External` written
+        // before this round is untouched by it.
+        let mut router = InputRouter::new();
+        let (mut state, log) = r1734_state(COPY_ONLY);
+        router.update_paint_scene(r1734_paint(), &mut state);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 200.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 200.0, 60.0, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 50.0, 300.0, &mut state);
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        let log = read(&log);
+        assert!(
+            !log.contains(&"palette:offered".to_owned()),
+            "an undeclared surface is never asked: {log:?}",
+        );
+        assert!(
+            log.contains(&"board:left".to_owned()),
+            "and the target it came from is still left: {log:?}",
+        );
+        assert!(
+            !log.iter().any(|s| s.contains(":commit")),
+            "releasing over nothing commits nothing: {log:?}",
         );
     }
 

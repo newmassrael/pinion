@@ -40,7 +40,7 @@
 
 use pinion_core::Scene;
 use pinion_core::external::ExternalIntrospect;
-use pinion_core::scene::ExternalNode;
+use pinion_core::scene::{ExternalNode, Rect};
 
 use crate::path::{self, PathError};
 
@@ -145,6 +145,38 @@ fn names_the_root(scene: &Scene, segments: &[String]) -> bool {
 #[must_use]
 pub fn lookup_addressed<'s>(scene: &'s Scene, segments: &[String]) -> Option<&'s Scene> {
     lookup_addressed_chain(scene, segments).map(|(node, _)| node)
+}
+
+/// R1734 §5.34 §5.12 — every `External` in the state scene that the paint scene
+/// actually drew, paired with the rectangle it drew into.
+///
+/// The population every per-surface CENSUS reads: which surfaces exist, and
+/// where each one is, so a census row can be judged at a point rather than as a
+/// whole. Zero-area surfaces are excluded because a rectangle nothing occupies
+/// has no point to judge at, and a row about one would be a row about nothing.
+///
+/// **Lifted at the third byte-identical copy** ([[three-site-internal-duplication-substrate-lift]]):
+/// `scene/pointer_target` (R1700) wrote it, `scene/wheel_intent` (R1703) copied
+/// it, and `scene/drop_targets` (R1734) was about to be the third. Purely
+/// mechanical wiring with no opinion in it, so the lift is unconditional — and
+/// the sharper reason is the usual one: three censuses disagreeing about which
+/// surfaces exist would each be right about a different tree, and whichever one
+/// nobody ran would be the wrong one.
+#[must_use]
+pub fn painted_surfaces(paint: &Scene, state_scene: &Scene) -> Vec<(String, Rect)> {
+    let painted = paint.absolute_rects_by_tag();
+    let mut found = Vec::new();
+    state_scene.for_each_node(&mut |visit| {
+        if let Scene::External(node) = visit.node
+            && let Some(tag) = node.tag.as_deref()
+            && let Some(rect) = painted.get(tag)
+            && rect.w > 0
+            && rect.h > 0
+        {
+            found.push((tag.to_owned(), *rect));
+        }
+    });
+    found
 }
 
 /// R1558 §5.34 — [`lookup_addressed`], plus the segment chain that actually
