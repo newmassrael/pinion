@@ -63,6 +63,8 @@ source "$hook_dir/lib/consumer-tests.sh"
 # R1507 — the pinned gate tool is resolved by this hook, not by PATH.
 # shellcheck source=SCRIPTDIR/lib/mnemosyne-tool.sh
 source "$hook_dir/lib/mnemosyne-tool.sh"
+# shellcheck source=SCRIPTDIR/lib/worktree-guard.sh
+source "$hook_dir/lib/worktree-guard.sh"
 
 # --- R1495. The libraries this hook decides with, verified first ---
 #
@@ -74,6 +76,26 @@ source "$hook_dir/lib/mnemosyne-tool.sh"
 echo "pre-push: hook library tests ..." >&2
 if ! bash "$repo_root/tools/test_hooks.sh" >&2; then
     echo "pre-push: the hook libraries failed their own tests" >&2
+    exit 1
+fi
+
+# A round is published from the main tree; exploration worktrees may not push.
+# This sits AFTER the library tests on purpose -- the rule just above is that
+# this hook does not decide with libraries it has not verified, and the guard is
+# one of them. It costs two `rev-parse` calls, so buying that ordering is free.
+require_main_worktree_for push || exit 1
+
+# The tool that CREATES those worktrees gets the same treatment as every other
+# tool this repo gates with. Four things about this machine do not follow a bare
+# `git worktree add` and all four fail quietly -- the `target/` symlink onto the
+# fixed-size compressed volume, submodule population, the shared headless
+# display number, and teardown -- so a session that hand-rolls one instead
+# rebuilds the 2026-07-29 full-disk precondition. That makes the script load
+# bearing, and a load-bearing script whose own tests nobody runs is the thing
+# this hook exists to prevent. Milliseconds, no git, no writes.
+echo "pre-push: worktree tool selftest ..." >&2
+if ! bash "$repo_root/tools/worktree.sh" --selftest >&2; then
+    echo "pre-push: the worktree tool failed its own tests" >&2
     exit 1
 fi
 

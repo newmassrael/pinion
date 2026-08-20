@@ -1,0 +1,33 @@
+# Merge behaviour for the files that two concurrent rounds would both touch.
+#
+# Why this file exists: exploration can be parallelised across git worktrees
+# (`tools/worktree.sh`), but round *closure* cannot — several tracked files are
+# written once per round and would collide. Two of those collisions have
+# opposite correct answers, and git cannot guess either one, so they are
+# declared here rather than discovered during a merge.
+
+# The Phase B declaration is append-only: one row per round, rows independent
+# (`docs/phase-b-rounds.tsv`, see CLAUDE.md "Working contract"). Two rounds each
+# adding their own row is not a conflict in any meaningful sense — union keeps
+# both, which is exactly the intended result.
+#
+# Deliberately NOT applied to the other `docs/*.tsv` budgets
+# (reference-names-budget, containment-budget, pointer-reach-budget, ...): those
+# are *rewritten wholesale* by their tool's `--write-budget`, so a union merge
+# would resurrect stale rows and silently inflate a ratchet. Append-only is a
+# property of this one file, not of the extension.
+docs/phase-b-rounds.tsv merge=union
+
+# The atomic store is the spec SSOT and must NEVER be hand-edited — CLAUDE.md
+# says so, and every mutation goes through the Mnemosyne typed primitives.
+#
+# That rule and a textual auto-merge are incompatible: resolving a conflict in
+# this file IS a hand edit, and a *successful* auto-merge is worse than a failed
+# one, because it produces a store nobody authored and nobody read. `-merge`
+# makes git refuse to combine the two sides — it keeps ours and declares the
+# conflict — which forces the only correct procedure: drop one side's ledger
+# writes, let the other land, then re-apply through `mnemosyne-cli`.
+#
+# So this line does not make parallel rounds work. It makes the fact that they
+# do not work arrive as a refusal instead of as a corrupted 14 MB JSON.
+docs/.atomic/workspace.atomic.json -merge

@@ -56,6 +56,20 @@ hook_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "$hook_dir/lib/mnemosyne-tool.sh"
 # shellcheck source=SCRIPTDIR/lib/consumer-tests.sh
 source "$hook_dir/lib/consumer-tests.sh"
+# shellcheck source=SCRIPTDIR/lib/worktree-guard.sh
+source "$hook_dir/lib/worktree-guard.sh"
+
+# A round is closed from the main tree; exploration worktrees may not commit.
+# See lib/worktree-guard.sh for the split and why printing it was not enough.
+#
+# Deliberately ahead of `mnemosyne_resolve`, which can spend a minute building
+# the pinned tool: a commit that is going to be refused for standing in the
+# wrong tree should be refused before that minute is paid. (pre-push runs this
+# same guard AFTER its library tests instead -- that hook has a stated rule
+# about not deciding with libraries it has not verified, and this one has no
+# such step to sit behind.)
+require_main_worktree_for commit || exit 1
+
 mnemosyne_resolve
 
 echo "pre-commit: mnemosyne-cli validate-workspace ($MN_CLI_SOURCE) ..." >&2

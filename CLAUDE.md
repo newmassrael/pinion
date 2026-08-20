@@ -309,6 +309,29 @@ tests (`tools/test_hooks.sh`) before trusting them.
   milliseconds inside `pre-push`). Before R1495 nothing verified any of them —
   including `commit-msg-lint.sh`, which gates every commit message.
 
+### Exploration worktrees, and the gate that keeps closure in the main tree (R1743)
+
+Parallel **exploration** is supported; parallel **round closure** is not.
+
+- **Create one with `tools/worktree.sh add <name>`. Never with a bare
+  `git worktree add`** — four things here do not follow it and all four fail
+  quietly: the `target/` symlink onto the compressed volume, submodule
+  population, the shared headless display number, and teardown (`git worktree
+  remove` *refuses* a worktree containing submodules, and `submodule deinit`
+  would strip the **main** tree's config through the shared `.git/config`).
+  Worktrees are **detached**, so no branch is created.
+- **`worktree-guard.sh` refuses a commit or a push from a linked worktree**, on
+  the measured fact that `--absolute-git-dir` equals `--git-common-dir` only in
+  the main tree. Override: `PINION_WRITE_FROM_WORKTREE=1`, which needs an
+  explicit request — it exists so a bypass names the rule it sets aside instead
+  of disabling every gate the way `--no-verify` does.
+- **Why closure cannot parallelise:** the atomic store is one 14 MB file whose
+  merge `.gitattributes` now *refuses*, because resolving that conflict would
+  itself be the hand edit forbidden above. `docs/phase-b-rounds.tsv` gets
+  `merge=union` (append-only); the other `docs/*.tsv` budgets deliberately do
+  **not** — they are rewritten by `--write-budget`, so union there would
+  resurrect stale rows and inflate a ratchet silently.
+
 ### Build-cache budget (R1486, corrected + bounded R1489)
 
 `pre-push` ends by printing `target/`'s size and, when it exceeds a budget,

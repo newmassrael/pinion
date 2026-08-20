@@ -34,6 +34,8 @@ source "$repo_root/.githooks/lib/target-budget.sh"
 source "$repo_root/.githooks/lib/phase-b-tally.sh"
 # shellcheck source=SCRIPTDIR/../.githooks/lib/consumer-tests.sh
 source "$repo_root/.githooks/lib/consumer-tests.sh"
+# shellcheck source=SCRIPTDIR/../.githooks/lib/worktree-guard.sh
+source "$repo_root/.githooks/lib/worktree-guard.sh"
 
 pass=0
 fail=0
@@ -1242,6 +1244,55 @@ ok "clearing a name is allowed to lower the count" \
    "$(python3 "$ratchet_tmp/repo/tools/reference_names.py" --check >/dev/null 2>&1; \
       echo $?)" \
    "0"
+
+# ---------------------------------------------------------------------------
+# worktree_verdict — the guard that keeps a round closing from the main tree
+# ---------------------------------------------------------------------------
+#
+# The paths below are the MEASURED forms (2026-08-20): in the main tree
+# `--absolute-git-dir` and `--git-common-dir` are the same path, and in a linked
+# worktree the first is `<common>/worktrees/<name>`. The classifier is pure so
+# every verdict is reachable here without building a worktree -- which matters,
+# because the one thing a check like this must never do is pass by accident on
+# the tree it happens to be run from.
+
+wg_main="/home/coin/pinion/.git"
+wg_linked="/home/coin/pinion/.git/worktrees/gate"
+
+ok "identical git dirs are the main tree" \
+   "$(worktree_verdict "$wg_main" "$wg_main" "")" "main"
+ok "a linked worktree is refused" \
+   "$(worktree_verdict "$wg_linked" "$wg_main" "")" "linked"
+ok "the override releases a linked worktree" \
+   "$(worktree_verdict "$wg_linked" "$wg_main" "1")" "override"
+
+# The override must not turn the MAIN tree into an override case -- the verdict
+# a hook prints is read by a person, and "allowing commit from ..." in the main
+# tree would train them to ignore it.
+ok "the override does not relabel the main tree" \
+   "$(worktree_verdict "$wg_main" "$wg_main" "1")" "main"
+
+# A trailing slash is a form nobody produces today. That is exactly why it is
+# here: the check would pass for years and then refuse every commit on the day
+# git's normalisation changed.
+ok "a trailing slash on one side still reads as main" \
+   "$(worktree_verdict "$wg_main/" "$wg_main" "")" "main"
+ok "a trailing slash on both sides still reads as main" \
+   "$(worktree_verdict "$wg_main/" "$wg_main/" "")" "main"
+
+# Prefix-only relationships must NOT read as main. A worktree's git dir always
+# starts with the common dir, so a comparison written with `==` against a glob,
+# or with a prefix test, would call every worktree the main tree -- which is the
+# failure that makes the gate absent rather than wrong.
+ok "a path that merely starts with the common dir is linked" \
+   "$(worktree_verdict "${wg_main}x" "$wg_main" "")" "linked"
+ok "a deeper worktree path is still linked" \
+   "$(worktree_verdict "$wg_main/worktrees/a/b" "$wg_main" "")" "linked"
+
+# An empty override string is what an unset variable expands to; it must not
+# read as "set".
+ok "an unset override is not an override" \
+   "$(worktree_verdict "$wg_linked" "$wg_main" "")" "linked"
 
 printf '[hooks] %d passed, %d failed\n' "$pass" "$fail"
 [[ "$fail" -eq 0 ]]
