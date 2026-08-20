@@ -1,4 +1,11 @@
-//! R1734 §5.51 §5.15 — the **target** side of a drag.
+//! R1734 §5.51 §5.15 — the **target** side of a drag, and (R1735) what the
+//! **source** is told about it.
+//!
+//! R1734 built the first half and every sentence in it is addressed inward, to
+//! the destination. R1735 added [`DropStanding`], which is the same judgement
+//! travelling back out to the surface that started the drag — so this module is
+//! now about both ends of one gesture rather than one of them. Its own
+//! documentation carries the measurement for each half.
 //!
 //! Until this module, a drag session in this tree spoke to exactly one party:
 //! the surface that started it. [`External::begin_drag`] opened a session, and

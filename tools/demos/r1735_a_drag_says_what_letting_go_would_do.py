@@ -345,10 +345,11 @@ def section_g(app: RpcSubprocess, spec: dict, kind: str) -> None:
     )
     titles = {c["key"]: c["title"] for c in canon}
     ok(
-        "G: ★★ and `nowhere` is NOT pinned here — one External covers this whole "
-        "window, so a cursor inside it is always over a surface that declares. "
-        "That arm is exercised where it can be, in the router's own tests over "
-        "genuinely separate surfaces",
+        "G: ★★ and `nowhere` is NOT pinned here — this screen's ROOT declares "
+        "itself the drop region for the whole window and the resolver prefers "
+        "the nearest opted-in ancestor, so a cursor inside the window always "
+        "resolves to a surface that declares. That arm is exercised where it "
+        "can be, in the router's own tests over genuinely separate surfaces",
         "nowhere" not in titles,
     )
 

@@ -183,10 +183,15 @@
       "",
       "Two entries, not three. `nowhere` — the arm that separates 'a target",
       "is here and it said no' from 'there is no target here' — is",
-      "unreachable ON THIS SCREEN by construction: the shell is one External",
-      "covering the whole window, so a cursor inside the window is always",
-      "over a surface that declares. It is exercised where it can be, in the",
-      "router's own tests, over genuinely separate surfaces."
+      "unreachable ON THIS SCREEN by construction, and the reason is the",
+      "opt-in rather than a count of surfaces: this screen's ROOT declares",
+      "itself the drop region for the whole window, and the resolver prefers",
+      "the nearest opted-in ancestor, so any cursor inside the window",
+      "resolves to a surface that declares. (The state scene is not one",
+      "External — a mounted destination contributes its own — but none of",
+      "those opt in, so none of them is ever what a drop resolves to.) The",
+      "arm is exercised where it can be, in the router's own tests, over",
+      "genuinely separate surfaces."
     ],
     "canon": [
       {
