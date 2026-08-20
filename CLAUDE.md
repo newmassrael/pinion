@@ -130,6 +130,36 @@ backend declaration / repaint trigger / thread ownership / lifecycle callbacks /
 
 All non-trivial decisions live in the **Mnemosyne atomic store** at `docs/.atomic/workspace.atomic.json` — the sole directly-validated SSOT. Read it via `mnemosyne-cli query` (the rendered `docs/GENERATED.md` view was retired in Mnemosyne R395–R400).
 
+### Which round did the ledger last record? Ask the tool (R1746)
+
+```bash
+python3 tools/changelog_rounds.py          # coverage + the newest entry
+python3 tools/changelog_rounds.py --check  # what pre-push refuses
+```
+
+**Do not hand-write that query, and do not use `mnemosyne-cli query
+--list-changelog` for it.** Both were measured wrong at R1746, in different
+directions, and the wrong answers are plausible:
+
+- the store holds **three key forms** — `Round 1708.4`, `R1742`, a bare `408` —
+  and they *interleave* rather than succeed one another (the R-form starts at
+  R51 and is what every recent round uses; the Round-form runs R1–R1708). A
+  regex matching `Round (\d+)` therefore answers
+  `Round 1708.4` for "newest", which is how R1744 came to record a 34-round
+  outage that did not exist.
+- the CLI documents `--list-changelog` as "round order, oldest first" and
+  `--limit N` as "the newest N". Measured against this store it groups by key
+  **form** and sorts lexicographically inside each group, so its newest fourteen
+  end `R999, SCE-RFC-002-004, round-14, round-15` — it answers *Round 15*. Also
+  `query --changelog-entry` needs the historical form: `R1742` resolves, `R1519`
+  is rejected because that round's key is `Round 1519`. Not fixable from here
+  (`vendor/mnemosyne` is another repo) ⇒ registered as an upstream debt.
+
+A rule nobody can query is a rule nobody can keep: R1743–R1745 landed with no
+entry at all, while the gated `docs/phase-b-rounds.tsv` never missed a round.
+The three were reconstructed at R1746 from their commits and TSV rows, and say
+so in their own text.
+
 Spec phase summary:
 
 | Round | Outcome |
@@ -195,6 +225,10 @@ mnemosyne.toml          workspace config (schema, locale, validators, ledgers)
   register depth work — a round that improves a widget the tree already has
   creates no artifact, and a count of artifacts cannot see it (R1526). Git is
   the census: a round with no row is reported UNDECLARED at every push
+- **Every round appends one changelog entry** (see "Decision audit trail"
+  below). Since R1746 `pre-push` refuses to publish a round while an EARLIER
+  one is still unrecorded — the round in progress is exempt, because a round
+  legitimately pushes before it closes
 
 ## Cross-repo discipline (NEVER edit other repositories directly)
 

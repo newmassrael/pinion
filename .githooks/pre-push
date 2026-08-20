@@ -194,6 +194,30 @@ if ! python3 "$repo_root/tools/wire_only_deps.py" --check >&2; then
     exit 1
 fi
 
+# R1746 — the round ledger, which CLAUDE.md calls the decision audit trail and
+# nothing has ever checked.
+#
+# `docs/phase-b-rounds.tsv` is the other once-per-round artifact and it IS
+# checked (the tally prints UNDECLARED below). The difference is measurable: at
+# R1746 the TSV had a row for every round git has and the changelog had no entry
+# for R1743, R1744 or R1745 — a gated artifact continued, an ungated one stopped.
+#
+# The round in progress is exempt (a round legitimately pushes before it closes),
+# so what this refuses is publishing a round while an EARLIER one is still
+# unrecorded. It also refuses a changelog key whose form the reader does not
+# know, because a key it cannot read is a round it would silently miscount —
+# which is how R1744 came to record a 34-round outage that did not exist. Reads
+# git log and the store's keys; boots nothing (~0.3s).
+echo "pre-push: round ledger ..." >&2
+if ! python3 "$repo_root/tools/changelog_rounds.py" --selftest >&2; then
+    echo "pre-push: the round-ledger gate failed its own tests" >&2
+    exit 1
+fi
+if ! python3 "$repo_root/tools/changelog_rounds.py" --check >&2; then
+    echo "pre-push: append the missing entry with mnemosyne-cli, then re-push" >&2
+    exit 1
+fi
+
 # R1600.1 — the counterfactual driver. Counterfactual verification is this
 # project's round-level discipline and until R1600 it had no mechanism: the
 # driver was rewritten in a scratchpad each round, and R1599 built two defects
