@@ -1,0 +1,224 @@
+{
+  "$comment": [
+    "R1737 — WHERE A POINTER ARRIVES IN THE ANALYSIS TOOL'S SCREENS, and who",
+    "may be asked about it. Written down once, apart from the code that has to",
+    "satisfy it.",
+    "",
+    "WHY THIS IS A FILE AND NOT A RUST CONSTANT. The reason its siblings are. A",
+    "screen's own `spec` module is what a RUNNING screen needs, and a",
+    "specification written there is written by the same hand that has to satisfy",
+    "it — so the gate ends up asking the thing under test for the right answer",
+    "(R1728). This file is the other hand. It is tracked, it is read by the demo,",
+    "and the demo may not edit it to pass.",
+    "",
+    "WHAT OPENED IT. R1736 repaired a one-pixel defect: a screen was told the",
+    "pixel BEFORE the one the pointer was over, at some coordinates and not",
+    "others, because the router hands a fraction and the surface multiplies it",
+    "back. A press carries no position of its own — it acts on the cursor the",
+    "last move recorded — so the whole screen was aimed wrong by that much, and",
+    "a person reported it as 'sometimes the node is selected and sometimes the",
+    "background behind it is'.",
+    "",
+    "That repair was measured by walking a real pointer over 600 columns and 600",
+    "rows of a running screen and asking the screen where it thought the pointer",
+    "was. MEASURED HERE, at the start of this round: of the five screens in this",
+    "tree that hit-test themselves, three publish a cursor field — in TWO",
+    "incompatible spellings, an `\"x,y\"` string and an `{x, y}` object — and TWO",
+    "publish nothing at all. So the check that found the defect could not be run",
+    "on two of the five, and on the other three it depended on each screen's own",
+    "vocabulary.",
+    "",
+    "The fact was never the screen's to volunteer. The framework resolves the",
+    "reading, and at that moment holds both accounts of where the pointer is.",
+    "",
+    "The vocabulary here is neutral by requirement: this describes the analysis",
+    "tool's screens, not any particular product's."
+  ],
+  "every_surface": {
+    "$comment": [
+      "THE ARRIVAL IS ASKABLE FOR EVERY SURFACE, WITHOUT THE SURFACE SAYING",
+      "ANYTHING.",
+      "",
+      "The population is the scene's painted surfaces and not the arrival store,",
+      "and that direction is what makes the census honest: a report built by",
+      "walking what the store holds could only list surfaces a pointer already",
+      "reached, so 'no surface drifted' would be satisfied by a run that pointed",
+      "at nothing.",
+      "",
+      "THE FLOOR, MEASURED by building a probe at 6.11.1 and running it. There",
+      "an outside observer CAN ask, for any widget, where the pointer is in that",
+      "widget's own frame, without the widget having stored anything — exact",
+      "over 400 columns and 300 rows of a child widget, no misses. Universality",
+      "was the floor's and this tree owed it. This surface is the debt paid."
+    ],
+    "canon": [
+      {
+        "ordinal": 1,
+        "key": "askable",
+        "title": "every painted surface has an arrival row, whatever it publishes"
+      },
+      {
+        "ordinal": 2,
+        "key": "never-is-named",
+        "title": "a surface no pointer reached is named, not counted as clean"
+      },
+      {
+        "ordinal": 3,
+        "key": "one-spelling",
+        "title": "and the answer has the same shape on every screen"
+      }
+    ],
+    "owed": []
+  },
+  "two_accounts": {
+    "$comment": [
+      "THE FRAMEWORK COMPARES THE TWO ACCOUNTS IT HOLDS, AND PUBLISHES THE",
+      "VERDICT.",
+      "",
+      "At the moment it resolves a reading the framework has the cursor the",
+      "window system reported and the rectangle the fraction is taken over. The",
+      "pixel the pointer is over is `floor(cursor) - rect.origin`, arithmetic",
+      "with no fraction in it; the pixel the surface will resolve is",
+      "`pixel_of(fraction, extent)`. Two derivations of one fact.",
+      "",
+      "Three verdicts, and only one is a defect. `strayed` is a capture lock",
+      "forwarding past the rectangle's edge on purpose, where the resolved pixel",
+      "is a clamp and not a claim — folding it into either neighbour would",
+      "either manufacture a defect or hide one.",
+      "",
+      "THE FLOOR, MEASURED. It never compares its own two accounts, and its",
+      "answer is not this question at all: it reports WHERE THE CURSOR IS, not",
+      "where the event ARRIVED. A press delivered to a child at (37, 21),",
+      "followed by moving the cursor, leaves it answering (300, 250). Across the",
+      "five types such a record could live on there are 245 declared properties",
+      "and 195 declared methods; 3 are point-typed, all of them the widget's own",
+      "position in its parent, and 0 methods return a point. None is a delivered",
+      "position, and for a synthesised event the position it carried is",
+      "unreadable."
+    ],
+    "canon": [
+      {
+        "ordinal": 1,
+        "key": "exact",
+        "title": "the pixel a surface is told is the pixel the pointer was over"
+      },
+      {
+        "ordinal": 2,
+        "key": "drifted-is-a-defect",
+        "title": "two pixels of the same rectangle is a defect, and says which way"
+      },
+      {
+        "ordinal": 3,
+        "key": "strayed-is-not",
+        "title": "a cursor outside the rectangle is a clamp, not a disagreement"
+      }
+    ],
+    "owed": []
+  },
+  "every_screen": {
+    "$comment": [
+      "AND IT HOLDS ON EVERY SCREEN THAT HIT-TESTS ITSELF, swept with the",
+      "machine's own pointer.",
+      "",
+      "Stated per-pixel and not per-control on purpose: which pixels a",
+      "truncating multiplication loses depends on the extent, so any list of",
+      "points somebody chooses can miss them all — which is exactly how R1736's",
+      "defect survived every gate in this tree.",
+      "",
+      "The population is the five screens that implement a hit test of their",
+      "own, counted rather than assumed. R1736 repaired one of them and measured",
+      "two; the other two could not be measured at all, which is what this round",
+      "changed."
+    ],
+    "canon": [
+      {
+        "ordinal": 1,
+        "key": "columns",
+        "title": "every column of the surface arrives as itself"
+      },
+      {
+        "ordinal": 2,
+        "key": "rows",
+        "title": "every row of the surface arrives as itself"
+      },
+      {
+        "ordinal": 3,
+        "key": "all-five",
+        "title": "on all five screens that resolve a press themselves"
+      }
+    ],
+    "owed": []
+  },
+  "it_is_the_arrival": {
+    "$comment": [
+      "IT IS WHERE THE EVENT ARRIVED, NOT WHERE THE CURSOR HAPPENS TO BE.",
+      "",
+      "The distinction the floor cannot draw, and the reason the record is",
+      "written at the delivery rather than read from a live cursor. It also",
+      "settles what may write it: a READ must not move it. R1736's own lesson is",
+      "that a probe which disturbs what it measures measures the disturbance —",
+      "its first reproduction table was its own drag drift — and a census that",
+      "recorded an arrival while answering 'what would a wheel here do' would be",
+      "that same mistake built into the framework."
+    ],
+    "canon": [
+      {
+        "ordinal": 1,
+        "key": "delivered",
+        "title": "the record is the last delivery, and it does not follow the cursor"
+      },
+      {
+        "ordinal": 2,
+        "key": "a-read-moves-nothing",
+        "title": "asking the census leaves the record where it was"
+      }
+    ],
+    "owed": [
+      {
+        "key": "drag-channel",
+        "sentence": "while a router drag session runs, the position arrives over a drop target's rectangle and no arrival is recorded",
+        "since": "R1737",
+        "why": [
+          "A router with a session open stops calling `pointer_move` and sends",
+          "the position as a drop point whose fraction is taken over the",
+          "resolved DROP TARGET's rectangle — which is in general not the",
+          "surface's own, and whose tag is not the surface's tag. So both halves",
+          "of this record would mean something different there: a different key",
+          "and a different comparison. Stated rather than papered over, because",
+          "the honest consequence is that the arrival goes stale for the",
+          "duration of a drag."
+        ]
+      },
+      {
+        "key": "wheel-channel",
+        "sentence": "the wheel and two-finger channels record no arrival",
+        "since": "R1737",
+        "why": [
+          "They normalise over a possibly different basis and their consumers",
+          "read the FRACTION — a notch does not resize what it is measured over.",
+          "The pixel a fraction names is not a quantity they compute, so a",
+          "landing verdict for them would be a judgement on arithmetic that",
+          "never runs. A wheel-only surface therefore reads as `never`, which is",
+          "true of the record and worth knowing."
+        ]
+      },
+      {
+        "key": "a-surface-that-stops-being-painted-takes-its-drifts-with-it",
+        "sentence": "the arrivals of a surface that leaves the screen are forgotten, drifts included",
+        "since": "R1737",
+        "why": [
+          "A surface no longer painted has its size, its painted regions and now",
+          "its arrivals dropped, so it cannot answer where a pointer is and a",
+          "different screen reusing the tag cannot inherit its position. The",
+          "cost is that a drift on a page navigated away from is forgotten with",
+          "the page, so the check covers the surfaces a run ended with. The",
+          "alternative — a store that grows without bound and answers for things",
+          "that are gone — is worse, and the honest fix is not a longer memory",
+          "but a report that says what it dropped. Stated here rather than",
+          "papered over because a gate's coverage is exactly the thing this",
+          "round found itself getting wrong twice."
+        ]
+      }
+    ]
+  }
+}

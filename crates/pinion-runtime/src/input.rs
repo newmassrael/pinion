@@ -80,6 +80,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 use std::time::Instant;
 
+use pinion_core::arrival::PointerArrival;
 use pinion_core::composite_tag::{compose_send_payload, split_subindex};
 use pinion_core::drop_target::{DropActions, DropContract, DropOffer, DropStanding, DropVerdict};
 use pinion_core::event::WheelDelta;
@@ -88,8 +89,7 @@ use pinion_core::external::{
     IntrospectValue, OUTER_DOCK_MARGIN, OUTER_DOCK_ZONE_TAG,
 };
 use pinion_core::input::{
-    GesturePhase, PointerButton, PointerButtons, PointerEdge, PointerReading, PointerWireEvent,
-    RawPointerButton,
+    GesturePhase, PointerButton, PointerButtons, PointerEdge, PointerWireEvent, RawPointerButton,
 };
 use pinion_core::scene::{ExternalNode, Rect, Scene};
 use pinion_core::widgets::scroll::ScrollState;
@@ -3418,12 +3418,21 @@ impl InputRouter {
         let Some(external) = state_scene.find_external_with_tag_mut(primary) else {
             return;
         };
-        let Some(reading) =
+        let Some(arrival) =
             capture_rel_coords(paint, external, primary, target_tag, cursor_x, cursor_y)
         else {
             return;
         };
-        external.handle.pointer_move(reading);
+        // ★★★★★ R1737 §5.35 — recorded HERE, at the delivery, and keyed by the
+        // surface's own tag. This is the channel a press is resolved against: a
+        // press carries no position, it acts on the cursor the last
+        // `pointer_move` recorded, so this pixel is the one every gesture on a
+        // self-hit-testing screen is aimed with. The wheel and the two-finger
+        // gestures deliberately do NOT record — they normalise over a possibly
+        // different basis and their consumers read the fraction, so publishing a
+        // pixel verdict for them would judge arithmetic nobody performs.
+        pinion_core::arrival::record_pointer_arrival(primary, arrival);
+        external.handle.pointer_move(arrival.reading());
         // R1430 §5.35 — every non-positional axis (pressure / tilt / twist /
         // tangential / height) travels WITH the move (the W3C `pointermove`
         // model), forwarded as ONE bundle so a new axis is a struct field, not a
@@ -4967,7 +4976,7 @@ fn offer_to_hovered_external(
     let Some(external) = state_scene.find_external_with_tag_mut(primary) else {
         return false;
     };
-    let Some(reading) =
+    let Some(arrival) =
         capture_rel_coords(paint, external, primary, target_tag, cursor.0, cursor.1)
     else {
         return false;
@@ -4975,6 +4984,11 @@ fn offer_to_hovered_external(
     // R1727 — the wheel and the two-finger gestures take the FRACTION and are
     // right to: a notch does not resize what it is measured over. Only the
     // captured drag needed the rect, so only it reads the whole reading.
+    //
+    // ★ R1737 — and for the same reason this does not record an arrival: the
+    // pixel a fraction names is not a quantity these consumers compute, so a
+    // landing verdict here would be a judgement on arithmetic that never runs.
+    let reading = arrival.reading();
     offer(external.handle.as_mut(), reading.u(), reading.v())
 }
 
@@ -5031,8 +5045,12 @@ pub fn wheel_intent_at(
     let target_tag = resolve_pointer_tag(paint, cursor.0, cursor.1)?;
     let (primary, _) = split_subindex(&target_tag);
     let external = state_scene.find_external_with_tag(primary)?;
-    let reading = capture_rel_coords(paint, external, primary, &target_tag, cursor.0, cursor.1)?;
-    Some((primary.to_owned(), external.handle.wheel_intent(reading.at)))
+    // ★ R1737 — a READ, so it records nothing. The census asking "what would a
+    // wheel here do" must not move the framework's record of where a pointer
+    // arrived: a measurement that disturbs what it measures measures the
+    // disturbance, which is the lesson R1736 paid for.
+    let arrival = capture_rel_coords(paint, external, primary, &target_tag, cursor.0, cursor.1)?;
+    Some((primary.to_owned(), external.handle.wheel_intent(arrival.at)))
 }
 
 /// R1432 §5.35 — the External-offer leg for a native PINCH gesture, the
@@ -5122,7 +5140,7 @@ fn capture_rel_coords(
     target_tag: &str,
     cursor_x: f64,
     cursor_y: f64,
-) -> Option<PointerReading> {
+) -> Option<PointerArrival> {
     let norm_tag = match external.handle.capture_normalize() {
         CaptureNormalize::Tag(tag) => tag,
         CaptureNormalize::Primary => primary,
@@ -5132,14 +5150,20 @@ fn capture_rel_coords(
     // R1727 §5.35 — the rect travels WITH the fraction. It was resolved here and
     // dropped on the floor, which left every consumer to supply a divisor of its
     // own; a divisor the gesture itself moves is then a defect nobody can see
-    // (see [`PointerReading`] for the measurement that opened this).
-    #[allow(
-        clippy::cast_precision_loss,
-        reason = "a logical-pixel rect is small enough to round-trip f32 exactly"
-    )]
-    Some(PointerReading::new(
+    // (see `PointerReading` for the measurement that opened this).
+    //
+    // ★★★★★ R1737 §5.35 — and so does the rect's ORIGIN, which is the other
+    // half R1727 left here. With it the arrival carries both of the framework's
+    // accounts of where the pointer is — the window system's cursor and the
+    // fraction the surface will multiply back — so
+    // `pinion_core::arrival::Landing` can compare them. Before this the origin
+    // was subtracted inside `normalize_cursor` and discarded, which is why the
+    // one-pixel round-trip defect R1736 found needed a person and a 600-point
+    // sweep rather than being a value the framework publishes.
+    Some(PointerArrival::new(
+        rect,
+        (cursor_x, cursor_y),
         normalize_cursor(rect, cursor_x, cursor_y),
-        (rect.w as f32, rect.h as f32),
     ))
 }
 
@@ -5320,6 +5344,7 @@ mod tests {
         Backend, BackendFallback, BackendSupport, CaptureNormalize, ExternalIntrospect,
         InterveneError, IntrospectSchema, InvokeError, RepaintOwner, ThreadOwnership,
     };
+    use pinion_core::input::PointerReading;
     use pinion_core::scene::{ContainerNode, Rect};
     use pinion_core::style::{BoxStyle, Color};
 
@@ -5626,6 +5651,55 @@ mod tests {
             pinion_core::external::surface_size("canvas"),
             None,
             "★ a surface that is not on screen does not answer a stale size"
+        );
+    }
+
+    /// ★★★★★ R1737 — a surface that leaves the screen stops answering where a
+    /// pointer arrived in it.
+    ///
+    /// Written because the round that added the record shipped the sentence
+    /// "a screen that is gone cannot answer for the next one with the same tag"
+    /// as a docstring with **no caller** — the forgetting function existed and
+    /// nothing invoked it. The closing audit found it, which is what that audit
+    /// is for: a claim a round WRITES is as much its output as the code.
+    ///
+    /// The residue is deliberate and is recorded in
+    /// `docs/analyzer-arrival-spec.json`: a drift on a surface that has since
+    /// stopped being painted goes with it.
+    #[test]
+    fn r1737_a_surface_that_leaves_the_screen_forgets_where_the_pointer_arrived() {
+        use pinion_core::arrival::{PointerArrival, pointer_arrival};
+
+        let (handle, _sizes) = SizedExternal::new();
+        let mut state = Scene::Container(ContainerNode::new(vec![external_at(
+            "canvas",
+            Rect::new(0, 0, 0, 0),
+            handle,
+        )]));
+        let paint = painted_as("canvas", Rect::new(0, 0, 1440, 900));
+        let mut known = std::collections::HashMap::new();
+        pinion_core::arrival::forget_pointer_arrival("canvas");
+
+        announce_external_sizes(&paint, &mut state, &mut known);
+        pinion_core::arrival::record_pointer_arrival(
+            "canvas",
+            PointerArrival::new(Rect::new(0, 0, 1440, 900), (700.0, 400.0), (0.5, 0.5)),
+        );
+        assert!(
+            pointer_arrival("canvas").is_some(),
+            "a painted surface a pointer reached answers"
+        );
+        // Still painted: the record survives an ordinary frame, which is what
+        // makes the assertion below about LEAVING rather than about frames.
+        announce_external_sizes(&paint, &mut state, &mut known);
+        assert!(pointer_arrival("canvas").is_some());
+
+        let gone = painted_as("elsewhere", Rect::new(0, 0, 100, 100));
+        announce_external_sizes(&gone, &mut state, &mut known);
+        assert!(
+            pointer_arrival("canvas").is_none(),
+            "★ a surface that is not on screen does not answer a stale arrival, \
+             and a different screen reusing the tag does not inherit one"
         );
     }
 
@@ -14551,6 +14625,15 @@ pub fn announce_external_sizes(
             known.remove(&tag);
             pinion_core::external::forget_surface_size(&tag);
             pinion_core::painted::forget_painted_regions(&tag);
+            // ★ R1737 — and its arrivals, for the same reason: a surface that is
+            // not on screen must not answer where a pointer is, and a different
+            // screen reusing the tag must not inherit the last one's position.
+            // The residue is stated rather than hidden and is written into
+            // `docs/analyzer-arrival-spec.json`: a drift on a surface that has
+            // since stopped being painted is forgotten with it, so the gate
+            // covers the surfaces a run ended with. The alternative is a store
+            // that grows without bound and answers for things that are gone.
+            pinion_core::arrival::forget_pointer_arrival(&tag);
             continue;
         };
         if rect.w == 0 || rect.h == 0 {

@@ -5697,10 +5697,87 @@ class RealPointer:
                 self.release(button)
             except Exception:  # noqa: BLE001 — teardown must not mask the body
                 pass
+        # ★★★★★ R1737 — every surface this session's pointer reached must have
+        # been told the pixel the pointer was actually over. This is the check
+        # that found R1736's defect, made total: it used to require a screen that
+        # publishes a cursor field (three of five did, in two spellings) and a
+        # 600-point sweep. Now the framework compares its own two accounts at
+        # every event, so ANY demo that drives a real pointer gets the round trip
+        # checked for free, over exactly the pixels its own gestures used.
+        #
+        # Skipped while an exception is already propagating: the body's failure
+        # is the interesting one and a teardown assertion would bury it.
+        if exc and exc[0] is not None:
+            return
+        assert_no_pointer_drift(self.tf, label="real-pointer session")
 
 
 #: xdotool's button numbers, named the way the rest of this harness names them.
 _REAL_POINTER_BUTTONS = {"left": "1", "middle": "2", "right": "3"}
+
+
+def pointer_arrivals(tf: "RpcSubprocess") -> Optional[dict]:
+    """★★★★★ R1737 — where a pointer arrived in every surface, from the
+    framework's own record.
+
+    `None` on a binary that predates the method, the same tolerance
+    `_gate_pointer_targets` gives — a stale binary is not evidence of a defect.
+    """
+    try:
+        resp = tf.request("scene/pointer_arrival")
+    except RpcError as exc:
+        if exc.code == -32601:
+            return None
+        raise
+    assert resp is not None
+    return resp.result
+
+
+def assert_no_pointer_drift(tf: "RpcSubprocess", *, label: str = "pointer") -> Optional[dict]:
+    """★★★★★ R1737 — refuse a run in which a pointer was delivered to a surface
+    at a different pixel from the one it was over.
+
+    The framework holds two accounts of every arrival — the cursor the window
+    system reported, and the fraction the surface multiplies back — and
+    `Landing` is the comparison. `drifted` is the one verdict with no benign
+    reading: `strayed` is a capture lock forwarding past the rectangle's edge on
+    purpose, and `never` is a surface this run did not point at.
+
+    ★ The framework COUNTS, so this covers every arrival the session caused
+    rather than the last one. That distinction is the whole point: the first
+    draft read only the most recent arrival, so a six-hundred-position sweep
+    with one bad pixel in the middle would have passed — which is R1736's own
+    finding (a gate whose coverage is an accident of which point it looked at).
+
+    Returns the report, so a caller can also assert on WHAT it covered — which
+    matters, because "nothing drifted" is trivially true of a run that pointed
+    at nothing, and `delivered` is the number that says whether it did.
+    """
+    report = pointer_arrivals(tf)
+    if report is None:
+        return None
+    if report.get("defects"):
+        rows = []
+        for row in report.get("surfaces", []):
+            evidence = row.get("drifted_at")
+            if evidence is None:
+                continue
+            rows.append(
+                f"{row['surface']}: {row['drifted']} of {row['delivered']} "
+                f"arrival(s) went wrong; the first had the pointer over "
+                f"{tuple(evidence['inside'])} of {evidence['over']} and told the "
+                f"surface {tuple(evidence['resolved'])} (drift "
+                f"{tuple(evidence['drift'])})"
+            )
+        raise AssertionError(
+            f"{label}: {report['drifts']} arrival(s) across {report['defects']} "
+            f"surface(s) told a different pixel from the one the pointer was over "
+            f"— {'; '.join(rows[:4])}. Every press on a self-hit-testing screen "
+            f"is resolved against this pixel, so the whole screen is aimed wrong "
+            f"by that much; see `pinion_core::external::pixel_of` for the "
+            f"arithmetic and R1736 for the measurement of what it costs a person."
+        )
+    return report
 
 
 def assert_gesture_reads_one_fact(

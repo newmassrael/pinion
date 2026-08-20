@@ -1288,6 +1288,11 @@ impl External for ViewOracle {
     }
 
     fn target_at(&self, x: u32, y: u32) -> PointerTarget {
+        // ★ R1737 — the framework's own frame conversion, put here for the
+        // reason R1714 wrote it: a caller applies it without first asking
+        // whether this screen pans, and a screen that omits it has a hit test
+        // that is right at one offset and wrong at every other.
+        let (x, y) = pinion_core::external::into_layout(VIEW_TAG, (x, y));
         self.state.as_ref().map_or(PointerTarget::Unanswered, |s| {
             Hit::at(s, x, y)
                 .word()

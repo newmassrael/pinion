@@ -214,6 +214,11 @@ pub const RPC_METHODS: &[(&str, MethodOcc, MethodWindow)] = &[
     ("scene/pan_gesture", MethodOcc::Read, MethodWindow::Scope),
     ("scene/pinch_gesture", MethodOcc::Read, MethodWindow::Scope),
     (
+        "scene/pointer_arrival",
+        MethodOcc::Read,
+        MethodWindow::Scope,
+    ),
+    (
         "scene/pointer_button",
         MethodOcc::Mutate,
         MethodWindow::Scope,

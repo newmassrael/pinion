@@ -2866,6 +2866,17 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
                     crate::pointer_target::handle_scene_pointer_target(last_paint_scene, scene),
                     HandlerKind::Read,
                 ),
+                // ★★★★★ R1737 §5.35 §5.15 — the half `pointer_target` cannot
+                // see. That census compares two answers the SURFACE gives; this
+                // one compares the two accounts the FRAMEWORK held when it
+                // delivered the event — the window system's cursor and the
+                // fraction the surface multiplies back — so the one-pixel round
+                // trip a person reported is a published verdict rather than
+                // something a per-screen sweep has to go looking for.
+                "scene/pointer_arrival" => (
+                    crate::pointer_arrival::handle_scene_pointer_arrival(last_paint_scene, scene),
+                    HandlerKind::Read,
+                ),
                 // ★★★★★ R1703 §5.45 §5.15 — what a wheel over a point WOULD do,
                 // asked before turning it. The value published is the one the
                 // router routes by (a surface with no declared intent is never

@@ -342,6 +342,42 @@ pub const WIRE_TYPES: &[WireType] = &[
             ],
         },
     },
+    // ★★★★★ R1737 §5.35 — one pointer arrival, both of the framework's accounts
+    // of it and the verdict between them. One shape used twice on a row (the
+    // last arrival, and the first one that went wrong) so a reader learns one
+    // vocabulary for one fact.
+    WireType {
+        name: "ArrivalAt",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("over", WireTy::Object, Some("WireRect")),
+                WireField::new("cursor", WireTy::Array, None),
+                WireField::new("inside", WireTy::Array, None),
+                WireField::new("resolved", WireTy::Array, None),
+                WireField::new("drift", WireTy::Array, None),
+                WireField::new("landing", WireTy::String, None),
+            ],
+        },
+    },
+    // ★★★★★ R1737 §5.35 — one surface's arrivals. Every count and every
+    // position is ABSENT on a surface no pointer has reached rather than zero,
+    // so an agent cannot mistake "nobody pointed here" for "the pointer arrived
+    // and nothing was wrong".
+    WireType {
+        name: "ArrivalRow",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("surface", WireTy::String, None),
+                WireField::new("state", WireTy::String, None),
+                WireField::new("delivered", WireTy::Integer, None).optional(),
+                WireField::new("exact", WireTy::Integer, None).optional(),
+                WireField::new("strayed", WireTy::Integer, None).optional(),
+                WireField::new("drifted", WireTy::Integer, None).optional(),
+                WireField::new("last", WireTy::Object, Some("ArrivalAt")).optional(),
+                WireField::new("drifted_at", WireTy::Object, Some("ArrivalAt")).optional(),
+            ],
+        },
+    },
     WireType {
         name: "AutoRepeatHoldOutcome",
         shape: WireShape::Object {
@@ -1731,6 +1767,23 @@ pub const WIRE_TYPES: &[WireType] = &[
             ],
         },
     },
+    // ★★★★★ R1737 §5.35 — where a pointer arrived in every surface, and whether
+    // the framework's two accounts of it agree. `never` is a NAMED list rather
+    // than a shortfall in a total, so a run that pointed at nothing cannot read
+    // as a run in which nothing drifted.
+    WireType {
+        name: "PointerArrivalReport",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("surfaces", WireTy::Array, Some("ArrivalRow")),
+                WireField::new("never", WireTy::Array, None),
+                WireField::new("arrived", WireTy::Integer, None),
+                WireField::new("delivered", WireTy::Integer, None),
+                WireField::new("defects", WireTy::Integer, None),
+                WireField::new("drifts", WireTy::Integer, None),
+            ],
+        },
+    },
     WireType {
         name: "PointerReachReport",
         shape: WireShape::Object {
@@ -2652,6 +2705,21 @@ pub const WIRE_TYPES: &[WireType] = &[
                 // slot is on the wire the same way every other key it
                 // publishes is.
                 WireField::new("values", WireTy::Array, None).optional(),
+            ],
+        },
+    },
+    // R1737 — a rectangle on the wire, spelled out rather than derived from
+    // `Rect`: that type is `#[non_exhaustive]` and carries no `Serialize`, so
+    // deriving the promise from it would let the promise change without anyone
+    // deciding to.
+    WireType {
+        name: "WireRect",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("x", WireTy::Integer, None),
+                WireField::new("y", WireTy::Integer, None),
+                WireField::new("w", WireTy::Integer, None),
+                WireField::new("h", WireTy::Integer, None),
             ],
         },
     },

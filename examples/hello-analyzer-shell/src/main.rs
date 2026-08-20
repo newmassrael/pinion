@@ -4148,6 +4148,15 @@ impl External for ShellOracle {
     /// ★★★★★ R1700 §5.35 — what a press here addresses, for the framework to
     /// hold against what this screen painted here.
     fn target_at(&self, x: u32, y: u32) -> PointerTarget {
+        // ★ R1737 — through the framework's own frame conversion, which R1714
+        // wrote precisely so a caller could put it on every such point without
+        // first asking whether this screen pans. It is the identity here today;
+        // it was missing on four of the five self-hit-testing screens in this
+        // tree, so each of them was a screen whose hit test would be right at
+        // one offset and wrong at every other — the defect R1714 measured on
+        // the node lab, where a 400-pixel pan took `scene/pointer_target` from
+        // 57 deliverable rectangles to 1.
+        let (x, y) = pinion_core::external::into_layout(VIEW_TAG, (x, y));
         self.state.as_ref().map_or(PointerTarget::Unanswered, |s| {
             word_or_nothing(&Hit::at(s, x, y))
         })
