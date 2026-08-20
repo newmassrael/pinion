@@ -42,21 +42,22 @@
 //!
 //! | by name | inside its own rectangle | verdict | |
 //! |---|---|---|---|
-//! | a word | the same word at the CENTRE | [`Deliverable`] | pressable where it is drawn |
+//! | a word | the same word at the CENTRE, and no probe astray | [`Deliverable`] | pressable where it is drawn |
 //! | a word | the same word somewhere else inside | [`Handle`] | it is gripped by a strip |
 //! | nothing | something, at the centre | [`Covering`] | decoration over what it decorates |
 //! | nothing | nothing | [`Inert`] | a caption, a rule, a badge |
+//! | **a word** | **some probe resolves where nothing is drawn** | [`Astray`] | **the defect** |
 //! | **a word** | **nowhere inside** | [`Unreachable`] | **the defect** |
 //!
 //! [`Deliverable`]: TargetVerdict::Deliverable
 //! [`Handle`]: TargetVerdict::Handle
 //! [`Inert`]: TargetVerdict::Inert
 //! [`Covering`]: TargetVerdict::Covering
+//! [`Astray`]: TargetVerdict::Astray
 //! [`Unreachable`]: TargetVerdict::Unreachable
 //!
-//! [`Unreachable`] is the one with no benign reading, and it is what the capture
-//! viewer's resize produced: 166 rectangles that answered by name and were
-//! addressable at no point inside themselves.
+//! [`Unreachable`] is what the capture viewer's resize produced: 166 rectangles
+//! that answered by name and were addressable at no point inside themselves.
 //!
 //! ## Why the question is "somewhere inside" and not "at the centre"
 //!
@@ -71,12 +72,75 @@
 //! and that is satisfied by a grip. So a rectangle whose centre does not
 //! address it is probed at eight more points — the four edge midpoints and the
 //! four corners, each inset — and answers [`Handle`] with the point that
-//! worked. Reported, counted, never fatal. The failure is a rectangle that
-//! answers at NONE of the nine, which is what a screen looks like when its
-//! paint and its hit test have come to read different facts.
+//! worked.
 //!
-//! ★ The centre is still probed first and is still the strong form, so this
-//! costs one call per rectangle in the ordinary case.
+//! ## ★★★★★ R1736 — and why the OTHER eight are now asked even when the centre
+//! agrees
+//!
+//! Until R1736 the eight extra probes only ever RESCUED a rectangle: they ran
+//! when the centre disagreed and could turn `Unreachable` into `Handle`. A
+//! rectangle whose centre agreed was never asked anything else, so this gate
+//! sampled one point per rectangle in the direction that convicts.
+//!
+//! A person found the hole by hand. On the node lab, at the zoom the screen
+//! opens at, a card's centre addressed the card and **all four of its inset
+//! corners addressed the canvas behind it** — so a press six pixels inside a
+//! painted card panned the diagram instead of picking the card up. Every gate
+//! in this tree was green, and every automatic observer in it — this one, the
+//! screen's own sweep, and a demo's `click(path = ...)` — aims at the centre,
+//! which was the one point that agreed.
+//!
+//! So the nine are all asked, always, and each answer is judged against the
+//! paint rather than against the centre alone: an answer naming something else
+//! is sound exactly when the paint puts that something else at that very point.
+//! A card's corner answering the pin that overhangs it is the paint agreeing
+//! with itself. The same corner answering the canvas behind it is
+//! [`Astray`] — the screen resolved a press somewhere it drew nothing.
+//!
+//! ★ Cost: nine `target_at` calls per painted rectangle instead of one, on a
+//! method whose whole job is a point lookup, in a report nothing renders per
+//! frame.
+//!
+//! ### The floor, measured rather than asserted
+//!
+//! Built and run against the 6.11.1 release. A canvas item that paints exactly
+//! the region it declares is pickable at **100% of the pixels it was drawn in**,
+//! under four different camera transforms including fractional zooms — measured
+//! over 13,500, 9,450, 11,718 and 9,919 points. That is the floor, and it is
+//! **above** where this tree stood: the defect above is a screen of ours failing
+//! a property a mature toolkit keeps.
+//!
+//! What the floor cannot do is notice when the two come apart. An item there
+//! declares its draw box and its pick shape **separately**, and the same probe
+//! measured an item whose paint reaches six pixels past its pick shape: 15.4% of
+//! its painted pixels at zoom 100 and 84, and 30.1% at 135, resolve to *nothing
+//! at all*, while the framework holds both rectangles, hands out the larger one
+//! as the item's bounds, and never compares them. There is no verdict, no
+//! count, and nothing to ask. That is the half this module is.
+//!
+//! # ★★★ What this census stops being able to see, on a screen that resolves
+//! from its paint
+//!
+//! Stated because a later reader will otherwise take a clean report as evidence
+//! of something it no longer tests. This census compares two answers —
+//! [`target_of_tag`] by name and [`target_at`] by point — and it is only a
+//! COMPARISON while the screen derives them separately. R1736 made the node
+//! lab's diagram resolve a press by looking up what it painted and mapping that
+//! tag through the very function `target_of_tag` calls, so for those families
+//! the two answers now come from one derivation, and geometry drift there is
+//! unrepresentable rather than merely unreported.
+//!
+//! That is the better state — this whole module exists because a repository
+//! that repaired the drift by hand four times kept the structure that produced
+//! it — but it changes what a green means. On such a screen this census
+//! measures **layering**: whether the thing a reader sees on top is the thing a
+//! press reaches. What it can no longer measure there is whether the screen
+//! knows where it drew something, because the screen no longer has an opinion
+//! about that. The screens that still hit-test from a model of their own —
+//! which is all the others — are where the original question still bites.
+//!
+//! [`target_of_tag`]: pinion_core::external::External::target_of_tag
+//! [`target_at`]: pinion_core::external::External::target_at
 //!
 //! # `unanswered` is a third state on purpose
 //!
@@ -132,6 +196,16 @@ pub enum TargetVerdict {
     /// Not addressable by name, and a press at its centre reaches something
     /// that is: decoration over what it decorates.
     Covering,
+    /// ★★★★★ R1736 — addressable by name, and some point inside it resolves to
+    /// something **the paint does not put there**. The defect a centre sample
+    /// cannot see.
+    ///
+    /// Not the same failure as [`Self::Unreachable`], and worth its own word:
+    /// an unreachable rectangle is one nobody can press, which a reader
+    /// discovers immediately. An astray one presses *sometimes*, depending on
+    /// where inside it the pointer landed, which is what a person reports as
+    /// "it works and then it doesn't".
+    Astray,
     /// Addressable by name, and addressable at **no point inside its own
     /// painted rectangle**. The defect.
     Unreachable,
@@ -142,7 +216,7 @@ impl TargetVerdict {
     /// rather than one per consumer.
     #[must_use]
     pub fn is_defect(self) -> bool {
-        matches!(self, Self::Unreachable)
+        matches!(self, Self::Unreachable | Self::Astray)
     }
 }
 
@@ -163,6 +237,13 @@ pub struct TargetRow {
     /// `null`. Left at the centre even for a `Handle` row, because what the
     /// middle of a group answers is the fact that made it a handle.
     pub at_centre: Option<String>,
+    /// ★★★★★ R1736 — for a [`TargetVerdict::Astray`] row, what the point at
+    /// (`x`, `y`) resolved to. `null` on every other verdict.
+    ///
+    /// Published because a defect a caller cannot act on is a number rather
+    /// than a report: this names the point AND the wrong answer, so the repair
+    /// starts from a fact instead of a search.
+    pub astray_to: Option<String>,
     /// The verdict.
     pub verdict: TargetVerdict,
 }
@@ -202,6 +283,9 @@ pub struct SurfaceTargets {
     pub inert: usize,
     /// … decoration over something addressable.
     pub covering: usize,
+    /// ★★★★★ R1736 — … addressable by name, and resolving somewhere the paint
+    /// put nothing at some point inside themselves. A defect.
+    pub astray: usize,
     /// … addressable by name and at no point inside themselves. A defect.
     pub unreachable: usize,
     /// Every row, in tag order, so a caller comparing two window sizes reads
@@ -223,8 +307,12 @@ pub struct PointerTargetReport {
     pub defects: usize,
 }
 
+/// ★ R1736 — the framework's own predicate, lifted at its third copy: this
+/// module, a screen's paint sweep and the paint-region store all asked "does
+/// this rectangle hold this pixel", and a hit test is where two copies
+/// disagreeing puts a press somewhere nobody aimed.
 fn contains(rect: Rect, x: u32, y: u32) -> bool {
-    x >= rect.x && y >= rect.y && x < rect.x + rect.w && y < rect.y + rect.h
+    rect.holds(x, y)
 }
 
 fn centre(rect: Rect) -> (u32, u32) {
@@ -258,64 +346,77 @@ pub fn handle_scene_pointer_target(
     serde_json::to_value(&report).map_err(|e| RpcError::internal_error(e.to_string()))
 }
 
-/// How the two answers stand, given whether any probe other than the centre
-/// reached the tag.
+/// How the answers stand, given what the nine probes found.
 ///
-/// A pure function of the three facts, so the classification can be exercised
+/// A pure function of the four facts, so the classification can be exercised
 /// without a scene — the rule is what the census IS, and a module whose only
 /// verification is that its callers happen to be green is the shape this
 /// project keeps recording as a debt.
-fn verdict_of(by_name: &PointerTarget, at_centre: &PointerTarget, gripped: bool) -> TargetVerdict {
+///
+/// ★★★★★ R1736 — `astray` outranks everything, including a centre that agrees.
+/// That order is the whole point: the defect a person found was a rectangle
+/// whose centre agreed and whose corners did not, and any rule that decided on
+/// the centre first would have gone on calling it deliverable.
+fn verdict_of(
+    by_name: &PointerTarget,
+    at_centre: &PointerTarget,
+    gripped: bool,
+    astray: bool,
+) -> TargetVerdict {
     match (by_name.word(), at_centre.word()) {
         (None, None) => TargetVerdict::Inert,
         (None, Some(_)) => TargetVerdict::Covering,
+        (Some(_), _) if astray => TargetVerdict::Astray,
         (Some(named), Some(hit)) if named == hit => TargetVerdict::Deliverable,
         (Some(_), _) if gripped => TargetVerdict::Handle,
         (Some(_), _) => TargetVerdict::Unreachable,
     }
 }
 
-/// The nine points a rectangle is probed at, in the order they are tried:
-/// the centre first, then the four edge midpoints, then the four corners, each
-/// inset far enough to be unambiguously inside.
+/// ★★★★★ R1736 — the nine points a rectangle is probed at, and the rule is the
+/// **framework's** rather than this module's.
+///
+/// A screen's own paint sweep asks the same question about the same
+/// rectangles, and two copies of it would be two definitions of what "the whole
+/// rectangle" means — with the screen that disagreed being the one nobody
+/// re-derived. Lifted to [`pinion_core::painted::probe_points`], where the
+/// reasoning for the nine and for what they still do not cover lives.
 ///
 /// ★ The edge midpoints are what make a group whose grip is a tab strip
 /// answerable at all — the first draft probed only the centre and this gate's
 /// first run reported the node lab's two host frames as defects, when what it
 /// had actually found is that a group is gripped by its top strip and holds its
 /// members everywhere else.
-fn probes(rect: Rect) -> [(u32, u32); 9] {
-    let inset_x = (rect.w / 4).min(6);
-    let inset_y = (rect.h / 4).min(6);
-    // `saturating_sub` throughout: this runs inside a dispatcher, where a panic
-    // takes the whole surface down, and it is asked about every painted
-    // rectangle on every screen in the tree.
-    let (l, r) = (
-        rect.x + inset_x,
-        rect.x + rect.w.saturating_sub(1).saturating_sub(inset_x),
-    );
-    let (t, b) = (
-        rect.y + inset_y,
-        rect.y + rect.h.saturating_sub(1).saturating_sub(inset_y),
-    );
-    let (cx, cy) = centre(rect);
-    [
-        (cx, cy),
-        (cx, t),
-        (cx, b),
-        (l, cy),
-        (r, cy),
-        (l, t),
-        (r, t),
-        (l, b),
-        (r, b),
-    ]
+use pinion_core::painted::probe_points as probes;
+
+/// ★★★★★ R1736 — one painted rectangle that answers BY NAME, with the surface
+/// it was attributed to.
+///
+/// The census is two passes over these because judging any one probe needs to
+/// know where every ANSWER is painted: a single pass could only ever compare a
+/// probe with the tag it was probing, which is what made "the answer names
+/// something the paint does not put here" unaskable.
+struct Candidate<'a> {
+    tag: &'a str,
+    rect: Rect,
+    surface_tag: &'a String,
+    surface_rect: Rect,
+    by_name: PointerTarget,
 }
 
-fn build(paint: &Scene, state_scene: &Scene) -> PointerTargetReport {
-    let painted = paint.absolute_rects_by_tag();
-    let surfaces = painted_surfaces(paint, state_scene);
+/// Per surface, the rectangles each addressable WORD is painted in.
+///
+/// A word and not a tag, because `target_at` answers in the surface's own
+/// vocabulary and several painted rectangles can name one thing.
+type PaintedWords<'a> = BTreeMap<&'a String, BTreeMap<String, Vec<Rect>>>;
 
+/// FIRST PASS — attribute each painted rectangle to its surface and ask what it
+/// addresses by name.
+fn candidates_of<'a>(
+    painted: &'a std::collections::HashMap<String, Rect>,
+    surfaces: &'a [(String, Rect)],
+    state_scene: &Scene,
+) -> (Vec<Candidate<'a>>, PaintedWords<'a>) {
     // A rectangle belongs to the SMALLEST surface whose own rectangle contains
     // its centre. Stated as a rule rather than left to walk order because a
     // screen with a surface inside a surface would otherwise be attributed by
@@ -326,11 +427,11 @@ fn build(paint: &Scene, state_scene: &Scene) -> PointerTargetReport {
             .filter(|(_, rect)| contains(*rect, x, y))
             .min_by_key(|(_, rect)| u64::from(rect.w) * u64::from(rect.h))
     };
-
     let mut ordered: Vec<(&String, &Rect)> = painted.iter().collect();
     ordered.sort_by(|a, b| a.0.cmp(b.0));
 
-    let mut per_surface: BTreeMap<String, Vec<TargetRow>> = BTreeMap::new();
+    let mut candidates: Vec<Candidate> = Vec::new();
+    let mut words: PaintedWords = BTreeMap::new();
     for (tag, rect) in ordered {
         if rect.w == 0 || rect.h == 0 {
             continue;
@@ -349,39 +450,118 @@ fn build(paint: &Scene, state_scene: &Scene) -> PointerTargetReport {
         if !by_name.answered() {
             continue;
         }
-        // ★ `saturating_sub`, because only the tag's CENTRE is known to be
-        // inside the surface — a rectangle straddling the surface's left or top
-        // edge has probes outside it, and a bare subtraction there is a panic
-        // in a dispatcher rather than a wrong answer.
-        let ask = |x: u32, y: u32| {
-            node.handle.target_at(
-                x.saturating_sub(surface_rect.x),
-                y.saturating_sub(surface_rect.y),
-            )
+        if let Some(word) = by_name.word() {
+            words
+                .entry(surface_tag)
+                .or_default()
+                .entry(word.to_owned())
+                .or_default()
+                .push(*rect);
+        }
+        candidates.push(Candidate {
+            tag,
+            rect: *rect,
+            surface_tag,
+            surface_rect: *surface_rect,
+            by_name,
+        });
+    }
+    (candidates, words)
+}
+
+/// SECOND PASS — probe all nine points of one rectangle and judge each answer
+/// against the paint.
+fn judge(
+    cand: &Candidate,
+    elsewhere: Option<&BTreeMap<String, Vec<Rect>>>,
+    state_scene: &Scene,
+) -> Option<TargetRow> {
+    let node = state_scene.find_external_with_tag(cand.surface_tag)?;
+    let surface_rect = cand.surface_rect;
+    // ★ `saturating_sub`, because only the tag's CENTRE is known to be inside
+    // the surface — a rectangle straddling the surface's left or top edge has
+    // probes outside it, and a bare subtraction there is a panic in a
+    // dispatcher rather than a wrong answer.
+    let ask = |x: u32, y: u32| {
+        node.handle.target_at(
+            x.saturating_sub(surface_rect.x),
+            y.saturating_sub(surface_rect.y),
+        )
+    };
+    let (cx, cy) = centre(cand.rect);
+    let at_centre = ask(cx, cy);
+    // A grip is a point OTHER than the centre that reaches the tag, and it is
+    // only interesting when the centre does not — a rectangle whose centre
+    // answers is deliverable, and reporting one of its edges as the point to
+    // press would be a worse answer than its middle.
+    let centre_agrees = cand.by_name.word().is_some() && at_centre.word() == cand.by_name.word();
+    let mut grip = None;
+    let mut astray: Option<(u32, u32, Option<String>)> = None;
+    for (n, (px, py)) in probes(cand.rect).into_iter().enumerate() {
+        // A probe outside the surface would be asked about a point the surface
+        // was never told it owns, and a wrong answer there is the gate's fault
+        // rather than the screen's.
+        if !contains(surface_rect, px, py) {
+            continue;
+        }
+        let got = if n == 0 {
+            at_centre.clone()
+        } else {
+            ask(px, py)
         };
-        let at_centre = ask(cx, cy);
-        // The centre first, and the other eight only when the centre does not
-        // agree — so an ordinary control costs one call and a group costs nine.
-        let grip = match (by_name.word(), at_centre.word()) {
-            (Some(named), hit) if hit != Some(named) => probes(*rect)
-                .into_iter()
-                .skip(1)
-                .find(|(px, py)| ask(*px, *py).word() == Some(named)),
-            _ => None,
-        };
-        let verdict = verdict_of(&by_name, &at_centre, grip.is_some());
-        let at = grip.unwrap_or((cx, cy));
-        per_surface
-            .entry(surface_tag.clone())
-            .or_default()
-            .push(TargetRow {
-                tag: tag.to_string(),
-                x: at.0,
-                y: at.1,
-                verdict,
-                by_name: by_name.word().map(ToOwned::to_owned),
-                at_centre: at_centre.word().map(ToOwned::to_owned),
-            });
+        if got.word().is_some() && got.word() == cand.by_name.word() {
+            if grip.is_none() && n > 0 && !centre_agrees {
+                grip = Some((px, py));
+            }
+            continue;
+        }
+        if astray.is_some() {
+            continue;
+        }
+        // The answer names something else. Sound exactly when the paint puts
+        // that something else AT THIS POINT — a card's corner answering the pin
+        // that overhangs it is the paint agreeing with itself; the same corner
+        // answering the canvas behind it is not.
+        let elsewhere_here = got.word().is_some_and(|word| {
+            elsewhere.is_some_and(|by_word| {
+                by_word
+                    .get(word)
+                    .is_some_and(|rects| rects.iter().any(|r| contains(*r, px, py)))
+            })
+        });
+        if !elsewhere_here {
+            astray = Some((px, py, got.word().map(ToOwned::to_owned)));
+        }
+    }
+    let verdict = verdict_of(&cand.by_name, &at_centre, grip.is_some(), astray.is_some());
+    let (at, astray_to) = match &astray {
+        Some((px, py, to)) => ((*px, *py), to.clone()),
+        None => (grip.unwrap_or((cx, cy)), None),
+    };
+    Some(TargetRow {
+        tag: cand.tag.to_string(),
+        x: at.0,
+        y: at.1,
+        verdict,
+        by_name: cand.by_name.word().map(ToOwned::to_owned),
+        at_centre: at_centre.word().map(ToOwned::to_owned),
+        astray_to,
+    })
+}
+
+fn build(paint: &Scene, state_scene: &Scene) -> PointerTargetReport {
+    let painted = paint.absolute_rects_by_tag();
+    let surfaces = painted_surfaces(paint, state_scene);
+    let (candidates, painted_words) = candidates_of(&painted, &surfaces, state_scene);
+
+    let mut per_surface: BTreeMap<String, Vec<TargetRow>> = BTreeMap::new();
+    for cand in &candidates {
+        if let Some(row) = judge(cand, painted_words.get(cand.surface_tag), state_scene) {
+            per_surface
+                .entry(cand.surface_tag.clone())
+                .or_default()
+                .push(row);
+        }
     }
 
     let mut unanswered = Vec::new();
@@ -406,7 +586,10 @@ fn build(paint: &Scene, state_scene: &Scene) -> PointerTargetReport {
         }
         let count = |want: TargetVerdict| rows.iter().filter(|r| r.verdict == want).count();
         let unreachable = count(TargetVerdict::Unreachable);
-        defects += unreachable;
+        let astray = count(TargetVerdict::Astray);
+        // ★ Derived from the verdict's own rule rather than re-listed here, so
+        // a sixth verdict cannot be a defect in one place and not the other.
+        defects += rows.iter().filter(|r| r.verdict.is_defect()).count();
         out.push(SurfaceTargets {
             surface: surface.clone(),
             painted_size: (rect.w, rect.h),
@@ -417,6 +600,7 @@ fn build(paint: &Scene, state_scene: &Scene) -> PointerTargetReport {
             handle: count(TargetVerdict::Handle),
             inert: count(TargetVerdict::Inert),
             covering: count(TargetVerdict::Covering),
+            astray,
             unreachable,
             rows,
         });
@@ -438,18 +622,21 @@ mod tests {
     }
 
     #[test]
-    fn r1700_the_five_verdicts_are_the_five_ways_two_answers_can_stand() {
+    fn r1700_the_six_verdicts_are_the_six_ways_the_answers_can_stand() {
         let nothing = PointerTarget::Nothing;
         // A control: named, and the middle of it addresses the same thing.
         assert_eq!(
-            verdict_of(&word("message.0"), &word("message.0"), false),
+            verdict_of(&word("message.0"), &word("message.0"), false, false),
             TargetVerdict::Deliverable
         );
         // A caption: named by nothing, addressing nothing.
-        assert_eq!(verdict_of(&nothing, &nothing, false), TargetVerdict::Inert);
+        assert_eq!(
+            verdict_of(&nothing, &nothing, false, false),
+            TargetVerdict::Inert
+        );
         // Decoration over a control: the label is not addressable, the row is.
         assert_eq!(
-            verdict_of(&nothing, &word("message.0"), false),
+            verdict_of(&nothing, &word("message.0"), false, false),
             TargetVerdict::Covering
         );
         // ★ A group gripped by its tab strip — the case that refuted the first
@@ -457,22 +644,45 @@ mod tests {
         // centre correctly addresses a card INSIDE it, and a probe on the strip
         // reaches the group.
         assert_eq!(
-            verdict_of(&word("frame:host-a"), &word("node:R-01"), true),
+            verdict_of(&word("frame:host-a"), &word("node:R-01"), true, false),
             TargetVerdict::Handle
         );
         // ★★ The defect, and it is the SAME two answers as the row above with
         // the grip taken away — which is exactly why `gripped` has to be a
         // fact the census establishes rather than a reading of the two words.
         assert_eq!(
-            verdict_of(&word("frame:host-a"), &word("node:R-01"), false),
+            verdict_of(&word("frame:host-a"), &word("node:R-01"), false, false),
             TargetVerdict::Unreachable
         );
         // And the shape a resize produced 166 times: named, addressing nothing.
         assert_eq!(
-            verdict_of(&word("byte.7"), &nothing, false),
+            verdict_of(&word("byte.7"), &nothing, false, false),
             TargetVerdict::Unreachable
         );
+        // ★★★★★ R1736 — the sixth, and the one a centre sample cannot reach:
+        // the two answers AGREE at the centre and some other point inside the
+        // rectangle resolves where the paint put nothing. A person found this
+        // by hand on a card whose middle picked it up and whose corners panned
+        // the canvas behind it.
+        assert_eq!(
+            verdict_of(&word("node:P-01"), &word("node:P-01"), false, true),
+            TargetVerdict::Astray
+        );
+        // ★ And it outranks a grip too: a rectangle reachable somewhere and
+        // astray somewhere else is defective, not gripped.
+        assert_eq!(
+            verdict_of(&word("node:P-01"), &word("canvas"), true, true),
+            TargetVerdict::Astray
+        );
+        // ★ But an UNNAMED rectangle cannot be astray — nothing claimed it
+        // addresses anything, so a probe landing elsewhere is what decoration
+        // does. Otherwise every caption over a control would be a defect.
+        assert_eq!(
+            verdict_of(&nothing, &word("message.0"), false, true),
+            TargetVerdict::Covering
+        );
         assert!(TargetVerdict::Unreachable.is_defect());
+        assert!(TargetVerdict::Astray.is_defect());
         for benign in [
             TargetVerdict::Deliverable,
             TargetVerdict::Handle,

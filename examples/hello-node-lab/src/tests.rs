@@ -660,7 +660,13 @@ fn r1651_every_control_the_screen_paints_is_hit_at_the_centre_it_paints_in() {
     // a press does not reach.
     let owner = Owner::new();
     owner.run(|| {
-        let state = state();
+        // ★★★★★ R1736 — the state the VIEW reads, and painted first. A press is
+        // resolved from the paint now, so this test has two new obligations: it
+        // must drive the screen the view function draws (a state of its own
+        // would be painted by nobody), and it must have drawn something.
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        crate::painted::render_so_a_press_can_be_asked(&state);
         // ★ R1653 — a card's rectangle is on the WORLD SURFACE the canvas is a
         // viewport onto, and a press arrives in window coordinates. The
         // conversion is the app's own, so this cannot drift from it.
@@ -778,7 +784,12 @@ fn r1653_the_two_canvas_conversions_invert_each_other() {
 fn r1654_a_node_drags_above_and_left_of_the_opening_graph() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = std::rc::Rc::new(state());
+        // ★★★★★ R1736 — the state the view reads, painted first: a press is
+        // resolved from the paint now, so a drag that starts without one is
+        // starting on an empty screen.
+        super::reset_lab_state();
+        let state = super::use_lab_state();
+        crate::painted::render_so_a_press_can_be_asked(&state);
         let node = state.node_of("R-01").expect("on the canvas");
         let before = super::card_rect(&state, node).expect("a card");
         let start = super::content_to_window(
@@ -824,7 +835,10 @@ fn r1654_a_node_drags_above_and_left_of_the_opening_graph() {
 fn r1654_a_frame_is_derived_from_its_members_and_moves_them() {
     let owner = Owner::new();
     owner.run(|| {
-        let state = std::rc::Rc::new(state());
+        // ★★★★★ R1736 — the state the view reads, because the drags below are
+        // resolved from what the screen painted.
+        super::reset_lab_state();
+        let state = super::use_lab_state();
         let frames = super::frames_of(&state);
         let (host_a, _) = frames
             .iter()
@@ -855,6 +869,11 @@ fn r1654_a_frame_is_derived_from_its_members_and_moves_them() {
         // other and the two boxes re-derive.
         let moving = state.node_of("T-01").expect("on host-b");
         assert!(super::members_of(&state, host_b).contains(&moving));
+        // ★★★★★ R1736 — painted before the drag, because the press that starts
+        // it is resolved from the paint. Re-painted rather than painted once at
+        // the top: this test moves cards between the two acts, and a press
+        // aimed with a frame the screen has since redrawn is aimed at history.
+        crate::painted::render_so_a_press_can_be_asked(&state);
         let target =
             super::card_rect(&state, state.node_of("P-02").expect("on host-a")).expect("a card");
         let from = super::card_rect(&state, moving).expect("a card");
@@ -884,6 +903,9 @@ fn r1654_a_frame_is_derived_from_its_members_and_moves_them() {
         );
 
         // (3) THE FRAME IS A HANDLE: dragging its tab moves every member.
+        // ★ R1736 — repainted again, for the reason above: act (2) moved a card
+        // between hosts, so both frames have new boxes.
+        crate::painted::render_so_a_press_can_be_asked(&state);
         let tab = super::frame_rect_of(&state, host_a);
         let grip = super::content_to_window(&state, i64::from(tab.x + 40), i64::from(tab.y + 4))
             .expect("on screen");

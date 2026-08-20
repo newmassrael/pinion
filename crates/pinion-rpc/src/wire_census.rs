@@ -2119,6 +2119,7 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("handle", WireTy::Integer, None),
                 WireField::new("inert", WireTy::Integer, None),
                 WireField::new("covering", WireTy::Integer, None),
+                WireField::new("astray", WireTy::Integer, None),
                 WireField::new("unreachable", WireTy::Integer, None),
                 WireField::new("rows", WireTy::Array, Some("TargetRow")),
             ],
@@ -2133,6 +2134,7 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("y", WireTy::Integer, None),
                 WireField::new("by_name", WireTy::String, None).nullable(),
                 WireField::new("at_centre", WireTy::String, None).nullable(),
+                WireField::new("astray_to", WireTy::String, None).nullable(),
                 WireField::new("verdict", WireTy::String, Some("TargetVerdict")),
             ],
         },
@@ -2140,7 +2142,14 @@ pub const WIRE_TYPES: &[WireType] = &[
     WireType {
         name: "TargetVerdict",
         shape: WireShape::Enum {
-            values: &["deliverable", "handle", "inert", "covering", "unreachable"],
+            values: &[
+                "deliverable",
+                "handle",
+                "inert",
+                "covering",
+                "astray",
+                "unreachable",
+            ],
         },
     },
     WireType {

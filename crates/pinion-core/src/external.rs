@@ -336,17 +336,62 @@ pub fn granted_surface_extent(tag: &str) -> Option<(u32, u32)> {
 /// in each screen is the reason [`layout_size`] is: a screen that forgets it
 /// has a hit test that is right at one offset and wrong at every other, which
 /// is a defect nothing but a person moving the window would find.
+///
+/// ★★★★★ R1736 — the multiplication is [`pixel_of`], which is where the
+/// measurement of why a bare cast is wrong lives.
 #[must_use]
 pub fn layout_point(tag: &str, at: (f32, f32)) -> (u32, u32) {
     let (w, h) = surface_size(tag).unwrap_or((1, 1));
-    #[allow(
-        clippy::cast_precision_loss,
-        clippy::cast_possible_truncation,
-        clippy::cast_sign_loss,
-        reason = "a window fraction times a window size is a pixel inside it"
-    )]
-    let pixel = |frac: f32, extent: u32| -> u32 { (frac.clamp(0.0, 1.0) * extent as f32) as u32 };
-    into_layout(tag, (pixel(at.0, w), pixel(at.1, h)))
+    into_layout(tag, (pixel_of(at.0, w), pixel_of(at.1, h)))
+}
+
+/// ★★★★★ R1736 — **the pixel a fraction of `extent` names.**
+///
+/// # Why this is not a bare cast
+///
+/// The fraction arrived from a pixel divided by this extent, in `f32`
+/// ([`crate::input::PointerReading`]). Multiplying it back inverts a division
+/// that has already lost bits, so the product lands a hair either side of the
+/// pixel it came from — and truncation turns "a hair below an integer" into the
+/// pixel *before* it while leaving "a hair above" alone.
+///
+/// Measured on the running node lab by walking a real X pointer over 600
+/// columns and 600 rows and asking the screen where it thought the pointer was:
+/// with the old cast **35 of 600 columns and 20 of 600 rows arrived one pixel
+/// left or up**, x = 434 among them, while 491 and 547 in the same sweep were
+/// exact. With this, 0 and 0.
+///
+/// One pixel, at some coordinates and not others, is exactly the shape a person
+/// reports as "it works and then it doesn't". On a nine-pixel pin it is an
+/// eighth of the target.
+///
+/// So the product is nudged by the largest error the `f32` can carry before it
+/// is floored. The nudge is **derived from the format**, not chosen: an `f32`
+/// holds `f32::EPSILON` of relative error and the product is at most `extent`.
+/// A genuinely fractional cursor still names the pixel it is inside, because
+/// the nudge is smaller than any distance a cursor can be from a pixel edge.
+///
+/// ```
+/// # use pinion_core::external::pixel_of;
+/// // The round trip an integer pixel makes through a fraction.
+/// for extent in [1u32, 2, 37, 900, 1440, 2494] {
+///     for pixel in 0..extent {
+///         let frac = pixel as f32 / extent as f32;
+///         assert_eq!(pixel_of(frac, extent), pixel, "{pixel} of {extent}");
+///     }
+/// }
+/// ```
+#[must_use]
+#[allow(
+    clippy::cast_precision_loss,
+    clippy::cast_possible_truncation,
+    clippy::cast_sign_loss,
+    reason = "a window fraction times a window size is a pixel inside it"
+)]
+pub fn pixel_of(frac: f32, extent: u32) -> u32 {
+    let extent = f64::from(extent);
+    let slack = extent * f64::from(f32::EPSILON);
+    (f64::from(frac.clamp(0.0, 1.0)).mul_add(extent, slack)).floor() as u32
 }
 
 /// ★★★★★ R1714 — a point in the **window's** frame, in the frame the screen's
@@ -4459,6 +4504,73 @@ mod tests {
         // range is a smaller lie than multiplying by it.
         assert_eq!(layout_point(tag, (-1.0, 2.0)), (120, 430));
         crate::shrink::forget_pan(tag);
+        forget_surface_size(tag);
+    }
+
+    /// ★★★★★ R1736 — **every pixel survives the round trip through a
+    /// fraction**, which is the property a person found broken by hand.
+    ///
+    /// The router divides an integer pixel by the surface extent into an `f32`
+    /// and hands the screen the fraction; [`layout_point`] multiplies it back.
+    /// With a truncating cast the product lands a hair below the pixel it came
+    /// from often enough to matter — measured on the running node lab, window
+    /// x **434** arrived as **433** while 491 and 547 in the same session were
+    /// exact — and a press six pixels inside a card resolved to the canvas
+    /// behind it.
+    ///
+    /// Asserted over the WHOLE range of several extents rather than at a
+    /// sample, because the failures are **scattered**: they are the pixels
+    /// whose quotient the `f32` rounds down, and which those are depends on the
+    /// extent, so any list of points somebody chooses can miss them all. This
+    /// test's own extents are where that is measurable exactly — the old cast
+    /// fails it at 74 of 1440 and 24 of 900.
+    ///
+    /// ★ The end-to-end number is the demo's, not this test's, and the two are
+    /// different measurements: walking a real pointer over the running screen
+    /// found 35 of 600 columns and 20 of 600 rows arriving one pixel off, which
+    /// is the same defect through the whole router rather than through this
+    /// function alone. On a 9-pixel pin it is an eighth of the target.
+    #[test]
+    fn r1736_every_pixel_survives_the_round_trip_through_a_fraction() {
+        let tag = "r1736.round_trip";
+        crate::shrink::forget_pan(tag);
+        for (w, h) in [(1u32, 1u32), (3, 7), (37, 41), (900, 1440), (2494, 1531)] {
+            record_surface_size(tag, w, h);
+            for pixel in 0..w {
+                #[allow(
+                    clippy::cast_precision_loss,
+                    reason = "the router's own division, reproduced exactly"
+                )]
+                let frac = pixel as f32 / w as f32;
+                assert_eq!(
+                    layout_point(tag, (frac, 0.0)).0,
+                    pixel,
+                    "x pixel {pixel} of {w}",
+                );
+            }
+            for pixel in 0..h {
+                #[allow(
+                    clippy::cast_precision_loss,
+                    reason = "the router's own division, reproduced exactly"
+                )]
+                let frac = pixel as f32 / h as f32;
+                assert_eq!(
+                    layout_point(tag, (0.0, frac)).1,
+                    pixel,
+                    "y pixel {pixel} of {h}",
+                );
+            }
+        }
+        // ★ And a genuinely fractional cursor still names the pixel it is
+        // inside: the nudge is the f32's own error, which is far smaller than
+        // any distance a cursor can sit from a pixel edge. Without this the
+        // repair would be "round to nearest", which moves a cursor at 433.6
+        // onto pixel 434 — a different defect in the other direction.
+        record_surface_size(tag, 1000, 1000);
+        assert_eq!(pixel_of(0.433_6, 1000), 433);
+        assert_eq!(pixel_of(0.433_999, 1000), 433);
+        assert_eq!(pixel_of(0.0, 1000), 0);
+        assert_eq!(pixel_of(1.0, 1000), 1000);
         forget_surface_size(tag);
     }
 

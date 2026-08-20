@@ -2606,6 +2606,35 @@ impl Rect {
         px >= x && px < x + w && py >= y && py < y + h
     }
 
+    /// ★★★★★ R1736 — does this rectangle hold that **pixel**?
+    ///
+    /// Half-open on both axes, so two rectangles that touch do not both claim
+    /// the seam. Its own method beside
+    /// [`contains_point`](Self::contains_point) rather than a cast into it: a
+    /// pixel is a whole thing and a point is a position inside one, and the two
+    /// questions answer differently at every edge. A caller with an integer
+    /// coordinate that went through the float door would be asking about the
+    /// point at the pixel's top-left corner.
+    ///
+    /// Lifted at its third copy, which is this workspace's rule. The framework's
+    /// pointer census, a screen's own paint sweep and the paint-region store all
+    /// asked it, in three private helpers with three names — and a hit test is
+    /// exactly the place where two copies of "is it inside" disagreeing puts a
+    /// press somewhere the reader did not aim.
+    ///
+    /// ```
+    /// # use pinion_core::scene::Rect;
+    /// let r = Rect::new(10, 10, 5, 5);
+    /// assert!(r.holds(10, 10));
+    /// assert!(r.holds(14, 14));
+    /// assert!(!r.holds(15, 14));
+    /// assert!(!r.holds(9, 10));
+    /// ```
+    #[must_use]
+    pub const fn holds(self, px: u32, py: u32) -> bool {
+        px >= self.x && py >= self.y && px < self.x + self.w && py < self.y + self.h
+    }
+
     /// R1713 — the rectangle both cover, or `None` when they share no pixel.
     ///
     /// The other half of [`union`](Self::union), and `None` rather than a

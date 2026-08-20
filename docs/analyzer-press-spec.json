@@ -1,0 +1,252 @@
+{
+  "$comment": [
+    "R1736 — WHAT A PRESS ON THE ANALYSIS TOOL'S SCREENS GUARANTEES, written",
+    "down once, apart from the code that has to satisfy it.",
+    "",
+    "WHY THIS IS A FILE AND NOT A RUST CONSTANT. The reason its siblings are.",
+    "A screen's own `spec` module is what a RUNNING screen needs — paint tags,",
+    "catalogue rows, the wording of a refusal — and a specification written",
+    "there is written by the same hand that has to satisfy it, so the gate ends",
+    "up asking the thing under test for the right answer (R1728). This file is",
+    "the other hand. It is tracked, it is read by the demo and by the screens'",
+    "own sweeps, and neither of them may edit it to pass.",
+    "",
+    "WHAT OPENED IT. A person reported, on their own desktop, that a node",
+    "created from the palette could not be selected — and, decisively, that",
+    "'sometimes the node is selected and sometimes the background behind it is,",
+    "so dragging pans'. Every gate in the tree was green. Two things were true",
+    "at once and only one of them had been looked for:",
+    "",
+    "  1. a press was delivered to the screen one pixel left or up of where the",
+    "     pointer actually was, at some coordinates and not others; and",
+    "  2. the gate that watches 'the drawn thing is the pressed thing' sampled",
+    "     ONE POINT per rectangle in the direction that convicts, and that point",
+    "     was the middle.",
+    "",
+    "Both are measured below rather than asserted. The vocabulary here is",
+    "neutral by requirement: this describes the analysis tool's screens, not any",
+    "particular product's."
+  ],
+  "round_trip": {
+    "$comment": [
+      "THE PIXEL A POINTER IS AT IS THE PIXEL THE SCREEN IS TOLD ABOUT.",
+      "",
+      "A screen that hit-tests itself is handed a FRACTION of its surface and",
+      "multiplies it back. The fraction was made by dividing an integer pixel",
+      "by an integer extent in 32-bit floating point, so the product lands a",
+      "hair either side of the pixel it came from — and truncating it turns 'a",
+      "hair below an integer' into the pixel before.",
+      "",
+      "Measured by walking a real X pointer over 600 columns and 600 rows of a",
+      "running screen and asking it where it thought the pointer was:",
+      "35 of 600 columns and 20 of 600 rows arrived one pixel left or up.",
+      "After the repair, 0 and 0. This surface is that measurement kept.",
+      "",
+      "It is stated per-pixel and not per-control on purpose. Which pixels fail",
+      "depends on the extent, so any list of points somebody chooses can miss",
+      "them all — which is exactly how this survived every gate."
+    ],
+    "canon": [
+      {
+        "ordinal": 1,
+        "key": "every-column",
+        "title": "every column of the surface arrives as itself"
+      },
+      {
+        "ordinal": 2,
+        "key": "every-row",
+        "title": "every row of the surface arrives as itself"
+      }
+    ],
+    "owed": []
+  },
+  "whole_rectangle": {
+    "$comment": [
+      "A CONTROL IS PRESSABLE OVER THE RECTANGLE IT WAS DRAWN IN, not only at",
+      "its middle.",
+      "",
+      "The framework holds every tagged rectangle its last frame painted, so",
+      "this is askable as a total rather than sampled: each rectangle is probed",
+      "at nine points — its centre, its four edge midpoints and its four inset",
+      "corners — and every answer is judged against the paint. An answer naming",
+      "something else is sound exactly when the paint puts that something else",
+      "at that very point: a card's corner answering the pin that overhangs it",
+      "is the paint agreeing with itself, and the same corner answering the",
+      "canvas behind it is not.",
+      "",
+      "Before R1736 the eight non-centre probes only ever RESCUED a rectangle —",
+      "they ran when the centre disagreed and could turn a defect into a grip.",
+      "A rectangle whose centre agreed was never asked anything else. Every",
+      "automatic observer in the tree aims at the middle, so the middle is the",
+      "one point that cannot convict.",
+      "",
+      "THE FLOOR, MEASURED. A mature retained-mode toolkit was built and driven",
+      "for this: a canvas item that paints exactly the region it declares is",
+      "pickable at 100% of the pixels it was drawn in, under four camera",
+      "transforms including fractional zooms (13,500 / 9,450 / 11,718 / 9,919",
+      "points, no misses). That is a real floor and this tree owed it. What the",
+      "floor cannot do is notice when an author lets the two come apart: an item",
+      "whose paint reaches six pixels past its pick shape leaves 15.4% of its",
+      "painted pixels dead at zoom 100 and 84, and 30.1% at 135, while the",
+      "framework holds both rectangles, hands out the larger one as the item's",
+      "bounds, and never compares them. There is no verdict to read."
+    ],
+    "canon": [
+      {
+        "ordinal": 1,
+        "key": "centre",
+        "title": "the middle of the rectangle reaches what was drawn there"
+      },
+      {
+        "ordinal": 2,
+        "key": "edges",
+        "title": "the four edge midpoints reach it or something drawn over it"
+      },
+      {
+        "ordinal": 3,
+        "key": "corners",
+        "title": "the four inset corners reach it or something drawn over it"
+      },
+      {
+        "ordinal": 4,
+        "key": "astray",
+        "title": "no point inside it resolves where the paint drew nothing"
+      }
+    ],
+    "owed": [
+      {
+        "key": "every-pixel",
+        "sentence": "nine points is a sample of a region, not the region",
+        "since": "R1736",
+        "why": [
+          "The honest statement is 'every point inside the rectangle', and nine",
+          "points is what a check can afford to ask of every painted rectangle",
+          "of every screen on every frame. The nine are chosen to be the ones a",
+          "transform error moves first — the middle is the last point to break,",
+          "which is why it was the wrong one to sample alone. A per-pixel sweep",
+          "is affordable for one control at a time and the demo does it for the",
+          "surface's own coordinate round trip, where the failures are dense."
+        ]
+      }
+    ]
+  },
+  "one_derivation": {
+    "$comment": [
+      "THE DRAWN RECTANGLE AND THE PRESSED RECTANGLE ARE ONE RECTANGLE.",
+      "",
+      "The invariant that makes the surface above unfalsifiable-by-drift rather",
+      "than merely watched. A screen is one escape hatch, so it hit-tests",
+      "itself; every such screen written here used to work out where it had",
+      "drawn something a SECOND time, from the model, and the two derivations",
+      "have parted four times in this repository's history — a doubled offset, a",
+      "pane-versus-window frame, an unscrolled pane, a stale window size. Each",
+      "was repaired on one screen and left the structure standing.",
+      "",
+      "The framework painted those rectangles and still holds them, with the",
+      "names on them, so the press reads them instead. The priority among",
+      "overlapping marks is the paint's too: last drawn is topmost, which is",
+      "what the reader sees — the pin is over the card because the painter drew",
+      "it there, not because a hit test lists pins first.",
+      "",
+      "This is not reachable from the floor's design. Measured on the same",
+      "6.11.1 build: of eight marks a self-painting widget drew inside itself,",
+      "the framework names ZERO, because the only record it keeps of a paint is",
+      "pixels and pixels carry no identity."
+    ],
+    "canon": [
+      {
+        "ordinal": 1,
+        "key": "cards",
+        "title": "a card is reached through the rectangle it was painted in"
+      },
+      {
+        "ordinal": 2,
+        "key": "pins",
+        "title": "a pin is reached over its own paint, including where it overhangs"
+      },
+      {
+        "ordinal": 3,
+        "key": "over",
+        "title": "what is drawn on top is what a press reaches first"
+      }
+    ],
+    "owed": [
+      {
+        "key": "the-census-stops-discriminating-here",
+        "sentence": "the surface above measures layering on this screen now, not geometry",
+        "since": "R1736",
+        "why": [
+          "`whole_rectangle` is a COMPARISON of two answers — what a rectangle",
+          "addresses by name, and what a press inside it addresses — and it is",
+          "only a comparison while the screen derives the two separately. This",
+          "surface makes them one derivation, so on the families it covers the",
+          "census can no longer catch geometry drift; there is none to catch.",
+          "That is the better state and it is also a smaller claim, written",
+          "here so a later reader does not take a clean report for more than it",
+          "is. The screens that still hit-test from a model of their own are",
+          "where the original question still bites."
+        ]
+      },
+      {
+        "key": "wires",
+        "sentence": "a wire carries no tag of its own, so a press on one is still parsed from the model",
+        "since": "R1736",
+        "why": [
+          "A link is drawn as a stroke between two pins and the paint records no",
+          "named rectangle for it, so there is nothing in the store to resolve",
+          "against. Stated rather than hidden: it is the remaining half of this",
+          "axis on this screen, and closing it means giving a wire a painted",
+          "identity rather than teaching the hit test a second geometry."
+        ]
+      },
+      {
+        "key": "group-box",
+        "sentence": "a host frame is still gripped by its strip through the model's rectangle",
+        "since": "R1736",
+        "why": [
+          "The frame's painted rectangle is the whole group, and a press over",
+          "its interior belongs to the card there rather than to the group — so",
+          "resolving the frame from its paint would make every card inside it",
+          "undraggable. The grip is the strip along its top, and the paint does",
+          "not name that strip apart from the box. Closing this means painting",
+          "the grip as its own named thing, which is a change to what the screen",
+          "draws and not only to how it is read."
+        ]
+      }
+    ]
+  },
+  "it_says_so": {
+    "$comment": [
+      "A SELECTION MADE WITH THE POINTER REACHES THE PERSON, in the same",
+      "sentence as one made on the wire.",
+      "",
+      "Measured three times: the wire's select said 'selected T-01' and a press",
+      "said nothing at all, because the sentence sat at the invoke site rather",
+      "than at the act. So the reader who uses the pointer heard nothing and the",
+      "agent who uses the wire heard everything — the wrong way round.",
+      "",
+      "It matters most exactly where the surfaces above fail. A press that lands",
+      "on the wrong thing while the screen says nothing reads as 'I clicked and",
+      "nothing happened', which is the sentence the person who opened this file",
+      "used."
+    ],
+    "canon": [
+      {
+        "ordinal": 1,
+        "key": "pointer",
+        "title": "a press that changes the selection says what is now selected"
+      },
+      {
+        "ordinal": 2,
+        "key": "wire",
+        "title": "and the wire's own verb says the same sentence, once"
+      },
+      {
+        "ordinal": 3,
+        "key": "unchanged",
+        "title": "a press that changes nothing says nothing"
+      }
+    ],
+    "owed": []
+  }
+}

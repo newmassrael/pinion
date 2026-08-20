@@ -318,6 +318,15 @@ fn painted_at(state: &std::rc::Rc<LabState>, size: (u32, u32)) -> (Painted, Scen
     );
     let mut cache = pinion_runtime::LayoutCache::new();
     pinion_runtime::compute_layout(&mut scene, &mut cache, size.0, size.1);
+    // ★★★★★ R1736 — and recording what was painted, exactly as the shell does
+    // on the same pass it announces the size. The screen resolves a press on
+    // the diagram from this store now, so a sweep that skipped the line would
+    // be driving a hit test the running window does not have.
+    assert!(
+        pinion_runtime::record_painted_surface(&scene, super::VIEW_TAG),
+        "the screen's own surface is painted, or every press below is asked of \
+         a store this frame never filled",
+    );
     let shot = Painted::of(&scene, size);
     assert!(
         std::rc::Rc::ptr_eq(state, &use_lab_state()),
@@ -338,6 +347,22 @@ fn painted_and_scene(state: &std::rc::Rc<LabState>, size: (u32, u32)) -> (Painte
 /// Paint the screen as the window would, at the design size.
 fn painted(state: &std::rc::Rc<LabState>) -> Painted {
     painted_at(state, (WIN_W, WIN_H)).0
+}
+
+/// ★★★★★ R1736 — **paint the screen so a press can be asked of it**, for the
+/// model tests next door.
+///
+/// `tests.rs` asserts the geometry helpers against each other and renders
+/// nothing, which was sound while a press was worked out from the model. It is
+/// not sound any more: the diagram's marks are resolved from the paint the
+/// framework kept, so *"what does a press here reach"* is a question about what
+/// is ON SCREEN, and a caller that has not drawn anything is asking about an
+/// empty screen.
+///
+/// Exposed rather than duplicated, because a second way of painting for a test
+/// would be a second screen — which is the whole class this round is about.
+pub(super) fn render_so_a_press_can_be_asked(state: &std::rc::Rc<LabState>) {
+    let _ = painted_at(state, (WIN_W, WIN_H));
 }
 
 /// The centre of a rectangle, which is where a press is aimed.
@@ -707,10 +732,22 @@ fn assert_forward(when: &str, state: &LabState, shot: &Painted, size: (u32, u32)
         .count()
 }
 
-/// (3) REACHABLE — every painted control answers for itself when pressed at the
-/// centre of the rectangle it was painted in. Returns how many were probed.
+/// ★★★★★ R1736 — the nine points a painted rectangle is probed at, **the
+/// framework's rule** and not this module's.
+///
+/// The same nine `scene/pointer_target` uses, from the same function, because
+/// this sweep and that census ask the same question about the same rectangles:
+/// a rectangle is a REGION and a region is not checked by one point. Every
+/// automatic observer in this tree used to aim at the centre — this sweep, the
+/// framework's census, and a demo's `click(path=...)` — and a person found a
+/// defect where the centre was the one point that agreed.
+use pinion_core::painted::probe_points as probes;
+
+/// (3) REACHABLE — every painted control answers for itself, or for something
+/// the paint puts on top of it, at **every** one of [`probes`]'s nine points
+/// inside the rectangle it was painted in. Returns how many were probed.
 fn assert_reachable(when: &str, state: &LabState, shot: &Painted, size: (u32, u32)) -> usize {
-    let probes: Vec<(&String, String)> = shot
+    let controls: Vec<(&String, String)> = shot
         .tags
         .iter()
         .filter_map(|(tag, _)| must_answer(tag).map(|want| (tag, want)))
@@ -743,44 +780,65 @@ fn assert_reachable(when: &str, state: &LabState, shot: &Painted, size: (u32, u3
         .filter(|tag| must_answer(tag).is_some())
         .count();
     assert!(
-        probes.len() + scrolled >= 40,
+        controls.len() + scrolled >= 40,
         "{when}: only {} control(s) — {} painted and {scrolled} one scroll \
          away. A screen that stops painting controls must fail here, not \
          report a smaller number",
-        probes.len() + scrolled,
-        probes.len()
+        controls.len() + scrolled,
+        controls.len()
     );
-    let mut unreachable = Vec::new();
-    for (tag, want) in &probes {
-        let rect = shot.tags[*tag];
-        let (px, py) = centre(rect);
-        // ★★ R1681.3 — the picked link's own chrome legitimately covers what it
-        // is drawn over: it is an affordance the person summoned, the reference
-        // draws it in the same place, and the seats themselves are probed here
-        // too (see `must_answer`), so this excuses nothing it does not replace
-        // with something reachable.
-        //
-        // ★★★ NOT for the chrome's OWN tags, and a counterfactual is what said
-        // so: a first draft excused every probe the chrome covered, which
-        // includes the chrome, so making the `delete` seat unpressable left
-        // this sweep green. An exception that swallows the thing it is
-        // exchanged for is not an exception, it is a hole.
-        if !tag.starts_with("lab.link.") && super::chrome_covers(state, px, py) {
-            continue;
+    // ★★★★★ R1736 — where each ANSWER is painted, so a probe that names
+    // something else can be judged against the paint rather than against a
+    // guess. A card's corner answering the pin that overhangs it is the paint
+    // agreeing with itself; the same corner answering the canvas behind it is
+    // the screen resolving a press somewhere it drew nothing.
+    let mut painted_at: BTreeMap<String, Vec<Rect>> = BTreeMap::new();
+    for (tag, rect) in &shot.tags {
+        if let Some(word) = must_answer(tag) {
+            painted_at.entry(word).or_default().push(*rect);
         }
-        let got = Hit::at(state, px, py).word(state);
-        if &got != want && !same_row(want, &got) {
-            unreachable.push((tag, want.clone(), got, rect));
+    }
+    let mut unreachable = Vec::new();
+    for (tag, want) in &controls {
+        let rect = shot.tags[*tag];
+        for (px, py) in probes(rect) {
+            // ★★ R1681.3 — the picked link's own chrome legitimately covers
+            // what it is drawn over: it is an affordance the person summoned,
+            // the reference draws it in the same place, and the seats
+            // themselves are probed here too (see `must_answer`), so this
+            // excuses nothing it does not replace with something reachable.
+            //
+            // ★★★ NOT for the chrome's OWN tags, and a counterfactual is what
+            // said so: a first draft excused every probe the chrome covered,
+            // which includes the chrome, so making the `delete` seat
+            // unpressable left this sweep green. An exception that swallows the
+            // thing it is exchanged for is not an exception, it is a hole.
+            if !tag.starts_with("lab.link.") && super::chrome_covers(state, px, py) {
+                continue;
+            }
+            let got = Hit::at(state, px, py).word(state);
+            if &got == want || same_row(want, &got) {
+                continue;
+            }
+            // The answer names something else — sound only when the paint puts
+            // that something else at this very point.
+            if painted_at
+                .get(&got)
+                .is_some_and(|rects| rects.iter().any(|r| r.holds(px, py)))
+            {
+                continue;
+            }
+            unreachable.push((tag, want.clone(), got, rect, (px, py)));
         }
     }
     assert!(
         unreachable.is_empty(),
-        "{when}: {} of {} painted control(s) are drawn where a press does not \
-         reach them: {unreachable:?}",
+        "{when}: {} probe(s) inside a painted control resolve to something the \
+         paint does not put there, over {} control(s): {unreachable:?}",
         unreachable.len(),
-        probes.len()
+        controls.len()
     );
-    probes.len()
+    controls.len()
 }
 
 /// (4) CONTAINED — a mark outside its own pane is a mark the reader sees

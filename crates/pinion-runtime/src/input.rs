@@ -76,7 +76,7 @@
 //!   call site sources them yet — winit `Touch` event integration is
 //!   a separate carry.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::rc::Rc;
 use std::time::Instant;
 
@@ -5456,6 +5456,62 @@ mod tests {
         let mut node = pinion_core::scene::ExternalNode::new(Box::new(handle)).with_tag(tag);
         node.rect = rect;
         Scene::External(node)
+    }
+
+    /// ★★★★★ R1736 — **what a surface painted is recorded on the same pass**,
+    /// in paint order, in the surface's own frame, and only for its own marks.
+    ///
+    /// The three properties a hit test reading this store depends on, asserted
+    /// apart from any screen: a mark inside a nested surface belongs to the
+    /// nested one (or a screen inside a screen would find its host's controls
+    /// in its own stack), the coordinates are surface-local (or every lookup
+    /// would be off by wherever the surface sits), and a surface that stops
+    /// being painted stops answering (or a press would be resolved against a
+    /// frame that is no longer on screen).
+    #[test]
+    fn r1736_a_surface_is_told_what_it_painted_and_only_that() {
+        let (handle, _) = SizedExternal::new();
+        let mut state = Scene::Container(ContainerNode::new(vec![external_at(
+            "screen",
+            Rect::new(0, 0, 0, 0),
+            handle,
+        )]));
+        // A surface at an offset, holding two marks — one of them drawn later
+        // and overlapping the first.
+        let mut surface = ContainerNode::new(vec![
+            painted_as("under", Rect::new(120, 140, 80, 40)),
+            painted_as("over", Rect::new(150, 150, 20, 20)),
+        ]);
+        surface.rect = Rect::new(100, 100, 400, 300);
+        surface.tag = Some("screen".into());
+        surface.layout = pinion_core::style::LayoutStyle::new();
+        let paint = Scene::Container(surface);
+        let mut known = std::collections::HashMap::new();
+        announce_external_sizes(&paint, &mut state, &mut known);
+
+        let marks = pinion_core::painted::painted_regions("screen").expect("painted this frame");
+        assert_eq!(
+            marks.marks().collect::<Vec<_>>(),
+            vec![
+                ("under", Rect::new(20, 40, 80, 40)),
+                ("over", Rect::new(50, 50, 20, 20)),
+            ],
+            "surface-local, in paint order, and the surface is not a mark inside itself",
+        );
+        // The overlap belongs to whichever was drawn last, which is what the
+        // reader sees.
+        assert_eq!(marks.topmost_at(55, 55), Some("over"));
+        assert_eq!(marks.topmost_at(25, 45), Some("under"));
+        assert_eq!(marks.topmost_at(300, 200), None);
+
+        // A frame that does not paint it takes the record away, rather than
+        // leaving a stale one to answer.
+        let empty = painted_as("elsewhere", Rect::new(0, 0, 10, 10));
+        announce_external_sizes(&empty, &mut state, &mut known);
+        assert!(
+            pinion_core::painted::painted_regions("screen").is_none(),
+            "a surface that is not on screen answers nothing, not an empty set",
+        );
     }
 
     /// ★ R1656 §5.15 — the widget is told its size, and told again when it
@@ -14466,6 +14522,22 @@ pub fn announce_external_sizes(
             }
         }
     });
+    // ★★★★★ R1736 — what each surface DREW, from the same scene and the same
+    // rectangles as the sizes below.
+    //
+    // Beside the size deliberately: a screen that hit-tests itself needs both
+    // halves of the same fact, and taking them from two passes is how they
+    // would come to disagree about which frame they are describing. See
+    // `pinion_core::painted` for what this closes.
+    let painted: Vec<(String, Rect)> = tags
+        .iter()
+        .filter_map(|tag| {
+            rect_for_tag(paint_scene, tag)
+                .filter(|r| r.w > 0 && r.h > 0)
+                .map(|rect| (tag.clone(), rect))
+        })
+        .collect();
+    record_painted_marks(paint_scene, &painted);
     let mut told = 0;
     for tag in tags {
         // ★ `rect_for_tag` on the PAINT scene, which is the same resolution
@@ -14478,6 +14550,7 @@ pub fn announce_external_sizes(
             // the memory so its size is announced again when it returns.
             known.remove(&tag);
             pinion_core::external::forget_surface_size(&tag);
+            pinion_core::painted::forget_painted_regions(&tag);
             continue;
         };
         if rect.w == 0 || rect.h == 0 {
@@ -14510,4 +14583,82 @@ pub fn announce_external_sizes(
         told += 1;
     }
     told
+}
+
+/// ★★★★★ R1736 — record what ONE surface painted, for a caller that has the
+/// paint scene and not the state one.
+///
+/// The windowed path goes through [`announce_external_sizes`], which does this
+/// for every surface on the same pass as the sizes. The in-process sweeps have
+/// no state scene to walk for `External` handles — they run `view()` and the
+/// layout pass and nothing else — so they say which surface they painted.
+///
+/// ★ It exists so those sweeps take the SAME path the window does. A fixture
+/// that skipped this would leave a screen resolving presses from its model
+/// while the running app resolves them from its paint, which is two behaviours
+/// under one name and the exact shape R1700 recorded: "the in-process sweeps
+/// paint and hit-test inside one owner scope, where the size axis is void by
+/// construction".
+///
+/// Returns whether the surface was painted at all.
+pub fn record_painted_surface(paint_scene: &Scene, tag: &str) -> bool {
+    let Some(rect) = rect_for_tag(paint_scene, tag).filter(|r| r.w > 0 && r.h > 0) else {
+        pinion_core::painted::forget_painted_regions(tag);
+        return false;
+    };
+    record_painted_marks(paint_scene, &[(tag.to_owned(), rect)]);
+    true
+}
+
+/// ★★★★★ R1736 — record, for each painted surface, the tagged rectangles drawn
+/// inside it, in paint order and in that surface's own coordinates.
+///
+/// One walk for every surface rather than one per surface, because paint order
+/// is what the store is FOR and a per-surface walk would have to re-establish
+/// it each time.
+///
+/// A mark belongs to the **smallest** surface whose rectangle contains its
+/// centre — the same attribution `scene/pointer_target` makes, stated once here
+/// rather than left to walk order. Without it a screen nested inside another
+/// would find the host's marks in its own stack and resolve presses to things
+/// it does not own.
+fn record_painted_marks(paint_scene: &Scene, surfaces: &[(String, Rect)]) {
+    let mut marks: BTreeMap<&str, Vec<(String, Rect)>> = surfaces
+        .iter()
+        .map(|(tag, _)| (tag.as_str(), Vec::new()))
+        .collect();
+    paint_scene.for_each_node(&mut |visit| {
+        let Some(tag) = visit.node.tag() else { return };
+        let Some(rect) = visit.absolute_rect() else {
+            return; // clipped entirely away: painted nowhere, so not painted
+        };
+        let (cx, cy) = (rect.x + rect.w / 2, rect.y + rect.h / 2);
+        let Some((surface_tag, surface_rect)) = surfaces
+            .iter()
+            .filter(|(_, r)| cx >= r.x && cy >= r.y && cx < r.x + r.w && cy < r.y + r.h)
+            .min_by_key(|(_, r)| u64::from(r.w) * u64::from(r.h))
+        else {
+            return;
+        };
+        if surface_tag == tag {
+            return; // a surface is not a thing painted inside itself
+        }
+        if let Some(into) = marks.get_mut(surface_tag.as_str()) {
+            into.push((
+                tag.to_owned(),
+                Rect::new(
+                    rect.x.saturating_sub(surface_rect.x),
+                    rect.y.saturating_sub(surface_rect.y),
+                    rect.w,
+                    rect.h,
+                ),
+            ));
+        }
+    });
+    for (tag, into) in marks {
+        pinion_core::painted::record_painted_regions(
+            tag,
+            pinion_core::painted::PaintedRegions::from_marks(into),
+        );
+    }
 }

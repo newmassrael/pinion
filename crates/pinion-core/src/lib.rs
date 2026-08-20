@@ -58,6 +58,7 @@ pub mod mnemonic;
 pub mod modal_scope_request;
 pub mod model_index;
 pub mod operation;
+pub mod painted;
 pub mod path_data;
 pub mod print;
 pub mod reach;

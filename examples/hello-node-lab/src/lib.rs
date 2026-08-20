@@ -2995,48 +2995,60 @@ impl Hit {
             .map_or(Self::Nothing, |seat| seat.hit)
     }
 
+    /// ★★★★★ R1736 — the diagram's own marks, resolved from **the paint the
+    /// framework kept** rather than worked out a second time.
+    ///
+    /// A card, a pin and the picked link's chrome are all things this screen
+    /// DREW, under a camera transform, and until this round the press path
+    /// re-derived every one of their rectangles from the model. That is the
+    /// two-derivation shape this repository has repaired by hand four times —
+    /// R1648's doubled offset, R1651.1's pane-versus-window frame, R1662's
+    /// unscrolled palette, R1700's stale window size — and each repair left the
+    /// structure that produced it standing.
+    ///
+    /// It is gone here. `pinion_core::painted` holds the tagged rectangle of
+    /// every mark the last frame drew, in paint order, so "where is the card"
+    /// has one answer and the press reads it.
+    ///
+    /// ★ **The priority is the paint's too.** The hand-written rule this
+    /// replaces said "the chrome first, then pins, then cards, back to front",
+    /// which is a z-order kept beside the painter's — and the pin is on top
+    /// because the painter draws it on top. Last drawn is what the reader sees
+    /// and now what a press reaches.
+    ///
+    /// Only the families the paint NAMES are resolved here. A wire carries no
+    /// tag of its own, so `link_at` still parses the model for it; that is
+    /// stated rather than hidden, and it is the remaining half of this axis on
+    /// this screen.
+    fn on_diagram_from_paint(state: &LabState, px: u32, py: u32) -> Option<Self> {
+        // The paint is published in the WINDOW's frame and this screen resolves
+        // in the LAYOUT's; below the comfortable size the two differ by exactly
+        // the pan (R1714's relationship, read in the other direction).
+        let (pan_x, pan_y) = pinion_core::shrink::window_pan(VIEW_TAG);
+        let (wx, wy) = (px.checked_sub(pan_x)?, py.checked_sub(pan_y)?);
+        let marks = pinion_core::painted::painted_regions(VIEW_TAG)?;
+        marks
+            .stack_at(wx, wy)
+            .filter(|(tag, _)| {
+                tag.starts_with("lab.node.")
+                    || tag.starts_with("lab.pin.")
+                    || tag.starts_with("lab.link.")
+            })
+            .map(|(tag, _)| Self::of_tag(state, tag))
+            .find(|hit| !matches!(hit, Self::Nothing))
+    }
+
     /// What a press inside the canvas viewport reaches.
     fn on_canvas(state: &LabState, px: u32, py: u32) -> Self {
+        // ★★★★★ R1736 — the cards, the pins and the picked link's chrome, from
+        // the paint. Their relative priority comes from the paint too.
+        if let Some(hit) = Self::on_diagram_from_paint(state, px, py) {
+            return hit;
+        }
         // ★ The canvas is a viewport onto a world surface, so a press is
         // resolved in the surface's coordinates — the same ones the painter
         // places cards in. One conversion, at the boundary.
         let (cx, cy) = window_to_content(state, px, py);
-        // ★★ R1681 — the picked link's own affordances, before everything else
-        // on the canvas: they float over the graph, and a press that fell
-        // through to the world would pan the canvas out from under the button.
-        // The rectangles are the PAINTER's, read from one derivation, so "it is
-        // drawn there" and "it is pressed there" cannot be two answers.
-        if let Some(chrome) = link_chrome(state) {
-            if holds(chrome.act, cx, cy) {
-                return Self::LinkAct;
-            }
-            for (n, (_, seat)) in chrome.chips.iter().enumerate() {
-                if holds(*seat, cx, cy) {
-                    return Self::Endpoint(n);
-                }
-            }
-        }
-        // Pins before cards: a pin overhangs its card's edge, and the pin is
-        // the smaller target, so testing the card first would make a link
-        // impossible to author with a real mouse.
-        for node in state.cards() {
-            let Some(card) = card_rect(state, node) else {
-                continue;
-            };
-            if holds(pin_rect(state, card, true), cx, cy) {
-                return Self::Pin { node, dial: true };
-            }
-            if state.role_of(node).is_some_and(Role::accepts)
-                && holds(pin_rect(state, card, false), cx, cy)
-            {
-                return Self::Pin { node, dial: false };
-            }
-        }
-        for node in state.cards().into_iter().rev() {
-            if card_rect(state, node).is_some_and(|r| holds(r, cx, cy)) {
-                return Self::Node(node);
-            }
-        }
         if let Some(link) = link_at(state, cx, cy) {
             return Self::Link(link);
         }
@@ -7821,8 +7833,11 @@ impl ExternalIntrospect for LabOracle {
                 let node = state.node_of(name.trim()).ok_or_else(|| {
                     InvokeError::rejected(format!("no node is called {:?}", name.trim()))
                 })?;
+                // ★ R1736 — the sentence moved INTO `select_card`, so this arm
+                // no longer says it. Saying it here as well would tell the wire
+                // twice and the pointer once, which is the asymmetry that line
+                // exists to end.
                 select_card(&state, Some(node));
-                state.say(Utterance::done(format!("selected {}", name.trim())));
                 Ok(IntrospectValue::Text(name.trim().to_owned()))
             }
             // ★★ R1682 — the node's own life. Four verbs over one argument,
@@ -9036,6 +9051,20 @@ fn apply_selection<I: IntoIterator<Item = NodeId>>(state: &Rc<LabState>, cards: 
         return;
     }
     state.selection.set(selection);
+    // ★★★★★ R1736 — and it SAYS so, whichever channel changed it.
+    //
+    // Measured three times before this line existed: the wire's `select` said
+    // "selected T-01" and a press said nothing at all, because the sentence sat
+    // at the INVOKE site rather than at the act. So the reader who uses the
+    // pointer heard nothing and the agent who uses the wire heard everything —
+    // the wrong way round, and R1720's rule ("a confirmation reaches a person
+    // too") holed on its pointer side.
+    //
+    // Here rather than at either caller because this is the one place a
+    // selection changes, and it is already the place that knows whether it DID
+    // change: a press that re-selects the card already showing says nothing,
+    // which is what makes the sentence worth reading when it appears.
+    say_selection(state);
     if change.active_moved() && state.editing.get().is_some() {
         // ★ Applied, then shut — the same rule as opening the field somewhere
         // else, with the one difference the situation forces: a refusal cannot
@@ -9044,6 +9073,28 @@ fn apply_selection<I: IntoIterator<Item = NodeId>>(state: &Rc<LabState>, cards: 
         commit_edit(state).ok();
         end_edit(state);
     }
+}
+
+/// ★★★★★ R1736 — what the selection now is, in a sentence a person reads.
+///
+/// Three shapes because the selection has three, and a reader told "selected"
+/// with no subject has been told nothing: nothing at all, one card, or a group
+/// whose leading card is the one the inspector is showing. The count is stated
+/// for the group because "selected P-01" over six selected cards would be true
+/// of the inspector and false of the canvas.
+fn say_selection(state: &Rc<LabState>) {
+    let selection = state.selection.get();
+    let Some(active) = selection.active().copied() else {
+        state.say(Utterance::done("nothing selected"));
+        return;
+    };
+    let name = state.name_of(active);
+    let rest = selection.len().saturating_sub(1);
+    state.say(Utterance::done(if rest == 0 {
+        format!("selected {name}")
+    } else {
+        format!("selected {name} and {rest} more")
+    }));
 }
 
 /// Shut the field, leaving whatever it was editing alone.
