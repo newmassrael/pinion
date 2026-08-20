@@ -53582,6 +53582,46 @@
         "**The composite `send` paths are untouched.** Widgets whose event is a tuple (`(day, ev)`, `(idx, ev)`) drive through a multi-argument `send`, and whether a discard there names the segment that failed is a question this round did not ask."
       ]
     },
+    "R1741": {
+      "decision_summary": "The engine pin moves again, one commit, and the honest report is that there is\nnothing new to consume.\n\n`7db6aeb` → `e0fdd46`, a single upstream commit: *\"Give the invoke half the\nguards the send half already had\"* — a test-only change that adds no API. So\nthis round bumps and proves, and does **not** manufacture a consumption to make\nthe round look larger. R1739 consumed what the previous 44 commits brought; this\none had nothing to bring.\n\n**What it did find is a sequencing rule, and it found it by tripping over it.**\nThe second bump was begun while the previous round's push was still in flight,\nand the push was refused — `pre-push: pinion's SCE pin disagrees with itself` —\nbecause the dual-pin gate reads the **working tree and index**, not the commit\nbeing pushed. The commit was fine; the tree around it was mid-bump. The gate was\nright and the ordering was wrong: a pin bump is not a background task to start\nwhile something else is being published.\n\nWorth recording twice over, because the failure also arrived wearing the wrong\nface: the harness reported the push as *completed, exit code 0* while the\nrecorded status was 1 and `git ls-remote` still showed the previous round's\ncommit. This workspace already has that rule written down — judge a push by the\nstatus stamped into a file and by the remote ref, never by the wrapper — and\nthis is the run that would have published a false \"pushed\" claim without it.",
+      "changes_bullets": [
+        "**The pin moves as the triple**: `vendor/sce` gitlink, both `rev =` entries in the workspace manifest, and `Cargo.lock`. `tools/pin_sync.py --check-dual-pin` reports `dual pin: SCE@e0fdd46 (manifest = lock = vendor/sce)`.",
+        "**No source change.** The one upstream commit is a test-only addition to the engine's own suite, so nothing here calls anything it did not call before, and no consumption is claimed."
+      ],
+      "verification_bullets": [
+        "`tools/pin_sync.py --check-dual-pin` → `dual pin: SCE@e0fdd46 (manifest = lock = vendor/sce)`.",
+        "pinion-core **3,843** library tests green against the new revision, unchanged from the count on the revision before it — which is the expected result for a test-only upstream commit and is stated because an unchanged number is evidence too.",
+        "★ The push that this round's ordering broke is the verification that matters: it was judged by the status stamped into a file and by `git ls-remote`, both of which said it had NOT landed, while the harness notification said exit 0."
+      ],
+      "impact_refs": [
+        "5.4",
+        "5.14",
+        "2"
+      ],
+      "carry_forward_bullets": [
+        "The engine capabilities R1739 listed as brought-but-unconsumed are still unconsumed: a host running its own `<invoke>` type, serving its own `<send>` Event I/O Processor type, reporting the processor types it has no path for, naming the language its expressions evaluate in, reporting a macrostep it refused to finish and an `error.*` event nothing answered, and following the macrostep past a transition that moves nothing. Each is a consumer-forced seam when something here needs it.",
+        "R1740's remainder is untouched by this round: the two refusals still wear one `InvokeError` kind, and 27 of 30 send-bearing surfaces still answer the old way."
+      ],
+      "publishable_decision_summary": "The engine pin moves again, one commit, and the honest report is that there is\nnothing new to consume.\n\n`7db6aeb` → `e0fdd46`, a single upstream commit: *\"Give the invoke half the\nguards the send half already had\"* — a test-only change that adds no API. So\nthis round bumps and proves, and does **not** manufacture a consumption to make\nthe round look larger. R1739 consumed what the previous 44 commits brought; this\none had nothing to bring.\n\n**What it did find is a sequencing rule, and it found it by tripping over it.**\nThe second bump was begun while the previous round's push was still in flight,\nand the push was refused — `pre-push: pinion's SCE pin disagrees with itself` —\nbecause the dual-pin gate reads the **working tree and index**, not the commit\nbeing pushed. The commit was fine; the tree around it was mid-bump. The gate was\nright and the ordering was wrong: a pin bump is not a background task to start\nwhile something else is being published.\n\nWorth recording twice over, because the failure also arrived wearing the wrong\nface: the harness reported the push as *completed, exit code 0* while the\nrecorded status was 1 and `git ls-remote` still showed the previous round's\ncommit. This workspace already has that rule written down — judge a push by the\nstatus stamped into a file and by the remote ref, never by the wrapper — and\nthis is the run that would have published a false \"pushed\" claim without it.",
+      "publishable_changes_bullets": [
+        "**The pin moves as the triple**: `vendor/sce` gitlink, both `rev =` entries in the workspace manifest, and `Cargo.lock`. `tools/pin_sync.py --check-dual-pin` reports `dual pin: SCE@e0fdd46 (manifest = lock = vendor/sce)`.",
+        "**No source change.** The one upstream commit is a test-only addition to the engine's own suite, so nothing here calls anything it did not call before, and no consumption is claimed."
+      ],
+      "publishable_verification_bullets": [
+        "`tools/pin_sync.py --check-dual-pin` → `dual pin: SCE@e0fdd46 (manifest = lock = vendor/sce)`.",
+        "pinion-core **3,843** library tests green against the new revision, unchanged from the count on the revision before it — which is the expected result for a test-only upstream commit and is stated because an unchanged number is evidence too.",
+        "★ The push that this round's ordering broke is the verification that matters: it was judged by the status stamped into a file and by `git ls-remote`, both of which said it had NOT landed, while the harness notification said exit 0."
+      ],
+      "publishable_impact_refs": [
+        "5.4",
+        "5.14",
+        "2"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The engine capabilities R1739 listed as brought-but-unconsumed are still unconsumed: a host running its own `<invoke>` type, serving its own `<send>` Event I/O Processor type, reporting the processor types it has no path for, naming the language its expressions evaluate in, reporting a macrostep it refused to finish and an `error.*` event nothing answered, and following the macrostep past a transition that moves nothing. Each is a consumer-forced seam when something here needs it.",
+        "R1740's remainder is untouched by this round: the two refusals still wear one `InvokeError` kind, and 27 of 30 send-bearing surfaces still answer the old way."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
