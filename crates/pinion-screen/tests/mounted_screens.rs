@@ -10,6 +10,7 @@ use std::rc::Rc;
 
 use pinion_a11y::{AccessNode, AriaRole, WidgetA11y};
 use pinion_core::chrome::{HostChrome, Part as ChromePart, host_chrome};
+use pinion_core::conformance::{DocumentReport, Part, SpecDocument};
 use pinion_core::external::{External, StubExternal, layout_size};
 use pinion_core::reactive::{Owner, VIEWPORT_SIZE};
 use pinion_core::scene::{ContainerNode, Rect};
@@ -17,7 +18,7 @@ use pinion_core::shrink::ShrinkPolicy;
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::destination::{Destination, Destinations, Journey};
 use pinion_core::{Frame, Modifiers, Scene, WidgetCore};
-use pinion_screen::{Mount, Screen, ScreenRoster};
+use pinion_screen::{Mount, Screen, ScreenRoster, SectionStanding};
 use pinion_shell::test_fixtures::TestRenderer;
 use pinion_shell::{SizeStrategy, WidgetView, WindowSpec};
 
@@ -144,6 +145,21 @@ impl WidgetView for LabFixture {
         Some(LAB_SHRINK)
     }
 
+    /// ★★★★★ R1738 — this fixture answers a written specification, and the
+    /// viewer beside it deliberately does not. One roster then holds all four
+    /// standings a section can have, which is what the report is tested
+    /// against.
+    fn conformance() -> Option<DocumentReport> {
+        Some(lab_specification().report(&|surface| match surface {
+            // The build has the two parts in the specified order and is missing
+            // the third — a real difference rather than a passing fixture,
+            // because a report tested only against agreement cannot be shown to
+            // report anything.
+            "rows" => vec![Part::new("id", "ID"), Part::new("name", "Name")],
+            other => panic!("the fixture specification does not name {other}"),
+        }))
+    }
+
     fn focus_ring_style(_focused_tag: &str) -> Option<pinion_overlay::FocusRingStyle> {
         // A content surface that owns its own indicator — the one hook whose
         // `None` is a decision rather than an absence.
@@ -215,6 +231,32 @@ impl WidgetView for ViewerFixture {
 }
 
 // --- The fixture application --------------------------------------------------
+
+/// The specification the lab fixture answers to (R1738).
+///
+/// Three parts, of which the fixture builds two, so every count the report adds
+/// up has a value other than "all of it" and a test cannot pass by the numbers
+/// happening to agree.
+fn lab_specification() -> SpecDocument {
+    SpecDocument::parse(
+        r#"{ "rows": {
+              "canon": [
+                { "key": "id", "title": "ID" },
+                { "key": "name", "title": "Name" },
+                { "key": "state", "title": "State" }
+              ],
+              "owed": [
+                {
+                  "key": "state",
+                  "sentence": "part 2 `state` (State) is specified and the surface has no such part",
+                  "since": "R1738",
+                  "why": "The fixture builds two of the three parts on purpose, so every count this report adds up has a value other than all-of-it and a test cannot pass by the numbers happening to agree."
+                }
+              ]
+           } }"#,
+    )
+    .expect("the fixture specification is a document")
+}
 
 fn destinations() -> Destinations {
     Destinations::new(vec![
@@ -826,5 +868,163 @@ fn r1724_a_roster_is_held_the_way_a_host_holds_it() {
         2,
         "two of the four destinations are screens; the other two are the \
          host's own page and a locked seat"
+    );
+}
+
+// --- R1738: what the assembled application can say about itself ---------------
+
+/// ★★★★★ The population is the ROSTER's, so a section is missing from the
+/// report only by not being in the application.
+///
+/// The failing shape this replaces was measured on the real tool: its published
+/// conformance was a verdict about the eight navigation seats, and four of its
+/// six open sections had never been compared with anything — not failing a
+/// check, absent from the population, with nothing anywhere saying so.
+#[test]
+fn r1738_every_destination_is_a_row_whether_or_not_anything_judged_it() {
+    let said = roster().conformance();
+    assert_eq!(
+        said.rows()
+            .iter()
+            .map(|row| row.key.as_str())
+            .collect::<Vec<_>>(),
+        ["dashboard", "catalog", "stream", "topology"],
+        "one row per destination, in the roster's own order"
+    );
+    assert_eq!(said.sections(), 4);
+    assert_eq!(said.judged(), 1, "the lab fixture answers a specification");
+    assert_eq!(
+        said.unjudged(),
+        2,
+        "the viewer publishes no verdict and the dashboard has no screen at all"
+    );
+    assert_eq!(said.closed(), 1);
+}
+
+/// The four standings are four different facts and the roster tells them apart.
+#[test]
+fn r1738_a_section_that_answers_nothing_is_a_row_and_not_a_silence() {
+    let said = roster().conformance();
+    let standing = |key: &str| {
+        said.rows()
+            .iter()
+            .find(|row| row.key == key)
+            .map(|row| row.standing.word())
+            .expect("the fixture holds it")
+    };
+    assert_eq!(standing("catalog"), "judged");
+    assert_eq!(
+        standing("stream"),
+        "unspecified",
+        "a screen is mounted and it publishes no verdict"
+    );
+    assert_eq!(
+        standing("dashboard"),
+        "inline",
+        "no screen is mounted, so this roster has nothing to ask — which is a \
+         different fact from a screen that answers nothing, and the work that \
+         closes it is different too"
+    );
+    assert_eq!(standing("topology"), "closed");
+}
+
+/// ★★★★★ The rule the type exists for: an application does not get to report
+/// conformance on the strength of the sections somebody wrote a specification
+/// for.
+#[test]
+fn r1738_an_application_with_unjudged_sections_does_not_conform() {
+    let said = roster().conformance();
+    assert!(
+        !said.conforms(),
+        "two of its open sections were never judged, and that is part of the \
+         verdict rather than a footnote under it"
+    );
+    let judged: Vec<_> = said
+        .rows()
+        .iter()
+        .filter(|row| row.standing.is_judged())
+        .collect();
+    assert_eq!(judged.len(), 1);
+    let SectionStanding::Judged(report) = &judged[0].standing else {
+        panic!("it was just filtered for");
+    };
+    assert!(
+        report.reconciles(),
+        "the one section that IS judged has exactly the difference its ledger \
+         declares — so the application failing to conform is about coverage, \
+         not about that section"
+    );
+    assert_eq!((report.specified(), report.reproduced()), (3, 2));
+    assert_eq!(
+        (said.specified(), said.reproduced()),
+        (3, 2),
+        "the application's totals are its judged sections added up"
+    );
+}
+
+/// A row carries the tag its section is addressed by exactly when a screen is
+/// mounted there — so a reader of the report can go and ask the section itself
+/// without a mapping nobody published.
+#[test]
+fn r1738_a_row_says_how_to_reach_the_section_it_is_about() {
+    let said = roster().conformance();
+    let tag = |key: &str| {
+        said.rows()
+            .iter()
+            .find(|row| row.key == key)
+            .and_then(|row| row.tag.clone())
+    };
+    assert_eq!(tag("catalog").as_deref(), Some(LAB_TAG));
+    assert_eq!(tag("stream").as_deref(), Some(VIEWER_TAG));
+    assert_eq!(tag("dashboard"), None, "the host paints it itself");
+    assert_eq!(
+        tag("topology"),
+        None,
+        "nothing can be mounted at a closed seat"
+    );
+}
+
+/// A closed destination's row carries the destination's OWN reason, not a
+/// second wording of the closure written beside it.
+#[test]
+fn r1738_a_closed_seat_reports_the_reason_the_destination_gives() {
+    let said = roster().conformance();
+    let row = said
+        .rows()
+        .iter()
+        .find(|row| row.key == "topology")
+        .expect("the fixture holds it");
+    let why = row.standing.why().expect("a closed seat says why");
+    assert!(
+        why.contains("requirement 12"),
+        "the destination's own sentence, verbatim: {why}"
+    );
+}
+
+/// The published value carries the counts rather than leaving a client to
+/// recompute them, because a client that recomputes them can disagree with the
+/// application about how much of it was judged.
+#[test]
+fn r1738_the_published_report_carries_its_own_counts() {
+    let said = roster().conformance();
+    let wire = said.to_json();
+    assert_eq!(wire["sections"], 4);
+    assert_eq!(wire["judged"], 1);
+    assert_eq!(wire["unjudged"], 2);
+    assert_eq!(wire["closed"], 1);
+    assert_eq!(wire["conforms"], false);
+    let rows = wire["rows"]
+        .as_array()
+        .expect("the report publishes its rows");
+    assert_eq!(
+        rows.len(),
+        said.sections(),
+        "the wire cannot hold fewer rows"
+    );
+    assert!(
+        rows.iter()
+            .filter(|row| row["standing"] != "judged")
+            .all(|row| row.get("why").is_some()),
+        "every row that is not judged publishes its reason"
     );
 }

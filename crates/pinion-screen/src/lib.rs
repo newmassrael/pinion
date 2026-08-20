@@ -73,6 +73,7 @@
 //! leaving takes the panels with it and returning brings them back.
 //!
 
+pub mod conformance;
 pub mod coverage;
 mod mount;
 mod roster;
@@ -91,6 +92,7 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::{Frame, Scene};
 use pinion_shell::{WindowPolicy, WindowSpec};
 
+pub use conformance::{ApplicationConformance, SectionRow, SectionStanding};
 pub use mount::Mount;
 pub use roster::{MountDefect, ScreenRoster, ScreenState};
 
@@ -132,6 +134,22 @@ pub trait Screen {
     /// title while this screen is the one showing — the row the reference
     /// toolkit keeps and shows nowhere.
     fn title(&self) -> &'static str;
+
+    // --- specification ------------------------------------------------------
+
+    /// ★★★★★ R1738 — the written specification this screen answers to, and how
+    /// much of it the build reproduces, or `None` when it answers to none.
+    ///
+    /// **No default, deliberately, while the binding hook it mirrors has one.**
+    /// The asymmetry is the decision: a hook required of every
+    /// [`WidgetView`](pinion_shell::WidgetView) in this tree would be 225 edits
+    /// that say nothing, while a screen written *directly* against this trait
+    /// is a host's own inline page — the one place where "is this section
+    /// judged" is a live question somebody should have to answer out loud.
+    ///
+    /// See [`conformance`] for what a host does with it and for the
+    /// measurement that forced it.
+    fn conformance(&self) -> Option<pinion_core::conformance::DocumentReport>;
 
     // --- state --------------------------------------------------------------
 

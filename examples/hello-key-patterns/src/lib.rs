@@ -1330,7 +1330,9 @@ fn built(surface: &str) -> Vec<Part> {
 /// Not a test fixture: this is the sentence an agent driving the tool needs
 /// before it plans anything.
 fn conformance_json() -> serde_json::Value {
-    spec::document().wire(&built)
+    <KeyPatternView as WidgetView>::conformance()
+        .expect("this section answers a written specification")
+        .to_json()
 }
 
 /// The screen, as a table a client reads instead of a screenshot.
@@ -1887,6 +1889,18 @@ impl WidgetView for KeyPatternView {
 
     fn shrink_policy() -> Option<ShrinkPolicy> {
         Some(SHRINK)
+    }
+
+    /// ★★★★★ R1738 — the same verdict this section publishes on its own wire,
+    /// answered where a host assembling screens can reach it.
+    ///
+    /// It was reachable before only by knowing this screen's tag and asking it
+    /// directly, so the application it is a page of could not count it. One
+    /// value, two readers: this screen's own `conformance` slot serialises it
+    /// for a client of this binary, and a host adds it up with its other
+    /// sections.
+    fn conformance() -> Option<pinion_core::conformance::DocumentReport> {
+        Some(spec::document().report(&built))
     }
 }
 

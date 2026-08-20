@@ -1473,6 +1473,37 @@ pub trait WidgetView: pinion_a11y::WidgetA11y {
         None
     }
 
+    /// ★★★★★ R1738 §5.27 §2 #7 — the written specification this screen answers
+    /// to, and how much of it the build reproduces. `None` when it answers to
+    /// none.
+    ///
+    /// `None` is **not** "reproduces nothing" and it is not silence either: a
+    /// host assembling screens publishes it as a *row* saying this section has
+    /// no specification, which is the difference between a section nobody
+    /// judged and a section nobody noticed.
+    ///
+    /// # Why this is a binding's hook and not a test's
+    ///
+    /// It was a test's, and that is what forced it. Two screens of this tree's
+    /// analysis tool already built exactly this value and published it on their
+    /// own wire; a third computed it and used it only inside a unit test of the
+    /// standalone binary. Measured over the wire at R1738, standing in each
+    /// section of the assembled application in turn: **six** open sections,
+    /// **two** answering, and the application's own headline reading
+    /// `specified 8, reproduced 8` — a count of navigation seats. The four
+    /// silent sections were not failing a check, they were **absent from the
+    /// population**, and nothing said so because there was no hook here for a
+    /// host to ask through.
+    ///
+    /// A binding answering here answers the same fact whether it is run as its
+    /// own window or mounted as a page, which is what makes an assembled
+    /// application able to report on itself. See
+    /// `pinion_screen`'s conformance module for what a host does with it.
+    #[must_use]
+    fn conformance() -> Option<pinion_core::conformance::DocumentReport> {
+        None
+    }
+
     /// R56.2.c §5.13 §5.38 — IME candidate window positioning hint.
     /// Returns the caret rect in **window-local logical-pixel
     /// coordinates** (origin at the top-left of the client area, the

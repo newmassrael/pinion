@@ -16,10 +16,11 @@ use pinion_core::chrome::{HostChrome, with_host_chrome};
 use pinion_core::external::with_surface_extent;
 use pinion_core::shrink::pan;
 use pinion_core::widget_core::ExtraExternal;
-use pinion_core::widgets::destination::{Destinations, Journey};
+use pinion_core::widgets::destination::{Destinations, Journey, Standing};
 use pinion_core::{Frame, Scene};
 
 use crate::Screen;
+use crate::conformance::{ApplicationConformance, SectionRow, SectionStanding};
 
 /// A host's cached projection: where it is, and how far the screen it is
 /// showing has moved.
@@ -197,6 +198,54 @@ impl ScreenRoster {
     #[must_use]
     pub fn is_mounted(&self, key: &str) -> bool {
         self.screens.contains_key(key)
+    }
+
+    /// ★★★★★ R1738 — how much of its own specification each section of this
+    /// application reproduces, one row per destination.
+    ///
+    /// **The population is this roster's**, walked here rather than taken from
+    /// a list a caller passes in, which is the whole reason the report is worth
+    /// having: a section cannot be missing from it by being forgotten, only by
+    /// not being in the application. See
+    /// [`conformance`](crate::conformance) for the measurement that forced it
+    /// and for what each arm means.
+    ///
+    /// Not keyed by a [`Journey`], unlike every accessor that hands out a
+    /// *screen*. The rule this crate is built on — *the screen the journey is
+    /// at is the only one anything reaches* — is about reaching a screen's
+    /// behaviour: its paint, its keys, its windows. A verdict about what a
+    /// section is specified to contain is not behaviour and is not reached
+    /// through the page region; it is a fact about the assembled application,
+    /// and an application that could only report on the section somebody
+    /// happens to be standing in would be the defect this exists to repair.
+    #[must_use]
+    pub fn conformance(&self) -> ApplicationConformance {
+        ApplicationConformance::new(
+            self.destinations
+                .all()
+                .iter()
+                .map(|destination| {
+                    let mounted = self.screens.get(&*destination.key);
+                    let standing = match (&destination.standing, mounted) {
+                        (Standing::Closed(why), _) => SectionStanding::Closed(why.clone()),
+                        (Standing::Open, None) => SectionStanding::Inline,
+                        (Standing::Open, Some(screen)) => screen
+                            .conformance()
+                            .map_or(SectionStanding::Unspecified, SectionStanding::Judged),
+                    };
+                    SectionRow {
+                        key: destination.key.to_string(),
+                        title: destination.title.to_string(),
+                        // A closed destination cannot have a screen mounted at
+                        // it — `new` refuses that pairing — so this is `None`
+                        // there for the same reason it is `None` for a page the
+                        // host paints itself: there is nothing to address.
+                        tag: mounted.map(|screen| screen.tag().to_owned()),
+                        standing,
+                    }
+                })
+                .collect(),
+        )
     }
 
     /// The keys with a screen behind them, in roster order.

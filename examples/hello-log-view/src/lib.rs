@@ -1169,7 +1169,9 @@ fn built(surface: &str) -> Vec<Part> {
 }
 
 fn conformance_json() -> serde_json::Value {
-    spec::document().wire(&built)
+    <LogView as WidgetView>::conformance()
+        .expect("this section answers a written specification")
+        .to_json()
 }
 
 /// The screen, as a table a client reads instead of a screenshot.
@@ -1762,6 +1764,16 @@ impl WidgetView for LogView {
 
     fn shrink_policy() -> Option<ShrinkPolicy> {
         Some(SHRINK)
+    }
+
+    /// ★★★★★ R1738 — the same verdict this section publishes on its own wire,
+    /// answered where a host assembling screens can reach it.
+    ///
+    /// See the sibling section's hook for what forced it: a verdict only
+    /// reachable by knowing a screen's tag is a verdict the application it is a
+    /// page of cannot count.
+    fn conformance() -> Option<pinion_core::conformance::DocumentReport> {
+        Some(spec::document().report(&built))
     }
 }
 

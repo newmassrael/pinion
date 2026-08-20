@@ -935,29 +935,201 @@ impl SpecDocument {
         ledger.judge(&canon.diff(built))
     }
 
+    /// ★★★★★ R1738 — the whole comparison, as a value that can be **added up**.
+    ///
+    /// See [`DocumentReport`] for why this exists beside [`wire`](Self::wire),
+    /// which now derives from it: the wire form was the only form, and a wire
+    /// form is where a count goes to stop being a count.
+    #[must_use]
+    pub fn report(&self, built: &dyn Fn(&str) -> Vec<Part>) -> DocumentReport {
+        DocumentReport {
+            surfaces: self
+                .surfaces()
+                .map(|surface| {
+                    let canon = &self.canon[surface];
+                    let ledger = &self.owed[surface];
+                    let divergences = canon.diff(&built(surface));
+                    SurfaceStanding {
+                        unreconciled: ledger.judge(&divergences),
+                        surface: surface.to_owned(),
+                        specified: canon.len(),
+                        divergences,
+                        owed: ledger.owed().to_vec(),
+                    }
+                })
+                .collect(),
+        }
+    }
+
     /// The whole comparison, as the value a running application publishes.
     ///
     /// One shape rather than one per screen, because an agent asking two
     /// screens how much of their specification they are should not have to read
     /// two answers.
+    ///
+    /// ★ R1738 — derived from [`report`](Self::report) rather than written a
+    /// second time. The two were one expression from the round this shape was
+    /// introduced; keeping them so is what stops the typed count and the
+    /// published count from disagreeing about the same build.
     #[must_use]
     pub fn wire(&self, built: &dyn Fn(&str) -> Vec<Part>) -> serde_json::Value {
+        self.report(built).to_json()
+    }
+}
+
+/// ★★★★★ R1738 — how much of ONE named surface a build reproduces.
+///
+/// The typed half of what [`SpecDocument::wire`] publishes, and it exists
+/// because the wire form used to be the *only* form. An application assembled
+/// out of several specified sections could serialise each section's comparison
+/// and could not add two of them together, so the question a reader actually
+/// has — *how much of this application has been judged at all* — had nowhere to
+/// be computed and therefore was not.
+///
+/// Measured on this tree's own analysis tool the round this type was written:
+/// six open sections, **two** of them publishing a verdict about their own
+/// surfaces, and the application's headline reading `specified 8, reproduced 8`
+/// — a count of navigation seats that a reader had every reason to take for a
+/// count of the tool.
+///
+/// # Examples
+///
+/// ```
+/// use pinion_core::conformance::{Part, SpecDocument};
+///
+/// let doc = SpecDocument::parse(
+///     r#"{ "columns": {
+///           "canon": [
+///             { "key": "id", "title": "ID" },
+///             { "key": "name", "title": "Name" }
+///           ],
+///           "owed": []
+///        } }"#,
+/// )
+/// .expect("the fixture is a specification");
+///
+/// let report = doc.report(&|_| vec![Part::new("id", "ID")]);
+/// assert_eq!(report.specified(), 2);
+/// assert_eq!(report.reproduced(), 1);
+/// assert!(!report.reconciles());
+/// ```
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SurfaceStanding {
+    surface: String,
+    specified: usize,
+    divergences: Vec<PartDivergence>,
+    unreconciled: Vec<Unreconciled>,
+    owed: Vec<Owed>,
+}
+
+impl SurfaceStanding {
+    /// The surface this is about.
+    #[must_use]
+    pub fn surface(&self) -> &str {
+        &self.surface
+    }
+
+    /// How many parts the specification fixes.
+    #[must_use]
+    pub fn specified(&self) -> usize {
+        self.specified
+    }
+
+    /// How many of them the build has, in the place the specification puts
+    /// them.
+    #[must_use]
+    pub fn reproduced(&self) -> usize {
+        self.specified - self.divergences.len()
+    }
+
+    /// Every way the build is not what was specified.
+    #[must_use]
+    pub fn divergences(&self) -> &[PartDivergence] {
+        &self.divergences
+    }
+
+    /// Every way the difference the build *has* is not the difference its
+    /// ledger *declares*.
+    #[must_use]
+    pub fn unreconciled(&self) -> &[Unreconciled] {
+        &self.unreconciled
+    }
+
+    /// The differences this surface's ledger accepts.
+    #[must_use]
+    pub fn owed(&self) -> &[Owed] {
+        &self.owed
+    }
+
+    /// Whether the difference this build has is exactly the difference somebody
+    /// wrote down.
+    ///
+    /// Not *whether it diverges nowhere*: a surface with a declared remainder
+    /// is a surface somebody reviewed, and a check that demanded zero
+    /// divergences would make the ledger unusable the moment it held an entry.
+    /// The failing condition is a difference **nobody accepted**, in either
+    /// direction — which is [`Ledger::judge`]'s equality.
+    #[must_use]
+    pub fn reconciles(&self) -> bool {
+        self.unreconciled.is_empty()
+    }
+}
+
+/// ★★★★★ R1738 — every surface one specification names, and how much of each
+/// the build reproduces.
+///
+/// See [`SurfaceStanding`] for what forced a typed report. This is the value a
+/// screen hands its host so an application can say how much of *itself* is
+/// judged, rather than each section answering separately to whoever thought to
+/// ask it.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DocumentReport {
+    surfaces: Vec<SurfaceStanding>,
+}
+
+impl DocumentReport {
+    /// Each surface, in the order the document declares them.
+    #[must_use]
+    pub fn surfaces(&self) -> &[SurfaceStanding] {
+        &self.surfaces
+    }
+
+    /// How many parts this specification fixes across every surface.
+    #[must_use]
+    pub fn specified(&self) -> usize {
+        self.surfaces.iter().map(SurfaceStanding::specified).sum()
+    }
+
+    /// How many of them the build has where they were specified.
+    #[must_use]
+    pub fn reproduced(&self) -> usize {
+        self.surfaces.iter().map(SurfaceStanding::reproduced).sum()
+    }
+
+    /// Whether every surface's difference is the difference somebody wrote
+    /// down.
+    #[must_use]
+    pub fn reconciles(&self) -> bool {
+        self.surfaces.iter().all(SurfaceStanding::reconciles)
+    }
+
+    /// The report as the value a running application publishes.
+    #[must_use]
+    pub fn to_json(&self) -> serde_json::Value {
         let mut out = serde_json::Map::new();
-        for surface in self.surfaces() {
-            let canon = &self.canon[surface];
-            let ledger = &self.owed[surface];
-            let found = canon.diff(&built(surface));
+        for standing in &self.surfaces {
             out.insert(
-                surface.to_owned(),
+                standing.surface.clone(),
                 serde_json::json!({
-                    "specified": canon.len(),
-                    "reproduced": canon.len() - found.len(),
-                    "divergences": found
+                    "specified": standing.specified(),
+                    "reproduced": standing.reproduced(),
+                    "divergences": standing
+                        .divergences
                         .iter()
                         .map(|d| serde_json::json!({ "key": d.key(), "says": d.sentence() }))
                         .collect::<Vec<_>>(),
-                    "owed": ledger
-                        .owed()
+                    "owed": standing
+                        .owed
                         .iter()
                         .map(|entry| serde_json::json!({
                             "key": entry.key,
@@ -966,8 +1138,8 @@ impl SpecDocument {
                             "why": entry.why,
                         }))
                         .collect::<Vec<_>>(),
-                    "unreconciled": ledger
-                        .judge(&found)
+                    "unreconciled": standing
+                        .unreconciled
                         .iter()
                         .map(|u| serde_json::json!({ "key": u.key(), "says": u.sentence() }))
                         .collect::<Vec<_>>(),
@@ -1537,5 +1709,105 @@ mod tests {
         )])
         .expect("the entry names its seat, its round and its reason");
         assert!(ledger.reconciles(&spec.diff(&built)));
+    }
+
+    // --- R1738: the comparison as a value that can be added up ---------------
+
+    fn two_surface_document() -> super::SpecDocument {
+        super::SpecDocument::parse(
+            r#"{
+                 "columns": {
+                   "canon": [
+                     { "key": "id", "title": "ID" },
+                     { "key": "name", "title": "Name" }
+                   ],
+                   "owed": []
+                 },
+                 "detail": {
+                   "canon": [
+                     { "key": "summary", "title": "Summary" }
+                   ],
+                   "owed": []
+                 }
+               }"#,
+        )
+        .expect("the fixture is a document of two surfaces")
+    }
+
+    /// A report adds its surfaces up, which is the whole reason it is typed:
+    /// the wire form could be serialised per surface and never summed.
+    #[test]
+    fn r1738_a_report_is_every_surface_added_up() {
+        let report = two_surface_document().report(&|surface| match surface {
+            "columns" => vec![Part::new("id", "ID"), Part::new("name", "Name")],
+            "detail" => vec![Part::new("summary", "Summary")],
+            other => panic!("no surface named {other}"),
+        });
+        assert_eq!(report.surfaces().len(), 2);
+        assert_eq!(report.specified(), 3);
+        assert_eq!(report.reproduced(), 3);
+        assert!(report.reconciles());
+    }
+
+    /// ★ A difference **nobody accepted** is what fails, in either direction —
+    /// not merely a difference. A surface with a reviewed remainder is a
+    /// surface somebody looked at, and a check demanding zero divergences would
+    /// make the ledger unusable the moment it held an entry.
+    #[test]
+    fn r1738_a_difference_nobody_wrote_down_is_what_stops_a_report_reconciling() {
+        let report = two_surface_document().report(&|surface| match surface {
+            "columns" => vec![Part::new("id", "ID")],
+            "detail" => vec![Part::new("summary", "Summary")],
+            other => panic!("no surface named {other}"),
+        });
+        assert_eq!(report.specified(), 3);
+        assert_eq!(report.reproduced(), 2, "`name` is absent");
+        assert!(!report.reconciles(), "and no entry declares it");
+        let columns = &report.surfaces()[0];
+        assert_eq!(columns.surface(), "columns");
+        assert_eq!(columns.divergences().len(), 1);
+        assert_eq!(columns.unreconciled().len(), 1);
+        assert!(
+            report.surfaces()[1].reconciles(),
+            "the other surface is fine"
+        );
+    }
+
+    /// The published form carries what the typed form counts.
+    ///
+    /// ★ Written the second time. The first draft asserted
+    /// `wire(built) == report(built).to_json()`, which cannot fail: `wire` *is*
+    /// that expression since this round made it one. A test whose two sides are
+    /// the same expression is a test that would pass while the shape it is
+    /// about changed underneath it — the class this workspace keeps finding, and
+    /// the closing audit found it here. So the wire form is checked against
+    /// values written out by hand, and the delegation is proved by the typed
+    /// accessors agreeing with them.
+    #[test]
+    fn r1738_the_wire_form_publishes_what_the_report_counts() {
+        let doc = two_surface_document();
+        let built = |surface: &str| match surface {
+            "columns" => vec![Part::new("id", "ID")],
+            "detail" => vec![Part::new("summary", "Summary")],
+            other => panic!("no surface named {other}"),
+        };
+        let wire = doc.wire(&built);
+        assert_eq!(wire["columns"]["specified"], 2);
+        assert_eq!(wire["columns"]["reproduced"], 1);
+        assert_eq!(
+            wire["columns"]["divergences"][0]["says"],
+            "part 1 `name` (Name) is specified and the surface has no such part",
+        );
+        assert_eq!(wire["columns"]["unreconciled"].as_array().unwrap().len(), 1);
+        assert_eq!(wire["detail"]["specified"], 1);
+        assert_eq!(wire["detail"]["reproduced"], 1);
+        assert!(wire["detail"]["divergences"].as_array().unwrap().is_empty());
+
+        // And the typed accessors answer the same build, which is what makes
+        // the two halves one derivation rather than two that agree today.
+        let report = doc.report(&built);
+        assert_eq!(report.specified(), 3);
+        assert_eq!(report.reproduced(), 2);
+        assert!(!report.reconciles());
     }
 }

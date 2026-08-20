@@ -81,6 +81,16 @@ impl<V: WidgetView> Screen for Mount<V> {
         V::title()
     }
 
+    /// ★★★★★ R1738 — the binding's own verdict, unchanged by being mounted.
+    ///
+    /// That it is the *same* value the standalone binary publishes is the point:
+    /// a section that reproduces its specification when run in its own window
+    /// and is never asked when it is a page would be two builds wearing one
+    /// name.
+    fn conformance(&self) -> Option<pinion_core::conformance::DocumentReport> {
+        V::conformance()
+    }
+
     fn latch(&self, state_scene: &Scene) -> u64 {
         let next = V::read_state(state_scene);
         if self.latched.get() != Some(next) {

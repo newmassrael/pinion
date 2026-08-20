@@ -2701,6 +2701,17 @@ const FIELDS: &[SchemaField] = const {
         // difference was accepted. `destinations` reports what IS on the rail;
         // this reports the rail against the rail it is supposed to be.
         SchemaField::new("conformance", "json"),
+        // ★★★★★ R1738 — how much of ITS OWN specification each section of this
+        // application reproduces, one row per destination.
+        //
+        // `conformance` above is about the rail: eight seats specified, eight
+        // reproduced. That sentence was the only conformance this application
+        // published, and read as a statement about the tool it was wrong —
+        // measured over this wire before this slot existed, four of the six
+        // open sections had never been compared with anything and nothing said
+        // so. This slot is the population, so a section is missing from it only
+        // by not being in the application.
+        SchemaField::new("sections", "json"),
         // The Settings destination's switches.
         SchemaField::new("options", "json"),
         SchemaField::new("editing", "bool"),
@@ -2931,6 +2942,7 @@ impl ExternalIntrospect for ShellOracle {
                 // prefixes would be inferring a rule nobody wrote down.
                 state.screens.wire(&state.journey.get()),
             )),
+            "sections" => Ok(IntrospectValue::Json(sections_json(state))),
             "options" => Ok(IntrospectValue::Json(options_json(state))),
             "editing" => Ok(IntrospectValue::Bool(state.editing.get())),
             "config_open" => text(state.config_open.get().unwrap_or_default()),
@@ -2960,15 +2972,7 @@ impl ExternalIntrospect for ShellOracle {
             "restore_to" => text(state.maximized.get().map_or_else(String::new, |m| {
                 serde_json::to_string(m.peek()).unwrap_or_else(|why| why.to_string())
             })),
-            "floating" => text(
-                state
-                    .floats
-                    .get()
-                    .iter()
-                    .map(|f| f.id.clone())
-                    .collect::<Vec<_>>()
-                    .join(","),
-            ),
+            "floating" => text(floating_ids(state)),
             // ★★★★★ R1697 — **where each detached panel is, how big, and which
             // is in front**, which nothing published.
             //
@@ -7068,6 +7072,32 @@ fn spec_json() -> serde_json::Value {
             }))
         }).collect::<Vec<_>>(),
     })
+}
+
+/// The ids of the cards that are currently torn off, in the order they float.
+///
+/// Lifted out of the read arm in R1738 for the reason the lint gives: adding one
+/// slot took `query` one line over its budget, and a nine-line expression inline
+/// beside forty one-line arms was the cheapest thing in it to name.
+fn floating_ids(state: &ShellState) -> String {
+    state
+        .floats
+        .get()
+        .iter()
+        .map(|f| f.id.clone())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+/// ★★★★★ R1738 — the framework's own count of how much of this application has
+/// been judged, section by section.
+///
+/// Built by `ScreenRoster` from the roster rather than assembled here, for the
+/// reason the slot exists at all: a list written on this side is a list a
+/// section can fall off, and that is exactly what the round measured — four of
+/// six open sections had never been compared with anything and nothing said so.
+fn sections_json(state: &ShellState) -> serde_json::Value {
+    state.screens.conformance().to_json()
 }
 
 /// ★ R1695 — the Settings switches, as the wire reads them.

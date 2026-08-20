@@ -38,6 +38,7 @@ DOCS = Path(__file__).resolve().parent.parent / "docs"
 RAIL_SPEC_PATH = DOCS / "analyzer-rail-spec.json"
 KEYS_SPEC_PATH = DOCS / "analyzer-keys-spec.json"
 BOARD_SPEC_PATH = DOCS / "analyzer-board-spec.json"
+SECTIONS_SPEC_PATH = DOCS / "analyzer-sections-spec.json"
 
 
 def rail_spec() -> dict:
@@ -53,6 +54,31 @@ def board_spec() -> dict:
 def keys_spec() -> dict:
     """The key-pattern section's three surfaces, as their pin states them."""
     return json.loads(KEYS_SPEC_PATH.read_text(encoding="utf-8"))
+
+
+def sections_spec() -> dict:
+    """Which sections of the assembled application are judged, and the reason
+    accepted for each that is not (R1738).
+
+    Unlike its siblings this is a claim about THIS BUILD rather than about the
+    behaviour reference, which is why it does not repeat the seat list: the
+    population is `rail_spec`'s canon and this holds only the remainder.
+    """
+    return json.loads(SECTIONS_SPEC_PATH.read_text(encoding="utf-8"))
+
+
+def unjudged_sections() -> dict[str, str]:
+    """The sections the pin accepts as unjudged, keyed by seat, valued by the
+    sentence the running application is expected to publish for each.
+
+    A dict rather than a list because the gate asserts an EQUALITY against the
+    application's own unjudged rows: a section that starts answering must have
+    its entry deleted here, and an entry left behind has to fail as loudly as a
+    section that went silent.
+    """
+    return {
+        entry["key"]: entry["sentence"] for entry in sections_spec()["unjudged"]["owed"]
+    }
 
 
 def rail_keys() -> list[str]:
