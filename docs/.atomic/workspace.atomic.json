@@ -55220,6 +55220,106 @@
         "parsing is untouched. That is the debt file's third item and its own round."
       ]
     },
+    "R1750": {
+      "decision_summary": "The engine pin moves fourteen commits, and the consumption splits in two: one\nhalf arrived and is proven in this tree's own generated Rust, the other half\nwent to four backends and NOT to the one this project emits from.\n\nWHAT ARRIVED. `tools/codegen/templates/rust/module_index.rs.jinja2` now puts\n`#[allow(unused_imports)]` on the `pub use *_sm::*` it emits. Proven rather\nthan assumed: after forcing the build script to re-run, this tree's\n`button_sm.include.rs` carries that line. ★ The upstream commit body gives its\nreproduction as \"a consumer whose library reaches the machine only from its\ntests… under the consumer's `deny(warnings)` that is a hard error in generated\ncode the consumer may not edit\" -- which is exactly this workspace's shape, so\nthis is the upstream reading OUR constraint and fixing its emitter. Recorded\nbecause a bump that consumes something because the consumer asked for it is a\ndifferent fact from a bump that happens to compile.\n\nWHAT DID NOT ARRIVE, and it is the round's real finding. The headline feature\nis `Bound the macrostep an internal chain cannot end` -- W3C SCXML 3.13, the\ncase where a `<raise>` answering itself never empties the queue, given one\nmicrostep budget across both branches of Appendix D's inner loop with a\nbackstop of 1000. Asked which Rust files that commit touched, the answer is\nONE, and it is the allow above. The bound itself went to C, Go, Kotlin and C++,\nand to the C codegen template. Measured by keyword: the C template has 14 hits\nfor budget/backstop, the Rust templates have none -- and the two Rust hits that\nLOOK like a bound are not one, a lint \"suppression budget\" and a\n`MAX_MICROSTEP_DEDUP_SLOTS` slot count. So this project's twelve widget\nstatecharts plus its window topology are still unbounded against a\nself-answering internal chain, where four other backends now are not, and there\nis no workaround here: that our charts do not currently contain such a chain is\na fact that is true today rather than a guarantee. Registered as SCE-005 with a\nhandoff, because `vendor/sce` is not edited from here.\n\n⚠ WHY THAT ABSENCE IS NOT PROVEN BY A TEST, stated rather than glossed: a test\nthat shows it would have to run a chart with no bound, and would therefore not\nterminate. The evidence is structural. When upstream adds the bound, a chart\nthat answers itself and an assertion that the macrostep ENDS becomes writable,\nand that test is what will prove the consumption.",
+      "changes_bullets": [
+        "`vendor/sce` gitlink, the two workspace manifest revs and `Cargo.lock` move",
+        "together in one commit, which is what the dual-pin gate asserts.",
+        "`memory/sce-upstream-debts.md` gains SCE-005 -- the first open entry in a file",
+        "whose residue had been zero since the 2026-08-11 audit.",
+        "`claudedocs/sce-005-rust-emit-has-no-macrostep-bound-HANDOFF.md` carries the",
+        "measurement, the exposure and the two procedural traps to the sce session."
+      ],
+      "verification_bullets": [
+        "`tools/pin_sync.py --check-dual-pin` reports manifest = lock = vendor/sce at",
+        "a8026fd.",
+        "Gates, each judged by an rc written to a file: `cargo test -p pinion-core -p",
+        "pinion-forge -p pinion-runtime` green, `cargo test -p pinion-rpc -p",
+        "pinion-shell -p pinion-screen -p pinion-widget-paint` green, clippy over the",
+        "three engine-facing crates clean.",
+        "Blast radius chosen as what the ENGINE moves rather than what the manifest edit",
+        "touched: the widget demos whose behaviour IS their machine --",
+        "hello_button_r641, hello_toggle_click, hello_toggle_activate, all rc 0.",
+        "The consumption proof is the emitted file itself, read after a forced re-run."
+      ],
+      "impact_refs": [
+        "5.4"
+      ],
+      "carry_forward_bullets": [
+        "SCE-005 is open and cannot be closed from here: the fix is a Rust-template",
+        "change in another repository, reachable only by the PR path this project holds",
+        "itself to. The handoff names the two candidate outcomes -- the omission is",
+        "filled, or upstream says why Rust is deliberately the exception.",
+        "THREE PROCEDURAL TRAPS THIS BUMP WALKED INTO, all caught by a gate rather than",
+        "by me, and all worth carrying because the next bump meets them again.",
+        "(1) `cargo check` was green while `Cargo.lock` still held the OLD rev, because a",
+        "remote build does not return the refreshed lock to this tree. \"The build is",
+        "green\" and \"the three pins agree\" are different claims, which is what",
+        "`--check-dual-pin` exists to separate.",
+        "(2) `bx --local` refuses without a reason that can expire, on a measurement that",
+        "a bare `--local` outlived its reason by three hours.",
+        "(3) ★ `cargo build` was green while the GENERATED code was an hour-old cache",
+        "from before the pin moved. Reading it would have produced the confident wrong",
+        "conclusion that the template change does not reach us. \"The build is green\" is",
+        "not \"the build script re-ran\" -- a pin bump's consumption proof starts at the",
+        "emitted file's TIMESTAMP, and forces `cargo clean -p <crate>` when it has not",
+        "moved.",
+        "A closing-audit grep for the old rev found one surviving occurrence, in",
+        "`tools/worktree.sh`. Read rather than replaced: it is a synthetic",
+        "`git submodule status` line in that script's selftest, so it is sample data and",
+        "not a claim about the pin. Changing it would make the fixture look like it",
+        "tracks the pin, which is the one thing a fixture must not do."
+      ],
+      "publishable_decision_summary": "The engine pin moves fourteen commits, and the consumption splits in two: one\nhalf arrived and is proven in this tree's own generated Rust, the other half\nwent to four backends and NOT to the one this project emits from.\n\nWHAT ARRIVED. `tools/codegen/templates/rust/module_index.rs.jinja2` now puts\n`#[allow(unused_imports)]` on the `pub use *_sm::*` it emits. Proven rather\nthan assumed: after forcing the build script to re-run, this tree's\n`button_sm.include.rs` carries that line. ★ The upstream commit body gives its\nreproduction as \"a consumer whose library reaches the machine only from its\ntests… under the consumer's `deny(warnings)` that is a hard error in generated\ncode the consumer may not edit\" -- which is exactly this workspace's shape, so\nthis is the upstream reading OUR constraint and fixing its emitter. Recorded\nbecause a bump that consumes something because the consumer asked for it is a\ndifferent fact from a bump that happens to compile.\n\nWHAT DID NOT ARRIVE, and it is the round's real finding. The headline feature\nis `Bound the macrostep an internal chain cannot end` -- W3C SCXML 3.13, the\ncase where a `<raise>` answering itself never empties the queue, given one\nmicrostep budget across both branches of Appendix D's inner loop with a\nbackstop of 1000. Asked which Rust files that commit touched, the answer is\nONE, and it is the allow above. The bound itself went to C, Go, Kotlin and C++,\nand to the C codegen template. Measured by keyword: the C template has 14 hits\nfor budget/backstop, the Rust templates have none -- and the two Rust hits that\nLOOK like a bound are not one, a lint \"suppression budget\" and a\n`MAX_MICROSTEP_DEDUP_SLOTS` slot count. So this project's twelve widget\nstatecharts plus its window topology are still unbounded against a\nself-answering internal chain, where four other backends now are not, and there\nis no workaround here: that our charts do not currently contain such a chain is\na fact that is true today rather than a guarantee. Registered as SCE-005 with a\nhandoff, because `vendor/sce` is not edited from here.\n\n⚠ WHY THAT ABSENCE IS NOT PROVEN BY A TEST, stated rather than glossed: a test\nthat shows it would have to run a chart with no bound, and would therefore not\nterminate. The evidence is structural. When upstream adds the bound, a chart\nthat answers itself and an assertion that the macrostep ENDS becomes writable,\nand that test is what will prove the consumption.",
+      "publishable_changes_bullets": [
+        "`vendor/sce` gitlink, the two workspace manifest revs and `Cargo.lock` move",
+        "together in one commit, which is what the dual-pin gate asserts.",
+        "`memory/sce-upstream-debts.md` gains SCE-005 -- the first open entry in a file",
+        "whose residue had been zero since the 2026-08-11 audit.",
+        "`claudedocs/sce-005-rust-emit-has-no-macrostep-bound-HANDOFF.md` carries the",
+        "measurement, the exposure and the two procedural traps to the sce session."
+      ],
+      "publishable_verification_bullets": [
+        "`tools/pin_sync.py --check-dual-pin` reports manifest = lock = vendor/sce at",
+        "a8026fd.",
+        "Gates, each judged by an rc written to a file: `cargo test -p pinion-core -p",
+        "pinion-forge -p pinion-runtime` green, `cargo test -p pinion-rpc -p",
+        "pinion-shell -p pinion-screen -p pinion-widget-paint` green, clippy over the",
+        "three engine-facing crates clean.",
+        "Blast radius chosen as what the ENGINE moves rather than what the manifest edit",
+        "touched: the widget demos whose behaviour IS their machine --",
+        "hello_button_r641, hello_toggle_click, hello_toggle_activate, all rc 0.",
+        "The consumption proof is the emitted file itself, read after a forced re-run."
+      ],
+      "publishable_impact_refs": [
+        "5.4"
+      ],
+      "publishable_carry_forward_bullets": [
+        "SCE-005 is open and cannot be closed from here: the fix is a Rust-template",
+        "change in another repository, reachable only by the PR path this project holds",
+        "itself to. The handoff names the two candidate outcomes -- the omission is",
+        "filled, or upstream says why Rust is deliberately the exception.",
+        "THREE PROCEDURAL TRAPS THIS BUMP WALKED INTO, all caught by a gate rather than",
+        "by me, and all worth carrying because the next bump meets them again.",
+        "(1) `cargo check` was green while `Cargo.lock` still held the OLD rev, because a",
+        "remote build does not return the refreshed lock to this tree. \"The build is",
+        "green\" and \"the three pins agree\" are different claims, which is what",
+        "`--check-dual-pin` exists to separate.",
+        "(2) `bx --local` refuses without a reason that can expire, on a measurement that",
+        "a bare `--local` outlived its reason by three hours.",
+        "(3) ★ `cargo build` was green while the GENERATED code was an hour-old cache",
+        "from before the pin moved. Reading it would have produced the confident wrong",
+        "conclusion that the template change does not reach us. \"The build is green\" is",
+        "not \"the build script re-ran\" -- a pin bump's consumption proof starts at the",
+        "emitted file's TIMESTAMP, and forces `cargo clean -p <crate>` when it has not",
+        "moved.",
+        "A closing-audit grep for the old rev found one surviving occurrence, in",
+        "`tools/worktree.sh`. Read rather than replaced: it is a synthetic",
+        "`git submodule status` line in that script's selftest, so it is sample data and",
+        "not a claim about the pin. Changing it would make the fixture look like it",
+        "tracks the pin, which is the one thing a fixture must not do."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
