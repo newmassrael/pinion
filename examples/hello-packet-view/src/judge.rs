@@ -59,8 +59,8 @@
 //! of a defect — the escape hatch R1742's header refuses, arrived at from a
 //! different direction.
 
-use pinion_core::conformance::{Built, DocumentReport, Part};
-use pinion_core::painted::{PaintedRegions, in_reading_order, painted_regions};
+use pinion_core::conformance::{Built, DocumentReport, Part, parts_as_read, parts_titled};
+use pinion_core::painted::PaintedRegions;
 use pinion_core::scene::Rect;
 
 use crate::VIEW_TAG;
@@ -125,38 +125,26 @@ pub fn built(regions: &PaintedRegions, surface: &str) -> Built {
 
 /// The filter bar's three parts.
 ///
-/// ★★★★★ **The query box is not among this surface's marks, and that is a fact
-/// about the framework rather than a defect in either.** Measured the first
-/// time this file ran against the assembled application: the bar reported the
-/// query *absent* and the other two parts *out of place*, which is what a
-/// missing leading part does to an ordered roster. The box is an
+/// ★★★★★ R1758 — **this used to be four lines and a stated limitation, and the
+/// framework was what was wrong.** The query box is an
 /// [`External`](pinion_core::external::External) of its own — it owns focus and
-/// takes keystrokes — so the paint store files it as a SURFACE, and a surface
-/// is not a thing painted inside itself. Its marks are one level down, in its
-/// own store.
+/// takes keystrokes — so the paint store registers it as a SURFACE. Marks were
+/// attributed to *the smallest surface whose rectangle contains them*, and a
+/// nested surface's own node is inside its own rectangle, so the box was filed
+/// under itself and dropped: the bar reported its query absent and its other
+/// two parts out of place, which is what a missing leading part does to an
+/// ordered roster.
 ///
-/// So it is found by asking whether **its** surface painted, which is the same
-/// store one question lower rather than a different kind of evidence. Worth
-/// stating for the next screen that embeds a framework widget and finds a part
-/// of itself missing: `parts_under` answers about one surface, and an embedded
-/// External is another one.
-///
-/// ⚠ It is placed FIRST rather than sorted into reading order with its
-/// siblings, because the rectangle that would sort it belongs to the other
-/// store and this one has no coordinate for it. The bar leads with the query in
-/// both documents, so the position is the specification's; what this surface
-/// therefore cannot catch is the query box moving to the far end of its own
-/// bar, and saying so is cheaper than a reader assuming it could.
+/// R1747 worked around it here by asking the child store whether it had painted
+/// and prepending the part by hand, which could not say WHERE in the bar the
+/// box was — so a query box that moved to the far end went uncaught. R1758 met
+/// the same class from the other side (a host's own box holding a nested
+/// surface, attributed to the child) and repaired the attribution instead: a
+/// mark now belongs to the nearest ANCESTOR that is a surface, which is who
+/// drew it. The box is an ordinary part of this bar again, in its painted
+/// place, and the position is now checked rather than assumed.
 fn filter_bar(regions: &PaintedRegions) -> Vec<Part> {
-    let mut parts = Vec::new();
-    if painted_regions(crate::QUERY_TAG).is_some() {
-        parts.push(Part::new(
-            "query",
-            bar_part_title("query").unwrap_or_default(),
-        ));
-    }
-    parts.extend(named(regions, FILTER, &bar_part_title));
-    parts
+    named(regions, FILTER, &bar_part_title)
 }
 
 /// A surface whose parts the reference titles by what they READ.
@@ -166,16 +154,13 @@ fn filter_bar(regions: &PaintedRegions) -> Vec<Part> {
 /// name the reading is said to be missing rather than guessed at, because a
 /// part that draws nothing and a part that draws the wrong thing are different
 /// defects and a blank would make them read alike.
+///
+/// ★ R1758 obligation-3b — the reading itself is the framework's
+/// ([`parts_as_read`]) now. Counted at the commit before that round: three
+/// files held these four lines and two of them were screens, and the round was
+/// about to add two more.
 fn read(regions: &PaintedRegions, stem: &str) -> Vec<Part> {
-    in_reading_order(regions.parts_under(stem))
-        .into_iter()
-        .map(|(key, _)| {
-            let said = regions
-                .reads(&format!("{stem}{key}"))
-                .unwrap_or("<this part is painted and draws no words>");
-            Part::new(key, said.to_owned())
-        })
-        .collect()
+    parts_as_read(regions, stem)
 }
 
 /// A surface whose parts carry no label a reader sees, titled by this screen's
@@ -189,16 +174,7 @@ fn named(
     stem: &str,
     title: &dyn Fn(&str) -> Option<&'static str>,
 ) -> Vec<Part> {
-    in_reading_order(regions.parts_under(stem))
-        .into_iter()
-        .map(|(key, _)| {
-            let said = title(&key).map_or_else(
-                || format!("<{key} is painted and no table names it>"),
-                str::to_owned,
-            );
-            Part::new(key, said)
-        })
-        .collect()
+    parts_titled(regions, stem, &|key| title(key).map(str::to_owned))
 }
 
 /// What one part of the filter bar is, in the words the specification uses.

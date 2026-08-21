@@ -134,6 +134,18 @@ def lab_row(app: RpcSubprocess) -> dict:
     return row
 
 
+def lab_surfaces(app: RpcSubprocess) -> dict:
+    """The lab's per-surface verdict.
+
+    ★ R1758 — one accessor rather than `["conformance"]["surfaces"]` at fifteen
+    call sites. The row publishes the section's WHOLE verdict under one key now
+    (what it was read from, the totals, and the surfaces), because a row that
+    spread three of a verdict's facts flat is how a partial verdict comes to
+    read as a complete one.
+    """
+    return lab_row(app)["conformance"]["surfaces"]
+
+
 def reveal(app: RpcSubprocess, tag: str, over: str = "lab.inspector.body") -> None:
     """Wheel `over` until `tag` is painted, the way a hand reaches a chip below
     the fold.
@@ -216,7 +228,7 @@ def section_a(app: RpcSubprocess) -> None:
     ok(
         "A: and the judged row carries the tag its section is addressed by, so "
         "a reader of this report can go and ask the section itself",
-        row["tag"] and row["surfaces"],
+        row["tag"] and row["conformance"]["surfaces"],
     )
     # ★★★★★ Found by re-running an OLDER gate against this round's build, which
     # is why it is asserted here: a section that derives its verdict from its
@@ -258,7 +270,7 @@ def section_b(app: RpcSubprocess) -> None:
     assert_eq(app.query(f"{EXT}/nav"), SEAT, "B: the lab seat opens")
 
     row = lab_row(app)
-    surfaces = row["surfaces"]
+    surfaces = row["conformance"]["surfaces"]
     ok("B: the section names every surface its specification fixes", len(surfaces) == 3)
 
     # ★ Measured rather than assumed: the tool opens the lab with a card
@@ -280,7 +292,9 @@ def section_b(app: RpcSubprocess) -> None:
     ok(
         "B: ★★★ and what each is SPECIFIED to be does not depend on a session -- "
         "the shortfall is a fact about the session, not about the build",
-        row["specified"] == sum(s["specified"] for s in surfaces.values()) > 0,
+        row["conformance"]["specified"]
+        == sum(s["specified"] for s in surfaces.values())
+        > 0,
     )
 
     # ⚠ And the one the round wants a reader to see with its eyes open. The
@@ -322,32 +336,32 @@ def section_c(app: RpcSubprocess) -> str:
         "C: a press on the card the canvas drew selects THAT card",
     )
 
-    row = lab_row(app)
+    surfaces = lab_surfaces(app)
     assert_eq(
-        row["surfaces"]["controls"]["standing"],
+        surfaces["controls"]["standing"],
         True,
         "C: ★★ selecting a card puts the value controls on screen, and the "
         "verdict changes with the session because it is ABOUT the session",
     )
     ok(
         "C: the enumeration row is still away -- nobody has added it",
-        row["surfaces"]["enum_row"]["standing"] is False,
+        surfaces["enum_row"]["standing"] is False,
     )
 
     # The row: reach the palette chip that offers this configuration path — it
     # is below the fold on the page the tool gives the lab — and press it.
     reveal(app, f"lab.form.add.{key}")
     press_tag(app, f"lab.form.add.{key}")
-    row = lab_row(app)
+    surfaces = lab_surfaces(app)
     ok(
         f"C: ★★ pressing the chip that offers `{key}` puts the specified row "
         f"on screen",
-        row["surfaces"]["enum_row"]["standing"] is True,
+        surfaces["enum_row"]["standing"] is True,
     )
     ok(
         "C: and the roster it collapses is still shut, which is a THIRD state "
         "-- away, standing-and-shut, standing-and-open are not two things",
-        row["surfaces"]["enum_roster"]["standing"] is False,
+        surfaces["enum_roster"]["standing"] is False,
     )
 
     # 🟥★★★★★ MEASURED HERE, AND IT IS THE ROUND'S SHARPEST FINDING. At the
@@ -357,7 +371,7 @@ def section_c(app: RpcSubprocess) -> str:
     # NOT as a page — "two builds wearing one name", which R1738 named as the
     # risk and nothing could measure until a section published a verdict a host
     # could read. It is reported, not hidden: the verdict says so.
-    cramped = lab_row(app)["surfaces"]["enum_row"]
+    cramped = lab_surfaces(app)["enum_row"]
     body = abs_rects_of(app.snapshot(source="paint")).get("lab.inspector.body")
     ok(
         f"C: 🟥★★★★★ at the opening window the inspector is {body[2]}px wide and "
@@ -373,7 +387,7 @@ def section_c(app: RpcSubprocess) -> str:
     # screen.
     resize_and_settle(app, (2560, 1600))
     app.tick(16)
-    shut = lab_row(app)["surfaces"]
+    shut = lab_surfaces(app)
     for name in ("enum_row", "controls"):
         said = shut[name]
         ok(
@@ -387,7 +401,7 @@ def section_c(app: RpcSubprocess) -> str:
     # The roster: press the collapsed control.
     reveal(app, f"lab.form.control.{key}")
     press_tag(app, f"lab.form.control.{key}")
-    opened = lab_row(app)["surfaces"]
+    opened = lab_surfaces(app)
     said = opened["enum_roster"]
     ok(
         f"C: ★★★ pressing the control opens the roster, and it reproduces "
@@ -446,7 +460,7 @@ def section_d(app: RpcSubprocess, key: str) -> None:
     published = json.loads(app.query(f"/{tag}{EXT}/spec"))["inspector"]
     assert_eq(
         sorted(published),
-        sorted(row["surfaces"]),
+        sorted(row["conformance"]["surfaces"]),
         "D: the surfaces the section publishes a SPECIFICATION for are the ones "
         "it publishes a VERDICT for -- one document, two readings",
     )
@@ -495,21 +509,30 @@ def section_e(app: RpcSubprocess, key: str) -> None:
     own = app.query(f"/{row['tag']}{EXT}/conformance")
     assert_eq(
         own,
-        row["surfaces"],
+        row["conformance"],
         "E: ★★ the host's row for `lab` IS the value the section publishes on "
         "its own wire -- the host aggregates, it does not re-derive",
     )
     assert_eq(
-        row["specified"],
-        sum(s["specified"] for s in own.values()),
+        row["conformance"]["specified"],
+        sum(s["specified"] for s in own["surfaces"].values()),
         "E: and the row's totals are its surfaces added up",
+    )
+    # ★★★★★ R1758 — and the verdict names what it was READ FROM. A count with
+    # no qualifier let two sections of this tool report every part reproduced
+    # from a page they had not painted.
+    assert_eq(
+        own["evidence"],
+        "paint",
+        "E: ★★★★★ and it says the verdict is about a painted frame",
     )
 
     ok(
         "E: ★ and the section's own wire is reachable because the journey is "
         "standing in it -- which is why the host answering for every section "
         "from anywhere is what makes an application-wide verdict possible",
-        app.query(f"{EXT}/nav") == SEAT and set(own) == set(row["surfaces"]),
+        app.query(f"{EXT}/nav") == SEAT
+        and set(own["surfaces"]) == set(row["conformance"]["surfaces"]),
     )
 
     with RpcSubprocess(LAB, boot_grace=1.5) as alone:
@@ -518,8 +541,8 @@ def section_e(app: RpcSubprocess, key: str) -> None:
             "E: ★★★★★ freshly started, the same section says its two "
             "session-dependent surfaces are AWAY -- the verdict is about a "
             "session, so two processes in different sessions must differ",
-            fresh["enum_row"]["standing"] is False
-            and fresh["enum_roster"]["standing"] is False
+            fresh["surfaces"]["enum_row"]["standing"] is False
+            and fresh["surfaces"]["enum_roster"]["standing"] is False
             and fresh != own,
         )
         # The SAME gestures, over the same painted rectangles, in a process

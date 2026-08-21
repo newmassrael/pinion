@@ -15258,11 +15258,38 @@ pub fn record_painted_surfaces(paint_scene: &Scene, tags: &[&str]) -> usize {
 /// is what the store is FOR and a per-surface walk would have to re-establish
 /// it each time.
 ///
-/// A mark belongs to the **smallest** surface whose rectangle contains its
-/// centre — the same attribution `scene/pointer_target` makes, stated once here
-/// rather than left to walk order. Without it a screen nested inside another
-/// would find the host's marks in its own stack and resolve presses to things
-/// it does not own.
+/// ★★★★★ R1758 — a mark belongs to the surface it was painted **inside**: the
+/// nearest ancestor, in the scene, whose tag is a registered surface.
+///
+/// # Why it is ancestry and not geometry, measured
+///
+/// It was *the smallest surface whose rectangle contains the mark's centre*,
+/// justified as "the same attribution `scene/pointer_target` makes". Those are
+/// two different questions that happened to share an answer. Which surface a
+/// POINT is over is a question about rectangles and the innermost one wins;
+/// which surface PAINTED a mark is a question about who drew it, and the scene
+/// already knows.
+///
+/// They come apart exactly at a host's own box that HOLDS a nested surface —
+/// the two have the same rectangle, so geometry hands the host's box to the
+/// child. Measured at R1758 on the key-pattern section, whose header specifies
+/// three parts: the box tagged `kp.header.filter` holds a text field that owns
+/// focus and is therefore a surface of its own at the same size, so the header
+/// surface reported `filter` **absent** while the frame plainly drew it. The
+/// capture viewer had met the same class at R1747 from the other side — the
+/// query box being a surface meant its own tag never appeared among its bar's
+/// parts — and worked around it by asking the child store whether it had
+/// painted and prepending the part by hand, with a documented limitation that
+/// it could not then tell where in the bar the box had moved to.
+///
+/// Ancestry answers both without a workaround, and is right in the cases
+/// geometry gets wrong in either direction: an overlay a host paints ACROSS a
+/// nested surface stays the host's, and a mark a nested surface paints outside
+/// its own rectangle stays the child's.
+///
+/// A surface's own node has no surface ancestor of its own name, so the rule
+/// that a surface is not a thing painted inside itself needs no separate
+/// statement — it follows.
 fn record_painted_marks(paint_scene: &Scene, surfaces: &[(String, Rect)]) {
     let mut marks: BTreeMap<&str, Vec<(String, Rect)>> = surfaces
         .iter()
@@ -15276,12 +15303,14 @@ fn record_painted_marks(paint_scene: &Scene, surfaces: &[(String, Rect)]) {
         .map(|(tag, _)| (tag.as_str(), BTreeMap::new()))
         .collect();
     paint_scene.for_each_node(&mut |visit| {
-        let surface_of = |rect: Rect| {
-            let (cx, cy) = (rect.x + rect.w / 2, rect.y + rect.h / 2);
-            surfaces
-                .iter()
-                .filter(|(_, r)| cx >= r.x && cy >= r.y && cx < r.x + r.w && cy < r.y + r.h)
-                .min_by_key(|(_, r)| u64::from(r.w) * u64::from(r.h))
+        // The nearest ancestor that IS a registered surface. Nearest rather
+        // than outermost, so a surface nested in another gets its own marks;
+        // ancestors only, so a surface's own node belongs to whoever drew it.
+        let surface_of = || {
+            visit.ancestors.iter().rev().find_map(|a| {
+                let tag = a.tag()?;
+                surfaces.iter().find(|(name, _)| name == tag)
+            })
         };
         let Some(rect) = visit.absolute_rect() else {
             return; // clipped entirely away: painted nowhere, so not painted
@@ -15294,7 +15323,7 @@ fn record_painted_marks(paint_scene: &Scene, surfaces: &[(String, Rect)]) {
                 .tag
                 .as_deref()
                 .or_else(|| visit.ancestors.iter().rev().find_map(|a| a.tag()));
-            if let (Some(owner), Some((surface_tag, _))) = (owner, surface_of(rect))
+            if let (Some(owner), Some((surface_tag, _))) = (owner, surface_of())
                 && let Some(into) = reads.get_mut(surface_tag.as_str())
             {
                 into.entry(owner.to_owned())
@@ -15306,12 +15335,13 @@ fn record_painted_marks(paint_scene: &Scene, surfaces: &[(String, Rect)]) {
             }
         }
         let Some(tag) = visit.node.tag() else { return };
-        let Some((surface_tag, surface_rect)) = surface_of(rect) else {
+        let Some((surface_tag, surface_rect)) = surface_of() else {
             return;
         };
-        if surface_tag == tag {
-            return; // a surface is not a thing painted inside itself
-        }
+        debug_assert_ne!(
+            surface_tag, tag,
+            "a surface cannot be its own ancestor, so it cannot be a thing painted inside itself",
+        );
         if let Some(into) = marks.get_mut(surface_tag.as_str()) {
             into.push((
                 tag.to_owned(),
@@ -15329,6 +15359,134 @@ fn record_painted_marks(paint_scene: &Scene, surfaces: &[(String, Rect)]) {
             tag,
             pinion_core::painted::PaintedRegions::from_marks(into)
                 .with_reads(reads.remove(tag).unwrap_or_default()),
+        );
+    }
+}
+
+#[cfg(test)]
+mod painted_attribution_tests {
+    use super::record_painted_surfaces;
+    use pinion_core::Scene;
+    use pinion_core::painted::{forget_painted_regions, painted_regions};
+    use pinion_core::scene::{ContainerNode, Rect, TextNode};
+
+    const HOST: &str = "r1758.host";
+    const FIELD: &str = "r1758.host.field";
+
+    /// A tagged region at an absolute rectangle, as the paint scene has it.
+    fn boxed(tag: &'static str, rect: Rect, children: Vec<Scene>) -> Scene {
+        let mut node = ContainerNode::new(children);
+        node.rect = rect;
+        node.tag = Some(tag.into());
+        node.layout = pinion_core::style::LayoutStyle::new();
+        Scene::Container(node)
+    }
+
+    /// A host that draws a box of its own **holding** a nested surface of
+    /// exactly the same size, plus a mark inside that nested surface.
+    ///
+    /// The shape every screen in this tree that embeds a focus-owning widget
+    /// has: the widget is registered as a surface, and the box the host puts it
+    /// in is laid out to the widget's size.
+    fn scene() -> Scene {
+        boxed(
+            HOST,
+            Rect::new(0, 0, 400, 300),
+            vec![
+                boxed(
+                    FIELD,
+                    Rect::new(10, 10, 200, 32),
+                    // The nested surface, at the SAME rectangle as the host's
+                    // box that holds it.
+                    vec![boxed(
+                        "r1758.query",
+                        Rect::new(10, 10, 200, 32),
+                        vec![Scene::Text(
+                            TextNode::new("typed", Rect::new(12, 16, 60, 12))
+                                .with_tag("r1758.query.value"),
+                        )],
+                    )],
+                ),
+                boxed("r1758.host.label", Rect::new(10, 60, 100, 20), vec![]),
+            ],
+        )
+    }
+
+    /// ★★★★★ R1758 — **a mark belongs to the surface that PAINTED it, not to
+    /// the smallest surface its rectangle lands in.**
+    ///
+    /// Attribution was geometric, justified as matching `scene/pointer_target`.
+    /// Those are two questions: which surface a POINT is over is about
+    /// rectangles, and which surface drew a MARK is about who drew it. They come
+    /// apart exactly here, at a host's own box holding a nested surface of the
+    /// same size — geometry hands the host's box to the child, so the host's
+    /// specified part vanishes from its own store.
+    ///
+    /// Measured on the key-pattern section at R1758: its header specifies three
+    /// parts and reported the third, a box holding a text field, **absent**
+    /// while the frame plainly drew it.
+    #[test]
+    fn r1758_a_mark_belongs_to_the_surface_that_painted_it() {
+        for tag in [HOST, "r1758.query"] {
+            forget_painted_regions(tag);
+        }
+        assert_eq!(
+            record_painted_surfaces(&scene(), &[HOST, "r1758.query"]),
+            2,
+            "both surfaces are on this frame",
+        );
+
+        let host = painted_regions(HOST).expect("the host painted");
+        let host_marks: Vec<&str> = host.marks().map(|(tag, _)| tag).collect();
+        assert!(
+            host_marks.contains(&FIELD),
+            "★ the host's own box, which HOLDS the nested surface, is the host's \
+             mark: {host_marks:?}",
+        );
+        assert!(
+            host_marks.contains(&"r1758.query"),
+            "★★ and so is the nested surface's own node -- the host drew it, and \
+             a bar that could not see its own query box could not say where in \
+             itself the box sits: {host_marks:?}",
+        );
+        assert!(
+            !host_marks.contains(&"r1758.query.value"),
+            "while what the nested surface drew INSIDE itself is not the host's: \
+             {host_marks:?}",
+        );
+
+        let nested = painted_regions("r1758.query").expect("the field painted");
+        let nested_marks: Vec<&str> = nested.marks().map(|(tag, _)| tag).collect();
+        assert_eq!(
+            nested_marks,
+            vec!["r1758.query.value"],
+            "and the nested surface holds exactly what it drew",
+        );
+    }
+
+    /// The reading a specified surface is judged by sees the host's part.
+    ///
+    /// The same fact one layer up, asserted where the judgment actually reads
+    /// it: `parts_under` is what a screen's `judge` module calls, and the
+    /// geometric rule made this answer one part short.
+    #[test]
+    fn r1758_a_hosts_part_holding_a_nested_surface_is_under_its_own_stem() {
+        for tag in [HOST, "r1758.query"] {
+            forget_painted_regions(tag);
+        }
+        record_painted_surfaces(&scene(), &[HOST, "r1758.query"]);
+        let host = painted_regions(HOST).expect("the host painted");
+        let mut parts: Vec<String> = host
+            .parts_under("r1758.host.")
+            .into_iter()
+            .map(|(key, _)| key)
+            .collect();
+        parts.sort();
+        assert_eq!(
+            parts,
+            vec!["field".to_owned(), "label".to_owned()],
+            "★★★★★ both of the host's specified parts, including the one that \
+             holds a surface of its own",
         );
     }
 }

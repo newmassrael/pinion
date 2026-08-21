@@ -1503,16 +1503,24 @@ fn r1747_the_capture_viewer_reproduces_its_specification_or_says_why_not() {
     println!("off the frame at a smaller size: {off_frame:?}");
 }
 
-/// ★★★★★ R1747 — the query box is judged as **its own surface**, and this is
-/// what says so.
+/// ★★★★★ R1747, restated by R1758 — the query box is **a mark of the screen
+/// that drew it and a surface of its own**, and those are two facts rather than
+/// a contradiction.
 ///
-/// The bar reported its query absent and its other two parts out of place the
-/// first time the verdict ran, because a widget that owns focus is an
-/// `External` and the paint store files an External as a SURFACE rather than as
-/// a mark inside its host. The working-around is one line in `judge`; this is
-/// the fact underneath it, asserted so a framework change that folded nested
-/// surfaces back into their host would fail here rather than silently make the
-/// bar report a fourth part.
+/// R1747 asserted the first half backwards. A widget that owns focus is an
+/// `External`, so the paint store registers it as a surface; attribution was
+/// geometric, so the box's own node fell inside its own rectangle and was
+/// dropped from its host — and the bar reported its query absent. That was
+/// written down here as the framework's intended behaviour, with a note saying
+/// a change that "folded nested surfaces back into their host" should fail
+/// here. R1758 made exactly that change deliberately, from the other side of
+/// the same class (a host's box HOLDING a nested surface was being attributed
+/// to the child), and this gate is what caught the consequence — which is what
+/// it was for.
+///
+/// The rule now: a mark belongs to the nearest ancestor that is a surface. So
+/// the box belongs to the screen, everything drawn INSIDE the box belongs to
+/// the box, and the bar can say where in itself the box sits.
 #[test]
 fn r1747_a_focus_owning_widget_is_a_surface_and_not_a_mark_of_its_host() {
     let owner = Owner::new();
@@ -1522,11 +1530,14 @@ fn r1747_a_focus_owning_widget_is_a_surface_and_not_a_mark_of_its_host() {
         let screen =
             pinion_core::painted::painted_regions(super::VIEW_TAG).expect("the sweep just painted");
         assert!(
+            screen.marks().any(|(tag, _)| tag == super::QUERY_TAG),
+            "the box the screen drew is a mark of the screen",
+        );
+        assert!(
             !screen
                 .marks()
-                .any(|(tag, _)| tag.starts_with("pv.filter.query")),
-            "the query box and everything drawn inside it belong to the query's \
-             own store, not to the screen's",
+                .any(|(tag, _)| tag.starts_with(&format!("{}.", super::QUERY_TAG))),
+            "while everything drawn INSIDE the box belongs to the box's own store",
         );
         // ★ The presence of an ENTRY is the fact `judge::filter_bar` rests on,
         // and it is a different fact from the entry holding anything. Measured

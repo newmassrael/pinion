@@ -73,7 +73,6 @@ then asks the toolkit about it.
 from __future__ import annotations
 
 import sys
-from collections.abc import Iterable
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
@@ -207,7 +206,34 @@ def section_c(app: RpcSubprocess) -> None:
         "C: ★★★★★ and yet the host answers for every one of them from here -- "
         "which is what makes a verdict about the application possible without "
         "navigating it",
-        all(row.get("surfaces") for row in judged),
+        all(row.get("conformance") for row in judged),
+    )
+    # ★★★★★ R1758 — and every one of them says WHAT IT WAS READ FROM. Measured
+    # here at R1747 and again at R1758 before the repair: two of these four
+    # reported every part of their specification reproduced from a page they had
+    # not painted a frame on, because their verdict came from their own tables.
+    # A count with no qualifier could not tell those two from the two answering
+    # honestly, and this row is the qualifier.
+    ok(
+        "C: ★★★★★ and every judged section's verdict is about a PAINTED FRAME "
+        "-- a verdict read from a screen's own tables cannot fail for the "
+        "reason judging exists",
+        [row["conformance"]["evidence"] for row in judged]
+        == ["paint"] * len(judged),
+    )
+    ok(
+        "C: ★★★★★ so a section that is not showing reports its surfaces AWAY "
+        "rather than reproduced -- this is the exact row that was wrong",
+        all(
+            row["conformance"]["reproduced"] == 0
+            and row["conformance"]["away"] == len(row["conformance"]["surfaces"])
+            for row in judged
+            if not row["showing"]
+        ),
+    )
+    ok(
+        "C: ★ and the application refuses to call that conformance",
+        said["conforms"] is False and said["declared"] == 0,
     )
 
     # ★★★★★ R1742 — the host's row is re-read WHILE STANDING IN the section,
@@ -233,30 +259,45 @@ def section_c(app: RpcSubprocess) -> None:
         own = app.query(f"/{row['tag']}/external/conformance")
         assert_eq(
             own,
-            here["surfaces"],
+            here["conformance"],
             f"C: ★★ the host's row for `{row['key']}` IS the value the section "
             f"publishes on its own wire -- the host aggregates, it does not "
             f"re-derive",
         )
         assert_eq(
-            here["specified"],
-            sum(surface["specified"] for surface in own.values()),
+            here["conformance"]["specified"],
+            sum(surface["specified"] for surface in own["surfaces"].values()),
             f"C: and `{row['key']}`'s totals are its surfaces added up",
         )
-    app.intervene(f"{EXT}/nav", "dashboard")
-    app.tick(16)
+        ok(
+            f"C: ★★★★★ and standing IN `{row['key']}` its surfaces report "
+            f"STANDING -- the verdict moved when the frame did, which is what "
+            f"says it is about the frame",
+            here["conformance"]["standing"] > 0,
+        )
 
     # One standalone binary, so the claim "one build, two placements" is checked
     # against a second PROCESS and not only against a second slot of this one.
-    keys_row = next(row for row in judged if row["key"] == "keys")
+    #
+    # ★★★★★ R1758 — the host's row is taken WHILE STANDING IN the section. It
+    # used to be taken from the dashboard, which worked only because the section
+    # answered from tables that do not change with the frame; now that the
+    # verdict is about the paint, a row read from another page is about a frame
+    # that is not in the application any more. Same correction R1742 had to make
+    # one assertion earlier, found by running this old gate after the change.
+    app.intervene(f"{EXT}/nav", "keys")
+    app.tick(16)
+    keys_row = next(r for r in report(app)["rows"] if r["key"] == "keys")
     with RpcSubprocess(KEYS_SECTION, boot_grace=1.5) as standalone:
         assert_eq(
             standalone.query(f"{EXT}/conformance"),
-            keys_row["surfaces"],
+            keys_row["conformance"],
             "C: ★★★★★ and the standalone binary of that section publishes the "
             "SAME verdict -- a section that conforms in its own window and is "
             "never asked as a page would be two builds wearing one name",
         )
+    app.intervene(f"{EXT}/nav", "dashboard")
+    app.tick(16)
 
 
 def section_d(app: RpcSubprocess) -> None:
@@ -316,9 +357,19 @@ def section_d(app: RpcSubprocess) -> None:
         # counts, which a reader can see is not coverage. The ratchet below is
         # what stops that being an escape: the population and the part count
         # may not fall below what this check measured when it was written.
+        #
+        # ★★★★★ R1758 — and the canon comes out of the VERDICT now, which
+        # deleted a rule this file used to need. A verdict said how many parts
+        # were specified and not which, so the canon had to be fetched from
+        # whatever the section published beside it and identified by "the
+        # sub-document holding every surface" — itself a repair, made at R1747
+        # after a screen's own `context` table collided with its pin's `context`
+        # surface. A verdict that names its own parts has nothing to search and
+        # nothing to disambiguate.
+        surfaces_said = row["conformance"]["surfaces"]
         parts_by_surface = {
-            surface: parts_of(app, row["tag"], surface, row["surfaces"])
-            for surface in row["surfaces"]
+            surface: [part["key"] for part in surfaces_said[surface]["canon"]]
+            for surface in surfaces_said
         }
         for surface, parts in parts_by_surface.items():
             ok(
@@ -374,59 +425,32 @@ def unreachable(app: RpcSubprocess, tag: str) -> bool:
     return False
 
 
-def parts_of(
-    app: RpcSubprocess, tag: str, surface: str, surfaces: Iterable[str]
-) -> list[str]:
-    """The part keys one surface of a section is specified to have.
-
-    Read from the section's own published specification rather than from a table
-    in this file: the two demos before this one each grew their own copy of a
-    seat list, and the one nobody ran was the one that was wrong.
-
-    ★★★★★ R1742 — it also looks one level down, and reading it flat was a
-    defect. A section may publish its specification NESTED under a name of its
-    own (the node lab publishes `spec.inspector`), and the flat read answered
-    `[]` for every surface of such a section. Nothing failed: the loop below
-    compared nothing, and the printed coverage stayed the number it already
-    was, which reads as covering every judged section. That is this demo's own
-    lesson turned on itself -- count what the check actually looked at -- so
-    the caller refuses a surface that yields no parts.
-
-    ★★★★★ R1747 — and the lookup takes the sub-document that holds EVERY
-    surface, which is a derivation replacing a coincidence. R1742's own comment
-    below predicted this class ("the matching is a heuristic") and the fourth
-    judged section is where it fired: the capture viewer's pin fixes a surface
-    called `context`, and that screen's own published tables ALSO have a
-    `context` -- a different document answering to the same word. Taking the
-    first key that matches would have compared the pin's surface against the
-    screen's negotiated-value table and reported a shortfall that is not one.
-
-    A section's specification is the one place where every surface it is judged
-    on appears together, so that -- and not a name match -- is what identifies
-    it. Ambiguity is refused rather than resolved by order: two candidates
-    holding every surface means this file cannot tell which document the
-    verdict is about, and guessing is what it is trying to stop.
-    """
-    import json
-
-    said = app.query(f"/{tag}/external/spec")
-    if isinstance(said, str):
-        said = json.loads(said)
-    wanted = set(surfaces)
-    candidates = [said] + [v for v in said.values() if isinstance(v, dict)]
-    holding = [c for c in candidates if wanted <= set(c)]
-    assert holding, (
-        f"`{tag}` publishes no document holding every surface it is judged on "
-        f"({sorted(wanted)}); the verdict is about something this file cannot find"
-    )
-    assert len(holding) == 1, (
-        f"`{tag}` publishes {len(holding)} documents holding every surface it is "
-        f"judged on, so which one the verdict is about is a guess"
-    )
-    rows = holding[0][surface]
-    if isinstance(rows, dict):
-        rows = rows.get("canon", [])
-    return [row["key"] for row in rows or [] if isinstance(row, dict) and "key" in row]
+# ★★★★★ R1758 — `parts_of` used to be HERE, and deleting it is the round's
+# smallest visible result and one of its clearest.
+#
+# It answered *which parts one surface of a section is specified to have* by
+# fetching `/{tag}/external/spec` and hunting for the right sub-document, because
+# a verdict said how MANY parts were specified and never which. That hunt needed
+# two repairs of its own: R1742 taught it to look one level down (a section may
+# publish its specification nested, and the flat read answered `[]` for every
+# surface while the printed coverage stayed put), and R1747 replaced name
+# matching with "the sub-document holding every surface" after a screen's own
+# `context` table collided with its pin's `context` surface — one word, two
+# documents.
+#
+# A verdict that carries its own canon has nothing to search and nothing to
+# disambiguate, so all of it goes.
+#
+# ⚠ WHAT WENT WITH IT, named rather than left for the next reader to notice:
+# the two assertions the lookup made on the way past — that a judged section
+# publishes AT LEAST ONE document holding every surface it is judged on, and
+# AT MOST one. Both were preconditions of the search, not claims anybody
+# needed: they existed so this file could find the canon, and the canon is
+# in the verdict now. The claim they were standing in for — *a client can ask
+# a running section what its verdict is about without reading this
+# repository* — is answered more directly than before, by the section itself.
+# What is no longer checked anywhere is the SHAPE a section publishes its
+# specification in on the `spec` slot, and nothing depends on that shape now.
 
 
 def section_e(app: RpcSubprocess) -> None:

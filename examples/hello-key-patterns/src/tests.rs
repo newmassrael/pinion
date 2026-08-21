@@ -12,7 +12,7 @@ use pinion_core::reactive::Owner;
 use pinion_core::widgets::text_field::TextFieldState;
 
 use super::{
-    Hit, KeyPatternView, LIST_TAG, ViewOracle, built, conformance_json, declarer_standing, key_at,
+    Hit, KeyPatternView, LIST_TAG, ViewOracle, conformance_json, declarer_standing, key_at,
     select_declaration, set_query, show_declarer, spec, use_view_state,
 };
 
@@ -36,26 +36,41 @@ fn oracle(state: &std::rc::Rc<super::ViewState>) -> ViewOracle {
 
 // ── The specification ───────────────────────────────────────────────────────
 
+/// The parts one surface's own table declares, in the table's order.
+///
+/// ★ R1758 — this used to be `super::built`, which is what the WIRE answered
+/// with. It is a fixture now, because the wire answers from the paint: see
+/// `crate::judge`. The check below is still worth keeping and is a **weaker**
+/// claim than it was — that this screen's tables agree with the pin, which is
+/// what `painted.rs` then ties to the pixels.
+fn tabled(surface: &str) -> Vec<pinion_core::conformance::Part> {
+    use pinion_core::conformance::Part;
+    match surface {
+        "header" => spec::HEADER
+            .iter()
+            .map(|p| Part::new(p.key, p.title))
+            .collect(),
+        "columns" => spec::COLUMNS
+            .iter()
+            .map(|c| Part::new(c.key, c.title))
+            .collect(),
+        "detail" => spec::DETAIL
+            .iter()
+            .map(|p| Part::new(p.key, p.title))
+            .collect(),
+        other => panic!("no surface named {other}"),
+    }
+}
+
 /// ★★★★★ R1730 — the tables this screen RUNS on are the reference's, or the
 /// difference is one somebody wrote down.
 ///
 /// The painted peer of this check is in `painted.rs` and is the stronger claim.
-/// This one is here because the wire publishes `conformance` from these tables
-/// rather than from the paint: an agent asking the running screen how much of
-/// the section is here gets an answer derived from what is asserted here, and
-/// `painted.rs` is what ties these tables to the pixels.
 #[test]
 fn r1730_the_tables_reproduce_the_specification_or_say_where_they_do_not() {
     let doc = spec::document();
     for surface in doc.surfaces() {
-        // ★ R1742 — and `expect` here is a check, not plumbing: this section's
-        // surfaces are drawn whenever it is showing, so a build that started
-        // answering `away` for one of them would be declining a judgement it
-        // has no session-dependent reason to decline.
-        let parts = built(surface)
-            .parts()
-            .unwrap_or_else(|| panic!("the {surface} surface is always on this screen"))
-            .to_vec();
+        let parts = tabled(surface);
         let unreconciled: Vec<String> = doc
             .unreconciled(surface, &parts)
             .iter()
@@ -69,25 +84,67 @@ fn r1730_the_tables_reproduce_the_specification_or_say_where_they_do_not() {
     }
 }
 
-/// The reproduction is a number rather than an impression, and every surface is
-/// either reproduced or owed.
+/// ★★★★★ R1758 — **a screen that has not painted cannot say it reproduced
+/// anything**, and the wire is where that has to be true.
+///
+/// The gate the round exists for, written against the exact measurement that
+/// opened it. Standing on another page of the assembled application — so this
+/// section had drawn no frame in that session — the tool's own report said
+/// `keys reproduced 21 of 21, away none`, beside two sibling sections correctly
+/// reporting `0 of 26` and `0 of 15` away. It was not a defect in the painter;
+/// the number was read out of `crate::spec`'s tables and could not have said
+/// anything else.
+///
+/// The peer of this check is in `painted.rs`: with a frame recorded, the same
+/// slot reports every surface standing. **Both are needed** — a verdict that is
+/// always away and a verdict that is never away are equally uninformative, and
+/// only running the pair distinguishes a screen that judges its paint from one
+/// that has merely stopped answering.
 #[test]
-fn r1730_the_wire_says_how_much_of_the_section_is_here() {
+fn r1758_the_wire_declines_to_judge_a_screen_that_has_not_painted() {
+    // Deterministic rather than incidental: the paint store is per-thread and
+    // another test on this thread may have filled it. What is being asserted is
+    // the answer given an EMPTY store, so the store is emptied.
+    pinion_core::painted::forget_painted_regions(super::VIEW_TAG);
+
     let published = conformance_json();
+    assert_eq!(
+        published["evidence"], "paint",
+        "the verdict says what it was read from, and this screen reads the frame",
+    );
+    assert_eq!(
+        published["reproduced"], 0,
+        "nothing was painted, so nothing can have been reproduced",
+    );
+    assert_eq!(
+        published["standing"], 0,
+        "no surface of an unpainted screen is on screen",
+    );
+    assert!(
+        !published["reconciles"].as_bool().expect("a verdict"),
+        "declining to be judged is not passing",
+    );
+
     let doc = spec::document();
+    let surfaces = &published["surfaces"];
     for surface in doc.surfaces() {
-        let row = &published[surface];
-        let specified = row["specified"].as_u64().expect("a count");
-        let reproduced = row["reproduced"].as_u64().expect("a count");
-        let owed = row["owed"].as_array().expect("an array").len() as u64;
-        assert_eq!(
-            reproduced + owed,
-            specified,
-            "every part of the {surface} surface is either reproduced or owed, and none is both",
-        );
+        let row = &surfaces[surface];
+        assert_eq!(row["standing"], false, "the {surface} surface is not shown");
         assert!(
-            row["unreconciled"].as_array().expect("an array").is_empty(),
-            "the {surface} surface publishes a difference its ledger does not declare",
+            row["why"].as_str().is_some_and(|why| !why.is_empty()),
+            "the {surface} surface says WHY it is not judged rather than going silent",
+        );
+        assert_eq!(
+            row["specified"].as_u64().expect("a count"),
+            doc.canon(surface).expect("a declared surface").len() as u64,
+            "what the {surface} surface is SUPPOSED to be does not depend on \
+             whether anybody opened it",
+        );
+        assert_eq!(
+            row["canon"].as_array().expect("an array").len(),
+            doc.canon(surface).expect("a declared surface").len(),
+            "★ R1758 — and the verdict names WHICH parts it is about, so a \
+             reader holding only this can check it",
         );
     }
 }

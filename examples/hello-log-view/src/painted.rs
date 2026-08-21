@@ -21,7 +21,6 @@ use std::collections::{BTreeMap, BTreeSet};
 use pinion_core::reactive::Owner;
 use pinion_core::scene::Rect;
 use pinion_core::test_fixtures::screen_ink::{assert_contained_ink, stand_in_ink};
-use pinion_core::test_fixtures::surface::painted_surface;
 use pinion_core::widgets::text_field::TextFieldState;
 use pinion_core::{Frame, Scene};
 
@@ -162,30 +161,21 @@ fn sweep(mut check: impl FnMut(&std::rc::Rc<ViewState>, &Painted, &Scene, (u32, 
     }
 }
 
-/// What each surface's parts are titled, by the running screen's own tables.
-fn title_of(surface: &str) -> impl Fn(&str) -> Option<String> + use<> {
-    let table: Vec<(&'static str, &'static str)> = match surface {
-        "header" => spec::HEADER.iter().map(|p| (p.key, p.title)).collect(),
-        "columns" => spec::COLUMNS.iter().map(|c| (c.key, c.title)).collect(),
-        "detail" => spec::DETAIL.iter().map(|p| (p.key, p.title)).collect(),
-        other => panic!("no surface named {other}"),
-    };
-    move |key: &str| {
-        table
-            .iter()
-            .find(|(k, _)| *k == key)
-            .map(|(_, t)| (*t).to_owned())
-    }
-}
-
-/// The tag stem each surface's parts are painted under.
-fn stem_of(surface: &str) -> &'static str {
-    match surface {
-        "header" => "lv.header.",
-        "columns" => "lv.column.",
-        "detail" => "lv.detail.",
-        other => panic!("no surface named {other}"),
-    }
+/// ★★★★★ R1758 — record what this frame painted, the way the WINDOW does.
+///
+/// See the key-pattern section's fixture of the same name for why: the
+/// judgment below is `crate::judge`'s, which reads the framework's paint store
+/// rather than a scene, and a fixture that skipped this would leave the sweep
+/// judging one thing and the running application another. The filter box is an
+/// [`External`](pinion_core::external::External) of its own, so both surfaces
+/// go in one call — a mark belongs to the nearest surface that is its ancestor,
+/// and that attribution is only right when every surface is named.
+fn record(scene: &Scene) {
+    let surfaces = pinion_runtime::record_painted_surfaces(scene, &[VIEW_TAG, super::QUERY_TAG]);
+    assert!(
+        surfaces >= 1,
+        "the section's own paint root must be on the frame it is being judged from",
+    );
 }
 
 // ── 1. The section the pipeline paints IS the section the reference draws ───
@@ -195,19 +185,37 @@ fn stem_of(surface: &str) -> &'static str {
 /// Swept across every state and every size. The severity states are the ones
 /// worth the sweep: a surface that only conforms while everything is shown has
 /// not been checked in the state a person reaches for when something is wrong.
+///
+/// ★★★★★ R1758 — and it is now **the same reading the wire publishes**. It was
+/// `painted_surface(scene, …)` here and this screen's own tables on the wire,
+/// so the strong claim ran in `cargo test` while the running application
+/// answered a weak one.
 #[test]
 fn r1731_every_specified_surface_is_the_one_the_paint_draws() {
     let doc = spec::document();
     sweep(|_, _, scene, _, case| {
-        for surface in doc.surfaces() {
-            let built = painted_surface(scene, stem_of(surface), &title_of(surface));
+        record(scene);
+        let report = crate::judge::conformance();
+        assert_eq!(
+            report.evidence(),
+            pinion_core::conformance::Evidence::Paint,
+            "{case}: the verdict must be about the frame, not about a table",
+        );
+        for standing in report.surfaces() {
+            let surface = standing.surface();
             assert!(
-                !built.is_empty(),
-                "{case}: the {surface} surface painted no parts at all, so a difference \
+                standing.is_standing(),
+                "{case}: the {surface} surface reports away ({:?}), and this section's \
+                 surfaces are drawn whenever it is showing",
+                standing.why(),
+            );
+            assert!(
+                standing.reproduced() > 0,
+                "{case}: the {surface} surface reproduced nothing at all, so a difference \
                  against it would come out empty and read as success",
             );
-            let unreconciled: Vec<String> = doc
-                .unreconciled(surface, &built)
+            let unreconciled: Vec<String> = standing
+                .unreconciled()
                 .iter()
                 .map(pinion_core::conformance::Unreconciled::sentence)
                 .collect();
@@ -218,6 +226,11 @@ fn r1731_every_specified_surface_is_the_one_the_paint_draws() {
                 unreconciled.join("\n  "),
             );
         }
+        assert_eq!(
+            report.surfaces().len(),
+            doc.surfaces().count(),
+            "{case}: every surface the pin fixes is in the verdict",
+        );
     });
 }
 

@@ -962,6 +962,77 @@ fn r1738_an_application_with_unjudged_sections_does_not_conform() {
     );
 }
 
+/// ★★★★★ R1758 — **a verdict a screen read off its own tables is not
+/// conformance**, and the application counts those separately from the ones it
+/// never judged at all.
+///
+/// The rule R1742 settled and left as prose in one screen's header. Measured on
+/// this tree's analysis tool at R1747 and again at R1758: two of its four judged
+/// sections reported every part of their specification reproduced from a page
+/// where they had not painted a frame, because the roster they answered with was
+/// a copy of the specification. Nothing failed and no count told those two from
+/// the two answering honestly.
+///
+/// The fixture beside this one answers with
+/// [`SpecDocument::report`](pinion_core::conformance::SpecDocument::report),
+/// which is the entry point that hands a screen nothing — so it is stamped
+/// `declaration`, and this asserts what an application does about that.
+///
+/// ⚠ Sharpened into a roster where **nothing else is wrong**, because the
+/// four-seat fixture already fails to conform for having unjudged pages: a test
+/// on that roster would pass whether or not the evidence rule exists. Here the
+/// only open destination holds the judged screen, whose difference is exactly
+/// what its ledger declares — so `conforms()` turns on this rule alone.
+#[test]
+fn r1758_a_verdict_from_a_screens_own_tables_is_not_conformance() {
+    let one_seat = Destinations::new(vec![Destination::open("catalog", "Catalog")])
+        .expect("one open destination is a rail");
+    let roster = ScreenRoster::new(
+        one_seat,
+        vec![(
+            "catalog",
+            Box::new(Mount::<LabFixture>::new()) as Box<dyn Screen>,
+        )],
+    )
+    .expect("the fixture screen is mounted at an open destination");
+    let said = roster.conformance(&at_one("catalog"));
+
+    assert_eq!(said.unjudged(), 0, "nothing here is unjudged");
+    let SectionStanding::Judged(report) = &said.rows()[0].standing else {
+        panic!("the only seat holds the judged fixture");
+    };
+    assert!(
+        report.reconciles(),
+        "and its difference is exactly the one its ledger declares, so no other \
+         rule can be what makes this application fail to conform"
+    );
+
+    assert_eq!(
+        report.evidence(),
+        pinion_core::conformance::Evidence::Declaration,
+        "the fixture answers from its own tables, and the verdict says so"
+    );
+    assert_eq!(said.declared(), 1);
+    assert!(
+        !said.conforms(),
+        "★★★★★ a screen agreeing with its own tables is not evidence that it \
+         reproduces anything, so the application does not report conformance on \
+         the strength of it"
+    );
+
+    let wire = said.to_json();
+    assert_eq!(wire["declared"], 1, "and a client reads the count too");
+    assert_eq!(wire["conforms"], false);
+    assert_eq!(wire["rows"][0]["conformance"]["evidence"], "declaration");
+}
+
+/// A one-destination journey, for the roster above.
+fn at_one(key: &str) -> Journey {
+    let one_seat = Destinations::new(vec![Destination::open("catalog", "Catalog")])
+        .expect("one open destination is a rail");
+    Journey::begin(&one_seat, key).expect("the fixture opens at a real destination")
+}
+
 /// A row carries the tag its section is addressed by exactly when a screen is
 /// mounted there — so a reader of the report can go and ask the section itself
 /// without a mapping nobody published.

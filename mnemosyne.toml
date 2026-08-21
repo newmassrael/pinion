@@ -985,3 +985,36 @@ reason = "R1366.7 audit half cited pre-fmt hash 4736d984 and false fmt-clean; co
 applied_in = "R1366.8.1"
 content_hash_before = "04513635761a269a4b9ee5e9a5fb94db76e3d5d0f08f4cf07b6aa4f78247debe"
 content_hash_after = "8cca924a1c71a444239a4fed9add8378d6d4fcd44b2a1390d316def5aaaaca07"
+
+# R1758 — the third instance of the class R51.186 and R682.A already record, and
+# the first in ~1000 rounds. The audit half captured
+# `impact_refs = ["5.27", "5.38", "5.40", "2 #7"]`: the last is the
+# section-plus-invariant form this project writes in PROSE (`§2 #7`,
+# scene-as-data), and the store's impact list takes section ids. The publishable
+# half was corrected to `["5.27","5.38","5.40","2"]` via `redact-term
+# --scope impact_refs`; the audit half is frozen by R296 schema design, so the
+# dangling ref is registered below rather than hidden.
+#
+# ⚠ The lesson worth more than the repair: `append-changelog-entry --impact`
+# accepted the token WITHOUT complaint and the defect surfaced only at
+# `validate-workspace`, one command later, as a count. Both prior instances of
+# this class were the same shape — a ref that reads correctly to a person and
+# resolves to nothing. There is no gate between writing the entry and being told
+# a number went up by one; the invariant `#7` is named in the entry's own text,
+# where it belongs.
+[[publishable_override_ledger]]
+kind = "typo_fix"
+target_id = "R1758"
+fields = ["publishable_impact_refs"]
+reason = "R1758 audit impact_refs frozen with ['5.27','5.38','5.40','2 #7']; `2 #7` is the prose form of §2 invariant #7 and is not a section id. set_changelog_publishable_impact_refs (via redact-term --scope impact_refs) corrected the publishable half to ['5.27','5.38','5.40','2']. Audit half immutable; orphan_ledger registers the dangling audit ref below."
+applied_in = "R1758"
+content_hash_before = "c0b90053e3169aa4704dded0d6f00688b202d3011b0d3c4a827b53eec1189014"
+content_hash_after = "ba2f6ad321fcbc50cd7520b62bd4a6c3052e30cb11f9ad50c3591d6153a308c2"
+
+[[orphan_ledger]]
+kind = "atomic_entry_ref"
+doc = "docs/GENERATED.md"
+from = "R1758"
+to = "2 #7"
+reason = "R1758 audit_impact_refs frozen with the prose form of the invariant; intent was §2 (the seven binding invariants), and specifically invariant #7 scene-as-data, which the entry names in its own text."
+since = "R1758"

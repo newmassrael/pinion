@@ -101,7 +101,14 @@ def pointer(app: RpcSubprocess):
 
 def section_a(app: RpcSubprocess, spec: dict) -> None:
     banner("A — the section says how much of its specification it is")
-    conformance = q(app, "conformance")
+    verdict = q(app, "conformance")
+    # ★ R1758 — the slot publishes the whole verdict, qualifier first.
+    ok(
+        "A: ★★★★★ and it says what it was read from -- this section judges the "
+        "frame it painted, not the tables it holds",
+        verdict["evidence"] == "paint",
+    )
+    conformance = verdict["surfaces"]
     ok(
         "A: it reports every surface the specification fixes",
         sorted(conformance) == surfaces(spec),

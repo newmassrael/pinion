@@ -274,6 +274,21 @@ impl ApplicationConformance {
             .count()
     }
 
+    /// ★★★★★ R1758 — how many judged sections answered from their **own
+    /// tables** rather than from a painted frame.
+    ///
+    /// A separate count from [`unjudged`](Self::unjudged) because it is a
+    /// different fact: those sections *were* compared with a specification, and
+    /// the comparison could not fail for the reason comparisons exist. See
+    /// [`Evidence`](pinion_core::conformance::Evidence) for what was measured,
+    /// and [`conforms`](Self::conforms) for what this report does about it.
+    #[must_use]
+    pub fn declared(&self) -> usize {
+        self.judged_reports()
+            .filter(|report| !report.evidence().is_paint())
+            .count()
+    }
+
     /// How many sections a reader can arrive at that nothing has judged.
     #[must_use]
     pub fn unjudged(&self) -> usize {
@@ -311,9 +326,26 @@ impl ApplicationConformance {
     /// report conformance on the strength of the ones somebody wrote a
     /// specification for — the count of judged sections is part of the verdict,
     /// not a footnote under it.
+    ///
+    /// ★★★★★ R1758 — **and false while any judged section answered from its own
+    /// tables**, which is the same rule one level down. R1742 settled that a
+    /// verdict read from the model is structurally consistent with the model
+    /// and therefore proves nothing; leaving it as prose in one screen's header
+    /// cost what prose costs. Measured on this tree's running application at
+    /// R1747 and again at R1758: two of four judged sections reported every
+    /// part of their specification reproduced while they had not painted a
+    /// frame in that session, and no count anywhere distinguished them from the
+    /// two that answered honestly.
+    ///
+    /// A section that genuinely cannot be judged from what it painted says so
+    /// per surface with [`Built::Away`](pinion_core::conformance::Built::Away)
+    /// and a reason. That is a narrower claim than asserting a roster, and it
+    /// is the one R1742 made non-escapable — an away surface reconciles nothing.
     #[must_use]
     pub fn conforms(&self) -> bool {
-        self.unjudged() == 0 && self.judged_reports().all(DocumentReport::reconciles)
+        self.unjudged() == 0
+            && self.declared() == 0
+            && self.judged_reports().all(DocumentReport::reconciles)
     }
 
     /// The report of each judged section.
@@ -336,6 +368,11 @@ impl ApplicationConformance {
         serde_json::json!({
             "sections": self.sections(),
             "judged": self.judged(),
+            // ★ R1758 — beside `judged`, because "compared with a
+            // specification" and "compared with a painted frame" are two
+            // populations and a reader adding the first to a headline is
+            // reading the second.
+            "declared": self.declared(),
             "unjudged": self.unjudged(),
             "closed": self.closed(),
             "specified": self.specified(),
@@ -358,9 +395,19 @@ impl ApplicationConformance {
                         value["why"] = serde_json::Value::String(why);
                     }
                     if let SectionStanding::Judged(report) = &row.standing {
-                        value["surfaces"] = report.to_json();
-                        value["specified"] = report.specified().into();
-                        value["reproduced"] = report.reproduced().into();
+                        // ★★★★★ R1758 — the section's verdict, WHOLE and under
+                        // one key. It was three of its facts spread flat here
+                        // (`surfaces`, `specified`, `reproduced`), which is how
+                        // a partial verdict comes to read as a complete one:
+                        // the row said how much was reproduced and had no room
+                        // to say what that was measured against, so the two
+                        // sections answering from their own tables were
+                        // indistinguishable here from the two answering from a
+                        // frame. Nesting also makes the row and the section's
+                        // own published slot the SAME value rather than two
+                        // renderings of it — the "one word, two documents"
+                        // class R1747 spent a round on.
+                        value["conformance"] = report.to_json();
                     }
                     value
                 })

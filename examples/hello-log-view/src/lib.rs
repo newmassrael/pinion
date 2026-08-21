@@ -46,6 +46,7 @@
 //!
 //! See `tools/demos/r1731_a_log_section_is_the_one_the_reference_draws.py`.
 
+mod judge;
 mod spec;
 
 #[cfg(test)]
@@ -60,7 +61,6 @@ use pinion_a11y::{
     AccessFocus, AccessLive, AccessNode, AccessValue, AriaRole, GridCell, GridColumn, GridRow,
     WidgetA11y, grid_table_nodes,
 };
-use pinion_core::conformance::{Built, Part};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, PointerTarget, ReadRefusal, RepaintOwner,
@@ -1143,35 +1143,9 @@ fn wire_bytes(at: Rect, record: &'static spec::RowSpec, ink: Ink) -> Vec<Scene> 
 
 // ── The three surfaces, as this screen builds them ──────────────────────────
 
-/// One surface's parts, as the running screen's own tables declare them.
-///
-/// # Panics
-///
-/// If asked for a surface the specification does not name, which is a defect in
-/// this file.
-///
-/// ★ R1742 — every surface is [`Built::Standing`]: this section's three
-/// surfaces are drawn whenever it is showing, so none of them can be away. A
-/// screen whose surfaces come and go with a session says so instead; the node
-/// lab is that case.
-#[must_use]
-fn built(surface: &str) -> Built {
-    Built::Standing(match surface {
-        "header" => spec::HEADER
-            .iter()
-            .map(|p| Part::new(p.key, p.title))
-            .collect(),
-        "columns" => spec::COLUMNS
-            .iter()
-            .map(|c| Part::new(c.key, c.title))
-            .collect(),
-        "detail" => spec::DETAIL
-            .iter()
-            .map(|p| Part::new(p.key, p.title))
-            .collect(),
-        other => panic!("no surface named {other}"),
-    })
-}
+// ★★★★★ R1758 — `built` used to be HERE, reading this screen's own tables
+// straight into a roster of parts. The reading moved to `crate::judge`, where
+// it comes out of the last painted frame instead.
 
 fn conformance_json() -> serde_json::Value {
     pinion_shell::conformance_json::<LogView>()
@@ -1775,8 +1749,12 @@ impl WidgetView for LogView {
     /// See the sibling section's hook for what forced it: a verdict only
     /// reachable by knowing a screen's tag is a verdict the application it is a
     /// page of cannot count.
+    ///
+    /// ★★★★★ R1758 — and it is answered from the **paint** now. It was
+    /// `spec::document().report(&built)` over this screen's own tables: a
+    /// verdict that cannot fail. See this crate's `judge` module.
     fn conformance() -> Option<pinion_core::conformance::DocumentReport> {
-        Some(spec::document().report(&built))
+        Some(judge::conformance())
     }
 }
 

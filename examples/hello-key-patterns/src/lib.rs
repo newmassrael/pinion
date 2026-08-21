@@ -44,6 +44,7 @@
 //!
 //! See `tools/demos/r1730_a_section_is_the_one_the_reference_draws.py`.
 
+mod judge;
 mod spec;
 
 #[cfg(test)]
@@ -59,7 +60,6 @@ use pinion_a11y::{
     WidgetA11y, grid_table_nodes,
 };
 use pinion_core::availability::{Recourse, Unavailable, UnavailableKind};
-use pinion_core::conformance::{Built, Part};
 use pinion_core::external::{
     Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
     IntrospectSchema, IntrospectValue, InvokeError, PointerTarget, ReadRefusal, RepaintOwner,
@@ -1294,40 +1294,10 @@ fn endpoint_chips(at: Rect, record: &'static spec::RowSpec, ink: Ink) -> Vec<Sce
 
 // ── The three surfaces, as this screen builds them ──────────────────────────
 
-/// One surface's parts, as the running screen's own tables declare them.
-///
-/// What the wire publishes and what the specification is compared against. The
-/// painted scene is compared with **this** by `painted.rs`, so the chain runs
-/// specification → tables → paint with both links checked, rather than a
-/// specification checked against a copy of itself.
-///
-/// # Panics
-///
-/// If asked for a surface `docs/analyzer-keys-spec.json` does not fix, which is
-/// a defect in this file.
-///
-/// ★ R1742 — every surface is [`Built::Standing`]: this section's three
-/// surfaces are drawn whenever it is showing, so none of them can be away. A
-/// screen whose surfaces come and go with a session says so instead; the node
-/// lab is that case.
-#[must_use]
-fn built(surface: &str) -> Built {
-    Built::Standing(match surface {
-        "header" => spec::HEADER
-            .iter()
-            .map(|p| Part::new(p.key, p.title))
-            .collect(),
-        "columns" => spec::COLUMNS
-            .iter()
-            .map(|c| Part::new(c.key, c.title))
-            .collect(),
-        "detail" => spec::DETAIL
-            .iter()
-            .map(|p| Part::new(p.key, p.title))
-            .collect(),
-        other => panic!("no surface named {other}"),
-    })
-}
+// ★★★★★ R1758 — `built` used to be HERE, and it read this screen's own tables
+// straight into a roster of parts. The reading moved to `crate::judge`, where
+// it is taken out of the last painted frame instead; see that module for the
+// measurement that forced the move.
 
 /// How much of the specified section this build reproduces, and where it does
 /// not.
@@ -1902,8 +1872,14 @@ impl WidgetView for KeyPatternView {
     /// value, two readers: this screen's own `conformance` slot serialises it
     /// for a client of this binary, and a host adds it up with its other
     /// sections.
+    ///
+    /// ★★★★★ R1758 — and it is answered from the **paint** now. It was
+    /// `spec::document().report(&built)` over this screen's own tables, which
+    /// is a verdict that cannot fail: measured on the assembled application,
+    /// this section reported 21 of 21 reproduced from a page where it had not
+    /// drawn a frame. See this crate's `judge` module.
     fn conformance() -> Option<pinion_core::conformance::DocumentReport> {
-        Some(spec::document().report(&built))
+        Some(judge::conformance())
     }
 }
 

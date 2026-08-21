@@ -149,6 +149,20 @@ def row(app: RpcSubprocess) -> dict:
     return next(r for r in report(app)["rows"] if r["key"] == SEAT)
 
 
+def verdict_of(app: RpcSubprocess) -> dict:
+    """The section's whole verdict, as the host's row publishes it.
+
+    ★ R1758 — a row carries the section's verdict under one key now, qualifier
+    included, rather than spreading three of its facts flat.
+    """
+    return row(app)["conformance"]
+
+
+def surfaces_of(app: RpcSubprocess) -> dict:
+    """The per-surface half of that verdict."""
+    return verdict_of(app)["surfaces"]
+
+
 def press_tag(app: RpcSubprocess, tag: str) -> None:
     """Press the rectangle the last frame drew for `tag`.
 
@@ -206,10 +220,10 @@ def section_a(app: RpcSubprocess) -> None:
     ok(
         "A: and the judged row carries the tag its section is addressed by, so "
         "a reader of this report can go and ask the section itself",
-        here["tag"] == "packet_view" and here["surfaces"],
+        here["tag"] == "packet_view" and here["conformance"]["surfaces"],
     )
     assert_eq(
-        sorted(here["surfaces"]),
+        sorted(here["conformance"]["surfaces"]),
         sorted(surfaces(packets_spec())),
         "A: ★★ the surfaces the section publishes a VERDICT for are exactly the "
         "ones the pin fixes -- one document, two readings",
@@ -228,7 +242,7 @@ def section_a(app: RpcSubprocess) -> None:
 def section_b(app: RpcSubprocess) -> None:
     banner("B — the same verdict read from the dashboard and from inside the section")
     assert_eq(app.query(f"{EXT}/nav"), "dashboard", "B: this report starts at the dashboard")
-    cold = row(app)
+    cold = verdict_of(app)
     ok(
         "B: ★ a section the session has never opened says its surfaces are AWAY "
         f"with the reason: {cold['surfaces']['context'].get('why', '<none>')}",
@@ -242,6 +256,12 @@ def section_b(app: RpcSubprocess) -> None:
             for s in cold["surfaces"].values()
         ),
     )
+    ok(
+        "B: ★★★★★ R1758 -- and the verdict says it was read from the PAINT, "
+        "which is what makes the sentence above checkable: a verdict from a "
+        "screen's own tables would report every part reproduced from here",
+        cold["evidence"] == "paint" and cold["reproduced"] == 0,
+    )
 
     app.intervene(f"{EXT}/nav", SEAT)
     app.tick(16)
@@ -253,8 +273,8 @@ def section_b(app: RpcSubprocess) -> None:
     app.tick(16)
     away = row(app)
     assert_eq(
-        away["surfaces"],
-        standing["surfaces"],
+        away["conformance"],
+        standing["conformance"],
         "B: ★★★★★ the row read from the DASHBOARD is the same verdict as the "
         "row read while standing in the section -- R1742's hardest defect, "
         "asserted rather than rediscovered",
@@ -272,7 +292,7 @@ def section_b(app: RpcSubprocess) -> None:
 def judge_surfaces(app: RpcSubprocess, where: str) -> None:
     """Every surface the pin fixes, as the application reports it right now."""
     global PARTS_COMPARED
-    said = row(app)["surfaces"]
+    said = surfaces_of(app)
     for name in sorted(said):
         verdict = said[name]
         ok(
@@ -305,13 +325,13 @@ def section_c(app: RpcSubprocess) -> None:
     ok(
         "C: ★ the whole document reconciles -- every surface standing, every "
         "declared remainder matched, nothing undeclared",
-        all(s["standing"] and not s["unreconciled"] for s in row(app)["surfaces"].values()),
+        all(s["standing"] and not s["unreconciled"] for s in surfaces_of(app).values()),
     )
     ok(
         "C: ★★ and one surface's declared remainder is NOT empty, so the "
         "ledger is doing work rather than sitting at zero: "
-        f"{[o['key'] for o in row(app)['surfaces']['reassembly']['owed']]}",
-        row(app)["surfaces"]["reassembly"]["owed"],
+        f"{[o['key'] for o in surfaces_of(app)['reassembly']['owed']]}",
+        surfaces_of(app)["reassembly"]["owed"],
     )
     print(f"  [coverage] {PARTS_COMPARED} specified part(s) judged, {PRESSES} press(es)")
 
@@ -321,7 +341,7 @@ def section_d(app: RpcSubprocess) -> str:
     tag = row(app)["tag"]
 
     def selection() -> dict:
-        return row(app)["surfaces"]["selection"]
+        return surfaces_of(app)["selection"]
 
     ok(
         "D: with a row the pane can show, the relation is standing and whole",
@@ -498,13 +518,13 @@ def section_f(app: RpcSubprocess, derived: str) -> None:
     own = app.query(f"/{here['tag']}{EXT}/conformance")
     assert_eq(
         own,
-        here["surfaces"],
+        here["conformance"],
         "F: ★★ the host's row for `packets` IS the value the section publishes "
         "on its own wire -- the host aggregates, it does not re-derive",
     )
     assert_eq(
-        here["specified"],
-        sum(s["specified"] for s in own.values()),
+        here["conformance"]["specified"],
+        sum(s["specified"] for s in own["surfaces"].values()),
         "F: and the row's totals are its surfaces added up",
     )
     # ★★★ And the document the verdict is against is the one in `docs/`, read
@@ -515,15 +535,31 @@ def section_f(app: RpcSubprocess, derived: str) -> None:
     # application reports are checked against the pin as this process reads it
     # off disk: two hands, and the comparison is between them.
     pin = packets_spec()
+    said = own["surfaces"]
     assert_eq(
-        {name: own[name]["specified"] for name in sorted(own)},
+        {name: said[name]["specified"] for name in sorted(said)},
         {name: len(pin[name]["canon"]) for name in sorted(surfaces(pin))},
         "F: ★★★ every surface's specified count is the length of that surface's "
         "canon in docs/analyzer-packets-spec.json, read off disk by this process "
         "-- the verdict is against the pin and not against the screen's own table",
     )
+    # ★★★★★ R1758 — and WHICH parts, not only how many. A verdict that carries
+    # its canon is one a reader can check without going and finding the pin, and
+    # the check that it is the pin's canon is this one.
     assert_eq(
-        sorted(o["key"] for o in own["reassembly"]["owed"]),
+        {
+            name: [part["key"] for part in said[name]["canon"]]
+            for name in sorted(said)
+        },
+        {
+            name: [part["key"] for part in pin[name]["canon"]]
+            for name in sorted(surfaces(pin))
+        },
+        "F: ★★★★★ and the verdict NAMES the parts it is about, in the pin's own "
+        "order -- a count with nothing behind it cannot be checked from outside",
+    )
+    assert_eq(
+        sorted(o["key"] for o in said["reassembly"]["owed"]),
         sorted(o["key"] for o in pin["reassembly"]["owed"]),
         "F: ★★ and the declared remainder the application carries is the one "
         "the pin declares, entry for entry",
@@ -539,7 +575,10 @@ def section_f(app: RpcSubprocess, derived: str) -> None:
         ok(
             "F: ★ and it reconciles there too, so the verdict is not an "
             "artifact of the host's page size",
-            all(s["standing"] and not s["unreconciled"] for s in fresh.values()),
+            all(
+                s["standing"] and not s["unreconciled"]
+                for s in fresh["surfaces"].values()
+            ),
         )
         # ★★★★★ The check above is the one worth being suspicious of, and this
         # round was: two verdicts that CANNOT differ are not evidence that they
@@ -555,7 +594,7 @@ def section_f(app: RpcSubprocess, derived: str) -> None:
             "F: ★★★★★ driven somewhere the host has not been, the standalone "
             "verdict PARTS from the host's -- so the equality above is a fact "
             "about the build rather than about a value that cannot move",
-            parted != own and parted["selection"]["standing"] is False,
+            parted != own and parted["surfaces"]["selection"]["standing"] is False,
         )
         press_tag(app, f"pv.tree.field.{derived}")
         assert_eq(

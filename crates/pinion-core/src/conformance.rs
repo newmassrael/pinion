@@ -201,6 +201,165 @@ impl Built {
     }
 }
 
+/// ★★★★★ R1758 — one specified surface's parts, **as the frame that painted it
+/// has them**: everything under `stem`, in reading order, each titled by a
+/// table.
+///
+/// # Why the framework owns this
+///
+/// It is the four lines every screen that judges its own paint writes. Counted
+/// at the commit before this one, by the sentence a key with no table entry
+/// gets: **three files** hold it — this crate's scene-side fixture, the node
+/// lab's `judge` and the capture viewer's `judge` (which has two, one for each
+/// titling rule) — and the round that lifted it was about to add **two more
+/// screens**. Already identical down to that sentence, which is the point at
+/// which a helper stops being any screen's own; the next screen writing it
+/// slightly differently would make two verdicts about one build disagree for a
+/// reason nobody could see from either.
+///
+/// `title` answers what a key is called. It is a table rather than the paint
+/// because most parts of a record pane carry no label a reader sees: a
+/// specification fixes that they are THERE and in what order, and how a build
+/// draws them is the build's. Where the title IS drawn — a column header, a
+/// roster's words — [`parts_as_read`] is the reading to take instead.
+///
+/// A key the paint has and the table does not gets a title saying so rather
+/// than an empty string, so the difference reports as a rename with a readable
+/// right-hand side instead of as a blank.
+#[must_use]
+pub fn parts_titled(
+    regions: &crate::painted::PaintedRegions,
+    stem: &str,
+    title: &dyn Fn(&str) -> Option<String>,
+) -> Vec<Part> {
+    crate::painted::in_reading_order(regions.parts_under(stem))
+        .into_iter()
+        .map(|(key, _)| {
+            let said =
+                title(&key).unwrap_or_else(|| format!("<{key} is painted and no table names it>"));
+            Part::new(key, said)
+        })
+        .collect()
+}
+
+/// ★ R1758 — the `title` a [`parts_titled`] call needs, from a table of
+/// `(key, title)` pairs.
+///
+/// Four lines of closure that say nothing about any screen: find the key, hand
+/// back an owned title. Lifted in the round that would otherwise have written
+/// it a second and a third time — a screen's tables are its own, and looking a
+/// key up in them is not.
+pub fn titles_from(
+    table: Vec<(&'static str, &'static str)>,
+) -> impl Fn(&str) -> Option<String> + use<> {
+    move |key: &str| {
+        table
+            .iter()
+            .find(|(named, _)| *named == key)
+            .map(|(_, title)| (*title).to_owned())
+    }
+}
+
+/// ★★★★★ R1758 — one specified surface's parts, each titled by **the words it
+/// drew**.
+///
+/// The reading for a surface the reference titles by what a reader sees: a
+/// column header, a roster's options, a decoded field's heading. Judging those
+/// by a table would let a painter label the fourth column anything at all and
+/// leave the difference invisible.
+///
+/// Where the frame drew nothing under a part's own name the reading is said to
+/// be missing rather than guessed at, because a part that draws nothing and a
+/// part that draws the wrong thing are different defects and a blank would make
+/// them read alike.
+#[must_use]
+pub fn parts_as_read(regions: &crate::painted::PaintedRegions, stem: &str) -> Vec<Part> {
+    crate::painted::in_reading_order(regions.parts_under(stem))
+        .into_iter()
+        .map(|(key, _)| {
+            let said = regions
+                .reads(&format!("{stem}{key}"))
+                .unwrap_or("<this part is painted and draws no words>");
+            Part::new(key, said.to_owned())
+        })
+        .collect()
+}
+
+/// ★★★★★ R1758 — **what the built side of a verdict was read from.**
+///
+/// # Why a count needs this beside it
+///
+/// [`DocumentReport::reproduced`] answers *how many of the specified parts this
+/// build has*. That number means two different things depending on where the
+/// parts came from, and a reader acts on the two differently:
+///
+/// * read back out of the frame the screen painted, it is a statement about
+///   what a person can see;
+/// * taken from the screen's own tables, it is the screen agreeing with itself
+///   — the specification and the answer travel together, so the comparison
+///   cannot fail for the reason it exists.
+///
+/// R1742 wrote the second of those down as a rule (*judge from the paint; a
+/// verdict read from the model is structurally consistent with the model and
+/// proves nothing*) and left it as prose in one screen's header. Measured on
+/// the running application at R1747 and again at R1758, standing on a page that
+/// is not theirs: two of this tree's four judged sections reported **21 of 21**
+/// and **15 of 15** reproduced while they had not painted a frame in that
+/// session at all, beside two siblings correctly reporting `0 of 26` and
+/// `0 of 15` away. Nothing was failing. The two numbers were not about pixels.
+///
+/// This is the sixth case of the convention R1752 named — *a number carries its
+/// own qualifier* (`render_us` + `captured`, `gpu_us` + `gpu_timing_supported`,
+/// `mean_render_us` + `captured_frames`, a frame timing + its adapter) — and
+/// the qualifier is the half that was missing.
+///
+/// # What it is a claim about, exactly
+///
+/// **What the framework handed the screen**, not what the screen chose to look
+/// at. [`SpecDocument::report_from_paint`] fetches the surface's marks out of
+/// the paint store and hands them in, so [`Paint`](Self::Paint) says *this
+/// verdict was computed against a recorded frame*; [`SpecDocument::report`]
+/// hands the screen nothing, so [`Declaration`](Self::Declaration) says *this
+/// verdict was computed against whatever the screen had*.
+///
+/// That distinction is worth having because it is not gameable in the direction
+/// that matters. `report_from_paint` substitutes [`Built::Away`] for every
+/// surface when the store holds no frame, so a report carrying `Paint` **cannot**
+/// claim reproduction without a frame behind it. `Declaration` makes no such
+/// promise, which is precisely why an assembled application refuses to count it
+/// as conformance — see `pinion_screen`'s application report.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Evidence {
+    /// The parts were read back out of the frame the screen painted.
+    Paint,
+    /// The parts are the screen's own account of what it builds, with no frame
+    /// behind them.
+    Declaration,
+}
+
+impl Evidence {
+    /// The word this arm is published under.
+    #[must_use]
+    pub const fn wire(self) -> &'static str {
+        match self {
+            Evidence::Paint => "paint",
+            Evidence::Declaration => "declaration",
+        }
+    }
+
+    /// Whether the verdict was computed against a painted frame.
+    #[must_use]
+    pub const fn is_paint(self) -> bool {
+        matches!(self, Evidence::Paint)
+    }
+}
+
+impl core::fmt::Display for Evidence {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str(self.wire())
+    }
+}
+
 /// Why a roster of parts could not be built.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum SurfaceDefect {
@@ -1029,9 +1188,27 @@ impl SpecDocument {
     /// not on screen says *that* instead of handing back an empty roster the
     /// comparison would read as total failure. See [`Built`] for why the third
     /// answer is not an escape hatch.
+    ///
+    /// ★★★★★ R1758 — the report it produces is stamped
+    /// [`Evidence::Declaration`], because this entry point hands the screen
+    /// **nothing**: whatever the closure answers with, it did not come from the
+    /// framework's record of what was painted. See [`Evidence`] for the
+    /// measurement that forced the stamp, and
+    /// [`report_from_paint`](Self::report_from_paint) for the entry point that
+    /// earns the other one.
     #[must_use]
     pub fn report(&self, built: &dyn Fn(&str) -> Built) -> DocumentReport {
+        self.report_with(Evidence::Declaration, built)
+    }
+
+    /// [`report`](Self::report), told where the built side came from.
+    ///
+    /// Private because the stamp is not a caller's to choose: it is a fact
+    /// about which entry point was taken, and a public parameter would make it
+    /// a claim a screen could simply assert.
+    fn report_with(&self, evidence: Evidence, built: &dyn Fn(&str) -> Built) -> DocumentReport {
         DocumentReport {
+            evidence,
             surfaces: self
                 .surfaces()
                 .map(|surface| {
@@ -1043,7 +1220,7 @@ impl SpecDocument {
                             SurfaceStanding {
                                 unreconciled: ledger.judge(&divergences),
                                 surface: surface.to_owned(),
-                                specified: canon.len(),
+                                canon: canon.parts().to_vec(),
                                 away: None,
                                 divergences,
                                 owed: ledger.owed().to_vec(),
@@ -1058,7 +1235,7 @@ impl SpecDocument {
                         Built::Away(why) => SurfaceStanding {
                             unreconciled: Vec::new(),
                             surface: surface.to_owned(),
-                            specified: canon.len(),
+                            canon: canon.parts().to_vec(),
                             away: Some(why),
                             divergences: Vec::new(),
                             owed: ledger.owed().to_vec(),
@@ -1099,7 +1276,7 @@ impl SpecDocument {
         built: &dyn Fn(&crate::painted::PaintedRegions, &str) -> Built,
     ) -> DocumentReport {
         let regions = crate::painted::painted_regions(surface_tag);
-        self.report(&|surface| match regions.as_deref() {
+        self.report_with(Evidence::Paint, &|surface| match regions.as_deref() {
             Some(regions) => built(regions, surface),
             None => {
                 Built::away("this screen has not painted a frame yet, so none of it is on screen")
@@ -1212,7 +1389,23 @@ impl SpecDocument {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SurfaceStanding {
     surface: String,
-    specified: usize,
+    /// ★★★★★ R1758 — the parts the specification fixes, and not merely how
+    /// many of them there are.
+    ///
+    /// A verdict saying *seven were specified* cannot be checked by anybody: a
+    /// reader holding it has no way to ask **which** seven, so a build that
+    /// renamed one and a build that reordered two are indistinguishable from
+    /// outside. Measured at R1758 — R1738's own gate could not read a section's
+    /// canon out of the verdict, so it went looking for it in whatever the
+    /// section published *beside* the verdict and had to identify the right
+    /// document by a rule ("the one holding every surface") that R1747 had
+    /// already had to repair once, after a screen's own table and its
+    /// specification collided on the word `context`.
+    ///
+    /// Carrying it here removes the search. It is the specification's side of
+    /// the comparison, so it is the same whether or not the surface is on
+    /// screen.
+    canon: Vec<Part>,
     /// `None` while the surface is on screen; the screen's own reason for it
     /// not being, otherwise.
     ///
@@ -1240,7 +1433,17 @@ impl SurfaceStanding {
     /// on whether anybody opened it.
     #[must_use]
     pub fn specified(&self) -> usize {
-        self.specified
+        self.canon.len()
+    }
+
+    /// ★★★★★ R1758 — **which** parts the specification fixes, in its order.
+    ///
+    /// The half [`specified`](Self::specified) cannot carry. See the field for
+    /// the gate that had to go looking for this elsewhere, and what it had to
+    /// guess to find it.
+    #[must_use]
+    pub fn canon(&self) -> &[Part] {
+        &self.canon
     }
 
     /// ★ R1742 — whether the surface was on screen to be compared at all.
@@ -1293,7 +1496,7 @@ impl SurfaceStanding {
             .filter(|d| !matches!(d, PartDivergence::Unspecified { .. }))
             .map(PartDivergence::key)
             .collect();
-        self.specified - troubled.len()
+        self.canon.len() - troubled.len()
     }
 
     /// Every way the build is not what was specified.
@@ -1343,6 +1546,7 @@ impl SurfaceStanding {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DocumentReport {
     surfaces: Vec<SurfaceStanding>,
+    evidence: Evidence,
 }
 
 impl DocumentReport {
@@ -1350,6 +1554,14 @@ impl DocumentReport {
     #[must_use]
     pub fn surfaces(&self) -> &[SurfaceStanding] {
         &self.surfaces
+    }
+
+    /// ★★★★★ R1758 — where the built side of this verdict came from.
+    ///
+    /// The qualifier every count below needs beside it. See [`Evidence`].
+    #[must_use]
+    pub const fn evidence(&self) -> Evidence {
+        self.evidence
     }
 
     /// How many parts this specification fixes across every surface.
@@ -1402,14 +1614,42 @@ impl DocumentReport {
     /// carries `why`. The same shape a section row has one level up, for the
     /// same reason: a reader who cannot tell *not reproduced* from *not on
     /// screen* is reading two facts as one.
+    ///
+    /// ★★★★★ R1758 — **the whole verdict, not only its surfaces.** It was the
+    /// surface map alone, which meant the one place a section published its own
+    /// judgment carried neither a total nor the qualifier that says what the
+    /// total is about, and a client wanting either had to be a *host* reading
+    /// the application report one level up. `evidence` leads because it governs
+    /// how the rest is read; `surfaces` is nested rather than merged, because a
+    /// map keyed by surface name and a map of the report's own facts share a
+    /// namespace only until a specification names a surface `reproduced`.
     #[must_use]
     pub fn to_json(&self) -> serde_json::Value {
+        serde_json::json!({
+            "evidence": self.evidence.wire(),
+            "specified": self.specified(),
+            "reproduced": self.reproduced(),
+            "standing": self.standing(),
+            "away": self.away(),
+            "reconciles": self.reconciles(),
+            "surfaces": self.surfaces_json(),
+        })
+    }
+
+    /// Each surface's own row, keyed by the name the specification gives it.
+    #[must_use]
+    pub fn surfaces_json(&self) -> serde_json::Value {
         let mut out = serde_json::Map::new();
         for standing in &self.surfaces {
             let mut row = serde_json::json!({
                 "specified": standing.specified(),
                 "reproduced": standing.reproduced(),
                 "standing": standing.is_standing(),
+                "canon": standing
+                    .canon()
+                    .iter()
+                    .map(|part| serde_json::json!({ "key": part.key, "title": part.title }))
+                    .collect::<Vec<_>>(),
                 "divergences": standing
                     .divergences
                     .iter()
@@ -1954,19 +2194,68 @@ mod tests {
             _ => Built::Standing(vec![Part::new("subject", "Subject")]),
         };
         let wire = document().wire(&built);
-        assert_eq!(wire["columns"]["specified"], 2);
-        assert_eq!(wire["columns"]["reproduced"], 2);
-        assert_eq!(wire["detail"]["reproduced"], 1);
-        assert_eq!(wire["detail"]["owed"][0]["since"], "R1731");
+        // ★ R1758 — the verdict's own facts lead, and the surfaces are nested
+        // under one key rather than sharing a namespace with them.
+        assert_eq!(wire["evidence"], "declaration");
+        assert_eq!(wire["specified"], 4);
+        assert_eq!(wire["reproduced"], 3);
+        let surfaces = &wire["surfaces"];
+        assert_eq!(surfaces["columns"]["specified"], 2);
+        assert_eq!(surfaces["columns"]["reproduced"], 2);
+        assert_eq!(surfaces["detail"]["reproduced"], 1);
+        assert_eq!(surfaces["detail"]["owed"][0]["since"], "R1731");
+        // ★ R1758 — and each surface names WHICH parts it is judged on, so a
+        // reader holding only this can check the count.
+        assert_eq!(
+            surfaces["columns"]["canon"]
+                .as_array()
+                .expect("an array")
+                .iter()
+                .map(|part| part["key"].as_str().expect("a key"))
+                .collect::<Vec<_>>(),
+            ["id", "name"],
+        );
         for surface in ["columns", "detail"] {
             assert!(
-                wire[surface]["unreconciled"]
+                surfaces[surface]["unreconciled"]
                     .as_array()
                     .expect("an array")
                     .is_empty(),
                 "{surface} publishes a difference its ledger does not declare",
             );
         }
+    }
+
+    /// ★★★★★ R1758 — the two entry points stamp two different qualifiers, and
+    /// that is the whole mechanism.
+    ///
+    /// A verdict from [`SpecDocument::report`] says `declaration`: the caller
+    /// was handed nothing, so whatever it answered with did not come from a
+    /// recorded frame. A verdict from `report_from_paint` says `paint` — and
+    /// **cannot** claim reproduction without a frame, because the framework
+    /// substitutes away for every surface when the store is empty. That is why
+    /// the qualifier is not gameable in the direction that matters.
+    #[test]
+    fn r1758_a_verdict_says_what_it_was_read_from() {
+        use super::Evidence;
+
+        let tabled = document().report(&|_| Built::Standing(vec![Part::new("id", "ID")]));
+        assert_eq!(tabled.evidence(), Evidence::Declaration);
+        assert_eq!(tabled.evidence().wire(), "declaration");
+        assert!(tabled.standing() > 0, "the roster was accepted as given");
+
+        let unpainted = document().report_from_paint("r1758-nothing-has-painted-this", &|_, _| {
+            Built::Standing(vec![Part::new("id", "ID")])
+        });
+        assert_eq!(unpainted.evidence(), Evidence::Paint);
+        assert_eq!(
+            unpainted.reproduced(),
+            0,
+            "★ a verdict stamped `paint` with no frame behind it reproduces nothing, \
+             whatever the screen would have answered",
+        );
+        assert_eq!(unpainted.standing(), 0);
+        assert!(!unpainted.reconciles());
     }
 
     /// ★★★★★ The trait's reason for existing: the navigation axis's own
@@ -2085,13 +2374,16 @@ mod tests {
         // reads: `reproduced: 0` beside `standing: false` is a different fact
         // from `reproduced: 0` beside `standing: true`.
         let wire = report.to_json();
-        assert_eq!(wire["detail"]["standing"], serde_json::json!(false));
-        assert_eq!(wire["columns"]["standing"], serde_json::json!(true));
+        let surfaces = &wire["surfaces"];
+        assert_eq!(surfaces["detail"]["standing"], serde_json::json!(false));
+        assert_eq!(surfaces["columns"]["standing"], serde_json::json!(true));
         assert_eq!(
-            wire["detail"]["why"],
+            surfaces["detail"]["why"],
             serde_json::json!("nobody selected a row, so there is no detail to read"),
         );
-        assert!(wire["columns"].get("why").is_none());
+        assert!(surfaces["columns"].get("why").is_none());
+        assert_eq!(wire["away"], 1);
+        assert_eq!(wire["standing"], 1);
     }
 
     /// ★★★★★ R1742 — **how many parts a build reproduces is a count of
@@ -2244,16 +2536,31 @@ mod tests {
             other => panic!("no surface named {other}"),
         };
         let wire = doc.wire(&built);
-        assert_eq!(wire["columns"]["specified"], 2);
-        assert_eq!(wire["columns"]["reproduced"], 1);
+        assert_eq!(wire["specified"], 3);
+        assert_eq!(wire["reproduced"], 2);
+        assert_eq!(wire["reconciles"], false);
+        let surfaces = &wire["surfaces"];
+        assert_eq!(surfaces["columns"]["specified"], 2);
+        assert_eq!(surfaces["columns"]["reproduced"], 1);
         assert_eq!(
-            wire["columns"]["divergences"][0]["says"],
+            surfaces["columns"]["divergences"][0]["says"],
             "part 1 `name` (Name) is specified and the surface has no such part",
         );
-        assert_eq!(wire["columns"]["unreconciled"].as_array().unwrap().len(), 1);
-        assert_eq!(wire["detail"]["specified"], 1);
-        assert_eq!(wire["detail"]["reproduced"], 1);
-        assert!(wire["detail"]["divergences"].as_array().unwrap().is_empty());
+        assert_eq!(
+            surfaces["columns"]["unreconciled"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(surfaces["detail"]["specified"], 1);
+        assert_eq!(surfaces["detail"]["reproduced"], 1);
+        assert!(
+            surfaces["detail"]["divergences"]
+                .as_array()
+                .unwrap()
+                .is_empty()
+        );
 
         // And the typed accessors answer the same build, which is what makes
         // the two halves one derivation rather than two that agree today.

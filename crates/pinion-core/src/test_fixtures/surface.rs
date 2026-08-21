@@ -72,20 +72,20 @@ pub fn painted_parts(scene: &Scene, stem: &str) -> Vec<(String, Rect)> {
 /// A key the paint has and the table does not is given a title that says so
 /// rather than an empty string, so the difference reports as a rename with a
 /// readable right-hand side instead of as a blank.
+///
+/// ★ R1758 — the *reading* is [`parts_titled`](crate::conformance::parts_titled)
+/// now, where the running screens take it from too. This is the entry point for
+/// a caller holding a scene rather than a recorded surface, which is the same
+/// split [`painted_parts`] already had one layer down. Before the move, a
+/// screen's own sweep and the verdict that screen publishes were two copies of
+/// one rule.
 #[must_use]
 pub fn painted_surface(
     scene: &Scene,
     stem: &str,
     titles: &dyn Fn(&str) -> Option<String>,
 ) -> Vec<Part> {
-    in_reading_order(painted_parts(scene, stem))
-        .into_iter()
-        .map(|(key, _)| {
-            let title =
-                titles(&key).unwrap_or_else(|| format!("<{key} is painted and no table names it>"));
-            Part::new(key, title)
-        })
-        .collect()
+    crate::conformance::parts_titled(&PaintedRegions::of_scene(scene), stem, titles)
 }
 
 /// ★★★★★ R1733 — one surface whose parts are **layers**, in the order they are
