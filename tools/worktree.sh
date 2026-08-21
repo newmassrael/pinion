@@ -50,17 +50,46 @@
 #
 # ## What a worktree may NOT do
 #
-# Nothing here enforces these yet — they are printed on every `add` so the
-# session standing in one has read them:
+# Printed on every `add` so the session standing in one has read them, and
+# since R1759 the first two are ENFORCED — by `land`, which refuses to carry
+# them back:
 #
 #   * no commit, no push (the round lands from the main tree)
 #   * no mutation of `docs/.atomic/` (the ledger is main-tree-only)
 #   * no `docs/phase-b-rounds.tsv` row
 #
+# ## The way back (R1759)
+#
+# `add` / `list` / `remove` were the whole surface until R1759, which is to say
+# the front half of a round had a tool and the HANDOFF BETWEEN THE HALVES had
+# none. R1757 landed by hand and the cost is what this section exists to
+# remove: the patch was exported, `git apply` was tried, then a `cp` loop, and
+# the three safety questions that make any of it legitimate — do the two trees
+# agree on HEAD, does my file set collide with what the main tree already has
+# uncommitted, did the worktree touch a main-tree-only file — were answered by
+# hand with `comm -12` and eyes. Two of those three are the ones that damage
+# someone ELSE's work, and a check made by hand is a check that will one day
+# not be made. `land` asks all three and REFUSES; it never merges.
+#
+# It also cannot express a deletion, a rename or a submodule pin move, so it
+# refuses those by name rather than guessing — the `classify_submodule_status`
+# precedent, where the wrong answer was worse than no answer.
+#
+# ## Round numbers are CLAIMED, not derived (R1759)
+#
+# `git log` cannot see a round that has not committed yet, so two sessions
+# starting the same afternoon both derive the same next number. Measured
+# 2026-08-21: R1757 and R1758 were both begun as "R1757", and the collision
+# surfaced only because one session happened to read the other's memory file —
+# after which 85 sites had to be renumbered. `add` claims the next free number
+# in this script's own state directory and `list` shows every claim, so the
+# answer is visible before anything is committed.
+#
 # ## Usage
 #
-#   tools/worktree.sh add <name>       # create; prints the DISPLAY to export
-#   tools/worktree.sh list             # every worktree plus its cache and display
+#   tools/worktree.sh add <name>       # create; claims a round, prints the DISPLAY
+#   tools/worktree.sh list             # every worktree plus its cache, display, round
+#   tools/worktree.sh land <name>      # carry the work back to the main tree
 #   tools/worktree.sh remove <name>    # tear down, including the cache directory
 #   tools/worktree.sh --selftest       # pure-logic checks, no git, no writes
 
@@ -187,6 +216,114 @@ classify_submodule_status() {
     fi
 }
 
+# R1759 — paths a worktree may not carry back, because the main tree owns them.
+#
+# `docs/.atomic/` is one 14 MB JSON whose merge `.gitattributes` REFUSES, so two
+# writers cannot both append and resolving the conflict would be the hand edit
+# the Mnemosyne contract forbids. `docs/phase-b-rounds.tsv` is `merge=union` and
+# would therefore merge silently — which is worse here, not better: the row
+# would arrive without the ledger entry it is supposed to accompany.
+LEDGER_PATHS=("docs/.atomic/" "docs/phase-b-rounds.tsv")
+
+# The submodules. A pin move is a gitlink, not file content, so copying it back
+# would carry nothing; the triple discipline (gitlink + two manifest revs + the
+# lock) belongs to the main tree.
+SUBMODULE_PATHS=("vendor/sce" "vendor/mnemosyne")
+
+# R1759 — classify one `git status --porcelain` record into a land verdict.
+#
+# Takes the two status characters and the path as arguments rather than reading
+# git, so `--selftest` drives every arm. The verdicts:
+#
+#   copy              a modification or an addition; `land` copies the file
+#   refuse-delete     a removal — a copy cannot express one
+#   refuse-rename     a rename — two paths, and the old one must disappear
+#   refuse-ledger     main-tree-only (see LEDGER_PATHS)
+#   refuse-submodule  a gitlink move (see SUBMODULE_PATHS)
+#
+# Refusing is deliberate where guessing was available. A delete could be
+# `rm`-ed and a rename could be replayed, but both are destructive actions
+# derived from a two-character parse, and this file's own history says what
+# that is worth: the first `classify_submodule_status` guessed and reported
+# "verified" on a fatal error.
+classify_land_status() {
+    local xy="$1" path="$2" ledger sub
+    # A rename is R in either column; the record carries two paths.
+    [[ $xy == R* || $xy == *R ]] && { printf 'refuse-rename\n'; return; }
+    # A delete in either column. `??` must not reach this test -- it does not.
+    [[ $xy == D* || $xy == *D ]] && { printf 'refuse-delete\n'; return; }
+    for sub in "${SUBMODULE_PATHS[@]}"; do
+        [[ $path == "$sub" || $path == "$sub/"* ]] && { printf 'refuse-submodule\n'; return; }
+    done
+    for ledger in "${LEDGER_PATHS[@]}"; do
+        # A trailing slash means "this directory"; otherwise an exact path.
+        if [[ $ledger == */ ]]; then
+            [[ $path == "$ledger"* ]] && { printf 'refuse-ledger\n'; return; }
+        else
+            [[ $path == "$ledger" ]] && { printf 'refuse-ledger\n'; return; }
+        fi
+    done
+    printf 'copy\n'
+}
+
+# R1759 — the paths present in BOTH newline-separated lists, one per line.
+#
+# This is the check that protects the other session's work: if a file I edited
+# in the worktree is also uncommitted in the main tree, copying mine over it
+# destroys theirs with no diff to review and no reflog to recover from. R1757
+# ran the equivalent `comm -12` by hand and got an empty answer; the next round
+# might not, and might not look.
+#
+# Sorting is internal so callers may pass the lists in any order.
+land_overlap() {
+    comm -12 <(printf '%s\n' "$1" | sort -u) <(printf '%s\n' "$2" | sort -u) | grep -v '^$' || true
+}
+
+# R1759 — the highest round number appearing in a block of commit subjects.
+#
+# Pure, so `--selftest` drives it without git. Subjects here look like
+# `feat(rpc): R1757 a burst of keys arrives together`, and the ledger also
+# holds a historical `Round <n>` form, so both are read. `0` when the text
+# names none, which keeps the caller's arithmetic total.
+newest_round_in() {
+    grep -oE '\b(R|Round )[0-9]+' <<<"${1:-}" \
+        | grep -oE '[0-9]+' \
+        | sort -n \
+        | tail -1 \
+        || true
+}
+
+# R1759 — the round `add` should claim: one past the highest number that is
+# either COMMITTED or already CLAIMED by a live worktree.
+#
+# The second half is the whole point. `git log` cannot see a round that has not
+# committed yet, which is how two sessions came to begin the same afternoon as
+# "R1757".
+next_round() {
+    local git_newest="${1:-0}" claimed="${2:-}" highest n
+    highest="${git_newest:-0}"
+    for n in $claimed; do
+        (( n > highest )) && highest="$n"
+    done
+    printf '%s\n' "$(( highest + 1 ))"
+}
+
+# Rounds this script has already handed out, read back from its own state
+# files. Same "the directory is gone, so the claim is gone" rule the display
+# allocator uses -- a hand-deleted worktree must not reserve a number forever.
+claimed_rounds() {
+    local f name key value out=()
+    for f in "$STATE_DIR"/*.env; do
+        [[ -e $f ]] || continue
+        name="$(basename "$f" .env)"
+        [[ -d "$(wt_dir_for "$name")" ]] || continue
+        while IFS='=' read -r key value; do
+            [[ $key == "PINION_WT_ROUND" ]] && out+=("$value")
+        done < "$f"
+    done
+    printf '%s\n' "${out[*]:-}"
+}
+
 # ------------------------------------------------------------------ guardrails
 
 require_main_worktree() {
@@ -217,7 +354,7 @@ cmd_add() {
     require_main_worktree
     require_cache_volume
 
-    local repo_root wt cache state display
+    local repo_root wt cache state display round
     repo_root="$(git rev-parse --show-toplevel)"
     wt="$(wt_dir_for "$name")"
     cache="$(cache_dir_for "$name")"
@@ -227,6 +364,14 @@ cmd_add() {
 
     display="$(pick_display "$(taken_displays)")" \
         || die "no free display in :$DISPLAY_LOW-:$DISPLAY_HIGH"
+
+    # R1759 — claim a round number before anything is created, so a second
+    # session running `list` sees it immediately. 200 subjects is far more than
+    # the span any two live worktrees cover, and reading more costs nothing but
+    # says nothing either.
+    round="$(next_round \
+        "$(newest_round_in "$(git -C "$repo_root" log --format=%s -200)")" \
+        "$(claimed_rounds)")"
 
     mkdir -p "$WT_HOME" "$STATE_DIR"
 
@@ -250,30 +395,58 @@ cmd_add() {
     say "populating submodules (vendor/sce, vendor/mnemosyne)"
     git -C "$wt" submodule update --init >/dev/null
 
-    printf 'PINION_WT_NAME=%s\nPINION_WT_DISPLAY=%s\nPINION_WT_CACHE=%s\n' \
-        "$name" "$display" "$cache" > "$state"
+    printf 'PINION_WT_NAME=%s\nPINION_WT_DISPLAY=%s\nPINION_WT_CACHE=%s\nPINION_WT_ROUND=%s\n' \
+        "$name" "$display" "$cache" "$round" > "$state"
 
     verify_worktree "$name" "$wt" "$cache"
 
     cat <<EOF
 
-worktree '$name' ready.
+worktree '$name' ready, holding round R$round.
 
   cd $wt
   export DISPLAY=:$display        # this worktree's own headless display
                                   # (Xvfb :$display must be started separately)
 
-Measured: '$name' is also what \`bx\` derives its REMOTE directory and lock from
-(\`basename \$(git rev-parse --show-toplevel)\`), so pick names that are
-distinctive across every repository on the build hosts -- 'jni-seam', not 'a'.
+R$round IS CLAIMED, not derived. \`git log\` cannot see a round that has not
+committed, so two sessions starting the same afternoon both compute the same
+next number -- measured 2026-08-21, when R1757 and R1758 were both begun as
+"R1757" and 85 sites had to be renumbered. \`tools/worktree.sh list\` shows every
+claim, including this one, before anything is committed.
+
+BUILDS: \`bx\` resolves its repo root from the CURRENT DIRECTORY
+(\`git rev-parse --show-toplevel\`), and it has no override, so from a shell
+pinned to the main tree it sends the MAIN tree to a build host and then runs
+your --manifest-path against a directory that is not there (measured: exit 101
+in 17s). Until \`bx\` grows a --root, paste this and use \`wtb\` instead:
+
+  wtb() { BX_LOCAL_REASON="testing linked worktree $name; bx resolves its root \\
+from cwd and has no override" \\
+    "\$HOME/.claude/remote-build/bin/bx" --local -- \\
+    "\$@" --manifest-path $wt/Cargo.toml; }
+
+  wtb cargo test -p pinion-core        # -> runs against $name
+
+⚠ That forces LOCAL execution and the build fleet stays idle, which on a busy
+host is the round's largest avoidable cost. It is a stopgap; the real fix is a
+\`--root\` flag in bx, which lives in its own repository.
 
 This worktree is for EXPLORATION. It must not:
   * commit or push -- the round lands from $repo_root
   * mutate docs/.atomic/ -- the ledger is main-tree-only, and its merge is
     refused by .gitattributes precisely so this cannot be done by accident
   * add a docs/phase-b-rounds.tsv row
+  (\`land\` refuses to carry the last two back, so this is enforced and not
+   only asked.)
 
-Tear down with: tools/worktree.sh remove $name
+⚠ This tree's build cache is EMPTY. A failure here that the main tree does not
+show may be about the cache -- or about the FLAGS you happen to be passing.
+Isolate one variable before naming a cause: R1757 registered a rustc ICE as
+"cold cache" when the discriminator was actually \`--document-private-items\`,
+and the wrong name nearly entered a frozen ledger.
+
+Carry it back with: tools/worktree.sh land $name
+Tear down with:     tools/worktree.sh remove $name
 EOF
 }
 
@@ -351,9 +524,116 @@ cmd_list() {
         [[ -e $f ]] || continue
         name="$(basename "$f" .env)"
         # shellcheck disable=SC1090  # generated by this script, fixed shape
-        ( set -a; . "$f"; printf 'worktree: %-16s display :%-4s cache %s\n' \
-            "$PINION_WT_NAME" "$PINION_WT_DISPLAY" "$PINION_WT_CACHE" )
+        ( set -a; . "$f"; printf 'worktree: %-16s round R%-6s display :%-4s cache %s\n' \
+            "$PINION_WT_NAME" "${PINION_WT_ROUND:-?}" \
+            "$PINION_WT_DISPLAY" "$PINION_WT_CACHE" )
     done
+}
+
+# --------------------------------------------------------------------- land
+
+# R1759 — carry a worktree's work back to the main tree.
+#
+# Copies files. It does not merge, does not commit, and does not stage: what it
+# prints at the end is the exact `git add` line for what it moved, so the round
+# still closes by hand in the main tree where the ledger lives.
+#
+# The three refusals are the reason this exists. Two of them protect work that
+# is not yours.
+cmd_land() {
+    local name="${1:-}"
+    [[ -n $name ]] || die "usage: tools/worktree.sh land <name>"
+    valid_name "$name" || die "invalid name '$name'"
+    require_main_worktree
+
+    local wt repo_root
+    wt="$(wt_dir_for "$name")"
+    repo_root="$(git rev-parse --show-toplevel)"
+    [[ -d $wt ]] || die "no worktree at $wt"
+
+    # (1) The two trees must agree on HEAD. Copying a file built against a
+    # different base is how a silent semantic conflict is made: the bytes apply
+    # cleanly and the meaning does not. R1757 checked this by hand.
+    local wt_head main_head
+    wt_head="$(git -C "$wt" rev-parse HEAD)"
+    main_head="$(git -C "$repo_root" rev-parse HEAD)"
+    if [[ $wt_head != "$main_head" ]]; then
+        warn "worktree is at ${wt_head:0:8}, main tree at ${main_head:0:8}"
+        die "rebase the worktree onto the main tree's HEAD first, then re-run and RE-RUN ITS GATES -- a landing that skips them is a landing onto an untested base"
+    fi
+
+    # (2) Classify every change. `-z` because git quotes odd paths in the plain
+    # porcelain and a quoted path would be copied to the wrong name.
+    local -a copy=() refused=()
+    local xy path verdict record
+    while IFS= read -r -d '' record; do
+        [[ -n $record ]] || continue
+        xy="${record:0:2}"
+        path="${record:3}"
+        verdict="$(classify_land_status "$xy" "$path")"
+        case "$verdict" in
+            copy) copy+=("$path") ;;
+            *)    refused+=("$verdict $path") ;;
+        esac
+    done < <(git -C "$wt" status --porcelain=v1 -z)
+
+    if (( ${#refused[@]} > 0 )); then
+        # Not backticks: inside a double-quoted bash string they COMMAND
+        # SUBSTITUTE, so the first draft of this line ran `land` as a program
+        # and printed "command not found" above the refusal it was announcing.
+        warn "this worktree changed things 'land' cannot carry:"
+        printf '  %s\n' "${refused[@]}" >&2
+        die "${#refused[@]} refusal(s) -- a ledger/submodule path belongs to the main tree, and a delete or rename must be replayed by hand"
+    fi
+    (( ${#copy[@]} > 0 )) || die "worktree '$name' has no changes to land"
+
+    # (3) THE CHECK THAT PROTECTS SOMEONE ELSE. A file uncommitted in BOTH trees
+    # would be overwritten with no diff to review and nothing to recover from.
+    local main_changed wt_changed overlap
+    main_changed="$(git -C "$repo_root" status --porcelain=v1 | cut -c4-)"
+    wt_changed="$(printf '%s\n' "${copy[@]}")"
+    overlap="$(land_overlap "$wt_changed" "$main_changed")"
+    if [[ -n $overlap ]]; then
+        warn "these paths are uncommitted in BOTH trees:"
+        printf '  %s\n' "$overlap" >&2
+        die "refusing -- landing would destroy the main tree's copy. Commit or stash there first."
+    fi
+
+    local f
+    for f in "${copy[@]}"; do
+        mkdir -p "$repo_root/$(dirname "$f")"
+        cp "$wt/$f" "$repo_root/$f"
+    done
+
+    # (4) Verify the bytes arrived, rather than trusting that `cp` said nothing.
+    local mismatched=0
+    for f in "${copy[@]}"; do
+        cmp -s "$wt/$f" "$repo_root/$f" || { warn "FAIL: $f did not copy identically"; mismatched=$((mismatched + 1)); }
+    done
+    (( mismatched == 0 )) || die "$mismatched file(s) did not land"
+
+    say "landed ${#copy[@]} file(s) from '$name' onto ${main_head:0:8}"
+    local round=""
+    # shellcheck disable=SC1090  # generated by this script, fixed shape
+    [[ -e "$(state_file_for "$name")" ]] && round="$( . "$(state_file_for "$name")"; printf '%s' "${PINION_WT_ROUND:-}" )"
+
+    cat <<EOF
+
+Stage exactly what landed (never \`git add -A\` -- this tree may hold work that
+is not yours):
+
+  git add ${copy[*]}
+
+Then close the round HERE, in the main tree, because the worktree cannot:
+  * mnemosyne-cli append-changelog-entry --entry-id R${round:-<NNNN>} ...
+  * one row appended to docs/phase-b-rounds.tsv
+  * commit (the hooks compile the WHOLE working tree, so anything else
+    uncommitted here must compile too)
+
+⚠ Re-run the round's gates in THIS tree before committing. The worktree's
+verdicts were taken against its own build cache and its own copy of every file
+you did not touch.
+EOF
 }
 
 # ------------------------------------------------------------------- remove
@@ -497,6 +777,90 @@ cmd_selftest() {
     check "worktree dir" "$WT_HOME/x" "$(wt_dir_for x)"
     check "state file" "$WT_HOME/.state/x.env" "$(state_file_for x)"
 
+    # ---- R1759: land verdicts. Every arm, because a wrong one either drops a
+    # file silently or destroys a path the main tree owns.
+    check "a modification is copied" \
+        "copy" "$(classify_land_status " M" "crates/pinion-core/src/input.rs")"
+    check "a staged addition is copied" \
+        "copy" "$(classify_land_status "A " "examples/hello-x/src/judge.rs")"
+    check "an untracked file is copied" \
+        "copy" "$(classify_land_status "??" "tools/demos/r1759_x.py")"
+    check "a tool script is copied" \
+        "copy" "$(classify_land_status " M" "tools/rpc_verify.py")"
+    # A copy cannot express a removal, and guessing would delete in the main tree.
+    check "a worktree delete is refused" \
+        "refuse-delete" "$(classify_land_status " D" "crates/pinion-core/src/old.rs")"
+    check "a staged delete is refused" \
+        "refuse-delete" "$(classify_land_status "D " "crates/pinion-core/src/old.rs")"
+    check "a rename is refused" \
+        "refuse-rename" "$(classify_land_status "R " "crates/a.rs")"
+    # ★ `??` must not be read as a delete by a careless character test -- it has
+    # no D, but a `[[ $xy == *D* ]]`-shaped check on the PATH would misfire.
+    check "an untracked path containing D is still a copy" \
+        "copy" "$(classify_land_status "??" "crates/D/mod.rs")"
+    # The ledger paths, which are the main tree's alone.
+    check "the atomic store is refused" \
+        "refuse-ledger" "$(classify_land_status " M" "docs/.atomic/workspace.atomic.json")"
+    check "the phase-b row file is refused" \
+        "refuse-ledger" "$(classify_land_status " M" "docs/phase-b-rounds.tsv")"
+    # ...and a NEIGHBOUR of a ledger path is not a ledger path. A prefix test
+    # without the directory slash would refuse this one too.
+    check "a docs file that is not the ledger is copied" \
+        "copy" "$(classify_land_status " M" "docs/phase-b-axis-history.md")"
+    check "a file merely starting with the tsv name is copied" \
+        "copy" "$(classify_land_status " M" "docs/phase-b-rounds.tsv.bak")"
+    # ★ FOUND BY A COUNTERFACTUAL THAT PASSED. The two ledger entries take
+    # DIFFERENT arms -- one is a directory, one is an exact path -- and the
+    # assertion above only covers the exact-path arm. Dropping the slash from
+    # the directory arm left the whole suite green, so the sibling of the
+    # DIRECTORY entry needed its own case. Over-refusal is the quiet direction:
+    # `land` would refuse a legitimate file and the reason would look official.
+    check "a sibling of the ledger DIRECTORY is copied" \
+        "copy" "$(classify_land_status " M" "docs/.atomic-notes.md")"
+    check "a file inside the ledger directory is still refused" \
+        "refuse-ledger" "$(classify_land_status "??" "docs/.atomic/sidecar.json")"
+    # Submodules are gitlinks; copying carries nothing.
+    check "a submodule pin move is refused" \
+        "refuse-submodule" "$(classify_land_status " M" "vendor/sce")"
+    check "a path inside a submodule is refused" \
+        "refuse-submodule" "$(classify_land_status " M" "vendor/mnemosyne/src/lib.rs")"
+    # ...but a path that merely shares the prefix is not inside it.
+    check "vendor-sibling is not a submodule" \
+        "copy" "$(classify_land_status " M" "vendor/sce-notes.md")"
+
+    # ---- R1759: the overlap check -- the one that protects another session.
+    check "no overlap is empty" "" "$(land_overlap "a.rs
+b.rs" "c.rs")"
+    check "one shared path is reported" "b.rs" "$(land_overlap "a.rs
+b.rs" "b.rs
+c.rs")"
+    check "order does not matter" "a.rs" "$(land_overlap "b.rs
+a.rs" "a.rs")"
+    check "an empty main tree overlaps nothing" "" "$(land_overlap "a.rs" "")"
+    check "an empty worktree overlaps nothing" "" "$(land_overlap "" "a.rs")"
+
+    # ---- R1759: round claiming. The bug this exists for is the SECOND check:
+    # a number nobody has committed yet is still taken.
+    check "newest from R-form subjects" "1758" \
+        "$(newest_round_in "feat(rpc): R1757 a burst
+feat(core): R1758 a verdict")"
+    check "the highest wins, not the first line" "1758" \
+        "$(newest_round_in "feat(core): R1758 a verdict
+chore: R1756 the perf axis")"
+    check "the historical Round form is read too" "1519" \
+        "$(newest_round_in "docs: Round 1519 the re-tally")"
+    check "no round in the text is zero-ish" "" "$(newest_round_in "chore: tidy")"
+    check "next round is one past git" "1759" "$(next_round 1758 "")"
+    # ★ THE REGRESSION TEST FOR THE COLLISION ITSELF: git says 1756, but a live
+    # worktree already holds 1757, so the answer is 1758 and not 1757. Before
+    # R1759 this returned 1757 and two sessions built the same round.
+    check "a claimed round is taken even though git cannot see it" \
+        "1758" "$(next_round 1756 "1757")"
+    check "the highest claim wins" "1760" "$(next_round 1756 "1757 1759")"
+    check "a claim below git's newest does not lower the answer" \
+        "1759" "$(next_round 1758 "1700")"
+    check "no git history and no claims still yields a number" "1" "$(next_round "" "")"
+
     if (( failures == 0 )); then
         say "selftest OK"
         return 0
@@ -509,6 +873,7 @@ cmd_selftest() {
 case "${1:-}" in
     add)        shift; cmd_add "${1:-}" ;;
     list)       cmd_list ;;
+    land)       shift; cmd_land "${1:-}" ;;
     remove)     shift; cmd_remove "${1:-}" ;;
     --selftest) cmd_selftest ;;
     ""|-h|--help)
