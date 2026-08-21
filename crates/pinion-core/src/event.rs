@@ -16,8 +16,37 @@
 //! Window routing is *not* an `Event` concern: per §5.17, the runtime
 //! layer resolves which window an event belongs to before view-fn
 //! invocation — `Event` itself stays window-agnostic.
+//!
+//! # ⚠ NOTHING IN THIS MODULE IS DELIVERED TO A BINDING (measured R1658,
+//! restated R1757)
+//!
+//! [`Event`] is §5.13's ratified vocabulary and it is **not** the shape input
+//! actually arrives in. Measured over the whole tree: the only place any
+//! variant of it is CONSTRUCTED is this module's own test, and no dispatch
+//! path reaches a binding through it. Real input flows through per-hook
+//! signatures on [`WidgetCore`](crate::WidgetCore) —
+//! [`apply_key_press`](crate::WidgetCore::apply_key_press),
+//! `apply_wheel`, `apply_secondary_click`, and their siblings — each taking
+//! the facts its own event needs.
+//!
+//! This is written here because the gap **cost a consumer a wrong PR**. An
+//! embedder needing to know when a keystroke arrived read `KeyEvent`, saw it
+//! carried only a key code, and asked for a timestamp field on it. Adding one
+//! would have delivered nothing to anybody, because nobody receives a
+//! `KeyEvent`; the capability landed on `apply_key_press` instead (R1658).
+//! Reading a published vocabulary and believing it is what you receive is not
+//! a mistake on the reader's part — so the type says so itself now.
+//!
+//! Reconciling the two is a **spec round**, not a cleanup: §5.13 ratified this
+//! enum in Round 5, so deleting it is not this module's decision, and
+//! converging dispatch onto it would rewrite every keyboard, pointer and
+//! wheel hook in the tree. Until then, treat this module as the ratified
+//! taxonomy and the `WidgetCore` hooks as the delivered one.
 
 /// Closed core event categories (§5.13 ratify).
+///
+/// ⚠ Declared, not delivered — see the module doc. No dispatch path
+/// constructs this.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum Event {
@@ -199,6 +228,15 @@ impl WheelStepper {
 
 /// Keyboard input. The `key` field is a placeholder until §5.13 settles
 /// the keycode taxonomy (W3C UI Events vs winit virtual key vs raw HID).
+///
+/// ⚠ **Declared, not delivered.** No dispatch path constructs this, and a
+/// binding never receives one — see the module doc for the measurement and
+/// for the consumer PR that fact cost. A keystroke reaches a binding as
+/// [`KeyPress`](crate::KeyPress) through
+/// [`WidgetCore::apply_key_press`](crate::WidgetCore::apply_key_press),
+/// carrying the W3C key name, the modifiers, the auto-repeat flag and the
+/// arrival. **Anything a keystroke needs to carry belongs on `KeyPress`**;
+/// adding a field here delivers it to nobody.
 #[non_exhaustive]
 #[derive(Debug, Clone)]
 pub enum KeyEvent {

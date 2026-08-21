@@ -234,13 +234,46 @@ pub fn run_with_handlers<V: WidgetViewTui<Renderer = TuiRenderer<CrosstermBacken
 /// See the module-level [`IDLE_POLL_MS`] / [`ACTIVE_POLL_MS`] / [`REST_EPSILON`]
 /// notes for the R51.148 §5.28 adaptive-poll rationale the timeout comes from.
 fn await_terminal_event<V: WidgetViewTui>(core: &ShellCoreTui<V>) -> io::Result<Option<bool>> {
-    let carried_over = crossterm::event::poll(Duration::ZERO)?;
-    let timeout = if core.wants_next_frame(REST_EPSILON) {
+    await_delivery(
+        crossterm::event::poll,
+        poll_timeout(core.wants_next_frame(REST_EPSILON)),
+    )
+}
+
+/// R1757 §5.28 §2 #6 — the adaptive poll timeout: short while something is
+/// still moving, long while the terminal may go idle (R51.148).
+///
+/// Takes the ANSWER of [`ShellCoreTui::wants_next_frame`] rather than the
+/// core, so the mapping is assertable without staging a live animation. The
+/// one-gate discipline is unaffected — the caller still asks that one
+/// predicate; this only turns its answer into a duration.
+const fn poll_timeout(wants_next_frame: bool) -> Duration {
+    if wants_next_frame {
         Duration::from_millis(ACTIVE_POLL_MS)
     } else {
         Duration::from_millis(IDLE_POLL_MS)
-    };
-    if crossterm::event::poll(timeout)? {
+    }
+}
+
+/// R1757 §5.13 §5.39 §2 #6 — the delivery boundary itself, over an injected
+/// `poll`, so all three of its answers can be asserted.
+///
+/// R1658 defined this boundary and extracted it into a function — and then
+/// left it as the ONE backend of four whose delivery boundary had no test,
+/// while its own counterfactual was busy proving that an untested delivery
+/// path is exactly where the defect hides. The only thing standing in the way
+/// was that `crossterm::event::poll` was called directly; it is an argument
+/// now, which is the whole of what was missing.
+///
+/// `poll(ZERO)` asks whether an event was ALREADY available — a question about
+/// the moment the previous dispatch returned, which is why it is asked before
+/// the waiting poll and not after.
+fn await_delivery(
+    mut poll: impl FnMut(Duration) -> io::Result<bool>,
+    timeout: Duration,
+) -> io::Result<Option<bool>> {
+    let carried_over = poll(Duration::ZERO)?;
+    if poll(timeout)? {
         Ok(Some(!carried_over))
     } else {
         Ok(None)
@@ -874,5 +907,95 @@ mod tests {
             4.0,
         ));
         assert!(!core.cached_state().open, "release alone opens nothing");
+    }
+
+    // ---- R1757 §5.13 §5.39 §2 #6 — the terminal delivery boundary ----
+
+    /// Drive [`super::await_delivery`] with a scripted `poll`, returning both
+    /// its answer and the timeouts it asked for. The recorded timeouts are
+    /// half the assertion: the ZERO poll must come FIRST, because the
+    /// availability question is about the moment the previous dispatch
+    /// returned and asking it second would answer about a different moment.
+    fn scripted_delivery(
+        answers: &[bool],
+        timeout: std::time::Duration,
+    ) -> (Option<bool>, Vec<std::time::Duration>) {
+        let mut asked: Vec<std::time::Duration> = Vec::new();
+        let mut answers = answers.iter().copied();
+        let verdict = {
+            let asked = &mut asked;
+            super::await_delivery(
+                move |d| {
+                    asked.push(d);
+                    Ok(answers.next().expect("the script covers every poll"))
+                },
+                timeout,
+            )
+            .expect("the scripted poll never errors")
+        };
+        (verdict, asked)
+    }
+
+    #[test]
+    fn r1757_an_event_that_was_already_waiting_joins_the_open_delivery() {
+        // The half that makes a burst one gesture: the person typed the second
+        // key BEFORE this app finished the first, so it belongs to the delivery
+        // already open however long the app took. Turning this arm into
+        // `Some(true)` is the defect the whole capability exists to remove —
+        // every key would open its own delivery and no burst could ever be one
+        // gesture.
+        let (verdict, asked) = scripted_delivery(&[true, true], std::time::Duration::from_secs(1));
+        assert_eq!(
+            verdict,
+            Some(false),
+            "already waiting: it did not have to wait, so no new delivery",
+        );
+        assert_eq!(
+            asked[0],
+            std::time::Duration::ZERO,
+            "availability is asked FIRST, about the moment the last dispatch returned",
+        );
+        assert_eq!(asked.len(), 2, "then once with the adaptive timeout");
+    }
+
+    #[test]
+    fn r1757_an_event_this_turn_waited_for_opens_a_delivery() {
+        let (verdict, _) = scripted_delivery(&[false, true], std::time::Duration::from_secs(1));
+        assert_eq!(
+            verdict,
+            Some(true),
+            "nothing was waiting and then something arrived — a new delivery",
+        );
+    }
+
+    #[test]
+    fn r1757_a_timeout_is_not_a_delivery_at_all() {
+        // `None` is distinct from both: the loop repaints an animation and goes
+        // round again without touching the delivery. A `Some` here would open a
+        // delivery for a keystroke that never came.
+        for already in [false, true] {
+            let (verdict, _) =
+                scripted_delivery(&[already, false], std::time::Duration::from_secs(1));
+            assert_eq!(verdict, None, "already_waiting={already}");
+        }
+    }
+
+    #[test]
+    fn r1757_the_poll_timeout_follows_the_frame_appetite() {
+        // The ACTIVE arm is the one an animating frame must take; nothing asked.
+        assert_eq!(
+            super::poll_timeout(false),
+            std::time::Duration::from_millis(super::IDLE_POLL_MS),
+            "a resting terminal may sleep long",
+        );
+        assert_eq!(
+            super::poll_timeout(true),
+            std::time::Duration::from_millis(super::ACTIVE_POLL_MS),
+            "something is still moving, so poll again soon",
+        );
+        assert!(
+            super::poll_timeout(true) < super::poll_timeout(false),
+            "and 'soon' is shorter than 'long' — the whole point of the pair",
+        );
     }
 }

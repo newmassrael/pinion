@@ -2075,6 +2075,13 @@ impl<V: WidgetCore> CoreShell<V> {
                 .get(window_id)
                 .and_then(|r| r.auto_scroll_state(PointerId::MOUSE)),
             key_dispatch,
+            // R1757 §5.49 §5.39 — the delivery currently open. Deliberately
+            // NOT per-window: a delivery is one handover from the platform to
+            // this runtime, and the platform hands over to the process, not to
+            // a window. The axes above read per-window router state; this one
+            // reads the very field every window's keystrokes are stamped from,
+            // so two windows never disagree about which delivery is open.
+            key_delivery: self.key_delivery.batch(),
         })
     }
 

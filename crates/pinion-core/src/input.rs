@@ -427,6 +427,9 @@ impl HeldKeys {
 ///   single-OS-window backend (the TUI), the "axis unavailable" honesty
 ///   of [`Self::modifiers`]; `Some` on the GUI shell whose key routing
 ///   is gated per OS window.
+/// * [`Self::key_delivery`] — R1757 §5.49 §5.39, the keystroke delivery
+///   currently open, so an agent that sent several keys in one request can
+///   confirm they went in as one.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct InputStateSnapshot {
     /// Absolute modifier cache (`None` = backend tracks none).
@@ -459,6 +462,26 @@ pub struct InputStateSnapshot {
     /// speed — and, because the declared band travels with it, also answers
     /// the harder question of why a drag near an edge is NOT scrolling.
     pub auto_scroll: Option<AutoScrollState>,
+    /// R1757 §5.49 §5.39 — the keystroke delivery currently open
+    /// ([`KeyBatch`]), so "these keys arrived together" is a fact the wire
+    /// can state and not only the Rust API.
+    ///
+    /// The READ peer of the burst form of `scene/key`. R1658 made every
+    /// keystroke carry its [`KeyArrival`], but left the arrival a Rust-only
+    /// fact — defensibly, because the wire could send only one key per
+    /// request and an agent asking which delivery it landed in would learn
+    /// nothing it did not already know. A request that carries *several* keys
+    /// ends that: whether the drain kept them together is now a real
+    /// question, and this is where it is asked.
+    ///
+    /// There is no "axis unavailable" arm. Every backend that dispatches a
+    /// key opens a delivery to dispatch it under, so a `null` spelling would
+    /// be unreachable — the same reason
+    /// [`held_pointer_buttons`](Self::held_pointer_buttons) has none.
+    /// [`KeyBatch::initial`] is what a runtime that has not opened one yet
+    /// answers, and it is distinct from every delivery, so "none yet" is
+    /// still said out loud.
+    pub key_delivery: KeyBatch,
 }
 
 /// R1620 §5.45 §5.16 — the live auto-scroll of one held pointer: the region's
@@ -612,7 +635,12 @@ impl MultiSelectKeyOp {
 /// ask is whether two keystrokes carry the *same* batch, so the value is not
 /// a number anyone can do sums on. Ids are allocated per binding and never
 /// reused within a run.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+// R1757 — `Default` so [`InputStateSnapshot`] keeps deriving it now that the
+// snapshot carries a batch. It is [`Self::initial`], pinned by
+// `r1757_the_default_batch_is_the_initial_one`: a snapshot built with
+// `..Default::default()` must claim "no delivery has opened", not "delivery
+// one", or every fixture would assert against a batch that never existed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
 pub struct KeyBatch(u64);
 
 impl KeyBatch {
@@ -630,6 +658,35 @@ impl KeyBatch {
     #[must_use]
     pub const fn next(self) -> Self {
         Self(self.0.wrapping_add(1))
+    }
+
+    /// R1757 §5.49 — how many deliveries had been opened when this batch was
+    /// allocated: `0` for [`initial`](Self::initial), then `1`, `2`, … in the
+    /// order the runtime opened them.
+    ///
+    /// # Why an ordinal exists, given what this type's own doc says
+    ///
+    /// The doc above says a batch is comparable and not arithmetic, and for a
+    /// Rust consumer that stands — ask [`KeyArrival::arrived_with`], because
+    /// one that compares batches itself becomes a second author of the rule.
+    /// This accessor exists for exactly one caller: the wire.
+    ///
+    /// `scene/input_state` publishes the open delivery as
+    /// `key_delivery.opened`, and an agent reading it has a question equality
+    /// cannot answer. Having sent ONE `scene/key` carrying a burst of three
+    /// keys, it wants to know whether the drain kept them in one delivery or
+    /// split them into three. *Both* outcomes leave a different batch open
+    /// than before, so "did it change" separates nothing; only "it advanced
+    /// by exactly one" does. That is a distance, and answering it is the
+    /// whole reason the burst form needed a read peer at all.
+    ///
+    /// So the ordinal is published because the wire's question is genuinely
+    /// about distance — not because the Rust rule was wrong. A Rust consumer
+    /// reaching for this instead of `arrived_with` is doing the thing the
+    /// type's doc warns against.
+    #[must_use]
+    pub const fn ordinal(self) -> u64 {
+        self.0
     }
 }
 
@@ -3186,6 +3243,39 @@ mod key_arrival_tests {
         assert_eq!(press.arrival, arrival);
         assert_eq!(press.arrival.at(), arrival.at());
         assert_eq!(press.arrival.batch(), arrival.batch());
+    }
+
+    #[test]
+    fn r1757_the_default_batch_is_the_initial_one() {
+        // `InputStateSnapshot` derives `Default` and every fixture in the tree
+        // builds one with `..Default::default()`, so the derived batch is what
+        // those fixtures assert the wire against. It must be the batch that
+        // means "no delivery has opened" — a derive landing on delivery ONE
+        // would have every idle snapshot claim a delivery that never happened.
+        assert_eq!(KeyBatch::default(), KeyBatch::initial());
+        assert_eq!(
+            super::InputStateSnapshot::default().key_delivery,
+            KeyBatch::initial(),
+            "an idle snapshot says no delivery has opened",
+        );
+    }
+
+    #[test]
+    fn r1757_the_ordinal_is_the_distance_the_wire_reads() {
+        // The wire's question is a DISTANCE, not an equality: an agent that
+        // sent one burst of three keys must be able to tell "one delivery
+        // opened" from "three did", and both leave a different batch open than
+        // before. So the ordinal counts deliveries, one per open, from zero.
+        let initial = KeyBatch::initial();
+        assert_eq!(initial.ordinal(), 0, "no delivery has opened yet");
+        assert_eq!(initial.next().ordinal(), 1);
+        assert_eq!(initial.next().next().ordinal(), 2);
+        // And the distance is what separates the two readings the axis exists
+        // to separate — stated as arithmetic, because that is the claim.
+        let after_one_burst = initial.next();
+        let after_three_singles = initial.next().next().next();
+        assert_eq!(after_one_burst.ordinal() - initial.ordinal(), 1);
+        assert_eq!(after_three_singles.ordinal() - initial.ordinal(), 3);
     }
 
     #[test]

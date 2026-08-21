@@ -1231,7 +1231,30 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         self.core.open_key_delivery()
     }
 
+    /// R1757 §5.49 §5.39 §2 #6 — the delivery currently open, the terminal
+    /// peer of `ShellCore::key_delivery`. The reader half of the axis
+    /// `scene/input_state` publishes, so this backend can be held to the same
+    /// rule as the GUI one rather than assumed to keep it.
+    #[must_use]
+    pub const fn key_delivery(&self) -> pinion_core::KeyArrival {
+        self.core.key_delivery()
+    }
+
     pub fn drain_deferred_inputs(&mut self, inputs: &[pinion_rpc::DeferredInput]) -> bool {
+        // R1757 §5.49 §5.39 §2 #6 — one drain that dispatches a keystroke is
+        // one delivery, the same rule the GUI drain keeps.
+        //
+        // R1658 gave the terminal LOOP its delivery boundary
+        // ([`Self::open_key_delivery`], called when the loop had to wait) but
+        // left this drain without one, so a key injected over RPC into a TUI
+        // app inherited whichever delivery the last TYPED key had opened — it
+        // claimed to have arrived alongside a keystroke it had nothing to do
+        // with, and a gesture bound on `arrived_with` would have honoured the
+        // pair. §2 #6 asks the two backends to agree about the user's input,
+        // and on this axis they did not.
+        if inputs.iter().any(pinion_rpc::DeferredInput::dispatches_key) {
+            self.core.open_key_delivery();
+        }
         let mut state_changed = false;
         for input in inputs {
             // R1430 §5.35 §2 #6 — the toolkit tablet event scalar axes route
@@ -3672,6 +3695,40 @@ mod tests {
         }];
         let _ = core.drain_deferred_inputs(&inputs);
         assert_eq!(*core.cached_state(), ButtonState::Hover);
+    }
+
+    #[test]
+    fn r1757_an_injected_key_gets_its_own_delivery_in_the_terminal_too() {
+        // §2 #6 — the two backends must agree about the user's input, and on
+        // this axis they did not. R1658 gave the terminal LOOP a delivery
+        // boundary and left this drain without one, so a key injected over RPC
+        // inherited whichever delivery the last TYPED key had opened: it
+        // claimed to have arrived alongside a keystroke it had nothing to do
+        // with, and a binding asking `arrived_with` would have honoured the
+        // pair.
+        let mut core = primed_button_core();
+        let typed = core.open_key_delivery();
+        let inputs = vec![pinion_rpc::DeferredInput::Key {
+            x: 8.0,
+            y: 8.0,
+            key: "Space".to_string(),
+            state: pinion_rpc::KeyWireState::Press,
+        }];
+        let _ = core.drain_deferred_inputs(&inputs);
+        assert!(
+            !core.key_delivery().arrived_with(typed),
+            "the injected key opened its own delivery, not the typed key's",
+        );
+
+        // And a drain with no keystroke leaves it alone — the same gate the GUI
+        // drain keeps, so the published ordinal means the same thing on both.
+        let before = core.key_delivery();
+        let click = vec![pinion_rpc::DeferredInput::Click { x: 8.0, y: 8.0 }];
+        let _ = core.drain_deferred_inputs(&click);
+        assert!(
+            core.key_delivery().arrived_with(before),
+            "a pointer drain dispatches no keystroke, so it opens no delivery",
+        );
     }
 
     #[test]

@@ -4022,7 +4022,17 @@ impl<V: WidgetView> ShellCore<V> {
         // sent separately. The instant is taken here, before the first
         // handler of the drain runs, for the same reason the winit path takes
         // it in `new_events`.
-        self.core.open_key_delivery();
+        //
+        // R1757 §5.49 — but only when the drain actually dispatches a
+        // keystroke. Pre-R1757 this opened one unconditionally, which was
+        // invisible while the delivery was a Rust-only fact and became a
+        // defect the moment `scene/input_state` published it: an agent reads
+        // the axis before and after its burst to see the delivery advance by
+        // ONE, and those two reads are themselves drains. The instrument would
+        // have consumed what it measures. See `DeferredInput::dispatches_key`.
+        if inputs.iter().any(DeferredInput::dispatches_key) {
+            self.core.open_key_delivery();
+        }
         // `DeferredInput` is `non_exhaustive`; the wildcard arm
         // covers future variants (key, cursor_only, etc.) silently
         // no-op against this drain until a follow-up round extends
@@ -13526,6 +13536,116 @@ mod injected_arrival_tests {
         assert!(
             log[0].arrived_with(opened) && log[1].arrived_with(opened),
             "the offer-first arm reads the open delivery as well"
+        );
+    }
+
+    /// R1757 — the published `key_delivery.opened` ordinal, read the way an
+    /// agent reads it: over the wire, through a whole `scene/input_state`
+    /// request. Reading the field directly would not exercise the thing this
+    /// round changed — that the read itself no longer moves what it measures.
+    fn delivery_opened(sc: &mut ShellCore<InjectedArrivalFixture>) -> u64 {
+        let mut no_resize = |_: u32, _: u32| {};
+        let resp = sc
+            .dispatch_rpc(
+                r#"{"jsonrpc":"2.0","id":1,"method":"scene/input_state"}"#,
+                &mut no_resize,
+            )
+            .expect("a response frame");
+        let v: serde_json::Value = serde_json::from_str(&resp).expect("valid response json");
+        v["result"]["key_delivery"]["opened"]
+            .as_u64()
+            .unwrap_or_else(|| panic!("key_delivery.opened is a number: {resp}"))
+    }
+
+    fn boot_fixture() -> ShellCore<InjectedArrivalFixture> {
+        INJECTED_ARRIVALS.with(|log| log.borrow_mut().clear());
+        let mut sc = ShellCore::<InjectedArrivalFixture>::new();
+        let boot = sc.compute_paint_scene(100, 100);
+        sc.finalize_frame(boot);
+        sc
+    }
+
+    #[test]
+    fn r1757_a_burst_from_one_request_is_one_delivery_end_to_end() {
+        // THE ROUND'S CLAIM, driven the way a consumer drives it: one real
+        // `scene/key` request carrying three keys, through the real dispatcher
+        // and the real drain. R1658's own counterfactual found that every test
+        // it had written bypassed the path the defect was on, so this asserts
+        // BOTH halves at once — that the binding sees one gesture, and that the
+        // wire says so.
+        let mut sc = boot_fixture();
+        let before = delivery_opened(&mut sc);
+        let mut no_resize = |_: u32, _: u32| {};
+        let burst = r#"{"jsonrpc":"2.0","id":2,"method":"scene/key","params":{"at":{"x":5.0,"y":5.0},"keys":["ArrowLeft","ArrowLeft","ArrowLeft"]}}"#;
+        let _ = sc.dispatch_rpc(burst, &mut no_resize);
+
+        let log = INJECTED_ARRIVALS.with(|log| log.borrow().clone());
+        assert_eq!(log.len(), 3, "all three keys reached the binding");
+        assert!(
+            log[0].arrived_with(log[1]) && log[1].arrived_with(log[2]),
+            "one request is one delivery — the three are one gesture",
+        );
+        assert_eq!(log[0].at(), log[2].at(), "and one instant");
+        assert_eq!(
+            delivery_opened(&mut sc) - before,
+            1,
+            "and the wire says so: one delivery opened, whatever the burst carried",
+        );
+    }
+
+    #[test]
+    fn r1757_three_requests_are_three_deliveries_and_the_wire_separates_them() {
+        // The other half, and the one that makes the axis worth publishing: the
+        // reading must DISTINGUISH a burst from the same keys sent separately.
+        // A fixture where both answered the same would gate nothing — the
+        // failure this project keeps meeting.
+        let mut sc = boot_fixture();
+        let before = delivery_opened(&mut sc);
+        let mut no_resize = |_: u32, _: u32| {};
+        for id in 0..3 {
+            let one = format!(
+                r#"{{"jsonrpc":"2.0","id":{id},"method":"scene/key","params":{{"at":{{"x":5.0,"y":5.0}},"key":"ArrowLeft"}}}}"#
+            );
+            let _ = sc.dispatch_rpc(&one, &mut no_resize);
+        }
+
+        let log = INJECTED_ARRIVALS.with(|log| log.borrow().clone());
+        assert_eq!(log.len(), 3);
+        assert!(
+            !log[0].arrived_with(log[1]) && !log[1].arrived_with(log[2]),
+            "sent separately, they did not arrive together",
+        );
+        assert_eq!(
+            delivery_opened(&mut sc) - before,
+            3,
+            "three requests, three deliveries — the distance a burst does not travel",
+        );
+    }
+
+    #[test]
+    fn r1757_a_request_with_no_keystroke_opens_no_delivery() {
+        // What makes the two readings above trustworthy. Every RPC request runs
+        // the drain, so pre-R1757 the two `scene/input_state` calls bracketing a
+        // burst each opened a delivery of their own and the difference read 3
+        // for one burst — the instrument consuming what it measures. A request
+        // that dispatches no keystroke must move nothing.
+        let mut sc = boot_fixture();
+        let before = delivery_opened(&mut sc);
+        let mut no_resize = |_: u32, _: u32| {};
+        // A pointer request, and a release-only key edge: neither types.
+        let click =
+            r#"{"jsonrpc":"2.0","id":3,"method":"scene/click","params":{"at":{"x":5.0,"y":5.0}}}"#;
+        let _ = sc.dispatch_rpc(click, &mut no_resize);
+        let release = r#"{"jsonrpc":"2.0","id":4,"method":"scene/key","params":{"key":"Space","state":"up"}}"#;
+        let _ = sc.dispatch_rpc(release, &mut no_resize);
+        assert_eq!(
+            delivery_opened(&mut sc),
+            before,
+            "no keystroke was dispatched, so no delivery opened",
+        );
+        assert!(
+            INJECTED_ARRIVALS.with(|log| log.borrow().is_empty()),
+            "and nothing reached the key hook",
         );
     }
 

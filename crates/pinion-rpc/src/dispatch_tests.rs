@@ -1596,6 +1596,266 @@ fn r666_scene_key_multi_codepoint_named_string_still_routes_as_named() {
     }
 }
 
+// ---- R1757 §5.49 §5.39 §2 #2 — the scene/key burst form ----
+
+/// Send one `scene/key` request and return what it enqueued. The inbox is
+/// fresh per call, so an assertion about "nothing was enqueued" is about this
+/// request and not a leftover.
+fn key_request(params: &str) -> (Option<crate::RpcError>, Vec<DeferredInput>) {
+    let mut scene = counted_scene(0);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    let mut inbox: Vec<DeferredInput> = Vec::new();
+    let error = {
+        let mut ctx =
+            DispatchContext::new(&mut scene, &previews, &revision).with_deferred_inputs(&mut inbox);
+        let req =
+            format!(r#"{{"jsonrpc":"2.0","method":"scene/key","params":{params},"id":1757}}"#);
+        parse_response(&dispatch(&mut ctx, &req).unwrap()).error
+    };
+    (error, inbox)
+}
+
+/// The `data` word of a rejection, or the empty string. Consumes the error so
+/// the helper does not take a whole `RpcError` by value only to borrow it.
+fn err_data(error: Option<crate::RpcError>) -> String {
+    let Some(data) = error.and_then(|e| e.data) else {
+        return String::new();
+    };
+    data.as_str().unwrap_or_default().to_owned()
+}
+
+#[test]
+fn r1757_a_burst_enqueues_one_stroke_per_entry_sharing_one_target() {
+    // The whole point: N keys from ONE request, so the drain delivers them as
+    // one delivery and the binding sees them as one gesture. NAMED keys are
+    // what was missing — `scene/type` could already burst characters, and the
+    // repeat window the defect was reported on is spent on arrows.
+    let (error, inbox) =
+        key_request(r#"{"at":{"x":7.0,"y":9.0},"keys":["ArrowLeft","ArrowLeft","ArrowLeft"]}"#);
+    assert!(error.is_none(), "{error:?}");
+    assert_eq!(inbox.len(), 3, "one enqueued stroke per entry");
+    for input in &inbox {
+        let DeferredInput::Key {
+            x,
+            y,
+            ref key,
+            state,
+        } = *input
+        else {
+            panic!("expected a named Key, got {input:?}");
+        };
+        assert_eq!(key, "ArrowLeft");
+        assert_eq!(
+            state,
+            KeyWireState::Press,
+            "a bare string is an atomic press"
+        );
+        assert_eq!(
+            (x, y),
+            (7.0, 9.0),
+            "the burst shares one resolved target, as scene/type does",
+        );
+    }
+}
+
+#[test]
+fn r1757_a_burst_routes_each_entry_through_the_one_discriminator() {
+    // R666's single-codepoint rule decides which channel a key takes, and the
+    // burst must not carry a second copy of it: `"a"` in an array has to reach
+    // `V::keybinding` exactly as `scene/key {key:"a"}` does, or the same
+    // keystroke would mean different things depending on how it was sent.
+    let (error, inbox) = key_request(r#"{"at":{"x":0.0,"y":0.0},"keys":["ArrowLeft","a","안"]}"#);
+    assert!(error.is_none(), "{error:?}");
+    assert!(
+        matches!(inbox[0], DeferredInput::Key { .. }),
+        "multi-codepoint is a named key: {:?}",
+        inbox[0]
+    );
+    for (i, expected) in [(1usize, "a"), (2, "안")] {
+        let DeferredInput::CharacterKey { ref character, .. } = inbox[i] else {
+            panic!("single-codepoint routes as Character, got {:?}", inbox[i]);
+        };
+        assert_eq!(character, expected);
+    }
+}
+
+#[test]
+fn r1757_a_burst_entry_states_its_own_edge() {
+    // Per-entry `state` is not decoration: a pan chord is `Space` down, the
+    // arrows, `Space` up, and the WHOLE claim of that gesture is that the
+    // three arrived together. Without per-entry edges the burst could express
+    // a run of presses but not a chord — the shape a held modifier needs.
+    let (error, inbox) = key_request(
+        r#"{"at":{"x":1.0,"y":2.0},"keys":[{"key":"Space","state":"down"},"ArrowLeft",{"key":"Space","state":"up"}]}"#,
+    );
+    assert!(error.is_none(), "{error:?}");
+    let states: Vec<KeyWireState> = inbox
+        .iter()
+        .map(|input| match *input {
+            DeferredInput::Key { state, .. } | DeferredInput::CharacterKey { state, .. } => state,
+            ref other => panic!("expected a keystroke, got {other:?}"),
+        })
+        .collect();
+    assert_eq!(
+        states,
+        vec![KeyWireState::Down, KeyWireState::Press, KeyWireState::Up],
+        "the array holds mixed edges, in order",
+    );
+}
+
+#[test]
+fn r1757_a_malformed_entry_enqueues_nothing_at_all() {
+    // A burst is rejected TOTALLY or not at all. A partial one would be worse
+    // than a rejection: the drain would deliver the surviving prefix as a
+    // complete delivery, so the binding would see a gesture the caller never
+    // asked for while the caller saw an error saying it had not happened.
+    for (params, wanted) in [
+        (
+            r#"{"at":{"x":0.0,"y":0.0},"keys":["ArrowLeft",3,"ArrowRight"]}"#,
+            "keys[1]",
+        ),
+        (
+            r#"{"at":{"x":0.0,"y":0.0},"keys":["ArrowLeft",""]}"#,
+            "keys[1]",
+        ),
+        (
+            r#"{"at":{"x":0.0,"y":0.0},"keys":["ArrowLeft",{"key":"Space","state":"pressed"}]}"#,
+            "keys[1].state",
+        ),
+        (
+            r#"{"at":{"x":0.0,"y":0.0},"keys":["ArrowLeft",{"state":"down"}]}"#,
+            "keys[1].key",
+        ),
+    ] {
+        let (error, inbox) = key_request(params);
+        assert!(error.is_some(), "must reject: {params}");
+        let data = err_data(error);
+        assert!(
+            data.contains(wanted),
+            "the rejection names the offending entry ({wanted}): {data:?}",
+        );
+        assert!(
+            inbox.is_empty(),
+            "a rejected burst enqueues nothing, not a prefix: {inbox:?}",
+        );
+    }
+}
+
+#[test]
+fn r1757_key_and_keys_are_alternatives_and_one_is_required() {
+    // The same "exactly one" shape `at` / `path` already has on this method.
+    // Both together is a rejection rather than a precedence rule: a caller
+    // that sent both does not know which it meant, and neither do we.
+    let (both, inbox) = key_request(r#"{"at":{"x":0.0,"y":0.0},"key":"a","keys":["b"]}"#);
+    assert!(both.is_some(), "both forms at once must reject");
+    assert!(inbox.is_empty());
+    let (neither, _) = key_request(r#"{"at":{"x":0.0,"y":0.0}}"#);
+    let data = err_data(neither);
+    assert!(
+        data.contains("key"),
+        "the rejection names the param: {data:?}"
+    );
+
+    // An empty array asks for no keystroke, which would open a delivery that
+    // delivered nothing. The caller cannot have meant that.
+    let (empty, inbox) = key_request(r#"{"at":{"x":0.0,"y":0.0},"keys":[]}"#);
+    assert!(empty.is_some(), "an empty burst must reject");
+    assert!(inbox.is_empty());
+    let (scalar, _) = key_request(r#"{"at":{"x":0.0,"y":0.0},"keys":"ArrowLeft"}"#);
+    assert!(scalar.is_some(), "keys must be an array");
+}
+
+#[test]
+fn r1757_a_release_only_burst_is_positionless_but_one_press_needs_a_target() {
+    // R882.1 made a lone `state:"up"` positionless, because a release
+    // dispatches nothing and so has nowhere to be aimed. Over a burst that
+    // reads "no entry dispatches" — and one entry that DOES dispatch makes the
+    // target required, because the whole burst shares it.
+    let (release_only, inbox) = key_request(r#"{"keys":[{"key":"Space","state":"up"}]}"#);
+    assert!(
+        release_only.is_none(),
+        "a release-only burst needs no target: {release_only:?}",
+    );
+    assert_eq!(inbox.len(), 1);
+    let (mixed, inbox) = key_request(r#"{"keys":[{"key":"Space","state":"up"},"ArrowLeft"]}"#);
+    assert!(
+        mixed.is_some(),
+        "one dispatching stroke makes the target required",
+    );
+    assert!(inbox.is_empty());
+}
+
+#[test]
+fn r1757_only_a_dispatching_keystroke_asks_for_a_delivery() {
+    // The predicate both drains gate `open_key_delivery` on. It is what keeps
+    // the published axis readable: an agent reads `scene/input_state` before
+    // and after its burst, and those reads are themselves drains — if every
+    // drain opened a delivery, the instrument would consume what it measures.
+    let dispatching = DeferredInput::Key {
+        x: 0.0,
+        y: 0.0,
+        key: "ArrowLeft".to_owned(),
+        state: KeyWireState::Press,
+    };
+    assert!(dispatching.dispatches_key());
+    let character = DeferredInput::CharacterKey {
+        x: 0.0,
+        y: 0.0,
+        character: "a".to_owned(),
+        state: KeyWireState::Down,
+    };
+    assert!(character.dispatches_key(), "a down edge types as well");
+    let release = DeferredInput::Key {
+        x: 0.0,
+        y: 0.0,
+        key: "Space".to_owned(),
+        state: KeyWireState::Up,
+    };
+    assert!(
+        !release.dispatches_key(),
+        "a release dispatches nothing, so no keystroke needs an arrival",
+    );
+    assert!(
+        !DeferredInput::Click { x: 0.0, y: 0.0 }.dispatches_key(),
+        "a click is not a keystroke",
+    );
+}
+
+#[test]
+fn r1757_input_state_publishes_the_open_delivery() {
+    let mut scene = counted_scene(3);
+    let previews = PreviewLedger::default();
+    let revision = SceneRevision::default();
+    // Idle: the axis is present carrying the batch that means "none opened
+    // yet", never absent — a reader that must probe for a key cannot tell "no
+    // delivery" from "this backend does not answer the axis".
+    let mut ctx = DispatchContext::new(&mut scene, &previews, &revision)
+        .with_input_state(pinion_core::InputStateSnapshot::default());
+    let resp = dispatch(
+        &mut ctx,
+        r#"{"jsonrpc":"2.0","id":1,"method":"scene/input_state"}"#,
+    )
+    .expect("response frame");
+    let v: Value = serde_json::from_str(&resp).expect("valid response json");
+    assert_eq!(v["result"]["key_delivery"]["opened"], 0);
+
+    // And after two deliveries it says two, so the DISTANCE an agent reads
+    // across its own request is the number of deliveries that request opened.
+    let snap = pinion_core::InputStateSnapshot {
+        key_delivery: pinion_core::KeyBatch::initial().next().next(),
+        ..Default::default()
+    };
+    let mut ctx2 = DispatchContext::new(&mut scene, &previews, &revision).with_input_state(snap);
+    let resp2 = dispatch(
+        &mut ctx2,
+        r#"{"jsonrpc":"2.0","id":2,"method":"scene/input_state"}"#,
+    )
+    .expect("response frame");
+    let v2: Value = serde_json::from_str(&resp2).expect("valid response json");
+    assert_eq!(v2["result"]["key_delivery"]["opened"], 2);
+}
+
 // ---- R770 §5.49 §5.15 — OS file drag-drop RPC peers ----
 
 #[test]
@@ -10138,6 +10398,13 @@ fn probe_params() -> serde_json::Value {
         "viewport".to_owned(),
         serde_json::json!({"width": 1, "height": 1}),
     );
+    // R1757 — `scene/key`'s burst form reads an ARRAY, so a path-shaped string
+    // would be refused on the value. The probe supplies it alongside `key`,
+    // which that method rejects as "exactly one of the two" — harmless for the
+    // window column it is being classified for (`scene/key` resolves a scene
+    // TAG, never a window prefix, and refused on `state` before this round
+    // too), but the reason is written down rather than left to be rediscovered.
+    params.insert("keys".to_owned(), serde_json::json!(["Enter"]));
     // `scene/simulate` carries its path INSIDE a step, so the probe has to be
     // a well-formed step to reach it at all.
     params.insert(
@@ -10166,6 +10433,7 @@ const PROBE_PARAM_NAMES: &[&str] = &[
     "index",
     "intent",
     "key",
+    "keys",
     "kind",
     "magnification",
     "max_attempts",

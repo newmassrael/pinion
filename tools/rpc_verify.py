@@ -2489,6 +2489,79 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
             params["path"] = path
         self.request("scene/key", params)
 
+    def keys(
+        self,
+        strokes: "Sequence[Any]",
+        *,
+        at: Optional[tuple[float, float]] = None,
+        path: Optional[str] = None,
+    ) -> None:
+        """R1757 §5.49 §5.39 — one `scene/key` request carrying SEVERAL
+        keystrokes, so they reach the binding as one keystroke *delivery*.
+
+        This is the only way to drive a **gesture** over the wire. A repeat
+        window, a chord timeout and a double-tap are statements about "these
+        arrived together" (R1658), and one drain is one delivery — so N
+        separate `.key()` calls are N deliveries and can never express one.
+        `.text()` below has the same limitation by construction: it loops.
+
+        Each stroke is either a key name (an atomic press) or a
+        `(name, state)` pair for an explicit `"down"` / `"up"` edge, which is
+        what a chord needs — `Space` down, the arrows, `Space` up, all in one
+        delivery.
+
+        Confirm it landed as one with `.key_delivery_opened()`: that ordinal
+        advances by exactly one across this call, whatever the burst carried.
+
+        Target resolution matches `.key()`, except that the burst shares ONE
+        target — a keyboard delivery has one focus. It may be omitted only
+        when every stroke is a release, which dispatches nothing.
+        """
+        if not strokes:
+            raise ValueError("a burst must carry at least one keystroke")
+        entries: list[Any] = []
+        all_releases = True
+        for stroke in strokes:
+            if isinstance(stroke, str):
+                name, state = stroke, None
+            else:
+                name, state = stroke
+            if not name:
+                raise ValueError("key name must not be empty")
+            entries.append(name if state is None else {"key": name, "state": state})
+            all_releases = all_releases and state == "up"
+        if all_releases:
+            if at is not None and path is not None:
+                raise ValueError("supply at most one of `at` or `path`")
+        elif (at is None) == (path is None):
+            raise ValueError("exactly one of `at` or `path` must be supplied")
+        params: dict[str, Any] = {"keys": entries}
+        if at is not None:
+            params["at"] = {"x": float(at[0]), "y": float(at[1])}
+        elif path is not None:
+            params["path"] = path
+        self.request("scene/key", params)
+
+    def key_delivery_opened(self, *, window: Optional[str] = None) -> int:
+        """R1757 §5.49 — the `key_delivery.opened` ordinal from
+        `scene/input_state`: how many keystroke deliveries the runtime has
+        opened, the last of which is the one now open.
+
+        Read it before and after a `.keys()` burst; the difference is the
+        number of deliveries that request opened, and for a burst it is one.
+        A request that dispatches no keystroke does not move it, so
+        bracketing a burst with these two reads does not perturb what they
+        measure.
+        """
+        params: dict[str, Any] = {}
+        if window is not None:
+            params["window"] = window
+        resp = self.request("scene/input_state", params)
+        assert resp is not None
+        result = resp.result
+        assert isinstance(result, dict), f"input_state is an object: {result!r}"
+        return int(result["key_delivery"]["opened"])
+
     def text(
         self,
         body: str,

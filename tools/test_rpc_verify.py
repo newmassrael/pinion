@@ -512,6 +512,70 @@ def test_key_argument_rules() -> None:
           "key: a release is positionless and says so")
 
 
+def test_key_burst_is_one_request() -> None:
+    # R1757 — the whole point of the burst wrapper is that it sends ONE
+    # request, because one drain is one delivery. A wrapper that looped would
+    # look identical from the call site and express no gesture at all — which
+    # is exactly what `.text()` does, and why `.keys()` had to exist.
+    tf = wired()
+    deliver(tf, {"jsonrpc": "2.0", "id": 1, "result": None})
+    before = len(sent(tf))
+    tf.keys(["ArrowLeft", "ArrowLeft", "ArrowLeft"], at=(4.0, 5.0))
+    frames = sent(tf)[before:]
+    check(len(frames) == 1, f"keys: one request, not one per stroke ({len(frames)})")
+    check(frames[0]["params"] == {
+        "keys": ["ArrowLeft", "ArrowLeft", "ArrowLeft"],
+        "at": {"x": 4.0, "y": 5.0},
+    }, f"keys: bare names ride as strings, one shared target: {frames[0]['params']!r}")
+
+    # A `(name, state)` pair becomes the object form, which is what a chord
+    # needs — the edges have to be expressible INSIDE one delivery.
+    deliver(tf, {"jsonrpc": "2.0", "id": 2, "result": None})
+    tf.keys([("Space", "down"), "ArrowLeft", ("Space", "up")], path="board")
+    params = sent(tf)[-1]["params"]
+    check(params["keys"] == [
+        {"key": "Space", "state": "down"},
+        "ArrowLeft",
+        {"key": "Space", "state": "up"},
+    ], f"keys: mixed edges, in order: {params['keys']!r}")
+    check(params["path"] == "board", "keys: a path target rides as a path")
+
+    # A release-only burst is positionless, for the reason a lone release is.
+    deliver(tf, {"jsonrpc": "2.0", "id": 3, "result": None})
+    tf.keys([("Space", "up")])
+    check(sent(tf)[-1]["params"] == {"keys": [{"key": "Space", "state": "up"}]},
+          "keys: an all-release burst needs no target")
+
+    for label, call in (
+        ("an empty burst", lambda: tf.keys([], at=(1.0, 1.0))),
+        ("an empty name", lambda: tf.keys(["ArrowLeft", ""], at=(1.0, 1.0))),
+        ("no target with a press", lambda: tf.keys(["ArrowLeft"])),
+        ("both a point and a path", lambda: tf.keys(["a"], at=(1.0, 1.0), path="t")),
+    ):
+        try:
+            call()
+            check(False, f"keys: {label} must be refused")
+        except ValueError:
+            check(True, f"keys: {label} is refused")
+
+
+def test_key_delivery_opened_reads_the_published_axis() -> None:
+    # R1757 — the reading a burst is confirmed by. It must come off the
+    # published axis rather than be counted client-side: what a client can
+    # count is its own calls, and the question is what the RUNTIME did with
+    # them.
+    tf = wired()
+    deliver(tf, {"jsonrpc": "2.0", "id": 1, "result": {
+        "key_delivery": {"opened": 7},
+        "held_keys": [],
+    }})
+    check(tf.key_delivery_opened() == 7,
+          "key_delivery_opened: reads `opened` off the axis")
+    frame = sent(tf)[-1]
+    check(frame["method"] == "scene/input_state",
+          f"key_delivery_opened: asks input_state, not a private door: {frame['method']}")
+
+
 def test_assume_built_gate_reads_the_value_not_the_presence() -> None:
     # R1333 — presence-checking made `PINION_ASSUME_BUILT=0` DISABLE the
     # rebuild, the opposite of what setting `0` means.

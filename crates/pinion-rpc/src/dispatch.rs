@@ -1450,6 +1450,80 @@ pub enum DeferredInput {
     SetTargetFps { fps: Option<u32> },
 }
 
+impl DeferredInput {
+    /// R1757 §5.49 §5.39 — whether draining this entry dispatches a
+    /// **keystroke**, and therefore whether the drain needs to open a
+    /// keystroke delivery for it.
+    ///
+    /// # Why the drain asks instead of always opening one
+    ///
+    /// R1658 wrote the rule as "one drain is one delivery", and the drain
+    /// implemented it literally: it opened one at the top, for every request.
+    /// While the delivery was a Rust-only fact that was invisible — a
+    /// `scene/click` request would open a delivery no keystroke ever carried,
+    /// and nothing could tell.
+    ///
+    /// R1757 publishes the open delivery on the wire, and the reading an
+    /// agent needs from it is a *distance*: send one `scene/key` carrying
+    /// three keys, see the delivery advance by exactly one. Under the literal
+    /// rule that reading is impossible, because the `scene/input_state` calls
+    /// taken before and after each advance it too — the measurement would
+    /// consume its own instrument. So the rule becomes "one drain **that
+    /// dispatches a keystroke** is one delivery", which is what it always
+    /// meant.
+    ///
+    /// A release-only entry answers `false`: [`KeyWireState::Up`] updates the
+    /// held cache and dispatches nothing, so no keystroke exists to carry an
+    /// arrival. This defers to that same predicate rather than re-deciding
+    /// which edges type.
+    ///
+    /// # The match is exhaustive, and that is the gate
+    ///
+    /// `#[non_exhaustive]` stops an *out-of-crate* match from being exhaustive,
+    /// which is why the §2 #6 parity check
+    /// (`r1364_5_deferred_input_parity`, over in `pinion-tui`) has to grep
+    /// source text: from there the compiler cannot help. This is the DEFINING
+    /// crate, so it can, and so it does — a variant added tomorrow does not
+    /// compile until somebody says here whether it types. Listing
+    /// twenty-five variants that do not is worth a compiler-enforced answer to
+    /// "which inputs are keystrokes"; a wildcard would have let the next one
+    /// through silently, which is exactly the R1364.4 shape.
+    ///
+    /// This is also why the predicate lives on the enum rather than in either
+    /// drain: the answer has to land beside the variant.
+    #[must_use]
+    pub fn dispatches_key(&self) -> bool {
+        match self {
+            Self::Key { state, .. } | Self::CharacterKey { state, .. } => state.dispatches(),
+            Self::Quit
+            | Self::FileHoverCancel
+            | Self::PointerLeave
+            | Self::Wheel { .. }
+            | Self::Click { .. }
+            | Self::SecondaryClick { .. }
+            | Self::DoubleClick { .. }
+            | Self::PointerButton { .. }
+            | Self::PointerPressure { .. }
+            | Self::PointerTilt { .. }
+            | Self::PointerTwist { .. }
+            | Self::PointerTangentialPressure { .. }
+            | Self::PointerHeight { .. }
+            | Self::PointerKind { .. }
+            | Self::PinchGesture { .. }
+            | Self::RotationGesture { .. }
+            | Self::PanGesture { .. }
+            | Self::SmartZoomGesture { .. }
+            | Self::Drag { .. }
+            | Self::FileHover { .. }
+            | Self::FileDrop { .. }
+            | Self::Hover { .. }
+            | Self::Tick { .. }
+            | Self::SetModifiers { .. }
+            | Self::SetTargetFps { .. } => false,
+        }
+    }
+}
+
 // R888.1 §5.28 — `PacingState` is homed in
 // `pinion_runtime::frame_pacing` next to `WindowFramePolicy` (the
 // READ-payload precedent: `InputStateSnapshot` → pinion-core,
@@ -5071,7 +5145,21 @@ where
 /// R51.197 §5.49 §5.45 — `scene/key` typed dispatcher.
 ///
 /// Params: `{at: {x: f64, y: f64}, key: <W3C KeyboardEvent.key string>,
-/// state?: "down" | "up"}`.
+/// state?: "down" | "up"}`, or the R1757 burst form
+/// `{at: …, keys: [<key name> | {key, state?}, …]}`. Exactly one of `key` /
+/// `keys` is required — the same "exactly one" shape `at` / `path` has here.
+///
+/// R1757 §5.39 §2 #2 — the burst form exists so an agent can drive a
+/// **gesture**, not just a keystroke. One drain is one delivery (R1658), so
+/// every key of one `keys` array reaches the binding carrying the same
+/// [`KeyArrival`](pinion_core::KeyArrival) — which is what a repeat window, a
+/// chord timeout and a double-tap are statements about. Sent as separate
+/// requests those keys are separate deliveries, correctly, because they were
+/// sent separately; before this form there was no way to say otherwise. The
+/// agent confirms it happened by reading `scene/input_state`'s `key_delivery`
+/// axis, which advances by exactly one across the call however many keys the
+/// array carried. See [`parse_key_burst`] for the entry vocabulary and why
+/// per-entry `state` is part of it.
 ///
 /// R882 §5.49 §5.39 — the optional `state` param is the winit
 /// `KeyboardInput` edge peer ([`KeyWireState`]): `"down"` dispatches
@@ -5115,28 +5203,25 @@ where
         return Err(RpcError::invalid_params("InputInjectionUnavailable"));
     };
     let params = require_params(params)?;
-    let key = params
-        .get("key")
-        .and_then(Value::as_str)
-        .ok_or_else(|| RpcError::invalid_params("params.key missing or not a string"))?;
-    if key.is_empty() {
-        return Err(RpcError::invalid_params("params.key must not be empty"));
-    }
-    // R882 §5.49 §5.39 — the optional keyboard edge: absent = the
-    // legacy atomic press; "down" / "up" mirror the winit Pressed /
-    // Released edges (held-key absolute state — the Space pan chord).
-    // Out-of-vocabulary values reject loudly (no silent atomic press).
-    let state_param = params.get("state");
-    let state = match state_param {
-        None => KeyWireState::Press,
-        Some(value) => {
-            let name = value.as_str().ok_or_else(|| {
-                RpcError::invalid_params("params.state must be a string (\"down\" | \"up\")")
-            })?;
-            KeyWireState::from_wire_param(Some(name)).ok_or_else(|| {
-                RpcError::invalid_params("params.state must be \"down\" or \"up\"")
-            })?
+    // R1757 — `key` and `keys` are alternatives, exactly one required: the
+    // same shape `at` / `path` already has on this method. Both together is a
+    // rejection rather than a precedence rule, because a caller that sent
+    // both does not know which one it meant and neither do we.
+    let strokes: Vec<KeyStroke> = match (params.get("key"), params.get("keys")) {
+        (Some(_), Some(_)) => {
+            return Err(RpcError::invalid_params(
+                "params.key and params.keys are alternatives — pass exactly one",
+            ));
         }
+        (None, None) => {
+            return Err(RpcError::invalid_params(
+                "params.key missing or not a string (or params.keys for a burst)",
+            ));
+        }
+        // The single form's keystroke IS the params object, read by the same
+        // function each burst entry goes through.
+        (Some(_), None) => vec![parse_key_stroke_object(params, "params")?],
+        (None, Some(keys)) => parse_key_burst(keys)?,
     };
     // R51.202 §5.49 — key location is either an explicit cursor
     // coordinate or a tag lookup via the paint scene, mirroring
@@ -5145,7 +5230,16 @@ where
     // the drain dispatches nothing for it), so `at`/`path` is optional
     // there; the placeholder coordinate is never consumed (the drain
     // gates its cursor move on `dispatches()`).
-    let (x, y) = if state == KeyWireState::Up
+    // R1757 — over a burst that reads "no stroke dispatches", so a
+    // release-only burst stays positionless exactly as a lone `state:"up"`
+    // does. One dispatching stroke anywhere in the array needs the target,
+    // because the whole burst shares it.
+    //
+    // Through `dispatches()` rather than `== Up`, which is the same answer
+    // today and would stop being it the moment a non-typing edge is added:
+    // "which edges type" has one home ([`KeyWireState::dispatches`]) and this
+    // is the third reader of it, not a second author.
+    let (x, y) = if strokes.iter().all(|s| !s.state.dispatches())
         && params.get("at").is_none()
         && params.get("path").is_none()
     {
@@ -5153,32 +5247,168 @@ where
     } else {
         resolve_at_or_path(params, paint_producer, last_paint_scene)?
     };
-    // R666 §5.37 — single-codepoint vs multi-codepoint discriminator.
-    // `chars().count()` is the Unicode-scalar-value count, so
-    // pre-composed CJK syllables like `"안"` (one codepoint) still
-    // route as Character; multi-syllable IME composition output
-    // like `"안녕"` (two codepoints) routes as Named and gets
-    // rejected by `apply_key`'s `is_printable_key` predicate, which
-    // is the correct fall-through to the R56.1.g preedit substrate.
-    let mut chars = key.chars();
+    // R1757 — every stroke was parsed BEFORE anything was enqueued, so a
+    // malformed entry at index 5 leaves the inbox untouched rather than
+    // half-injecting a gesture. A partial burst would be worse than a
+    // rejected one: the drain would deliver it as a complete delivery.
+    for stroke in strokes {
+        push_key_stroke(inbox, x, y, &stroke);
+    }
+    Ok(Value::Null)
+}
+
+/// R1757 §5.49 §5.39 — one keystroke of a `scene/key` request, before a
+/// target has been resolved. The burst form parses the whole array into these
+/// so a rejection can be total.
+struct KeyStroke {
+    /// W3C `KeyboardEvent.key` name, non-empty (checked at parse).
+    key: String,
+    /// The keyboard edge this stroke carries.
+    state: KeyWireState,
+}
+
+/// R882 §5.49 §5.39 — decode the optional keyboard edge from a `state` field.
+/// Absent = the legacy atomic press; `"down"` / `"up"` mirror the winit
+/// `Pressed` / `Released` edges (held-key absolute state — the `Space` pan
+/// chord). Out-of-vocabulary values reject loudly (no silent atomic press).
+///
+/// R1757 — `field` names the JSON path in the rejection, so a burst says
+/// which entry was wrong (`params.keys[2].state`) instead of blaming the
+/// request as a whole.
+fn parse_key_state(value: Option<&Value>, field: &str) -> Result<KeyWireState, RpcError> {
+    match value {
+        None => Ok(KeyWireState::Press),
+        Some(value) => {
+            let name = value.as_str().ok_or_else(|| {
+                RpcError::invalid_params(format!("{field} must be a string (\"down\" | \"up\")"))
+            })?;
+            KeyWireState::from_wire_param(Some(name)).ok_or_else(|| {
+                RpcError::invalid_params(format!("{field} must be \"down\" or \"up\""))
+            })
+        }
+    }
+}
+
+/// R1757 §5.49 §5.39 — the `key` + `state` pair of a keystroke, read from an
+/// object.
+///
+/// The single form's keystroke IS the request params, so it reads through here
+/// with `field = "params"` and the burst's entries with
+/// `field = "params.keys[i]"`. One definition of what a keystroke is, and one
+/// set of rejection words — the first draft of this round had a second copy for
+/// the single form whose doc claimed to be this one, which is how the two would
+/// have drifted.
+fn parse_key_stroke_object(obj: &Value, field: &str) -> Result<KeyStroke, RpcError> {
+    let key = obj
+        .get("key")
+        .and_then(Value::as_str)
+        .ok_or_else(|| RpcError::invalid_params(format!("{field}.key missing or not a string")))?;
+    if key.is_empty() {
+        return Err(RpcError::invalid_params(format!(
+            "{field}.key must not be empty"
+        )));
+    }
+    Ok(KeyStroke {
+        key: key.to_owned(),
+        state: parse_key_state(obj.get("state"), &format!("{field}.state"))?,
+    })
+}
+
+/// R1757 §5.49 §5.39 §2 #2 — decode the `keys` burst: several keystrokes in
+/// ONE request, so they reach the binding as one keystroke **delivery**.
+///
+/// # Why the wire needed this
+///
+/// R1658 gave every keystroke a [`KeyArrival`](pinion_core::KeyArrival) —
+/// when it arrived and which platform delivery it came out of — because a
+/// gesture judged on `Instant::now()` inside a handler is judged on *the
+/// app's* clock and silently shrinks by however long the previous keystroke
+/// took. A repeat window, a chord timeout and a double-tap are all statements
+/// about "these arrived together".
+///
+/// The RPC path could then dispatch a keystroke, but never a *gesture*: one
+/// drain is one delivery and `scene/key` carried one key, so two keys an
+/// agent sent were always two deliveries — correctly, since they were sent
+/// separately. Every binding that depends on arriving together was therefore
+/// undriveable over the wire, which is §2 #2 holding for observation only.
+/// Character bursts had a door already (`scene/type` fans a string out into
+/// one delivery), so what was missing was precisely the NAMED keys — the
+/// arrows a repeat window is spent on.
+///
+/// # The entry vocabulary
+///
+/// A bare string is the common case and means an atomic press:
+/// `{"keys": ["ArrowLeft", "ArrowLeft", "ArrowLeft"]}`. An object states an
+/// edge, which is what a chord needs — the whole point of `Space` down,
+/// `ArrowLeft`, `Space` up is that the three arrived together:
+/// `{"keys": [{"key": "Space", "state": "down"}, "ArrowLeft", …]}`. The
+/// object form is exactly the single form's `key` + `state` pair, read by the
+/// same function, so "what a keystroke is" has one definition.
+///
+/// An empty array rejects: a request that asks for no keystroke would open a
+/// delivery that delivered nothing, and the caller cannot have meant that.
+fn parse_key_burst(keys: &Value) -> Result<Vec<KeyStroke>, RpcError> {
+    let entries = keys
+        .as_array()
+        .ok_or_else(|| RpcError::invalid_params("params.keys must be an array"))?;
+    if entries.is_empty() {
+        return Err(RpcError::invalid_params(
+            "params.keys must not be empty — a burst carries at least one key",
+        ));
+    }
+    entries
+        .iter()
+        .enumerate()
+        .map(|(i, entry)| {
+            let field = format!("params.keys[{i}]");
+            match entry {
+                Value::String(key) if key.is_empty() => Err(RpcError::invalid_params(format!(
+                    "{field} must not be empty"
+                ))),
+                Value::String(key) => Ok(KeyStroke {
+                    key: key.clone(),
+                    state: KeyWireState::Press,
+                }),
+                Value::Object(_) => parse_key_stroke_object(entry, &field),
+                _ => Err(RpcError::invalid_params(format!(
+                    "{field} must be a key name string or a {{key, state}} object"
+                ))),
+            }
+        })
+        .collect()
+}
+
+/// R666 §5.37 — enqueue one keystroke, routing it by the single-codepoint vs
+/// multi-codepoint discriminator.
+///
+/// `chars().count()` is the Unicode-scalar-value count, so pre-composed CJK
+/// syllables like `"안"` (one codepoint) still route as Character;
+/// multi-syllable IME composition output like `"안녕"` (two codepoints) routes
+/// as Named and gets rejected by `apply_key`'s `is_printable_key` predicate,
+/// which is the correct fall-through to the R56.1.g preedit substrate.
+///
+/// R1757 — one home for the routing, shared by the single and burst forms. A
+/// burst that routed its entries by a second copy of this rule could deliver
+/// `"a"` down one channel and `scene/key {key:"a"}` down the other.
+fn push_key_stroke(inbox: &mut Vec<DeferredInput>, x: f64, y: f64, stroke: &KeyStroke) {
+    let mut chars = stroke.key.chars();
     let first = chars.next();
     let single_codepoint = first.is_some() && chars.next().is_none();
     if single_codepoint {
         inbox.push(DeferredInput::CharacterKey {
             x,
             y,
-            character: key.to_owned(),
-            state,
+            character: stroke.key.clone(),
+            state: stroke.state,
         });
     } else {
         inbox.push(DeferredInput::Key {
             x,
             y,
-            key: key.to_owned(),
-            state,
+            key: stroke.key.clone(),
+            state: stroke.state,
         });
     }
-    Ok(Value::Null)
 }
 
 /// §5.49 §5.39 — `scene/type` text-injection handler: a single RPC that
@@ -7618,6 +7848,19 @@ fn export_pdf_error_to_rpc(err: &ExportPdfError) -> RpcError {
 ///   maps each currently-held key to the window that owned its press's
 ///   rising edge. Together they make the close-during-dispatch gate
 ///   (R1073) — the admit decision — AI-observable.
+/// * `key_delivery` — R1757 §5.39, `{ "opened": <u64> }`: how many keystroke
+///   deliveries this runtime has opened, the last of which is the one now
+///   open. Not window-scoped — the platform hands over to the process. There
+///   is no `null` arm; a runtime that has opened none answers `0`, which is
+///   distinct from every delivery.
+///
+///   This is the READ peer of the burst form of `scene/key`. One drain is one
+///   delivery, so an agent that sent several keys in a single request
+///   confirms they arrived TOGETHER by seeing this advance by exactly one
+///   across the call — the fact a repeat window, a chord timeout or a
+///   double-tap is a statement about. Three separate `scene/key` calls
+///   advance it three times, which is the honest difference: they did not
+///   arrive together.
 ///
 /// Read-only — `HandlerKind::Read` upstream skips the
 /// [`SceneRevision`] bump.
@@ -7679,6 +7922,10 @@ fn handle_scene_input_state(
         "auto_scroll": auto_scroll,
         "cursor": cursor,
         "key_dispatch": key_dispatch,
+        // R1757 §5.49 §5.39 — `opened` is the delivery's ordinal, not an
+        // opaque id, because the question this axis exists for is a distance
+        // and not an equality: see `KeyBatch::ordinal`.
+        "key_delivery": { "opened": snap.key_delivery.ordinal() },
     }))
 }
 
@@ -7701,11 +7948,12 @@ fn handle_scene_input_state(
 /// the axes they use are present; "no axis silently disappeared" is this
 /// const's job, in the crate, where a change to the emitter is in the same
 /// diff as a change to the census.
-pub const INPUT_STATE_AXES: [&str; 6] = [
+pub const INPUT_STATE_AXES: [&str; 7] = [
     "auto_scroll",
     "cursor",
     "held_keys",
     "held_pointer_buttons",
+    "key_delivery",
     "key_dispatch",
     "modifiers",
 ];
