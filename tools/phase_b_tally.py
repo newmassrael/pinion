@@ -1059,6 +1059,17 @@ AXES = [
                 # round that built it, after the tool reported it UNCLASSIFIED
                 # at that round's own push.
                 "overflow-clip",
+                # R1753 — the content drag: a press on a scroll region's
+                # content that strays past the click-vs-drag threshold pans
+                # the region, the way a finger moves a list. Filed here and
+                # NOT under Model/View at scale, which is about a data path
+                # — selection models, section headers, column axes — whereas
+                # this is an INTERACTION vocabulary a shared container
+                # publishes, the same family as `gesture`, `pinch-zoom` and
+                # `raw-pointer` above and as this axis's own standing
+                # wheel-reach item. Added on the round that built it, after
+                # the tool reported it UNCLASSIFIED at that round's own push.
+                "content-drag",
             ]),
         ],
         # R1533 re-judgment, 82 -> 84, demanded by the tool: the round ledger

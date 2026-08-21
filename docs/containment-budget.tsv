@@ -52,6 +52,7 @@ hello-commands	0
 hello-commands-tui	unmeasured	RpcError: [-32099] subprocess exited during boot (rc=1) — 'hello-commands-tui: shell error: No such device or address (o
 hello-completer	0
 hello-conn-lifecycle	0
+hello-content-drag	0
 hello-contextmenu	0
 hello-cross-filter	0
 hello-crosshair	0

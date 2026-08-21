@@ -1703,10 +1703,21 @@ impl InputRouter {
     /// `id`. The single producer of the click-vs-drag determination
     /// [`pointer_up`](Self::pointer_up) and the double-click detector both
     /// consume — see [`press_became_drag`](Self::press_became_drag).
-    fn track_press_drag(&mut self, id: PointerId, x: f64, y: f64) {
-        if let Some(gesture) = self.press_gestures.get_mut(&id) {
-            gesture.latch.advance((x, y));
-        }
+    ///
+    /// R1753 — returns whether THIS call is the one that latched it: the rising
+    /// edge, not the level. A press becomes a drag exactly once, and the
+    /// handover in
+    /// [`escalate_press_to_content_pan`](Self::escalate_press_to_content_pan)
+    /// is a one-time event that reads it. Gating on the level instead would
+    /// re-walk the paint tree looking for a content-drag region on **every move
+    /// of every drag in the tree** — and the answer is a property of the press
+    /// POINT, which does not move, so asking again could not change it.
+    fn track_press_drag(&mut self, id: PointerId, x: f64, y: f64) -> bool {
+        let Some(gesture) = self.press_gestures.get_mut(&id) else {
+            return false;
+        };
+        let was_live = gesture.latch.live();
+        gesture.latch.advance((x, y)) && !was_live
     }
 
     /// R876 §5.49 §5.51 — whether the in-flight press for `id` has strayed
@@ -1786,7 +1797,7 @@ impl InputRouter {
         // path re-derives it. A tracked press only exists between
         // `pointer_down` and `pointer_up`, so free-mode hover *between* two
         // genuine clicks (no press held) never clears the candidate.
-        self.track_press_drag(id, x, y);
+        let just_became_drag = self.track_press_drag(id, x, y);
         if self.press_became_drag(id) {
             // R1701 — `forget`, not `remove`: the window is the per-pointer
             // detector and survives the gesture; what is dropped is the
@@ -1795,6 +1806,20 @@ impl InputRouter {
                 window.forget();
             }
         }
+        // R1753 §5.45 §5.35 — the press that just latched may belong to a
+        // scroll region rather than to the widget it landed on. Run AFTER
+        // `track_press_drag`, because the latch it advances is the very
+        // condition being read: escalating on a raw distance here would be a
+        // second opinion about what a drag is, and there is already one.
+        //
+        // Gated on the RISING edge, so a gesture attempts the handover once.
+        let (pan_live, pan_dispatched) = if pan_live || !just_became_drag {
+            (pan_live, pan_dispatched)
+        } else {
+            let (escalated, escalated_dispatch) =
+                self.escalate_press_to_content_pan(id, x, y, modifiers, state_scene);
+            (escalated, pan_dispatched || escalated_dispatch)
+        };
         if self.drag_sessions.contains_key(&id) {
             // R742 §5.51 — a drag started on this pointer: resolve the
             // drop location under the absolute cursor and forward it to
@@ -2109,6 +2134,143 @@ impl InputRouter {
         (true, dispatched)
     }
 
+    /// R1753 §5.45 §5.35 — convert an in-flight PRESS into a content pan, when
+    /// the region the press landed in declares
+    /// [`ContentDrag::Grab`](pinion_core::widgets::scroll::ContentDrag::Grab).
+    ///
+    /// This is the third producer into the pan channel, and the only one that
+    /// does not know at press time that it is a pan. The middle drag (R881) and
+    /// the Space-chord left drag (R882) are both *armed before the press* — the
+    /// button or the chord says what the gesture is, so nothing else ever had a
+    /// claim on it. Here the press has already been delivered to a widget, and
+    /// the gesture only reveals itself as a pan by moving. So this arm has one
+    /// job the other two do not: **hand the pointer over**, mid-gesture.
+    ///
+    /// The handover, in the order it has to happen:
+    ///
+    /// 1. **Refuse if anything else owns the pointer.** A capture lock, a
+    ///    `DnD` session, a raw-sink grab or a live pan all mean the press's motion is
+    ///    already spoken for; feeding it to a scroll container as well would
+    ///    drive two gestures from one finger. This is the same exclusivity
+    ///    [`pan_down`](Self::pan_down) enforces, read in the same order.
+    /// 2. **Find the region by the PRESS point, not the current one.** The
+    ///    pointer may already have left the container it started in — that is
+    ///    what a drag does — and the container a gesture belongs to is the one
+    ///    it began in ([`Scene::content_drag_target_at`] climbs to an ancestor
+    ///    that takes content drags when the innermost region does not).
+    /// 3. **Cancel the widget's press.** It received a `PointerDown` and will
+    ///    now never receive the matching `Up`, because the release resolves in
+    ///    the pan channel. Without the cancel a row stays visually latched for
+    ///    the whole scroll and then forever — the exact ghost
+    ///    [`pointer_cancel`](Self::pointer_cancel) exists to prevent, one
+    ///    surface over.
+    /// 4. **Drop the press record.** One gesture owns a pointer; the trailing
+    ///    click is then suppressed by ownership rather than by the R794 latch
+    ///    read, which is strictly stronger — `pointer_up` does not run at all,
+    ///    so no activation, no caret, no auto-repeat tick can survive the pan.
+    ///
+    /// The pan is pinned at the press origin and its `tag` is deliberately
+    /// `None`: the stage-1 `External` wheel offer exists so a canvas under the
+    /// cursor can claim a scroll before the container does, and that widget has
+    /// *already had* this gesture — it took the `PointerDown`. Offering it the
+    /// same motion again as a wheel would deliver one gesture twice.
+    ///
+    /// Returns `(pan_live, dispatched_this_move)`, matching
+    /// [`advance_pan`](Self::advance_pan) — which is what actually applies the
+    /// delta, so the escalation cannot compute the first move differently from
+    /// every move after it.
+    fn escalate_press_to_content_pan(
+        &mut self,
+        id: PointerId,
+        x: f64,
+        y: f64,
+        modifiers: Modifiers,
+        state_scene: &mut Scene,
+    ) -> (bool, bool) {
+        if self.drag_pans.contains_key(&id)
+            || self.captured_targets.contains_key(&id)
+            || self.drag_sessions.contains_key(&id)
+            || self.raw_grabs.contains_key(&id)
+        {
+            return (false, false);
+        }
+        let Some(press) = self.press_gestures.get(&id) else {
+            return (false, false);
+        };
+        if !press.latch.live() {
+            return (false, false);
+        }
+        let origin = press.latch.origin();
+        let Some(scroll) = self.content_pan_scroll_at(origin) else {
+            return (false, false);
+        };
+        // Step 3 + 4. The record is removed FIRST so the tag is owned rather
+        // than borrowed across the dispatch, and so no re-entrant read can see
+        // a press that has already lost its pointer.
+        let Some(press) = self.press_gestures.remove(&id) else {
+            return (false, false);
+        };
+        dispatch_send(
+            state_scene,
+            &press.target,
+            PointerWireEvent::Cancel.as_wire_name(),
+            self.held_modifiers,
+            // The button is still physically down — the gesture moved, the
+            // finger did not lift. `pointer_cancel` clears the held set because
+            // there the release genuinely never comes; here it does, and
+            // `pan_up` is what will note its edge.
+            self.held_buttons(id),
+        );
+        self.open_content_pan(id, origin, scroll);
+        self.advance_pan(id, x, y, modifiers, state_scene)
+    }
+
+    /// R1753 §5.45 §5.35 — the [`ScrollState`] a content drag beginning at
+    /// `origin` (window-logical px) would move, or `None` when no region there
+    /// takes content drags — or one does but has no reactive state attached,
+    /// which is a declarative-only scroll node the router cannot move (the same
+    /// silent drop [`Scene::scroll_state_at`] documents for the wheel).
+    ///
+    /// One home for the question, because it is asked from two places that must
+    /// not answer it differently: the press that lands on a widget and
+    /// escalates, and the press that lands on bare content and arms the channel
+    /// immediately. They differ in WHEN the pan opens, never in WHICH region it
+    /// belongs to.
+    fn content_pan_scroll_at(&self, origin: (f64, f64)) -> Option<Rc<ScrollState>> {
+        self.last_paint_scene
+            .as_ref()?
+            .content_drag_target_at(floor_clamp_u32(origin.0), floor_clamp_u32(origin.1))?
+            .state
+            .clone()
+    }
+
+    /// R1753 §5.45 §5.35 — open a left-channel pan on `scroll`, pinned at the
+    /// press `origin` with no stage-1 `External` recipient.
+    ///
+    /// `tag: None` is the property that distinguishes a content drag from the
+    /// other two pan producers, and it is deliberate on both paths. The stage-1
+    /// offer exists so a widget under the cursor can claim a scroll gesture
+    /// before the container does; a content drag has either already given that
+    /// widget the press (the escalation) or found no widget there at all (the
+    /// bare press). Offering it the motion as a wheel on top would deliver one
+    /// gesture twice.
+    fn open_content_pan(&mut self, id: PointerId, origin: (f64, f64), scroll: Rc<ScrollState>) {
+        self.drag_pans.insert(
+            id,
+            DragPan {
+                button: PanButton::Left,
+                swallowed_presses: 0,
+                pan: Some(PanState {
+                    latch: DragLatch::new(origin),
+                    last: origin,
+                    frac: (0.0, 0.0),
+                    tag: None,
+                    scroll: Some(scroll),
+                }),
+            },
+        );
+    }
+
     /// winit `CursorLeft` handler. Drops the cursor for `id` and
     /// dispatches a `PointerLeave` if a hover was in flight for that
     /// pointer — *unless* a drag is in flight (R51.34 §5.35 capture
@@ -2312,6 +2474,31 @@ impl InputRouter {
                     self.held_modifiers,
                     self.held_buttons(id),
                 );
+            }
+        } else if let Some(&origin) = self.cursors.get(&id) {
+            // R1753 §5.45 §5.35 — the press landed on NO tagged target. If it
+            // landed inside a region that takes content drags, the pan channel
+            // opens right here rather than waiting to escalate.
+            //
+            // The asymmetry with the escalation arm is not a shortcut, it is
+            // the ambiguity being absent. A press on a widget is genuinely two
+            // gestures until it moves — a tap and a scroll — which is why that
+            // path lets the widget have the press first and takes the pointer
+            // back only once the threshold decides. Here there is no widget: no
+            // `PointerDown` was dispatched, no capture opened, no drag source
+            // armed, and the shell's press follow-ups (click-to-focus, caret)
+            // all read the same absent hover target and do nothing. Nothing
+            // else can want this press, so the container may have it at once —
+            // exactly the reasoning [`pan_down`](Self::pan_down) applies to the
+            // middle button, whose press is unambiguous for the same reason.
+            //
+            // Opening in the DEAD ZONE (the latch starts unlatched) is what
+            // keeps a press-release in place from scrolling: `pan_up` reports
+            // [`PanRelease::Click`] for it, which the left channel treats as
+            // inert. So a stationary click on empty list background is still a
+            // click that moved nothing.
+            if let Some(scroll) = self.content_pan_scroll_at(origin) {
+                self.open_content_pan(id, origin, scroll);
             }
         }
     }
@@ -10886,6 +11073,327 @@ mod tests {
         router.cursor_moved(PointerId::MOUSE, 50.0, 89.2, &mut state_scene);
         assert_eq!(scroll.offset(), (0, 11), "accumulated remainder lands");
         assert_eq!(router.middle_up(PointerId::MOUSE), PanRelease::Pan);
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R1753 §5.45 §5.35 — content drag: a PRIMARY press on a region that
+    // declares `ContentDrag::Grab` pans it, and the widget it landed on
+    // keeps the tap.
+    //
+    // Reported by a consumer whose window is 430x932 — a phone-shaped set
+    // list where every row is a tap target and the only other gesture is
+    // the scroll. Measured there: a press-and-drag moved the offset by 0px
+    // and opened the pressed row instead.
+    // ─────────────────────────────────────────────────────────────────
+
+    /// Logs every `send` the router dispatches to it, so a test can assert the
+    /// SEQUENCE a widget saw — which is the whole question for an escalation:
+    /// `Down` then `Cancel` and never an `Up`.
+    struct SendLogExternal(Arc<Mutex<Vec<String>>>);
+
+    impl std::fmt::Debug for SendLogExternal {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            f.debug_struct("SendLogExternal").finish()
+        }
+    }
+
+    impl pinion_core::external::External for SendLogExternal {
+        fn backends(&self) -> BackendSupport {
+            BackendSupport::new(&[Backend::Gui], BackendFallback::Skip)
+        }
+        fn repaint_ownership(&self) -> RepaintOwner {
+            RepaintOwner::Framework
+        }
+        fn thread_ownership(&self) -> ThreadOwnership {
+            ThreadOwnership::UiThreadSync
+        }
+        fn introspect_mut(&mut self) -> Option<&mut dyn ExternalIntrospect> {
+            Some(self)
+        }
+    }
+
+    impl ExternalIntrospect for SendLogExternal {
+        fn schema(&self) -> IntrospectSchema {
+            IntrospectSchema::new(const { &[] })
+        }
+        fn query(&self, _path: &str) -> Result<IntrospectValue, ReadRefusal> {
+            Err(ReadRefusal::UnknownPath)
+        }
+        fn intervene(
+            &mut self,
+            _path: &str,
+            _value: IntrospectValue,
+        ) -> Result<(), InterveneError> {
+            Err(InterveneError::UnknownPath)
+        }
+        fn invoke(
+            &mut self,
+            method: &str,
+            args: IntrospectValue,
+        ) -> Result<IntrospectValue, InvokeError> {
+            if method == "send"
+                && let IntrospectValue::Text(name) = args
+            {
+                // A COMPOSITE target's wire is `{key}:{Event}[:…]`; a bare
+                // target with no context is the colon-free event name. Both
+                // forms are decoded through the grammar's own splitter rather
+                // than by slicing here (R1619) — `main_btn` is bare, so this
+                // fixture would log nothing at all if it only handled the
+                // composite spelling.
+                let event = pinion_core::composite_tag::split_send_payload(&name)
+                    .map_or_else(|| name.clone(), |sent| sent.event.to_owned());
+                self.0.lock().expect("mutex poisoned").push(event);
+            }
+            Ok(IntrospectValue::Null)
+        }
+    }
+
+    /// The R881 pan fixture with ONE thing changed — the region's content-drag
+    /// policy. Built by mutating that scene rather than by restating its
+    /// geometry, so a test pair that differs only in the flag cannot silently
+    /// come to differ in the layout too.
+    fn paint_with_content_drag(
+        state: Rc<ScrollState>,
+        drag: pinion_core::widgets::scroll::ContentDrag,
+    ) -> Scene {
+        let mut root = paint_with_button_over_scroll(state, None);
+        if let Scene::Container(c) = &mut root
+            && let Some(Scene::Scroll(s)) = c.children.first_mut()
+        {
+            s.content_drag = drag;
+        } else {
+            panic!("fixture shape changed: expected root > Scroll");
+        }
+        root
+    }
+
+    /// A router + state scene whose only widget is `main_btn`, logging sends.
+    fn content_drag_harness(
+        scroll: &Rc<ScrollState>,
+        drag: pinion_core::widgets::scroll::ContentDrag,
+    ) -> (InputRouter, Scene, Arc<Mutex<Vec<String>>>) {
+        let log = Arc::new(Mutex::new(Vec::new()));
+        let mut state_scene = Scene::External(
+            ExternalNode::new(Box::new(SendLogExternal(Arc::clone(&log)))).with_tag("main_btn"),
+        );
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_content_drag(Rc::clone(scroll), drag),
+            &mut state_scene,
+        );
+        (router, state_scene, log)
+    }
+
+    #[test]
+    fn r1753_a_drag_on_a_grabbing_region_scrolls_it() {
+        use pinion_core::widgets::scroll::ContentDrag;
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let (mut router, mut state, _log) = content_drag_harness(&scroll, ContentDrag::Grab);
+        // Press on the row at (100, 90) — inside `main_btn` (80..120 square).
+        router.cursor_moved(PointerId::MOUSE, 100.0, 90.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        assert_eq!(scroll.offset(), (0, 0), "the press alone moves nothing");
+        // Drag 30 px up, well past DRAG_CLICK_THRESHOLD_PX.
+        assert!(
+            router.cursor_moved(PointerId::MOUSE, 100.0, 60.0, &mut state),
+            "the escalated move reports a dispatch, so the frame repaints"
+        );
+        // ★ The delta is measured from the PRESS point, not from where the
+        // threshold was crossed: the content is glued to the finger. Anything
+        // less would leave it lagging by the threshold for the whole gesture.
+        assert_eq!(scroll.offset(), (0, 30), "content follows the pointer 1:1");
+        assert_eq!(
+            router.left_pan_up(PointerId::MOUSE),
+            PanRelease::Pan,
+            "the release resolves in the pan channel, not as a click"
+        );
+    }
+
+    #[test]
+    fn r1753_a_drag_on_a_region_that_declines_scrolls_nothing() {
+        // The discriminating half of the pair above: same fixture, same
+        // gesture, `Off` instead of `Grab`. Without this a bug that panned
+        // EVERY scroll region would pass the test above and change the
+        // behaviour of every rubber band in the tree.
+        use pinion_core::widgets::scroll::ContentDrag;
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let (mut router, mut state, _log) = content_drag_harness(&scroll, ContentDrag::Off);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 90.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 60.0, &mut state);
+        assert_eq!(
+            scroll.offset(),
+            (0, 0),
+            "a region that did not declare content drag is not panned by one"
+        );
+        assert_eq!(
+            router.left_pan_up(PointerId::MOUSE),
+            PanRelease::NoPress,
+            "and no pan gesture was ever opened"
+        );
+    }
+
+    #[test]
+    fn r1753_the_escalation_cancels_the_widget_press() {
+        // The widget took a `PointerDown` and will never get the matching
+        // `Up`, because the release now resolves in the pan channel. Without
+        // the cancel the row stays visually latched for the whole scroll and
+        // then forever — the ghost `pointer_cancel` exists to prevent.
+        use pinion_core::widgets::scroll::ContentDrag;
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let (mut router, mut state, log) = content_drag_harness(&scroll, ContentDrag::Grab);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 90.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 60.0, &mut state);
+        let _ = router.left_pan_up(PointerId::MOUSE);
+        let seen = log.lock().expect("mutex poisoned").clone();
+        assert_eq!(
+            seen,
+            vec![
+                PointerWireEvent::Enter.as_wire_name().to_owned(),
+                PointerWireEvent::Down.as_wire_name().to_owned(),
+                PointerWireEvent::Cancel.as_wire_name().to_owned(),
+            ],
+            "the widget is pressed, then told the gesture left it, and never \
+             receives an Up it could read as activation",
+        );
+    }
+
+    #[test]
+    fn r1753_a_long_drag_hands_the_pointer_over_exactly_once() {
+        // The handover is an EDGE. A real drag delivers many moves past the
+        // threshold, and every one of them would re-attempt the escalation if
+        // it were gated on the latch's level instead of its rising edge — the
+        // widget would be told the gesture left it over and over.
+        //
+        // The cancel count is the observable that separates the two: a level
+        // gate still produces a correct-looking scroll offset, so a test that
+        // only checked the offset would pass on the wrong implementation.
+        use pinion_core::widgets::scroll::ContentDrag;
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let (mut router, mut state, log) = content_drag_harness(&scroll, ContentDrag::Grab);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 100.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        for step in 1..=8 {
+            let y = 100.0 - f64::from(step) * 10.0;
+            router.cursor_moved(PointerId::MOUSE, 100.0, y, &mut state);
+        }
+        assert_eq!(scroll.offset(), (0, 80), "eight 10 px steps, all applied");
+        let cancels = log
+            .lock()
+            .expect("mutex poisoned")
+            .iter()
+            .filter(|e| e.as_str() == PointerWireEvent::Cancel.as_wire_name())
+            .count();
+        assert_eq!(cancels, 1, "the widget is told once, not once per move");
+    }
+
+    #[test]
+    fn r1753_a_tap_under_the_threshold_still_reaches_the_widget() {
+        // ★ The property that lets this be added to a list whose rows are
+        // already tap targets. A press that does not stray is not a pan: the
+        // widget keeps its Down/Up pair and nothing scrolls.
+        use pinion_core::widgets::scroll::ContentDrag;
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let (mut router, mut state, log) = content_drag_harness(&scroll, ContentDrag::Grab);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 90.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        // A 2 px wobble — under DRAG_CLICK_THRESHOLD_PX (4.0).
+        router.cursor_moved(PointerId::MOUSE, 100.0, 88.0, &mut state);
+        assert_eq!(scroll.offset(), (0, 0), "a wobble is not a pan");
+        assert!(
+            !router.left_pan_in_flight(PointerId::MOUSE),
+            "no pan was opened, so the release takes the ordinary widget arc"
+        );
+        router.pointer_up(PointerId::MOUSE, &mut state);
+        let seen = log.lock().expect("mutex poisoned").clone();
+        assert!(
+            seen.contains(&PointerWireEvent::Up.as_wire_name().to_owned()),
+            "the tap still activates the row: {seen:?}"
+        );
+        assert!(
+            !seen.contains(&PointerWireEvent::Cancel.as_wire_name().to_owned()),
+            "and nothing cancelled it: {seen:?}"
+        );
+    }
+
+    #[test]
+    fn r1753_a_press_on_bare_content_pans_with_no_widget_involved() {
+        // The gap doc's wording is "a press that started inside the scroll
+        // container", not "a press that started on a row". A press on empty
+        // list background dispatches no `PointerDown` at all, so there is no
+        // ambiguity to resolve and the channel opens at once.
+        use pinion_core::widgets::scroll::ContentDrag;
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let (mut router, mut state, log) = content_drag_harness(&scroll, ContentDrag::Grab);
+        // (20, 150) is inside the scroll viewport and outside `main_btn`.
+        router.cursor_moved(PointerId::MOUSE, 20.0, 150.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 20.0, 120.0, &mut state);
+        assert_eq!(scroll.offset(), (0, 30), "bare content pans too");
+        assert_eq!(router.left_pan_up(PointerId::MOUSE), PanRelease::Pan);
+        assert!(
+            log.lock().expect("mutex poisoned").is_empty(),
+            "no widget was under the press, so none was told anything"
+        );
+    }
+
+    #[test]
+    fn r1753_a_click_on_bare_content_moves_nothing() {
+        // The bare-content arm opens its gesture in the DEAD ZONE, so a
+        // press-release in place is still a click that scrolled nothing — the
+        // same latch discipline the middle pan uses to keep a click a click.
+        use pinion_core::widgets::scroll::ContentDrag;
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let (mut router, mut state, _log) = content_drag_harness(&scroll, ContentDrag::Grab);
+        router.cursor_moved(PointerId::MOUSE, 20.0, 150.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        assert_eq!(
+            router.left_pan_up(PointerId::MOUSE),
+            PanRelease::Click,
+            "a press that never strayed is a click, and the left channel \
+             treats that verdict as inert"
+        );
+        assert_eq!(scroll.offset(), (0, 0));
+    }
+
+    #[test]
+    fn r1753_a_capturing_widget_keeps_the_pointer_it_grabbed() {
+        // Exclusivity, the direction that matters most: a widget that took a
+        // capture lock owns the motion for the whole gesture. Feeding the same
+        // moves to a scroll container as well would drive a slider and a pan
+        // from one finger. `ReadingExternal` declares `wants_pointer_capture`.
+        use pinion_core::widgets::scroll::ContentDrag;
+        let scroll = Rc::new(ScrollState::new());
+        scroll.set_max(500, 500);
+        let moves = Arc::new(Mutex::new(Vec::new()));
+        let mut state = Scene::External(
+            ExternalNode::new(Box::new(ReadingExternal(Arc::clone(&moves)))).with_tag("main_btn"),
+        );
+        let mut router = InputRouter::new();
+        router.update_paint_scene(
+            paint_with_content_drag(Rc::clone(&scroll), ContentDrag::Grab),
+            &mut state,
+        );
+        router.cursor_moved(PointerId::MOUSE, 100.0, 90.0, &mut state);
+        router.pointer_down(PointerId::MOUSE, &mut state);
+        router.cursor_moved(PointerId::MOUSE, 100.0, 60.0, &mut state);
+        assert_eq!(
+            scroll.offset(),
+            (0, 0),
+            "the captured widget's drag is not also a pan"
+        );
+        assert!(
+            !moves.lock().expect("mutex poisoned").is_empty(),
+            "and the widget still received its captured motion"
+        );
     }
 
     // ─── R881.1 §5.35 adversarial-arm regressions (session audit) ──

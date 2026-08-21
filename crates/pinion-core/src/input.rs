@@ -100,6 +100,23 @@ impl DragLatch {
     pub const fn live(&self) -> bool {
         self.live
     }
+
+    /// R1753 — the press point this latch was opened at (logical px).
+    ///
+    /// Published because a gesture that ESCALATES out of a press needs the
+    /// press point, not the point the escalation was noticed at: a content
+    /// drag that started measuring at the threshold crossing would leave the
+    /// content lagging the pointer by [`DRAG_CLICK_THRESHOLD_PX`] forever,
+    /// since the grab convention is "the content follows the cursor" and the
+    /// cursor's own reference is where the finger first landed.
+    ///
+    /// Read-only on purpose. The origin is the one thing about a latch that
+    /// must never move — the whole determination is a distance FROM it — so
+    /// this is an accessor rather than a public field.
+    #[must_use]
+    pub const fn origin(&self) -> (f64, f64) {
+        self.origin
+    }
 }
 
 /// R1549 §5.35 §5.38 — press-and-hold **auto-repeat** cadence: how long a

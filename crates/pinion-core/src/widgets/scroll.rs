@@ -685,6 +685,66 @@ impl Default for AutoScroll {
     }
 }
 
+/// R1753 §5.45 §5.35 — **content drag**: whether a press that lands on this
+/// region's CONTENT and then strays into a drag pans the region, the way a
+/// finger moves a list.
+///
+/// ## Why this is a declaration and not simply the behaviour
+///
+/// A scroll container already has four ways to move: the wheel, the arrow /
+/// page keys, and the router's two pan channels — the chord-free middle drag
+/// and the primary drag the shell arms with its Space chord (the design tool's
+/// hand tool). Every one of them is unambiguous about who the gesture belongs
+/// to, because none of them is a gesture the CONTENT also wants.
+///
+/// A plain primary-button drag on the content is not like that. On a desktop
+/// list it is a rubber band; on a data grid it is a cell sweep; on a canvas it
+/// is a marquee. On a touch-shaped surface it is the scroll, and there is
+/// nothing else it could be. Both readings are right for their surface and
+/// neither can be the default for the other, so the surface declares which one
+/// it is — the same shape [`AutoScroll`] uses one field over.
+///
+/// ## What [`Grab`](Self::Grab) costs the press
+///
+/// Nothing, until the press moves. The press still reaches the widget under it
+/// — a tap on a row still activates that row — and only once it strays past
+/// [`DRAG_CLICK_THRESHOLD_PX`](crate::input::DRAG_CLICK_THRESHOLD_PX) does the
+/// container take the pointer over, cancelling the widget's press so it is not
+/// left latched under a gesture no longer aimed at it. That order is what lets
+/// the affordance be added to a list whose rows are already tap targets
+/// without taking the taps away.
+///
+/// Contrast the Space chord, which swallows the press outright: the hand tool
+/// is armed BEFORE the press, so it has no ambiguity to resolve and no widget
+/// that ought to have seen the press at all.
+///
+/// ## Inertia is deliberately absent
+///
+/// A flick that keeps travelling after release is a separate axis — it needs a
+/// velocity estimate, a deceleration curve, and a frame tick to integrate on,
+/// and it changes where the content comes to rest after the gesture is over.
+/// This type is the gesture, not the physics; nothing here forecloses inertia
+/// being added beside it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, Hash)]
+pub enum ContentDrag {
+    /// A press on the content never pans this region (the default). The
+    /// pointer belongs to whatever the press landed on for the whole gesture.
+    #[default]
+    Off,
+    /// A press on the content that strays past the framework's click-vs-drag
+    /// threshold pans this region, with the content following the pointer from
+    /// the press point.
+    Grab,
+}
+
+impl ContentDrag {
+    /// Whether a press on this region's content may become a pan.
+    #[must_use]
+    pub const fn is_enabled(self) -> bool {
+        matches!(self, Self::Grab)
+    }
+}
+
 /// R55.B §5.45 — Resolve (or lazily initialize) the
 /// [`ScrollState`] for the current view scope.
 ///

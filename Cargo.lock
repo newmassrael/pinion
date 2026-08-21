@@ -2256,6 +2256,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "hello-content-drag"
+version = "0.0.1"
+dependencies = [
+ "pinion-a11y",
+ "pinion-core",
+ "pinion-forge",
+ "pinion-gpu",
+ "pinion-shell",
+ "vello",
+]
+
+[[package]]
 name = "hello-contextmenu"
 version = "0.0.1"
 dependencies = [

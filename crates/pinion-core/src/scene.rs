@@ -2161,6 +2161,42 @@ impl Scene {
     /// a scroll viewport and are non-descendable leaves.
     #[must_use]
     pub fn scroll_target_at(&self, x: u32, y: u32) -> Option<&ScrollNode> {
+        self.scroll_target_matching(x, y, &|_| true)
+    }
+
+    /// R1753 §5.45 §5.35 — the deepest [`ScrollNode`] covering `(x, y)` that
+    /// declares
+    /// [`ContentDrag::Grab`](crate::widgets::scroll::ContentDrag::Grab): which
+    /// region a press at this point would pan if it strayed into a drag.
+    ///
+    /// **It is not `scroll_target_at` plus a check on the answer.** A region
+    /// that does not take content drags is transparent to the gesture rather
+    /// than a wall in front of it, so the walk keeps climbing and an ancestor
+    /// that DOES take them still gets the pan — the same ancestor walk the W3C
+    /// scroll chain performs, and the reason a non-scrolling inner pane never
+    /// strands a finger on a touch surface. Testing the deepest node alone
+    /// would answer `None` for exactly that arrangement.
+    #[must_use]
+    pub fn content_drag_target_at(&self, x: u32, y: u32) -> Option<&ScrollNode> {
+        self.scroll_target_matching(x, y, &|node| node.content_drag.is_enabled())
+    }
+
+    /// R1753 §5.45 — the shared descent behind [`Self::scroll_target_at`] and
+    /// [`Self::content_drag_target_at`]: the deepest [`ScrollNode`] covering
+    /// `(x, y)` that `accept` admits.
+    ///
+    /// The traversal is the one `scroll_target_at` has always performed, with
+    /// its single unconditional `Some(s)` become `accept(s)`. Lifted rather
+    /// than copied because the two walks must agree about what "the region at
+    /// this point" means down to the offset translation and the descent order:
+    /// a pan that pinned a different container than the wheel resolves would be
+    /// two answers to one question, and nothing would say they may differ.
+    fn scroll_target_matching(
+        &self,
+        x: u32,
+        y: u32,
+        accept: &dyn Fn(&ScrollNode) -> bool,
+    ) -> Option<&ScrollNode> {
         match self {
             Scene::Scroll(s) => {
                 if !rect_contains(s.viewport, x, y) {
@@ -2178,18 +2214,18 @@ impl Scene {
                     && cx >= 0
                     && cy >= 0
                     && let (Ok(cxu), Ok(cyu)) = (u32::try_from(cx), u32::try_from(cy))
-                    && let Some(deeper) = s.content.scroll_target_at(cxu, cyu)
+                    && let Some(deeper) = s.content.scroll_target_matching(cxu, cyu, accept)
                 {
                     return Some(deeper);
                 }
-                Some(s)
+                accept(s).then_some(s)
             }
             Scene::Container(c) => {
                 if !rect_contains(c.rect, x, y) {
                     return None;
                 }
                 for child in &c.children {
-                    if let Some(deeper) = child.scroll_target_at(x, y) {
+                    if let Some(deeper) = child.scroll_target_matching(x, y, accept) {
                         return Some(deeper);
                     }
                 }
@@ -4494,6 +4530,23 @@ pub struct ScrollNode {
     /// gesture the user can decline to make; a missing one is a selection they
     /// cannot express).
     pub auto_scroll: crate::widgets::scroll::AutoScroll,
+    /// R1753 §5.45 §5.35 — whether a press on this region's CONTENT that
+    /// strays into a drag pans it
+    /// ([`ContentDrag`](crate::widgets::scroll::ContentDrag)).
+    ///
+    /// On the NODE for [`auto_scroll`](Self::auto_scroll)'s reason and one
+    /// more: this is the declaration the ROUTER walks the paint tree to find,
+    /// and it must be able to pick the region a press belongs to before it
+    /// knows whether any state is attached at all.
+    ///
+    /// Defaults to [`ContentDrag::Off`](crate::widgets::scroll::ContentDrag::Off)
+    /// — the opposite direction to `auto_scroll`, and deliberately. Auto-scroll
+    /// extends a gesture the user is already making; a content drag CLAIMS one,
+    /// taking the pointer away from the widget under it. Defaulting that on
+    /// would silently convert every rubber band, cell sweep and marquee in a
+    /// tree into a pan, so the fail-safe direction here is off and the surface
+    /// that wants it says so.
+    pub content_drag: crate::widgets::scroll::ContentDrag,
     /// R55.G.4 §5.45 — layout sidecar mirroring the
     /// `{Box,Text,Path,Image,Container,External}Node` shape. Drives
     /// the §5.21 R23 taffy pass: how this scroll participates in
@@ -4526,6 +4579,7 @@ impl ScrollNode {
             state: None,
             measured_rows: None,
             auto_scroll: crate::widgets::scroll::AutoScroll::default(),
+            content_drag: crate::widgets::scroll::ContentDrag::Off,
             // R55.G.4 §5.45 — default the layout size to the clip-window
             // dimensions so taffy treats Scroll as a fixed-size leaf
             // unless the caller chains `with_layout(...)` to opt into
@@ -4554,6 +4608,21 @@ impl ScrollNode {
         auto_scroll: crate::widgets::scroll::AutoScroll,
     ) -> Self {
         self.auto_scroll = auto_scroll;
+        self
+    }
+
+    /// R1753 §5.45 §5.35 — declare this region's
+    /// [`content_drag`](Self::content_drag) policy. Pass
+    /// [`ContentDrag::Grab`](crate::widgets::scroll::ContentDrag::Grab) for a
+    /// surface where a primary drag on the content means "move the content" —
+    /// a touch-shaped list, a phone-proportioned pane, any viewport whose rows
+    /// are tap targets and whose only other gesture is the scroll.
+    #[must_use]
+    pub const fn with_content_drag(
+        mut self,
+        content_drag: crate::widgets::scroll::ContentDrag,
+    ) -> Self {
+        self.content_drag = content_drag;
         self
     }
 
@@ -7232,6 +7301,99 @@ mod tests {
         // R55.C.2 — outside every scroll viewport → None.
         let scene = container_at(0, 0, 200, 200, vec![box_at(50, 50, 30, 30)]);
         assert!(scene.scroll_state_at(60, 60).is_none());
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // R1753 §5.45 §5.35 — `Scene::content_drag_target_at`: WHICH region a
+    // press at a point would pan. Every case below asserts it against
+    // `scroll_target_at` at the same point, because the whole content of the
+    // claim is that the two can differ — a fixture where they agree would
+    // pass with the predicate ignored entirely.
+    // ─────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn r1753_a_region_that_says_nothing_takes_no_content_drag() {
+        // The default is Off, so the region the wheel would move is NOT the
+        // region a press would pan — it is no region at all.
+        let content = box_at(0, 0, 200, 400);
+        let scene = Scene::Scroll(ScrollNode::new(Rect::new(10, 10, 100, 100), content));
+        assert!(
+            scene.scroll_target_at(50, 50).is_some(),
+            "the wheel still resolves this region"
+        );
+        assert!(
+            scene.content_drag_target_at(50, 50).is_none(),
+            "a press does not pan a region that never declared it takes presses"
+        );
+    }
+
+    #[test]
+    fn r1753_a_content_drag_climbs_past_a_region_that_declines() {
+        // ★ The behaviour this walk exists for. The point is inside BOTH
+        // viewports; the inner region declines content drags and the outer
+        // takes them. A press there pans the OUTER — the deepest region is
+        // transparent to the gesture, not a wall in front of it.
+        //
+        // Testing `scroll_target_at(...).filter(takes_content_drags)` instead
+        // would answer `None` here, which is a finger that scrolls nothing on
+        // a touch surface. The two assertions are stated together so the
+        // fixture cannot degenerate into one where both walks agree.
+        let inner = Scene::Scroll(ScrollNode::new(
+            Rect::new(10, 10, 50, 50),
+            box_at(0, 0, 100, 100),
+        ));
+        let outer = Scene::Scroll(
+            ScrollNode::new(Rect::new(0, 0, 200, 200), inner)
+                .with_content_drag(crate::widgets::scroll::ContentDrag::Grab),
+        );
+        assert_eq!(
+            outer
+                .scroll_target_at(20, 20)
+                .expect("the wheel resolves the inner region")
+                .viewport,
+            Rect::new(10, 10, 50, 50),
+        );
+        assert_eq!(
+            outer
+                .content_drag_target_at(20, 20)
+                .expect("the press climbs to the region that takes it")
+                .viewport,
+            Rect::new(0, 0, 200, 200),
+        );
+    }
+
+    #[test]
+    fn r1753_a_content_drag_stops_at_the_deepest_region_that_takes_it() {
+        // The mirror of the case above: when the inner region DOES take
+        // content drags it keeps the gesture, so the walk is "deepest that
+        // accepts" rather than "outermost that accepts". Same geometry as the
+        // climb test, one flag apart — which is what makes the pair a
+        // measurement of the predicate and not of the descent.
+        let inner = Scene::Scroll(
+            ScrollNode::new(Rect::new(10, 10, 50, 50), box_at(0, 0, 100, 100))
+                .with_content_drag(crate::widgets::scroll::ContentDrag::Grab),
+        );
+        let outer = Scene::Scroll(
+            ScrollNode::new(Rect::new(0, 0, 200, 200), inner)
+                .with_content_drag(crate::widgets::scroll::ContentDrag::Grab),
+        );
+        assert_eq!(
+            outer
+                .content_drag_target_at(20, 20)
+                .expect("the inner region takes it")
+                .viewport,
+            Rect::new(10, 10, 50, 50),
+        );
+    }
+
+    #[test]
+    fn r1753_a_content_drag_outside_every_viewport_finds_nothing() {
+        let scene = Scene::Scroll(
+            ScrollNode::new(Rect::new(50, 50, 30, 30), box_at(0, 0, 100, 100))
+                .with_content_drag(crate::widgets::scroll::ContentDrag::Grab),
+        );
+        assert!(scene.content_drag_target_at(50, 50).is_some());
+        assert!(scene.content_drag_target_at(0, 0).is_none());
     }
 
     #[test]

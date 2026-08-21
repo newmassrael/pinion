@@ -187,6 +187,7 @@ members = [
     "examples/hello-segmented-multi",
     "examples/hello-listbox",
     "examples/hello-listbox-multi",
+    "examples/hello-content-drag",
     "examples/hello-slider",
     "examples/hello-slider-vertical",
     "examples/hello-range-slider",
