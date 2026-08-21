@@ -184,3 +184,41 @@ lint_commit_message() {
 
     return 0
 }
+
+# R1760 — the round token a subject declares, or empty.
+#
+# `feat(rpc): R1757 a burst ...` -> `R1757`
+# `fix(runtime): R1753.1 a count ...` -> `R1753.1`
+#
+# A CONTINUATION IS A DIFFERENT TOKEN FROM ITS PARENT, deliberately and by
+# construction: 106 commits in this history are `.N` follow-ups to a round
+# that is already committed, so a check that folded `R1753.1` onto `R1753`
+# would refuse every one of them. Comparing whole tokens keeps continuations
+# legal without a special case.
+#
+# Pure — takes the subject as an argument and calls no git — so
+# `tools/test_hooks.sh` drives every arm.
+round_token_of() {
+    grep -oE '\bR[0-9]+(\.[0-9]+)?\b' <<<"${1:-}" | head -1 || true
+}
+
+# R1760 — is `token` already carried by a commit subject in `history`?
+#
+# `history` is passed in (newline-separated subjects) rather than read here,
+# for the same reason: the decision is testable without a repository.
+#
+# ## Why this gate exists
+#
+# `git log` cannot see a round that has not committed yet, so two sessions
+# starting the same afternoon derive the same next number. Measured
+# 2026-08-21: R1757 and R1758 were both begun as "R1757", and the collision
+# surfaced only because one session happened to read the other's memory file —
+# after which 85 sites were renumbered. R1759 made `worktree.sh` CLAIM a
+# number, which fixes it for anyone using that tool and is therefore advisory.
+# This is the backstop: the first moment a duplicate is knowable from git is
+# the second commit, and this refuses it there.
+round_token_taken() {
+    local token="${1:-}" history="${2:-}"
+    [[ -n $token ]] || return 1
+    grep -qE "(^|[^0-9A-Za-z.])${token//./\\.}([^0-9.]|$)" <<<"$history"
+}

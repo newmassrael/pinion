@@ -799,7 +799,11 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
         // `shell.rs`'s `carried_over` for where the terminal's delivery
         // boundary is decided. A terminal reports no auto-repeat edge, so
         // `repeat` stays `false` — a held key arrives as ordinary keystrokes.
-        let press = pinion_core::KeyPress::new(key_str, modifiers, false, self.core.key_delivery());
+        // R1760 — `take`, not read: the first keystroke of a delivery consumes
+        // its number, so a loop turn that carried none burns none. The GUI
+        // sibling does the same; see `CoreShell::open_key_delivery`.
+        let arrival = self.core.take_key_delivery();
+        let press = pinion_core::KeyPress::new(key_str, modifiers, false, arrival);
         if let Some(tail) = self.core.apply_key_press(focused, &press) {
             return self.handle_tail(&tail);
         }
@@ -1227,8 +1231,8 @@ impl<V: WidgetViewTui> ShellCoreTui<V> {
     /// event that was already available belongs to the delivery already open.
     /// See `shell.rs`'s `carried_over` for why that is the terminal's
     /// boundary.
-    pub fn open_key_delivery(&mut self) -> pinion_core::KeyArrival {
-        self.core.open_key_delivery()
+    pub fn open_key_delivery(&mut self) {
+        self.core.open_key_delivery();
     }
 
     /// R1757 §5.49 §5.39 §2 #6 — the delivery currently open, the terminal
@@ -3707,7 +3711,11 @@ mod tests {
         // with, and a binding asking `arrived_with` would have honoured the
         // pair.
         let mut core = primed_button_core();
-        let typed = core.open_key_delivery();
+        // A TYPED key: open the loop's delivery and let the key claim it, which
+        // is what the terminal loop does. R1760 — opening alone claims nothing.
+        core.open_key_delivery();
+        core.dispatch_key("Space", pinion_core::Modifiers::empty());
+        let typed = core.key_delivery();
         let inputs = vec![pinion_rpc::DeferredInput::Key {
             x: 8.0,
             y: 8.0,

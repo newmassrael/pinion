@@ -2751,8 +2751,8 @@ impl<V: WidgetView> ShellCore<V> {
     /// Public because the **backend** is what knows where a platform handover
     /// begins, and the backend is outside this type: `AppShell::new_events`
     /// calls it once per winit event-loop iteration. A binding never does.
-    pub fn open_key_delivery(&mut self) -> pinion_core::KeyArrival {
-        self.core.open_key_delivery()
+    pub fn open_key_delivery(&mut self) {
+        self.core.open_key_delivery();
     }
 
     /// R1658 §5.13 §5.39 — the arrival of the delivery currently open.
@@ -2774,7 +2774,11 @@ impl<V: WidgetView> ShellCore<V> {
         // one taken here: taking it here would date the key at the moment
         // this app got round to it, which is what the capability exists to
         // stop. `AppShell::new_events` is what opens it.
-        let press = KeyPress::new(key, self.modifiers, repeat, self.core.key_delivery());
+        // R1760 — `take`, not read: the first keystroke of a delivery is what
+        // consumes its number, so an event-loop iteration that carried none
+        // burns none. See `CoreShell::open_key_delivery`.
+        let arrival = self.core.take_key_delivery();
+        let press = KeyPress::new(key, self.modifiers, repeat, arrival);
         if let Some(tail) = self.core.apply_key_press(focused.as_deref(), &press) {
             self.revision.bump();
             self.handle_tail(&tail);
@@ -3241,7 +3245,9 @@ impl<V: WidgetView> ShellCore<V> {
         let focused = self.focus.focused().map(str::to_owned);
         // R1658 — same rule as `apply_key_inner`: the arrival is the open
         // delivery's, not one taken at dispatch.
-        let press = KeyPress::new(key_str, self.modifiers, repeat, self.core.key_delivery());
+        // R1760 — `take`, not read; see the sibling in `apply_key_inner`.
+        let arrival = self.core.take_key_delivery();
+        let press = KeyPress::new(key_str, self.modifiers, repeat, arrival);
         if let Some(tail) = self.core.apply_key_press(focused.as_deref(), &press) {
             self.revision.bump();
             // R705.1 — `handle_tail` arms `redraw_requested` whenever the
@@ -13499,9 +13505,13 @@ mod injected_arrival_tests {
         let boot = sc.compute_paint_scene(100, 100);
         sc.finalize_frame(boot);
 
-        let opened = sc.open_key_delivery();
+        // R1760 — read the delivery back AFTER the keys claimed it; opening no
+        // longer hands out a number, because before a keystroke claims one it
+        // does not exist.
+        sc.open_key_delivery();
         sc.apply_key("a");
         sc.apply_key("b");
+        let opened = sc.key_delivery();
 
         let log = INJECTED_ARRIVALS.with(|log| log.borrow().clone());
         assert_eq!(log.len(), 2, "both keys reached the binding");
@@ -13527,9 +13537,10 @@ mod injected_arrival_tests {
         let boot = sc.compute_paint_scene(100, 100);
         sc.finalize_frame(boot);
 
-        let opened = sc.open_key_delivery();
+        sc.open_key_delivery();
         assert!(sc.try_apply_key("Escape"), "the fixture claims every key");
         assert!(sc.try_apply_key("Tab"));
+        let opened = sc.key_delivery();
 
         let log = INJECTED_ARRIVALS.with(|log| log.borrow().clone());
         assert_eq!(log.len(), 2);

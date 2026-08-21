@@ -177,6 +177,15 @@ pub struct CoreShell<V: WidgetCore> {
     /// arrival that is honest about being nobody's batch rather than
     /// claiming to have arrived with the next one.
     key_delivery: KeyArrival,
+    /// R1760 §5.13 §5.39 — a delivery a backend has OPENED whose number no
+    /// keystroke has claimed yet, holding the instant stamped before any
+    /// handler of that iteration ran.
+    ///
+    /// `None` between deliveries. The GUI backend opens one per event-loop
+    /// iteration whether or not that iteration carries a key, so committing
+    /// the number here would make the published counter tick on the clock —
+    /// see [`Self::open_key_delivery`] for the CI failure that proved it.
+    pending_key_delivery: Option<std::time::Instant>,
     /// R1543 §5.39 — per-`(window, folded key)` cycling cursor for **ambiguous**
     /// mnemonics: the tag [`Self::dispatch_mnemonic_for_window`] activated last
     /// time this accelerator was pressed in this window.
@@ -827,6 +836,7 @@ impl<V: WidgetCore> CoreShell<V> {
             routers,
             held_keys: HeldKeys::default(),
             key_delivery: KeyArrival::new(std::time::Instant::now(), KeyBatch::initial()),
+            pending_key_delivery: None,
             mnemonic_cursor: HashMap::new(),
             intent_queue: IntentQueue::new(),
             root_owner,
@@ -2313,7 +2323,13 @@ impl<V: WidgetCore> CoreShell<V> {
         // `open_key_delivery`. Opening one here is what makes that true
         // rather than letting it inherit whatever delivery ran last and
         // claim to have arrived alongside it.
-        let arrival = self.open_key_delivery();
+        //
+        // R1760 — open AND take, because this path both starts the delivery
+        // and is the keystroke that fills it. Opening alone would now leave it
+        // pending and the keystroke would carry the PREVIOUS delivery, which
+        // is the very inheritance the paragraph above rules out.
+        self.open_key_delivery();
+        let arrival = self.take_key_delivery();
         self.apply_key_press(focused, &KeyPress::new(key, modifiers, repeat, arrival))
     }
 
@@ -2333,17 +2349,72 @@ impl<V: WidgetCore> CoreShell<V> {
     /// separates "when the keystroke arrived" from "when this app got round
     /// to it", and those differ by however long the previous keystroke's
     /// handler took.
-    pub fn open_key_delivery(&mut self) -> KeyArrival {
-        self.key_delivery =
-            KeyArrival::new(std::time::Instant::now(), self.key_delivery.batch().next());
+    ///
+    /// # The NUMBER is allocated lazily, and R1760 is why
+    ///
+    /// This marks a delivery *pending* with its instant; the batch id is not
+    /// consumed until a keystroke is actually dispatched under it
+    /// ([`Self::take_key_delivery`]). An event-loop iteration that carries no
+    /// keystroke therefore burns no number, which matters because the GUI
+    /// backend calls this on EVERY iteration — a free-running counter
+    /// otherwise, ticking on nothing but the clock.
+    ///
+    /// R1757 published that counter as `scene/input_state`'s `key_delivery`
+    /// and told agents to read it either side of a burst, the difference being
+    /// how many deliveries the request opened. In a live windowed app that
+    /// reading was FALSE: idle iterations between the two reads advanced it
+    /// too, so the difference was "my burst plus however long I waited". Two
+    /// demos asserting that `scene/input_state` is side-effect-free (two
+    /// consecutive reads identical — it is a `HandlerKind::Read`) went red in
+    /// CI and were right to.
+    ///
+    /// That is R1757's own headline defect at the other end of the frame: it
+    /// stopped the RPC drain opening a delivery for a keyless request and left
+    /// the event loop doing exactly the same thing. So the rule is not "count
+    /// handovers offered" but **count handovers that delivered**, which is the
+    /// only kind an agent can observe or has any reason to care about.
+    ///
+    /// The instant still comes from here, so R1658's ordering guarantee is
+    /// untouched; only the numbering waits.
+    /// # It returns nothing, deliberately
+    ///
+    /// R1760's first draft handed back the arrival a keystroke *would* carry.
+    /// That is a foot-gun and its own tests found it: two opens with no
+    /// keystroke between them both previewed the same unclaimed number, so a
+    /// caller that passed the preview straight to `apply_key_press` — which
+    /// takes an arrival as an argument and cannot know it was speculative —
+    /// dispatched two separate deliveries that claimed to have arrived
+    /// together. Three R1658 tests went red and were right to.
+    ///
+    /// A number that has not been claimed does not exist, so there is nothing
+    /// honest to return. A keystroke asks for one with
+    /// [`Self::take_key_delivery`].
+    pub fn open_key_delivery(&mut self) {
+        self.pending_key_delivery = Some(std::time::Instant::now());
+    }
+
+    /// R1760 §5.13 §5.39 — the arrival a keystroke being dispatched NOW
+    /// carries, materialising the pending delivery if one is open.
+    ///
+    /// The first keystroke after [`Self::open_key_delivery`] consumes the
+    /// pending instant and advances the batch; every later keystroke of the
+    /// same delivery gets the same value, which is what makes them one
+    /// gesture. A keystroke dispatched with nothing pending inherits the
+    /// delivery already current — the caller is mid-delivery, not starting one.
+    pub fn take_key_delivery(&mut self) -> KeyArrival {
+        if let Some(at) = self.pending_key_delivery.take() {
+            self.key_delivery = KeyArrival::new(at, self.key_delivery.batch().next());
+        }
         self.key_delivery
     }
 
-    /// R1658 §5.13 §5.39 — the arrival of the delivery currently open.
+    /// R1658 §5.13 §5.39 — the arrival of the last delivery that actually
+    /// delivered a keystroke.
     ///
-    /// A backend that opened a delivery for this event-loop iteration reads
-    /// it here for each keystroke that iteration dispatches, so all of them
-    /// carry one batch.
+    /// R1760 — this is the READ, and it is deliberately blind to a pending
+    /// delivery: `scene/input_state` publishes it, and a read that moved
+    /// because time passed would not be a state snapshot. See
+    /// [`Self::open_key_delivery`] for the CI failure that established this.
     #[must_use]
     pub const fn key_delivery(&self) -> KeyArrival {
         self.key_delivery
@@ -7575,16 +7646,15 @@ mod key_arrival_tests {
         HANDLER_WORK.with(|w| w.set(work));
         let mut core: CoreShell<ArrivalFixture> = CoreShell::new();
         // ONE delivery, the way a backend opens one per platform handover.
-        let opened = core.open_key_delivery();
+        // R1760 — the first keystroke CLAIMS it; `opened` is read back after,
+        // because before that claim the number does not exist.
+        core.open_key_delivery();
         for key in keys {
-            let press = KeyPress::new(
-                key,
-                pinion_core::Modifiers::empty(),
-                false,
-                core.key_delivery(),
-            );
+            let arrival = core.take_key_delivery();
+            let press = KeyPress::new(key, pinion_core::Modifiers::empty(), false, arrival);
             let _ = core.apply_key_press(Some("arrival"), &press);
         }
+        let opened = core.key_delivery();
         let log = ARRIVAL_LOG.with(|log| log.borrow().clone());
         assert!(
             log.iter().all(|(a, _)| a.arrived_with(opened)),
@@ -7640,7 +7710,8 @@ mod key_arrival_tests {
         HANDLER_WORK.with(|w| w.set(std::time::Duration::ZERO));
         let mut core: CoreShell<ArrivalFixture> = CoreShell::new();
         for key in ["a", "b"] {
-            let arrival = core.open_key_delivery();
+            core.open_key_delivery();
+            let arrival = core.take_key_delivery();
             let press = KeyPress::new(key, pinion_core::Modifiers::empty(), false, arrival);
             let _ = core.apply_key_press(Some("arrival"), &press);
         }
@@ -7648,6 +7719,64 @@ mod key_arrival_tests {
         assert!(
             !log[0].0.arrived_with(log[1].0),
             "two platform deliveries are two gestures"
+        );
+    }
+
+    #[test]
+    fn r1760_an_empty_delivery_burns_no_number() {
+        // ★ THE REGRESSION TEST FOR A DEFECT CI FOUND AND EVERY LOCAL GATE
+        // MISSED. The GUI backend opens a delivery on EVERY winit event-loop
+        // iteration, so before R1760 the published `key_delivery.opened`
+        // counter ticked on the clock: two `scene/input_state` reads taken a
+        // few idle iterations apart disagreed, and the R1757 documentation
+        // told agents to read the difference as "how many deliveries my burst
+        // opened". `r885_input_state` and `r1419_window_focus` assert that
+        // read is side-effect-free and both went red.
+        let mut core: CoreShell<ArrivalFixture> = CoreShell::new();
+        let before = core.key_delivery();
+        for _ in 0..5 {
+            core.open_key_delivery();
+        }
+        assert!(
+            core.key_delivery().arrived_with(before),
+            "five idle iterations moved the published delivery — this is the \
+             free-running counter R1760 removed",
+        );
+    }
+
+    #[test]
+    fn r1760_the_first_keystroke_of_a_delivery_claims_its_number() {
+        // ...and the capability still holds: the number IS consumed the moment
+        // a keystroke uses it, once per delivery however many keys it carries.
+        // A fixture where the two halves agreed would prove nothing, so this
+        // asserts both the advance and the sharing.
+        ARRIVAL_LOG.with(|log| log.borrow_mut().clear());
+        HANDLER_WORK.with(|w| w.set(std::time::Duration::ZERO));
+        let mut core: CoreShell<ArrivalFixture> = CoreShell::new();
+        let before = core.key_delivery();
+
+        core.open_key_delivery();
+        for key in ["a", "b", "c"] {
+            let arrival = core.take_key_delivery();
+            let press = KeyPress::new(key, pinion_core::Modifiers::empty(), false, arrival);
+            let _ = core.apply_key_press(Some("arrival"), &press);
+        }
+
+        let log = ARRIVAL_LOG.with(|log| log.borrow().clone());
+        assert_eq!(log.len(), 3);
+        assert!(
+            log[0].0.arrived_with(log[1].0) && log[1].0.arrived_with(log[2].0),
+            "one delivery, so three keys are one gesture",
+        );
+        assert!(
+            !core.key_delivery().arrived_with(before),
+            "and the delivery DID advance once, so a burst is still observable",
+        );
+        assert_eq!(
+            core.key_delivery().batch().ordinal() - before.batch().ordinal(),
+            1,
+            "by exactly one, whatever the burst carried — the reading the wire \
+             publishes",
         );
     }
 
@@ -7713,7 +7842,8 @@ mod key_arrival_tests {
         }
 
         let mut core: CoreShell<LegacyFixture> = CoreShell::new();
-        let arrival = core.open_key_delivery();
+        core.open_key_delivery();
+        let arrival = core.take_key_delivery();
         let press = KeyPress::new("z", pinion_core::Modifiers::empty(), false, arrival);
         assert!(
             core.apply_key_press(Some("legacy"), &press).is_some(),

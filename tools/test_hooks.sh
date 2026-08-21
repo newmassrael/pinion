@@ -843,7 +843,13 @@ ok "and it is accepted" \
 # The two assertions above pass with and without the fix, because a plain shell
 # has no such environment. Only this one discriminates, which is exactly why it
 # is a separate case rather than an extra condition on those.
-ok "the submodule checks survive the environment `git commit` gives a hook" \
+# R1760 — NOT backticks. Inside this double-quoted label they COMMAND
+# SUBSTITUTE, so `tools/test_hooks.sh` was running `git commit` on every
+# invocation — including inside `pre-push`, which runs this suite. It exited
+# non-zero and printed to a swallowed stream, so nothing ever showed it. Found
+# by shellcheck (SC2006) while checking this round's own edits, an hour after
+# the identical defect was found by RUNNING the new `worktree.sh land`.
+ok "the submodule checks survive the environment 'git commit' gives a hook" \
    "$(GIT_DIR="$mn_live/.git" GIT_INDEX_FILE="$mn_live/.git/index" \
         mnemosyne_check_vendored_pin "$mn_live" "${live_sha:0:7}" >/dev/null 2>&1 \
         && echo ok || echo refused)" \
@@ -1293,6 +1299,44 @@ ok "a deeper worktree path is still linked" \
 # read as "set".
 ok "an unset override is not an override" \
    "$(worktree_verdict "$wg_linked" "$wg_main" "")" "linked"
+
+# ---------------------------------------------------------------------------
+# R1760 — the round-number duplicate gate. `git log` cannot see a round that
+# has not committed, so two sessions derive the same number; measured
+# 2026-08-21, R1757 and R1758 were both begun as "R1757".
+# ---------------------------------------------------------------------------
+
+ok "the round token is read off a subject" \
+   "$(round_token_of 'feat(rpc): R1757 a burst of keys arrives together')" "R1757"
+ok "a continuation keeps its suffix" \
+   "$(round_token_of 'fix(runtime): R1753.1 a count in a comment was never true')" "R1753.1"
+ok "a subject with no round declares none" \
+   "$(round_token_of 'chore: tidy the imports')" ""
+# The token is the FIRST one: a subject mentioning another round in its prose
+# still declares its own.
+ok "the declared round is the first token" \
+   "$(round_token_of 'fix(core): R1760 repay what R1757 got wrong')" "R1760"
+
+HIST='feat(rpc): R1757 a burst of keys arrives together
+feat(core): R1758 a verdict says what it was read from
+fix(runtime): R1753.1 a count in a comment was never true'
+
+taken() { if round_token_taken "$1" "$HIST"; then echo taken; else echo free; fi; }
+
+ok "a duplicate round is refused" "$(taken R1757)" "taken"
+ok "a fresh round is allowed" "$(taken R1760)" "free"
+# ★ THE CASE THAT MAKES THE GATE USABLE: 106 commits in this history are `.N`
+# follow-ups to a round that is already committed. Folding them onto the parent
+# would refuse every one.
+ok "a continuation of a committed round is allowed" "$(taken R1757.1)" "free"
+ok "an already-used continuation is refused" "$(taken R1753.1)" "taken"
+# ...and the parent of a committed continuation is NOT thereby taken, because
+# `R1753` itself has not been used as a subject token here.
+ok "a continuation does not reserve its parent" "$(taken R1753)" "free"
+# A prefix must not match: R175 is not R1757.
+ok "a shorter number is not a prefix match" "$(taken R175)" "free"
+ok "a longer number is not a match either" "$(taken R17570)" "free"
+ok "an empty token is never taken" "$(taken '')" "free"
 
 printf '[hooks] %d passed, %d failed\n' "$pass" "$fail"
 [[ "$fail" -eq 0 ]]

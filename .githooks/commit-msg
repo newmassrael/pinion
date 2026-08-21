@@ -20,4 +20,28 @@ if ! lint_commit_message "$1"; then
     exit 1
 fi
 
+# R1760 — refuse a round number an existing commit already carries.
+#
+# COMMIT-TIME ONLY, and deliberately not in the shared linter: `pre-push`
+# re-lints every commit being pushed, and each of those IS in the history it
+# would be compared against, so the same check there would refuse every push.
+#
+# The window this closes is narrow and real. R1759 taught `worktree.sh` to
+# CLAIM a round number, which fixes the collision for anyone using that tool
+# and is therefore advisory. This is the backstop for everyone else: a
+# duplicate becomes knowable from git the moment the second commit is written,
+# and that is here.
+round_token="$(round_token_of "$(head -1 "$1")")"
+if [[ -n $round_token ]] \
+   && round_token_taken "$round_token" "$(git log --format=%s 2>/dev/null || true)"; then
+    echo "commit-msg: round $round_token is already carried by a commit:" >&2
+    git log --oneline --grep="$round_token" -3 >&2 || true
+    echo "" >&2
+    echo "Two sessions can derive the same next round because \`git log\` cannot" >&2
+    echo "see one that has not committed. Pick the next free number, or make" >&2
+    echo "this a continuation ($round_token.1), which is a different token." >&2
+    echo "\`tools/worktree.sh list\` shows what other worktrees have claimed." >&2
+    exit 1
+fi
+
 exit 0

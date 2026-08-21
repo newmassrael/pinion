@@ -583,7 +583,29 @@ cmd_land() {
         # and printed "command not found" above the refusal it was announcing.
         warn "this worktree changed things 'land' cannot carry:"
         printf '  %s\n' "${refused[@]}" >&2
-        die "${#refused[@]} refusal(s) -- a ledger/submodule path belongs to the main tree, and a delete or rename must be replayed by hand"
+        # R1760 — say what to DO, not only what was refused. The refusal stays
+        # (a delete or a rename is a destructive action derived from a
+        # two-character status parse, and this tool does not guess), but
+        # leaving the author to reconstruct the commands by hand was half the
+        # cost it exists to remove. Each verdict prints the exact line.
+        local entry verdict path
+        printf '\n' >&2
+        for entry in "${refused[@]}"; do
+            verdict="${entry%% *}"
+            path="${entry#* }"
+            case "$verdict" in
+                refuse-delete)
+                    printf '  replay by hand:  git rm %s\n' "$path" >&2 ;;
+                refuse-rename)
+                    printf '  replay by hand:  git mv <old> %s   (land cannot see the old name)\n' "$path" >&2 ;;
+                refuse-submodule)
+                    printf '  pin move:        bump %s in the MAIN tree (gitlink + manifest revs + lock)\n' "$path" >&2 ;;
+                refuse-ledger)
+                    printf '  main-tree only:  re-apply %s here, after landing the rest\n' "$path" >&2 ;;
+            esac
+        done
+        printf '\n' >&2
+        die "${#refused[@]} refusal(s) -- land the rest first, then the lines above"
     fi
     (( ${#copy[@]} > 0 )) || die "worktree '$name' has no changes to land"
 
