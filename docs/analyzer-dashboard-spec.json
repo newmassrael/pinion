@@ -1,0 +1,119 @@
+{
+  "$comment": [
+    "R1761 — THE DASHBOARD SECTION'S PAINTED SURFACES, written down from the",
+    "behaviour reference in neutral vocabulary, so the section can be judged",
+    "against something other than its own tables.",
+    "",
+    "WHY THIS IS A SECOND DOCUMENT FOR ONE SCREEN, WHICH IS NORMALLY A DEFECT.",
+    "`analyzer-board-spec.json` beside it already specifies five surfaces of",
+    "this same screen. They are not the same kind of claim, and the difference",
+    "is the one R1758 made the report carry: a surface here is read back out of",
+    "a PAINTED FRAME, at any moment, by a running application answering a host.",
+    "Two of that file's five are not paint at all — a drop contract is a",
+    "declaration a surface publishes, and a drop standing is what a router hands",
+    "a source mid-gesture — and the other three exist only while a placement is",
+    "in flight, which a wire read cannot arrange.",
+    "",
+    "So that document is judged by a DRIVEN sweep, which can perform a gesture",
+    "and ask the declaration; this one is judged from the frame. Splitting them",
+    "by evidence rather than by screen is what keeps a section's published",
+    "verdict honest: a paint-stamped report that quietly answered two of its",
+    "surfaces from a declaration would be exactly the defect R1758 repaired one",
+    "level up. The two documents name DISJOINT surfaces and a gate asserts it,",
+    "because one word with two documents behind it is the defect R1747 spent a",
+    "round on.",
+    "",
+    "WHAT IS THE REFERENCE'S AND WHAT IS THIS BUILD'S. The layout bar's four",
+    "parts, the panel's heading and hint, the three groups, the entries' order",
+    "inside the first two groups, the footer's two counts and the four cards the",
+    "board opens with are all the reference's, read off the screen it states.",
+    "Two things are not, and both are recorded as remainders below rather than",
+    "written in as if they were: this build's hint offers a second way to place",
+    "a widget, and its third group is named for a wider set than the reference's",
+    "third.",
+    "",
+    "★ THE ENTRY LIST IS THE REFERENCE'S OWN COUNT, NOT ITS OWN LIST. The",
+    "reference's palette PAINTS six reserved entries and its footer says NINE",
+    "are reserved — the mismatch is in the reference, and the requirement table",
+    "on the same page names all nine. This build lists nine, so its panel and",
+    "its footer agree; the three the reference's panel omits sit in the group",
+    "their requirement belongs to. Stated here rather than left for a reader to",
+    "notice, because a pin that silently completed its source would be a pin",
+    "nobody could check against the source.",
+    "",
+    "HOW A PART IS TITLED, AND WHY IT DIFFERS PER SURFACE. Where the reference",
+    "fixes the WORDS a reader reads — a panel's heading, a group's heading —",
+    "the title here is those words, and the judge reads them back out of the",
+    "frame. Where a part is a value or a control whose label the screen changes",
+    "as it works, the title is this screen's own name for it and what the pin",
+    "fixes is the roster and its order. `crate::judge` says which is which per",
+    "surface and why."
+  ],
+  "layout_bar": {
+    "canon": [
+      { "key": "preset", "title": "the layout in effect, and what opens the list of them" },
+      { "key": "count", "title": "how many widgets the board is holding" },
+      { "key": "edit", "title": "the verb that turns layout editing on" },
+      { "key": "add", "title": "the verb that opens a placement" }
+    ],
+    "owed": []
+  },
+  "palette_head": {
+    "canon": [
+      { "key": "title", "title": "Widget Palette" },
+      { "key": "hint", "title": "Drag onto the canvas to place" }
+    ],
+    "owed": [
+      {
+        "key": "hint",
+        "sentence": "`hint` is specified as \"Drag onto the canvas to place\" and reads \"Drag onto the canvas, or click to add\"",
+        "since": "R1761",
+        "why": "The reference offers one way to get a widget onto the board and this build offers two: every placeable row carries a seat that places one without a drag, which the reference draws as well and does not mention here. The line says both, so a reader is not told to drag when a click will do. Recorded rather than reconciled by deleting the second way, which is the direction this project's rule about the reference runs: what the reference has and this build lacks is built, and what this build has beyond it is kept."
+      }
+    ]
+  },
+  "palette_groups": {
+    "canon": [
+      { "key": "capture", "title": "CAPTURE & DECODE · RELEASE 1" },
+      { "key": "visual", "title": "VISUALIZATION · RELEASE 2" },
+      { "key": "operate", "title": "DIAGNOSTICS · RELEASE 2" }
+    ],
+    "owed": [
+      {
+        "key": "operate",
+        "sentence": "`operate` is specified as \"DIAGNOSTICS · RELEASE 2\" and reads \"DIAGNOSE & OPERATE · RELEASE 2\"",
+        "since": "R1761",
+        "why": "The reference's third group holds three diagnostic widgets. This build's third group holds those and two that ACT on the system under study rather than report on it, so a heading saying only diagnostics would misname half of what is under it. The group's membership is the reference's requirement table's; the heading follows the membership."
+      }
+    ]
+  },
+  "palette": {
+    "canon": [
+      { "key": "packet", "title": "Message Stream" },
+      { "key": "decode", "title": "Decode Inspector" },
+      { "key": "keymap", "title": "Identifier Map" },
+      { "key": "filter", "title": "Search & Filter" },
+      { "key": "topology", "title": "Topology Map" },
+      { "key": "overlay", "title": "Topology Overlay" },
+      { "key": "throughput", "title": "Throughput" },
+      { "key": "share", "title": "Traffic Share" },
+      { "key": "latency", "title": "Latency" },
+      { "key": "health", "title": "Health Tiles" },
+      { "key": "loss", "title": "Loss Tracker" },
+      { "key": "alarms", "title": "Alarms" },
+      { "key": "admin", "title": "Admin Query" },
+      { "key": "placed", "title": "how many of this release's kinds are on the board" },
+      { "key": "reserved", "title": "how many kinds a later release brings" }
+    ],
+    "owed": []
+  },
+  "board": {
+    "canon": [
+      { "key": "packet#0", "title": "Message Stream" },
+      { "key": "decode#1", "title": "Decode Inspector" },
+      { "key": "keymap#2", "title": "Identifier Map" },
+      { "key": "filter#3", "title": "Search & Filter" }
+    ],
+    "owed": []
+  }
+}

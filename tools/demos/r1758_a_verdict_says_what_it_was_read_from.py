@@ -140,8 +140,9 @@ def section_a(app: RpcSubprocess) -> None:
     assert_eq(
         app.query(f"{EXT}/nav"),
         "dashboard",
-        "A: this report is being read from the dashboard, so no judged section "
-        "has painted a frame in this session",
+        "A: this report is being read from the dashboard, so no MOUNTED "
+        "section has painted a frame in this session (R1761: the dashboard "
+        "itself is judged now, by the host that paints it)",
     )
     assert_eq(
         {row["key"]: row["conformance"]["evidence"] for row in judged},
@@ -170,10 +171,26 @@ def section_a(app: RpcSubprocess) -> None:
 def section_b(app: RpcSubprocess) -> None:
     banner("B — the row that was wrong: an unpainted section reproduces NOTHING")
     said = report(app)
-    for row in judged_rows(said):
+    # ★★★★★ R1761 — this walked EVERY judged row and asserted none was showing,
+    # which held while the only judged sections were the four mounted screens
+    # and this report is read from the dashboard. The dashboard is judged now
+    # too — by the host that paints it — so the population this section is about
+    # is *the judged sections that have not painted*, and the one that HAS is
+    # the counter-example that keeps the claim from being about nothing.
+    unpainted = [row for row in judged_rows(said) if not row["showing"]]
+    ok(
+        "B: there are judged sections that have not painted a frame in this "
+        "session, which is what this section is about",
+        len(unpainted) >= 4,
+    )
+    ok(
+        "B: ★★ and exactly one judged section IS showing, so the contrast below "
+        "is a measurement rather than a report that says away to everything",
+        len([row for row in judged_rows(said) if row["showing"]]) == 1,
+    )
+    for row in unpainted:
         key = row["key"]
         verdict = row["conformance"]
-        ok(f"B: `{key}` is not the section showing", row["showing"] is False)
         ok(
             f"B: ★★★★★ `{key}` reproduces 0 of its {verdict['specified']} "
             f"specified part(s) from a page it has not painted",
@@ -202,10 +219,22 @@ def section_b(app: RpcSubprocess) -> None:
             verdict["reconciles"] is False,
         )
     assert_eq(
-        said["reproduced"],
+        sum(row["conformance"]["reproduced"] for row in unpainted),
         0,
-        "B: ★★★★★ so the application's headline is 0 reproduced from here. It "
-        "read 36 of 77 before this round -- two sections' worth of tables",
+        "B: ★★★★★ so the sections that have not painted contribute NOTHING to "
+        "the application's headline. Two of them read 36 of 77 before this "
+        "round -- two sections' worth of tables",
+    )
+    assert_eq(
+        said["reproduced"],
+        sum(
+            row["conformance"]["reproduced"]
+            for row in judged_rows(said)
+            if row["showing"]
+        ),
+        "B: ★★★ and the headline is exactly the showing section's, which is the "
+        "same statement from the other side: what a reader can SEE is the whole "
+        "of what this application claims to have reproduced right now",
     )
 
 
@@ -213,8 +242,9 @@ def section_c(app: RpcSubprocess) -> None:
     banner("C — walking to a section puts its surfaces back, so the verdict moves")
     global PARTS_COMPARED
     for key in sorted(STANDALONE):
-        app.intervene(f"{EXT}/nav", key)
-        app.tick(16)
+        # ★ R1761 — the frame, not the tick: every verdict below is read from
+        # the last PAINTED frame.
+        app.intervene_painted(f"{EXT}/nav", key)
         row = next(r for r in report(app)["rows"] if r["key"] == key)
         verdict = row["conformance"]
         ok(
@@ -231,8 +261,7 @@ def section_c(app: RpcSubprocess) -> None:
         )
         SECTIONS_JUDGED.append(key)
         PARTS_COMPARED += verdict["reproduced"]
-    app.intervene(f"{EXT}/nav", "dashboard")
-    app.tick(16)
+    app.intervene_painted(f"{EXT}/nav", "dashboard")
     print(
         f"  [moved] {PARTS_COMPARED} part(s) went from away to reproduced by "
         f"navigating"
@@ -242,8 +271,9 @@ def section_c(app: RpcSubprocess) -> None:
 def section_d(app: RpcSubprocess) -> None:
     banner("D — the verdict NAMES the parts it is about, in the pin's own order")
     for key in sorted(STANDALONE):
-        app.intervene(f"{EXT}/nav", key)
-        app.tick(16)
+        # ★ R1761 — the frame, not the tick: every verdict below is read from
+        # the last PAINTED frame.
+        app.intervene_painted(f"{EXT}/nav", key)
         said = next(r for r in report(app)["rows"] if r["key"] == key)["conformance"]
         declared = pin(key)
         # The pin may nest its surfaces under a name of its own; the population
@@ -275,15 +305,15 @@ def section_d(app: RpcSubprocess) -> None:
             f"so the two halves of the verdict cannot disagree",
             said["specified"] == sum(len(parts) for parts in canon.values()),
         )
-    app.intervene(f"{EXT}/nav", "dashboard")
-    app.tick(16)
+    app.intervene_painted(f"{EXT}/nav", "dashboard")
 
 
 def section_e(app: RpcSubprocess) -> None:
     banner("E — one value, three readers")
     for key in sorted(STANDALONE):
-        app.intervene(f"{EXT}/nav", key)
-        app.tick(16)
+        # ★ R1761 — the frame, not the tick: every verdict below is read from
+        # the last PAINTED frame.
+        app.intervene_painted(f"{EXT}/nav", key)
         row = next(r for r in report(app)["rows"] if r["key"] == key)
         own = app.query(f"/{row['tag']}{EXT}/conformance")
         assert_eq(
@@ -298,15 +328,13 @@ def section_e(app: RpcSubprocess) -> None:
             f"client of the section alone is not reading a bare count",
             own["evidence"] == "paint",
         )
-    app.intervene(f"{EXT}/nav", "dashboard")
-    app.tick(16)
+    app.intervene_painted(f"{EXT}/nav", "dashboard")
 
     # The third reader: a second PROCESS running one of these sections in its
     # own window. `keys` is the one to use — its three surfaces are drawn
     # whenever the section is showing, so two processes in different sessions
     # must agree, which makes the equality a claim about the build.
-    app.intervene(f"{EXT}/nav", "keys")
-    app.tick(16)
+    app.intervene_painted(f"{EXT}/nav", "keys")
     page = next(r for r in report(app)["rows"] if r["key"] == "keys")["conformance"]
     with RpcSubprocess(STANDALONE["keys"], boot_grace=1.5) as alone:
         assert_eq(
@@ -317,8 +345,7 @@ def section_e(app: RpcSubprocess) -> None:
             "own window and is never asked as a page would be two builds "
             "wearing one name",
         )
-    app.intervene(f"{EXT}/nav", "dashboard")
-    app.tick(16)
+    app.intervene_painted(f"{EXT}/nav", "dashboard")
 
 
 def body() -> None:

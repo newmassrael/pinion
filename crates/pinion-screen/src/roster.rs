@@ -20,7 +20,9 @@ use pinion_core::widgets::destination::{Destinations, Journey, Standing};
 use pinion_core::{Frame, Scene};
 
 use crate::Screen;
-use crate::conformance::{ApplicationConformance, SectionRow, SectionStanding};
+use crate::conformance::{
+    ApplicationConformance, SectionJudge, SectionRow, SectionStanding, Showing,
+};
 
 /// A host's cached projection: where it is, and how far the screen it is
 /// showing has moved.
@@ -44,25 +46,32 @@ pub struct ScreenState {
     pub revision: u64,
 }
 
-/// What is wrong with a pairing of destinations and screens.
+/// What is wrong with a pairing of destinations and the things that answer for
+/// them.
+///
+/// ★ R1761 — it was `MountDefect`, and every arm was about a screen. A
+/// destination's answer can now be a screen *or* a judge for a page the host
+/// paints itself, and the two share every refusal but one; a type named for
+/// half its arms is a type a reader stops believing.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum MountDefect {
-    /// A screen was mounted at a key the destination roster does not hold, so
+pub enum RosterDefect {
+    /// Something was placed at a key the destination roster does not hold, so
     /// nothing could ever navigate to it.
     NoSuchDestination {
-        /// The key the screen was mounted at.
+        /// The key it was placed at.
         key: String,
     },
-    /// A screen was mounted at a destination that is closed, so the roster
-    /// says one thing and the mount says another.
+    /// Something was placed at a destination that is closed, so the roster
+    /// says one thing and the placement says another.
     ///
     /// The direction that matters: a seat declared
     /// [`Unavailable::elsewhere`](pinion_core::availability::Unavailable::elsewhere)
     /// — *built, shipping, and not here* — with the screen mounted right here
     /// is a sentence the application would be telling a reader while showing
-    /// them the opposite.
+    /// them the opposite. A judge at a closed destination is the same sentence
+    /// one level quieter: a verdict about a section nobody can arrive at.
     DestinationIsClosed {
-        /// The key the screen was mounted at.
+        /// The key it was placed at.
         key: String,
     },
     /// Two screens were mounted at one key.
@@ -70,27 +79,54 @@ pub enum MountDefect {
         /// The key both claim.
         key: String,
     },
+    /// Two judges were registered for one key.
+    DuplicateJudge {
+        /// The key both claim.
+        key: String,
+    },
+    /// ★★★★★ R1761 — a judge was registered for a destination that already has
+    /// a screen, so two things claim to answer for one section.
+    ///
+    /// The refusal exists because the alternative is silent: whichever the
+    /// lookup happened to reach would win, and a section whose verdict depends
+    /// on the order two registrations were written in is a section nobody can
+    /// check. A mounted screen answers for itself — that is what
+    /// [`Screen::conformance`] is — so a host with something to add about it
+    /// has a screen to put it in.
+    SectionAlreadyAnswers {
+        /// The key with both a screen and a judge.
+        key: String,
+    },
 }
 
-impl core::fmt::Display for MountDefect {
+impl core::fmt::Display for RosterDefect {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            MountDefect::NoSuchDestination { key } => {
-                write!(f, "no destination `{key}` to mount a screen at")
+            RosterDefect::NoSuchDestination { key } => {
+                write!(f, "no destination `{key}` to place a section's answer at")
             }
-            MountDefect::DestinationIsClosed { key } => write!(
+            RosterDefect::DestinationIsClosed { key } => write!(
                 f,
                 "destination `{key}` is closed, and a closed destination with a \
                  screen behind it tells a reader the opposite of what it shows"
             ),
-            MountDefect::DuplicateMount { key } => {
+            RosterDefect::DuplicateMount { key } => {
                 write!(f, "two screens mounted at destination `{key}`")
             }
+            RosterDefect::DuplicateJudge { key } => {
+                write!(f, "two judges registered for destination `{key}`")
+            }
+            RosterDefect::SectionAlreadyAnswers { key } => write!(
+                f,
+                "destination `{key}` has a screen, which answers for it; a \
+                 second verdict from the host would make the section's own \
+                 answer depend on which registration a lookup reached first"
+            ),
         }
     }
 }
 
-impl std::error::Error for MountDefect {}
+impl std::error::Error for RosterDefect {}
 
 /// The destinations of an application, and the screens behind the ones that
 /// have one.
@@ -103,6 +139,17 @@ impl std::error::Error for MountDefect {}
 pub struct ScreenRoster {
     destinations: Destinations,
     screens: BTreeMap<String, Box<dyn Screen>>,
+    /// ★★★★★ R1761 — what answers for the destinations this host paints
+    /// itself.
+    ///
+    /// A second map rather than a second arm of `screens`, because a judge is
+    /// not a screen with most of it missing: it has no paint, no hit test and
+    /// no externals, and every accessor in this file that hands out a screen
+    /// would have to learn to refuse it. Keeping them apart means those
+    /// accessors are unchanged and cannot hand one out by accident, and the one
+    /// place both are read — [`conformance`](Self::conformance) — refuses a key
+    /// that is in both.
+    judges: BTreeMap<String, Box<dyn SectionJudge>>,
     /// ★★★★★ R1725 — what this host already provides, which every screen it
     /// shows is told before it builds anything.
     ///
@@ -126,29 +173,17 @@ impl ScreenRoster {
     ///
     /// # Errors
     ///
-    /// [`MountDefect`] — a screen at a key the roster does not hold, at a key
+    /// [`RosterDefect`] — a screen at a key the roster does not hold, at a key
     /// the roster declares closed, or two screens at one key.
     pub fn new(
         destinations: Destinations,
         mounts: Vec<(&str, Box<dyn Screen>)>,
-    ) -> Result<Self, MountDefect> {
+    ) -> Result<Self, RosterDefect> {
         let mut screens: BTreeMap<String, Box<dyn Screen>> = BTreeMap::new();
         for (key, screen) in mounts {
-            match destinations.get(key) {
-                None => {
-                    return Err(MountDefect::NoSuchDestination {
-                        key: key.to_owned(),
-                    });
-                }
-                Some(destination) if !destination.standing.is_open() => {
-                    return Err(MountDefect::DestinationIsClosed {
-                        key: key.to_owned(),
-                    });
-                }
-                Some(_) => {}
-            }
+            Self::placeable(&destinations, key)?;
             if screens.insert(key.to_owned(), screen).is_some() {
-                return Err(MountDefect::DuplicateMount {
+                return Err(RosterDefect::DuplicateMount {
                     key: key.to_owned(),
                 });
             }
@@ -156,9 +191,79 @@ impl ScreenRoster {
         Ok(Self {
             destinations,
             screens,
+            judges: BTreeMap::new(),
             chrome: HostChrome::NONE,
             placed_extent: Cell::new((0, 0)),
         })
+    }
+
+    /// The two refusals a screen and a judge share: the destination must exist
+    /// and must be one a reader can arrive at.
+    ///
+    /// Derived rather than written twice, for the reason this crate keeps
+    /// finding: two copies of one rule are two rules the moment somebody edits
+    /// one of them.
+    fn placeable(destinations: &Destinations, key: &str) -> Result<(), RosterDefect> {
+        match destinations.get(key) {
+            None => Err(RosterDefect::NoSuchDestination {
+                key: key.to_owned(),
+            }),
+            Some(destination) if !destination.standing.is_open() => {
+                Err(RosterDefect::DestinationIsClosed {
+                    key: key.to_owned(),
+                })
+            }
+            Some(_) => Ok(()),
+        }
+    }
+
+    /// ★★★★★ R1761 — **register what answers for a page this host paints
+    /// itself.**
+    ///
+    /// # What forced it, measured
+    ///
+    /// [`SectionStanding::Inline`] said the closing move was to give the page a
+    /// [`Screen`] of its own, and this crate's own documentation said the trait
+    /// is public for exactly that. Measured on the analysis tool at R1761,
+    /// standing on the section that entry had been open for since R1738: the
+    /// page region a screen would be granted is 1096×802 at (52, 98), while the
+    /// section's layout bar is 1096×46 at (52, 52) and its palette is 292×848
+    /// at (1148, 52) — **both outside the page**, because a host that paints
+    /// chrome *for* a section paints it beside the region rather than in it.
+    ///
+    /// A screen judges what it paints. So the recorded route would have
+    /// produced a verdict that structurally could not cover the section it was
+    /// about — quieter than the silence it replaced, and harder to notice.
+    ///
+    /// # Why this is not a way out of mounting
+    ///
+    /// It answers one question and grants nothing else: a judge has no paint,
+    /// no hit test, no keys and no accessibility tree, so a page that wants to
+    /// *be* a screen still has to become one. What it stops being is the price
+    /// of saying a true sentence about a page the host draws.
+    ///
+    /// # Errors
+    ///
+    /// [`RosterDefect`] — a judge at a key the roster does not hold, at a key
+    /// it declares closed, at a key that already has a screen, or two judges at
+    /// one key.
+    pub fn judging(
+        mut self,
+        key: &str,
+        judge: Box<dyn SectionJudge>,
+    ) -> Result<Self, RosterDefect> {
+        Self::placeable(&self.destinations, key)?;
+        if self.screens.contains_key(key) {
+            return Err(RosterDefect::SectionAlreadyAnswers {
+                key: key.to_owned(),
+            });
+        }
+        if self.judges.insert(key.to_owned(), judge).is_some() {
+            return Err(RosterDefect::DuplicateJudge {
+                key: key.to_owned(),
+            });
+        }
+        Ok(self)
     }
 
     /// ★★★★★ R1725 — declare what this host draws for every screen it shows,
@@ -244,9 +349,19 @@ impl ScreenRoster {
                 .iter()
                 .map(|destination| {
                     let mounted = self.screens.get(&*destination.key);
+                    let showing = journey.at() == destination.key.as_ref();
                     let standing = match (&destination.standing, mounted) {
                         (Standing::Closed(why), _) => SectionStanding::Closed(why.clone()),
-                        (Standing::Open, None) => SectionStanding::Inline,
+                        // ★★★★★ R1761 — a page the host paints is `Inline` only
+                        // while nothing answers for it. A host that registered
+                        // a judge has said what this section is compared
+                        // against, and the row says so.
+                        (Standing::Open, None) => self.judges.get(&*destination.key).map_or(
+                            SectionStanding::Inline,
+                            |judge| {
+                                SectionStanding::Judged(judge.conformance(Showing::of(showing)))
+                            },
+                        ),
                         (Standing::Open, Some(screen)) => screen
                             .conformance()
                             .map_or(SectionStanding::Unspecified, SectionStanding::Judged),
@@ -255,8 +370,10 @@ impl ScreenRoster {
                         key: destination.key.to_string(),
                         title: destination.title.to_string(),
                         // The journey's own answer, so "showing" here and the
-                        // page the reader is looking at cannot disagree.
-                        showing: journey.at() == destination.key.as_ref(),
+                        // page the reader is looking at cannot disagree — and
+                        // since R1761 it is the SAME value a judge was handed,
+                        // so a verdict and the label on it cannot either.
+                        showing,
                         // A closed destination cannot have a screen mounted at
                         // it — `new` refuses that pairing — so this is `None`
                         // there for the same reason it is `None` for a page the

@@ -38,13 +38,23 @@
 //! |---|---|
 //! | [`Judged`](SectionStanding::Judged) | a screen is here and it answers a written specification |
 //! | [`Unspecified`](SectionStanding::Unspecified) | a screen is here and it answers to no specification |
-//! | [`Inline`](SectionStanding::Inline) | the host paints this page itself, so this roster has no screen to ask |
+//! | [`Inline`](SectionStanding::Inline) | the host paints this page itself and nothing answers for it |
 //! | [`Closed`](SectionStanding::Closed) | you cannot arrive, and this is the reason |
 //!
 //! There is no catch-all. `Unspecified` and `Inline` are kept apart because the
 //! work that closes them is different — one is *write the specification down*,
-//! the other is *give the host's own page a [`Screen`](crate::Screen)*, which
-//! the trait is public for.
+//! the other is *say what compares this page with it*
+//! ([`SectionJudge`], registered through
+//! [`ScreenRoster::judging`](crate::ScreenRoster::judging)).
+//!
+//! ★★★★★ R1761 corrected the second half of that sentence, which had read
+//! *give the host's own page a [`Screen`](crate::Screen), which the trait is
+//! public for*. It was written from the type rather than from a measurement: a
+//! host paints a section's chrome beside the page region, so a screen at that
+//! destination judges the part of the section that happens to be inside one
+//! rectangle. Measured on the analysis tool's dashboard — page region 1096×802,
+//! layout bar 1096×46 above it, palette 292×848 beside it — the recorded route
+//! would have shipped a verdict blind to a quarter of its own section.
 //!
 //! # The one rule that makes it worth having
 //!
@@ -107,11 +117,26 @@ pub enum SectionStanding {
     /// ([`Built::Away`](pinion_core::conformance::Built::Away)) and a *section*
     /// still cannot.
     Unspecified,
-    /// The destination is open and its page is one the host paints itself, so
-    /// this roster has no screen to ask.
+    /// The destination is open, its page is one the host paints itself, and
+    /// **nothing answers for it** — neither a screen nor a judge.
     ///
-    /// Closing it means giving that page a [`Screen`](crate::Screen) of its
-    /// own, which is what the trait being public is for.
+    /// ★★★★★ R1761 — this arm's own closing instructions were wrong for
+    /// twenty-three rounds, and the correction is the round: it read *closing
+    /// it means giving that page a [`Screen`](crate::Screen) of its own, which
+    /// is what the trait being public is for*. Measured on the section that
+    /// sentence had been sitting on since R1738, a host's chrome for a section
+    /// is painted **beside** the page region rather than in it — a layout bar
+    /// above it and a palette panel to its right, together about a quarter of
+    /// the section's own area. A screen judges what it paints, so the route
+    /// recorded here would have produced a verdict that could not reach the
+    /// two surfaces the section is most distinctive for.
+    ///
+    /// Closing it means registering what answers for the page —
+    /// [`ScreenRoster::judging`](crate::ScreenRoster::judging) — which is a
+    /// smaller claim than being a screen and the true one for a page a host
+    /// draws. Becoming a [`Screen`](crate::Screen) is still the move for a page
+    /// that wants a screen's *behaviour*; it is no longer the price of saying a
+    /// true sentence about a page.
     Inline,
     /// The destination is closed, so there is no section to judge — and this is
     /// the destination's own reason, not a second wording of it.
@@ -159,9 +184,113 @@ impl SectionStanding {
                 "a screen is here and it publishes no verdict about a specification".to_owned(),
             ),
             SectionStanding::Inline => {
-                Some("the host paints this page itself, so there is no screen to ask".to_owned())
+                // ★ R1761 — *and nothing answers for it*. The sentence used to
+                // stop at "no screen to ask", which read as a fact about what
+                // the roster holds when it is a fact about what the host chose
+                // not to say: a page the host paints can be judged now, and a
+                // reason that names only the missing screen points at the wrong
+                // repair.
+                Some(
+                    "the host paints this page itself and nothing answers for it, \
+                     so nothing compares it with anything"
+                        .to_owned(),
+                )
             }
             SectionStanding::Closed(why) => Some(why.sentence()),
+        }
+    }
+}
+
+/// ★★★★★ R1761 — **what answers for a section whose page the host paints.**
+///
+/// # Why this is not [`Screen`](crate::Screen)
+///
+/// Because a screen and a verdict are two axes, and R1738 bound them together
+/// by accident: the only way for a section to be judged was to be a mounted
+/// binding, so two pages of this tree's analysis tool went twenty-three rounds
+/// unjudged while a written specification and a comparison against it existed
+/// for both, in the host's own test module.
+///
+/// The measurement that settles it is geometric. A host that paints a page
+/// itself paints that section's chrome **beside** the page region — measured on
+/// this tree's dashboard at R1761, a 1096×46 layout bar above the region and a
+/// 292×848 palette to its right, against a region of 1096×802. A screen judges
+/// what it paints, so making that page a screen would have produced a verdict
+/// covering three quarters of its own section, with nothing anywhere saying so.
+///
+/// # The obligation registering one takes on
+///
+/// The report is not `Option`, unlike [`Screen::conformance`](crate::Screen::conformance).
+/// A binding is mounted for a hundred reasons and judging is not one of them,
+/// so a screen may honestly answer nothing; a judge exists for no other purpose,
+/// so registering one **is** the claim that this section is compared with
+/// something. A host with nothing to compare registers nothing, and the row
+/// reads [`Inline`](SectionStanding::Inline) — which is the true sentence and
+/// the one this trait must not make it easy to hide.
+///
+/// # What it is not
+///
+/// Not a hook a host can answer from its own tables and have believed: the
+/// verdict a judge returns carries its own
+/// [`Evidence`](pinion_core::conformance::Evidence), and
+/// [`ApplicationConformance::conforms`] counts a verdict read from anything but
+/// a painted frame as a reason to refuse. See
+/// [`report_from_paint`](pinion_core::conformance::SpecDocument::report_from_paint),
+/// which is what an honest judge is built on.
+pub trait SectionJudge {
+    /// How much of its written specification this section reproduces.
+    ///
+    /// `showing` is the host's own answer to *is this the page a reader is
+    /// looking at*, handed in rather than looked up. See [`Showing`] for why a
+    /// judge cannot work it out for itself without opening an escape hatch.
+    fn conformance(&self, showing: Showing) -> DocumentReport;
+}
+
+/// ★★★★★ R1761 — whether the section a [`SectionJudge`] answers for is the one
+/// on screen.
+///
+/// # Why a judge is told rather than left to work it out
+///
+/// A mounted screen needs no such fact: it paints into a surface of its own, so
+/// a screen that is not showing has no recorded frame and
+/// [`report_from_paint`](pinion_core::conformance::SpecDocument::report_from_paint)
+/// answers away for all of it, structurally. A host's inline page has no
+/// surface of its own — its marks are the host's, and the host's store is full
+/// of *whatever page it is painting instead*. Measured at R1761: read from the
+/// preferences page, the dashboard's four layout-bar parts are simply not among
+/// the marks.
+///
+/// A judge could notice that by finding nothing under its own stems, and that
+/// is precisely the escape hatch R1742 refused one level down: *away because I
+/// found nothing* turns every absence into an excuse, so a page that stopped
+/// painting half of itself would report the same as a page nobody is looking
+/// at. The distinction belongs to whoever knows where the reader is, and that
+/// is the host. It is the same value the row beside the verdict publishes
+/// ([`SectionRow::showing`]), taken from the [`Journey`](pinion_core::widgets::destination::Journey)
+/// once — so the verdict and the label on it cannot disagree.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Showing {
+    /// This section is the page the application is on.
+    OnScreen,
+    /// The reader is somewhere else, so this page painted no part of the last
+    /// frame.
+    Elsewhere,
+}
+
+impl Showing {
+    /// Whether this section is the one on screen.
+    #[must_use]
+    pub const fn is_on_screen(self) -> bool {
+        matches!(self, Showing::OnScreen)
+    }
+
+    /// The host's fact, as a judge receives it.
+    #[must_use]
+    pub const fn of(showing: bool) -> Self {
+        if showing {
+            Showing::OnScreen
+        } else {
+            Showing::Elsewhere
         }
     }
 }

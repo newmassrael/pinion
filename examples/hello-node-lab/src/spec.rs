@@ -1367,8 +1367,10 @@ const INSPECTOR_SPEC_JSON: &str = include_str!("../../../docs/analyzer-inspector
 /// the pin rather than states the running screen can reach.
 #[must_use]
 pub fn inspector_document() -> pinion_core::conformance::SpecDocument {
-    pinion_core::conformance::SpecDocument::parse(INSPECTOR_SPEC_JSON)
-        .unwrap_or_else(|e| panic!("the inspector specification is readable: {e:?}"))
+    pinion_core::conformance::SpecDocument::pinned(
+        INSPECTOR_SPEC_JSON,
+        "docs/analyzer-inspector-spec.json",
+    )
 }
 
 /// The configuration path whose roster the conformance gate drives.

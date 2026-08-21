@@ -204,6 +204,17 @@ fn painted_at(size: (u32, u32)) -> (Painted, Scene) {
     let mut scene = super::view(ScreenState::default(), Frame::default());
     let mut cache = pinion_runtime::LayoutCache::new();
     pinion_runtime::compute_layout(&mut scene, &mut cache, size.0, size.1);
+    // ★★★★★ R1761 — and what this frame PAINTED, exactly as the window records
+    // it on the pass that announces the sizes. This screen judges its own paint
+    // now (`crate::judge`), so a sweep that skipped this line would be asking
+    // the verdict of a store this frame never filled — and would get the
+    // previous case's answer, which is worse than none.
+    assert_eq!(
+        pinion_runtime::record_painted_surfaces(&scene, &[super::VIEW_TAG]),
+        1,
+        "the shell is painted, or the verdict below is asked of a store this \
+         frame never filled",
+    );
     // ★ The cascade is what the WINDOW runs after layout, through the settle
     // loop. A sweep that skipped it would ask "is this seat inert" of a scene
     // in which nothing had yet resolved, and would answer no for a reason that
@@ -742,6 +753,22 @@ fn r1668_the_screen_invents_no_seat_and_states_the_counts_it_specifies() {
                 "shell.palette.placed".to_owned(),
                 "shell.palette.reserved".to_owned(),
             ])
+            // ★ R1761 — and the panel's own heading, which this backward check
+            // is what found: both lines were loose ink until the dashboard's
+            // surfaces were written down, so neither could be addressed and
+            // neither could be judged. The population is the dashboard
+            // specification's own `palette_head` roster, for the reason the
+            // rows below take theirs from `palette_row` — a part named only in
+            // this file could not exist.
+            .chain(
+                spec::dashboard_document()
+                    .canon("palette_head")
+                    .expect("the dashboard specification declares the panel's heading")
+                    .parts()
+                    .iter()
+                    .map(|part| format!("{}{}", super::PALETTE_HEAD, part.key))
+                    .collect::<Vec<_>>(),
+            )
             // ★ R1733 — and every PART of every row a widget can be picked up
             // from. The population is the board specification's own
             // `palette_row` roster crossed with the PLACEABLE catalogue, so a
@@ -3614,5 +3641,140 @@ fn r1733_the_wire_places_at_a_cell_and_refuses_half_a_cell() {
             clamped.1 <= spec::GRID_COLS,
             "a placement past the right edge stops on the board: {clamped:?}",
         );
+    });
+}
+
+// ── R1761: the dashboard against the pin, through the function the window uses ─
+
+/// ★★★★★ R1761 — **what this section paints, against
+/// `docs/analyzer-dashboard-spec.json`, in every state and at every size the
+/// sweep drives.**
+///
+/// Everything above this line compares the screen with `crate::spec` — the
+/// screen's own table, written in the same edit as the painter it feeds. This
+/// one compares it with a pin extracted from the behaviour reference, and the
+/// difference is why both exist: the first says this build is self-consistent,
+/// and only the second can say it is the reference.
+///
+/// Judged through [`crate::judge::built`] — the SAME function the running
+/// window and the assembled application answer from, so a copy of these
+/// readings kept here would be the second account whose disagreement nobody
+/// notices, because the one running in a window is not the one anybody runs.
+///
+/// # The rule is in three parts, and the third is the one with teeth
+///
+/// 1. In the state the specification describes, at the size it describes, every
+///    surface **reconciles**: the difference this build has is exactly the
+///    difference somebody wrote down.
+/// 2. At every OTHER state the sweep drives, `board` is exempt — those states
+///    add a card, maximise one, shrink them all. What the pin fixes is the
+///    board a reader arrives at, and the exemption is a state the sweep NAMES
+///    (`Case::state`) rather than a condition under which this check fails.
+/// 3. At every state and size, an undeclared difference on the other four
+///    surfaces may only be an **absence**, or a reordering with an absence
+///    beside it to explain it: shrinking a window may take a part off the
+///    frame, and it must never rename one or grow one the reference has not.
+#[test]
+fn r1761_the_dashboard_reproduces_its_specification_or_says_why_not() {
+    use pinion_core::conformance::{Built, PartDivergence, Unreconciled};
+    use pinion_screen::Showing;
+
+    let mut judged = 0usize;
+    let mut reconciled = 0usize;
+    sweep(|_, _, _, case| {
+        let regions =
+            pinion_core::painted::painted_regions(super::VIEW_TAG).expect("the sweep just painted");
+        let doc = spec::dashboard_document();
+        for surface in doc.surfaces() {
+            let Built::Standing(parts) = super::judge::built(&regions, surface, Showing::OnScreen)
+            else {
+                panic!(
+                    "{case}: `{surface}` is away while this page is the one painted -- the only \
+                     away this section has is the reader being somewhere else"
+                );
+            };
+            judged += 1;
+            let said: Vec<String> = doc
+                .unreconciled(surface, &parts)
+                .iter()
+                .map(Unreconciled::sentence)
+                .collect();
+            if case.as_specified() {
+                assert!(
+                    said.is_empty(),
+                    "{case}: `{surface}` is not what \
+                     docs/analyzer-dashboard-spec.json declares:\n  {}",
+                    said.join("\n  "),
+                );
+                reconciled += 1;
+                continue;
+            }
+            if surface == "board" {
+                // Part 2 — this sweep's later states are edits to the board.
+                continue;
+            }
+            let canon = doc.canon(surface).expect("the document fixes it");
+            let undeclared: BTreeSet<String> = doc
+                .unreconciled(surface, &parts)
+                .into_iter()
+                .filter_map(|entry| match entry {
+                    Unreconciled::Undeclared { sentence, .. } => Some(sentence),
+                    Unreconciled::Paid { .. } | Unreconciled::Reworded { .. } => None,
+                })
+                .collect();
+            let divergences: Vec<PartDivergence> = canon.diff(&parts);
+            let absent: BTreeSet<&str> = divergences
+                .iter()
+                .filter_map(|d| match d {
+                    PartDivergence::Absent { key, .. } => Some(key.as_str()),
+                    _ => None,
+                })
+                .collect();
+            for difference in &divergences {
+                let sentence = difference.sentence();
+                if !undeclared.contains(&sentence) {
+                    continue;
+                }
+                let allowed = match difference {
+                    PartDivergence::Absent { .. } => true,
+                    PartDivergence::OutOfOrder { .. } => !absent.is_empty(),
+                    PartDivergence::Unspecified { .. } | PartDivergence::Retitled { .. } => false,
+                };
+                assert!(
+                    allowed,
+                    "{case}: `{surface}` differs from the pin in a way nobody \
+                     declared and a smaller window cannot explain: {sentence}",
+                );
+            }
+        }
+    });
+    assert_eq!(judged, CASES * 5, "every surface was judged in every case");
+    assert_eq!(
+        reconciled, 5,
+        "and all five reconcile in the one case the specification describes",
+    );
+
+    // ★★ And the away this section DOES have, which no size or state can
+    // produce: the reader standing somewhere else. Asserted here rather than
+    // left to the demo, because it is the one answer the judge cannot derive
+    // from its own marks and the one a refactor could quietly drop.
+    let owner = Owner::new();
+    owner.run(|| {
+        let _ = painted_at((WIN_W, WIN_H));
+        let regions =
+            pinion_core::painted::painted_regions(super::VIEW_TAG).expect("the sweep just painted");
+        let doc = spec::dashboard_document();
+        for surface in doc.surfaces() {
+            match super::judge::built(&regions, surface, Showing::Elsewhere) {
+                Built::Away(why) => assert!(
+                    why.contains("another section"),
+                    "the away names where the reader is, not what the judge failed to find: {why}"
+                ),
+                Built::Standing(_) => panic!(
+                    "`{surface}` reports standing from a page the reader is not on, which is the \
+                     defect a host's own store makes possible"
+                ),
+            }
+        }
     });
 }

@@ -265,8 +265,12 @@ def section_a(app: RpcSubprocess) -> None:
 
 def section_b(app: RpcSubprocess) -> None:
     banner("B — an untouched lab says its surfaces are AWAY, not missing")
-    app.intervene(f"{EXT}/nav", SEAT)
-    app.tick(16)
+    # ★ R1761 — and not `intervene` + `tick`: every surface read below is a fact
+    # about the last PAINTED frame, and this demo failed once in a 34-demo sweep
+    # and never in 20 isolated re-runs — a read racing the render, which is
+    # exactly what that shape is. `intervene_painted` returns once the window
+    # has drawn the page this asks for.
+    app.intervene_painted(f"{EXT}/nav", SEAT)
     assert_eq(app.query(f"{EXT}/nav"), SEAT, "B: the lab seat opens")
 
     row = lab_row(app)

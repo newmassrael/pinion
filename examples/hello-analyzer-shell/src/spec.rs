@@ -409,8 +409,31 @@ const BOARD_SPEC_JSON: &str = include_str!("../../../docs/analyzer-board-spec.js
 /// pin, and all of them must stop the build rather than weaken the gate.
 #[must_use]
 pub fn board_document() -> pinion_core::conformance::SpecDocument {
-    pinion_core::conformance::SpecDocument::parse(BOARD_SPEC_JSON)
-        .expect("docs/analyzer-board-spec.json is a specification document")
+    pinion_core::conformance::SpecDocument::pinned(BOARD_SPEC_JSON, "docs/analyzer-board-spec.json")
+}
+
+/// ★★★★★ R1761 — the DASHBOARD SECTION's written specification: the surfaces a
+/// reader sees on this page, as the reference draws them.
+///
+/// Separate from [`board_document`] by **evidence** rather than by screen — one
+/// is read back out of a painted frame at any moment, the other needs a gesture
+/// driven and a declaration asked. The pin's own header carries the reasoning
+/// and `crate::judge` carries the reading.
+const DASHBOARD_SPEC_JSON: &str = include_str!("../../../docs/analyzer-dashboard-spec.json");
+
+/// The dashboard section's specification, parsed.
+///
+/// # Panics
+///
+/// If the document is not a specification — unreadable JSON, a surface with no
+/// canon, a remainder entry naming no round or no reason. All defects in the
+/// pin, and all of them must stop the build rather than weaken the gate.
+#[must_use]
+pub fn dashboard_document() -> pinion_core::conformance::SpecDocument {
+    pinion_core::conformance::SpecDocument::pinned(
+        DASHBOARD_SPEC_JSON,
+        "docs/analyzer-dashboard-spec.json",
+    )
 }
 
 // --- The Settings destination -------------------------------------------------
@@ -676,6 +699,41 @@ pub const PRESET: &str = "Overview";
 /// on it is a decision somebody made rather than a seed.
 pub const BOARD_VERBS: &[&str] = &["Edit Layout", "Add Widget"];
 
+/// ★★★★★ R1761 — the layout bar's parts, in the order the reference draws
+/// them, and what each one is.
+///
+/// The words beside the keys are this screen's own, not the words on screen:
+/// two of the four are *values* (which layout is in effect, how many widgets it
+/// holds) and one of the verbs changes its own label while editing, so a
+/// specification pinning the painted words would report a working screen as
+/// wrong the moment a reader used it. What the pin fixes here is which parts the
+/// bar has and in what order — see `crate::judge` for the rule and for which
+/// surfaces are judged by their words instead.
+pub const LAYOUT_BAR: &[(&str, &str)] = &[
+    (
+        "preset",
+        "the layout in effect, and what opens the list of them",
+    ),
+    ("count", "how many widgets the board is holding"),
+    ("edit", "the verb that turns layout editing on"),
+    ("add", "the verb that opens a placement"),
+];
+
+/// The two counts along the foot of the palette panel, left to right.
+///
+/// Both are values, so they are titled here rather than read — and both are
+/// derived from [`CATALOGUE`] on screen, which is what makes the pair worth
+/// stating: the reference's palette footer says how many this release places
+/// *and* how many a later one brings, and the second number is the screen's
+/// whole argument about scope.
+pub const PALETTE_FOOT: &[(&str, &str)] = &[
+    (
+        "placed",
+        "how many of this release's kinds are on the board",
+    ),
+    ("reserved", "how many kinds a later release brings"),
+];
+
 // --- The catalogue -----------------------------------------------------------
 
 /// Which release a catalogue entry belongs to.
@@ -723,6 +781,31 @@ pub const SECTIONS: &[(&str, &str, Tier)] = &[
     ("visual", "VISUALIZATION", Tier::Reserved),
     ("operate", "DIAGNOSE & OPERATE", Tier::Reserved),
 ];
+
+/// ★★★★★ R1761 — **which release a section's entries belong to, in the words
+/// the heading paints.**
+///
+/// The reference writes it into the heading itself — *«group» · «release»* —
+/// and this build painted the group and dropped the release, so a reader
+/// scanning the panel could see three headings and not which of them the first
+/// release fills. Measured against the reference screen at R1761, while writing
+/// the palette's surfaces down as a specification: the heading is where the
+/// reference answers *when does this arrive*, and the entries beneath it repeat
+/// only the requirement, one row at a time.
+///
+/// **Derived from the tier rather than typed into [`SECTIONS`]**, because a
+/// marker written beside the tier is a second copy of it: a section retiered
+/// with its heading left alone would say one thing and offer another, and
+/// nothing would notice. This way the heading cannot disagree with what the
+/// rows do.
+#[must_use]
+pub fn section_heading(title: &str, tier: Tier) -> String {
+    let release = match tier {
+        Tier::Placeable => "RELEASE 1",
+        Tier::Reserved => "RELEASE 2",
+    };
+    format!("{title} \u{b7} {release}")
+}
 
 /// The thirteen catalogue entries: four the first release places, nine it
 /// reserves.
@@ -1804,6 +1887,31 @@ pub const VOICES: &[VoiceSpec] = &[
 /// A total census is satisfied by declaring everything silent, so this table is
 /// the other half of the split and is what makes the first one a claim.
 pub const SILENCES: &[(&str, Population, &str, Where)] = &[
+    // ★★★★★ R1761 — three marks that became ADDRESSABLE so a specification
+    // could name them, and are silent because each one's words are already in
+    // an announcement a reader gets. Being tagged and being announced are two
+    // decisions, and this table is where the second one is made: a mark that
+    // gained an address without one would be a second voice for a fact the
+    // screen already says, which is exactly what a reader experiences as
+    // repetition.
+    (
+        "shell.subbar.count",
+        Population::One,
+        "part_of",
+        Where::At("dashboard"),
+    ),
+    (
+        "shell.palette.head.title",
+        Population::One,
+        "name_of",
+        Where::At("dashboard"),
+    ),
+    (
+        "shell.palette.head.hint",
+        Population::One,
+        "part_of",
+        Where::At("dashboard"),
+    ),
     // The scrolling viewport is a clip, not a thing on the screen: what a
     // reader walks is the board inside it.
     (

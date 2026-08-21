@@ -508,6 +508,5 @@ const LOGS_SPEC_JSON: &str = include_str!("../../../docs/analyzer-logs-spec.json
 /// rather than states the running screen can reach.
 #[must_use]
 pub fn document() -> SpecDocument {
-    SpecDocument::parse(LOGS_SPEC_JSON)
-        .unwrap_or_else(|e| panic!("the section specification is readable: {e:?}"))
+    SpecDocument::pinned(LOGS_SPEC_JSON, "docs/analyzer-logs-spec.json")
 }

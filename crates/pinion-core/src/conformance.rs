@@ -1144,6 +1144,33 @@ impl SpecDocument {
         Ok(Self { order, canon, owed })
     }
 
+    /// ★★★★★ R1761 — a pinned document, or a panic naming **both** the file and
+    /// what is wrong with it.
+    ///
+    /// # Why this is not each screen's three lines
+    ///
+    /// Found by the self-grep this project's rule about mechanical duplication
+    /// demands, and it was not merely duplication: six sites read a pin this
+    /// way and they had drifted into **two** idioms, each losing a different
+    /// half of the same sentence. Three said `.expect("docs/<file> is a
+    /// specification document")` — which names the file and throws the
+    /// [`SpecDefect`] away — and three said `.unwrap_or_else(|e| panic!("the
+    /// section specification is readable: {e:?}"))`, which keeps the defect and
+    /// does not say WHICH pin. A person reading either panic is missing exactly
+    /// the half the other one has.
+    ///
+    /// # Panics
+    ///
+    /// If `text` is not a specification document. That is a defect in a
+    /// reviewed artifact rather than a state a running screen can reach, and it
+    /// must stop the build: a pin that failed to parse and came out empty would
+    /// read as *this build reproduces everything*.
+    #[must_use]
+    pub fn pinned(text: &str, path: &str) -> Self {
+        Self::parse(text)
+            .unwrap_or_else(|defect| panic!("{path} is a specification document: {defect:?}"))
+    }
+
     /// The surfaces this document fixes, in the order it declares them.
     pub fn surfaces(&self) -> impl Iterator<Item = &str> {
         self.order.iter().map(String::as_str)

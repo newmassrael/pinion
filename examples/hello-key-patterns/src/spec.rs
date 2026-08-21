@@ -486,6 +486,5 @@ const KEYS_SPEC_JSON: &str = include_str!("../../../docs/analyzer-keys-spec.json
 /// the build rather than quietly weaken the comparison.
 #[must_use]
 pub fn document() -> SpecDocument {
-    SpecDocument::parse(KEYS_SPEC_JSON)
-        .unwrap_or_else(|e| panic!("the section specification is readable: {e:?}"))
+    SpecDocument::pinned(KEYS_SPEC_JSON, "docs/analyzer-keys-spec.json")
 }

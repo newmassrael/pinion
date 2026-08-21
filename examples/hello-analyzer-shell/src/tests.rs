@@ -2606,3 +2606,38 @@ fn r1724_the_hosts_state_moves_when_the_rail_does() {
         );
     });
 }
+
+/// ★★★★★ R1761 — **screen C has two written specifications and they must not
+/// name the same surface.**
+///
+/// The split is by EVIDENCE and not by screen: `analyzer-board-spec.json` holds
+/// surfaces that are a declaration, or that exist only while a placement is in
+/// flight, judged by the driven sweep in `crate::painted`;
+/// `analyzer-dashboard-spec.json` holds the ones readable from a frame at any
+/// moment, judged by `crate::judge` and published to the host.
+///
+/// One word with two documents behind it is the defect R1747 spent a round on —
+/// a screen's own `context` table collided with its pin's `context` surface, and
+/// a lookup by name could not say which it had found. Two documents about one
+/// screen are safe only while nothing has to choose between them, so this is the
+/// condition that makes them safe, asserted rather than remembered.
+#[test]
+fn r1761_the_two_specifications_of_this_screen_name_disjoint_surfaces() {
+    let board = spec::board_document();
+    let dashboard = spec::dashboard_document();
+    let named: std::collections::BTreeSet<String> = board.surfaces().map(str::to_owned).collect();
+    let both: Vec<&str> = dashboard
+        .surfaces()
+        .filter(|surface| named.contains(*surface))
+        .collect();
+    assert!(
+        both.is_empty(),
+        "both documents name {both:?}, so a reader asking this screen about that \
+         surface would get whichever document was looked in first"
+    );
+    assert!(
+        !named.is_empty() && dashboard.surfaces().count() > 0,
+        "both documents have surfaces, so the disjointness above is a claim \
+         rather than one empty set meeting another"
+    );
+}

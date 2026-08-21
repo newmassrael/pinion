@@ -130,6 +130,7 @@ use pinion_widget_paint::pane::{PanePointer, scroll_pane};
 use pinion_widget_paint::run::text_run;
 use pinion_widget_paint::switch::{self, SwitchStyle};
 
+mod judge;
 mod spec;
 
 // pinion-forge codegen output: `pub struct HelloAnalyzerShellRenderer` + its
@@ -715,6 +716,14 @@ fn screen_roster() -> ScreenRoster {
         ],
     )
     .expect("the mounted screens sit at open destinations of this rail")
+    // ★★★★★ R1761 — **the page this shell paints itself, answering for
+    // itself.** Not a mount: the dashboard's layout bar and its palette are
+    // painted BESIDE the page region rather than in it, so a screen at this
+    // destination would judge three quarters of its own section. A judge
+    // answers the one question — how much of `docs/analyzer-dashboard-spec.json`
+    // is on the frame — and gets nothing else. See `crate::judge`.
+    .judging("dashboard", Box::new(judge::BoardJudge))
+    .expect("`dashboard` is an open destination with no screen mounted at it")
     // ★★★★★ R1725 — **this application has a navigation, so its pages must not
     // each bring one.** Declared here, beside the roster it is a fact about:
     // the rail this shell paints IS `spec::RAIL`, and a screen shown inside it
@@ -1495,11 +1504,14 @@ fn help_strip_rect() -> Rect {
 fn palette_rows() -> Vec<PaletteRow> {
     let mut out = Vec::new();
     let mut y = 76_u32;
-    for (key, title, _tier) in spec::SECTIONS {
+    for (key, title, tier) in spec::SECTIONS {
         out.push(PaletteRow {
             def: None,
             section: key,
-            title,
+            // ★ R1761 — the heading says which release fills the group, which
+            // is what the reference writes there. Derived from the tier beside
+            // it, so the two cannot come apart.
+            title: spec::section_heading(title, *tier),
             rect: Rect::new(16, y, PALETTE_W - 32, 20),
         });
         y += 26;
@@ -1507,7 +1519,7 @@ fn palette_rows() -> Vec<PaletteRow> {
             out.push(PaletteRow {
                 def: Some(def),
                 section: key,
-                title: def.label,
+                title: def.label.to_owned(),
                 rect: Rect::new(10, y, PALETTE_W - 30, PALETTE_ROW_H),
             });
             y += PALETTE_ROW_H + 4;
@@ -1526,7 +1538,11 @@ struct PaletteRow {
     /// the heading is the group a reader descends through, and it needs a tag.
     section: &'static str,
     /// The words painted on the line.
-    title: &'static str,
+    ///
+    /// Owned since R1761: a section heading's words are composed from the
+    /// group's name and its release, so they are not a `'static` string any
+    /// more.
+    title: String,
     /// Where, in the palette panel's own space.
     rect: Rect,
 }
@@ -5104,12 +5120,28 @@ fn sub_bar_scene(state: &ShellState, palette: Palette) -> Scene {
             .with_style(BoxStyle::filled(palette.panel).with_corner_radius(8))
             .with_layout(absolute(preset)),
         ),
-        label(
+        // ★★★★★ R1761 — ADDRESSABLE. The reference's layout bar states how many
+        // widgets are placed beside the preset that placed them, and this build
+        // painted it as loose ink: measured over the wire before this round,
+        // `shell.subbar.` held three parts where the reference draws four, and
+        // the missing one was the only one that is not a control. A part a
+        // reader can see and nothing can name is a part no specification
+        // reaches.
+        cell(
+            "shell.subbar.count".to_owned(),
             &format!("{placed} widgets placed"),
             Rect::new(preset.x + preset.w + 14, preset.y + 8, 220, 16),
             FONT_BODY,
             palette.muted,
-        ),
+            TextOverflow::Ellipsis,
+        )
+        // ★ R1761 — addressable and NOT a second voice: the bar announces this
+        // count as its own readout, so the mark declares itself part of that
+        // announcement. Being tagged is what lets a specification name it;
+        // being `part_of` is what stops a reader hearing the same number twice
+        // and what keeps it out of the population of things a press must
+        // reach, since it is not a control.
+        .silenced(Silence::part_of("shell.subbar")),
         button(
             SubChip::EditLayout.rect(),
             SubChip::EditLayout.tag(),
@@ -7171,6 +7203,22 @@ pub(crate) fn part_tag(part: &str, kind: &str) -> String {
 /// The stem every palette-row part is tagged under.
 pub(crate) const PALETTE_PART: &str = "shell.palette.part.";
 
+/// The stem the palette panel's own heading is tagged under.
+///
+/// Its own stem rather than a suffix of the panel's, because
+/// [`PaintedRegions::parts_under`](pinion_core::painted::PaintedRegions::parts_under)
+/// takes the tags whose remainder holds no further dot — so the heading sits
+/// beside the entries in one flat family unless it is given a stem of its own,
+/// and a specification of the catalogue would then have to name two lines that
+/// are not catalogue entries.
+pub(crate) const PALETTE_HEAD: &str = "shell.palette.head.";
+
+/// What the panel calls itself.
+pub(crate) const PALETTE_HEAD_TITLE: &str = "shell.palette.head.title";
+
+/// The one line under it saying how a widget gets onto the board.
+pub(crate) const PALETTE_HEAD_HINT: &str = "shell.palette.head.hint";
+
 /// One palette row: the swatch, the name, the one line, and what the row offers
 /// -- the verb for a placeable entry, the booking for a reserved one.
 fn palette_row(
@@ -7353,19 +7401,35 @@ fn carry_slot_scene(ghost: &Tile, palette: Palette) -> Scene {
 /// The palette panel: the catalogue, grouped, with a count at the foot.
 fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
     let panel = palette_rect();
+    // ★★★★★ R1761 — the panel's own heading, ADDRESSABLE. It was two loose
+    // labels, so the two lines a reader reads first were the two lines nothing
+    // could ask about: measured over the wire before this round, the paint under
+    // `shell.palette.` held thirteen entries and two counts and neither of
+    // these. A specification cannot fix words that have no address.
     let mut children = vec![
-        label(
+        cell(
+            PALETTE_HEAD_TITLE.to_owned(),
             spec::PALETTE_TITLE,
             Rect::new(16, 18, 220, 20),
             FONT_TITLE,
             palette.ink,
-        ),
-        label(
+            TextOverflow::Ellipsis,
+        )
+        // ★ R1761 — these words ARE the panel's accessible name, so saying them
+        // again would be one fact in two voices. Addressable for the
+        // specification, silent for the reader.
+        .silenced(Silence::name_of("shell.palette")),
+        cell(
+            PALETTE_HEAD_HINT.to_owned(),
             spec::PALETTE_HINT,
             Rect::new(16, 42, 250, 16),
             FONT_SMALL,
             palette.muted,
-        ),
+            TextOverflow::Ellipsis,
+        )
+        // And the line under it is the panel's own description, which the list
+        // announces as its value.
+        .silenced(Silence::part_of("shell.palette")),
     ];
     for row in palette_rows() {
         match row.def {
@@ -7373,7 +7437,7 @@ fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
             // addressable rather than loose ink between the entries.
             None => children.push(cell(
                 format!("shell.palette.section.{}", row.section),
-                row.title,
+                &row.title,
                 row.rect,
                 FONT_TINY,
                 palette.muted,
@@ -8224,6 +8288,17 @@ fn sub_bar_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
         with_cursor_declared(
             AccessNode::new("shell.subbar", AriaRole::Toolbar)
                 .with_name("Layout bar")
+                // ★ R1761 — and how many widgets it is holding, which the bar
+                // paints beside the preset and had announced nowhere in this
+                // bar. Carried by the toolbar rather than published as a fourth
+                // child, because it is the bar's own readout and not a stop a
+                // cursor should land on — which is also what lets the painted
+                // mark declare itself part of this announcement instead of
+                // being a second voice for one fact.
+                .with_value(AccessValue::Text(format!(
+                    "{} widgets placed",
+                    state.placed().len()
+                )))
                 .with_child(SubChip::Preset.tag())
                 .with_child(SubChip::EditLayout.tag())
                 .with_child(SubChip::AddWidget.tag()),
@@ -8701,6 +8776,11 @@ fn series_reading(series: &[f64]) -> String {
 fn palette_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
     let mut list = AccessNode::new("shell.palette", AriaRole::List)
         .with_name(spec::PALETTE_TITLE)
+        // ★ R1761 — and the line the panel paints under that name, which is
+        // how a widget gets onto the board. It was on screen and in no
+        // announcement; the painted mark now declares itself part of this one
+        // rather than speaking for itself.
+        .with_value(AccessValue::Text(spec::PALETTE_HINT.to_owned()))
         .with_size_of_set(u32::try_from(spec::CATALOGUE.len()).unwrap_or(u32::MAX));
     let mut nodes = Vec::new();
     for (key, title, _tier) in spec::SECTIONS {

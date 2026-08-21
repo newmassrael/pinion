@@ -2381,6 +2381,111 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         assert resp is not None and isinstance(resp.result, dict)
         return resp.result
 
+    def frame_count(self, *, window: Optional[str] = None) -> int:
+        """How many frames this window has painted, or `0` before its first.
+
+        R1761 — the half of [`await_paint`] a caller takes BEFORE the action, so
+        the wait afterwards is against a baseline rather than against a number
+        that was already moving.
+        """
+        try:
+            return int(self.frame_timings(window=window)["frame_count"])
+        except (AssertionError, RpcError, KeyError, TypeError, ValueError):
+            # Before the first frame the profiler refuses, which is `0` frames
+            # painted rather than an error a caller should have to handle: the
+            # question is "how many", and none is an answer.
+            return 0
+
+    def await_paint(
+        self,
+        beyond: int,
+        *,
+        window: Optional[str] = None,
+        timeout: float = 8.0,
+    ) -> int:
+        """★★★★★ R1761 — block until this window has painted a frame AFTER an
+        action, and answer the count it reached.
+
+        # What this exists for, measured
+
+        A verdict read from the PAINT (`pinion_core::painted`, and everything
+        `conformance`'s `report_from_paint` is built on) is a fact about the
+        last frame the window drew. An action driven over RPC lands in the
+        deferred-input inbox and applies on the next shell frame, so a read
+        taken straight after it can be answered from the frame BEFORE the action
+        — and the answer is a true statement about a screen the reader has
+        already left.
+
+        `tick(dt)` does not close that: it advances the animation CLOCK, and a
+        window's paint is not synchronous with the call. Measured 2026-08-21
+        during a 34-demo sweep, two demos that navigate and then read a
+        paint-derived verdict failed once each and passed on every isolated
+        re-run — the classic shape of a read racing a render, which
+        [`wait_until`]'s own header already names as the reason it exists.
+
+        # Why the frame counter and not the verdict
+
+        Waiting until the thing being asserted is true makes the assertion
+        vacuous. This waits for a fact about the WINDOW — that it drew another
+        frame — which is a different fact from what any caller goes on to
+        assert, and it fails loudly rather than reading a stale frame quietly.
+
+        One frame beyond the baseline, and the baseline is taken BEFORE the
+        action: the shell drains its deferred input at the start of a frame and
+        then builds the view, so the first frame counted after the action is the
+        one that painted its effect. Waiting for more than that would hang a
+        window whose pacing lets it go idle once the screen has settled, which
+        is a failure mode with the same shape as the one being repaired.
+        """
+        target = beyond + 1
+
+        def painted() -> Optional[int]:
+            count = self.frame_count(window=window)
+            return count if count >= target else None
+
+        return wait_until(
+            painted,
+            timeout=timeout,
+            desc=f"the window to paint frame {target} (baseline {beyond})",
+        )
+
+    def intervene_painted(
+        self,
+        path: str,
+        value: Any,
+        *,
+        dt: float = 16.0,
+        window: Optional[str] = None,
+    ) -> Any:
+        """★★★★★ R1761 — write a slot and do not come back until the window has
+        PAINTED the result.
+
+        The form to use before reading anything derived from the paint — a
+        conformance verdict, a mark census, a rectangle. `intervene` + `tick`
+        alone leaves the read racing the render: the clock moves, the model
+        moves, and the frame that draws the new state is scheduled rather than
+        taken. See [`await_paint`] for the measurement.
+
+        The tick is kept and happens BEFORE the wait, because a demo that
+        advances the clock is usually asking for the settled state of something
+        that animates, and dropping it would change what a caller reads.
+
+        # The class this was applied to, counted rather than described
+
+        Eight demos read a conformance verdict. Five of them navigate and then
+        read one, and all five use this; the other three (`r1728`, `r1730`,
+        `r1731`) read at boot, where `RpcSubprocess`'s own `boot_grace` already
+        covers the first frame. ★ Counted at R1761's closing audit, which is
+        also where the count in that round's ledger entry was found wrong — it
+        says *twelve*, which is how many demos mention the word.
+        """
+        before = self.frame_count(window=window)
+        out = self.intervene(path, value)
+        if dt:
+            self.tick(dt)
+        self.await_paint(before, window=window)
+        return out
+
     def frame_timings(self, *, window: Optional[str] = None) -> dict[str, Any]:
         """`scene/frame_timings` typed wrapper (R907 §5.16 §5.7).
 

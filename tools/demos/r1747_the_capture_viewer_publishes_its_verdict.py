@@ -174,8 +174,14 @@ def press_tag(app: RpcSubprocess, tag: str) -> None:
     box = abs_rects_of(app.snapshot(source="paint")).get(tag)
     assert box is not None, f"the frame drew nothing at {tag}"
     x, y, w, h = box
+    # ★ R1761 — and the press is followed by the FRAME it causes, not by a tick.
+    # Everything a caller reads after this is a fact about the last painted
+    # frame, so returning before that frame exists hands back the screen as it
+    # was before the press.
+    before = app.frame_count()
     app.click((x + w / 2, y + h / 2))
     app.tick(16)
+    app.await_paint(before)
     PRESSES += 1
 
 
@@ -263,14 +269,17 @@ def section_b(app: RpcSubprocess) -> None:
         cold["evidence"] == "paint" and cold["reproduced"] == 0,
     )
 
-    app.intervene(f"{EXT}/nav", SEAT)
-    app.tick(16)
+    # ★ R1761 — and not `intervene` + `tick` at any of the three: every verdict
+    # read here is a fact about the last PAINTED frame, and this demo failed
+    # once in a 34-demo sweep and never in 20 isolated re-runs, which is what a
+    # read racing the render looks like. `intervene_painted` comes back once the
+    # window has drawn the page it asked for.
+    app.intervene_painted(f"{EXT}/nav", SEAT)
     assert_eq(app.query(f"{EXT}/nav"), SEAT, "B: the capture-viewer seat opens")
     standing = row(app)
     ok("B: standing in it, the section is the one showing", standing["showing"] is True)
 
-    app.intervene(f"{EXT}/nav", "dashboard")
-    app.tick(16)
+    app.intervene_painted(f"{EXT}/nav", "dashboard")
     away = row(app)
     assert_eq(
         away["conformance"],
@@ -285,8 +294,7 @@ def section_b(app: RpcSubprocess) -> None:
         away["showing"] is False
         and [r["key"] for r in report(app)["rows"] if r["showing"]] == ["dashboard"],
     )
-    app.intervene(f"{EXT}/nav", SEAT)
-    app.tick(16)
+    app.intervene_painted(f"{EXT}/nav", SEAT)
 
 
 def judge_surfaces(app: RpcSubprocess, where: str) -> None:

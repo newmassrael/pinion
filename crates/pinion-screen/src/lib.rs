@@ -92,9 +92,9 @@ use pinion_core::widget_core::ExtraExternal;
 use pinion_core::{Frame, Scene};
 use pinion_shell::{WindowPolicy, WindowSpec};
 
-pub use conformance::{ApplicationConformance, SectionRow, SectionStanding};
+pub use conformance::{ApplicationConformance, SectionJudge, SectionRow, SectionStanding, Showing};
 pub use mount::Mount;
-pub use roster::{MountDefect, ScreenRoster, ScreenState};
+pub use roster::{RosterDefect, ScreenRoster, ScreenState};
 
 /// One destination's page, when the page is a whole binding.
 ///
@@ -122,8 +122,18 @@ pub use roster::{MountDefect, ScreenRoster, ScreenState};
 /// # Implementors
 ///
 /// [`Mount`] for an existing binding, which is the expected route. Implementing
-/// it directly is for a page that has no binding of its own — a host's inline
-/// page — and is why the trait is public.
+/// it directly is for a page that has no binding of its own and wants a
+/// screen's *behaviour* — its own hit test, keymap, windows and accessibility
+/// tree — which is why the trait is public.
+///
+/// ★★★★★ R1761 — it is **not** what a host's inline page needs in order to be
+/// JUDGED, and this sentence said it was. A host paints a section's chrome
+/// beside the page region rather than in it (measured: a layout bar above and a
+/// palette panel to the right of a 1096×802 region), and a screen judges what it
+/// paints — so the route recorded here would have produced a verdict that could
+/// not reach a quarter of its own section. Publishing a verdict for a page the
+/// host draws is [`SectionJudge`], registered through
+/// [`ScreenRoster::judging`], which grants nothing else.
 pub trait Screen {
     // --- identity -----------------------------------------------------------
 

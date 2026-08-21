@@ -258,6 +258,39 @@ fn lab_specification() -> SpecDocument {
     .expect("the fixture specification is a document")
 }
 
+/// ★★★★★ R1761 — what answers for a page the host paints itself.
+///
+/// Deliberately reproduces its whole specification while the mounted fixture
+/// beside it does not: the two are then distinguishable in one report, and a
+/// test cannot pass by every row happening to say the same thing.
+struct BoardJudge;
+
+impl pinion_screen::SectionJudge for BoardJudge {
+    fn conformance(&self, showing: pinion_screen::Showing) -> DocumentReport {
+        board_specification().report(&|surface| match surface {
+            "bar" if !showing.is_on_screen() => {
+                Built::away("the reader is on another page, so this bar is not on the frame")
+            }
+            "bar" => Built::Standing(vec![Part::new("preset", "Preset"), Part::new("add", "Add")]),
+            other => panic!("the fixture specification does not name {other}"),
+        })
+    }
+}
+
+/// The specification a host's own page answers to in these tests.
+fn board_specification() -> SpecDocument {
+    SpecDocument::parse(
+        r#"{ "bar": {
+              "canon": [
+                { "key": "preset", "title": "Preset" },
+                { "key": "add", "title": "Add" }
+              ],
+              "owed": []
+           } }"#,
+    )
+    .expect("the fixture specification is a document")
+}
+
 fn destinations() -> Destinations {
     Destinations::new(vec![
         Destination::open("dashboard", "Dashboard"),
@@ -626,7 +659,7 @@ fn r1724_the_window_title_is_the_current_screens() {
 /// paints.
 #[test]
 fn r1724_a_roster_refuses_a_mount_it_cannot_honour() {
-    use pinion_screen::MountDefect;
+    use pinion_screen::RosterDefect;
 
     let missing = ScreenRoster::new(
         destinations(),
@@ -637,7 +670,7 @@ fn r1724_a_roster_refuses_a_mount_it_cannot_honour() {
     );
     assert_eq!(
         missing.err(),
-        Some(MountDefect::NoSuchDestination {
+        Some(RosterDefect::NoSuchDestination {
             key: "sessions".to_owned()
         })
     );
@@ -651,7 +684,7 @@ fn r1724_a_roster_refuses_a_mount_it_cannot_honour() {
     );
     assert_eq!(
         shut.err(),
-        Some(MountDefect::DestinationIsClosed {
+        Some(RosterDefect::DestinationIsClosed {
             key: "topology".to_owned()
         }),
         "a seat that tells a reader the destination is unavailable, with the \
@@ -670,9 +703,142 @@ fn r1724_a_roster_refuses_a_mount_it_cannot_honour() {
     );
     assert_eq!(
         twice.err(),
-        Some(MountDefect::DuplicateMount {
+        Some(RosterDefect::DuplicateMount {
             key: "catalog".to_owned()
         })
+    );
+}
+
+/// ★★★★★ R1761 — a page the host paints answers for itself once something is
+/// registered to answer, and the row stops saying nobody was asked.
+#[test]
+fn r1761_a_judge_makes_the_hosts_own_page_a_judged_section() {
+    let roster = ScreenRoster::new(
+        destinations(),
+        vec![(
+            "catalog",
+            Box::new(Mount::<LabFixture>::new()) as Box<dyn Screen>,
+        )],
+    )
+    .expect("the fixture screen is mounted at an open destination")
+    .judging("dashboard", Box::new(BoardJudge))
+    .expect("`dashboard` is open and has no screen");
+
+    let report = roster.conformance(&at("dashboard"));
+    let row = |key: &str| {
+        report
+            .rows()
+            .iter()
+            .find(|row| row.key == key)
+            .expect("the roster's own population")
+            .clone()
+    };
+
+    let board = row("dashboard");
+    assert!(
+        matches!(board.standing, SectionStanding::Judged(_)),
+        "the host's own page is judged by what the host registered, and the \
+         page is still the host's: {:?}",
+        board.standing
+    );
+    assert_eq!(
+        board.tag, None,
+        "★ and there is still no screen to address — a reader who wants a live \
+         verdict has the host's own slot, not a section's"
+    );
+    let SectionStanding::Judged(verdict) = &board.standing else {
+        unreachable!("asserted above")
+    };
+    assert_eq!((verdict.specified(), verdict.reproduced()), (2, 2));
+
+    assert!(
+        matches!(row("stream").standing, SectionStanding::Inline),
+        "a page with no judge and no screen still reads `Inline`, which is what \
+         makes registering one a statement rather than a default"
+    );
+    assert_eq!(report.judged(), 2);
+    assert_eq!(report.unjudged(), 1);
+
+    // ★★★★★ The half a judge cannot work out for itself: read from another
+    // page, the host's store is full of THAT page's marks, so a judge told
+    // nothing would report the section's own parts as missing.
+    let elsewhere = roster.conformance(&at("catalog"));
+    let board = elsewhere
+        .rows()
+        .iter()
+        .find(|row| row.key == "dashboard")
+        .expect("the roster's own population");
+    assert!(!board.showing);
+    let SectionStanding::Judged(verdict) = &board.standing else {
+        panic!(
+            "still judged from elsewhere: a row that vanished would put the \
+                section back outside the population"
+        )
+    };
+    assert_eq!(
+        (verdict.reproduced(), verdict.away()),
+        (0, 1),
+        "away, and counted as reproducing nothing -- declining to be judged is \
+         not passing"
+    );
+    assert!(!verdict.reconciles());
+}
+
+/// ★★★★★ R1761 — every refusal a mount gets, a judge gets; and the one that is
+/// only a judge's.
+#[test]
+fn r1761_a_roster_refuses_a_judge_it_cannot_honour() {
+    use pinion_screen::RosterDefect;
+
+    let empty = || {
+        ScreenRoster::new(destinations(), Vec::new())
+            .expect("nothing is mounted, so nothing can be mounted wrongly")
+    };
+
+    assert_eq!(
+        empty().judging("sessions", Box::new(BoardJudge)).err(),
+        Some(RosterDefect::NoSuchDestination {
+            key: "sessions".to_owned()
+        }),
+        "a verdict about a section the application does not have is a verdict \
+         nobody can check"
+    );
+    assert_eq!(
+        empty().judging("topology", Box::new(BoardJudge)).err(),
+        Some(RosterDefect::DestinationIsClosed {
+            key: "topology".to_owned()
+        }),
+        "a closed destination has no section to judge -- the row already says \
+         why you cannot arrive, and a verdict beside it would be a second \
+         answer to a question that is settled"
+    );
+    assert_eq!(
+        empty()
+            .judging("dashboard", Box::new(BoardJudge))
+            .expect("`dashboard` is open")
+            .judging("dashboard", Box::new(BoardJudge))
+            .err(),
+        Some(RosterDefect::DuplicateJudge {
+            key: "dashboard".to_owned()
+        })
+    );
+
+    let mounted = ScreenRoster::new(
+        destinations(),
+        vec![(
+            "catalog",
+            Box::new(Mount::<LabFixture>::new()) as Box<dyn Screen>,
+        )],
+    )
+    .expect("the fixture screen is mounted at an open destination");
+    assert_eq!(
+        mounted.judging("catalog", Box::new(BoardJudge)).err(),
+        Some(RosterDefect::SectionAlreadyAnswers {
+            key: "catalog".to_owned()
+        }),
+        "★★★★★ a mounted screen answers for its own section; a second verdict \
+         from the host would make which one wins depend on the order the two \
+         registrations were written in"
     );
 }
 

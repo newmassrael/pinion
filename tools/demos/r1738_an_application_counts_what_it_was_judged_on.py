@@ -137,13 +137,25 @@ def section_a(app: RpcSubprocess) -> None:
         "not silence",
         all("why" in row for row in said["rows"] if row["standing"] != "judged"),
     )
+    # ★★★★★ R1761 — this read `("tag" in row) == (row["standing"] in {"judged",
+    # "unspecified"})`, which was a true statement about a world where the only
+    # way to be judged was to be a mounted binding. It stopped being true the
+    # round a page the HOST paints started answering for itself: that row is
+    # `judged` and has no tag, because there is no separate surface to address.
+    #
+    # The claim it was reaching for is about mounting, so it now asks the fact
+    # about mounting — published on the roster's own wire since R1724 — instead
+    # of inferring it from a standing that no longer implies it.
+    mounted = {
+        row["key"]
+        for row in app.query(f"{EXT}/destinations")["destinations"]
+        if row["mounted"]
+    }
     ok(
         "A: a row carries the tag its section is addressed by exactly when a "
-        "screen is mounted there",
-        all(
-            ("tag" in row) == (row["standing"] in {"judged", "unspecified"})
-            for row in said["rows"]
-        ),
+        "screen is mounted there -- a page the host paints itself is judged "
+        "with no tag, because there is nothing else to ask",
+        all(("tag" in row) == (row["key"] in mounted) for row in said["rows"]),
     )
     print(
         f"  [population] {said['sections']} section(s): {said['judged']} judged, "
@@ -197,10 +209,17 @@ def section_c(app: RpcSubprocess) -> None:
     # means a client cannot assemble the application's verdict by asking the
     # sections — it would have to navigate the tool to find out what the tool
     # is, changing what the reader is looking at in order to measure it.
+    # ★ R1761 — the first judged row is the DASHBOARD now, and it has no wire of
+    # its own to be out of reach: a page the host paints is answered for by the
+    # host. The claim below is about a section with a surface to address, so the
+    # population is the judged rows that have one.
+    addressable = [row for row in judged if "tag" in row]
+    ok("C: some judged section is a mounted screen with a wire of its own", addressable)
     ok(
         "C: ★★★★★ standing at `dashboard`, a section's own wire is out of reach "
         "-- so a client CANNOT build this report by asking the sections",
-        app.query(f"{EXT}/nav") == "dashboard" and unreachable(app, judged[0]["tag"]),
+        app.query(f"{EXT}/nav") == "dashboard"
+        and unreachable(app, addressable[0]["tag"]),
     )
     ok(
         "C: ★★★★★ and yet the host answers for every one of them from here -- "
@@ -248,22 +267,38 @@ def section_c(app: RpcSubprocess) -> None:
     # is a claim about one frame, not about two.
     for row in judged:
         SECTIONS_WALKED += 1
-        app.intervene(f"{EXT}/nav", row["key"])
-        app.tick(16)
+        # ★ R1761 — the frame, not the tick: the verdict read next is a fact
+        # about the last PAINTED frame.
+        app.intervene_painted(f"{EXT}/nav", row["key"])
         here = next(r for r in report(app)["rows"] if r["key"] == row["key"])
         ok(
             f"C: ★★ the report says `{row['key']}` is the section showing, so a "
             f"reader knows which frame the verdict beside it is about",
             here["showing"] is True,
         )
-        own = app.query(f"/{row['tag']}/external/conformance")
-        assert_eq(
-            own,
-            here["conformance"],
-            f"C: ★★ the host's row for `{row['key']}` IS the value the section "
-            f"publishes on its own wire -- the host aggregates, it does not "
-            f"re-derive",
-        )
+        # ★ R1761 — a page the host paints has no wire of its own, and the
+        # absent `tag` is the row saying so rather than an omission. The
+        # comparison below is the one that only exists for a mounted screen;
+        # for the host's own page the checkable claim is the other one — that
+        # there is no second place this verdict is published from.
+        if "tag" in row:
+            own = app.query(f"/{row['tag']}/external/conformance")
+            assert_eq(
+                own,
+                here["conformance"],
+                f"C: ★★ the host's row for `{row['key']}` IS the value the "
+                f"section publishes on its own wire -- the host aggregates, it "
+                f"does not re-derive",
+            )
+        else:
+            own = here["conformance"]
+            ok(
+                f"C: ★★ `{row['key']}` is a page the host paints, so its "
+                f"verdict has exactly one publisher: no surface of its own "
+                f"answers, even standing in it",
+                app.query(f"{EXT}/nav") == row["key"]
+                and unreachable(app, row["key"]),
+            )
         assert_eq(
             here["conformance"]["specified"],
             sum(surface["specified"] for surface in own["surfaces"].values()),
@@ -285,8 +320,7 @@ def section_c(app: RpcSubprocess) -> None:
     # verdict is about the paint, a row read from another page is about a frame
     # that is not in the application any more. Same correction R1742 had to make
     # one assertion earlier, found by running this old gate after the change.
-    app.intervene(f"{EXT}/nav", "keys")
-    app.tick(16)
+    app.intervene_painted(f"{EXT}/nav", "keys")
     keys_row = next(r for r in report(app)["rows"] if r["key"] == "keys")
     with RpcSubprocess(KEYS_SECTION, boot_grace=1.5) as standalone:
         assert_eq(
@@ -296,8 +330,7 @@ def section_c(app: RpcSubprocess) -> None:
             "SAME verdict -- a section that conforms in its own window and is "
             "never asked as a page would be two builds wearing one name",
         )
-    app.intervene(f"{EXT}/nav", "dashboard")
-    app.tick(16)
+    app.intervene_painted(f"{EXT}/nav", "dashboard")
 
 
 def section_d(app: RpcSubprocess) -> None:
@@ -306,13 +339,27 @@ def section_d(app: RpcSubprocess) -> None:
     said = report(app)
     judged = [row for row in said["rows"] if row["standing"] == "judged"]
     for row in judged:
-        app.intervene(f"{EXT}/nav", row["key"])
-        app.tick(16)
+        # ★ R1761 — the frame, not the tick: the verdict read next is a fact
+        # about the last PAINTED frame.
+        app.intervene_painted(f"{EXT}/nav", row["key"])
         assert_eq(app.query(f"{EXT}/nav"), row["key"], f"D: the `{row['key']}` seat opens")
         rects = abs_rects_of(app.snapshot(source="paint"))
+        # ★ R1761 — a mounted section paints under its own root tag; a page the
+        # host paints has no such tag, and what says its section is there is
+        # the host's page region carrying marks. Two cases because there are
+        # two kinds of section, not because one is a special case.
+        #
+        # 🟥 And the old form was `startswith(f"{row['tag']}.") or "." in tag`,
+        # which any dotted tag on the screen satisfied — so it passed for every
+        # section whatever was painted. Measured while narrowing it: a mounted
+        # screen's marks carry ITS OWN tag prefixes (`pv.filter.query`), not its
+        # root's, so the first disjunct was never the one doing the work. What
+        # is true and checkable is that the guest's ROOT is on the frame.
         ok(
             f"D: arriving at `{row['key']}` paints its section inside the host",
-            any(tag.startswith(f"{row['tag']}.") or "." in tag for tag in rects),
+            row["tag"] in rects
+            if "tag" in row
+            else any(tag.startswith("shell.canvas") for tag in rects),
         )
         for chrome in ("shell.appbar", "shell.rail", f"shell.rail.{row['key']}"):
             ok(f"D: and the host's {chrome} survives it -- a page, not a takeover", chrome in rects)

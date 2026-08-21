@@ -1185,6 +1185,8 @@ const PACKETS_SPEC_JSON: &str = include_str!("../../../docs/analyzer-packets-spe
 /// the pin rather than states the running screen can reach.
 #[must_use]
 pub fn packets_document() -> pinion_core::conformance::SpecDocument {
-    pinion_core::conformance::SpecDocument::parse(PACKETS_SPEC_JSON)
-        .unwrap_or_else(|e| panic!("the capture viewer's specification is readable: {e:?}"))
+    pinion_core::conformance::SpecDocument::pinned(
+        PACKETS_SPEC_JSON,
+        "docs/analyzer-packets-spec.json",
+    )
 }
