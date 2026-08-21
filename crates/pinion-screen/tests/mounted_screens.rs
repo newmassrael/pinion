@@ -784,6 +784,61 @@ fn r1761_a_judge_makes_the_hosts_own_page_a_judged_section() {
     assert!(!verdict.reconciles());
 }
 
+/// ★★★★★ R1763 — **leaving a screen takes its painted marks with it.**
+///
+/// The marks were the one thing leaving did not take: a screen the journey has
+/// left keeps no externals, no windows and no accessibility tree, and kept its
+/// last frame's marks — so anything reading them answered about a frame that
+/// had left the application. Measured on this tree's analysis tool at R1763,
+/// three sections reported a reproduced specification with `showing: false`.
+///
+/// The store is asked directly rather than through a verdict, because a verdict
+/// is what this defect reached THROUGH: pinning it at the store is pinning the
+/// fact, and a screen that starts computing its verdict some other way would
+/// still be covered.
+#[test]
+fn r1763_leaving_a_screen_forgets_the_marks_it_painted() {
+    use pinion_core::painted::{PaintedRegions, painted_regions, record_painted_regions};
+
+    let roster = roster();
+    let empty = Scene::Container(ContainerNode::new(Vec::new()));
+
+    // Both screens have painted, which is the state a walked application is in.
+    for tag in [LAB_TAG, VIEWER_TAG] {
+        record_painted_regions(
+            tag,
+            PaintedRegions::from_marks(vec![(format!("{tag}.row"), Rect::new(0, 0, 10, 10))]),
+        );
+    }
+    assert!(painted_regions(LAB_TAG).is_some());
+    assert!(painted_regions(VIEWER_TAG).is_some());
+
+    let _ = roster.latch(&at("catalog"), &empty);
+    assert!(
+        painted_regions(LAB_TAG).is_some(),
+        "the screen the journey is AT keeps what it painted — it is about to \
+         paint again",
+    );
+    assert!(
+        painted_regions(VIEWER_TAG).is_none(),
+        "★★★★★ and the screen it is not at does not: a verdict read from those \
+         marks would be a statement about a frame that has left",
+    );
+
+    // And walking back is not one-way: the screen that was forgotten paints
+    // again, and the one just left is the one forgotten now.
+    record_painted_regions(
+        VIEWER_TAG,
+        PaintedRegions::from_marks(vec![("v.row".to_owned(), Rect::new(0, 0, 10, 10))]),
+    );
+    let _ = roster.latch(&at("stream"), &empty);
+    assert!(painted_regions(VIEWER_TAG).is_some());
+    assert!(
+        painted_regions(LAB_TAG).is_none(),
+        "leaving is symmetric, so this is a rule rather than one screen's luck",
+    );
+}
+
 /// ★★★★★ R1761 — every refusal a mount gets, a judge gets; and the one that is
 /// only a judge's.
 #[test]

@@ -281,16 +281,38 @@ def section_b(app: RpcSubprocess) -> None:
 
     app.intervene_painted(f"{EXT}/nav", "dashboard")
     away = row(app)
+    # ★★★★★ R1763 — this asserted that the verdict read from the dashboard was
+    # the SAME as the one read while standing in the section, and called that
+    # R1742's hardest defect asserted rather than rediscovered. It was pinning
+    # the defect: the two were equal because the section's marks stayed in the
+    # framework's store after the reader left, so the row went on reporting a
+    # reproduced specification about a frame that had left the application.
+    # Leaving takes the marks with it now, exactly as it already took the
+    # screen's externals, its windows and its accessibility tree — so the
+    # verdict changes, and what it changes TO is the honest answer.
     assert_eq(
-        away["conformance"],
-        standing["conformance"],
-        "B: ★★★★★ the row read from the DASHBOARD is the same verdict as the "
-        "row read while standing in the section -- R1742's hardest defect, "
-        "asserted rather than rediscovered",
+        (
+            away["conformance"]["reproduced"],
+            away["conformance"]["away"],
+            away["conformance"]["reconciles"],
+        ),
+        (0, len(away["conformance"]["surfaces"]), False),
+        "B: ★★★★★ read from the dashboard the section reproduces NOTHING and "
+        "every surface is away -- leaving took its marks with it, so no verdict "
+        "here is about a frame that has left",
     )
     ok(
-        "B: ★★ and only `showing` moved, so a verdict about a frame that has "
-        "left the application cannot read as a verdict about the application",
+        "B: ★★ and the specification it is judged against did not move with "
+        "them: the same parts are named, and only what the frame had changed",
+        {name: surface["canon"] for name, surface in away["conformance"]["surfaces"].items()}
+        == {
+            name: surface["canon"]
+            for name, surface in standing["conformance"]["surfaces"].items()
+        },
+    )
+    ok(
+        "B: ★★ and only one section is showing, so a verdict about a frame that "
+        "has left cannot read as a verdict about the application",
         away["showing"] is False
         and [r["key"] for r in report(app)["rows"] if r["showing"]] == ["dashboard"],
     )

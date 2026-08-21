@@ -561,8 +561,57 @@ impl ScreenRoster {
     /// This is a host's
     /// [`WidgetCore::read_state`](pinion_core::WidgetCore::read_state), and the
     /// only place [`Screen::latch`] is called from.
+    ///
+    /// ★★★★★ R1763 — **and leaving a screen takes its painted marks with it.**
+    ///
+    /// # What forced it, measured
+    ///
+    /// Leaving a screen already takes its externals, its windows and its
+    /// accessibility tree with it — that is this crate's central rule, *the
+    /// screen the journey is at is the only one anything reaches*. Its marks
+    /// were the one thing it left behind, and a verdict read from those is a
+    /// statement about a frame that has left the application.
+    ///
+    /// Measured on the assembled analysis tool at R1763, walking every section
+    /// and returning to the first:
+    ///
+    /// ```text
+    /// packets  showing=false  25 of 26  away=0  reconciles=true
+    /// keys     showing=false  21 of 21  away=0  reconciles=true
+    /// logs     showing=false  15 of 15  away=0  reconciles=true
+    /// ```
+    ///
+    /// Three sections reporting a reproduced specification about frames nobody
+    /// could see. R1742 published `showing` beside each row so a reader could
+    /// TELL, which was the honest half; this is the other half.
+    ///
+    /// ⚠ It matters more than a stale number, because
+    /// [`ApplicationConformance::conforms`](crate::ApplicationConformance::conforms)
+    /// is `unjudged == 0 && declared == 0 && every judged report reconciles` —
+    /// and R1762 brought the first two to zero. Without this, an application
+    /// could report conformance earned entirely by frames that had left it.
+    ///
+    /// # Why here, and what it does not reach
+    ///
+    /// Here because this is the per-frame moment that already names the current
+    /// screen, so the fact and its consequence are one expression. The window
+    /// path forgets a surface that is in the state scene and painted nothing
+    /// (`announce_external_sizes`, R1737); a screen the journey has left has no
+    /// externals in the state scene at all, so that loop never reaches it —
+    /// which is why the roster is the only thing that can.
+    ///
+    /// A screen's own nested surfaces (a text field that owns focus is an
+    /// `External` of its own) keep their marks. Nothing reads them for a
+    /// verdict — a section's judge reads its ROOT's store, which is what R1758
+    /// made sufficient — and stating the limit is cheaper than a reader
+    /// assuming it was covered.
     #[must_use]
     pub fn latch(&self, journey: &Journey, state_scene: &Scene) -> ScreenState {
+        for (key, screen) in &self.screens {
+            if key.as_str() != journey.at() {
+                pinion_core::painted::forget_painted_regions(screen.tag());
+            }
+        }
         let at = self
             .destinations
             .keys()
