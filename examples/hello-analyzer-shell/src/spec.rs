@@ -421,6 +421,25 @@ pub fn board_document() -> pinion_core::conformance::SpecDocument {
 /// and `crate::judge` carries the reading.
 const DASHBOARD_SPEC_JSON: &str = include_str!("../../../docs/analyzer-dashboard-spec.json");
 
+/// ★★★★★ R1762 — the PREFERENCES SECTION's written specification: the ten rows
+/// the reference draws, in four groups, and the words it heads them with.
+const SETTINGS_SPEC_JSON: &str = include_str!("../../../docs/analyzer-settings-spec.json");
+
+/// The preferences section's specification, parsed.
+///
+/// # Panics
+///
+/// If the document is not a specification — unreadable JSON, a surface with no
+/// canon, a remainder entry naming no round or no reason. All defects in the
+/// pin, and all of them must stop the build rather than weaken the gate.
+#[must_use]
+pub fn settings_document() -> pinion_core::conformance::SpecDocument {
+    pinion_core::conformance::SpecDocument::pinned(
+        SETTINGS_SPEC_JSON,
+        "docs/analyzer-settings-spec.json",
+    )
+}
+
 /// The dashboard section's specification, parsed.
 ///
 /// # Panics
@@ -495,7 +514,84 @@ pub const OPTIONS: &[OptionSpec] = &[
     },
 ];
 
-/// One row on the Settings page whose affordance is booked for a later release.
+/// ★★★★★ R1762 — one preferences row whose control is **a value and a chevron**.
+///
+/// The reference's first group opens with two of these before either of its
+/// switches, and this build had neither: measured at R1761 against the
+/// behaviour reference, the capture group draws four rows there and two here.
+/// They are the rows that make the page a page rather than a switchboard — the
+/// value is a word out of a roster, so the control is the collapsed chooser
+/// R1732 built for a form and R1762 lifted out of it.
+pub struct ValueRowSpec {
+    /// The key the wire addresses it by, and the suffix of its paint tag.
+    pub key: &'static str,
+    /// The row's title.
+    pub title: &'static str,
+    /// The sentence under it.
+    pub gist: &'static str,
+}
+
+/// ★★★★★ R1762 — the page's own heading, and the line under it.
+///
+/// The reference opens its preferences page with both and this build opened
+/// with neither: measured at R1761, a reader arriving here was given four
+/// unlabelled cards. A page that does not say what it is is a page whose groups
+/// are the only thing naming it.
+pub const SETTINGS_HEAD: (&str, &str) = (
+    "Settings",
+    "Capture, decode, decryption and appearance preferences.",
+);
+
+/// ★★★★★ R1762 — the decode group's third row: the payload formats this build
+/// can take apart, as the chips the reference lists them in.
+///
+/// Not a switch and not a chooser — the reference draws a set of formats that
+/// are *all* applied, which is a chip row. Its key, its title and the sentence
+/// under it, in the reference's own order.
+pub const PLUGIN_ROW: (&str, &str, &str) = (
+    "plugins",
+    "Payload sub-decoders",
+    "Format plugins applied to payloads",
+);
+
+/// The payload formats the row lists, in the reference's order.
+///
+/// Neutral by construction: the reference names two third-party serialisations
+/// and what is being reproduced is *that there are two named formats and both
+/// are on*, so they are named for what they are.
+pub const PLUGINS: [&str; 2] = ["schema", "records"];
+
+/// ★★★★★ R1762 — the three facts the page closes with: what this tool is, what
+/// wire format it reads, and which build a reader is looking at.
+///
+/// The reference's own footer, and the one place either screen says which build
+/// it is — which is the fact a person filing a defect is asked for first.
+pub const BUILD_STRIP: [&str; 3] = ["analysis tool", "wire format 0x09", "build R1762"];
+
+/// The two value rows, in the reference's order — both above the switches.
+pub const VALUE_ROWS: &[ValueRowSpec] = &[
+    ValueRowSpec {
+        key: "interface",
+        title: "Interface",
+        gist: "Capture source device",
+    },
+    ValueRowSpec {
+        key: "retention",
+        title: "Ring buffer size",
+        gist: "In-memory capture retention",
+    },
+];
+
+/// What the capture buffer may be sized to, smallest first.
+///
+/// A roster rather than a number field, because that is what the reference
+/// draws: a word in a box with a chevron, not a spin button. The opening value
+/// is the reference's own.
+pub const RETENTIONS: [&str; 3] = ["256 MB", "512 MB", "1 GB"];
+
+/// The buffer size the screen opens with — the middle of [`RETENTIONS`], which
+/// is the reference's.
+pub const RETENTION: &str = "512 MB";
 ///
 /// The reference wires both of these to the same *arrives later* handler, so
 /// they are the settings page's own locked seats — declared unavailable the way
@@ -1437,6 +1533,8 @@ pub enum Population {
     OptionGroups,
     /// R1695 — one per [`OPTIONS`] switch, keyed by its key.
     Options,
+    /// ★ R1762 — one per [`VALUE_ROWS`] row, keyed by its key.
+    ValueRows,
     /// R1695 — one per [`KEY_ROWS`] row, keyed by its key.
     KeyRows,
     /// R1695 — one per [`THEMES`] choice, keyed by index.
@@ -1510,6 +1608,7 @@ impl Population {
                 .map(|(key, _)| (*key).to_owned())
                 .collect(),
             Population::Options => OPTIONS.iter().map(|o| o.key.to_owned()).collect(),
+            Population::ValueRows => VALUE_ROWS.iter().map(|r| r.key.to_owned()).collect(),
             Population::KeyRows => KEY_ROWS.iter().map(|r| r.key.to_owned()).collect(),
             Population::Themes => indexes(THEMES.len()),
             Population::Placeable => CATALOGUE
@@ -1861,6 +1960,17 @@ pub const VOICES: &[VoiceSpec] = &[
         population: Population::KeyRows,
         at: Where::At("settings"),
     },
+    // ★★★★★ R1762 — the capture group's two value rows. A `combobox` is the
+    // role that says *there is a roster behind this*, and the screen carries
+    // `expanded` beside it so a reader is told whether the roster is in front
+    // of them — the pair the floor's own collapsed control cannot publish
+    // without a platform layer adding one.
+    VoiceSpec {
+        tag: "shell.settings.choose.{}",
+        role: "combobox",
+        population: Population::ValueRows,
+        at: Where::At("settings"),
+    },
     VoiceSpec {
         tag: "shell.settings.theme",
         role: "radiogroup",
@@ -1899,6 +2009,23 @@ pub const SILENCES: &[(&str, Population, &str, Where)] = &[
         Population::One,
         "part_of",
         Where::At("dashboard"),
+    ),
+    // ★★★★★ R1762 — a collapsed chooser's two inner parts. Both are painted,
+    // addressable and pressable, so the census asks about them — and the honest
+    // answer for both is that their content is already in the chooser's own
+    // announcement: the word IS its value, and the arrow draws the same
+    // open/closed state `expanded` carries.
+    (
+        "shell.settings.shown.{}",
+        Population::ValueRows,
+        "part_of",
+        Where::At("settings"),
+    ),
+    (
+        "shell.settings.arrow.{}",
+        Population::ValueRows,
+        "part_of",
+        Where::At("settings"),
     ),
     (
         "shell.palette.head.title",

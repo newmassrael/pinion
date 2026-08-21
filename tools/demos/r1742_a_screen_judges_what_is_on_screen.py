@@ -567,10 +567,13 @@ def section_e(app: RpcSubprocess, key: str) -> None:
 
 def body() -> None:
     accepted = unjudged_sections()
+    # ★ R1762 — the non-emptiness guard came off for the reason it was there:
+    # the remainder is empty now, and what makes this non-vacuous is section A's
+    # equality against the application's own unjudged rows.
     ok(
         "the reviewed remainder names a seat and a sentence for every section "
         "it still accepts as unjudged",
-        accepted and all(k and s for k, s in accepted.items()),
+        all(k and s for k, s in accepted.items()),
     )
 
     with RpcSubprocess(SHELL, boot_grace=1.5) as app:

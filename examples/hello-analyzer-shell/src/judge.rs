@@ -141,6 +141,95 @@ fn board(regions: &PaintedRegions) -> Vec<Part> {
     })
 }
 
+/// Where the preferences page's headings are addressed — the page's own, and
+/// one per group.
+const SETTINGS_HEAD: &str = "shell.settings.head.";
+/// Where each preferences row's title and sentence are addressed.
+const SETTINGS_ROWS: &str = "shell.settings.row.";
+/// Where a value row's collapsed chooser is addressed.
+const SETTINGS_CHOOSE: &str = "shell.settings.choose.";
+/// Where a switch is addressed.
+const SETTINGS_SWITCH: &str = "shell.settings.option.";
+/// Where a booked row's button is addressed.
+const SETTINGS_LOCKED: &str = "shell.settings.key.";
+/// Where an appearance choice is addressed.
+const SETTINGS_THEME: &str = "shell.settings.theme.";
+/// Where a payload format's chip is addressed.
+const SETTINGS_PLUGIN: &str = "shell.settings.plugin.";
+
+/// What answers for the preferences page, which is the other page this shell
+/// paints itself.
+pub struct SettingsJudge;
+
+impl SectionJudge for SettingsJudge {
+    fn conformance(&self, showing: Showing) -> DocumentReport {
+        spec::settings_document().report_from_paint(VIEW_TAG, &|regions, surface| {
+            settings_built(regions, surface, showing)
+        })
+    }
+}
+
+/// One preferences surface, as the last painted frame has it — or the reason it
+/// was not on that frame.
+///
+/// # Panics
+///
+/// If asked for a surface the specification does not name, which is a defect in
+/// this file rather than a state the screen can reach.
+#[must_use]
+pub fn settings_built(regions: &PaintedRegions, surface: &str, showing: Showing) -> Built {
+    if !showing.is_on_screen() {
+        return Built::away(
+            "the reader is on another section, so this page painted no part of the last frame",
+        );
+    }
+    match surface {
+        // ★ Read, not titled: the reference fixes these words and a painter that
+        // labelled a group anything at all would leave the difference invisible.
+        "head" => Built::Standing(parts_as_read(regions, SETTINGS_HEAD)),
+        "rows" => Built::Standing(parts_as_read(regions, SETTINGS_ROWS)),
+        "locked" => Built::Standing(parts_as_read(regions, SETTINGS_LOCKED)),
+        "theme" => Built::Standing(parts_as_read(regions, SETTINGS_THEME)),
+        "plugins" => Built::Standing(parts_as_read(regions, SETTINGS_PLUGIN)),
+        // ★ Titled, not read: a chooser draws the VALUE a session put in it and
+        // a switch draws no words at all, so pinning what they paint would
+        // report a working page as wrong the moment a reader used it.
+        "choosers" => Built::Standing(parts_titled(
+            regions,
+            SETTINGS_CHOOSE,
+            &settings_title_in("choosers"),
+        )),
+        "switches" => Built::Standing(parts_titled(
+            regions,
+            SETTINGS_SWITCH,
+            &settings_title_in("switches"),
+        )),
+        other => panic!("no preferences surface named {other}"),
+    }
+}
+
+/// What one part of a preferences `surface` is called, in this screen's own
+/// words.
+///
+/// Sourced from the PIN rather than from a second table here, because these two
+/// surfaces are the ones whose titles are not on the frame: a table written
+/// beside them could drift from the document they are judged against, and the
+/// drift would read as agreement.
+///
+/// # Panics
+///
+/// If asked about a surface with no canon, which is the same defect as above.
+fn settings_title_in(surface: &'static str) -> impl Fn(&str) -> Option<String> + use<> {
+    move |key: &str| {
+        spec::settings_document()
+            .canon(surface)?
+            .parts()
+            .iter()
+            .find(|part| part.key == key)
+            .map(|part| part.title.as_ref().to_owned())
+    }
+}
+
 /// What one part of `surface` is called, in this screen's own words.
 ///
 /// # Panics

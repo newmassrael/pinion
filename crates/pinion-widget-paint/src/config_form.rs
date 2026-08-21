@@ -71,7 +71,7 @@ use pinion_core::{Scene, measured_text_extent};
 /// neighbour in the port. The doc on [`RowWrap::Beside`] has claimed since
 /// R1651 that "a key wider than the column is elided rather than moving" — this
 /// is the round that makes that sentence true.
-fn form_run_style() -> TextStyle {
+pub(crate) fn form_run_style() -> TextStyle {
     TextStyle::new().with_overflow(TextOverflow::EllipsisMiddle)
 }
 
@@ -360,25 +360,13 @@ pub struct OpenPicker<'a> {
 /// to whatever row it happens to cover. Publishing it apart makes the layering
 /// a declared fact instead of a consequence of iteration order — and
 /// [`FormGeometry::option_at`] then has one place to consult first.
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct PickerPopup {
-    /// The configuration path this roster belongs to.
-    pub key: String,
-    /// The whole roster's box, which is what the paint fills and outlines.
-    pub rect: Rect,
-    /// Each option, as the tag suffix it is pressed by and where it landed.
-    ///
-    /// The suffix vocabulary is the one the expanded row used —
-    /// `option.<key>.<word>` — so a driver that could press an option before
-    /// this round presses the same name now. What changed is where it is, not
-    /// what it is called.
-    pub options: Vec<(String, Rect)>,
-    /// Whether the roster opened **upward** because there was no room below.
-    ///
-    /// Derived from [`OpenPicker::room`], published because a test that has to
-    /// re-derive it is a test that can agree with a wrong answer.
-    pub above: bool,
-}
+///
+/// ★ R1762 — the type itself moved to [`crate::chooser`], where the control it
+/// belongs to now lives: a collapsed chooser is not a thing only a form has,
+/// and a second consumer proved it. The suffix vocabulary is unchanged —
+/// `option.<key>.<word>` — so a driver that could press an option before
+/// presses the same name now.
+pub use crate::chooser::RosterBox as PickerPopup;
 
 /// Where every part of a form landed.
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -617,14 +605,11 @@ fn control_hint(field: &ConfigField, style: &FormStyle) -> u32 {
     }
 }
 
-/// The outline an open roster draws inside its own box, and so the inset its
-/// options are laid within — the popup's answer to [`CONTROL_FRAME`].
-const POPUP_FRAME: u32 = 1;
-
-/// The gap between a collapsed control and the roster it opens.
-const POPUP_GAP: u32 = 2;
-
 /// The width of the chevron seat at a collapsed control's trailing edge.
+///
+/// ★ R1762 — the roster's own frame and gap left with it (see
+/// [`crate::chooser`]); this one stays because the form measures a row's
+/// control hint against it.
 const CHEVRON_W: u32 = 22;
 
 /// Horizontal padding inside an option chip.
@@ -708,42 +693,16 @@ pub fn form_geometry_showing(
 /// height — clamping it would publish a box the paint does not draw, and the
 /// consumer that has to scroll it needs the real number.
 fn lay_popup(row: &RowBox, open: OpenPicker<'_>, style: &FormStyle) -> PickerPopup {
-    let n = u32::try_from(open.picker.len()).unwrap_or(u32::MAX);
-    let height = n * style.control_h + POPUP_FRAME * 2;
-    let control = row.control;
-    let below = control.y + control.h + POPUP_GAP;
-    let room_bottom = open.room.y + open.room.h;
-    let above = below + height > room_bottom && control.y >= height + POPUP_GAP;
-    let top = if above {
-        control.y - height - POPUP_GAP
-    } else {
-        below
-    };
-    let rect = Rect::new(control.x, top, control.w, height);
-    let options = open
-        .picker
-        .options()
-        .iter()
-        .enumerate()
-        .map(|(n, word)| {
-            let n = u32::try_from(n).unwrap_or(u32::MAX);
-            (
-                format!("option.{}.{word}", row.key),
-                Rect::new(
-                    rect.x + POPUP_FRAME,
-                    rect.y + POPUP_FRAME + n * style.control_h,
-                    rect.w.saturating_sub(POPUP_FRAME * 2),
-                    style.control_h,
-                ),
-            )
-        })
-        .collect();
-    PickerPopup {
-        key: row.key.clone(),
-        rect,
-        options,
-        above,
-    }
+    // ★ R1762 — the arithmetic moved to `crate::chooser`, which is where the
+    // control it belongs to lives. What stays here is the form's own half: the
+    // row a roster hangs off, and the row height it lays its options at.
+    crate::chooser::lay_roster(
+        &row.key,
+        row.control,
+        open.picker,
+        open.room,
+        style.control_h,
+    )
 }
 
 /// One row's rectangles, under the style's policy pair.
@@ -1002,7 +961,7 @@ fn width_of(geometry: &FormGeometry) -> u32 {
 
 /// Place a node at `rect`, expressed in the same space [`form_geometry`]
 /// reported — the paint subtracts the form's origin exactly once, here.
-fn placed(layout: LayoutStyle, rect: Rect, origin: (u32, u32)) -> LayoutStyle {
+pub(crate) fn placed(layout: LayoutStyle, rect: Rect, origin: (u32, u32)) -> LayoutStyle {
     layout
         .with_absolute_position(
             rect.x.saturating_sub(origin.0),
@@ -1560,7 +1519,7 @@ const fn inset_by(rect: Rect, frame: u32) -> Rect {
 /// One place rather than three: the three call sites below draw the same skin,
 /// and a padding each of them remembers separately is a padding one of them
 /// forgets — which is what the measurement found.
-fn framed(base: LayoutStyle) -> LayoutStyle {
+pub(crate) fn framed(base: LayoutStyle) -> LayoutStyle {
     let pad = base.padding;
     base.with_padding(Rect::new(
         pad.x + CONTROL_FRAME,
@@ -1649,49 +1608,6 @@ fn part_pill(
     )
 }
 
-/// The arrow at a collapsed control's trailing edge, and its **declared
-/// silence**.
-///
-/// No pill skin, unlike every other part: the reference draws the arrow inside
-/// the field's own box rather than as a button beside it, and a bordered pill
-/// here would read as a second control on a row that has one.
-///
-/// The silence is the load-bearing half. This rectangle is published, painted
-/// and pressable, so the voice census asks about it — and the honest answer is
-/// that its content is already in the combo box's announcement, which carries
-/// the same open/closed state the arrow draws. The framework's part-of class of
-/// silence says exactly that, and names the node a reader receives it at.
-fn chevron(
-    tag: String,
-    control_tag: String,
-    seat: Rect,
-    origin: (u32, u32),
-    theme: &Theme,
-) -> Scene {
-    // `placed` makes it pointer-transparent, which is what keeps a press
-    // reaching the consumer's hit test over the published rectangle rather than
-    // dying on a tag that has no `External`.
-    Scene::Container(
-        ContainerNode::new(vec![Scene::Text(TextNode::styled(
-            "\u{25be}".to_owned(),
-            Rect::default(),
-            form_run_style()
-                .with_size_px(10)
-                .with_fg(theme.resolve(ColorRole::OnSurfaceMuted)),
-        ))])
-        .with_tag(tag)
-        .with_layout(placed(
-            LayoutStyle::new()
-                .flex(FlexDirection::Row)
-                .with_align_items(AlignItems::Center)
-                .with_justify(JustifyContent::Center)
-                .with_silence(Silence::part_of(control_tag)),
-            seat,
-            origin,
-        )),
-    )
-}
-
 /// ★★★★★ R1732 — a choice row **collapsed**: the word it holds, and the
 /// chevron that opens the rest.
 ///
@@ -1707,56 +1623,20 @@ fn picker_control(
     origin: (u32, u32),
     theme: &Theme,
 ) -> Scene {
-    let seat = part_seat(row, &format!("pick.{}", row.key));
-    let shown = Rect::new(
-        10,
-        0,
-        row.control.w.saturating_sub(CHEVRON_W + 16),
-        row.control.h,
-    );
-    Scene::Container(
-        ContainerNode::new(vec![
-            // ★★★★ R1732 — the word the row holds, ADDRESSED. The reference's
-            // control shows its value inside itself and so does this one; a run
-            // nothing can name is a run a conformance check reads back as a
-            // missing part and a driver cannot ask about. Its words are the
-            // control's announced value, so it is folded into it rather than
-            // said twice.
-            Scene::Text(
-                TextNode::styled(
-                    field.value().into_owned(),
-                    shown,
-                    form_run_style()
-                        .with_size_px(12)
-                        .with_fg(theme.resolve(ColorRole::OnSurface)),
-                )
-                .with_tag(format!("{tag_prefix}.shown.{}", row.key))
-                .with_layout(
-                    LayoutStyle::new()
-                        .with_absolute_position(shown.x, shown.y)
-                        .with_size(Size::px(shown.w, shown.h))
-                        .with_pointer_transparent(true)
-                        .with_silence(Silence::part_of(format!(
-                            "{tag_prefix}.control.{}",
-                            row.key
-                        ))),
-                ),
-            ),
-            chevron(
-                format!("{tag_prefix}.pick.{}", row.key),
-                format!("{tag_prefix}.control.{}", row.key),
-                seat,
-                (row.control.x, row.control.y),
-                theme,
-            ),
-        ])
-        .with_tag(format!("{tag_prefix}.control.{}", row.key))
-        .with_style(control_skin(worst, theme))
-        .with_layout(placed(
-            framed(LayoutStyle::new().with_focusable(true)),
-            row.control,
-            origin,
-        )),
+    // ★ R1762 — the control moved to `crate::chooser`. What stays here is what
+    // is about a FORM: which tags this form addresses its parts by, and the
+    // skin a defect on the value behind it paints.
+    crate::chooser::view_collapsed(
+        &crate::chooser::ChooserTags {
+            control: format!("{tag_prefix}.control.{}", row.key),
+            shown: format!("{tag_prefix}.shown.{}", row.key),
+            arrow: format!("{tag_prefix}.pick.{}", row.key),
+        },
+        &field.value(),
+        row.control,
+        origin,
+        control_skin(worst, theme),
+        theme,
     )
 }
 
@@ -1778,50 +1658,11 @@ pub fn view_picker_popup(
     origin: (u32, u32),
     theme: &Theme,
 ) -> Scene {
-    let rows: Vec<Scene> = popup
-        .options
-        .iter()
-        .enumerate()
-        .map(|(n, (suffix, rect))| {
-            let word = suffix.rsplit('.').next().unwrap_or_default();
-            let here = n == picker.at();
-            let ink = if word == chosen {
-                theme.resolve(ColorRole::Accent)
-            } else {
-                theme.resolve(ColorRole::OnSurface)
-            };
-            let mut node = ContainerNode::new(vec![Scene::Text(TextNode::styled(
-                word.to_owned(),
-                Rect::new(10, 0, rect.w.saturating_sub(20), rect.h),
-                form_run_style().with_size_px(12).with_fg(ink),
-            ))])
-            .with_tag(format!("{tag_prefix}.{suffix}"))
-            .with_layout(placed(
-                LayoutStyle::new()
-                    .flex(FlexDirection::Row)
-                    .with_align_items(AlignItems::Center),
-                *rect,
-                (popup.rect.x, popup.rect.y),
-            ));
-            if here {
-                node = node.with_style(
-                    BoxStyle::filled(theme.resolve(ColorRole::SurfaceContainerHigh))
-                        .with_corner_radius(6),
-                );
-            }
-            Scene::Container(node)
-        })
-        .collect();
-    Scene::Container(
-        ContainerNode::new(rows)
-            .with_tag(format!("{tag_prefix}.roster.{}", popup.key))
-            .with_style(
-                BoxStyle::filled(theme.resolve(ColorRole::Surface))
-                    .with_corner_radius(8)
-                    .with_border(Border::new(theme.resolve(ColorRole::Outline), POPUP_FRAME)),
-            )
-            .with_layout(placed(framed(LayoutStyle::new()), popup.rect, origin)),
-    )
+    // ★ R1762 — the roster's paint moved to `crate::chooser` with the control
+    // it belongs to. This name stays because it is what a form's caller reaches
+    // for, and it forwards rather than restating: a second copy of a roster's
+    // paint is how two surfaces come to disagree about one control.
+    crate::chooser::view_roster(tag_prefix, popup, picker, chosen, origin, theme)
 }
 
 /// Every option, with the chosen ones marked.

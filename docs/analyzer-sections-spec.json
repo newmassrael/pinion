@@ -99,32 +99,29 @@
     "would be silent in exactly the same way."
   ],
   "unjudged": {
-    "owed": [
-      {
-        "key": "settings",
-        "kind": "inline",
-        "sentence": "the host paints this page itself and nothing answers for it, so nothing compares it with anything",
-        "since": "R1738",
-        "why": [
-          "The same shape `dashboard` was in, and R1761 built the mechanism",
-          "that closes it — `pinion_screen::ScreenRoster::judging`, a judge",
-          "registered for a page the host paints. What is left here is not the",
-          "mechanism, it is the specification: measured at R1761 against the",
-          "behaviour reference, this build's preferences page is MISSING three",
-          "rows the reference draws (a capture-source row and a retention row",
-          "in the first group, a payload-plugin row in the second), its four",
-          "group headings are loose ink no specification can address, and it",
-          "has neither the page heading the reference opens with nor the build",
-          "strip it closes with.",
-          "",
-          "So writing the pin means building those first — a pin that",
-          "specified only what this build already draws would be the R1747",
-          "defect on purpose, a document that cannot fail. That is a round's",
-          "work on the page itself rather than on the plumbing, which is why it",
-          "did not ride along with `dashboard`."
-        ]
-      }
-    ]
+    "$comment": [
+      "★★★★★ R1762 — THIS LIST IS EMPTY, and that is what R1738 opened the",
+      "count for: every section of the assembled application a reader can",
+      "arrive at is now compared with a written specification, and the",
+      "application says so itself (`unjudged: 0`, measured over the wire).",
+      "",
+      "It took five rounds and each closed a different kind of thing. R1742",
+      "made a screen publish a verdict it already computed. R1747 corrected a",
+      "reason that had been false for nine rounds and published a second. R1758",
+      "made a verdict say what it was read from. R1761 found that the route",
+      "recorded for the last two was itself wrong — a host paints a section's",
+      "chrome beside the page region, so a `Screen` there would judge three",
+      "quarters of its own section — and built the smaller thing instead.",
+      "R1762 could then write the last pin, once the page it is about had the",
+      "three rows, the heading and the footer the reference draws and this",
+      "build did not.",
+      "",
+      "AN EMPTY LIST IS STILL ASSERTED. The gate compares these entries with",
+      "the application's unjudged rows as an EQUALITY, so a section that stops",
+      "answering fails here as loudly as an entry left behind after it was",
+      "paid. Empty is a claim, not an absence of one."
+    ],
+    "owed": []
   },
   "it_is_the_application": {
     "owed": [

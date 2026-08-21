@@ -122,9 +122,11 @@ use pinion_core::{Frame, Scene, WidgetCore};
 // ★★★★★ R1724 — the axis that makes this file an application rather than a
 // screen: a destination's page can be another binding, mounted whole.
 use pinion_core::chrome::{HostChrome, Part as ChromePart};
+use pinion_core::widgets::picker::Picker;
 use pinion_screen::{Mount, Screen, ScreenRoster, ScreenState};
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
 use pinion_widget_paint::button::{self, ButtonColors, ButtonStyle};
+use pinion_widget_paint::chooser;
 use pinion_widget_paint::pages::{PagePointer, view_page_region};
 use pinion_widget_paint::pane::{PanePointer, scroll_pane};
 use pinion_widget_paint::run::text_run;
@@ -241,6 +243,16 @@ const FLOAT_GRIP: u32 = 16;
 
 /// R1662 — the input-router tag the board's scrolling body answers to.
 const CANVAS_SCROLL: &str = "shell.canvas.body";
+
+/// ★★★★★ R1762 — the preferences page's own scrolling viewport.
+///
+/// The reference's page scrolls (`overflow:auto` on its body) and this one did
+/// not, which held while the page was four short cards. Measured the moment the
+/// reference's own rows were built: the appearance group landed at y=872 in a
+/// region ending at y=900 and its build strip at y=958, so the last group's
+/// controls were painted where no press could reach them — the gate caught it
+/// as a segment that would not change the theme.
+const SETTINGS_SCROLL: &str = "shell.settings.body";
 
 const FONT_TITLE: u32 = 13;
 const FONT_BODY: u32 = 12;
@@ -596,6 +608,22 @@ struct ShellState {
     /// table and the wire publishes them from the same table; four fields would
     /// be four chances for the two to disagree about the order.
     options: Signal<[bool; spec::OPTIONS.len()]>,
+    /// ★★★★★ R1762 — the capture buffer size in effect, from
+    /// [`spec::RETENTIONS`].
+    ///
+    /// Its own signal rather than a second entry in `options`, because it is
+    /// not a switch: the reference draws it as a word out of a roster, and a
+    /// boolean array with a string in it would be the two encodings of one
+    /// state this file has been bitten by before.
+    retention: Signal<String>,
+    /// ★★★★★ R1762 — which value row's roster is **open**, and where in it the
+    /// reader is.
+    ///
+    /// `None` is closed, and there is deliberately no `open` flag beside a
+    /// highlight: *closed and highlighting the fourth option* is a state that
+    /// should not be spellable, which is the rule
+    /// [`Picker`] itself is built on.
+    picking: RefCell<Option<(String, pinion_core::widgets::picker::Picker)>>,
     /// ★★★★★ R1721 — which saved filter the filter card has applied.
     ///
     /// It had no state at all until this round, and that was the defect: the five
@@ -649,6 +677,9 @@ struct ShellState {
     /// ([[debt-the-analyzer-canvas-does-not-scroll]]). Held on the state
     /// because the paint and the hit test both read it.
     canvas_scroll: Rc<ScrollState>,
+    /// ★ R1762 — the preferences page's viewport, for the reason the reference
+    /// gives its own page one: the groups are taller than the region.
+    settings_scroll: Rc<ScrollState>,
 }
 
 /// ★★★★★ R1724 — **the destinations of this application, and the screens
@@ -724,6 +755,12 @@ fn screen_roster() -> ScreenRoster {
     // is on the frame — and gets nothing else. See `crate::judge`.
     .judging("dashboard", Box::new(judge::BoardJudge))
     .expect("`dashboard` is an open destination with no screen mounted at it")
+    // ★★★★★ R1762 — and the other page this shell paints itself. With this the
+    // application's `unjudged` count reaches ZERO: every section a reader can
+    // arrive at is compared with a written specification, which is what R1738
+    // opened the count for.
+    .judging("settings", Box::new(judge::SettingsJudge))
+    .expect("`settings` is an open destination with no screen mounted at it")
     // ★★★★★ R1725 — **this application has a navigation, so its pages must not
     // each bring one.** Declared here, beside the roster it is a fact about:
     // the rail this shell paints IS `spec::RAIL`, and a screen shown inside it
@@ -793,6 +830,8 @@ impl ShellState {
             ),
             screens: screen_roster(),
             options: Signal::new(opening_options()),
+            retention: Signal::new(spec::RETENTION.to_string()),
+            picking: RefCell::new(None),
             // The chip the specification opens with, read from the same table the
             // paint reads — so the screen opens where the reference's does.
             filter_chip: Signal::new(spec::FILTER_CHIPS.iter().position(|(_, on)| *on)),
@@ -816,6 +855,7 @@ impl ShellState {
             toast: Signal::new(Utterance::done(format!("{} loaded", spec::PRESET))),
             next_id: RefCell::new(u(spec::BOARD.len())),
             canvas_scroll: Rc::new(ScrollState::with_tag(CANVAS_SCROLL)),
+            settings_scroll: Rc::new(ScrollState::with_tag(SETTINGS_SCROLL)),
         }
     }
 
@@ -1180,21 +1220,29 @@ fn on_board(state: &ShellState, px: u32, py: u32) -> bool {
         )
 }
 
+/// ★ R1762 — a window coordinate folded into a scrolled surface's own frame.
+///
+/// One helper because three hit tests do it: the board's, the preferences
+/// page's, and the cell query below. Two of them wrote it out and the third was
+/// about to, which is this project's lift trigger — and the sharper reason is
+/// that an offset folded three ways is an offset one of them folds the wrong
+/// direction.
+fn fold_by(v: u32, by: i32) -> u32 {
+    #[allow(
+        clippy::cast_sign_loss,
+        clippy::cast_possible_truncation,
+        reason = "clamped into u32's range on the line above the cast"
+    )]
+    let folded = (i64::from(v) + i64::from(by)).clamp(0, i64::from(u32::MAX)) as u32;
+    folded
+}
+
 fn cell_at_window(state: &ShellState, px: u32, py: u32) -> (u32, u32) {
     let canvas = canvas_rect();
     let (ox, oy) = state.canvas_scroll.offset();
-    let fold = |v: u32, by: i32| -> u32 {
-        #[allow(
-            clippy::cast_sign_loss,
-            clippy::cast_possible_truncation,
-            reason = "clamped into u32's range on the line above the cast"
-        )]
-        let folded = (i64::from(v) + i64::from(by)).clamp(0, i64::from(u32::MAX)) as u32;
-        folded
-    };
     cell_at(
-        fold(px.saturating_sub(canvas.x), ox),
-        fold(py.saturating_sub(canvas.y), oy),
+        fold_by(px.saturating_sub(canvas.x), ox),
+        fold_by(py.saturating_sub(canvas.y), oy),
     )
 }
 
@@ -1559,6 +1607,13 @@ enum Hit {
     Option(&'static str),
     /// R1695 — a Settings key row's button, which is booked for a later release.
     KeyRow(&'static str),
+    /// ★ R1762 — a Settings value row's collapsed control, by its specification
+    /// key. Pressing it opens the roster; pressing it again dismisses.
+    Choose(&'static str),
+    /// ★ R1762 — one option of an open roster, by its place in it. The key
+    /// travels with it because a roster is over the whole page and the row it
+    /// belongs to is not derivable from where the press landed.
+    ChooseOption(String, usize),
     /// R1695 — a theme segment, by its index in [`spec::THEMES`].
     Theme(usize),
     Palette(&'static str),
@@ -1725,6 +1780,45 @@ impl Hit {
     /// responds are derived from ONE fact.
     fn in_settings(state: &ShellState, cx: u32, cy: u32) -> Self {
         let region = page_rect(&state.at());
+        // ★★★★★ R1762 — the page slides under its viewport, so the question is
+        // folded into the query once and every rectangle below stays stated in
+        // the page's own frame. The same shape the board's hit test has, for
+        // the same reason: two places subtracting an offset is two places one
+        // of them forgets to.
+        let (_, oy) = state.settings_scroll.offset();
+        let cy = fold_by(cy, oy);
+        // ★★★★★ R1762 — an OPEN roster is over everything on this page, so it
+        // is asked first. Anywhere else closes it, which is what a reader
+        // expects of a control that is collapsed until you open it and is what
+        // the reference does — and dismissing is not choosing, so the value is
+        // left alone.
+        {
+            let picking = state.picking.borrow();
+            if let Some((key, picker)) = picking.as_ref() {
+                let roster = chooser::lay_roster(
+                    key,
+                    settings_control_rect(region, key),
+                    picker,
+                    region,
+                    SET_OPTION_H,
+                );
+                for (n, (_, seat)) in roster.options.iter().enumerate() {
+                    if contains(*seat, region.x + cx, region.y + cy) {
+                        return Self::ChooseOption(key.clone(), n);
+                    }
+                }
+            }
+        }
+        for row in spec::VALUE_ROWS {
+            let seat = settings_control_rect(region, row.key);
+            if contains(
+                Rect::new(seat.x - region.x, seat.y - region.y, seat.w, seat.h),
+                cx,
+                cy,
+            ) {
+                return Self::Choose(row.key);
+            }
+        }
         for (n, option) in spec::OPTIONS.iter().enumerate() {
             let seat = Self::option_seat(region, n);
             if contains(seat, cx, cy) {
@@ -1755,10 +1849,17 @@ impl Hit {
     fn option_seat(region: Rect, n: usize) -> Rect {
         let option = &spec::OPTIONS[n];
         let card = settings_group_rect(region, option.group);
-        let within = u(spec::OPTIONS[..n]
-            .iter()
-            .filter(|o| o.group == option.group)
-            .count());
+        // ★★★★★ R1762 — the switches start below whatever VALUE rows the group
+        // opens with, and this offset is the same derivation the paint uses.
+        // Found by the gate rather than by inspection: adding two rows to the
+        // capture group moved the paint and left this reading row 0, so a press
+        // at the centre of a painted switch answered `nothing` — the
+        // paint-and-gesture-read-two-facts class, caught the round it appeared.
+        let within = settings_value_count(option.group)
+            + u(spec::OPTIONS[..n]
+                .iter()
+                .filter(|o| o.group == option.group)
+                .count());
         let row = Rect::new(0, within * SET_ROW_H, card.w, SET_ROW_H);
         let seat = settings_ctrl_rect(row, 64);
         Rect::new(card.x + seat.x, card.y + seat.y, seat.w, seat.h)
@@ -1817,16 +1918,7 @@ impl Hit {
         // board's own frame, so the offset is folded into the query once and
         // the two cannot drift.
         let (ox, oy) = state.canvas_scroll.offset();
-        let fold = |v: u32, by: i32| -> u32 {
-            #[allow(
-                clippy::cast_sign_loss,
-                clippy::cast_possible_truncation,
-                reason = "clamped into u32's range on the line above the cast"
-            )]
-            let folded = (i64::from(v) + i64::from(by)).clamp(0, i64::from(u32::MAX)) as u32;
-            folded
-        };
-        let (cx, cy) = (fold(cx, ox), fold(cy, oy));
+        let (cx, cy) = (fold_by(cx, ox), fold_by(cy, oy));
         let board = state.board.get();
         let editing = state.editing.get();
         for card in &state.placed() {
@@ -1944,6 +2036,16 @@ fn hit_word(hit: &Hit) -> String {
         Hit::Rail(name) => format!("shell.rail.{name}"),
         Hit::Option(key) => format!("shell.settings.option.{key}"),
         Hit::KeyRow(key) => format!("shell.settings.key.{key}"),
+        Hit::Choose(key) => settings_choose_tag(key),
+        // The suffix vocabulary the framework's roster lays its options under,
+        // so a driver presses the name the paint published.
+        Hit::ChooseOption(key, n) => format!(
+            "shell.settings.option.{key}.{}",
+            settings_options_of(key)
+                .get(*n)
+                .cloned()
+                .unwrap_or_default()
+        ),
         Hit::Theme(n) => format!("shell.settings.theme.{n}"),
         Hit::Palette(kind) => format!("shell.palette.{kind}"),
         Hit::Grip(id) => format!("card.{id}.grip"),
@@ -2695,6 +2797,10 @@ const FIELDS: &[SchemaField] = const {
         // the app bar
         SchemaField::new("source", "string"),
         SchemaField::new("sources", "string"),
+        // ★ R1762 — the preferences page's value rows.
+        SchemaField::new("retention", "string"),
+        SchemaField::new("retentions", "string"),
+        SchemaField::new("picking", "string"),
         SchemaField::new("capturing", "bool"),
         SchemaField::new("search", "string"),
         SchemaField::new("theme", "string"),
@@ -2940,6 +3046,11 @@ impl ExternalIntrospect for ShellOracle {
         match path {
             "source" => text(state.source.get()),
             "sources" => text(SOURCES.join(",")),
+            // ★ R1762 — the preferences page's value rows answer through one
+            // helper rather than three arms here, because this match is at the
+            // line limit and a slot added to a page should not have to argue
+            // with the size of a function about a different one.
+            "retention" | "retentions" | "picking" => text(settings_slot(state, path)),
             "capturing" => Ok(IntrospectValue::Bool(state.capturing.get())),
             "search" => text(state.search.get()),
             "theme" => text(theme_word(&state.theme)),
@@ -3716,6 +3827,12 @@ impl ShellOracle {
                 }
             }
             Hit::Option(key) => Self::toggle_option(state, key),
+            // ★★★★★ R1762 — the collapsed control TOGGLES its roster. Opening
+            // it is not a write: the value stays where it is until a word is
+            // chosen, which is the rule `Picker` is built on and the one the
+            // floor's own collapsed control breaks (it commits on every arrow).
+            Hit::Choose(key) => Self::toggle_roster(state, key),
+            Hit::ChooseOption(key, n) => Self::choose_value(state, &key, n),
             // Painted inert, so a pointer never reaches it; this is the
             // keyboard and wire path saying the same thing the seat declares.
             Hit::KeyRow(key) => {
@@ -3856,6 +3973,66 @@ impl ShellOracle {
             "{} {}",
             spec::OPTIONS[n].title,
             if on[n] { "on" } else { "off" }
+        )));
+    }
+
+    /// ★★★★★ R1762 — open a value row's roster, or dismiss the one that is
+    /// open.
+    ///
+    /// Pressing a second row while one is open moves to that row rather than
+    /// closing everything, because two rosters open at once is a state a reader
+    /// never asked for and `picking` cannot hold.
+    fn toggle_roster(state: &Rc<ShellState>, key: &str) {
+        let holding = state
+            .picking
+            .borrow()
+            .as_ref()
+            .map(|(open, _)| open.clone());
+        if holding.as_deref() == Some(key) {
+            *state.picking.borrow_mut() = None;
+            state.say(Utterance::new(Tone::Unchanged, "closed".to_owned()));
+            return;
+        }
+        let options = settings_options_of(key);
+        let chosen = settings_value_of(state, key);
+        match Picker::over(options, &chosen) {
+            Ok(picker) => {
+                let title = settings_value_title(key);
+                *state.picking.borrow_mut() = Some((key.to_owned(), picker));
+                state.say(Utterance::done(format!("{title} open, {chosen}")));
+            }
+            // A roster with nothing in it is a defect in this file's tables
+            // rather than a state a reader can reach, and it is said out loud
+            // rather than swallowed: a control that opened onto nothing would
+            // read as a control that does not work.
+            Err(why) => state.say(Utterance::refused(&format!("{why:?}"))),
+        }
+    }
+
+    /// ★★★★★ R1762 — take the word at `n` of the open roster, write it where
+    /// the value lives, and close.
+    fn choose_value(state: &Rc<ShellState>, key: &str, n: usize) {
+        let word = {
+            let mut picking = state.picking.borrow_mut();
+            let Some((open, picker)) = picking.as_mut() else {
+                return;
+            };
+            if open != key || !picker.point_at(n) {
+                return;
+            }
+            picker.highlighted().to_owned()
+        };
+        *state.picking.borrow_mut() = None;
+        match key {
+            "interface" => state.source.set(word.clone()),
+            "retention" => state.retention.set(word.clone()),
+            other => {
+                panic!("the specification names a value row {other:?} this shell cannot answer")
+            }
+        }
+        state.say(Utterance::done(format!(
+            "{} {word}",
+            settings_value_title(key)
         )));
     }
 
@@ -4547,6 +4724,19 @@ const SET_GROUP_GAP: u32 = 22;
 const SET_ROW_H: u32 = 64;
 const SET_ROW_PAD: u32 = 18;
 const SET_CTRL_W: u32 = 96;
+/// ★ R1762 — the seat a value row's collapsed chooser sits in.
+///
+/// Wider than a button's, because what it holds is a value rather than a verb:
+/// the reference's capture-source row shows a device and its address, and a
+/// seat sized for a word would elide the half that identifies it.
+const SET_VALUE_W: u32 = 208;
+/// The height of one option in an open value roster.
+const SET_OPTION_H: u32 = 30;
+/// ★ R1762 — the block the page's own heading and its one line occupy, above
+/// the first group's own heading.
+const SET_PAGE_HEAD_H: u32 = 58;
+/// The seat the payload-format row's chips sit in.
+const SET_PLUGIN_W: u32 = 148;
 /// The appearance segment: its overall width, its inner pad and a chip's height.
 ///
 /// Named rather than written into the painter and the hit test separately —
@@ -4574,14 +4764,42 @@ fn settings_group_rows(group: &str) -> u32 {
     match group {
         "keys" => u(spec::KEY_ROWS.len()),
         "appearance" => 1,
-        other => u(spec::OPTIONS.iter().filter(|o| o.group == other).count()),
+        // ★ R1762 — the capture group's switches, and the two VALUE rows the
+        // reference opens it with above them. Counted here rather than at the
+        // paint, because the card's height and the row a control lands on are
+        // one arithmetic and this file has drawn a card too short for its own
+        // rows before.
+        other => {
+            u(spec::OPTIONS.iter().filter(|o| o.group == other).count())
+                + settings_value_count(other)
+                + settings_plugin_count(other)
+        }
+    }
+}
+
+/// How many plugin rows a group closes with. Only the decode group has one,
+/// which is the reference's arrangement rather than a rule.
+fn settings_plugin_count(group: &str) -> u32 {
+    u32::from(group == "decode")
+}
+
+/// How many value rows a group opens with. Only the capture group has any, and
+/// that is the reference's arrangement rather than a rule.
+fn settings_value_count(group: &str) -> u32 {
+    if group == "capture" {
+        u(spec::VALUE_ROWS.len())
+    } else {
+        0
     }
 }
 
 /// The card rectangle a group occupies, region-local.
 fn settings_group_rect(region: Rect, group: &str) -> Rect {
     let col = settings_col(region);
-    let mut y = col.y;
+    // ★ R1762 — below the page's own heading, which the reference opens with.
+    // One constant read by the paint, this arithmetic and the hit test, which
+    // is this screen's standing rule about a number three things need.
+    let mut y = col.y + SET_PAGE_HEAD_H;
     for (key, _) in spec::OPTION_GROUPS {
         let rows = settings_group_rows(key);
         y += SET_HEAD_H + SET_HEAD_GAP;
@@ -5303,18 +5521,83 @@ fn rail_scene(state: &ShellState, palette: Palette) -> Scene {
 /// paged region with one page proves nothing about paging.
 fn settings_scene(state: &ShellState, palette: Palette, region: Rect) -> Vec<Scene> {
     let col = settings_col(region);
-    let mut out = Vec::new();
+    // ★★★★★ R1762 — the page says what it is, which the reference's does and
+    // this one did not: a reader arriving here was given four unlabelled cards.
+    let mut out = vec![
+        cell(
+            "shell.settings.head.title".to_owned(),
+            spec::SETTINGS_HEAD.0,
+            Rect::new(col.x, col.y, col.w, 24),
+            FONT_TITLE,
+            palette.ink,
+            TextOverflow::Ellipsis,
+        )
+        // These words ARE the page region's accessible name; saying them again
+        // would be one fact in two voices.
+        .silenced(Silence::name_of("shell.canvas")),
+        cell(
+            "shell.settings.head.gist".to_owned(),
+            spec::SETTINGS_HEAD.1,
+            Rect::new(col.x, col.y + 26, col.w, 16),
+            FONT_BODY,
+            palette.muted,
+            TextOverflow::Ellipsis,
+        )
+        .silenced(Silence::part_of("shell.canvas")),
+    ];
+    // ★★★★★ R1762 — the three facts the page closes with. The reference's own
+    // footer, and the one place either screen says which build a reader is
+    // looking at — the fact a person filing a defect is asked for first.
+    let last = settings_group_rect(region, spec::OPTION_GROUPS[spec::OPTION_GROUPS.len() - 1].0);
+    out.push(cell(
+        "shell.settings.build".to_owned(),
+        &spec::BUILD_STRIP.join(" \u{00b7} "),
+        Rect::new(col.x, last.y + last.h + SET_GROUP_GAP, col.w, 16),
+        FONT_SMALL,
+        palette.muted,
+        TextOverflow::Ellipsis,
+    ));
+    // ★ R1762 — and it is ANNOUNCED rather than silent: which build a reader is
+    // looking at is not decoration, it is the first thing a person filing a
+    // defect is asked for, and a strip only a sighted reader can get it from is
+    // a strip half the readers do not have.
     for (key, heading) in spec::OPTION_GROUPS {
         let card = settings_group_rect(region, key);
-        out.push(label(
-            heading,
-            Rect::new(col.x, card.y - SET_HEAD_H - SET_HEAD_GAP, col.w, SET_HEAD_H),
-            FONT_SMALL,
-            palette.muted,
-        ));
+        // ★★★★★ R1762 — ADDRESSABLE. Four group headings a reader reads and no
+        // specification could name: measured at R1761, the settings page's
+        // paint held rows, switches and buttons, and the four words that say
+        // what each card is were loose ink.
+        out.push(
+            cell(
+                format!("shell.settings.head.{key}"),
+                heading,
+                Rect::new(col.x, card.y - SET_HEAD_H - SET_HEAD_GAP, col.w, SET_HEAD_H),
+                FONT_SMALL,
+                palette.muted,
+                TextOverflow::Ellipsis,
+            )
+            // The heading IS the group's accessible name, so it is addressable
+            // for a specification and silent for a reader.
+            .silenced(Silence::name_of(format!("shell.settings.group.{key}"))),
+        );
         let rows = match key {
             "keys" => settings_key_rows(palette, region),
             "appearance" => settings_theme_row(state, palette, region),
+            // ★★★★★ R1762 — the capture group opens with the reference's two
+            // VALUE rows and then its switches, in that order. They are laid
+            // first so the switches below them start where the reference's do.
+            "capture" => {
+                let mut rows = settings_value_rows(state, palette, region);
+                rows.extend(settings_option_rows(state, palette, region, key));
+                rows
+            }
+            // ★★★★★ R1762 — the decode group closes with the reference's
+            // payload-format row, below its two switches.
+            "decode" => {
+                let mut rows = settings_option_rows(state, palette, region, key);
+                rows.extend(settings_plugin_row(palette, region));
+                rows
+            }
             group => settings_option_rows(state, palette, region, group),
         };
         out.push(Scene::Container(
@@ -5388,13 +5671,16 @@ fn settings_option_rows(
     // group's card and `index` its place in the specification, which is what the
     // value array is keyed by. Collapsing them would work only while every group
     // held every option.
+    // ★ R1762 — the switches start below whatever value rows the group opens
+    // with, and the offset is derived from the same count the card's height is.
+    let first = settings_value_count(group);
     for (n, (index, option)) in spec::OPTIONS
         .iter()
         .enumerate()
         .filter(|(_, option)| option.group == group)
         .enumerate()
     {
-        let row = Rect::new(0, u(n) * SET_ROW_H, card.w, SET_ROW_H);
+        let row = Rect::new(0, (first + u(n)) * SET_ROW_H, card.w, SET_ROW_H);
         out.push(settings_text(
             option.key,
             option.title,
@@ -5417,6 +5703,240 @@ fn settings_option_rows(
         ));
     }
     out
+}
+
+/// ★★★★★ R1762 — the capture group's **value rows**: a word out of a roster,
+/// and the chevron that opens it.
+///
+/// The control is `pinion_widget_paint::chooser`, not a box with a word in it.
+/// Hand-rolling it is the class R1673 measured on a sibling screen — a switch
+/// drawn as a track with no knob — and this shell already carries one instance
+/// of it in its own preset menu, so a second would have made it a habit rather
+/// than an oversight. The lift that made the control reachable from here is
+/// this round's framework half.
+///
+/// The roster is **not** painted here: it belongs over everything, in window
+/// space, which is where [`settings_roster_scene`] puts it. A popup drawn
+/// inside the card that opens it is clipped by that card — the R1672 lesson
+/// this screen already paid for once with its preset menu.
+fn settings_value_rows(state: &ShellState, palette: Palette, region: Rect) -> Vec<Scene> {
+    let theme = use_theme(THEME_TAG).theme_animated();
+    let card = settings_group_rect(region, "capture");
+    let mut out = Vec::new();
+    for (n, value_row) in spec::VALUE_ROWS.iter().enumerate() {
+        let row = Rect::new(0, u(n) * SET_ROW_H, card.w, SET_ROW_H);
+        out.push(settings_text(
+            value_row.key,
+            value_row.title,
+            value_row.gist,
+            row,
+            palette,
+            settings_choose_tag(value_row.key),
+        ));
+        let seat = settings_ctrl_rect(row, SET_VALUE_W);
+        out.push(chooser::view_collapsed(
+            &chooser::ChooserTags {
+                control: settings_choose_tag(value_row.key),
+                shown: format!("shell.settings.shown.{}", value_row.key),
+                arrow: format!("shell.settings.arrow.{}", value_row.key),
+            },
+            &settings_value_of(state, value_row.key),
+            seat,
+            (0, 0),
+            BoxStyle::filled(palette.canvas)
+                .with_corner_radius(8)
+                .with_border(Border::new(palette.outline, 1)),
+            &theme,
+        ));
+    }
+    out
+}
+
+/// ★★★★★ R1762 — the decode group's payload-format row: the formats this build
+/// applies, as the chips the reference lists them in.
+///
+/// Every chip is ON and none of them is pressable, which is the reference's own
+/// row: it states what the decoder does rather than offering a choice. They are
+/// addressed all the same, because a reader sees them and a specification that
+/// cannot name them cannot check that both are there.
+fn settings_plugin_row(palette: Palette, region: Rect) -> Vec<Scene> {
+    let (key, title, gist) = spec::PLUGIN_ROW;
+    let card = settings_group_rect(region, "decode");
+    let n = u(spec::OPTIONS.iter().filter(|o| o.group == "decode").count());
+    let row = Rect::new(0, n * SET_ROW_H, card.w, SET_ROW_H);
+    let seat = settings_ctrl_rect(row, SET_PLUGIN_W);
+    // The announced thing on this row is the CONTROL, exactly as on a switch
+    // row: the title and the sentence take their voice from it, so a reader
+    // hears the row once. Here the control is the chip seat, which is the only
+    // node that can carry what the formats are.
+    let seat_tag = format!("shell.settings.row.{key}.chips");
+    let mut out = vec![settings_text(key, title, gist, row, palette, seat_tag)];
+    let mut chips = Vec::new();
+    for (i, word) in spec::PLUGINS.iter().enumerate() {
+        let w = (SET_PLUGIN_W.saturating_sub(SEG_PAD * 2) - SEG_PAD) / u(spec::PLUGINS.len());
+        chips.push(Scene::Container(
+            ContainerNode::new(vec![label(
+                word,
+                Rect::new(8, 6, w.saturating_sub(16), 14),
+                FONT_SMALL,
+                palette.accent_fg,
+            )])
+            .with_tag(format!("shell.settings.plugin.{word}"))
+            .with_style(
+                BoxStyle::filled(palette.high)
+                    .with_corner_radius(6)
+                    .with_border(Border::new(palette.accent_fg, 1)),
+            )
+            .with_layout(
+                absolute(Rect::new(
+                    SEG_PAD + u(i) * (w + SEG_PAD),
+                    SEG_PAD,
+                    w,
+                    SEG_CHIP_H,
+                ))
+                // Each chip's word is in the row's announced value: the row
+                // states what the decoder applies, and a reader hearing every
+                // chip separately would hear the same sentence twice.
+                .with_silence(Silence::part_of(format!("shell.settings.row.{key}.chips"))),
+            ),
+        ));
+    }
+    out.push(Scene::Container(
+        ContainerNode::new(chips)
+            .with_tag(format!("shell.settings.row.{key}.chips"))
+            .with_layout(absolute(Rect::new(
+                seat.x,
+                row.y + (SET_ROW_H.saturating_sub(SEG_CHIP_H + SEG_PAD * 2)) / 2,
+                seat.w,
+                SEG_CHIP_H + SEG_PAD * 2,
+            ))),
+    ));
+    out
+}
+
+/// The tag a value row's collapsed control is addressed by.
+fn settings_choose_tag(key: &str) -> String {
+    format!("shell.settings.choose.{key}")
+}
+
+/// ★★★★★ R1762 — the open roster, in **window** space.
+///
+/// Empty unless a roster is open and the reader is on the page it belongs to:
+/// a popup that survived navigating away would be the class R1695 measured
+/// across this whole shell — a page you left still on screen.
+///
+/// The room it must stay inside is the PAGE REGION, handed to the framework's
+/// own geometry rather than decided here. That is the rule
+/// `pinion_widget_paint::chooser` keeps from R1732: a surface laid into a
+/// region it cannot see the bottom of would open a roster off the end of it.
+fn settings_roster_scene(state: &ShellState, at: &str) -> Scene {
+    let empty = Scene::Container(ContainerNode::new(Vec::new()));
+    if at != "settings" {
+        return empty;
+    }
+    let picking = state.picking.borrow();
+    let Some((key, picker)) = picking.as_ref() else {
+        return empty;
+    };
+    let region = page_rect("settings");
+    let theme = use_theme(THEME_TAG).theme_animated();
+    let roster = chooser::lay_roster(
+        key,
+        settings_control_rect(region, key),
+        picker,
+        region,
+        SET_OPTION_H,
+    );
+    chooser::view_roster(
+        "shell.settings",
+        &roster,
+        picker,
+        &settings_value_of(state, key),
+        (0, 0),
+        &theme,
+    )
+}
+
+/// Where a value row's collapsed control is, in **window** space.
+///
+/// One derivation for the paint, the roster's anchor and the hit test — the
+/// standing rule on this screen, and the class it has paid for three times.
+fn settings_control_rect(region: Rect, key: &str) -> Rect {
+    let card = settings_group_rect(region, "capture");
+    let n = spec::VALUE_ROWS
+        .iter()
+        .position(|row| row.key == key)
+        .map_or(0, u);
+    let row = Rect::new(0, n * SET_ROW_H, card.w, SET_ROW_H);
+    let seat = settings_ctrl_rect(row, SET_VALUE_W);
+    Rect::new(
+        region.x + card.x + seat.x,
+        region.y + card.y + seat.y,
+        seat.w,
+        seat.h,
+    )
+}
+
+/// What a value row is holding right now.
+///
+/// Read from the shell's own state rather than from a table of defaults, so the
+/// row says what the tool is actually doing — the capture source it shows is
+/// the one the application bar shows, which is the whole reason the reference
+/// puts it on this page.
+fn settings_value_of(state: &ShellState, key: &str) -> String {
+    match key {
+        "interface" => state.source.get(),
+        "retention" => state.retention.get(),
+        other => panic!("the specification names a value row {other:?} this shell cannot answer"),
+    }
+}
+
+/// ★★★★★ R1762 — what the preferences page's value rows publish: what each
+/// holds, what each may hold, and which one's roster is open.
+///
+/// A client that has to press a rectangle to find out what a control holds is a
+/// client reading pixels, which is the reason every other row on that page is
+/// on the wire too.
+///
+/// # Panics
+///
+/// If asked for a slot the schema does not declare, which is a defect in this
+/// pairing rather than a path a client can reach: the census asserts the two
+/// agree.
+fn settings_slot(state: &ShellState, path: &str) -> String {
+    match path {
+        "retention" => state.retention.get(),
+        "retentions" => spec::RETENTIONS.join(","),
+        "picking" => state
+            .picking
+            .borrow()
+            .as_ref()
+            .map_or_else(String::new, |(key, _)| key.clone()),
+        other => panic!("the schema declares no preferences slot {other:?}"),
+    }
+}
+
+/// What a value row is called — the words a reader hears when it moves.
+///
+/// # Panics
+///
+/// If asked about a key the specification does not name, which is a defect in
+/// this file rather than a state the screen can reach.
+fn settings_value_title(key: &str) -> &'static str {
+    spec::VALUE_ROWS
+        .iter()
+        .find(|row| row.key == key)
+        .map(|row| row.title)
+        .expect("the specification names every value row this shell draws")
+}
+
+/// What a value row may be set to, in the order the roster lists them.
+fn settings_options_of(key: &str) -> Vec<String> {
+    match key {
+        "interface" => SOURCES.iter().map(|s| (*s).to_owned()).collect(),
+        "retention" => spec::RETENTIONS.iter().map(|s| (*s).to_owned()).collect(),
+        other => panic!("the specification names a value row {other:?} this shell cannot answer"),
+    }
 }
 
 /// The two key rows, whose affordance is booked for a later release.
@@ -7595,7 +8115,27 @@ fn view(_state: ScreenState, frame: Frame) -> Scene {
                     .page_scene(&journey, (region.w, region.h), &frame)
                     .map_or_else(
                         || match here.key.as_ref() {
-                            "settings" => settings_scene(&state, palette, region),
+                            // ★★★★★ R1762 — the page SCROLLS, which the
+                            // reference's does and this one did not. The pane
+                            // derives its range from the groups themselves, so
+                            // a page that grows a row cannot outrun a number
+                            // written anywhere.
+                            "settings" => vec![
+                                scroll_pane(
+                                    &state.settings_scroll,
+                                    Rect::new(0, 0, region.w, region.h),
+                                    (0, SET_PAD),
+                                    // Every press goes to the one root
+                                    // `External` that runs this screen's own
+                                    // hit test, so the pane is invisible to
+                                    // the router (R1655).
+                                    PanePointer::PassesThrough,
+                                    settings_scene(&state, palette, region),
+                                )
+                                .silenced(Silence::layout(
+                                    "the preferences page's scrolling viewport",
+                                )),
+                            ],
                             _ => dashboard_scene(&state, palette),
                         },
                         |mounted| vec![mounted],
@@ -7640,6 +8180,11 @@ fn view(_state: ScreenState, frame: Frame) -> Scene {
             } else {
                 Scene::Container(ContainerNode::new(Vec::new()))
             },
+            // ★★★★★ R1762 — an open value roster, for the same reason and in
+            // the same place: over everything, in window space, bounded by the
+            // page it must not leave. Painted after the page so a press on it
+            // resolves to the roster rather than to whatever row it covers.
+            settings_roster_scene(&state, here.key.as_ref()),
             label(HELP_STRIP, help_strip_rect(), FONT_SMALL, palette.muted),
         ])
         .collect::<Vec<_>>();
@@ -8098,6 +8643,13 @@ impl WidgetA11y for AnalyzerShellView {
             nodes.push(region);
             nodes.extend(mounted);
         } else {
+            // ★ R1762 — the page's own heading is this region's NAME and the
+            // line under it is its value, which is why both painted marks
+            // declare themselves silent: a reader who heard them and the region
+            // would hear the page twice.
+            region = region
+                .with_name(spec::SETTINGS_HEAD.0)
+                .with_value(AccessValue::Text(spec::SETTINGS_HEAD.1.to_owned()));
             let (children, rows) = settings_nodes(&state);
             for child in children {
                 region = region.with_child(child);
@@ -8357,12 +8909,42 @@ fn board_nodes(state: &Rc<ShellState>) -> (String, Vec<String>, Vec<AccessNode>)
 fn settings_nodes(state: &Rc<ShellState>) -> (Vec<String>, Vec<AccessNode>) {
     let mut children = Vec::new();
     let mut nodes = Vec::new();
+    // ★ R1762 — the build strip, which the page closes with and which a reader
+    // filing a defect is asked for first.
+    children.push("shell.settings.build".to_owned());
+    nodes.push(
+        AccessNode::new("shell.settings.build", AriaRole::Status)
+            .with_name("Build")
+            .with_value(AccessValue::Text(spec::BUILD_STRIP.join(", "))),
+    );
     for (key, heading) in spec::OPTION_GROUPS {
         let tag = format!("shell.settings.group.{key}");
         children.push(tag.clone());
         let rows = match key {
             "keys" => settings_key_nodes(),
             "appearance" => settings_theme_nodes(state),
+            // ★ R1762 — the value rows come first here for the reason they come
+            // first on screen: a tree whose order is not the paint's order is a
+            // reader being walked through a page that is not in front of them.
+            "capture" => {
+                let mut rows = settings_value_nodes(state);
+                rows.extend(settings_option_nodes(state, key));
+                rows
+            }
+            // ★ R1762 — and the decode group's payload-format row, whose seat
+            // is what carries the formats: the chips themselves are its parts.
+            "decode" => {
+                let mut rows = settings_option_nodes(state, key);
+                rows.push(
+                    AccessNode::new(
+                        format!("shell.settings.row.{}.chips", spec::PLUGIN_ROW.0),
+                        AriaRole::Status,
+                    )
+                    .with_name(spec::PLUGIN_ROW.1)
+                    .with_value(AccessValue::Text(spec::PLUGINS.join(", "))),
+                );
+                rows
+            }
             group_key => settings_option_nodes(state, group_key),
         };
         let mut group = AccessNode::new(&tag, AriaRole::Group).with_name(heading);
@@ -8373,6 +8955,55 @@ fn settings_nodes(state: &Rc<ShellState>) -> (Vec<String>, Vec<AccessNode>) {
         nodes.extend(rows);
     }
     (children, nodes)
+}
+
+/// ★★★★★ R1762 — the value rows: a collapsed chooser each, and the roster of
+/// the one that is open.
+///
+/// `ComboBox` with `expanded`, which is the pair a reader needs: the role says
+/// there is a roster behind it and the state says whether it is in front of
+/// them. Measured at 6.11.1 on the floor's own collapsed control — its
+/// accessible object reports the value and the item count and has **no
+/// expanded state at all** unless the platform layer adds one, so a reader is
+/// told what is chosen and never told whether the list is open.
+fn settings_value_nodes(state: &Rc<ShellState>) -> Vec<AccessNode> {
+    let picking = state.picking.borrow();
+    let open = picking.as_ref();
+    let mut nodes = Vec::new();
+    for row in spec::VALUE_ROWS {
+        let showing = open.is_some_and(|(key, _)| key == row.key);
+        let mut node = AccessNode::new(settings_choose_tag(row.key), AriaRole::ComboBox)
+            .with_name(row.title)
+            .with_value(AccessValue::Text(settings_value_of(state, row.key)))
+            .with_expanded(showing);
+        if showing {
+            node = node.with_child(format!("shell.settings.roster.{}", row.key));
+        }
+        nodes.push(node);
+    }
+    // The open roster, and one node per word in it. Emitted only while it is
+    // open, which is the same property the paint has: a reader offered options
+    // that are not on screen is offered options nobody can reach.
+    if let Some((key, picker)) = open {
+        let roster_tag = format!("shell.settings.roster.{key}");
+        let mut roster = AccessNode::new(&roster_tag, AriaRole::Listbox)
+            .with_name(format!("{} options", settings_value_title(key)));
+        let chosen = settings_value_of(state, key);
+        let mut options = Vec::new();
+        for (n, word) in picker.options().iter().enumerate() {
+            let tag = format!("shell.settings.option.{key}.{word}");
+            roster = roster.with_child(tag.clone());
+            options.push(
+                AccessNode::new(tag, AriaRole::ListBoxOption)
+                    .with_name(word.as_ref())
+                    .with_set_position(n, picker.len())
+                    .with_selected(word.as_ref() == chosen),
+            );
+        }
+        nodes.push(roster);
+        nodes.extend(options);
+    }
+    nodes
 }
 
 /// The switch rows of one Settings group.

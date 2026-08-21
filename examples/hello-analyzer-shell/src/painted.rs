@@ -2183,6 +2183,15 @@ fn r1696_the_keyboard_ring_is_the_one_the_specification_declares() {
                         .iter()
                         .map(|o| format!("shell.settings.option.{}", o.key)),
                 )
+                // ★ R1762 — and the value rows' collapsed choosers, which are
+                // the third kind of catalogue widget this page paints. From the
+                // specification's own table, so a row added there arrives here
+                // rather than being remembered.
+                .chain(
+                    spec::VALUE_ROWS
+                        .iter()
+                        .map(|row| format!("shell.settings.choose.{}", row.key)),
+                )
                 .chain((0..spec::THEMES.len()).map(|n| format!("shell.settings.theme.{n}")))
                 .collect();
             for tag in &walked {
@@ -3758,6 +3767,7 @@ fn r1761_the_dashboard_reproduces_its_specification_or_says_why_not() {
     // produce: the reader standing somewhere else. Asserted here rather than
     // left to the demo, because it is the one answer the judge cannot derive
     // from its own marks and the one a refactor could quietly drop.
+    // (The preferences page's own version of both halves is the test below.)
     let owner = Owner::new();
     owner.run(|| {
         let _ = painted_at((WIN_W, WIN_H));
@@ -3774,6 +3784,128 @@ fn r1761_the_dashboard_reproduces_its_specification_or_says_why_not() {
                     "`{surface}` reports standing from a page the reader is not on, which is the \
                      defect a host's own store makes possible"
                 ),
+            }
+        }
+    });
+}
+
+/// ★★★★★ R1762 — **an open roster hangs off the control it belongs to**, and
+/// the two are compared against the PAINT rather than against each other.
+///
+/// Found by a counterfactual that PASSED: pointing the roster at the other
+/// value row's control changed nothing any gate could see. The demo presses the
+/// roster's options by reading their rectangles back out of the frame, so a
+/// roster laid over the wrong row is still pressed correctly — it is simply in
+/// the wrong place, which is exactly the kind of defect a driver cannot feel and
+/// a reader cannot miss.
+///
+/// The comparison is the roster's own box against the CHOOSER'S PAINTED
+/// RECTANGLE, which are two derivations: one is what `chooser::lay_roster`
+/// computed, the other is where the frame actually drew the control.
+#[test]
+fn r1762_an_open_roster_hangs_off_the_control_it_belongs_to() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let mut shot = painted_at_destination("settings");
+        for row in spec::VALUE_ROWS {
+            let tag = format!("shell.settings.choose.{}", row.key);
+            press_tag(&state, &shot, &tag);
+            shot = painted_at((WIN_W, WIN_H)).0;
+            let control = shot
+                .rect(&tag)
+                .unwrap_or_else(|| panic!("the frame drew {}'s control", row.key));
+            let roster = shot
+                .rect(&format!("shell.settings.roster.{}", row.key))
+                .unwrap_or_else(|| panic!("pressing {}'s control opens its roster", row.key));
+            assert_eq!(
+                (roster.x, roster.w),
+                (control.x, control.w),
+                "{}: the roster is the control's own width, in the control's own \
+                 column",
+                row.key,
+            );
+            assert!(
+                roster.y >= control.y + control.h || roster.y + roster.h <= control.y,
+                "{}: the roster hangs clear of the control rather than over it: \
+                 {roster:?} vs {control:?}",
+                row.key,
+            );
+            // Close it again, so the next row starts from the same state this
+            // one did.
+            press_tag(&state, &shot, &tag);
+            shot = painted_at((WIN_W, WIN_H)).0;
+        }
+    });
+}
+
+/// ★★★★★ R1762 — **what the PREFERENCES page paints, against
+/// `docs/analyzer-settings-spec.json`, through the function the window uses.**
+///
+/// The sibling of the dashboard's test above, and it exists because the round
+/// that wrote it measured its absence: eight counterfactuals were run against
+/// `cargo test -p hello-analyzer-shell` and **six passed** — every break in the
+/// preferences judge, its stems, its titles and its tables went unnoticed,
+/// because nothing in this crate's own suite drove that judge at all. A demo
+/// caught them, and a demo is not a gate a `cargo test` runs.
+///
+/// The rule is the dashboard's, with the same two parts: at the size and scroll
+/// position the specification describes, every surface reconciles; and the away
+/// this section has is the reader standing somewhere else, never *I found none
+/// of my parts*.
+#[test]
+fn r1762_the_preferences_page_reproduces_its_specification_or_says_why_not() {
+    use pinion_core::conformance::{Built, Unreconciled};
+    use pinion_screen::Showing;
+
+    let owner = Owner::new();
+    owner.run(|| {
+        let _ = painted_at_destination("settings");
+        let regions =
+            pinion_core::painted::painted_regions(super::VIEW_TAG).expect("the sweep just painted");
+        let doc = spec::settings_document();
+        let mut judged = 0usize;
+        for surface in doc.surfaces() {
+            let Built::Standing(parts) =
+                super::judge::settings_built(&regions, surface, Showing::OnScreen)
+            else {
+                panic!(
+                    "{surface}: away while this page is the one painted — the only away this \
+                     section has is the reader being somewhere else"
+                );
+            };
+            judged += 1;
+            let said: Vec<String> = doc
+                .unreconciled(surface, &parts)
+                .iter()
+                .map(Unreconciled::sentence)
+                .collect();
+            assert!(
+                said.is_empty(),
+                "`{surface}` is not what docs/analyzer-settings-spec.json declares:\n  {}",
+                said.join("\n  "),
+            );
+        }
+        assert_eq!(
+            judged,
+            doc.surfaces().count(),
+            "every surface the document names was judged",
+        );
+        assert!(
+            judged >= 7,
+            "the document names the page's surfaces: {judged}"
+        );
+
+        // ★★ And the away, which no size can produce.
+        for surface in doc.surfaces() {
+            match super::judge::settings_built(&regions, surface, Showing::Elsewhere) {
+                Built::Away(why) => assert!(
+                    why.contains("another section"),
+                    "the away names where the reader is, not what the judge failed to find: {why}"
+                ),
+                Built::Standing(_) => {
+                    panic!("`{surface}` reports standing from a page the reader is not on")
+                }
             }
         }
     });

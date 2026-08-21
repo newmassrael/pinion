@@ -182,11 +182,26 @@ def section_b(app: RpcSubprocess) -> None:
             sentence,
             f"B: and `{key}` gives the reason the pin declares for it",
         )
+    # ★★★★★ R1762 — this read `conforms is False and unjudged > 0`, and the
+    # second half was the rule being exercised: while a section was unjudged,
+    # conformance was refused. R1762 judged the last one, so `unjudged` is 0 and
+    # this demo can no longer be the place that rule is measured — it is a unit
+    # test of `pinion_screen::ApplicationConformance` instead, where a fixture
+    # can hold an unjudged section on purpose.
+    #
+    # What is still measurable here, and is the sharper fact: conformance is
+    # refused ANYWAY, because a verdict is about a frame and the sections a
+    # reader is not looking at are away. So the count reaching zero did not buy
+    # a `conforms: true`, and the reason it did not is worth reading.
     ok(
-        "B: ★★★★★ the application does NOT report conformance while sections are "
-        "unjudged -- the count of judged sections is part of the verdict, not a "
-        "footnote under it",
-        said["conforms"] is False and said["unjudged"] > 0,
+        "B: ★★★★★ the application does NOT report conformance -- with every "
+        "section judged, what refuses it is that a verdict is about a FRAME and "
+        "the sections nobody is looking at are away",
+        said["conforms"] is False,
+    )
+    print(
+        f"  [refusal] unjudged {said['unjudged']}, declared {said['declared']}, "
+        f"reproduced {said['reproduced']} of {said['specified']}"
     )
     ok(
         "B: ★★ and the seat-level verdict still says what it always said, so "
@@ -526,11 +541,23 @@ def section_e(app: RpcSubprocess) -> None:
 
 def body() -> None:
     accepted = unjudged_sections()
+    # ★★★★★ R1762 — this read `accepted and all(...)`, which required the
+    # remainder to be NON-EMPTY. That was a guard against a vacuous check and it
+    # was a true statement about a world where some section was unjudged; the
+    # round that judged the last one made it fail. The claim it was reaching for
+    # is that every entry is well formed, which an empty remainder satisfies —
+    # and what keeps the check from being vacuous is section B, which asserts
+    # the remainder EQUALS the application's own unjudged rows either way.
     ok(
         "the reviewed remainder names a seat and a sentence for every section "
         "it accepts as unjudged",
-        accepted and all(key and sentence for key, sentence in accepted.items()),
+        all(key and sentence for key, sentence in accepted.items()),
     )
+    if not accepted:
+        print(
+            "  · the remainder is EMPTY — every section of this application is "
+            "judged, and section B asserts that as an equality"
+        )
 
     with RpcSubprocess(SHELL, boot_grace=1.5) as app:
         section_a(app)

@@ -1,0 +1,119 @@
+{
+  "$comment": [
+    "R1762 — THE PREFERENCES SECTION'S PAINTED SURFACES, written down from the",
+    "behaviour reference in neutral vocabulary, so the last unjudged section of",
+    "the assembled application can be judged against something other than its",
+    "own tables.",
+    "",
+    "WHY THIS PIN COULD NOT BE WRITTEN AT R1761. The mechanism to publish a",
+    "verdict for a page the host paints landed then (`SectionJudge`), and this",
+    "entry stayed open anyway, because a pin that specified only what the build",
+    "already drew would be a document that cannot fail — R1747's defect made on",
+    "purpose. Measured at R1761 against the reference: this build's preferences",
+    "page was MISSING three of the reference's ten rows (a capture-source row",
+    "and a retention row in the first group, a payload-format row in the",
+    "second), had neither the page heading the reference opens with nor the",
+    "build strip it closes with, and its four group headings were loose ink no",
+    "specification could address. R1762 built all of it first; this file is",
+    "what became writable afterwards.",
+    "",
+    "THE TEN ROWS ARE THE REFERENCE'S TEN. That is the surface worth having:",
+    "the reference's page is a list of rows in four groups, and `rows` below is",
+    "that list, in that order, read back out of the frame. A row missing, a row",
+    "renamed, or a row that moved between groups all read as a difference here.",
+    "",
+    "HOW A PART IS TITLED, AND WHY IT DIFFERS PER SURFACE. Where the reference",
+    "fixes the WORDS a reader reads — the page's heading, a group's heading, a",
+    "row's title and the sentence under it, a booked row's verb, the appearance",
+    "choices, the payload formats — the title here is those words and the judge",
+    "reads them back off the frame. Where a part is a VALUE a session changes",
+    "(which capture source is in effect, which buffer size) or a control that",
+    "draws no words at all (a switch is a track and a knob), the title is this",
+    "screen's own name for it and what the pin fixes is the roster and its",
+    "order. `crate::judge` says which is which per surface and why.",
+    "",
+    "WHAT IS THE REFERENCE'S AND WHAT IS THIS BUILD'S. Every row, every heading",
+    "and every group is the reference's. Three things are not, and all three are",
+    "recorded as remainders below rather than written in as if they were: the",
+    "two rows whose values are this tool's own vocabulary, and the payload",
+    "formats, which the reference names as two third-party serialisations and",
+    "this build names for what they are."
+  ],
+  "head": {
+    "canon": [
+      { "key": "title", "title": "Settings" },
+      { "key": "gist", "title": "Capture, decode, decryption and appearance preferences." },
+      { "key": "capture", "title": "Capture" },
+      { "key": "decode", "title": "Decode" },
+      { "key": "keys", "title": "Decryption & keys" },
+      { "key": "appearance", "title": "Appearance" }
+    ],
+    "owed": [
+      {
+        "key": "keys",
+        "sentence": "`keys` is specified as \"Decryption & keys\" and reads \"Keys\"",
+        "since": "R1762",
+        "why": "The reference's third group is headed with both what it holds and what it is for. This build's heading is the shorter half, chosen at R1695 when the group was written and kept here rather than silently corrected, because the group's own rows say the rest and a heading is not the place this build is short."
+      }
+    ]
+  },
+  "rows": {
+    "canon": [
+      { "key": "interface", "title": "Interface Capture source device" },
+      { "key": "retention", "title": "Ring buffer size In-memory capture retention" },
+      { "key": "reconnect", "title": "Auto-reconnect Resume capture on link recovery" },
+      { "key": "on_launch", "title": "Start capture on launch Begin capturing when the app opens" },
+      { "key": "resolve", "title": "Resolve names from session start Full mapping requires capturing from the handshake" },
+      { "key": "numeric", "title": "Show unresolved numeric ids Display the raw id when the name is unknown" },
+      { "key": "plugins", "title": "Payload sub-decoders Format plugins applied to payloads" },
+      { "key": "keylog", "title": "Transport key log Import a key log to decrypt links" },
+      { "key": "e2e", "title": "Application end-to-end key Decode payloads the application encrypted end to end" },
+      { "key": "theme", "title": "Theme Both themes are first-class" }
+    ],
+    "owed": [
+      {
+        "key": "theme",
+        "sentence": "`theme` is specified as \"Theme Both themes are first-class\" and reads \"Theme\"",
+        "since": "R1762",
+        "why": "The last row of ten, and the page scrolls — exactly as the reference's does. Measured at the opening scroll position: the appearance group is painted at y=872 in a region ending at y=900, so the row's own title is on the frame and the sentence under it is 34 pixels lower, which is below the fold. A verdict read from the paint is about the frame, so it reports what the frame has; scrolling to the foot puts the sentence back and this entry is what says that is the reason rather than a row this build draws short. The alternative was an away-condition of `the page can not show all ten rows at once`, refused for R1742's reason: it would swallow a page that had genuinely stopped drawing a row."
+      }
+    ]
+  },
+  "choosers": {
+    "canon": [
+      { "key": "interface", "title": "which capture source is in effect" },
+      { "key": "retention", "title": "how much capture the buffer holds" }
+    ],
+    "owed": []
+  },
+  "switches": {
+    "canon": [
+      { "key": "reconnect", "title": "resume capture when the link comes back" },
+      { "key": "on_launch", "title": "begin capturing when the tool opens" },
+      { "key": "resolve", "title": "resolve names from the session's start" },
+      { "key": "numeric", "title": "show the raw identifier when no name is known" }
+    ],
+    "owed": []
+  },
+  "locked": {
+    "canon": [
+      { "key": "keylog", "title": "Import…" },
+      { "key": "e2e", "title": "Add key…" }
+    ],
+    "owed": []
+  },
+  "theme": {
+    "canon": [
+      { "key": "0", "title": "Dark" },
+      { "key": "1", "title": "Light" }
+    ],
+    "owed": []
+  },
+  "plugins": {
+    "canon": [
+      { "key": "schema", "title": "schema" },
+      { "key": "records", "title": "records" }
+    ],
+    "owed": []
+  }
+}

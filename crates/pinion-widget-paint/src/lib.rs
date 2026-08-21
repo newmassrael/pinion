@@ -80,6 +80,7 @@ pub mod barrier;
 pub mod button;
 pub mod checkbox;
 pub mod chip;
+pub mod chooser;
 pub mod column_header;
 pub mod config_form;
 pub mod coord;
