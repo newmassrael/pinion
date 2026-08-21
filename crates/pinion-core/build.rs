@@ -19,6 +19,9 @@ fn main() {
         "widgets/dock_panel.scxml",
         "app.scxml",
         "fixtures/multi_window.scxml",
+        // R1751 — the internal chain that cannot end itself, so the engine's
+        // macrostep budget is observable from here rather than only upstream.
+        "fixtures/self_answering_raise.scxml",
     ];
     // Inject caller-supplied derives onto every generated `{widget}State` /
     // `{widget}Event` enum via the sce-build derive hook (rust_derive_policy

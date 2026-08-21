@@ -104,6 +104,11 @@ pub mod test_fixtures;
 #[cfg(test)]
 mod multi_window;
 
+// R1751 — the runaway-chain fixture, `#[cfg(test)]` for the same reason as its
+// sibling above: it exists to stress an engine guarantee, not to be a surface.
+#[cfg(test)]
+mod self_answering_raise;
+
 pub use animation::{
     AnimRect, AnimVec2, AnimVec4, Animatable, Animation, DEFAULT_REST_EPSILON, Easing,
     SpringConfig, SpringState, Tickable, Tween,

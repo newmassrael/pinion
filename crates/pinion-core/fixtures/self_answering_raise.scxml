@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- pinion R1751 §5.4 — the internal chain that cannot end itself.
+
+     WHAT THIS IS FOR. W3C SCXML 3.13's macrostep runs until the internal
+     queue is empty. A `<raise>` whose own transition raises it again never
+     empties that queue, so the macrostep does not terminate on its own. The
+     engine bounds it: `sce_rust_runtime` stops a macrostep at
+     MAX_MACROSTEP_MICROSTEPS and counts the truncation, which a consumer
+     reads back through `Engine::truncated_macrosteps`.
+
+     Nothing in pinion asserted that the budget actually protects OUR
+     machines. This fixture is the chart that makes it observable, and
+     `pinion_core::widgets::widget` tests drive it.
+
+     ⚠ A FIXTURE, NOT A WIDGET. It is deliberately outside `widgets/`: every
+     chart in that directory is a product surface with a binding, and a chart
+     whose whole purpose is to run away is not one. The `fixtures/` sibling
+     `multi_window.scxml` is the same kind of thing.
+
+     ⚠ WHY IT IS NOT A TIMEOUT TEST. What the test asserts is that
+     `process_event` RETURNS and that the engine reports the truncation — an
+     account, not a wall clock. "It finished within N seconds" is the shape
+     that goes flaky on a slow runner, which this project's zero-flake policy
+     forbids.
+
+     THE SHAPE. `spin` answers its own `loop` event by raising `loop` again.
+     One external `start` enters the chain; from there the queue refills
+     itself for as long as the engine is willing to keep going. `settle` is
+     reachable only from outside, so a test can show the machine is still
+     alive after the truncation rather than wedged.
+-->
+<scxml xmlns="http://www.w3.org/2005/07/scxml"
+       version="1.0"
+       datamodel="null"
+       initial="idle">
+
+  <state id="idle">
+    <transition event="start" target="spin"/>
+  </state>
+
+  <state id="spin">
+    <!-- Entering the state is what puts the first `loop` in the internal
+         queue; the transition below is what keeps putting one there. -->
+    <onentry>
+      <raise event="loop"/>
+    </onentry>
+    <!-- The self-answering chain: handling `loop` raises `loop`. The queue
+         is never empty, so the macrostep ends only because the engine
+         bounds it. -->
+    <transition event="loop">
+      <raise event="loop"/>
+    </transition>
+    <!-- Reachable only from OUTSIDE the chain, so a test can show the
+         machine still takes events after a truncated macrostep. -->
+    <transition event="settle" target="idle"/>
+  </state>
+
+</scxml>
