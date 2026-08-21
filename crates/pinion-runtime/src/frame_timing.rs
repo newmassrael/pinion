@@ -1,5 +1,32 @@
 //! R907 §5.16 §5.7 — per-window frame-timing profiler substrate.
 //!
+//! # ★★★★★ The convention this record keeps: a number carries its qualifier
+//!
+//! R1752 named it after finding it a fourth time. A duration or a count here
+//! is frequently ambiguous on its own, and the answer has each time been a
+//! sibling field that says what the number is OF rather than a comment hoping
+//! the reader knows:
+//!
+//! * [`FrameTiming::settle_passes`] with [`settled`](FrameTiming::settled) —
+//!   how many passes, and whether they converged;
+//! * [`FrameTiming::gpu_us`] with
+//!   [`gpu_timing_supported`](FrameTimingsSnapshot::gpu_timing_supported) —
+//!   the GPU's clock, and whether this adapter has one;
+//! * [`FrameTiming::render_us`] with
+//!   [`captured`](FrameTiming::captured) (R1752) — the submit's cost, and
+//!   whether that submit was a render or a readback;
+//! * [`FrameTimingsSnapshot::mean_render_us`] with
+//!   [`captured_frames`](FrameTimingsSnapshot::captured_frames) (R1752) — the
+//!   mean, and how many of the two kinds it averaged over.
+//!
+//! It is a shape rather than a duplicated implementation: each pair is a
+//! distinct fact, so there is nothing to lift into a shared helper and a
+//! generic "value plus qualifier" wrapper would only make the wire worse.
+//! What was missing was the NAME, so a later round applies it deliberately
+//! instead of rediscovering it — R1752 rediscovered it by reading
+//! `render_us` through three failed profiles without knowing which function
+//! it had measured.
+//!
 //! The sibling of [`paint_cache_stats`](crate::paint_cache_stats):
 //! that module answers *"how much of the last frame was a cache
 //! hit?"*; this one answers *"how long did the last frame take, and
@@ -337,6 +364,29 @@ pub struct FrameTiming {
     /// accessibility / IME / finalize work. `>= build + encode +
     /// acquire + render` by construction.
     pub total_us: u64,
+    /// ★★★★★ (R1752 §5.16) Whether this frame's submit COPIED THE TEXTURE
+    /// BACK, which is what [`render_us`](Self::render_us) then contains.
+    ///
+    /// # Why the flag exists
+    ///
+    /// The submit is an either/or, not a render with an extra step: a frame
+    /// either renders, or it runs the capture path, and `render_us` brackets
+    /// whichever ran. So one field has been reporting two different functions
+    /// under one name, and nothing here said which — a reader comparing two
+    /// frames could not tell a slow paint from a readback.
+    ///
+    /// Measured at R1752 on one app, 60 frames each way: driven by ticks the
+    /// window's mean render was **8,452µs**; driven by screenshots, **10,344µs**
+    /// — the same field, 22% apart, for a reason no consumer could see.
+    ///
+    /// ⚠ It is a DISCRIMINATOR, not a subtraction. Splitting the readback out
+    /// of the capture path would need the backend to time its own internals,
+    /// which is what [`acquire_us`](Self::acquire_us) needed and got in
+    /// R1361.1; until then, saying which function ran is what lets the number
+    /// be read at all. The same round measured that the ordinary render is
+    /// 97.8% of a frame WITHOUT any capture, so the flag corrects a reading
+    /// rather than explaining the cost away.
+    pub captured: bool,
     /// (R1459 §5.16 §5.45) How many view + layout passes this paint spent
     /// reaching its fixed point — `1` when the first pass changed nothing,
     /// up to `SETTLE_PASS_BUDGET` when the frame gave up and asked for
@@ -511,6 +561,10 @@ impl FrameTiming {
             acquire_us,
             render_us,
             total_us,
+            // R1752 — false is the ordinary frame, and the builder below is
+            // what a caller that ran the capture path uses. Defaulting the
+            // other way would make every backend with no capture concept lie.
+            captured: false,
             settle_passes: 0,
             settled: false,
             shape_misses: 0,
@@ -599,6 +653,19 @@ impl FrameTiming {
         self.settle_passes = settle_passes;
         self.settled = settled;
         self.shape_misses = shape_misses;
+        self
+    }
+
+    /// ★ R1752 §5.16 — declare that this frame's submit ran the CAPTURE path,
+    /// so [`render_us`](Self::render_us) is a readback rather than a render.
+    ///
+    /// A separate builder rather than a parameter on [`new`](Self::new),
+    /// following [`with_work`](Self::with_work)'s reason: `new` takes five
+    /// durations and a sixth `bool` beside them is a slot a transposed call
+    /// site could fill silently.
+    #[must_use]
+    pub fn with_capture(mut self, captured: bool) -> Self {
+        self.captured = captured;
         self
     }
 
@@ -754,6 +821,11 @@ impl FrameTimingStats {
         // R1537 — folded over the samples that HAVE a GPU timing, with its
         // own count. See `mean_gpu_us`: the GPU denominator is not `len`.
         let (mut sum_gpu, mut max_gpu, mut gpu_sample_count) = (0u64, 0u64, 0u32);
+        // R1752 — how many of this window's samples are READBACKS rather than
+        // renders. Without it `mean_render_us` is a mean over two different
+        // functions, which is the defect one level up from the per-sample
+        // flag: a reader can now see the mix instead of averaging through it.
+        let mut captured_frames = 0u32;
         // R1538 — the census peaks. Max only: the property they guard is an
         // upper bound, and a mean cannot state one.
         let (mut max_scene_nodes, mut max_layout_nodes, mut max_encode_nodes) = (0u32, 0u32, 0u32);
@@ -774,6 +846,9 @@ impl FrameTimingStats {
             sum_encode = sum_encode.saturating_add(s.encode_us);
             sum_acquire = sum_acquire.saturating_add(s.acquire_us);
             sum_render = sum_render.saturating_add(s.render_us);
+            if s.captured {
+                captured_frames = captured_frames.saturating_add(1);
+            }
             if let Some(gpu) = s.gpu_us {
                 sum_gpu = sum_gpu.saturating_add(gpu);
                 max_gpu = max_gpu.max(gpu);
@@ -810,6 +885,7 @@ impl FrameTimingStats {
             mean_encode_us: sum_encode / len,
             mean_acquire_us: sum_acquire / len,
             mean_render_us: sum_render / len,
+            captured_frames,
             mean_gpu_us: (gpu_sample_count > 0).then(|| sum_gpu / u64::from(gpu_sample_count)),
             max_gpu_us: (gpu_sample_count > 0).then_some(max_gpu),
             max_scene_nodes,
@@ -1116,7 +1192,26 @@ pub struct FrameTimingsSnapshot {
     /// Mean acquire-phase (vsync block) µs over the window. R1361.1.
     pub mean_acquire_us: u64,
     /// Mean render-phase µs over the window (work only, acquire excluded).
+    ///
+    /// ⚠ R1752 — read it beside
+    /// [`captured_frames`](Self::captured_frames). The submit is an
+    /// either/or, so this is a mean over TWO functions whenever the window
+    /// holds a capture, and the count is what says whether it does.
     pub mean_render_us: u64,
+    /// ★★★★★ (R1752 §5.16) How many samples in this window ran the CAPTURE
+    /// path — a GPU→CPU readback — rather than an ordinary render.
+    ///
+    /// The per-sample flag ([`FrameTiming::captured`]) makes ONE frame
+    /// readable; a window is what a consumer actually reads, and a mean over a
+    /// mixed window is uninterpretable without this. `0` is a window of plain
+    /// frames, and `window_len` is a window of nothing but readbacks.
+    ///
+    /// ⚠ It also closes a race the demo for this round found: a client cannot
+    /// use [`last`](Self::last) to prove that ITS request captured, because
+    /// `last` is the most recent frame recorded and an idle paint can land
+    /// between the request and the read. A count over the window cannot be
+    /// stolen that way.
+    pub captured_frames: u32,
     /// (R1537 §5.16) Mean GPU µs over the samples in this window that
     /// carry one, or `None` when none of them does.
     ///
@@ -1778,6 +1873,51 @@ mod tests {
         // saturates to 0 rather than underflowing if it is violated.
         let degenerate = FrameTiming::new(300, 100, 0, 80, 100);
         assert_eq!(degenerate.other_us(), 0);
+    }
+
+    /// ★★★★★ R1752 — **the window counts the readbacks it holds, and counts
+    /// the right ones.**
+    ///
+    /// `mean_render_us` is a mean over TWO functions whenever a capture is in
+    /// the window, because the submit is an either/or. The count is what lets
+    /// a reader see the mixture instead of averaging through it.
+    ///
+    /// ★ This test exists because a counterfactual found nothing catching an
+    /// INVERTED count: the demo watched the field end to end, and a demo is
+    /// not in the gate a counterfactual runs. A number nothing in `cargo test`
+    /// asserts is a number that can quietly answer about the wrong frames.
+    #[test]
+    fn r1752_a_window_counts_its_readbacks() {
+        let mut stats = FrameTimingStats::new();
+        // Three frames, and the ONE in the middle captured. Deliberately not
+        // the first or the last: a fold that took either end would still be
+        // right about a one-element window and wrong here.
+        stats.record(FrameTiming::new(200, 100, 0, 50, 400));
+        stats.record(FrameTiming::new(200, 100, 0, 50, 400).with_capture(true));
+        stats.record(FrameTiming::new(200, 100, 0, 50, 400));
+        let snap = stats.snapshot(None).unwrap();
+
+        assert_eq!(snap.window_len, 3, "the fixture put three frames in");
+        assert_eq!(
+            snap.captured_frames, 1,
+            "exactly the capturing frame is counted — an inverted fold would \
+             answer 2 here, which is why the window is not all-or-nothing"
+        );
+    }
+
+    /// R1752 — and a window of nothing but renders counts none.
+    ///
+    /// Without this the sibling above is satisfied by a fold that counts every
+    /// frame and happens to see one capture; this pins the other end.
+    #[test]
+    fn r1752_a_window_with_no_readback_counts_none() {
+        let mut stats = FrameTimingStats::new();
+        stats.record(FrameTiming::new(200, 100, 0, 50, 400));
+        stats.record(FrameTiming::new(300, 150, 0, 70, 600));
+        let snap = stats.snapshot(None).unwrap();
+
+        assert_eq!(snap.window_len, 2);
+        assert_eq!(snap.captured_frames, 0, "no frame captured");
     }
 
     #[test]

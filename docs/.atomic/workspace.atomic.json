@@ -55444,6 +55444,114 @@
         "touching `/etc/sysctl.conf`, so a reboot restores them."
       ]
     },
+    "R1752": {
+      "decision_summary": "A frame record says WHICH FUNCTION its render number measured, and a window\nsays how many of each kind it averaged over.\n\nWHAT FORCED IT. The grid debt's third item asks for a font-table handle cache\non a consumer's profile: 44.4% in `read_fonts` / `cff::dict::parse_token` /\n`TableRecord::binary_search_by` / `FontRef::table_data`. That file also says,\nin its own words, to do items 1 and 2 first and then MEASURE AGAIN. R1748 and\nR1749 did them, so this round measured.\n\nTHE ANSWER IS THAT THE ITEM'S PREMISE IS FALSE ON THIS TREE, so it is corrected\nrather than implemented. One app, 80x24, sixty frames each way: driven by ticks\nthe window's mean render was 8,452µs against encode 102 and build 50; driven by\nscreenshots, 10,344µs against encode 104 and build 54. Shaping plus vello\nencode -- which is where a font-table lookup lives -- is 152µs, 1.8% of the\nframe, in BOTH regimes, and `render_us` is 97.8% with `acquire_us` at 5µs so it\nis not a vsync wait either. A font-table cache would be cutting inside that\n1.8%. The consumer's 44.4% was true of THEIR app, at ten times the cells on a\ndifferent font stack; it is not true here, and this file now says so with the\nnumbers rather than carrying a figure nobody re-took.\n\n★★★★★ THE ANSWER CAME FROM THE APP'S OWN FRAME ACCOUNTING, NOT FROM A PROFILE,\nand three profiles were taken first. Each was invalid, and each for a different\nreason: the first sampled the app IDLE (82.58% in one kernel address -- a\nblinking cursor repaints once or twice a second); the second forced 128 frames\nover `scene/screenshot` and sampled ITS OWN PROBE (`_copy_from_iter` 64.5% plus\nserde 21%, with the actual render at 0.81%, because that RPC ships the pixels\nas JSON); the third profiled the pixel tests, which have no RPC channel at all,\nand sampled wgpu's SHADER COMPILATION (`CharSearcher::next_match`, `memchr`,\n`naga::NonMaxU32::new`) because twelve short tests have no steady state. ⇒ \"a\nprofile came out\" and \"that profile is about this question\" are different\nclaims, and the second has to be argued every time.\n\nWHAT READING `render_us` THROUGH THOSE THREE ATTEMPTS EXPOSED. The submit is an\nEITHER/OR: a frame runs `capture_rgba8` or `render`, never both, and\n`render_us` brackets whichever ran. So one field had been reporting two\ndifferent functions under one name, measured 22% apart, and nothing anywhere\nsaid which. ⚠ The reading most likely to be taken was the one least\ninterpretable: an agent asks for screenshots, so an agent's frame timings were\ncapture frames.\n\nAND THE DEMO FOUND A SECOND LAYER OF THE SAME DEFECT. Asserting on `last` FAILED:\n`last` is the most recent frame RECORDED, and an idle paint lands between a\nrequest and the read, so a client cannot use it to prove anything about its own\nrequest. The window needed the count as well -- which is also what makes\n`mean_render_us` readable at all, since a mean over a window holding both kinds\nis a mean over two functions.",
+      "changes_bullets": [
+        "`FrameTiming::captured` + `with_capture`, `FrameClose::captured`, the wire's",
+        "`FrameTimingsLast::captured`, and the census entry -- the discriminator reaches",
+        "the consumer, because a fact the runtime knows and the wire drops is a fact",
+        "nobody has.",
+        "`FrameTimingsSnapshot::captured_frames` and its wire and census siblings, plus",
+        "a warning on `mean_render_us` to read them together.",
+        "The module's own doc now NAMES the convention this is the fourth instance of:",
+        "a number here carries a qualifier saying what it is of (`settle_passes` with",
+        "`settled`, `gpu_us` with `gpu_timing_supported`, and now these two)."
+      ],
+      "verification_bullets": [
+        "`cargo test -p pinion-runtime -p pinion-shell -p pinion-rpc` green, clippy over",
+        "the three clean, fmt clean -- each judged by an rc written to a file.",
+        "Blast radius taken as WHO READS A FRAME TIMING rather than what was edited,",
+        "because the wire shape moved: all 18 demos that read `scene/frame_timings`,",
+        "zero failures.",
+        "A new demo drives both regimes on one window and reads the flag back over RPC:",
+        "`ticked mean_render=7453us captured_frames=0 | shot mean_render=9490us",
+        "captured_frames=11`.",
+        "Counterfactuals 3/3 CAUGHT -- after a first run scored 2/3, and the PASSED one",
+        "was the finding: NOTHING IN `cargo test` ASSERTED `captured_frames`. Only the",
+        "demo watched it, and a demo is not in the gate a counterfactual runs, so an",
+        "inverted count would have shipped. Two tests now pin it, with the capturing",
+        "frame deliberately in the MIDDLE of the window -- a fold taking either end",
+        "would still be right about a one-element window and wrong there, and an",
+        "inverted fold answers 2.",
+        "The wire test gives its two frames the SAME duration on purpose: a fixture",
+        "where the capturing frame were also the slower one would pass while testing",
+        "nothing, because a reader could have told them apart by the number."
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "`render_us` still holds a readback whole rather than splitting it. Splitting",
+        "needs the backend to time its own internals, which is exactly what `acquire_us`",
+        "needed and got in R1361.1; this round adds the DISCRIMINATOR, not the",
+        "subtraction, and says so at the field. The same measurement shows why that is",
+        "enough for now: the ordinary render is 97.8% of a frame with no capture at all,",
+        "so the flag corrects a reading rather than explaining the cost away.",
+        "WHAT THE 97.8% IS remains unexplained and is now the grid debt's live question,",
+        "in place of the font-table item this round retired. It is CPU time recording",
+        "and submitting, with the vsync block already split out at 5µs and the GPU's own",
+        "clock at 543µs -- so it is neither waiting nor the GPU.",
+        "This tree has no uncontaminated steady-state paint workload: the demo idles,",
+        "the screenshot RPC ships pixels as JSON, and the pixel tests are boot-dominated.",
+        "Three profiles, three different structural blockers. Recorded here rather than",
+        "as a new debt file because the frame accounting answers the question the",
+        "profile was for -- but a round that needs a PROFILE rather than a count will",
+        "meet all three again."
+      ],
+      "publishable_decision_summary": "A frame record says WHICH FUNCTION its render number measured, and a window\nsays how many of each kind it averaged over.\n\nWHAT FORCED IT. The grid debt's third item asks for a font-table handle cache\non a consumer's profile: 44.4% in `read_fonts` / `cff::dict::parse_token` /\n`TableRecord::binary_search_by` / `FontRef::table_data`. That file also says,\nin its own words, to do items 1 and 2 first and then MEASURE AGAIN. R1748 and\nR1749 did them, so this round measured.\n\nTHE ANSWER IS THAT THE ITEM'S PREMISE IS FALSE ON THIS TREE, so it is corrected\nrather than implemented. One app, 80x24, sixty frames each way: driven by ticks\nthe window's mean render was 8,452µs against encode 102 and build 50; driven by\nscreenshots, 10,344µs against encode 104 and build 54. Shaping plus vello\nencode -- which is where a font-table lookup lives -- is 152µs, 1.8% of the\nframe, in BOTH regimes, and `render_us` is 97.8% with `acquire_us` at 5µs so it\nis not a vsync wait either. A font-table cache would be cutting inside that\n1.8%. The consumer's 44.4% was true of THEIR app, at ten times the cells on a\ndifferent font stack; it is not true here, and this file now says so with the\nnumbers rather than carrying a figure nobody re-took.\n\n★★★★★ THE ANSWER CAME FROM THE APP'S OWN FRAME ACCOUNTING, NOT FROM A PROFILE,\nand three profiles were taken first. Each was invalid, and each for a different\nreason: the first sampled the app IDLE (82.58% in one kernel address -- a\nblinking cursor repaints once or twice a second); the second forced 128 frames\nover `scene/screenshot` and sampled ITS OWN PROBE (`_copy_from_iter` 64.5% plus\nserde 21%, with the actual render at 0.81%, because that RPC ships the pixels\nas JSON); the third profiled the pixel tests, which have no RPC channel at all,\nand sampled wgpu's SHADER COMPILATION (`CharSearcher::next_match`, `memchr`,\n`naga::NonMaxU32::new`) because twelve short tests have no steady state. ⇒ \"a\nprofile came out\" and \"that profile is about this question\" are different\nclaims, and the second has to be argued every time.\n\nWHAT READING `render_us` THROUGH THOSE THREE ATTEMPTS EXPOSED. The submit is an\nEITHER/OR: a frame runs `capture_rgba8` or `render`, never both, and\n`render_us` brackets whichever ran. So one field had been reporting two\ndifferent functions under one name, measured 22% apart, and nothing anywhere\nsaid which. ⚠ The reading most likely to be taken was the one least\ninterpretable: an agent asks for screenshots, so an agent's frame timings were\ncapture frames.\n\nAND THE DEMO FOUND A SECOND LAYER OF THE SAME DEFECT. Asserting on `last` FAILED:\n`last` is the most recent frame RECORDED, and an idle paint lands between a\nrequest and the read, so a client cannot use it to prove anything about its own\nrequest. The window needed the count as well -- which is also what makes\n`mean_render_us` readable at all, since a mean over a window holding both kinds\nis a mean over two functions.",
+      "publishable_changes_bullets": [
+        "`FrameTiming::captured` + `with_capture`, `FrameClose::captured`, the wire's",
+        "`FrameTimingsLast::captured`, and the census entry -- the discriminator reaches",
+        "the consumer, because a fact the runtime knows and the wire drops is a fact",
+        "nobody has.",
+        "`FrameTimingsSnapshot::captured_frames` and its wire and census siblings, plus",
+        "a warning on `mean_render_us` to read them together.",
+        "The module's own doc now NAMES the convention this is the fourth instance of:",
+        "a number here carries a qualifier saying what it is of (`settle_passes` with",
+        "`settled`, `gpu_us` with `gpu_timing_supported`, and now these two)."
+      ],
+      "publishable_verification_bullets": [
+        "`cargo test -p pinion-runtime -p pinion-shell -p pinion-rpc` green, clippy over",
+        "the three clean, fmt clean -- each judged by an rc written to a file.",
+        "Blast radius taken as WHO READS A FRAME TIMING rather than what was edited,",
+        "because the wire shape moved: all 18 demos that read `scene/frame_timings`,",
+        "zero failures.",
+        "A new demo drives both regimes on one window and reads the flag back over RPC:",
+        "`ticked mean_render=7453us captured_frames=0 | shot mean_render=9490us",
+        "captured_frames=11`.",
+        "Counterfactuals 3/3 CAUGHT -- after a first run scored 2/3, and the PASSED one",
+        "was the finding: NOTHING IN `cargo test` ASSERTED `captured_frames`. Only the",
+        "demo watched it, and a demo is not in the gate a counterfactual runs, so an",
+        "inverted count would have shipped. Two tests now pin it, with the capturing",
+        "frame deliberately in the MIDDLE of the window -- a fold taking either end",
+        "would still be right about a one-element window and wrong there, and an",
+        "inverted fold answers 2.",
+        "The wire test gives its two frames the SAME duration on purpose: a fixture",
+        "where the capturing frame were also the slower one would pass while testing",
+        "nothing, because a reader could have told them apart by the number."
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "`render_us` still holds a readback whole rather than splitting it. Splitting",
+        "needs the backend to time its own internals, which is exactly what `acquire_us`",
+        "needed and got in R1361.1; this round adds the DISCRIMINATOR, not the",
+        "subtraction, and says so at the field. The same measurement shows why that is",
+        "enough for now: the ordinary render is 97.8% of a frame with no capture at all,",
+        "so the flag corrects a reading rather than explaining the cost away.",
+        "WHAT THE 97.8% IS remains unexplained and is now the grid debt's live question,",
+        "in place of the font-table item this round retired. It is CPU time recording",
+        "and submitting, with the vsync block already split out at 5µs and the GPU's own",
+        "clock at 543µs -- so it is neither waiting nor the GPU.",
+        "This tree has no uncontaminated steady-state paint workload: the demo idles,",
+        "the screenshot RPC ships pixels as JSON, and the pixel tests are boot-dominated.",
+        "Three profiles, three different structural blockers. Recorded here rather than",
+        "as a new debt file because the frame accounting answers the question the",
+        "profile was for -- but a round that needs a PROFILE rather than a count will",
+        "meet all three again."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

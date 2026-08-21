@@ -2110,6 +2110,12 @@ impl<V: WidgetView> AppShell<V> {
         // reason: the scene it censuses is the render target the scope below
         // builds, so nowhere else can see it.
         let (encode_us, encode_nodes, acquire_us, render_us, gpu, draw);
+        // R1752 §5.16 — declared out here beside the phase durations because
+        // it is what makes `render_us` readable: the submit is an either/or,
+        // so that number is a render on an ordinary frame and a readback on a
+        // capturing one. Measured 22% apart, and until this the record could
+        // not say which it held.
+        let captured_frame;
         // R1036 PR-17 — the `renderer.render` outcome for this frame, fed into
         // the per-window render-fidelity record so `scene/render_fidelity`
         // surfaces a failed present (the present-staleness signature).
@@ -2218,6 +2224,7 @@ impl<V: WidgetView> AppShell<V> {
             // this call, so an early-return path above cannot leave it
             // stale and make a later event-loop paint capture by surprise).
             let wants_capture = slot.pending_capture;
+            captured_frame = wants_capture;
             let captured;
             (present_ok, captured) =
                 submit_frame(&mut **renderer, render_target, base, wants_capture);
@@ -2336,6 +2343,9 @@ impl<V: WidgetView> AppShell<V> {
                 encode_us,
                 acquire_us,
                 render_us,
+                // R1752 — the same flag the submit branched on, carried
+                // forward so the number it produced can be read.
+                captured: captured_frame,
                 gpu,
                 encode_nodes,
                 access_nodes,
@@ -2366,6 +2376,11 @@ struct FrameClose {
     acquire_us: u64,
     /// GPU command-buffer record + submit, CPU-side.
     render_us: u64,
+    /// ★ R1752 — whether the submit above ran the CAPTURE path. It is an
+    /// either/or (`capture_rgba8` OR `render`), so `render_us` holds whichever
+    /// ran, and this is what lets a reader tell which. Measured 22% apart on
+    /// one app; see `FrameTiming::captured`.
+    captured: bool,
     /// What this paint learned about the GPU's own clock (R1537).
     gpu: GpuFrameReport,
     /// Scene nodes the encode walk entered (R1538).
@@ -2389,6 +2404,7 @@ impl FrameClose {
             self.render_us,
             total_us,
         )
+        .with_capture(self.captured)
     }
 }
 

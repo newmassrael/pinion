@@ -304,6 +304,17 @@ pub struct FrameTimingsLast {
     /// GPU command-buffer record + submit (CPU-side only, acquire
     /// excluded).
     pub render_us: u64,
+    /// ★★★★★ R1752 — whether the field above is a RENDER or a READBACK.
+    ///
+    /// The submit is an either/or: a frame runs the capture path or the render
+    /// path, and `render_us` brackets whichever ran. An agent comparing two
+    /// frames could not tell a slow paint from a screenshot, and screenshots
+    /// are exactly what an agent asks for — so the readings it is most likely
+    /// to take were the ones it could least interpret.
+    ///
+    /// Measured at R1752 on one window, 60 frames each way: ticked, the mean
+    /// render was 8,452µs; screenshotted, 10,344µs. Same field, 22% apart.
+    pub captured: bool,
     /// R1537 — GPU wall-clock µs for a recent frame: the rasterizer's
     /// compute passes plus the blit, measured by the GPU's own clock.
     ///
@@ -562,6 +573,19 @@ pub struct FrameTimingsWindow {
     pub mean_acquire_us: u64,
     /// Mean render-phase µs over the window (acquire excluded).
     pub mean_render_us: u64,
+    /// ★★★★★ R1752 — how many samples in this window were READBACKS.
+    ///
+    /// `mean_render_us` above is a mean over two different functions whenever
+    /// this is non-zero, because the submit is an either/or. A client reading
+    /// the mean without this is averaging renders together with screenshots —
+    /// and screenshots are what a client asks for, so that mixture is the
+    /// common case rather than the exotic one.
+    ///
+    /// ⚠ It is also the only sound way to ask "did MY request capture": `last`
+    /// is the most recent frame recorded, and an idle paint can land between a
+    /// screenshot and the read. This round's demo failed on exactly that race
+    /// before the count existed.
+    pub captured_frames: u32,
     /// R1537 — mean GPU µs over the window samples that carry one.
     ///
     /// Averaged over [`Self::gpu_sample_count`], not over `window_len`:
@@ -784,6 +808,7 @@ pub fn frame_timings(
             encode_us: s.last.encode_us,
             acquire_us: s.last.acquire_us,
             render_us: s.last.render_us,
+            captured: s.last.captured,
             total_us: s.last.total_us,
             other_us: s.last.other_us(),
             work_us: s.last.work_us(),
@@ -822,6 +847,7 @@ pub fn frame_timings(
             mean_encode_us: s.mean_encode_us,
             mean_acquire_us: s.mean_acquire_us,
             mean_render_us: s.mean_render_us,
+            captured_frames: s.captured_frames,
             mean_gpu_us: s.mean_gpu_us,
             max_gpu_us: s.max_gpu_us,
             gpu_sample_count: s.gpu_sample_count,
@@ -1215,6 +1241,38 @@ mod tests {
         assert_eq!(out.window.min_total_us, 540);
         assert_eq!(out.window.mean_total_us, 540);
         assert_eq!(out.window.max_total_us, 540);
+    }
+
+    /// ★★★★★ R1752 — **the wire says which function `render_us` measured.**
+    ///
+    /// The submit is an either/or, so that number is a render on an ordinary
+    /// frame and a readback on a capturing one. Two frames with the SAME
+    /// `render_us` and different `captured` are the case this exists for: the
+    /// duration alone cannot separate them, and before this round nothing
+    /// could.
+    ///
+    /// ★ The fixture gives both frames the same duration ON PURPOSE. A fixture
+    /// where the capturing frame were also the slower one would pass while
+    /// testing nothing — a reader could have told them apart by the number.
+    #[test]
+    fn r1752_the_wire_distinguishes_a_readback_from_a_render() {
+        let plain =
+            frame_timings(Some(snapshot_of(&[FrameTiming::new(300, 100, 0, 80, 540)]))).unwrap();
+        let shot = frame_timings(Some(snapshot_of(&[
+            FrameTiming::new(300, 100, 0, 80, 540).with_capture(true)
+        ])))
+        .unwrap();
+
+        assert_eq!(
+            plain.last.render_us, shot.last.render_us,
+            "the fixture must make the DURATIONS equal, or the flag is not \
+             what is being tested"
+        );
+        assert!(!plain.last.captured, "an ordinary frame rendered");
+        assert!(
+            shot.last.captured,
+            "a capturing frame copied its texture back"
+        );
     }
 
     #[test]
