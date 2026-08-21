@@ -55970,6 +55970,94 @@
         "round's, and not silently dropped."
       ]
     },
+    "R1756": {
+      "decision_summary": "Pro-tool performance is re-judged 90 -> 88, and it is the project's THIRD\nDOWNWARD MOVE (after R1577 and R1604) for their reason: a measurement finally\nreplaced an assumption, so what is new is the meter, not a worse tree.\n\nDEMANDED BY THE TOOL, not chosen: `round-axis` evidence went 14 -> 18 (+29%,\npast the band) because R1748, R1749, R1752 and R1754 each declared this axis\nand none re-judged. R1744 is the precedent for the shape of this round and\nalso for its outcome being open — that look HELD at 90, and holding is a\nlegitimate result. This one does not hold.\n\nTHE MEASUREMENT: THIS AXIS'S HEADLINE INSTRUMENT MEASURES THE WRONG THING.\n`FrameTiming::render_us` is documented \"GPU command-buffer record + submit,\nCPU-side\", and the shell subtracts the acquire so that it can be called \"work\nonly, acquire excluded\". R1754 measured one app, one scene, 133 draws, on two\ndisplays of ONE machine: `mean_render_us` 10,384 us against 997,132 us —\nninety-six-fold — while `gpu_us` was 491 us and 1,759 us and `encode_us` 126 us\nand 141 us. One hundred and thirty-three draws record and submit in\nmicroseconds, so on the second display 99.8% of that field is neither recording\nnor submitting. The only other statement inside the timed span is\n`surface_texture.present()`, which BLOCKS ON WHOEVER CONSUMES the swapchain.\n\nThat is R1361.1's defect at the other end of the frame. That round split the\nACQUIRE block out of `render_us` and wrote why: \"a window doing 0.7ms of work\nreported ~16ms of render and read exactly like a GPU-bound one\". It left the\nPRESENT block in. A professional profiler's first job is separating \"I am slow\"\nfrom \"I am waiting\", and this axis has been judged for 393 rounds on an\ninstrument that merges them.\n\nWHY WHAT LANDED DOES NOT OFFSET IT. Two qualifiers did land and both reached\nthe wire: R1752's `captured` / `captured_frames` (whether `render_us` timed a\nrender or a readback — an either/or, measured 22% apart) and R1754's `adapter`\n(which GPU stack produced every microsecond). Both are real capability on the\naxis's profiling half. But A FIELD THAT CANNOT SAY WHAT IT MEASURED IS A\nSMALLER DEFECT THAN A FIELD THAT MEASURES THE WRONG THING — and the second was\nfound only because the first two forced someone to look at `render_us` closely\nenough to ask what was inside it.\n\nR1748 AND R1749 ARE NOT CREDITED, on R1744's own rule applied a second time.\nThey removed two per-cell payments from the TextGrid — a rectangle and a glyph\ncall for every cell — after a CONSUMER reported 4 fps at 13,779 draws. That is\nthe fourth and fifth instance of the shape R1744 named: a cost that no check in\nthis repository names, found by a person using the tool rather than by the\ntree. Repayment restores credit rather than adding it (R1628), so those two\nrounds hold the number up rather than push it further down. Without them the\nmove would have been larger.\n\nTHE REMAINDER GAINS A SEVENTH ITEM AND IT IS NOW THE LARGEST. The six from\nR1558 and R1744 are all exactly where they were — present latency external,\nfootprint what the allocator was asked for, per-node replay absent by\nconstruction, the profile row's address without a general reader, R1550's two\narenas unpinned, and R1744's repeated-work cost model unaudited. The seventh is\nthe present split, registered as its own debt rather than carried in prose.",
+      "changes_bullets": [
+        "`tools/phase_b_tally.py`: the `perf` axis judgment moves to",
+        "`judged_at: 1756`, `completion: 88`, `evidence_snapshot: {example-name 5,",
+        "demo-body 18, round-axis 18}`, with the reasoning written into the comment",
+        "above it as CLAUDE.md requires of a re-judgment.",
+        "`CLAUDE.md`: the `Pro-tool performance` gap row is rewritten to the R1756",
+        "judgment — the previous text carried R1744's \"HELD at 90\", which a reader would",
+        "now pick work from wrongly. The Phase B headline numbers are re-synced to the",
+        "tool (all axes 88 -> 89, buildable 92 -> 93, and the true-north term with them);",
+        "they had drifted BEFORE this round, in the understating direction, which is the",
+        "drift this file's own header warns about."
+      ],
+      "verification_bullets": [
+        "`python3 tools/phase_b_tally.py --selftest` PASS (0 failures).",
+        "`python3 tools/phase_b_tally.py` exits 0 — STALE now reports nothing, where it",
+        "had named `perf` on the R1754 and R1755 pushes.",
+        "The axis reports `Pro-tool performance 9 88%` with every evidence kind at +0%,",
+        "and LEVERAGE re-ranked itself as it is designed to: perf 90 -> 108, still",
+        "second behind DCC widgets at 240. The ranking was not written down anywhere —",
+        "R1519 made it derived precisely so this happens.",
+        "No crate changed behaviour, so no cargo population applies; this round edits a",
+        "measurement tool and two documents."
+      ],
+      "impact_refs": [
+        "5.16"
+      ],
+      "carry_forward_bullets": [
+        "The 997 ms is attributed to `present()` BY ELIMINATION, not by isolation.",
+        "Building the split is what will measure it, and if the attribution is wrong the",
+        "debt note is what gets corrected first. The judgment does not depend on the",
+        "attribution being right: `render_us` is 99.8% not-record-and-not-submit either",
+        "way, and that alone is what the field claims not to be.",
+        "R1755's ledger claimed the eleven upstream commits offered this tree no API it",
+        "wants and removed none it uses. That claim was made from commit titles and",
+        "diffstats. It is now MEASURED and holds: the Rust runtime's public surface",
+        "changed in exactly two ways over that range — `to_lua_literal` removed,",
+        "`script_value_to_wire_string` added — and pinion references neither, nor",
+        "`ScriptValue`, nor `IScriptEngine`; its entire consumption of",
+        "`sce-rust-runtime` is `Engine` and `StatePolicy`. Recorded here because the",
+        "earlier entry is frozen and its evidence was weaker than its wording.",
+        "The other five items on this axis are unchanged and unscheduled."
+      ],
+      "publishable_decision_summary": "Pro-tool performance is re-judged 90 -> 88, and it is the project's THIRD\nDOWNWARD MOVE (after R1577 and R1604) for their reason: a measurement finally\nreplaced an assumption, so what is new is the meter, not a worse tree.\n\nDEMANDED BY THE TOOL, not chosen: `round-axis` evidence went 14 -> 18 (+29%,\npast the band) because R1748, R1749, R1752 and R1754 each declared this axis\nand none re-judged. R1744 is the precedent for the shape of this round and\nalso for its outcome being open — that look HELD at 90, and holding is a\nlegitimate result. This one does not hold.\n\nTHE MEASUREMENT: THIS AXIS'S HEADLINE INSTRUMENT MEASURES THE WRONG THING.\n`FrameTiming::render_us` is documented \"GPU command-buffer record + submit,\nCPU-side\", and the shell subtracts the acquire so that it can be called \"work\nonly, acquire excluded\". R1754 measured one app, one scene, 133 draws, on two\ndisplays of ONE machine: `mean_render_us` 10,384 us against 997,132 us —\nninety-six-fold — while `gpu_us` was 491 us and 1,759 us and `encode_us` 126 us\nand 141 us. One hundred and thirty-three draws record and submit in\nmicroseconds, so on the second display 99.8% of that field is neither recording\nnor submitting. The only other statement inside the timed span is\n`surface_texture.present()`, which BLOCKS ON WHOEVER CONSUMES the swapchain.\n\nThat is R1361.1's defect at the other end of the frame. That round split the\nACQUIRE block out of `render_us` and wrote why: \"a window doing 0.7ms of work\nreported ~16ms of render and read exactly like a GPU-bound one\". It left the\nPRESENT block in. A professional profiler's first job is separating \"I am slow\"\nfrom \"I am waiting\", and this axis has been judged for 393 rounds on an\ninstrument that merges them.\n\nWHY WHAT LANDED DOES NOT OFFSET IT. Two qualifiers did land and both reached\nthe wire: R1752's `captured` / `captured_frames` (whether `render_us` timed a\nrender or a readback — an either/or, measured 22% apart) and R1754's `adapter`\n(which GPU stack produced every microsecond). Both are real capability on the\naxis's profiling half. But A FIELD THAT CANNOT SAY WHAT IT MEASURED IS A\nSMALLER DEFECT THAN A FIELD THAT MEASURES THE WRONG THING — and the second was\nfound only because the first two forced someone to look at `render_us` closely\nenough to ask what was inside it.\n\nR1748 AND R1749 ARE NOT CREDITED, on R1744's own rule applied a second time.\nThey removed two per-cell payments from the TextGrid — a rectangle and a glyph\ncall for every cell — after a CONSUMER reported 4 fps at 13,779 draws. That is\nthe fourth and fifth instance of the shape R1744 named: a cost that no check in\nthis repository names, found by a person using the tool rather than by the\ntree. Repayment restores credit rather than adding it (R1628), so those two\nrounds hold the number up rather than push it further down. Without them the\nmove would have been larger.\n\nTHE REMAINDER GAINS A SEVENTH ITEM AND IT IS NOW THE LARGEST. The six from\nR1558 and R1744 are all exactly where they were — present latency external,\nfootprint what the allocator was asked for, per-node replay absent by\nconstruction, the profile row's address without a general reader, R1550's two\narenas unpinned, and R1744's repeated-work cost model unaudited. The seventh is\nthe present split, registered as its own debt rather than carried in prose.",
+      "publishable_changes_bullets": [
+        "`tools/phase_b_tally.py`: the `perf` axis judgment moves to",
+        "`judged_at: 1756`, `completion: 88`, `evidence_snapshot: {example-name 5,",
+        "demo-body 18, round-axis 18}`, with the reasoning written into the comment",
+        "above it as CLAUDE.md requires of a re-judgment.",
+        "`CLAUDE.md`: the `Pro-tool performance` gap row is rewritten to the R1756",
+        "judgment — the previous text carried R1744's \"HELD at 90\", which a reader would",
+        "now pick work from wrongly. The Phase B headline numbers are re-synced to the",
+        "tool (all axes 88 -> 89, buildable 92 -> 93, and the true-north term with them);",
+        "they had drifted BEFORE this round, in the understating direction, which is the",
+        "drift this file's own header warns about."
+      ],
+      "publishable_verification_bullets": [
+        "`python3 tools/phase_b_tally.py --selftest` PASS (0 failures).",
+        "`python3 tools/phase_b_tally.py` exits 0 — STALE now reports nothing, where it",
+        "had named `perf` on the R1754 and R1755 pushes.",
+        "The axis reports `Pro-tool performance 9 88%` with every evidence kind at +0%,",
+        "and LEVERAGE re-ranked itself as it is designed to: perf 90 -> 108, still",
+        "second behind DCC widgets at 240. The ranking was not written down anywhere —",
+        "R1519 made it derived precisely so this happens.",
+        "No crate changed behaviour, so no cargo population applies; this round edits a",
+        "measurement tool and two documents."
+      ],
+      "publishable_impact_refs": [
+        "5.16"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The 997 ms is attributed to `present()` BY ELIMINATION, not by isolation.",
+        "Building the split is what will measure it, and if the attribution is wrong the",
+        "debt note is what gets corrected first. The judgment does not depend on the",
+        "attribution being right: `render_us` is 99.8% not-record-and-not-submit either",
+        "way, and that alone is what the field claims not to be.",
+        "R1755's ledger claimed the eleven upstream commits offered this tree no API it",
+        "wants and removed none it uses. That claim was made from commit titles and",
+        "diffstats. It is now MEASURED and holds: the Rust runtime's public surface",
+        "changed in exactly two ways over that range — `to_lua_literal` removed,",
+        "`script_value_to_wire_string` added — and pinion references neither, nor",
+        "`ScriptValue`, nor `IScriptEngine`; its entire consumption of",
+        "`sce-rust-runtime` is `Engine` and `StatePolicy`. Recorded here because the",
+        "earlier entry is frozen and its evidence was weaker than its wording.",
+        "The other five items on this axis are unchanged and unscheduled."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

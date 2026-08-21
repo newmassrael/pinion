@@ -2381,9 +2381,70 @@ AXES = [
         # instances, and it is now the largest UNMEASURED item on the axis: the
         # other five are instruments this tree knows it lacks, and this is a
         # cost model nobody has audited.
-        "judged_at": 1744,
-        "completion": 90,
-        "evidence_snapshot": {"example-name": 5, "demo-body": 17, "round-axis": 14},
+        #
+        # R1756 re-judged 90 -> 88, DEMANDED by the tool (`round-axis` 14 -> 18,
+        # +29%; R1748, R1749, R1752 and R1754 each declared this axis and none
+        # re-judged). ★ A DOWNWARD MOVE, and the third this project has made
+        # (R1577, R1604) — each time because a measurement finally replaced an
+        # assumption, and each time the meter is what is new rather than the
+        # tree being worse.
+        #
+        # THE MEASUREMENT: this axis's HEADLINE INSTRUMENT reports a number that
+        # is mostly not what it says. `FrameTiming::render_us` is documented as
+        # "GPU command-buffer record + submit, CPU-side" and the shell subtracts
+        # the acquire so it can be called "work only". R1754 measured one app,
+        # one scene, 133 draws, on two displays of one machine: `mean_render_us`
+        # 10,384 us against 997,132 us — ninety-six-fold — while `gpu_us` was
+        # 491 us and 1,759 us and `encode_us` 126 us and 141 us. 133 draws
+        # record and submit in microseconds, so on the second display 99.8% of
+        # the field is neither recording nor submitting. The only other
+        # statement inside the timed span is `surface_texture.present()`, which
+        # BLOCKS ON THE CONSUMER of the swapchain.
+        #
+        # That is R1361.1's defect at the other end of the frame. That round
+        # split the ACQUIRE block out of `render_us` for exactly this reason,
+        # writing that "a window doing 0.7ms of work reported ~16ms of render
+        # and read exactly like a GPU-bound one" — and left the PRESENT block
+        # in. A professional profiler's first job is separating "I am slow"
+        # from "I am waiting"; this axis has been judged on an instrument that
+        # merges them, and no check here noticed for 393 rounds.
+        #
+        # WHY THAT OUTWEIGHS WHAT LANDED. Two qualifiers did land on the
+        # instrument and both reached the wire: R1752's `captured` /
+        # `captured_frames` (whether `render_us` timed a render or a readback —
+        # it is an either/or, measured 22% apart) and R1754's `adapter` (which
+        # GPU stack produced every microsecond). Both are real capability. But
+        # a field that cannot say WHAT IT MEASURED is a smaller defect than a
+        # field that measures the wrong thing, and the second was found only
+        # because the first two forced someone to look.
+        #
+        # R1748 AND R1749 ARE NOT CREDITED, on R1744's own rule applied a
+        # second time. They removed two per-cell payments from the TextGrid — a
+        # rectangle and a glyph call per cell — after a CONSUMER reported 4 fps
+        # with 13,779 draws. That is the fourth and fifth instance of the shape
+        # R1744 named: a cost no check in this repository names, found by a
+        # person using the tool. Repayment restores credit rather than adding
+        # it (R1628), so they hold the number up rather than push it further
+        # down.
+        #
+        # THE SIX-ITEM REMAINDER IS UNCHANGED — present latency still external,
+        # footprint still what the allocator was asked for, per-node replay
+        # still absent by construction, the profile row's address still without
+        # a general reader, R1550's two arenas still unpinned, and R1744's
+        # repeated-work cost model still unaudited — and it GAINS a seventh
+        # which is now the largest: `render_us` must split its present the way
+        # R1361.1 split its acquire. Registered as its own debt rather than
+        # carried in prose, and it is a bigger change than it looks (trait
+        # method, forge template, the phase partition every demo asserts, the
+        # wire, the census).
+        #
+        # ⚠ Stated rather than glossed: the 997 ms is attributed to `present()`
+        # BY ELIMINATION, not by isolation. Building the split is what will
+        # measure it, and if the attribution is wrong the debt note is what
+        # gets corrected first.
+        "judged_at": 1756,
+        "completion": 88,
+        "evidence_snapshot": {"example-name": 5, "demo-body": 18, "round-axis": 18},
     },
     {
         "key": "osnative",
