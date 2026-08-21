@@ -81,8 +81,13 @@ const ROW_H: u32 = 56;
 const ROW_GAP: u32 = 1;
 const HEADER_H: u32 = 96;
 
-/// The list viewport: the window minus the header. Nine rows fit; eighteen
-/// exist. A list that fitted would prove nothing at all.
+/// The list viewport: the window minus the header.
+///
+/// How many rows that holds is NOT written here. A count in a comment is wrong
+/// the moment a constant above it moves, and this one already was — the first
+/// draft said "nine fit", borrowed from the consumer's app, whose rows are
+/// taller than these. `r1753_the_list_overflows_its_viewport` derives it
+/// instead, and fails if the geometry stops overflowing at all.
 const VIEWPORT_H: u32 = WIN_H - HEADER_H;
 
 const PRIMARY_TAG: &str = "set_list";
@@ -460,13 +465,27 @@ mod tests {
     }
 
     #[test]
-    fn r1753_the_list_is_taller_than_its_viewport() {
+    fn r1753_the_list_overflows_its_viewport() {
         // A list that fitted on screen would pass every test above while
         // proving nothing about scrolling.
-        let content_h = u32::try_from(N).expect("N is a small literal") * (ROW_H + ROW_GAP) + 24;
+        //
+        // ★ It also OWNS the row count, which no comment does. R1753's closing
+        // audit found "nine rows fit" written above `VIEWPORT_H` — a number
+        // borrowed from the consumer's app, whose rows are taller, and false
+        // of this one by five. A count stated in prose is wrong as soon as a
+        // constant above it moves and nothing says so; a count derived here
+        // moves with it, and the assertion that matters is the RELATION.
+        let rows = u32::try_from(N).expect("N is a small literal");
+        let pitch = ROW_H + ROW_GAP;
+        let content_h = rows * pitch + 24;
         assert!(
             content_h > VIEWPORT_H,
             "content {content_h} must overflow viewport {VIEWPORT_H}",
+        );
+        let fit = (VIEWPORT_H - 12) / pitch;
+        assert!(
+            fit < rows,
+            "{fit} of {rows} rows fit; a list that fits proves nothing",
         );
     }
 

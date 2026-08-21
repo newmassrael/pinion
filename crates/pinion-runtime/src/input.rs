@@ -830,6 +830,33 @@ struct PanState {
     scroll: Option<Rc<ScrollState>>,
 }
 
+impl PanState {
+    /// R1753 §5.35 — seed a pan pinned at `origin`, aimed at `tag` (the stage-1
+    /// `External` wheel-offer recipient, `None` for a content drag) and
+    /// `scroll` (the stage-2 container).
+    ///
+    /// One constructor because the three fields a caller does NOT pass are the
+    /// ones a second copy could get wrong silently. `last` must start AT the
+    /// origin — it is the other end of every delta, so seeding it from the
+    /// current cursor instead would make the content jump by however far the
+    /// gesture had already travelled — and `frac` must start empty, or a pan
+    /// would inherit the sub-pixel remainder of whatever moved last. Both are
+    /// invisible in a diff and visible only as a glitch on the first frame.
+    ///
+    /// Lifted at the round that added the second construction site
+    /// ([`InputRouter::open_content_pan`]) rather than at a third, which is
+    /// this project's standing rule for mechanical duplication.
+    fn pinned_at(origin: (f64, f64), tag: Option<String>, scroll: Option<Rc<ScrollState>>) -> Self {
+        Self {
+            latch: DragLatch::new(origin),
+            last: origin,
+            frac: (0.0, 0.0),
+            tag,
+            scroll,
+        }
+    }
+}
+
 /// R881 §5.35 — what a pan-channel release resolved to (renamed from `MiddleRelease` in
 /// R882, when the left button gained the Space-hold chord entry into the same
 /// channel). The router owns the click-vs-pan determination (the [`DragLatch`] SSOT);
@@ -1943,13 +1970,7 @@ impl InputRouter {
         let scroll = self.last_paint_scene.as_ref().and_then(|paint| {
             paint.scroll_state_at(floor_clamp_u32(origin.0), floor_clamp_u32(origin.1))
         });
-        PanState {
-            latch: DragLatch::new(origin),
-            last: origin,
-            frac: (0.0, 0.0),
-            tag: self.hover_targets.get(&id).cloned(),
-            scroll,
-        }
+        PanState::pinned_at(origin, self.hover_targets.get(&id).cloned(), scroll)
     }
 
     /// R881 §5.35 §5.49 — close the middle-button gesture for `id`
@@ -2260,13 +2281,7 @@ impl InputRouter {
             DragPan {
                 button: PanButton::Left,
                 swallowed_presses: 0,
-                pan: Some(PanState {
-                    latch: DragLatch::new(origin),
-                    last: origin,
-                    frac: (0.0, 0.0),
-                    tag: None,
-                    scroll: Some(scroll),
-                }),
+                pan: Some(PanState::pinned_at(origin, None, Some(scroll))),
             },
         );
     }

@@ -3,8 +3,9 @@
 
 The consumer report this round answers, driven rather than described.
 
-A 430x932 phone-shaped list. Every row is a tap target; eighteen rows
-exist and nine fit. Measured on the consumer's build, a press-and-drag
+A 430x932 phone-shaped list. Every row is a tap target, and the list is
+taller than its viewport — how much taller is the example's own test to
+state, not this docstring's. Measured on the consumer's build, a press-and-drag
 over such a list moved the offset by 0 px and opened the pressed row
 instead. `ScrollNode::with_content_drag` is the declaration that fixes
 it, and this script shows both halves of the gesture surviving
