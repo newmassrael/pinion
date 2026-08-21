@@ -57464,6 +57464,92 @@
         "not build and did not need; it is the next thing this axis is short of."
       ]
     },
+    "R1764": {
+      "decision_summary": "R1764 — a verdict titled by painted words is a verdict the fold can decide, and\nthe CI runner decided one.\n\nWHAT FORCED IT. R1762's own gate went red on CI and green on every local run,\nincluding single-threaded:\n\n    `theme` is not what docs/analyzer-settings-spec.json declares:\n      `0` is specified as \"Dark\" and reads \"<this part is painted and draws no words>\"\n      `1` is specified as \"Light\" and reads \"<this part is painted and draws no words>\"\n\nTHE CAUSE IS THE FOLD, and R1762 had already written half of it down. The\npreferences page is taller than its region — that round gave it a viewport for\nexactly that reason — so the appearance group, last of four, is cut to a sliver\nat the opening scroll position. R1762 declared that for the ROW (its sentence is\nbelow the fold and the pin carries a remainder saying so) and did not notice\nthat the row's two CHOICES are inside the same sliver. Whether their labels\nsurvive the clip is a fact about where the page happens to be scrolled and how\nthe host lays a button's label out; here they survived and on the runner they did\nnot, so the verdict was being decided by the machine.\n\nTHE FIX IS WHICH ACCOUNT THE JUDGE READS, not what the pin says. `theme` is\ntitled from the screen's own table now rather than from the frame's words. The\npin is unchanged — `Dark` and `Light` are what the reference draws and what\n`spec::THEMES` holds — so the canon a reader checks against is the same document\nit was, and what moved is that the reading no longer depends on a clip.\n\n★★★★★ THE LESSON, and it is the one this project keeps paying for in a new\ncostume: a sample finds only what it was aimed at. R1762 chose `parts_as_read`\nfor this surface because the words are the reference's, ran it, and saw them —\non one machine, at one scroll position. The rule the round should have applied\nis its own: a part whose words a session can take off the frame is titled by the\ntable, and only a part that is always on the frame is titled by what it reads.",
+      "changes_bullets": [
+        "`crate::judge::settings_built` reads `theme` with `parts_titled` rather than",
+        "`parts_as_read`, from the same table the pin's canon holds.",
+        "`docs/analyzer-settings-spec.json` is UNCHANGED: the canon is the words the",
+        "reference draws, and this round moved which of the two accounts of those words",
+        "is compared against it."
+      ],
+      "verification_bullets": [
+        "The red: `gh run view 32493366680` — one job, one step, one test",
+        "(`r1762_the_preferences_page_reproduces_its_specification_or_says_why_not`),",
+        "100 passed 1 failed.",
+        "Reproduced-by-reasoning rather than by re-running: the test is green here at the",
+        "default thread count and single-threaded, so the difference is the environment,",
+        "and the message names the mechanism — two parts painted, neither reading any",
+        "words. Both sit in the sliver the appearance group is cut to at the opening",
+        "scroll position, which R1762 had already measured for the row above them",
+        "(painted 64px, reachable 28px).",
+        "cargo test -p hello-analyzer-shell — 101 passed, 0 failed, at the default thread",
+        "count and again with `--test-threads=1`.",
+        "Demos: r1738, r1747, r1761, r1762, r1763 all green against the rebuilt binary.",
+        "NOT DONE and stated: nothing yet asserts that a surface titled by what it reads",
+        "is on the frame at the scroll position the judge runs at. That is the general",
+        "form of this defect and it is written into the round's carry rather than",
+        "implied."
+      ],
+      "impact_refs": [
+        "5.27",
+        "5.40"
+      ],
+      "carry_forward_bullets": [
+        "The general form of this defect has no gate: a surface titled by what it READS",
+        "is one whose verdict a clip can change, and nothing checks that such a surface is",
+        "fully on the frame at the scroll position the judge runs at. Four of this page's",
+        "seven surfaces are read-titled and three of them happen to be above the fold.",
+        "\"Happen to\" is the whole problem; it is the same sentence R1762's own carry used",
+        "about the node lab masking a stale verdict.",
+        "The cheap shape is a per-surface assertion inside the page's own gate — for each",
+        "read-titled surface, its parts' painted rectangles are inside the page region —",
+        "and it is cheap because both numbers are already published (`scene/bbox` answers",
+        "`bbox` and `window` and their difference IS the clip)."
+      ],
+      "publishable_decision_summary": "R1764 — a verdict titled by painted words is a verdict the fold can decide, and\nthe CI runner decided one.\n\nWHAT FORCED IT. R1762's own gate went red on CI and green on every local run,\nincluding single-threaded:\n\n    `theme` is not what docs/analyzer-settings-spec.json declares:\n      `0` is specified as \"Dark\" and reads \"<this part is painted and draws no words>\"\n      `1` is specified as \"Light\" and reads \"<this part is painted and draws no words>\"\n\nTHE CAUSE IS THE FOLD, and R1762 had already written half of it down. The\npreferences page is taller than its region — that round gave it a viewport for\nexactly that reason — so the appearance group, last of four, is cut to a sliver\nat the opening scroll position. R1762 declared that for the ROW (its sentence is\nbelow the fold and the pin carries a remainder saying so) and did not notice\nthat the row's two CHOICES are inside the same sliver. Whether their labels\nsurvive the clip is a fact about where the page happens to be scrolled and how\nthe host lays a button's label out; here they survived and on the runner they did\nnot, so the verdict was being decided by the machine.\n\nTHE FIX IS WHICH ACCOUNT THE JUDGE READS, not what the pin says. `theme` is\ntitled from the screen's own table now rather than from the frame's words. The\npin is unchanged — `Dark` and `Light` are what the reference draws and what\n`spec::THEMES` holds — so the canon a reader checks against is the same document\nit was, and what moved is that the reading no longer depends on a clip.\n\n★★★★★ THE LESSON, and it is the one this project keeps paying for in a new\ncostume: a sample finds only what it was aimed at. R1762 chose `parts_as_read`\nfor this surface because the words are the reference's, ran it, and saw them —\non one machine, at one scroll position. The rule the round should have applied\nis its own: a part whose words a session can take off the frame is titled by the\ntable, and only a part that is always on the frame is titled by what it reads.",
+      "publishable_changes_bullets": [
+        "`crate::judge::settings_built` reads `theme` with `parts_titled` rather than",
+        "`parts_as_read`, from the same table the pin's canon holds.",
+        "`docs/analyzer-settings-spec.json` is UNCHANGED: the canon is the words the",
+        "reference draws, and this round moved which of the two accounts of those words",
+        "is compared against it."
+      ],
+      "publishable_verification_bullets": [
+        "The red: `gh run view 32493366680` — one job, one step, one test",
+        "(`r1762_the_preferences_page_reproduces_its_specification_or_says_why_not`),",
+        "100 passed 1 failed.",
+        "Reproduced-by-reasoning rather than by re-running: the test is green here at the",
+        "default thread count and single-threaded, so the difference is the environment,",
+        "and the message names the mechanism — two parts painted, neither reading any",
+        "words. Both sit in the sliver the appearance group is cut to at the opening",
+        "scroll position, which R1762 had already measured for the row above them",
+        "(painted 64px, reachable 28px).",
+        "cargo test -p hello-analyzer-shell — 101 passed, 0 failed, at the default thread",
+        "count and again with `--test-threads=1`.",
+        "Demos: r1738, r1747, r1761, r1762, r1763 all green against the rebuilt binary.",
+        "NOT DONE and stated: nothing yet asserts that a surface titled by what it reads",
+        "is on the frame at the scroll position the judge runs at. That is the general",
+        "form of this defect and it is written into the round's carry rather than",
+        "implied."
+      ],
+      "publishable_impact_refs": [
+        "5.27",
+        "5.40"
+      ],
+      "publishable_carry_forward_bullets": [
+        "The general form of this defect has no gate: a surface titled by what it READS",
+        "is one whose verdict a clip can change, and nothing checks that such a surface is",
+        "fully on the frame at the scroll position the judge runs at. Four of this page's",
+        "seven surfaces are read-titled and three of them happen to be above the fold.",
+        "\"Happen to\" is the whole problem; it is the same sentence R1762's own carry used",
+        "about the node lab masking a stale verdict.",
+        "The cheap shape is a per-surface assertion inside the page's own gate — for each",
+        "read-titled surface, its parts' painted rectangles are inside the page region —",
+        "and it is cheap because both numbers are already published (`scene/bbox` answers",
+        "`bbox` and `window` and their difference IS the clip)."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

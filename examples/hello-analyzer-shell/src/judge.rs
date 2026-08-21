@@ -189,7 +189,25 @@ pub fn settings_built(regions: &PaintedRegions, surface: &str, showing: Showing)
         "head" => Built::Standing(parts_as_read(regions, SETTINGS_HEAD)),
         "rows" => Built::Standing(parts_as_read(regions, SETTINGS_ROWS)),
         "locked" => Built::Standing(parts_as_read(regions, SETTINGS_LOCKED)),
-        "theme" => Built::Standing(parts_as_read(regions, SETTINGS_THEME)),
+        // ★★★★★ R1764 — TITLED, not read, and the reason is a red this repaired.
+        //
+        // The appearance group is the last of four on a page taller than its
+        // region, so at the opening scroll position it is cut to a sliver — this
+        // round's own `rows` surface declares that for the row's sentence. Its
+        // two choices are inside that sliver, and whether their words survive
+        // the clip is a fact about where the page happens to be scrolled and how
+        // the host lays out a button's label. Measured: they read their words
+        // here and read nothing at all on the CI runner, so the verdict was
+        // being decided by the machine.
+        //
+        // The pin is unchanged — `Dark` and `Light` are what `spec::THEMES`
+        // holds and what the reference draws — so what moved is only which of
+        // the two accounts of those words the judge reads.
+        "theme" => Built::Standing(parts_titled(
+            regions,
+            SETTINGS_THEME,
+            &settings_title_in("theme"),
+        )),
         "plugins" => Built::Standing(parts_as_read(regions, SETTINGS_PLUGIN)),
         // ★ Titled, not read: a chooser draws the VALUE a session put in it and
         // a switch draws no words at all, so pinning what they paint would
