@@ -55884,6 +55884,92 @@
         "outside this workspace. Nothing outside it exists yet."
       ]
     },
+    "R1755": {
+      "decision_summary": "The engine pin moves to `0ac56f1a45`, eleven commits on from `a8026fd62b`, and\nNOTHING NEW IS CONSUMED — which is the finding rather than an omission.\n\nWHAT THE ELEVEN CONTAIN, read before adopting rather than after. Two touch the\nmacrostep bound this tree started consuming at R1751:\n`bbde787f93` lets a consumer compile out the macrostep REPORT, and\n`6279c6b80c` puts the truncation log inside that same gate, which its doc had\nalready claimed. Neither touches the BOUND. The feature is opt-OUT, and\nupstream states the reason in the manifest: a consumer who does nothing must\nkeep the report, because losing it silently is exactly the failure the report\nexists to prevent. pinion does nothing, so pinion keeps it — and the three\nR1751 assertions are the proof, not the argument: they call\n`truncated_macrosteps()` and they pass under the new revision, so the accessors\nthis tree depends on are still there and still counting.\n\nTHE OTHER NINE DO NOT REACH THIS TREE, and each was checked rather than\nassumed. `b068fff9a5` (a non-finite double cast to an integer on the wire, W3C\nSCXML B.1) lives in `sce/src/scripting/ScriptResultUtils.cpp` — the C++ engine,\nwhich pinion does not embed; pinion takes the Rust runtime through Forge emit.\n`245c319a2b` moves a Lua literal behind `IScriptEngine`, and its Rust half is\nthe `sce-lua` crate this workspace does not depend on. The rest are upstream's\nown gates, anchors, stamps and a `gawk` portability fix.\n\n⇒ A PIN BUMP WITH NO CONSUMPTION IS A COMPLETE ROUND AND IS RECORDED AS ONE.\nR1741's lesson is the reason this is spelled out: the temptation at a bump is\nto invent a consumer so the round has an artifact, and an invented consumer is\nworse than none — it asserts a dependency that was not wanted. What this round\nowes instead is EVIDENCE THAT NOTHING BROKE, and that is what it produced.\n\nTHE BUILD WAS PROVEN TO BE THE NEW REVISION, not merely green. R1750 recorded\nthat a green `cargo build` can be an hour-old codegen cache, so `pinion-core`\nand `pinion-forge` were cleaned and the build log was READ: `sce-portable-bytes`,\n`sce-build` and `sce-rust-runtime` each compiled from\n`?rev=0ac56f1a455f3dadb313b64f3516a3073a3daee8`. A pin bump whose proof is a\ncache hit proves nothing about the pin.",
+      "changes_bullets": [
+        "`vendor/sce` gitlink, the two `Cargo.toml` revs and `Cargo.lock` all move to",
+        "`0ac56f1a455f3dadb313b64f3516a3073a3daee8` — the triple discipline, verified by",
+        "`tools/pin_sync.py --check-dual-pin` rather than by eye.",
+        "No pinion source changes: nothing in the eleven upstream commits offers this",
+        "tree an API it wants, and none removes one it uses."
+      ],
+      "verification_bullets": [
+        "`cargo test -p pinion-core -p pinion-runtime -p pinion-forge` PASS (3859 + the",
+        "rest), with the three R1751 macrostep assertions named in the log:",
+        "`r1751_a_self_answering_raise_is_stopped_by_the_engine`,",
+        "`r1751_a_truncated_macrostep_does_not_wedge_the_machine`,",
+        "`r1751_the_budget_is_spent_per_macrostep_and_not_once`. They are the consumption",
+        "proof for the two commits that touch the macrostep report.",
+        "`tools/pin_sync.py --check-dual-pin`: `SCE@0ac56f1 (manifest = lock =",
+        "vendor/sce)`.",
+        "Workspace clippy (pedantic, `--all-targets`, vello) PASS.",
+        "THE EMIT WAS FORCED, not cached: `cargo clean -p pinion-core -p pinion-forge`",
+        "first, and the build log read back to confirm `sce-portable-bytes` / `sce-build`",
+        "/ `sce-rust-runtime` compiled from `?rev=0ac56f1a45...`.",
+        "Demos on Xvfb :97, chosen because their widgets are SCE-driven:",
+        "`hello_button_r641`, `r690_tabs`, `r972_textgrid`, and R1754's",
+        "`r1754_a_frame_timing_says_what_made_it` — 4/4 PASS."
+      ],
+      "impact_refs": [
+        "5.4",
+        "5.14"
+      ],
+      "carry_forward_bullets": [
+        "`no-macrostep-diagnostics` is opt-out and pinion does not name it, so the report",
+        "survives. If a future dependency ever enabled it under Cargo feature",
+        "unification, the R1751 tests would fail to COMPILE (the accessors vanish with",
+        "the feature) rather than silently pass — so the existing gate already covers",
+        "that, and no new one was added.",
+        "The nine commits judged not to reach this tree were judged by reading their",
+        "diffstat and their touched paths, not by running them. A C++-side or Lua-side",
+        "regression would not be visible here either way.",
+        "`STALE — perf` is still outstanding from R1754's push: the tally reports one",
+        "axis judgment resting on evidence that has moved more than 25%. Not this",
+        "round's, and not silently dropped."
+      ],
+      "publishable_decision_summary": "The engine pin moves to `0ac56f1a45`, eleven commits on from `a8026fd62b`, and\nNOTHING NEW IS CONSUMED — which is the finding rather than an omission.\n\nWHAT THE ELEVEN CONTAIN, read before adopting rather than after. Two touch the\nmacrostep bound this tree started consuming at R1751:\n`bbde787f93` lets a consumer compile out the macrostep REPORT, and\n`6279c6b80c` puts the truncation log inside that same gate, which its doc had\nalready claimed. Neither touches the BOUND. The feature is opt-OUT, and\nupstream states the reason in the manifest: a consumer who does nothing must\nkeep the report, because losing it silently is exactly the failure the report\nexists to prevent. pinion does nothing, so pinion keeps it — and the three\nR1751 assertions are the proof, not the argument: they call\n`truncated_macrosteps()` and they pass under the new revision, so the accessors\nthis tree depends on are still there and still counting.\n\nTHE OTHER NINE DO NOT REACH THIS TREE, and each was checked rather than\nassumed. `b068fff9a5` (a non-finite double cast to an integer on the wire, W3C\nSCXML B.1) lives in `sce/src/scripting/ScriptResultUtils.cpp` — the C++ engine,\nwhich pinion does not embed; pinion takes the Rust runtime through Forge emit.\n`245c319a2b` moves a Lua literal behind `IScriptEngine`, and its Rust half is\nthe `sce-lua` crate this workspace does not depend on. The rest are upstream's\nown gates, anchors, stamps and a `gawk` portability fix.\n\n⇒ A PIN BUMP WITH NO CONSUMPTION IS A COMPLETE ROUND AND IS RECORDED AS ONE.\nR1741's lesson is the reason this is spelled out: the temptation at a bump is\nto invent a consumer so the round has an artifact, and an invented consumer is\nworse than none — it asserts a dependency that was not wanted. What this round\nowes instead is EVIDENCE THAT NOTHING BROKE, and that is what it produced.\n\nTHE BUILD WAS PROVEN TO BE THE NEW REVISION, not merely green. R1750 recorded\nthat a green `cargo build` can be an hour-old codegen cache, so `pinion-core`\nand `pinion-forge` were cleaned and the build log was READ: `sce-portable-bytes`,\n`sce-build` and `sce-rust-runtime` each compiled from\n`?rev=0ac56f1a455f3dadb313b64f3516a3073a3daee8`. A pin bump whose proof is a\ncache hit proves nothing about the pin.",
+      "publishable_changes_bullets": [
+        "`vendor/sce` gitlink, the two `Cargo.toml` revs and `Cargo.lock` all move to",
+        "`0ac56f1a455f3dadb313b64f3516a3073a3daee8` — the triple discipline, verified by",
+        "`tools/pin_sync.py --check-dual-pin` rather than by eye.",
+        "No pinion source changes: nothing in the eleven upstream commits offers this",
+        "tree an API it wants, and none removes one it uses."
+      ],
+      "publishable_verification_bullets": [
+        "`cargo test -p pinion-core -p pinion-runtime -p pinion-forge` PASS (3859 + the",
+        "rest), with the three R1751 macrostep assertions named in the log:",
+        "`r1751_a_self_answering_raise_is_stopped_by_the_engine`,",
+        "`r1751_a_truncated_macrostep_does_not_wedge_the_machine`,",
+        "`r1751_the_budget_is_spent_per_macrostep_and_not_once`. They are the consumption",
+        "proof for the two commits that touch the macrostep report.",
+        "`tools/pin_sync.py --check-dual-pin`: `SCE@0ac56f1 (manifest = lock =",
+        "vendor/sce)`.",
+        "Workspace clippy (pedantic, `--all-targets`, vello) PASS.",
+        "THE EMIT WAS FORCED, not cached: `cargo clean -p pinion-core -p pinion-forge`",
+        "first, and the build log read back to confirm `sce-portable-bytes` / `sce-build`",
+        "/ `sce-rust-runtime` compiled from `?rev=0ac56f1a45...`.",
+        "Demos on Xvfb :97, chosen because their widgets are SCE-driven:",
+        "`hello_button_r641`, `r690_tabs`, `r972_textgrid`, and R1754's",
+        "`r1754_a_frame_timing_says_what_made_it` — 4/4 PASS."
+      ],
+      "publishable_impact_refs": [
+        "5.4",
+        "5.14"
+      ],
+      "publishable_carry_forward_bullets": [
+        "`no-macrostep-diagnostics` is opt-out and pinion does not name it, so the report",
+        "survives. If a future dependency ever enabled it under Cargo feature",
+        "unification, the R1751 tests would fail to COMPILE (the accessors vanish with",
+        "the feature) rather than silently pass — so the existing gate already covers",
+        "that, and no new one was added.",
+        "The nine commits judged not to reach this tree were judged by reading their",
+        "diffstat and their touched paths, not by running them. A C++-side or Lua-side",
+        "regression would not be visible here either way.",
+        "`STALE — perf` is still outstanding from R1754's push: the tally reports one",
+        "axis judgment resting on evidence that has moved more than 25%. Not this",
+        "round's, and not silently dropped."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

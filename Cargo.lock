@@ -6996,7 +6996,7 @@ dependencies = [
 [[package]]
 name = "sce-build"
 version = "0.1.0"
-source = "git+https://github.com/newmassrael/scxml-core-engine.git?rev=a8026fd62be5062704c97ea4cbe3f9cd7dfea933#a8026fd62be5062704c97ea4cbe3f9cd7dfea933"
+source = "git+https://github.com/newmassrael/scxml-core-engine.git?rev=0ac56f1a455f3dadb313b64f3516a3073a3daee8#0ac56f1a455f3dadb313b64f3516a3073a3daee8"
 dependencies = [
  "libxml",
  "minijinja",
@@ -7013,7 +7013,7 @@ dependencies = [
 [[package]]
 name = "sce-portable-bytes"
 version = "0.1.0"
-source = "git+https://github.com/newmassrael/scxml-core-engine.git?rev=a8026fd62be5062704c97ea4cbe3f9cd7dfea933#a8026fd62be5062704c97ea4cbe3f9cd7dfea933"
+source = "git+https://github.com/newmassrael/scxml-core-engine.git?rev=0ac56f1a455f3dadb313b64f3516a3073a3daee8#0ac56f1a455f3dadb313b64f3516a3073a3daee8"
 dependencies = [
  "heapless",
 ]
@@ -7021,7 +7021,7 @@ dependencies = [
 [[package]]
 name = "sce-rust-runtime"
 version = "0.1.0"
-source = "git+https://github.com/newmassrael/scxml-core-engine.git?rev=a8026fd62be5062704c97ea4cbe3f9cd7dfea933#a8026fd62be5062704c97ea4cbe3f9cd7dfea933"
+source = "git+https://github.com/newmassrael/scxml-core-engine.git?rev=0ac56f1a455f3dadb313b64f3516a3073a3daee8#0ac56f1a455f3dadb313b64f3516a3073a3daee8"
 dependencies = [
  "log",
  "portable-atomic",
