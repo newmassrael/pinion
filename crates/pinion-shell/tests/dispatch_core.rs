@@ -3559,7 +3559,7 @@ mod r907_frame_timing_substrate {
         let got = holder.sample();
         assert_eq!(got.samples, vec![FrameTiming::new(300, 100, 0, 80, 540)]);
         assert_eq!(
-            got.snapshot.expect("published").frame_count,
+            got.snapshot.as_ref().expect("published").frame_count,
             1,
             "the published snapshot is the same fold scene/frame_timings returns",
         );
@@ -3618,6 +3618,75 @@ mod r907_frame_timing_substrate {
         // Counters are per-window, not shared.
         assert_eq!(main.frame_count, 1);
         assert_eq!(inspector.frame_count, 1);
+    }
+
+    /// R1754 — the adapter a window renders on rides that window's frame
+    /// timings, and it is **per window** rather than binding-wide.
+    ///
+    /// Two windows are given DIFFERENT adapters on purpose. A single shared
+    /// slot would pass a one-window test and answer the second window with the
+    /// first window's hardware — which is the reading a multi-window profile
+    /// would silently be built on.
+    ///
+    /// The third window is given none, which is the real state of a backend
+    /// that renders through no adapter: it must stay `None` rather than
+    /// inherit a neighbour's.
+    #[test]
+    fn r1754_the_adapter_rides_the_window_that_rendered_on_it() {
+        use pinion_runtime::{AdapterFacts, GpuBackend, GpuDeviceClass};
+
+        let _g = super::TEST_LOCK.lock().unwrap();
+        let mut core: ShellCore<TestView> = ShellCore::new();
+        core.record_frame_timing("main", FrameTiming::new(100, 50, 0, 30, 200));
+        core.record_frame_timing("inspector", FrameTiming::new(100, 50, 0, 30, 200));
+        core.record_frame_timing("terminal", FrameTiming::new(100, 50, 0, 30, 200));
+
+        // Before any backend says anything, the fold claims nothing.
+        assert!(
+            core.frame_timings_for_window("main")
+                .unwrap()
+                .adapter
+                .is_none(),
+            "the pure fold does not invent an adapter"
+        );
+
+        core.set_adapter_facts(
+            "main",
+            Some(AdapterFacts {
+                name: "discrete one".to_string(),
+                device_class: GpuDeviceClass::Discrete,
+                backend: GpuBackend::Vulkan,
+            }),
+        );
+        core.set_adapter_facts(
+            "inspector",
+            Some(AdapterFacts {
+                name: "software one".to_string(),
+                device_class: GpuDeviceClass::Cpu,
+                backend: GpuBackend::Gl,
+            }),
+        );
+        core.set_adapter_facts("terminal", None);
+
+        let main = core.frame_timings_for_window("main").unwrap();
+        let inspector = core.frame_timings_for_window("inspector").unwrap();
+        let terminal = core.frame_timings_for_window("terminal").unwrap();
+
+        let m = main.adapter.expect("main was told its adapter");
+        let i = inspector.adapter.expect("inspector was told its adapter");
+        assert_eq!(m.name, "discrete one");
+        assert_eq!(i.name, "software one");
+        assert_eq!(m.device_class, GpuDeviceClass::Discrete);
+        assert_eq!(i.device_class, GpuDeviceClass::Cpu);
+        assert!(
+            terminal.adapter.is_none(),
+            "a window with no adapter does not inherit one from a neighbour"
+        );
+
+        // ★ The three windows were given IDENTICAL samples, so the durations
+        // cannot be what distinguishes them here — only the qualifier can.
+        assert_eq!(main.last, inspector.last);
+        assert_eq!(main.last, terminal.last);
     }
 
     #[test]

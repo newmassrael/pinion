@@ -1102,6 +1102,17 @@ pub const WIRE_TYPES: &[WireType] = &[
         },
     },
     WireType {
+        name: "FrameTimingsAdapter",
+        shape: WireShape::Object {
+            fields: &[
+                WireField::new("name", WireTy::String, None),
+                WireField::new("device_class", WireTy::String, None),
+                WireField::new("backend", WireTy::String, None),
+                WireField::new("hardware", WireTy::Boolean, None),
+            ],
+        },
+    },
+    WireType {
         name: "FrameTimingsDraw",
         shape: WireShape::Object {
             fields: &[
@@ -1176,6 +1187,7 @@ pub const WIRE_TYPES: &[WireType] = &[
                 WireField::new("focus", WireTy::Object, Some("FrameTimingsFocus")),
                 WireField::new("mirror", WireTy::Object, Some("FrameTimingsMirror")),
                 WireField::new("resize", WireTy::Object, Some("FrameTimingsResize")),
+                WireField::new("adapter", WireTy::Object, Some("FrameTimingsAdapter")).optional(),
             ],
         },
     },

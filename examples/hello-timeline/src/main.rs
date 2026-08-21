@@ -144,7 +144,9 @@ fn timeline(view: &FrameTimingsView, scrub: f32) -> Timeline {
 /// from the same seam the flame is built from, so the line cannot disagree with
 /// the picture.
 fn status_line(view: &FrameTimingsView, scrub: f32) -> String {
-    let Some(s) = view.snapshot else {
+    // R1754 — by reference: the snapshot stopped being `Copy` when it started
+    // carrying the adapter that produced its numbers.
+    let Some(s) = view.snapshot.as_ref() else {
         return "no frames measured yet — the first paint records the first sample".to_string();
     };
     let shown = view.samples.len().min(RECENT);

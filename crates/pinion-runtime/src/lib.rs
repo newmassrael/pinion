@@ -56,9 +56,10 @@ pub use draw_profile::{DrawProfile, DrawProfileNode, DrawProfiler};
 pub use focus::FocusManager;
 pub use frame_pacing::{FixedTimestep, MAX_FRAME_DT_SECS, PacingState, clamp_frame_dt, substep};
 pub use frame_timing::{
-    DrawWork, FRAME_TIMING_WINDOW, FRAME_TIMINGS, FocusWork, FocusWorkCell, FrameTiming,
-    FrameTimingStats, FrameTimingsHolder, FrameTimingsSnapshot, FrameTimingsView, MirrorWork,
-    PaintWork, ProduceWork, instant_delta_us, use_frame_timings,
+    AdapterFacts, DrawWork, FRAME_TIMING_WINDOW, FRAME_TIMINGS, FocusWork, FocusWorkCell,
+    FrameTiming, FrameTimingStats, FrameTimingsHolder, FrameTimingsSnapshot, FrameTimingsView,
+    GpuBackend, GpuDeviceClass, MirrorWork, PaintWork, ProduceWork, instant_delta_us,
+    use_frame_timings,
 };
 /// R1404 §5.16 — the producer in-memory image surface, re-exported at the
 /// crate root (gated with the `image_cache` module on `vello`): the

@@ -129,8 +129,8 @@ pub use font::{
     subfamily_name as font_subfamily_name,
 };
 pub use frame_timings::{
-    FrameTimingsError, FrameTimingsLast, FrameTimingsMirror, FrameTimingsOutcome,
-    FrameTimingsProduce, FrameTimingsWindow, frame_timings,
+    FrameTimingsAdapter, FrameTimingsError, FrameTimingsLast, FrameTimingsMirror,
+    FrameTimingsOutcome, FrameTimingsProduce, FrameTimingsWindow, frame_timings,
 };
 pub use intents::{IntentsError, drain_intents};
 pub use intervene::{InterveneError, InterveneRefusal, intervene, intervene_from};

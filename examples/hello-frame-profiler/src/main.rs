@@ -272,7 +272,7 @@ fn timing_series(view: &FrameTimingsView, budget: Color) -> Vec<Series> {
         .collect();
 
     // Only when the window actually has a deadline — see the module doc.
-    if let Some(budget_us) = view.snapshot.and_then(|s| s.budget_us) {
+    if let Some(budget_us) = view.snapshot.as_ref().and_then(|s| s.budget_us) {
         let last = sample_x(view.samples.len().saturating_sub(1));
         let y = ms(budget_us);
         series.push(
@@ -317,7 +317,7 @@ fn histogram_bars(view: &FrameTimingsView, under: Color, over: Color) -> Vec<Bar
         .fold(0.0_f64, f64::max)
         .max(1.0);
     let width = max_ms / HIST_BINS as f64;
-    let budget_ms = view.snapshot.and_then(|s| s.budget_us).map(ms);
+    let budget_ms = view.snapshot.as_ref().and_then(|s| s.budget_us).map(ms);
     let mut counts = [0u32; HIST_BINS];
     for s in &view.samples {
         let idx = ((ms(s.total_us) / width).floor() as usize).min(HIST_BINS - 1);
@@ -339,7 +339,9 @@ fn histogram_bars(view: &FrameTimingsView, under: Color, over: Color) -> Vec<Bar
 /// the same fold `scene/frame_timings` returns — so the HUD cannot disagree
 /// with what an AI client reads over RPC.
 fn status_line(view: &FrameTimingsView) -> String {
-    let Some(s) = view.snapshot else {
+    // R1754 — by reference: the snapshot carries the adapter that made its
+    // numbers, so it is no longer `Copy`.
+    let Some(s) = view.snapshot.as_ref() else {
         return "no frames measured yet — the first paint records the first sample".to_string();
     };
     let pacing = match s.budget_us {

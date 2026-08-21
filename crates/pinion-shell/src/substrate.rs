@@ -238,6 +238,16 @@ struct WindowState {
     /// meaningless for a backend that has no clock, which the enum makes
     /// unrepresentable rather than merely unlikely.
     gpu_timing: WindowGpuTiming,
+    /// ★ R1754 — WHICH adapter this window's frames are being made on, or
+    /// `None` for a backend that renders through no adapter.
+    ///
+    /// Per-window for the reason [`Self::gpu_timing`] states one line above,
+    /// and written **once**, at renderer creation: adapter selection is
+    /// constrained by the surface, and the recovery ladder remakes the surface
+    /// from the same context, so a live window's adapter cannot change under
+    /// it. Reading it per frame would allocate the adapter's name on the paint
+    /// path — which a profiler substrate must not do.
+    adapter: Option<pinion_runtime::AdapterFacts>,
     /// R1708 — resizes the window system has delivered for THIS window but
     /// which no frame has answered yet, plus the lifetime accounting of what
     /// folding them cost.
@@ -2109,6 +2119,27 @@ impl<V: WidgetView> ShellCore<V> {
         };
     }
 
+    /// ★ R1754 §5.16 — record which adapter `window_id`'s frames are being
+    /// rendered on, so every duration `scene/frame_timings` publishes can say
+    /// what produced it.
+    ///
+    /// Separate from [`Self::set_gpu_timing_state`] on the axis that setter's
+    /// doc names — this is not a property of a frame either — and separate
+    /// from it in *cadence*: that one is cheap enough to re-state every paint,
+    /// while this owns a `String`, so it is written once when the renderer is
+    /// built and never on the paint path.
+    ///
+    /// `None` is a backend that renders through no adapter (`pinion-tui`, the
+    /// surface-less test fixtures). It is recorded rather than skipped so a
+    /// consumer can tell "no GPU here" from "nobody has said yet".
+    pub fn set_adapter_facts(
+        &mut self,
+        window_id: &str,
+        adapter: Option<pinion_runtime::AdapterFacts>,
+    ) {
+        self.window_state_mut(window_id).adapter = adapter;
+    }
+
     /// R1708 §5.16 §5.41 — record a resize the window system just delivered for
     /// `window_id`, WITHOUT painting it.
     ///
@@ -2388,6 +2419,11 @@ impl<V: WidgetView> ShellCore<V> {
                 // later one never became a frame, so it cannot live in the
                 // ring, and it is exactly the work a drag's cost is made of.
                 snap.resize = self.resize_tally_for_window(window_id);
+                // R1754 §5.16 — and the qualifier every µs above needs: which
+                // GPU stack made them. Attached at the read like the five
+                // facts above; cloned here rather than moved because the
+                // window keeps answering after this read.
+                snap.adapter = self.window_state(window_id).and_then(|w| w.adapter.clone());
                 snap
             })
     }

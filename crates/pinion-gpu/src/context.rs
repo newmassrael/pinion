@@ -92,7 +92,9 @@ pub struct GpuContext {
 
 impl core::fmt::Debug for GpuContext {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        let info = self.adapter.get_info();
+        // R1754 — the same accessor a consumer reads, so a log line and the
+        // published fact cannot disagree about which GPU this is.
+        let info = self.adapter_info();
         f.debug_struct("GpuContext")
             .field("adapter", &info.name)
             .field("backend", &info.backend)
@@ -204,6 +206,31 @@ impl GpuContext {
             },
             surface,
         ))
+    }
+
+    /// ★ R1754 — **which adapter this window is actually rendering on.**
+    ///
+    /// Adapter selection is constrained by the *surface* (see [`Self::new`]),
+    /// so which one arrives is a property of the window rather than of the
+    /// host, and no caller can read it off its own environment. Before this it
+    /// lived only inside this type's `Debug` — reachable by a log line and by
+    /// nothing else — while every duration pinion publishes is a measurement
+    /// of it.
+    ///
+    /// ⚠ Measured R1754, and worth stating because the opposite is the
+    /// intuitive guess: a virtual framebuffer here does **not** force a
+    /// software adapter. Both an `Xvfb` display and the real one selected the
+    /// same discrete GPU over Vulkan, while the frame times differed
+    /// ninety-six-fold. So this answers *what rendered*, and by itself will
+    /// not explain why two windows on one host disagree.
+    ///
+    /// Returns `wgpu`'s own struct rather than a pinion vocabulary because
+    /// this crate deliberately depends on nothing but `wgpu`; the mapping onto
+    /// a backend-agnostic vocabulary belongs to the shell, beside
+    /// `present_health_of`.
+    #[must_use]
+    pub fn adapter_info(&self) -> wgpu::AdapterInfo {
+        self.adapter.get_info()
     }
 
     /// The device every GPU resource in this window is created from.

@@ -17,7 +17,10 @@
 //!   whether that submit was a render or a readback;
 //! * [`FrameTimingsSnapshot::mean_render_us`] with
 //!   [`captured_frames`](FrameTimingsSnapshot::captured_frames) (R1752) — the
-//!   mean, and how many of the two kinds it averaged over.
+//!   mean, and how many of the two kinds it averaged over;
+//! * **every µs in the record** with
+//!   [`adapter`](FrameTimingsSnapshot::adapter) (R1754) — the durations, and
+//!   which GPU stack produced them.
 //!
 //! It is a shape rather than a duplicated implementation: each pair is a
 //! distinct fact, so there is nothing to lift into a shared helper and a
@@ -26,6 +29,13 @@
 //! instead of rediscovering it — R1752 rediscovered it by reading
 //! `render_us` through three failed profiles without knowing which function
 //! it had measured.
+//!
+//! ⚠ The naming did not make the next case cheap to *find*: R1754's is the
+//! first one whose qualifier scopes the WHOLE record rather than one sibling
+//! field, and it was found the expensive way — by a round reaching a
+//! conclusion about the framework from a number that described a virtual
+//! framebuffer. What a named convention buys is that the fix is then obvious;
+//! noticing the gap still costs a measurement.
 //!
 //! The sibling of [`paint_cache_stats`](crate::paint_cache_stats):
 //! that module answers *"how much of the last frame was a cache
@@ -708,10 +718,10 @@ impl FrameTiming {
 /// of the last [`FRAME_TIMING_WINDOW`] [`FrameTiming`] samples plus a
 /// lifetime frame counter.
 ///
-/// Not `Copy` (it owns the ring), so — unlike
+/// It owns the ring, so — unlike
 /// [`FragmentCacheStats`](crate::FragmentCacheStats), whose `Copy`
 /// snapshot is published every paint — this accumulator stays on the
-/// `ShellCore` SSOT and the `Copy` [`FrameTimingsSnapshot`] is
+/// `ShellCore` SSOT and [`FrameTimingsSnapshot`] is
 /// *projected at the AI-paced RPC read*, not mirrored every frame
 /// (the R890 "store the source, project on read" rule: the O(window)
 /// fold is paid only when an AI client actually consults
@@ -790,7 +800,7 @@ impl FrameTimingStats {
         self.samples.is_empty()
     }
 
-    /// Fold the rolling window into a `Copy` [`FrameTimingsSnapshot`].
+    /// Fold the rolling window into a [`FrameTimingsSnapshot`].
     ///
     /// `None` before the first frame (no samples to aggregate) — the
     /// bootstrap state a never-painted window reports, mapped to
@@ -896,6 +906,10 @@ impl FrameTimingStats {
             gpu_sample_count,
             // Filled by the backend after projection — see the field doc.
             gpu_timing_supported: false,
+            // R1754 — same rule: the adapter belongs to the device, not to any
+            // frame in the ring. `None` here is what a backend with no GPU
+            // keeps, and it is the correct reading there rather than a gap.
+            adapter: None,
             gpu_dropped_total: 0,
             mean_fps: fps_from_mean_total_us(mean_total),
             budget_us,
@@ -1163,13 +1177,181 @@ fn fps_from_mean_total_us(mean_total_us: u64) -> f32 {
     }
 }
 
-/// `Copy` projection of a [`FrameTimingStats`] rolling window — the
+/// (R1754 §5.16) What class of device a window's frames were rendered on.
+///
+/// pinion's own closed vocabulary rather than the graphics backend's, for the
+/// reason [`PresentHealth`](crate::PresentHealth) is: this crate is
+/// backend-agnostic, and a wire vocabulary that tracked a dependency's enum
+/// would change under consumers whenever that dependency added a variant.
+///
+/// [`Self::Cpu`] is the one a reader acts on — it says the numbers beside it
+/// were produced by a **software rasterizer**, where cost scales with pixel
+/// area rather than with the scene.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GpuDeviceClass {
+    /// A discrete GPU on its own memory.
+    Discrete,
+    /// A GPU sharing memory with the CPU.
+    Integrated,
+    /// A virtualised/paravirtualised GPU — a VM guest's passthrough.
+    Virtual,
+    /// **Software rasterization.** No GPU is doing this work.
+    Cpu,
+    /// The backend reported a class this vocabulary does not name.
+    Other,
+}
+
+impl GpuDeviceClass {
+    /// The wire token for this class.
+    ///
+    /// Spelled beside the variants rather than in the projector, which is the
+    /// idiom this tree already keeps (`pinion_gpu::Missed::as_str` and
+    /// `Rung::as_str`, which the sibling `present_health_of` reads): one
+    /// definition, and a new variant cannot reach the wire without being given
+    /// a name here.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Discrete => "discrete",
+            Self::Integrated => "integrated",
+            Self::Virtual => "virtual",
+            Self::Cpu => "cpu",
+            Self::Other => "other",
+        }
+    }
+
+    /// Whether a timing taken on this class describes GPU hardware.
+    ///
+    /// [`Self::Cpu`] is a software rasterizer, so the answer is no there and
+    /// yes everywhere else — including [`Self::Other`], which is an
+    /// unrecognised *device*, not a known-absent one.
+    #[must_use]
+    pub const fn is_hardware(self) -> bool {
+        !matches!(self, Self::Cpu)
+    }
+}
+
+/// (R1754 §5.16) Which graphics API a window's frames went through.
+///
+/// A closed pinion vocabulary for [`GpuDeviceClass`]'s reason. It matters
+/// beside the device class because the same physical GPU performs differently
+/// through different APIs, and because a fallback to
+/// [`Self::Gl`](Self::Gl) is itself a finding.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GpuBackend {
+    /// Vulkan.
+    Vulkan,
+    /// Metal.
+    Metal,
+    /// Direct3D 12.
+    Dx12,
+    /// OpenGL / OpenGL ES.
+    Gl,
+    /// WebGPU in a browser.
+    WebGpu,
+    /// A no-op backend that renders nothing — a device that cannot be a
+    /// premise for any timing claim.
+    Noop,
+    /// The backend reported an API this vocabulary does not name.
+    Other,
+}
+
+impl GpuBackend {
+    /// The wire token for this backend. Spelled here for
+    /// [`GpuDeviceClass::as_str`]'s reason.
+    #[must_use]
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Vulkan => "vulkan",
+            Self::Metal => "metal",
+            Self::Dx12 => "dx12",
+            Self::Gl => "gl",
+            Self::WebGpu => "webgpu",
+            Self::Noop => "noop",
+            Self::Other => "other",
+        }
+    }
+
+    /// Whether frames went through an API that actually draws.
+    ///
+    /// [`Self::Noop`] renders nothing, so a duration measured behind it prices
+    /// the absence of work. [`Self::Other`] is an unrecognised API rather than
+    /// a known-inert one, so it answers `true`.
+    #[must_use]
+    pub const fn draws(self) -> bool {
+        !matches!(self, Self::Noop)
+    }
+}
+
+/// ★★★★★ (R1754 §5.16) **Which GPU stack produced the numbers this snapshot
+/// carries.**
+///
+/// # Why a timing needs this
+///
+/// R1752 named the convention "a number carries its qualifier"
+/// (`settle_passes`+`settled`, `gpu_us`+`gpu_timing_supported`,
+/// `render_us`+`captured`, `mean_render_us`+`captured_frames`). This is its
+/// fifth case, and the one found by a round *building on the wrong number*:
+/// R1752 recorded "`render_us` is 97.8% of the frame" as a fact about the
+/// framework, and it was a fact about the display it happened to run on.
+///
+/// A consumer could not have caught that, because nothing in the record said
+/// what produced any of it. It still cannot be recovered client-side: adapter
+/// selection is constrained by the window's *surface*, so which adapter
+/// arrives is a property of the window rather than of the host (the R1510
+/// argument, one layer up).
+///
+/// The fact is not a property of any *frame*, so it cannot live in the ring:
+/// it belongs to the device, exactly like
+/// [`FrameTimingsSnapshot::gpu_timing_supported`], and is filled by the
+/// backend after projection for the same reason.
+///
+/// # ⚠ What it does NOT explain — measured, R1754
+///
+/// This field was built expecting it to explain that 97.8%, on the assumption
+/// that a virtual framebuffer forces a software rasterizer. **That assumption
+/// is false, and asking the two displays is what showed it.** On one machine,
+/// one app, one scene (133 draws), `mean_render_us` measured **10,384 µs** on
+/// a virtual framebuffer and **997,132 µs** on the real display — a
+/// ninety-six-fold spread — with *this struct answering identically both
+/// times*: the same discrete GPU, the same Vulkan backend,
+/// `hardware: true`. Over the same pair `gpu_us` was 491 µs and 1,759 µs and
+/// `encode_us` 126 µs and 141 µs.
+///
+/// So the adapter is **necessary and not sufficient**. It is necessary because
+/// a bug report is not reproducible without it and because
+/// [`GpuDeviceClass::Cpu`] is a real state on hosts with no GPU at all (CI
+/// containers, VMs), where cost tracks pixel area rather than the scene. It is
+/// not sufficient because the spread above lives somewhere else entirely —
+/// `render_us` brackets `present()` along with the record and the submit, and
+/// a present blocks. See [`FrameTiming::render_us`].
+///
+/// ★ Recorded here rather than quietly dropped because a qualifier that gets
+/// *believed* past its evidence is the failure this whole convention exists to
+/// prevent, and this one has already been believed once.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AdapterFacts {
+    /// The adapter's self-reported name, verbatim — e.g. `llvmpipe (LLVM
+    /// 15.0.7, 256 bits)` or a discrete GPU's model string.
+    pub name: String,
+    /// Discrete / integrated / virtual / **software**.
+    pub device_class: GpuDeviceClass,
+    /// The graphics API the frames went through.
+    pub backend: GpuBackend,
+}
+
+/// Projection of a [`FrameTimingStats`] rolling window — the
 /// payload `scene/frame_timings` serializes. Carries the last frame's
 /// phase breakdown plus the window's total-time min/mean/max and
 /// per-phase means, so an AI client gets both "what did the most
 /// recent frame cost?" and "what's the steady-state profile?" from one
 /// read.
-#[derive(Debug, Clone, Copy, PartialEq)]
+///
+/// (R1754) Not `Copy`: [`Self::adapter`] owns the adapter's name, and a
+/// qualifier that cannot be carried beside the number it qualifies would
+/// defeat its own purpose. The type is folded once per AI-paced RPC read and
+/// never on the paint path, so `Clone` is the whole cost.
+#[derive(Debug, Clone, PartialEq)]
 pub struct FrameTimingsSnapshot {
     /// Frames recorded across the window's whole lifetime.
     pub frame_count: u64,
@@ -1348,6 +1530,20 @@ pub struct FrameTimingsSnapshot {
     /// All-zero on a backend whose windows are never resized, and on
     /// `pinion-tui` (a terminal resize arrives as a different fact).
     pub resize: pinion_core::resize_batch::ResizeTally,
+    /// ★★★★★ (R1754 §5.16) **Which GPU stack produced every µs in this
+    /// snapshot** — see [`AdapterFacts`].
+    ///
+    /// **Filled by the backend after projection**, like
+    /// [`Self::gpu_timing_supported`] and for the identical reason: the ring
+    /// holds frames, and the adapter a window was given is not one.
+    ///
+    /// `None` is not "unknown" — it is the honest answer for a backend that
+    /// renders through no GPU adapter at all (`pinion-tui` writes cells to a
+    /// terminal; the RPC-only paths never boot a device). A consumer reading
+    /// `None` should not look for a GPU; a consumer reading
+    /// `Some(_)` with [`GpuDeviceClass::Cpu`] should not read the µs beside it
+    /// as a hardware measurement.
+    pub adapter: Option<AdapterFacts>,
 }
 
 // ── R1361 §5.16 §5.22 — the in-app read seam ─────────────────────────
@@ -1660,7 +1856,10 @@ mod seam_tests {
         // The value is still observed: sampled, not subscribed.
         let seen = owner.run(use_frame_timings);
         assert_eq!(seen.samples.len(), 1);
-        assert_eq!(seen.snapshot.expect("published").budget_us, Some(16_666));
+        assert_eq!(
+            seen.snapshot.as_ref().expect("published").budget_us,
+            Some(16_666)
+        );
     }
 
     #[test]
@@ -1678,7 +1877,10 @@ mod seam_tests {
             vec![20, 30],
             "last publish wins",
         );
-        assert_eq!(got.snapshot.expect("published").budget_us, Some(8_333));
+        assert_eq!(
+            got.snapshot.as_ref().expect("published").budget_us,
+            Some(8_333)
+        );
     }
 
     /// A published view built the way the shell builds one: the samples

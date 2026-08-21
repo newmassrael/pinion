@@ -1455,6 +1455,13 @@ mod tests {
             rust.contains("pub fn surface_health(&self)"),
             "the renderer publishes what it can say about presenting",
         );
+        // R1754 — the emitted renderer is the only thing that knows which
+        // adapter the surface constrained it to, and before this round that
+        // fact reached nothing but a `Debug` impl.
+        assert!(
+            rust.contains("pub fn adapter_info(&self)"),
+            "the renderer publishes which adapter its frames were made on",
+        );
         // Uncaptured-error handler installed at device creation (wgpu 29
         // takes an Arc).
         assert!(

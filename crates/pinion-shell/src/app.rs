@@ -3694,7 +3694,17 @@ impl<V: WidgetView + 'static> AppShell<V> {
         // (also used by the drag-preview window), so both window paths cross the
         // §6.3 `pollster::block_on` boundary the same way.
         let renderer = match Self::build_renderer(&window) {
-            Ok(r) => *r,
+            Ok(r) => {
+                // ★ R1754 §5.16 — the adapter is settled the moment the
+                // renderer exists (selection is constrained by this window's
+                // surface), so it is recorded HERE and never again. Reading it
+                // per frame would clone the adapter's name onto the paint
+                // path, which is precisely the perturbation a profiler
+                // substrate must not introduce.
+                self.core
+                    .set_adapter_facts(&spec.id, r.adapter_info().as_ref().map(adapter_facts_of));
+                *r
+            }
             Err(e) => {
                 tracing::error!(target: "pinion::shell", window = %spec.id, error = %e, "renderer init failed");
                 // Cache the window for a subsequent retry; renderer
@@ -4933,6 +4943,41 @@ impl GpuFrameReport {
 /// re-spelled here: the vocabulary has one definition, and this function
 /// only moves it across the crate boundary `pinion-runtime` cannot cross
 /// (it is backend-agnostic and must not depend on `wgpu`).
+/// ★ R1754 §5.16 — project the backend's adapter onto the wire-facing record.
+///
+/// The peer of [`present_health_of`], and it exists for the same reason: the
+/// vocabulary crosses a crate boundary `pinion-runtime` cannot
+/// (backend-agnostic, must not depend on `wgpu`).
+///
+/// The two enums are re-spelled here rather than passed through because
+/// `wgpu`'s are a **dependency's** vocabulary: a wire that echoed them would
+/// change under consumers whenever wgpu added a variant, and this record is
+/// read by AI clients that cannot be recompiled. Both catch-all arms map onto
+/// an explicit `Other` for that reason — an unrecognised backend is a fact
+/// worth publishing, not a reason to refuse.
+fn adapter_facts_of(info: &vello::wgpu::AdapterInfo) -> pinion_runtime::AdapterFacts {
+    use pinion_runtime::{GpuBackend, GpuDeviceClass};
+    use vello::wgpu::{Backend, DeviceType};
+    pinion_runtime::AdapterFacts {
+        name: info.name.clone(),
+        device_class: match info.device_type {
+            DeviceType::DiscreteGpu => GpuDeviceClass::Discrete,
+            DeviceType::IntegratedGpu => GpuDeviceClass::Integrated,
+            DeviceType::VirtualGpu => GpuDeviceClass::Virtual,
+            DeviceType::Cpu => GpuDeviceClass::Cpu,
+            DeviceType::Other => GpuDeviceClass::Other,
+        },
+        backend: match info.backend {
+            Backend::Vulkan => GpuBackend::Vulkan,
+            Backend::Metal => GpuBackend::Metal,
+            Backend::Dx12 => GpuBackend::Dx12,
+            Backend::Gl => GpuBackend::Gl,
+            Backend::BrowserWebGpu => GpuBackend::WebGpu,
+            Backend::Noop => GpuBackend::Noop,
+        },
+    }
+}
+
 fn present_health_of(health: pinion_gpu::SurfaceHealth) -> pinion_runtime::PresentHealth {
     pinion_runtime::PresentHealth {
         missed_in_a_row: health.missed_in_a_row(),
@@ -5882,6 +5927,123 @@ fn ratio_i64(v: i64, scale: f64) -> i64 {
         q.clamp(-(2f64.powi(62)), 2f64.powi(62)) as i64
     } else {
         0
+    }
+}
+
+#[cfg(test)]
+mod r1754_adapter_projection_tests {
+    //! R1754 §5.16 — the wgpu → pinion adapter vocabulary mapping.
+    //!
+    //! ★ Unit-tested rather than left to the demo, on R1752's lesson: a number
+    //! whose only witness is a demo is a number `cargo test` cannot defend, and
+    //! **demos are not in the counterfactual gate**. R1752 nearly shipped an
+    //! inverted `captured_frames` for exactly that reason.
+    //!
+    //! What stays demo-only is the one line of plumbing that needs a real
+    //! window (`resume_spec` → `ShellCore`), which no unit test can reach. The
+    //! *translation* is pure, so it is tested here where a break is caught.
+
+    use pinion_runtime::{GpuBackend, GpuDeviceClass};
+    use vello::wgpu::{Backend, DeviceType};
+
+    use super::adapter_facts_of;
+
+    /// An `AdapterInfo` carrying the two fields this mapping reads. The rest
+    /// are filled with values a real adapter would never make meaningful here,
+    /// so a mapping that started reading one of them would have to say so.
+    fn info(name: &str, device_type: DeviceType, backend: Backend) -> vello::wgpu::AdapterInfo {
+        vello::wgpu::AdapterInfo {
+            name: name.to_string(),
+            vendor: 0,
+            device: 0,
+            device_type,
+            device_pci_bus_id: String::new(),
+            driver: String::new(),
+            driver_info: String::new(),
+            backend,
+            subgroup_min_size: 0,
+            subgroup_max_size: 0,
+            transient_saves_memory: false,
+        }
+    }
+
+    /// Every device type reaches a distinct class — no arm collapses onto
+    /// another, which a `_ =>` catch-all would silently do.
+    #[test]
+    fn every_device_type_maps_to_its_own_class() {
+        let cases = [
+            (DeviceType::DiscreteGpu, GpuDeviceClass::Discrete),
+            (DeviceType::IntegratedGpu, GpuDeviceClass::Integrated),
+            (DeviceType::VirtualGpu, GpuDeviceClass::Virtual),
+            (DeviceType::Cpu, GpuDeviceClass::Cpu),
+            (DeviceType::Other, GpuDeviceClass::Other),
+        ];
+        for (from, want) in cases {
+            let got = adapter_facts_of(&info("a", from, Backend::Vulkan));
+            assert_eq!(got.device_class, want, "{from:?} maps to {want:?}");
+        }
+        // Non-vacuity: the five outputs are five DIFFERENT values, so a
+        // mapping that answered one constant would fail rather than pass every
+        // row above.
+        let mut seen: Vec<GpuDeviceClass> = cases
+            .iter()
+            .map(|(from, _)| adapter_facts_of(&info("a", *from, Backend::Vulkan)).device_class)
+            .collect();
+        seen.dedup();
+        assert_eq!(seen.len(), cases.len(), "the classes are distinguishable");
+    }
+
+    /// Same for the backend axis.
+    #[test]
+    fn every_backend_maps_to_its_own_name() {
+        let cases = [
+            (Backend::Vulkan, GpuBackend::Vulkan),
+            (Backend::Metal, GpuBackend::Metal),
+            (Backend::Dx12, GpuBackend::Dx12),
+            (Backend::Gl, GpuBackend::Gl),
+            (Backend::BrowserWebGpu, GpuBackend::WebGpu),
+            (Backend::Noop, GpuBackend::Noop),
+        ];
+        for (from, want) in cases {
+            let got = adapter_facts_of(&info("a", DeviceType::DiscreteGpu, from));
+            assert_eq!(got.backend, want, "{from:?} maps to {want:?}");
+        }
+        let mut seen: Vec<GpuBackend> = cases
+            .iter()
+            .map(|(from, _)| adapter_facts_of(&info("a", DeviceType::DiscreteGpu, *from)).backend)
+            .collect();
+        seen.dedup();
+        assert_eq!(seen.len(), cases.len(), "the backends are distinguishable");
+    }
+
+    /// The adapter's name is carried verbatim. It is the field a bug report
+    /// needs, and the only one this vocabulary must NOT normalise.
+    #[test]
+    fn the_name_is_carried_verbatim() {
+        let odd = "llvmpipe (LLVM 15.0.7, 256 bits)";
+        let got = adapter_facts_of(&info(odd, DeviceType::Cpu, Backend::Vulkan));
+        assert_eq!(got.name, odd);
+    }
+
+    /// The two axes are independent: neither is derived from the other.
+    ///
+    /// ★ Measured R1754 and this is why the pair matters — a virtual
+    /// framebuffer did NOT force a software adapter here, so `Cpu`-with-Vulkan
+    /// and `Discrete`-with-Gl are both real shapes and the mapping must not
+    /// collapse either onto the other.
+    #[test]
+    fn the_two_axes_do_not_contaminate_each_other() {
+        let software_on_a_real_api = adapter_facts_of(&info("a", DeviceType::Cpu, Backend::Vulkan));
+        assert_eq!(software_on_a_real_api.device_class, GpuDeviceClass::Cpu);
+        assert_eq!(software_on_a_real_api.backend, GpuBackend::Vulkan);
+
+        let hardware_on_a_fallback =
+            adapter_facts_of(&info("a", DeviceType::DiscreteGpu, Backend::Gl));
+        assert_eq!(
+            hardware_on_a_fallback.device_class,
+            GpuDeviceClass::Discrete
+        );
+        assert_eq!(hardware_on_a_fallback.backend, GpuBackend::Gl);
     }
 }
 

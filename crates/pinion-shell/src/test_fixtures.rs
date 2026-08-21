@@ -176,6 +176,15 @@ impl VelloRenderer for TestRenderer {
         pinion_gpu::SurfaceHealth::default()
     }
 
+    /// R1754 — `None`, which is the literal truth: this fixture holds no
+    /// adapter. Stated per-impl for the reason the three above are, and this
+    /// one earns the `Option` in the signature — there is no "default
+    /// adapter" that would be honest here, and naming a software one would
+    /// let a test assert a premise no device supplied.
+    fn adapter_info(&self) -> Option<vello::wgpu::AdapterInfo> {
+        None
+    }
+
     async fn new<W>(target: W, width: u32, height: u32) -> Result<Self, TestRendererError>
     where
         W: Into<vello::wgpu::SurfaceTarget<'static>> + Clone + 'static,

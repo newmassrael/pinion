@@ -454,6 +454,25 @@ pub trait VelloRenderer:
     #[must_use]
     fn surface_health(&self) -> pinion_gpu::SurfaceHealth;
 
+    /// ★ R1754 §5.16 — which adapter this backend renders on, or `None` for a
+    /// backend that renders through no adapter at all.
+    ///
+    /// **On this trait, not [`WidgetRenderer`], and with no default** — the
+    /// rule [`Self::last_acquire_us`], [`Self::surface_health`] and
+    /// [`Self::capture_rgba8`] already state, and here the `Option` carries
+    /// what a default would have hidden: a backend with no GPU answers `None`,
+    /// which is a *fact* about it rather than a missing value.
+    ///
+    /// Why the shell asks at all: every microsecond in
+    /// [`pinion_runtime::FrameTimingsSnapshot`] is a measurement of this
+    /// adapter, and adapter selection is constrained by the surface, so it is
+    /// a property of the window that no client can recover for itself. A
+    /// duration published without it gets read as a property of the software —
+    /// which is exactly how R1752 came to record a virtual framebuffer's cost
+    /// as a fact about pinion.
+    #[must_use]
+    fn adapter_info(&self) -> Option<vello::wgpu::AdapterInfo>;
+
     /// R1537 §5.16 — GPU measurements this backend took and then
     /// discarded, cumulative since boot. `0` for a backend that cannot
     /// time the GPU at all.
@@ -575,6 +594,13 @@ macro_rules! vello_renderer_impl {
             // `scene/render_fidelity` can publish why a window is dark.
             fn surface_health(&self) -> ::pinion_gpu::SurfaceHealth {
                 <$name>::surface_health(self)
+            }
+
+            // R1754 §5.16 — forward the template's adapter, so a frame timing
+            // can say which GPU stack produced it. `Some` unconditionally:
+            // this renderer owns a `GpuContext`, so it always has one.
+            fn adapter_info(&self) -> ::core::option::Option<::vello::wgpu::AdapterInfo> {
+                ::core::option::Option::Some(<$name>::adapter_info(self))
             }
 
             async fn new<W>(

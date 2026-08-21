@@ -2368,9 +2368,12 @@ pub fn dispatch_parsed(ctx: &mut DispatchContext<'_>, request: Request) -> Optio
     let size_floor = ctx.size_floor.take();
     // R907 §5.16 — per-window frame-timing profiler snapshot the
     // embedder pre-resolved from `ShellCore::frame_timings_for_window`.
-    // Copy out for the dispatch lifetime; `scene/frame_timings` reads
+    // Taken out for the dispatch lifetime; `scene/frame_timings` reads
     // it, every other arm ignores it.
-    let frame_timings = ctx.frame_timings;
+    //
+    // R1754 — `.take()` rather than a copy: the snapshot owns its adapter's
+    // name now, which puts it in the same class as the three slots below.
+    let frame_timings = ctx.frame_timings.take();
     // R1036 §5.16 §5.7 §2 #7 — per-window render-fidelity record; taken out for
     // the dispatch lifetime (owned, non-`Copy` — carries a `Vec` of per-grid
     // fingerprints). `scene/render_fidelity` is the only consumer.
@@ -7427,10 +7430,14 @@ fn handle_scene_text_cache_stats(
 /// `large_types_passed_by_value` threshold when the GPU-clock fields landed
 /// on it, and a `Copy` type quietly memcpying ~300 bytes per read is worth
 /// the reference even at AI-paced call rates. Nothing here mutates it.
+///
+/// R1754 — the reference now goes all the way through: the projection takes a
+/// borrow too, so the copy this comment argued against no longer happens at
+/// either hop.
 fn handle_scene_frame_timings(
     snapshot: Option<&pinion_runtime::FrameTimingsSnapshot>,
 ) -> Result<Value, RpcError> {
-    match frame_timings(snapshot.copied()) {
+    match frame_timings(snapshot) {
         Ok(outcome) => frame_timings_outcome_to_json(&outcome),
         Err(err) => Err(frame_timings_error_to_rpc(&err)),
     }

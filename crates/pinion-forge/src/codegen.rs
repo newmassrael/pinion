@@ -550,6 +550,15 @@ impl __NAME__ {
         self.surface.health()
     }
 
+    /// R1754 §5.16 — which adapter this window's frames are actually being
+    /// rendered on, so every duration the frame-timing record publishes can
+    /// say what produced it. Selection is constrained by the surface, so a
+    /// consumer cannot infer this from its own environment.
+    #[must_use]
+    pub fn adapter_info(&self) -> ::vello::wgpu::AdapterInfo {
+        self.context.adapter_info()
+    }
+
     /// Resize the wgpu surface to match a new window dimension.
     pub fn resize(&mut self, width: u32, height: u32) {
         self.context.resize_surface(&mut self.surface, width, height);

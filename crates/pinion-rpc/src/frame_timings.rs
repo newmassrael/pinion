@@ -656,7 +656,8 @@ pub struct FrameTimingsWindow {
 /// Snapshot returned by [`frame_timings`]. Projects
 /// [`FrameTimingsSnapshot`] onto the nested wire shape (last frame +
 /// window aggregates + cumulative count).
-#[derive(Debug, Clone, Copy, PartialEq, Serialize)]
+/// (R1754) Not `Copy` — [`Self::adapter`] owns the adapter's name.
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct FrameTimingsOutcome {
     /// Frames recorded across the window's whole lifetime.
     pub frame_count: u64,
@@ -699,6 +700,89 @@ pub struct FrameTimingsOutcome {
     /// R1708 — what this window's resizes cost, including the ones that never
     /// became a frame. All-zero for a window that was never resized.
     pub resize: FrameTimingsResize,
+    /// ★★★★★ R1754 — **which GPU stack produced every microsecond above.**
+    /// `null` for a backend that renders through no adapter at all.
+    ///
+    /// At the top level rather than inside [`Self::last`] or
+    /// [`Self::window`] because it qualifies BOTH: it is the premise of the
+    /// whole record, not a property of one frame or one fold.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub adapter: Option<FrameTimingsAdapter>,
+}
+
+/// ★★★★★ R1754 §5.16 — the adapter a window's frame timings were measured on.
+///
+/// # Why a timing record publishes hardware
+///
+/// Because a duration with no stated premise gets read as a property of the
+/// software. R1752 read one and recorded "`render_us` is 97.8% of the frame"
+/// about pinion; it was true of the display that round happened to run on.
+///
+/// A client cannot recover this from its own environment: adapter selection is
+/// constrained by the window's *surface*, so the answer is a property of the
+/// window, not of the host. Which is also why it is answered per window.
+///
+/// ## ⚠ What it does not settle
+///
+/// Measured R1754, one machine, one app, one scene: `mean_render_us` was
+/// **10,384 µs** on a virtual framebuffer and **997,132 µs** on the real
+/// display, and **this object answered identically both times** (same discrete
+/// GPU, same Vulkan backend, `hardware: true`). A consumer must therefore read
+/// it as *what the numbers were made on*, never as *why they differ*. What
+/// explains that pair is not on this wire yet: `render_us` brackets `present()`
+/// together with the record and the submit, and a present blocks on whoever is
+/// consuming the swapchain.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FrameTimingsAdapter {
+    /// The adapter's self-reported name, verbatim — what a bug report needs
+    /// in order to be reproducible.
+    pub name: String,
+    /// `discrete` / `integrated` / `virtual` / `cpu` / `other`.
+    ///
+    /// **`cpu` is the one to branch on**: it says a software rasterizer
+    /// produced these numbers, so they price pixels rather than the scene.
+    pub device_class: &'static str,
+    /// `vulkan` / `metal` / `dx12` / `gl` / `webgpu` / `noop` / `other` — the
+    /// graphics API the frames went through. The same GPU performs
+    /// differently through different ones, and a fall back to `gl` is itself
+    /// worth seeing.
+    pub backend: &'static str,
+    /// Whether these timings can be read as describing GPU hardware at all —
+    /// `false` exactly when [`Self::device_class`] is `cpu` or
+    /// [`Self::backend`] is `noop`.
+    ///
+    /// Derived rather than left to the client because it is the question every
+    /// consumer actually has, and a client deriving it would have to enumerate
+    /// this vocabulary itself — which is the coupling the closed vocabulary
+    /// exists to avoid. Publishing the terms *and* the judgment lets a reader
+    /// act without a lookup table and audit the judgment when it matters.
+    pub hardware: bool,
+}
+
+impl FrameTimingsAdapter {
+    /// Project the runtime facts onto the wire.
+    ///
+    /// The tokens are `&'static str` because the sets are closed — that is the
+    /// whole point of pinion owning them (see
+    /// [`pinion_runtime::GpuDeviceClass`]) — and only the adapter's *name* is
+    /// genuinely open text.
+    ///
+    /// Each token and each verdict is spelled by the **type that owns it**,
+    /// not here. That is this tree's idiom for an enum's wire name (20+
+    /// `as_str` sites, including the `Missed` / `Rung` pair the sibling
+    /// `present_health_of` reads), and it means a new variant cannot reach the
+    /// wire without being given a name at the point it is declared.
+    fn of(a: &pinion_runtime::AdapterFacts) -> Self {
+        Self {
+            name: a.name.clone(),
+            device_class: a.device_class.as_str(),
+            backend: a.backend.as_str(),
+            // Both terms, and each spelled by the type that owns it: a
+            // software rasterizer is not hardware however real its API, and a
+            // backend that draws nothing is not hardware however real its GPU.
+            hardware: a.device_class.is_hardware() && a.backend.draws(),
+        }
+    }
 }
 
 /// R1708 §5.16 §5.41 §2 #7 — what a window's resizes cost, including the ones
@@ -790,12 +874,17 @@ impl FrameTimingsResize {
 /// Project a per-window [`FrameTimingsSnapshot`] onto the wire-shaped
 /// [`FrameTimingsOutcome`].
 ///
+/// (R1754) Takes the snapshot by **reference**. It stopped being `Copy` when
+/// the adapter's name joined it, and the borrow is strictly better than the
+/// `Copy` it replaces: the projection only reads fields, so the ~300-byte
+/// memcpy the old signature paid per call was never buying anything.
+///
 /// # Errors
 ///
 /// - [`FrameTimingsError::FrameTimingsUnavailable`] — the embedder did
 ///   not register a snapshot on [`DispatchContext::frame_timings`](crate::dispatch::DispatchContext::frame_timings).
 pub fn frame_timings(
-    snapshot: Option<FrameTimingsSnapshot>,
+    snapshot: Option<&FrameTimingsSnapshot>,
 ) -> Result<FrameTimingsOutcome, FrameTimingsError> {
     let Some(s) = snapshot else {
         return Err(FrameTimingsError::FrameTimingsUnavailable);
@@ -839,6 +928,8 @@ pub fn frame_timings(
             nodes_total: s.mirror.nodes,
         },
         resize: FrameTimingsResize::of(s.resize),
+        // R1754 — the premise of every number in this record.
+        adapter: s.adapter.as_ref().map(FrameTimingsAdapter::of),
         window: FrameTimingsWindow {
             min_total_us: s.min_total_us,
             mean_total_us: s.mean_total_us,
@@ -889,6 +980,140 @@ mod tests {
             .expect("non-empty window yields a snapshot")
     }
 
+    /// R1754 — the adapter reaches the wire, and `hardware` is a judgment over
+    /// BOTH terms rather than a rename of either.
+    ///
+    /// ★ The fixture is built so that no single-operand implementation passes.
+    /// A discrete-GPU-over-Noop case and a Cpu-over-Vulkan case are each
+    /// `hardware: false` while disagreeing about which field caused it, so
+    /// `hardware = class != Cpu` and `hardware = backend != Noop` are both
+    /// refuted, and only the conjunction survives. Without those two rows the
+    /// test would pass against three different wrong implementations — the
+    /// R1722/R1727/R1728 shape, where a fixture that cannot tell two
+    /// expressions apart is the same as having no gate.
+    #[test]
+    fn r1754_the_wire_says_which_stack_made_the_numbers() {
+        use pinion_runtime::{AdapterFacts, GpuBackend, GpuDeviceClass};
+
+        // A backend that renders through no adapter says so, and the field is
+        // omitted from the wire rather than faked.
+        let bare = snapshot_of(&[FrameTiming::new(1, 2, 3, 4, 20)]);
+        assert!(bare.adapter.is_none(), "the pure fold claims no adapter");
+        let out = frame_timings(Some(&bare)).unwrap();
+        assert!(out.adapter.is_none(), "no adapter, no claim on the wire");
+        let json = serde_json::to_value(&out).unwrap();
+        assert!(
+            json.get("adapter").is_none(),
+            "an absent adapter is absent from the JSON, not null-filled"
+        );
+
+        // Each row: the facts a backend would fill in after projection, and
+        // what `hardware` must then be.
+        let cases = [
+            (
+                GpuDeviceClass::Discrete,
+                GpuBackend::Vulkan,
+                true,
+                "discrete",
+                "vulkan",
+            ),
+            (
+                GpuDeviceClass::Integrated,
+                GpuBackend::Gl,
+                true,
+                "integrated",
+                "gl",
+            ),
+            (
+                GpuDeviceClass::Virtual,
+                GpuBackend::Dx12,
+                true,
+                "virtual",
+                "dx12",
+            ),
+            (
+                GpuDeviceClass::Other,
+                GpuBackend::Metal,
+                true,
+                "other",
+                "metal",
+            ),
+            // Software rasterizer on a real API — refutes `backend != Noop`.
+            (
+                GpuDeviceClass::Cpu,
+                GpuBackend::Vulkan,
+                false,
+                "cpu",
+                "vulkan",
+            ),
+            // Real GPU class behind a backend that draws nothing — refutes
+            // `class != Cpu`.
+            (
+                GpuDeviceClass::Discrete,
+                GpuBackend::Noop,
+                false,
+                "discrete",
+                "noop",
+            ),
+            // Neither term saves it.
+            (GpuDeviceClass::Cpu, GpuBackend::Noop, false, "cpu", "noop"),
+        ];
+        for (class, backend, hardware, class_token, backend_token) in cases {
+            let mut snap = snapshot_of(&[FrameTiming::new(1, 2, 3, 4, 20)]);
+            snap.adapter = Some(AdapterFacts {
+                name: "test adapter".to_string(),
+                device_class: class,
+                backend,
+            });
+            let out = frame_timings(Some(&snap)).unwrap();
+            let a = out
+                .adapter
+                .expect("the backend filled it, so the wire has it");
+            assert_eq!(
+                a.device_class, class_token,
+                "{class_token}: device class token"
+            );
+            assert_eq!(a.backend, backend_token, "{backend_token}: backend token");
+            assert_eq!(
+                a.hardware, hardware,
+                "{class_token}/{backend_token}: hardware verdict"
+            );
+            assert_eq!(a.name, "test adapter", "the adapter's own name is verbatim");
+        }
+    }
+
+    /// R1754 — the adapter qualifies the record without disturbing it.
+    ///
+    /// The two snapshots are given the SAME samples on purpose: the only
+    /// difference is the qualifier, so any timing field that moved would be
+    /// the qualifier changing the measurement it describes.
+    #[test]
+    fn r1754_the_qualifier_does_not_move_the_numbers_it_qualifies() {
+        use pinion_runtime::{AdapterFacts, GpuBackend, GpuDeviceClass};
+
+        let samples = [
+            FrameTiming::new(100, 10, 0, 20, 200),
+            FrameTiming::new(120, 12, 3, 25, 240),
+        ];
+        let plain = frame_timings(Some(&snapshot_of(&samples))).unwrap();
+        let mut snap = snapshot_of(&samples);
+        snap.adapter = Some(AdapterFacts {
+            name: "test adapter".to_string(),
+            device_class: GpuDeviceClass::Cpu,
+            backend: GpuBackend::Gl,
+        });
+        let qualified = frame_timings(Some(&snap)).unwrap();
+
+        assert!(plain.adapter.is_none() && qualified.adapter.is_some());
+        assert_eq!(plain.last, qualified.last, "the last frame is untouched");
+        assert_eq!(
+            plain.window, qualified.window,
+            "the aggregates are untouched"
+        );
+        assert_eq!(plain.frame_count, qualified.frame_count);
+        assert_eq!(plain.window_len, qualified.window_len);
+    }
+
     #[test]
     fn r1459_work_counts_reach_the_wire_and_are_not_derived_from_durations() {
         // The counts ride the same sample as the durations, and nothing on the
@@ -899,12 +1124,12 @@ mod tests {
         let converged = FrameTiming::new(100, 10, 0, 20, 200).with_work(1, true, 0);
         let struggling = FrameTiming::new(100, 10, 0, 20, 200).with_work(4, false, 37);
 
-        let a = frame_timings(Some(snapshot_of(&[converged]))).unwrap();
+        let a = frame_timings(Some(&snapshot_of(&[converged]))).unwrap();
         assert_eq!(a.last.settle_passes, 1);
         assert!(a.last.settled);
         assert_eq!(a.last.shape_misses, 0);
 
-        let b = frame_timings(Some(snapshot_of(&[struggling]))).unwrap();
+        let b = frame_timings(Some(&snapshot_of(&[struggling]))).unwrap();
         assert_eq!(b.last.settle_passes, 4);
         assert!(
             !b.last.settled,
@@ -934,7 +1159,7 @@ mod tests {
             nodes: 3_708,
         };
 
-        let out = frame_timings(Some(snap)).unwrap();
+        let out = frame_timings(Some(&snap)).unwrap();
         assert_eq!(out.produce.passes_total, 9);
         assert_eq!(out.produce.shape_misses_total, 130);
         assert_eq!(out.frame_count, 1, "one FRAME, whatever the producer did");
@@ -961,7 +1186,7 @@ mod tests {
             retries: 2,
         };
 
-        let out = frame_timings(Some(snap)).unwrap();
+        let out = frame_timings(Some(&snap)).unwrap();
         assert_eq!(out.focus.derivations_total, 6);
         assert_eq!(out.focus.retries_total, 2);
         assert_eq!(
@@ -983,7 +1208,7 @@ mod tests {
         // sentinel: unlike `settle_passes` (where `0` means never-measured and
         // every real paint is `>= 1`), zero focus work is the honest report of a
         // binding whose every focus request hit.
-        let out = frame_timings(Some(snapshot_of(&[FrameTiming::new(1, 2, 3, 4, 20)]))).unwrap();
+        let out = frame_timings(Some(&snapshot_of(&[FrameTiming::new(1, 2, 3, 4, 20)]))).unwrap();
         assert_eq!(out.focus.derivations_total, 0);
         assert_eq!(out.focus.retries_total, 0);
     }
@@ -1007,7 +1232,7 @@ mod tests {
             nodes: 2_884,
         };
 
-        let out = frame_timings(Some(snap)).unwrap();
+        let out = frame_timings(Some(&snap)).unwrap();
         assert_eq!(
             out.mirror.scenes_total, 3,
             "the fan-out width: one stored scene per painted window",
@@ -1035,7 +1260,7 @@ mod tests {
         // `pinion-tui` has no R705 re-store — it paints one window that
         // publishes itself. Zero here is "that producer does not exist", which
         // is the same number as "it did nothing" and is honest as both.
-        let out = frame_timings(Some(snapshot_of(&[FrameTiming::new(1, 2, 3, 4, 20)]))).unwrap();
+        let out = frame_timings(Some(&snapshot_of(&[FrameTiming::new(1, 2, 3, 4, 20)]))).unwrap();
         assert_eq!(out.mirror.scenes_total, 0);
         assert_eq!(out.mirror.passes_total, 0);
         assert_eq!(out.mirror.unsettled_total, 0);
@@ -1047,7 +1272,7 @@ mod tests {
         // `Default`. Zero passes is distinguishable from every real paint's
         // `>= 1`, so a consumer can tell "not measured" from "measured one".
         let bare = FrameTiming::new(1, 2, 3, 4, 20);
-        let out = frame_timings(Some(snapshot_of(&[bare]))).unwrap();
+        let out = frame_timings(Some(&snapshot_of(&[bare]))).unwrap();
         assert_eq!(out.last.settle_passes, 0, "the never-measured sentinel");
         assert!(!out.last.settled);
         assert_eq!(out.last.shape_misses, 0);
@@ -1064,8 +1289,8 @@ mod tests {
         let small = FrameTiming::new(100, 10, 0, 20, 200).with_census(40, 40, 3);
         let huge = FrameTiming::new(100, 10, 0, 20, 200).with_census(40_000, 82_000, 39_000);
 
-        let a = frame_timings(Some(snapshot_of(&[small]))).unwrap();
-        let b = frame_timings(Some(snapshot_of(&[huge]))).unwrap();
+        let a = frame_timings(Some(&snapshot_of(&[small]))).unwrap();
+        let b = frame_timings(Some(&snapshot_of(&[huge]))).unwrap();
 
         assert_eq!(a.last.scene_nodes, 40);
         assert_eq!(a.last.layout_nodes, 40);
@@ -1087,7 +1312,7 @@ mod tests {
             FrameTiming::new(100, 10, 0, 20, 200).with_census(40_000, 40_000, 40_000),
             FrameTiming::new(100, 10, 0, 20, 200).with_census(120, 240, 4),
         ]);
-        let out = frame_timings(Some(snap)).unwrap();
+        let out = frame_timings(Some(&snap)).unwrap();
         assert_eq!(out.window.max_scene_nodes, 40_000);
         assert_eq!(out.window.max_encode_nodes, 40_000);
         assert_eq!(
@@ -1106,7 +1331,7 @@ mod tests {
         // `scene_nodes` is the last pass's, `layout_nodes` the sum. On a frame
         // that converged immediately they are equal, and that equality is the
         // statement that nothing was re-measured — not a redundancy.
-        let out = frame_timings(Some(snapshot_of(&[FrameTiming::new(100, 10, 0, 20, 200)
+        let out = frame_timings(Some(&snapshot_of(&[FrameTiming::new(100, 10, 0, 20, 200)
             .with_work(1, true, 0)
             .with_census(412, 412, 9)])))
         .unwrap();
@@ -1115,7 +1340,7 @@ mod tests {
 
         // Three passes over the same tree: the tree is unchanged, the work is
         // three times as much, and only `layout_nodes` says so.
-        let out = frame_timings(Some(snapshot_of(&[FrameTiming::new(100, 10, 0, 20, 200)
+        let out = frame_timings(Some(&snapshot_of(&[FrameTiming::new(100, 10, 0, 20, 200)
             .with_work(3, true, 0)
             .with_census(412, 1_236, 9)])))
         .unwrap();
@@ -1143,7 +1368,7 @@ mod tests {
             unsettled: 0,
             nodes: 126_000,
         };
-        let out = frame_timings(Some(snap)).unwrap();
+        let out = frame_timings(Some(&snap)).unwrap();
         assert_eq!(out.produce.nodes_total, 84_000);
         assert_eq!(out.mirror.nodes_total, 126_000);
         assert_eq!(
@@ -1168,8 +1393,8 @@ mod tests {
             .with_census(63, 63, 1)
             .with_access_census(1_000_000);
 
-        let a = frame_timings(Some(snapshot_of(&[windowed]))).unwrap();
-        let b = frame_timings(Some(snapshot_of(&[leaking]))).unwrap();
+        let a = frame_timings(Some(&snapshot_of(&[windowed]))).unwrap();
+        let b = frame_timings(Some(&snapshot_of(&[leaking]))).unwrap();
         assert_eq!(a.last.access_nodes, 21);
         assert_eq!(b.last.access_nodes, 1_000_000);
         assert_eq!(
@@ -1183,9 +1408,11 @@ mod tests {
 
     #[test]
     fn r1538_census_serializes_under_last_and_window() {
-        let out = frame_timings(Some(snapshot_of(&[FrameTiming::new(300, 100, 0, 80, 540)
-            .with_census(412, 824, 9)
-            .with_access_census(21)])))
+        let out = frame_timings(Some(&snapshot_of(&[FrameTiming::new(
+            300, 100, 0, 80, 540,
+        )
+        .with_census(412, 824, 9)
+        .with_access_census(21)])))
         .unwrap();
         let json = serde_json::to_value(out).unwrap();
         for (group, key, want) in [
@@ -1214,7 +1441,7 @@ mod tests {
         // has a root, so every real frame reports `scene_nodes >= 1`. That is
         // what lets a client tell "no paint yet" from "a tiny paint" without a
         // sentinel.
-        let out = frame_timings(Some(snapshot_of(&[FrameTiming::new(1, 2, 3, 4, 20)]))).unwrap();
+        let out = frame_timings(Some(&snapshot_of(&[FrameTiming::new(1, 2, 3, 4, 20)]))).unwrap();
         assert_eq!(out.last.scene_nodes, 0);
         assert_eq!(out.last.layout_nodes, 0);
         assert_eq!(out.last.encode_nodes, 0);
@@ -1230,7 +1457,7 @@ mod tests {
     #[test]
     fn r907_single_frame_projects_field_for_field() {
         let snap = snapshot_of(&[FrameTiming::new(300, 100, 0, 80, 540)]);
-        let out = frame_timings(Some(snap)).unwrap();
+        let out = frame_timings(Some(&snap)).unwrap();
         assert_eq!(out.frame_count, 1);
         assert_eq!(out.window_len, 1);
         assert_eq!(out.last.build_us, 300);
@@ -1256,11 +1483,14 @@ mod tests {
     /// testing nothing — a reader could have told them apart by the number.
     #[test]
     fn r1752_the_wire_distinguishes_a_readback_from_a_render() {
-        let plain =
-            frame_timings(Some(snapshot_of(&[FrameTiming::new(300, 100, 0, 80, 540)]))).unwrap();
-        let shot = frame_timings(Some(snapshot_of(&[
-            FrameTiming::new(300, 100, 0, 80, 540).with_capture(true)
-        ])))
+        let plain = frame_timings(Some(&snapshot_of(&[FrameTiming::new(
+            300, 100, 0, 80, 540,
+        )])))
+        .unwrap();
+        let shot = frame_timings(Some(&snapshot_of(&[FrameTiming::new(
+            300, 100, 0, 80, 540,
+        )
+        .with_capture(true)])))
         .unwrap();
 
         assert_eq!(
@@ -1278,7 +1508,7 @@ mod tests {
     #[test]
     fn r907_phase_partition_holds_on_wire() {
         let snap = snapshot_of(&[FrameTiming::new(200, 90, 0, 60, 400)]);
-        let out = frame_timings(Some(snap)).unwrap();
+        let out = frame_timings(Some(&snap)).unwrap();
         // total == build + encode + acquire + render + other, by
         // construction (this fixture pins acquire = 0).
         assert_eq!(
@@ -1294,7 +1524,7 @@ mod tests {
             FrameTiming::new(300, 150, 0, 70, 600),
             FrameTiming::new(500, 200, 0, 120, 980),
         ]);
-        let out = frame_timings(Some(snap)).unwrap();
+        let out = frame_timings(Some(&snap)).unwrap();
         assert!(out.window.min_total_us <= out.window.mean_total_us);
         assert!(out.window.mean_total_us <= out.window.max_total_us);
         assert_eq!(out.window.min_total_us, 400);
@@ -1304,7 +1534,7 @@ mod tests {
     #[test]
     fn r907_serialized_nests_last_and_window() {
         let snap = snapshot_of(&[FrameTiming::new(300, 100, 0, 80, 540)]);
-        let out = frame_timings(Some(snap)).unwrap();
+        let out = frame_timings(Some(&snap)).unwrap();
         let json = serde_json::to_value(out).unwrap();
         assert_eq!(
             json.get("last")
@@ -1325,7 +1555,7 @@ mod tests {
     #[test]
     fn r907_mean_fps_inverts_mean_total_on_wire() {
         let snap = snapshot_of(&[FrameTiming::new(10_000, 4_000, 0, 2_000, 16_666)]);
-        let out = frame_timings(Some(snap)).unwrap();
+        let out = frame_timings(Some(&snap)).unwrap();
         #[allow(clippy::cast_precision_loss, reason = "test re-derivation")]
         let rederived = 1_000_000.0_f32 / out.window.mean_total_us as f32;
         assert!((out.mean_fps - rederived).abs() < 1e-3);
@@ -1339,7 +1569,7 @@ mod tests {
         // jank fields present and zero (a client tells "untracked" from
         // "on budget" by budget_us presence).
         let snap = snapshot_of(&[FrameTiming::new(200, 100, 0, 50, 9_999)]);
-        let out = frame_timings(Some(snap)).unwrap();
+        let out = frame_timings(Some(&snap)).unwrap();
         assert_eq!(out.budget_us, None);
         assert_eq!(out.over_budget_frames, 0);
         assert_eq!(out.worst_overrun_us, 0);
@@ -1375,7 +1605,7 @@ mod tests {
             ],
             Some(500),
         );
-        let out = frame_timings(Some(snap)).unwrap();
+        let out = frame_timings(Some(&snap)).unwrap();
         assert_eq!(out.budget_us, Some(500));
         assert_eq!(out.over_budget_frames, 2);
         assert_eq!(out.worst_overrun_us, 480);
@@ -1388,7 +1618,7 @@ mod tests {
             &[FrameTiming::new(8_000, 4_000, 0, 2_000, 16_666)],
             Some(16_666),
         );
-        let out = frame_timings(Some(snap)).unwrap();
+        let out = frame_timings(Some(&snap)).unwrap();
         let json = serde_json::to_value(out).unwrap();
         assert_eq!(
             json.get("budget_us").and_then(serde_json::Value::as_u64),
@@ -1416,7 +1646,7 @@ mod tests {
             ],
             Some(200),
         );
-        let out = frame_timings(Some(snap)).unwrap();
+        let out = frame_timings(Some(&snap)).unwrap();
         assert_eq!(out.over_budget_frames, 2);
         assert_eq!(out.window_len, 4);
         #[allow(clippy::cast_precision_loss, reason = "test re-derivation")]

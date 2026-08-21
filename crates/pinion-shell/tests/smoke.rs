@@ -162,6 +162,12 @@ impl VelloRenderer for SmokeRenderer {
         pinion_gpu::SurfaceHealth::default()
     }
 
+    /// R1754 — no device, so no adapter. `None` is the measurement here, not
+    /// an omission.
+    fn adapter_info(&self) -> Option<vello::wgpu::AdapterInfo> {
+        None
+    }
+
     async fn new<W>(target: W, width: u32, height: u32) -> Result<Self, SmokeRendererError>
     where
         W: Into<vello::wgpu::SurfaceTarget<'static>> + Clone + 'static,
