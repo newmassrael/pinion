@@ -1598,3 +1598,300 @@ fn r1747_a_focus_owning_widget_is_a_surface_and_not_a_mark_of_its_host() {
         );
     });
 }
+
+// ── R1772: the operations this screen offers, and by which cause ────────────
+
+/// A screen as it opens, with `earlier` — the operation this one `needs` — done
+/// first, through that operation's own declared cause.
+///
+/// A real property of the tool rather than a convenience: selecting a field is
+/// only possible once a message is selected, and a gate that reached the
+/// precondition by writing the state directly would be testing a screen no
+/// person can be in.
+#[cfg(test)]
+fn fresh_state_reaching(earlier: Option<&str>) -> std::rc::Rc<ViewState> {
+    // ★★★★★ `use_view_state` is a HOOK: one state per owner scope, so this
+    // RESETS rather than constructs, and saying so matters. The first draft
+    // cleared the field with `select_field(&state, "")`, which returns early
+    // for a path the decode map does not hold — so the field kept whatever the
+    // previous row had left, and the gate reported *the gesture ran and
+    // `selected_field` did not move* for a gesture that worked perfectly. A
+    // reset that can silently not reset is worse than none.
+    let state = use_view_state();
+    super::run_filter(&state, "").expect("an empty query is the whole capture");
+    select_message(&state, 0);
+    state.field.set(String::new());
+    state.list_scroll.scroll_to(0, 0);
+    state.tree_scroll.scroll_to(0, 0);
+    state.bytes_scroll.scroll_to(0, 0);
+    if let Some(earlier) = earlier {
+        let op = spec::OPERATIONS
+            .iter()
+            .find(|op| op.name == earlier)
+            .expect("the gate asserts a `needs` names a row of this table");
+        if let Some((verb, arg)) = op.verb {
+            invoke_for_test(&state, verb, arg).expect("the precondition's own verb is routed");
+        } else {
+            let drive = OPERATION_GESTURES
+                .iter()
+                .find(|(name, _)| *name == earlier)
+                .map(|(_, drive)| *drive)
+                .expect("a row with no verb declares a gesture, and the gate checks it");
+            drive(&state);
+        }
+    }
+    state
+}
+
+/// The value of one published slot, as a client sees it.
+///
+/// Read through the screen's own introspection rather than off the state, so a
+/// slot that moved internally and is not published reads as *did not move* —
+/// which is the honest answer to *can an agent see this happen*, and the whole
+/// reason the three scroll rows needed `scroll` published before they could
+/// exist.
+#[cfg(test)]
+fn witness_of(state: &std::rc::Rc<ViewState>, slot: &str) -> String {
+    let mut oracle = super::ViewOracle::new();
+    oracle.attach(std::rc::Rc::clone(state));
+    format!(
+        "{:?}",
+        pinion_core::external::ExternalIntrospect::query(&oracle, slot)
+    )
+}
+
+/// One action, invoked the way an agent invokes it — **with the argument in the
+/// type the screen DECLARES for it**.
+///
+/// ★★★★★ R1772 — the type is read out of the published schema rather than
+/// guessed, and the first draft guessed. It sent every argument as text, and
+/// `select_message` answered `expected a row index`: a real disagreement
+/// between the table's textual argument and the action's declared `int`, caught
+/// by running. Deriving it means a row cannot be written whose argument the
+/// screen would refuse, and it means this driver keeps working when an action
+/// changes type — the schema is the one place that says so.
+#[cfg(test)]
+fn invoke_for_test(state: &std::rc::Rc<ViewState>, verb: &str, arg: &str) -> Result<(), String> {
+    use pinion_core::external::{ExternalIntrospect, IntrospectValue};
+
+    let mut oracle = super::ViewOracle::new();
+    oracle.attach(std::rc::Rc::clone(state));
+    let declared = oracle
+        .schema()
+        .field_for(verb)
+        .map(|field| field.ty)
+        .ok_or_else(|| format!("`{verb}` is not a declared action of this screen"))?;
+    let value =
+        match declared {
+            "int" => IntrospectValue::Int(arg.parse::<i64>().map_err(|_| {
+                format!("`{verb}` declares `int` and the table's argument is {arg:?}")
+            })?),
+            _ => IntrospectValue::Text(arg.to_owned()),
+        };
+    ExternalIntrospect::invoke(&mut oracle, verb, value)
+        .map(|_| ())
+        .map_err(|why| format!("{why:?}"))
+}
+
+/// Scroll one pane at a size where its content actually overflows.
+///
+/// ★★★★★ R1772 — written because the gate said *the gesture ran and `scroll`
+/// did not move*, three times, and the cause was neither the screen nor the
+/// wire. `ScrollState::scroll_by` clamps to a maximum the LAYOUT measures, so a
+/// pane whose content fits cannot be scrolled — correctly. Whether it fits
+/// depends on the window, and this build's capture holds sixteen messages
+/// where the reference's holds a hundred and eighty thousand, so at the size
+/// this screen opens in there is genuinely nothing to scroll.
+///
+/// Sweeping the sizes this screen already declares it supports is the honest
+/// claim: *a person can scroll this pane at some size this screen is laid out
+/// for*. Hard-coding one size would have made the gate assert a fact about that
+/// size while reading as a fact about the screen — and if no swept size
+/// overflows, the driver moves nothing and the gate fails, which is the answer
+/// that would mean the row must not claim the gesture.
+#[cfg(test)]
+fn scroll_somewhere_it_overflows(
+    state: &std::rc::Rc<ViewState>,
+    pane: fn(&ViewState) -> &std::rc::Rc<pinion_core::widgets::scroll::ScrollState>,
+) {
+    for (_, size) in SIZES {
+        painted_at(state, *size);
+        let scroll = pane(state);
+        let before = scroll.offset();
+        scroll.scroll_by(0, 40);
+        if scroll.offset() != before {
+            return;
+        }
+    }
+}
+
+/// The gesture that causes one operation, joined to [`spec::OPERATIONS`] by the
+/// operation's name.
+///
+/// A table beside the specification rather than a column inside it, for the
+/// reason the sibling screen states: a gesture is a press at a place or a drag
+/// between two, and that is not a value a `const` row can hold. The gate
+/// asserts the two tables name the same operations in **both** directions, so a
+/// `gesture: true` with nothing behind it fails and so does a driver for a row
+/// that claims no gesture.
+#[cfg(test)]
+type GestureDriver = fn(&std::rc::Rc<ViewState>);
+
+#[cfg(test)]
+const OPERATION_GESTURES: &[(&str, GestureDriver)] = &[
+    ("filter the capture", |state| {
+        super::run_filter(state, "type=data").expect("the query parses");
+    }),
+    ("clear the filter", |state| {
+        super::run_filter(state, "").expect("an empty query is the whole capture");
+    }),
+    ("select a message", |state| {
+        select_message(state, 3);
+    }),
+    ("select a decoded field", |state| {
+        select_field(state, "l0.link");
+    }),
+    // ★★★★★ The three the reference offers that no ACTION reaches. The driver
+    // is the pane's own scroll state, which is what a pointer moves — and until
+    // this round nothing published that it had moved, so these rows had no
+    // witness to name and could not have been written at all.
+    //
+    // ★★ Each PAINTS first, and finding out why is the gate earning its place.
+    // `ScrollState::scroll_by` clamps to a maximum the LAYOUT measures, so on a
+    // screen that has never been laid out the maximum is zero and a scroll
+    // moves nothing. A driver that skipped the paint would have been asserting
+    // that this screen cannot scroll, when what could not scroll was the
+    // fixture — and a pointer scroll only ever happens on a laid-out frame
+    // anyway, so painting is what makes this driver the gesture it claims.
+    ("scroll the message list", |state| {
+        scroll_somewhere_it_overflows(state, |s| &s.list_scroll);
+    }),
+    ("scroll the decode tree", |state| {
+        scroll_somewhere_it_overflows(state, |s| &s.tree_scroll);
+    }),
+    ("scroll the byte pane", |state| {
+        scroll_somewhere_it_overflows(state, |s| &s.bytes_scroll);
+    }),
+];
+
+/// ★★★★★ R1772 — **every declared way of causing an operation causes it**, on
+/// the third analyzer screen to be asked.
+///
+/// The rule is the sibling screens': a `verb` must be routed and must move the
+/// slot the row names, a `gesture: true` must have a driver and that driver must
+/// move the same slot, and the count of operations this screen cannot perform
+/// at all is a RATCHET rather than a target — it fails when the number grows
+/// and it fails when the number shrinks without the table being updated, so the
+/// only way past it is to move a row.
+#[test]
+fn r1772_every_declared_way_of_causing_an_operation_causes_it() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let declared: BTreeSet<&str> = spec::OPERATIONS
+            .iter()
+            .filter(|op| op.gesture)
+            .map(|op| op.name)
+            .collect();
+        let driven: BTreeSet<&str> = OPERATION_GESTURES.iter().map(|(name, _)| *name).collect();
+        assert_eq!(
+            declared, driven,
+            "★ the specification and the drivers name different operations — a \
+             gesture declared with nothing behind it is a promise no gate holds \
+             the screen to",
+        );
+        let names: BTreeSet<&str> = spec::OPERATIONS.iter().map(|op| op.name).collect();
+        assert_eq!(
+            names.len(),
+            spec::OPERATIONS.len(),
+            "the operations are named uniquely, or the join above is ambiguous",
+        );
+        for op in spec::OPERATIONS {
+            if let Some(earlier) = op.needs {
+                assert!(
+                    names.contains(earlier),
+                    "{:?} needs {earlier:?}, which this table does not hold",
+                    op.name,
+                );
+            }
+        }
+
+        let mut inert: Vec<String> = Vec::new();
+        let mut exercised = 0usize;
+
+        for op in spec::OPERATIONS {
+            // Each cause is measured from a fresh screen, so one row cannot
+            // pass on the state another row left behind.
+            if let Some((verb, arg)) = op.verb {
+                let state = fresh_state_reaching(op.needs);
+                let before = witness_of(&state, op.witness);
+                let answer = invoke_for_test(&state, verb, arg);
+                let after = witness_of(&state, op.witness);
+                exercised += 1;
+                if let Err(why) = answer {
+                    inert.push(format!(
+                        "{:?}: the wire refused `{verb} {arg}` ({why})",
+                        op.name
+                    ));
+                } else if before == after {
+                    inert.push(format!(
+                        "{:?}: `{verb} {arg}` was accepted and `{}` did not move",
+                        op.name, op.witness,
+                    ));
+                }
+            }
+            if op.gesture {
+                let state = fresh_state_reaching(op.needs);
+                let before = witness_of(&state, op.witness);
+                let cause = OPERATION_GESTURES
+                    .iter()
+                    .find(|(name, _)| *name == op.name)
+                    .map(|(_, drive)| *drive)
+                    .expect("the two tables were just asserted to agree");
+                cause(&state);
+                let after = witness_of(&state, op.witness);
+                exercised += 1;
+                if before == after {
+                    inert.push(format!(
+                        "{:?}: the gesture ran and `{}` did not move",
+                        op.name, op.witness,
+                    ));
+                }
+            }
+        }
+
+        assert!(
+            inert.is_empty(),
+            "declared causes that cause nothing:\n  {}",
+            inert.join("\n  ")
+        );
+        assert!(
+            exercised >= spec::OPERATIONS.len(),
+            "every operation was exercised by at least one of its declared causes",
+        );
+
+        // ★ The ratchet. Written as an equality on purpose: a row that becomes
+        // reachable must be moved in the table, and a row that stops being
+        // reachable must be too.
+        let absent = spec::OPERATIONS.iter().filter(|op| !op.reachable()).count();
+        assert_eq!(
+            absent, 0,
+            "★ every operation the reference's capture view offers is reachable \
+             on this screen by SOME cause. If this number grows, a row went \
+             absent; if the table grows a row that is absent, say so here.",
+        );
+        // ★★★★★ And the asymmetry the table exists to expose, which the count
+        // above cannot see: three of the seven are reachable only by a person.
+        let agentless = spec::OPERATIONS
+            .iter()
+            .filter(|op| op.verb.is_none())
+            .count();
+        assert_eq!(
+            agentless, 3,
+            "★ the three scrollable regions the reference offers have no action \
+             on THIS SCREEN. Publishing `scroll` (R1772) made them observable; \
+             a verb for them is what is still absent. ⚠ Not a claim that a \
+             client cannot scroll them at all — the framework's own \
+             `scene/scroll` reaches all three, which R1772's demo drives.",
+        );
+    });
+}

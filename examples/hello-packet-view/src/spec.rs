@@ -1190,3 +1190,120 @@ pub fn packets_document() -> pinion_core::conformance::SpecDocument {
         "docs/analyzer-packets-spec.json",
     )
 }
+
+/// ★★★★★ R1772 — the third screen to get one, and the reason is the second
+/// screen's bill.
+///
+/// The two sibling screens carry this table; this one did not, and R1707
+/// measured what that cost: the filter bar drew a three-clause query, three
+/// saved chips and a `kept / total` readout while `row_count` answered 16
+/// whatever was typed, there was no `filter` verb, and there was no text input
+/// anywhere on the screen — with every check on this example green. A screen
+/// census counts what IS drawn, so an operation the screen cannot perform
+/// paints nothing and is invisible by construction. This table is the list that
+/// can hold an absence.
+///
+/// ⚠ Those particular defects are FIXED — re-measured at the head of R1772, the
+/// `filter` verb routes and the query is real. The debt's evidence had gone
+/// stale while its headline claim (no table here) stayed true, which is why the
+/// entry point for this round was a re-measurement and not the file's numbers.
+pub use pinion_core::operation::Operation as OperationSpec;
+
+/// The capture viewer's operations, in the behaviour reference's own order.
+///
+/// # Where the population comes from
+///
+/// Extracted from the reference's capture section, which is markedly smaller
+/// than the node lab's: measured, its whole capture view binds ONE named
+/// handler (the filter box) and two per-row click closures (a message row, a
+/// decode-tree row), over three scrollable regions. So this table is seven rows
+/// and not thirty, and that is the reference's shape rather than a shortfall.
+///
+/// Every row is MEASURED against this screen as it stands. The `verb` column
+/// holds an action the wire actually routes today and `gesture` says whether a
+/// pointer path actually reaches it; the gate drives both and fails on an
+/// optimistic entry.
+///
+/// ★★★★★ **What writing it found, and could not have been found another way.**
+/// `witness` is mandatory — a row cannot be written for an operation whose
+/// effect nothing publishes — and the three scroll rows had no slot to name.
+/// This screen held all three pane offsets, hit-tested with them, and published
+/// none of them, so a client could not ask whether a scroll had happened.
+/// `scroll` is published now, which is what lets those rows be in the table at
+/// all.
+///
+/// ⚠ And what `verb: None` claims, exactly. It says **this screen declares no
+/// action for it** — not that the pane cannot be scrolled by a client. The
+/// framework's own `scene/scroll` reaches all three, measured in this round's
+/// demo, and stating the narrower claim is the difference between a column a
+/// reader can act on and one they would have to distrust.
+pub const OPERATIONS: &[OperationSpec] = &[
+    // ── the filter bar ───────────────────────────────────────────
+    // ★★ The witness is `kept_rows` and NOT `row_count`, and finding that out
+    // is the column earning its place. `row_count` answers how many messages
+    // the capture holds — a constant — so a filter row witnessed on it would
+    // have been an entry that could never fail. R1707 measured a build where
+    // that number stood still whatever was typed; the number is right and the
+    // filter is real, and it is `kept_rows` that moves.
+    OperationSpec {
+        name: "filter the capture",
+        verb: Some(("filter", "type=data")),
+        gesture: true,
+        witness: "kept_rows",
+        needs: None,
+    },
+    // ★ Emptying the box is its own operation and not the absence of the one
+    // above: the reference's box can be cleared back to the whole capture, and
+    // a table that recorded only the narrowing would describe a tool you cannot
+    // get out of.
+    OperationSpec {
+        name: "clear the filter",
+        verb: Some(("filter", "")),
+        gesture: true,
+        witness: "kept_rows",
+        needs: Some("filter the capture"),
+    },
+    // ── the message list ─────────────────────────────────────────
+    OperationSpec {
+        name: "select a message",
+        verb: Some(("select_message", "3")),
+        gesture: true,
+        witness: "selected_row",
+        needs: None,
+    },
+    // ★★★★★ The first of the three the reference offers and an agent cannot
+    // cause. A person scrolls the list with the pointer; no action on this
+    // screen moves it, and until this round nothing published that it had
+    // moved at all. The row is here rather than omitted precisely so the
+    // absence is counted.
+    OperationSpec {
+        name: "scroll the message list",
+        verb: None,
+        gesture: true,
+        witness: "scroll",
+        needs: None,
+    },
+    // ── the decode tree ──────────────────────────────────────────
+    OperationSpec {
+        name: "select a decoded field",
+        verb: Some(("select_field", "l0.link")),
+        gesture: true,
+        witness: "selected_field",
+        needs: Some("select a message"),
+    },
+    OperationSpec {
+        name: "scroll the decode tree",
+        verb: None,
+        gesture: true,
+        witness: "scroll",
+        needs: None,
+    },
+    // ── the byte pane ────────────────────────────────────────────
+    OperationSpec {
+        name: "scroll the byte pane",
+        verb: None,
+        gesture: true,
+        witness: "scroll",
+        needs: None,
+    },
+];

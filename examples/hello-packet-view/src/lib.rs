@@ -2567,6 +2567,18 @@ impl ExternalIntrospect for ViewOracle {
                     SchemaField::new("folded", "json"),
                     SchemaField::new("said", "object"),
                     SchemaField::new("cursor", "json"),
+                    // ★★★★★ R1772 — where each of the three panes has been
+                    // scrolled to. Found by writing this screen's operation
+                    // table: the behaviour reference's capture view offers
+                    // three scrollable regions, and `Operation::witness` is
+                    // mandatory — a row cannot be written for an operation
+                    // whose effect nothing publishes. This build held all three
+                    // offsets and used them to hit-test, and published none of
+                    // them, so an agent could neither cause a scroll nor SEE
+                    // that one had happened. Publishing them is what lets those
+                    // three rows say `verb: None, gesture: true` honestly
+                    // rather than being left out of the table altogether.
+                    SchemaField::new("scroll", "json"),
                     // ★★★ R1707 — the filter's whole surface, declared. The
                     // declaration is a PRECONDITION of dispatch (R1637), so an
                     // arm added to `query` and left out here answers
@@ -2701,6 +2713,20 @@ impl ExternalIntrospect for ViewOracle {
             "cursor" => {
                 let (x, y) = state.cursor.get();
                 Ok(IntrospectValue::Json(serde_json::json!({"x": x, "y": y})))
+            }
+            // ★ R1772 — all three at once rather than three paths, because the
+            // question a reader has is *where is this screen scrolled to*, and
+            // three reads that could be taken a frame apart answer it worse.
+            "scroll" => {
+                let pane = |scroll: &ScrollState| {
+                    let (x, y) = scroll.offset();
+                    serde_json::json!({ "x": x, "y": y })
+                };
+                Ok(IntrospectValue::Json(serde_json::json!({
+                    "list": pane(&state.list_scroll),
+                    "tree": pane(&state.tree_scroll),
+                    "bytes": pane(&state.bytes_scroll),
+                })))
             }
             _ => Err(ReadRefusal::UnknownPath),
         }
@@ -2894,6 +2920,20 @@ fn spec_json() -> serde_json::Value {
         // no gate can hold the screen to, which is the state this screen was in.
         "gestures": spec::GESTURES.iter().map(|(g, effect)| serde_json::json!({
             "gesture": g, "effect": effect,
+        })).collect::<Vec<_>>(),
+        // ★★★★★ R1772 — the operations the behaviour reference's capture view
+        // offers, and by which of the two causes THIS build reaches each.
+        // Published rather than kept in the source for the reason its two
+        // siblings are: a demo carrying its own copy of the list would be
+        // checking the list against itself. `absent` is DERIVED so an operation
+        // cannot be declared missing and reachable at once.
+        "operations": spec::OPERATIONS.iter().map(|op| serde_json::json!({
+            "name": op.name,
+            "verb": op.verb.map(|(verb, arg)| serde_json::json!([verb, arg])),
+            "gesture": op.gesture,
+            "witness": op.witness,
+            "needs": op.needs,
+            "absent": !op.reachable(),
         })).collect::<Vec<_>>(),
         "query_columns": spec::QUERY_COLUMNS,
         "query_placeholder": spec::QUERY_PLACEHOLDER,
