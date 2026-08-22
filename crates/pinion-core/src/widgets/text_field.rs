@@ -3053,11 +3053,18 @@ mod tests {
     // ─────────────────────────────────────────────────────────────
 
     #[test]
-    fn external_schema_declares_thirty_seven_slots() {
+    fn external_schema_declares_forty_one_slots() {
         // R1769 grew the surface: + configuration (the lossless statechart
-        // read) + resume (the action that takes it back). The count in this
-        // test's NAME moved with them — it is a fact about the schema, and a
-        // name left behind would say something false about what is asserted.
+        // read) + resume (the action that takes it back).
+        //
+        // ⚠ R1769.2 — the name said `thirty_seven` for an hour and that was
+        // ALSO wrong: R1769 read the previous name (`thirty_five`), added two,
+        // and never counted the list. It is FORTY-ONE, and the previous name
+        // had been false by four before this round touched it. Counted against
+        // `schema()` itself, not against the name it replaced.
+        // ⇒ a count in a test's NAME is asserted by nobody: the expectation
+        // below fails loudly when the schema moves, and the name can disagree
+        // with it in silence. Registered as its own debt.
         // R56.1.b grew the surface: state + text + caret + send.
         // R56.1.d grew the surface: + key (W3C UI Events keystroke
         // dispatch).
