@@ -1895,3 +1895,149 @@ fn r1772_every_declared_way_of_causing_an_operation_causes_it() {
         );
     });
 }
+
+/// ★★★★★ R1774 §5.32 §5.45 — **every clamp this screen has is reached from
+/// both sides by the sweep above.**
+///
+/// Screen C asked this first (R1669) and found a real defect on its first run;
+/// the debt that recorded it observed that screens A and B carry guards of the
+/// same shape and **nobody asks them the question**. This is screen B's answer,
+/// and the third consumer of the lifted vocabulary — the screen supplies only
+/// its own observations, the rule lives in the crate.
+///
+/// # What a clamp is on THIS screen
+///
+/// Screen B's three panes SCROLL, so a row below the fold is not clamped — the
+/// reader scrolls to it, and the painted index holds it either way because it
+/// was built. What is clamped here is a member the screen declares and then
+/// does not BUILD: a byte row the dump stops short of, a field a fold removes.
+/// So each observable names the exact tags its family should contain and asks
+/// how many of them the frame actually has — the guard's effect, never the
+/// condition it tests.
+///
+/// # The split, derived rather than written down
+///
+/// ★★★★★ The first run of this gate reported four of seven families as *never
+/// clamped*, and the cause was the observable rather than the screen: those
+/// four have **no drop-branch at all**. The derivation is where the family's
+/// size comes from. A family the STATE sizes — the rows a query kept, the
+/// fields a fold left, the rows a frame's length needs — can come out shorter
+/// than it asked for, so it is a clamp and belongs in the census. A family the
+/// SPECIFICATION sizes is a fixed strip: `spec::COLUMNS`, `spec::SAVED_FILTERS`,
+/// `spec::CONTEXT`, `spec::LANES` never change length, nothing tests whether
+/// they fit, and folding them into the census would report an unexercised guard
+/// that does not exist.
+///
+/// They are not dropped, though — they get the assertion that IS true of them
+/// and would be false the moment someone added such a branch: every member is
+/// built at every swept state and size, the declared floor included. What keeps
+/// them inside their strip is the containment gate above, not a clamp; between
+/// the two, a member can neither vanish silently nor be painted where nobody
+/// can see it.
+#[test]
+fn r1774_the_sweep_reaches_both_sides_of_every_clamp() {
+    let mut census = pinion_core::test_fixtures::clamp::ClampCensus::new();
+    sweep(|state, shot, _, _, case| {
+        // (name, the tags this family should hold, whether the STATE sizes it)
+        let families: &[(&str, Vec<String>, bool)] = &[
+            (
+                "list: rows",
+                state
+                    .kept()
+                    .iter()
+                    .map(|n| format!("pv.list.row.{n}"))
+                    .collect(),
+                true,
+            ),
+            (
+                "tree: fields",
+                super::visible_fields(state)
+                    .iter()
+                    .map(|(path, ..)| format!("pv.tree.field.{path}"))
+                    .collect(),
+                true,
+            ),
+            (
+                // ★★★★★ The OFFSET label, which is what a byte row paints.
+                // The first draft asked for `pv.bytes.row.{n}` and the census
+                // reported the family as clamped on every single frame — 0 of
+                // N built, always. The cause was the observable for the third
+                // time in this round: that tag is an ANNOUNCEMENT, and the
+                // function producing it says so in its own doc — nothing
+                // paints it, a byte row being the eight cells and the offset
+                // beside them. An observable naming a tag no painter emits
+                // reads as a permanent clamp, which is indistinguishable from
+                // a screen that truly always truncates.
+                //
+                // Spelled through the screen's own helper for the reason that
+                // helper exists: the paint and the census must not grow two
+                // conventions for one address.
+                "bytes: offsets",
+                (0..state.frame_bytes().len().div_ceil(spec::BYTES_PER_ROW))
+                    .map(super::bytes_offset_tag)
+                    .collect(),
+                true,
+            ),
+            (
+                "list: columns",
+                (0..spec::COLUMNS.len())
+                    .map(|n| format!("pv.list.head.{n}"))
+                    .collect(),
+                false,
+            ),
+            (
+                "filter: saved chips",
+                (0..spec::SAVED_FILTERS.len())
+                    .map(|n| format!("pv.filter.saved.{n}"))
+                    .collect(),
+                false,
+            ),
+            (
+                "context: values",
+                spec::CONTEXT
+                    .iter()
+                    .map(|v| format!("pv.context.{}", v.key.replace(' ', "_")))
+                    .collect(),
+                false,
+            ),
+            (
+                "reassembly: lanes",
+                (0..spec::LANES.len())
+                    .map(|n| format!("pv.reassembly.lane.{n}"))
+                    .collect(),
+                false,
+            ),
+        ];
+
+        for (what, declared, state_sized) in families {
+            // A family with no members this frame says nothing either way, and
+            // folding it in as "not clamped" would be the census asserting
+            // completeness it did not observe.
+            if declared.is_empty() {
+                continue;
+            }
+            let missing: Vec<&String> = declared
+                .iter()
+                .filter(|t| !shot.tags.contains_key(*t))
+                .collect();
+            if *state_sized {
+                census.note(*what, !missing.is_empty());
+            } else {
+                assert!(
+                    missing.is_empty(),
+                    "{case}: {what} is sized by the specification and has no \
+                     branch that drops one, yet {} of its {} members were not \
+                     built: {missing:?}. Either the screen grew a clamp — in \
+                     which case this family belongs in the census beside it — \
+                     or it is losing content silently",
+                    missing.len(),
+                    declared.len(),
+                );
+            }
+        }
+    });
+    // Three, and the floor is what refuses a derivation that quietly yields
+    // nothing (R1651.1): an empty census passes both other clauses vacuously
+    // and reads as a screen with no unexercised guard.
+    census.assert_both_sides_reached("capture viewer", 3);
+}

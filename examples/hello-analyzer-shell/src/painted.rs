@@ -585,22 +585,14 @@ fn r1668_the_decode_card_lights_exactly_the_specified_bytes() {
 /// asked about directly.
 #[test]
 fn r1669_the_sweep_reaches_both_sides_of_every_clamp() {
-    /// What the sweep saw of one observable: its full form, and its clamped one.
-    #[derive(Default, Clone, Copy)]
-    struct Sides {
-        full: bool,
-        clamped: bool,
-    }
-
-    let mut seen: BTreeMap<String, Sides> = BTreeMap::new();
-    let mut note = |what: String, clamped: bool| {
-        let side = seen.entry(what).or_default();
-        if clamped {
-            side.clamped = true;
-        } else {
-            side.full = true;
-        }
-    };
+    // ★ R1774 — the record and the three assertions are the framework's now
+    // (`pinion_core::test_fixtures::clamp`), because the two sibling screens
+    // ask the same question and a verbatim third copy is how three screens come
+    // to disagree about what an unexercised guard is. What stays here is the
+    // only part that is this screen's: WHICH observables it has and how to read
+    // one off a painted frame.
+    let mut census = pinion_core::test_fixtures::clamp::ClampCensus::new();
+    let mut note = |what: String, clamped: bool| census.note(what, clamped);
 
     sweep(|state, shot, _, _| {
         for id in &shown_cards(state) {
@@ -647,36 +639,11 @@ fn r1669_the_sweep_reaches_both_sides_of_every_clamp() {
         }
     });
 
-    // The population is what the sweep produced, and it must not be empty --
-    // a derivation that quietly yields nothing is the failure this whole
-    // module's populations are written to avoid (R1651.1).
-    assert!(
-        seen.len() >= 9,
-        "the sweep observed only {} clamp outcome(s): {:?}",
-        seen.len(),
-        seen.keys().collect::<Vec<_>>(),
-    );
-    let unreached: Vec<&String> = seen
-        .iter()
-        .filter(|(_, side)| !side.clamped)
-        .map(|(what, _)| what)
-        .collect();
-    assert!(
-        unreached.is_empty(),
-        "no swept state reaches the clamped side of {unreached:?} — the guard \
-         is there and nothing exercises it, so deleting it would change nothing \
-         and no gate would say so",
-    );
-    let never_full: Vec<&String> = seen
-        .iter()
-        .filter(|(_, side)| !side.full)
-        .map(|(what, _)| what)
-        .collect();
-    assert!(
-        never_full.is_empty(),
-        "the sweep never sees {never_full:?} unclamped, so 'always truncated' \
-         would pass every check above it",
-    );
+    // The population floor is what it always was: a derivation that quietly
+    // yields nothing is the failure this whole module's populations are written
+    // to avoid (R1651.1), and the shared check requires the floor rather than
+    // defaulting it for exactly that reason.
+    census.assert_both_sides_reached("dashboard", 9);
 }
 
 /// R1671 — the screen FILLS the window it was given.

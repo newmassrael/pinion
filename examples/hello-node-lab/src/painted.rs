@@ -106,6 +106,38 @@ const STATES: &[SweptState] = &[
         state.selection.set(Selection::one(router));
         super::set_and_sync(state, "transport.link.tx.batch_size", "70000");
     }),
+    // ★★★★★ R1774 — enough bad values to OVERFLOW the launch panel, which is
+    // the state this sweep did not have. `gate_shown` keeps what fits and says
+    // how many it dropped, and its own documentation records that the panel
+    // "had been one bad graph away from a crash for its whole life, and what
+    // hid it was that nothing on this screen could produce many problems at
+    // once". That sentence was still true of the sweep: R1774's clamp census
+    // reported the guard's true branch unreached, so the truncation arm — the
+    // one that exists because the untruncated version CRASHED — was dead code
+    // as far as every check on this screen was concerned.
+    //
+    // Driven through the same `set_and_sync` a person's keystroke reaches, on
+    // whatever fields the cards actually carry, so the state is one a graph can
+    // really be in rather than one a test invented.
+    (
+        "with enough bad values to overflow the launch panel",
+        |state| {
+            for node in state.cards() {
+                let Some(form) = super::shown_form(state, node) else {
+                    continue;
+                };
+                state.selection.set(Selection::one(node));
+                for key in form
+                    .fields()
+                    .iter()
+                    .map(|f| f.key().to_owned())
+                    .collect::<Vec<_>>()
+                {
+                    super::set_and_sync(state, &key, "!!");
+                }
+            }
+        },
+    ),
     ("zoomed out", |state| {
         state.zoom.set(super::ZOOM_MIN);
     }),
@@ -193,6 +225,70 @@ const STATES: &[SweptState] = &[
         super::author_row(state, router, "connect.endpoints").expect("the wires derive it");
         super::set_and_sync(state, "connect.endpoints", "tcp/10.0.0.21:7449");
     }),
+    // ★★★★★ R1774 — a palette-added card whose form is SHORT enough to fit its
+    // digest, which is the other side of `card_rows`' three-row clamp.
+    //
+    // Every role opens with the same five rows (`form_for` says so in as many
+    // words), so that clamp ALWAYS clamped and the sweep could never see the
+    // unclamped side — `always truncated` would have passed every check above
+    // it. The side is reachable, though, and by an operation this screen
+    // declares: `remove a field`. So the state is driven through `remove_row`,
+    // the one way a row leaves a form, rather than by declaring the clamp
+    // one-sided and exempting it.
+    //
+    // ★★★★★ AND IT IS LAST, WHICH IS NOT COSMETIC. This sweep ACCUMULATES —
+    // state n is every edit up to n — so a state inserted in the middle changes
+    // what every state after it is about. Placed earlier, this one added a
+    // second free card, and the later "palette added, then dragged" state then
+    // dragged its card onto this one: `r1655_a_press_anywhere_on_a_card_reaches_
+    // that_card` went red reporting a card covering a card, and three repairs
+    // were made to the PLACEMENT code before the state name in a failure
+    // message showed the drag was the mover. A card dragged onto another card
+    // is a person's prerogative and not a defect; a sweep state that silently
+    // re-aims a later one is. New states go at the end unless they have a
+    // reason not to.
+    (
+        "with a card whose form is short enough to fit its digest",
+        |state| {
+            // ★★ A FRESH node, not one the earlier states have been editing. The
+            // first draft reused whatever palette-added card it found, and
+            // `remove_row` begins by committing any edit in flight — which the
+            // preceding state leaves invalid on purpose — so every removal was
+            // refused and the refusal was swallowed by a `let _`. A state that
+            // ignores a refusal is a state that did not happen.
+            super::add_node(state, Role::Responder);
+            let Some(node) = state
+                .cards()
+                .into_iter()
+                .rev()
+                .find(|node| super::declared_card(state, *node).is_none())
+            else {
+                return;
+            };
+            state.selection.set(Selection::one(node));
+            // ★★ Only the AUTHORED rows, and only until the digest fits. A derived
+            // row cannot be removed — measured, the refusal is `host is worked out
+            // from the frame, not written here` — so a state that tried would be
+            // asserting an operation this screen correctly refuses. Three is the
+            // largest digest `card_rows` does not clamp.
+            while super::shown_form(state, node).is_some_and(|form| form.fields().len() > 3) {
+                let Some(key) = super::shown_form(state, node).and_then(|form| {
+                    form.fields()
+                        .iter()
+                        .rev()
+                        .find(|f| matches!(f.source(), super::Source::Authored))
+                        .map(|f| f.key().to_owned())
+                }) else {
+                    // Nothing removable left: the form is as short as this screen
+                    // allows, and the census below will say whether that is short
+                    // enough rather than this state pretending it is.
+                    break;
+                };
+                super::remove_row(state, node, &key)
+                    .unwrap_or_else(|why| panic!("an authored row is removable: {why:?}"));
+            }
+        },
+    ),
 ];
 
 /// The window sizes the screen is swept at.
@@ -1576,8 +1672,26 @@ fn r1655_a_press_anywhere_on_a_card_reaches_that_card() {
                             Hit::Pin { node: p, .. } => {
                                 format!("ANOTHER node's pin ({})", state.name_of(p))
                             }
+                            // ★★ R1774 — with the two RECTANGLES, because a
+                            // count cannot be acted on. This tally said
+                            // "ANOTHER card (RSP-10), 6" through three
+                            // successive repairs of the placement code and
+                            // never once said WHERE, so each repair was a guess
+                            // and two of them were wrong. A gate that reports an
+                            // overlap owes the reader the overlap.
                             Hit::Node(other) => {
-                                format!("ANOTHER card ({})", state.name_of(other))
+                                let theirs = shot
+                                    .tags
+                                    .get(&format!("lab.node.{}", state.name_of(other)))
+                                    .copied();
+                                format!(
+                                    "ANOTHER card ({}) — PAINTED this {:?} that {theirs:?} \
+                                     | CANVAS this {:?} that {:?}",
+                                    state.name_of(other),
+                                    (rect.x, rect.y, rect.w, rect.h),
+                                    super::drawn_box_of(&state, node),
+                                    super::drawn_box_of(&state, other),
+                                )
                             }
                             other => format!("{} [{when}]", other.word(&state)),
                         };
@@ -4975,6 +5089,174 @@ fn r1732_the_inspector_reproduces_the_specification_or_says_where_it_does_not() 
             );
         }
         assert_eq!(declared.len(), judged.len());
+    });
+}
+
+/// One card's box as the placement search sees it: its name, where it is drawn
+/// in canvas units, and how big it is there.
+///
+/// Named because the failure message carries all three and a bare tuple of them
+/// is the shape `clippy::type_complexity` refuses — rightly, since the two
+/// coordinate pairs are not interchangeable and one of this round's wrong turns
+/// was exactly a confusion between two coordinate frames.
+type CardBox = (String, (i32, i32), (i32, i32));
+
+/// ★★★★★ R1774 — **a card the palette ADDS is never put on top of one already
+/// there**, which is exactly what `free_spot` promises and nothing asserted.
+///
+/// # The invariant is narrower than "no two cards overlap", deliberately
+///
+/// The first draft of this test asserted the wider thing over the whole sweep,
+/// and it was WRONG — it went red on `with a card the palette added, then
+/// dragged`, where a person has deliberately put one card over another. That is
+/// a prerogative, not a defect, and a gate forbidding it would have made this
+/// screen refuse a legal act to keep itself quiet. What `free_spot` owes is
+/// only this: a card the screen places WITHOUT being told where does not land
+/// on one. So the population is built by adding cards and nothing else.
+///
+/// # What the wider draft did find, before being narrowed
+///
+/// The overlap it reported was real and was caused by a SWEEP STATE, not by the
+/// screen: `STATES` accumulates, and a state added in the middle of it changed
+/// what a later state was about. Three repairs were made to the placement code
+/// on the strength of a failure that named a count and not a geometry; the state
+/// NAME in this test's message is what identified the mover. Printing the boxes
+/// is kept for that reason.
+#[test]
+fn r1774_a_card_the_palette_adds_is_never_placed_on_another() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        // Enough to make the search wrap a column, so the wrap arm is exercised
+        // and not merely present.
+        for n in 0..12 {
+            super::add_node(
+                &state,
+                if n % 2 == 0 {
+                    Role::Responder
+                } else {
+                    Role::Publisher
+                },
+            );
+            let boxes: Vec<CardBox> = state
+                .cards()
+                .into_iter()
+                .filter_map(|node| {
+                    super::drawn_box_of(&state, node).map(|at_size| {
+                        (state.name_of(node), at_size.0, {
+                            let e = at_size.1;
+                            (e.width, e.height)
+                        })
+                    })
+                })
+                .collect();
+            assert!(
+                boxes.len() > 1,
+                "after {} add(s) there are {} card box(es) — a population of one \
+                 cannot overlap, so every clause below would pass vacuously",
+                n + 1,
+                boxes.len(),
+            );
+            let mut over: Vec<String> = Vec::new();
+            for (i, (name, at, size)) in boxes.iter().enumerate() {
+                for (other, at2, size2) in boxes.iter().skip(i + 1) {
+                    let apart = at.0 >= at2.0 + size2.0
+                        || at2.0 >= at.0 + size.0
+                        || at.1 >= at2.1 + size2.1
+                        || at2.1 >= at.1 + size.1;
+                    if !apart {
+                        over.push(format!(
+                            "{name} at {at:?} {size:?} over {other} at {at2:?} {size2:?}"
+                        ));
+                    }
+                }
+            }
+            assert!(
+                over.is_empty(),
+                "after {} add(s): a placed card landed on another — {over:?}\n\
+                 all boxes: {boxes:?}",
+                n + 1,
+            );
+        }
+    });
+}
+
+/// ★★★★★ R1774 — **does this sweep reach both sides of every clamp this screen
+/// has?**
+///
+/// The question screen C has asked since R1669 and this screen never has. The
+/// debt that recorded the gap put the axis precisely: it is not *is there a
+/// guard* but *does a swept state reach the guard's true branch*, and that has
+/// to be asked on each screen's own sweep because the observables are the
+/// screen's. The rule is the framework's
+/// ([`pinion_core::test_fixtures::clamp`]) so a third copy of it cannot drift.
+///
+/// The two guards this screen's painter declares:
+///
+/// * **the launch panel's problem lines** — `gate_shown` keeps what fits and
+///   says how many it dropped. Its own documentation records that this
+///   affordance "had been one bad graph away from a crash for its whole life,
+///   and what hid it was that nothing on this screen could produce many
+///   problems at once", which is exactly the reading this gate exists to make
+///   compulsory rather than incidental.
+/// * **a card's digest rows** — `card_rows` shows the first three of a node's
+///   form, so a card whose node has more is clamped and one with fewer is not.
+#[test]
+fn r1774_the_sweep_reaches_both_sides_of_every_clamp() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let mut census = pinion_core::test_fixtures::clamp::ClampCensus::new();
+        for (when, mutate) in STATES {
+            mutate(&state);
+            for (how_big, size) in SIZES {
+                let _ = (when, how_big);
+                let shot = painted_at(&state, *size).0;
+
+                // The launch panel, read from the PAINT against the model's own
+                // count of what it wanted to show.
+                let wanted = state.gate_lines().len();
+                if wanted > 0 {
+                    let drawn = shot
+                        .tags
+                        .keys()
+                        .filter(|t| t.starts_with("lab.gate.line."))
+                        .count();
+                    census.note("gate: problem lines", drawn < wanted);
+                }
+
+                // A card's digest, which clamps at three rows — but ONLY on the
+                // branch that clamps.
+                //
+                // ★★ The first draft of this observable read every card, and
+                // the gate refused it: `card: digest rows` was never seen
+                // unclamped. The cause was the observable, not the screen —
+                // `card_rows` has two branches and only one has a `take(3)`.
+                // A card the specification declares a digest for shows the
+                // declared lines, so folding those in was reporting a clamp
+                // that never runs on them. An observable has to be read off the
+                // guard that actually executes, or the census is about
+                // something the screen does not do.
+                //
+                // ★★★★★ And it is read off the guard's EFFECT, not its input.
+                // `form.fields().len() > 3` is the condition `take(3)` tests;
+                // `card_rows(..).len() < form.fields().len()` is what the guard
+                // DID. They agree today, and an observable that restates the
+                // condition would go on agreeing after the guard was deleted —
+                // which is the one thing this census exists to notice.
+                for node in state.cards() {
+                    if super::declared_card(&state, node).is_some() {
+                        continue;
+                    }
+                    let Some(form) = super::shown_form(&state, node) else {
+                        continue;
+                    };
+                    let drawn = super::card_rows(&state, node).len();
+                    census.note("card: digest rows", drawn < form.fields().len());
+                }
+            }
+        }
+        census.assert_both_sides_reached("node lab", 2);
     });
 }
 

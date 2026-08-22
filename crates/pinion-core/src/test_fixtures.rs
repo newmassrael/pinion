@@ -31,6 +31,13 @@ pub mod screen_ink;
 // stand-in, and the thing a caller supplies is the driving.
 pub mod speech;
 
+// R1774 §5.32 §5.45 — does the sweep reach BOTH sides of every clamp a screen
+// has. Its own module for the reason the three around it have one: the rule is
+// the framework's and the observables are the screen's. Screen C of the
+// analysis tool carried this shape alone since R1669; the debt that recorded it
+// observed the other two screens have guards nobody asks about.
+pub mod clamp;
+
 // R1731 §5.32 §5.40 — reading a specified surface back out of a PAINTED scene,
 // for the same reason the two above are here. The second screen to compare its
 // surfaces with a written specification would otherwise have carried a verbatim

@@ -2626,8 +2626,11 @@ fn drawn_boxes(state: &LabState) -> Vec<((i32, i32), Extent)> {
     };
     let mut boxes: Vec<((i32, i32), Extent)> = Vec::new();
     for node in state.cards() {
-        if let Some(shape) = card_shape_at(state, node, UNZOOMED) {
-            boxes.push(unit(shape.rect));
+        // ★ R1774 — through `drawn_box_of`, so the placement search and this fit
+        // read a card's drawn position from ONE derivation. They did not, and
+        // the placement search was in the wrong frame for 86 rounds.
+        if let Some(held) = drawn_box_of(state, node) {
+            boxes.push(held);
         }
     }
     for (frame, _) in frames_of(state) {
@@ -10612,25 +10615,46 @@ fn choose_option(state: &Rc<LabState>, key: &str, word: &str) {
 /// frames — so nothing ever looked occupied and six added nodes landed in one
 /// stack. Measured by the test written for it, which is the point of writing
 /// one: the round's own repair was wrong and said so on its first run.
-fn free_spot(state: &LabState, want: (i32, i32), size: (i32, i32)) -> (i32, i32) {
-    let taken: Vec<(i32, i32, i32, i32)> = {
-        let doc = state.doc.borrow();
-        doc.tree(ROOT).map_or_else(Vec::new, |tree| {
-            state
-                .cards()
-                .into_iter()
-                .filter_map(|node| tree.node(node).map(|held| (held.x, held.y)))
-                .map(|(x, y)| (x, y, size.0, size.1))
-                .collect()
-        })
+///
+/// ★★★★★ R1774 — and the SAME MISTAKE was still in it, one frame further out.
+/// The search compared each card's STORED position against a measured size, and
+/// a card's stored position is not where it is drawn: `drawn_boxes` has derived
+/// that from `card_shape_at(.., UNZOOMED)` since R1688, because a card inside a
+/// host frame is offset by the frame and by the world origin. Mixing the two is
+/// the R1656 error above in a new place, and it cost three repairs — a constant
+/// size for everything, then measuring the avoided cards, then measuring the
+/// placed one too — each of which changed the count without fixing it (6, 6,
+/// 18). The third told the truth only because the gate was made to print the
+/// two rectangles; a tally of counts had said `ANOTHER card, 6` throughout.
+///
+/// So the search now runs entirely in DRAWN canvas units, and returns a DELTA.
+/// A delta is what can cross the two frames safely: whatever the mapping from a
+/// stored position to a drawn one is, it is additive, so moving the stored
+/// position by `d` moves the drawn box by `d`. Nothing here has to know what the
+/// frame offset is, which is why this cannot be half-right the way the previous
+/// three were.
+fn free_spot(state: &LabState, mover: NodeId) -> (i32, i32) {
+    // A card that cannot be measured is the one case with no honest answer, so
+    // it stays where it is rather than being moved by a guess.
+    let Some((at, size)) = drawn_box_of(state, mover) else {
+        return (0, 0);
     };
+    let taken: Vec<((i32, i32), Extent)> = state
+        .cards()
+        .into_iter()
+        .filter(|node| *node != mover)
+        .filter_map(|node| drawn_box_of(state, node))
+        .collect();
     let clear = |x: i32, y: i32| {
-        taken.iter().all(|(hx, hy, hw, hh)| {
-            x >= hx + hw || *hx >= x + size.0 || y >= hy + hh || *hy >= y + size.1
+        taken.iter().all(|((hx, hy), held)| {
+            x >= hx + held.width
+                || *hx >= x + size.width
+                || y >= hy + held.height
+                || *hy >= y + size.height
         })
     };
-    let step = size.1 + 12;
-    let (mut x, mut y) = want;
+    let step = size.height + 12;
+    let (mut x, mut y) = at;
     // Bounded: a column full to its own depth wraps to the next one rather than
     // looping forever.
     for attempt in 0..64 {
@@ -10639,19 +10663,39 @@ fn free_spot(state: &LabState, want: (i32, i32), size: (i32, i32)) -> (i32, i32)
         }
         y += step;
         if attempt % 8 == 7 {
-            x += size.0 + 12;
-            y = want.1;
+            x += size.width + 12;
+            y = at.1;
         }
     }
-    (x, y)
+    (x - at.0, y - at.1)
+}
+
+/// Where one card is DRAWN, in canvas units with the world origin taken off.
+///
+/// ★ R1774 — lifted out of [`drawn_boxes`], which has computed exactly this
+/// since R1688 and was the only thing that knew a card's drawn position is not
+/// its stored one. A second copy is how two callers come to disagree about
+/// which frame they are in, and that disagreement is this function's whole
+/// history.
+fn drawn_box_of(state: &LabState, node: NodeId) -> Option<((i32, i32), Extent)> {
+    let whole = |v: u32| i32::try_from(v).unwrap_or(i32::MAX);
+    let rect = card_shape_at(state, node, UNZOOMED)?.rect;
+    Some((
+        (whole(rect.x) - WORLD_ORIGIN, whole(rect.y) - WORLD_ORIGIN),
+        Extent::new(whole(rect.w), whole(rect.h)),
+    ))
 }
 
 fn add_node(state: &Rc<LabState>, role: Role) {
     let canvas = canvas_rect();
     let want = to_canvas(state, canvas.x + canvas.w / 2, canvas.y + canvas.h / 2);
-    // Design units, because that is what a node's stored position is in: the
+    // ★★★★★ R1774 — the card is BUILT first, at the spot it would like, and
+    // only then moved to one that is clear. A card's size follows its label and
+    // its form, so nothing can measure it until both exist, and the previous
+    // shape of this function had to guess instead: it searched with a constant
+    // and the guess was wrong in both directions at once. Design units
+    // throughout, because that is what a node's stored position is in — the
     // card is painted at `zoom` times this, and so is every other card.
-    let (cx, cy) = free_spot(state, want, (146, 96));
     let id = {
         let mut doc = state.doc.borrow_mut();
         doc.add_node(
@@ -10661,8 +10705,8 @@ fn add_node(state: &Rc<LabState>, role: Role) {
                 transport: Transport::Tcp,
                 listening: false,
             }),
-            cx,
-            cy,
+            want.0,
+            want.1,
         )
     };
     let Ok(id) = id else { return };
@@ -10676,6 +10720,20 @@ fn add_node(state: &Rc<LabState>, role: Role) {
         slot.label = Some(name.clone());
     }
     state.forms.borrow_mut().insert(id, form_for(&name, role));
+    // The card exists and can be measured now, so the spot it ends up in is
+    // computed from where it is DRAWN and applied as a delta to where it is
+    // STORED. See `free_spot` for why a delta rather than a position.
+    let (dx, dy) = free_spot(state, id);
+    let (cx, cy) = (want.0 + dx, want.1 + dy);
+    if let Some(slot) = state
+        .doc
+        .borrow_mut()
+        .tree_mut(ROOT)
+        .and_then(|t| t.node_mut(id))
+    {
+        slot.x = cx;
+        slot.y = cy;
+    }
     // ★ R1679 — where this card came into being, which is the only thing a
     // layout reset can put it back to. A card the specification does not
     // describe has no other source, and without this the layout predicate was
