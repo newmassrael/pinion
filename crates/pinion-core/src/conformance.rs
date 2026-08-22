@@ -1561,6 +1561,54 @@ impl SurfaceStanding {
     pub fn reconciles(&self) -> bool {
         self.away.is_none() && self.unreconciled.is_empty()
     }
+
+    /// This surface's row, as the value a running application publishes.
+    ///
+    /// ★ R1767 — public, and [`DocumentReport::surfaces_json`] is built out of
+    /// it rather than the other way round. A second reader of these facts
+    /// arrived that round — a walk keeps the frame each surface was last
+    /// **standing** on, which is a different question from what the last frame
+    /// said — and re-spelling the row there would have been two renderings of
+    /// one verdict, the "one word, two documents" class R1747 spent a round on.
+    /// A caller that needs to say more about a row adds keys to this value; it
+    /// does not rebuild it.
+    #[must_use]
+    pub fn to_json(&self) -> serde_json::Value {
+        let mut row = serde_json::json!({
+            "specified": self.specified(),
+            "reproduced": self.reproduced(),
+            "standing": self.is_standing(),
+            "canon": self
+                .canon()
+                .iter()
+                .map(|part| serde_json::json!({ "key": part.key, "title": part.title }))
+                .collect::<Vec<_>>(),
+            "divergences": self
+                .divergences
+                .iter()
+                .map(|d| serde_json::json!({ "key": d.key(), "says": d.sentence() }))
+                .collect::<Vec<_>>(),
+            "owed": self
+                .owed
+                .iter()
+                .map(|entry| serde_json::json!({
+                    "key": entry.key,
+                    "says": entry.sentence,
+                    "since": entry.since,
+                    "why": entry.why,
+                }))
+                .collect::<Vec<_>>(),
+            "unreconciled": self
+                .unreconciled
+                .iter()
+                .map(|u| serde_json::json!({ "key": u.key(), "says": u.sentence() }))
+                .collect::<Vec<_>>(),
+        });
+        if let Some(why) = self.why() {
+            row["why"] = serde_json::Value::String(why.to_owned());
+        }
+        row
+    }
 }
 
 /// ★★★★★ R1738 — every surface one specification names, and how much of each
@@ -1668,40 +1716,7 @@ impl DocumentReport {
     pub fn surfaces_json(&self) -> serde_json::Value {
         let mut out = serde_json::Map::new();
         for standing in &self.surfaces {
-            let mut row = serde_json::json!({
-                "specified": standing.specified(),
-                "reproduced": standing.reproduced(),
-                "standing": standing.is_standing(),
-                "canon": standing
-                    .canon()
-                    .iter()
-                    .map(|part| serde_json::json!({ "key": part.key, "title": part.title }))
-                    .collect::<Vec<_>>(),
-                "divergences": standing
-                    .divergences
-                    .iter()
-                    .map(|d| serde_json::json!({ "key": d.key(), "says": d.sentence() }))
-                    .collect::<Vec<_>>(),
-                "owed": standing
-                    .owed
-                    .iter()
-                    .map(|entry| serde_json::json!({
-                        "key": entry.key,
-                        "says": entry.sentence,
-                        "since": entry.since,
-                        "why": entry.why,
-                    }))
-                    .collect::<Vec<_>>(),
-                "unreconciled": standing
-                    .unreconciled
-                    .iter()
-                    .map(|u| serde_json::json!({ "key": u.key(), "says": u.sentence() }))
-                    .collect::<Vec<_>>(),
-            });
-            if let Some(why) = standing.why() {
-                row["why"] = serde_json::Value::String(why.to_owned());
-            }
-            out.insert(standing.surface.clone(), row);
+            out.insert(standing.surface.clone(), standing.to_json());
         }
         serde_json::Value::Object(out)
     }

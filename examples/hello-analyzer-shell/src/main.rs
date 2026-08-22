@@ -2834,6 +2834,18 @@ const FIELDS: &[SchemaField] = const {
         // so. This slot is the population, so a section is missing from it only
         // by not being in the application.
         SchemaField::new("sections", "json"),
+        // ★★★★★ R1767 — the same population, judged over the WALK a reader is
+        // taking rather than over the frame in front of them.
+        //
+        // `sections` above cannot ever say this application reproduces its
+        // specification, and that is not a defect in it: one frame paints one
+        // section, so every other section is away and an away surface
+        // reconciles nothing. Measured over this wire before this slot existed,
+        // walking all six open sections and returning left the headline at
+        // `26 of 133` — the boot number, honestly. This slot is where the walk
+        // itself is the unit, and each credited verdict names the step it was
+        // read at so nothing is credited to a frame nobody saw.
+        SchemaField::new("journey", "json"),
         // The Settings destination's switches.
         SchemaField::new("options", "json"),
         SchemaField::new("editing", "bool"),
@@ -3070,6 +3082,7 @@ impl ExternalIntrospect for ShellOracle {
                 state.screens.wire(&state.journey.get()),
             )),
             "sections" => Ok(IntrospectValue::Json(sections_json(state))),
+            "journey" => Ok(IntrospectValue::Json(journey_json(state))),
             "options" => Ok(IntrospectValue::Json(options_json(state))),
             "editing" => Ok(IntrospectValue::Bool(state.editing.get())),
             "config_open" => text(state.config_open.get().unwrap_or_default()),
@@ -7650,6 +7663,21 @@ fn floating_ids(state: &ShellState) -> String {
 /// six open sections had never been compared with anything and nothing said so.
 fn sections_json(state: &ShellState) -> serde_json::Value {
     state.screens.conformance(&state.journey.get()).to_json()
+}
+
+/// ★★★★★ R1767 — how much of its specification each section reproduced
+/// somewhere along the walk this session has taken.
+///
+/// The peer of [`sections_json`], which answers about the frame in front of the
+/// reader. Both are published, because they are two questions and reading
+/// either as the other is the mistake both exist to prevent: this one can say
+/// *this application reproduces what it is specified to be* and cannot say
+/// *right now*, and the other is the exact opposite.
+fn journey_json(state: &ShellState) -> serde_json::Value {
+    state
+        .screens
+        .journey_conformance(&state.journey.get())
+        .to_json()
 }
 
 /// ★ R1695 — the Settings switches, as the wire reads them.

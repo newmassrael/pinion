@@ -9,20 +9,21 @@
 //! accessibility tree with its children, and left its floating windows on
 //! screen (all four measured at 6.11.1).
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 use std::collections::BTreeMap;
 
 use pinion_core::chrome::{HostChrome, with_host_chrome};
 use pinion_core::external::with_surface_extent;
 use pinion_core::shrink::pan;
 use pinion_core::widget_core::ExtraExternal;
-use pinion_core::widgets::destination::{Destinations, Journey, Standing};
+use pinion_core::widgets::destination::{Destination, Destinations, Journey, Standing};
 use pinion_core::{Frame, Scene};
 
 use crate::Screen;
 use crate::conformance::{
     ApplicationConformance, SectionJudge, SectionRow, SectionStanding, Showing,
 };
+use crate::journey::{JourneyConformance, JourneySection, JourneyStanding, Walk};
 
 /// A host's cached projection: where it is, and how far the screen it is
 /// showing has moved.
@@ -166,6 +167,14 @@ pub struct ScreenRoster {
     /// is the one reading [`with_surface_extent`] refuses and this type must
     /// therefore not make.
     placed_extent: Cell<(u32, u32)>,
+    /// ★★★★★ R1767 — **what the walk a reader is taking has seen.**
+    ///
+    /// Kept here rather than by the host for the two reasons in [`Walk`]'s own
+    /// documentation: the population is this roster's, and the moment is
+    /// [`latch`](Self::latch) — the last instant at which the frame a departing
+    /// section actually painted can still be read, since R1763 discards it
+    /// immediately after.
+    walk: RefCell<Walk>,
 }
 
 impl ScreenRoster {
@@ -194,6 +203,7 @@ impl ScreenRoster {
             judges: BTreeMap::new(),
             chrome: HostChrome::NONE,
             placed_extent: Cell::new((0, 0)),
+            walk: RefCell::new(Walk::default()),
         })
     }
 
@@ -350,22 +360,7 @@ impl ScreenRoster {
                 .map(|destination| {
                     let mounted = self.screens.get(&*destination.key);
                     let showing = journey.at() == destination.key.as_ref();
-                    let standing = match (&destination.standing, mounted) {
-                        (Standing::Closed(why), _) => SectionStanding::Closed(why.clone()),
-                        // ★★★★★ R1761 — a page the host paints is `Inline` only
-                        // while nothing answers for it. A host that registered
-                        // a judge has said what this section is compared
-                        // against, and the row says so.
-                        (Standing::Open, None) => self.judges.get(&*destination.key).map_or(
-                            SectionStanding::Inline,
-                            |judge| {
-                                SectionStanding::Judged(judge.conformance(Showing::of(showing)))
-                            },
-                        ),
-                        (Standing::Open, Some(screen)) => screen
-                            .conformance()
-                            .map_or(SectionStanding::Unspecified, SectionStanding::Judged),
-                    };
+                    let standing = self.standing_of(destination, showing);
                     SectionRow {
                         key: destination.key.to_string(),
                         title: destination.title.to_string(),
@@ -384,6 +379,131 @@ impl ScreenRoster {
                 })
                 .collect(),
         )
+    }
+
+    /// What one destination can say about the frame in the paint store, told
+    /// whether it is the section a reader is looking at.
+    ///
+    /// ★ R1767 — extracted so there is **one** definition of *what a section
+    /// says*. It had been inline in [`conformance`](Self::conformance) and this
+    /// round needed the same answer at two more moments — once per latch, to
+    /// record what a walk saw, and once per row of a journey report, to fold in
+    /// the frame the reader is on. A second spelling of this match is exactly
+    /// the second account this tree keeps refusing.
+    fn standing_of(&self, destination: &Destination, showing: bool) -> SectionStanding {
+        match (&destination.standing, self.screens.get(&*destination.key)) {
+            (Standing::Closed(why), _) => SectionStanding::Closed(why.clone()),
+            // ★★★★★ R1761 — a page the host paints is `Inline` only while
+            // nothing answers for it. A host that registered a judge has said
+            // what this section is compared against, and the row says so.
+            (Standing::Open, None) => self
+                .judges
+                .get(&*destination.key)
+                .map_or(SectionStanding::Inline, |judge| {
+                    SectionStanding::Judged(judge.conformance(Showing::of(showing)))
+                }),
+            (Standing::Open, Some(screen)) => screen
+                .conformance()
+                .map_or(SectionStanding::Unspecified, SectionStanding::Judged),
+        }
+    }
+
+    /// ★★★★★ R1767 — **how much of its specification each section reproduced
+    /// somewhere along the walk a reader is taking.**
+    ///
+    /// The peer of [`conformance`](Self::conformance), which answers the same
+    /// question about the frame in front of you.
+    /// [`JourneyConformance`] is the type, and its module documentation carries
+    /// the measurement that forced it: with one section per frame and — in this
+    /// tree's own analysis tool — one section whose specified surfaces exclude
+    /// each other, the per-frame verdict is **unreachable by construction** for
+    /// any application with two open sections.
+    ///
+    /// # What it reads and what it does not
+    ///
+    /// Everything but one row comes from the walk this roster records at
+    /// [`latch`](Self::latch), which therefore only ever holds verdicts taken
+    /// from frames this application really painted. The exception is the
+    /// section the reader is **on**: its newest frame has been painted and not
+    /// yet latched, so it is folded in here, live, by the same derivation the
+    /// recorder uses. Nothing is stored by reading — call it twice between
+    /// frames and it answers the same thing.
+    ///
+    /// A destination the walk has never stood in is still asked, while away, so
+    /// that its **specification** is in the totals. A section absent from the
+    /// denominator is R1738's defect with a different hat on; a section
+    /// credited for a frame nobody saw is R1763's.
+    #[must_use]
+    pub fn journey_conformance(&self, journey: &Journey) -> JourneyConformance {
+        let walk = self.walk.borrow();
+        let rows = self
+            .destinations
+            .all()
+            .iter()
+            .map(|destination| {
+                let key = destination.key.as_ref();
+                let showing = journey.at() == key;
+                let seen = if showing {
+                    Some(walk.with_live(key, self.standing_of(destination, true)))
+                } else {
+                    walk.seen(key).cloned()
+                };
+                let (arrived, standing) = match seen {
+                    Some(section) => (Some(section.arrived()), section.standing().clone()),
+                    None => (
+                        None,
+                        JourneyStanding::of(None, self.standing_of(destination, false)),
+                    ),
+                };
+                JourneySection {
+                    key: key.to_owned(),
+                    title: destination.title.to_string(),
+                    tag: self.screens.get(key).map(|screen| screen.tag().to_owned()),
+                    showing,
+                    arrived,
+                    standing,
+                }
+            })
+            .collect();
+        JourneyConformance::new(walk.stops(), rows)
+    }
+
+    /// Fold the frame now in the paint store into the walk.
+    ///
+    /// Called from [`latch`](Self::latch), before R1763's forgetting, because
+    /// that is the last instant a departing section's frame can be read. See
+    /// [`Walk`] for why the observation is about the position the **previous**
+    /// latch left behind rather than the journey's current one.
+    ///
+    /// # What it costs, measured, and the limit that measurement does not cover
+    ///
+    /// This runs every frame, and it derives **one** section's verdict — the
+    /// one whose marks are in the store. It is deliberately not sampled:
+    /// sampling would make which frames a walk saw depend on how fast the
+    /// machine is, and a report that under-credits differently on every run is
+    /// worse than one that costs a little.
+    ///
+    /// Measured at R1767 on the analysis tool, the same binary with this call
+    /// behind a switch, three sections at ninety frames each: `mean_build_us`
+    /// 2158/2883/1466 with it against 2004/3384/1444 without and 1991/2972/1521
+    /// with it again — **below that instrument's noise**, which is a different
+    /// claim from zero and is the one those numbers support.
+    ///
+    /// ⚠ The limit, stated rather than left to be discovered: that is one
+    /// application's [`Screen::conformance`]. A
+    /// section whose verdict is expensive to derive pays that cost per frame
+    /// here, and nothing in this crate bounds it. An application whose sections
+    /// publish no verdict pays a map lookup, which is the property that makes
+    /// this affordable by default.
+    fn observe(&self, journey: &Journey) {
+        let mut walk = self.walk.borrow_mut();
+        if let Some(last) = walk.showing_last().map(ToOwned::to_owned)
+            && let Some(destination) = self.destinations.get(&last)
+        {
+            let standing = self.standing_of(destination, true);
+            walk.record(&last, standing);
+        }
+        walk.arrive(journey.at());
     }
 
     /// The keys with a screen behind them, in roster order.
@@ -607,6 +727,13 @@ impl ScreenRoster {
     /// assuming it was covered.
     #[must_use]
     pub fn latch(&self, journey: &Journey, state_scene: &Scene) -> ScreenState {
+        // ★★★★★ R1767 — and the walk takes the departing frame's verdict WITH
+        // it, on the way past. This line is before the forgetting below for the
+        // same reason the forgetting is here at all: this is the last instant
+        // at which the frame a reader actually saw can still be read, and a
+        // journey verdict that could not read it would be a verdict about
+        // whichever section happened to be last.
+        self.observe(journey);
         for (key, screen) in &self.screens {
             if key.as_str() != journey.at() {
                 pinion_core::painted::forget_painted_regions(screen.tag());
