@@ -274,7 +274,9 @@ fi
 
 msg_gate_failed=0
 tmp_msg="$(mktemp)"
-trap 'rm -f "$tmp_msg"' EXIT
+# R1779 — every path this push publishes, accumulated across the ref updates.
+tmp_paths="$(mktemp)"
+trap 'rm -f "$tmp_msg" "$tmp_paths"' EXIT
 
 # git feeds pre-push the ref updates on stdin:
 #   <local ref> <local sha> <remote ref> <remote sha>
@@ -303,6 +305,16 @@ while read -r _local_ref local_sha _remote_ref remote_sha; do
             msg_gate_failed=1
         fi
     done < <(git rev-list "${range[@]}")
+
+    # ★ R1779 — the paths this push actually touches, for the gates below that
+    # only have something to say about some of them. Collected from the SAME
+    # range the message lint walks, so a gate cannot disagree with it about
+    # what is being published.
+    if [[ "$remote_sha" =~ ^0+$ ]]; then
+        git diff --name-only "$(git rev-list --max-parents=0 "$local_sha" | tail -1)" "$local_sha" >>"$tmp_paths" 2>/dev/null || true
+    else
+        git diff --name-only "$remote_sha" "$local_sha" >>"$tmp_paths" 2>/dev/null || true
+    fi
 done
 
 if [[ "$msg_gate_failed" -ne 0 ]]; then
@@ -356,19 +368,31 @@ if ! mnemosyne_cli validate-workspace; then
     exit 1
 fi
 
-echo "pre-push: cargo clippy --workspace --all-targets --features pinion-runtime/vello ..." >&2
 # R1026 §6.3 — rustfmt gate (unconditional; push validates the publishable
-# state). Runs before clippy so a formatting drift fails fast.
+# state). Cheap, and formatting drift is what makes a diff unreadable.
 echo "pre-push: cargo fmt --all --check ..." >&2
 if ! cargo fmt --all --check; then
     echo "pre-push: cargo fmt --check failed — run 'cargo fmt --all' before push" >&2
     exit 1
 fi
 
-if ! cargo clippy --workspace --all-targets --features pinion-runtime/vello; then
-    echo "pre-push: clippy failed — fix violations before push" >&2
-    exit 1
-fi
+# ★★★★★ R1779 — CLIPPY AND RUSTDOC RUN IN CI NOW, and nowhere else.
+# `.github/workflows/ci.yml` runs both with byte-identical flags, as
+# consecutive steps of one job on one `target/` — which is the arrangement the
+# note in `pre-commit` asks for, since rustdoc is only cheap when clippy warmed
+# the build. Checked as a MOVE before the removal: a gate deleted here and
+# absent there would have been a gate deleted.
+#
+# WHY THIS ONE MEASUREMENT DECIDED IT: a fully warmed pre-push still took
+# 237.33s (R1775, timed with no SSH involved), and git opens the SSH connection
+# BEFORE running this hook — so every push spent four minutes racing GitHub's
+# idle timeout, and lost seven times running. The keepalive fixed the transport;
+# this fixes the cost.
+#
+# ⚠ WHAT THE TRADE COSTS: a violation now surfaces AFTER publishing rather than
+# before. The stop-the-line gate above is what keeps that bounded — it refuses
+# to push onto a base whose last completed CI run failed, so a red cannot be
+# built upon, and the override exists only to publish the fix.
 
 # R1766 — the committed statechart emit. `crates/pinion-core/generated/` is
 # tracked now rather than produced into OUT_DIR on every build, and `build.rs`
@@ -377,26 +401,40 @@ fi
 # hand-edited emit or a generator gone non-deterministic — neither moves an
 # input hash. This is that half: a byte comparison against a fresh run of the
 # pinned generator. It is a ratchet rather than a test suite, which is why it
-# runs here and not only in CI, and it is near-free once clippy has warmed the
-# build (the three assertions themselves measured 0.16s).
-echo "pre-push: statechart emit matches the pinned generator ..." >&2
-if ! cargo test -p pinion-core --test statechart_emit; then
-    echo "pre-push: the committed statechart emit is stale or hand-edited — run" >&2
-    echo "  PINION_REGEN_STATECHARTS=1 cargo test -p pinion-core --test statechart_emit" >&2
-    exit 1
+# runs here and not only in CI.
+#
+# ★★★★★ R1779 — AND IT RUNS ONLY WHEN THE PUSH COULD HAVE STALED IT, which the
+# round that moved clippy out had to discover by measuring.
+#
+# Its own note used to end "near-free once clippy has warmed the build (the
+# three assertions themselves measured 0.16s)". That was true and it was
+# LOAD-BEARING: the assertions are free, the BUILD behind them is not. With
+# clippy gone this step compiles the SCE chain itself — `libxml`, bindgen,
+# `sce-build`, `pinion-forge` — and a fully warmed hook went from 237s to
+# **830s**. Moving the heavy pair to CI did not remove the compilation; it moved
+# it to a step that pays for it alone.
+#
+# The emit can only go stale if a chart, the committed emit, the pinned
+# generator or the pin itself moved. So it is gated on exactly those paths, the
+# way `pre-commit`'s clippy was gated on `*.rs`, and an ordinary push now does
+# no compiling at all. A push that DOES touch them pays the build — which is
+# the push that needs the ratchet.
+if grep -qE '(\.scxml$|^crates/pinion-core/generated/|^crates/pinion-core/build\.rs$|^vendor/sce$|^Cargo\.(toml|lock)$)' "$tmp_paths"; then
+    echo "pre-push: statechart emit matches the pinned generator ..." >&2
+    if ! cargo test -p pinion-core --test statechart_emit; then
+        echo "pre-push: the committed statechart emit is stale or hand-edited — run" >&2
+        echo "  PINION_REGEN_STATECHARTS=1 cargo test -p pinion-core --test statechart_emit" >&2
+        exit 1
+    fi
+else
+    echo "pre-push: statechart emit — no chart, emit, generator or pin in this push" >&2
 fi
 
-# R1214 — broken intra-doc link gate (unconditional; push validates the
-# publishable state). `warnings = "deny"` (workspace.lints) promotes rustdoc
-# lints to errors, so a plain `cargo doc` fails on any broken/redundant/private
-# intra-doc link. Absent until R1214 — the reason ~1000 links accreted from
-# ~R683 unseen (the gate ran clippy, never rustdoc). Near-free once clippy has
-# warmed the build.
-echo "pre-push: cargo doc --workspace --no-deps --document-private-items ..." >&2
-if ! cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items; then
-    echo "pre-push: cargo doc failed — fix broken intra-doc links before push" >&2
-    exit 1
-fi
+# R1214's intra-doc link gate moved to CI with clippy in R1779 — see the note
+# above, and `pre-commit` for why the two are one unit. The history is worth
+# keeping either way: nothing ran rustdoc until R1214, which is how ~1000 broken
+# links accreted from ~R683 unseen. A lint that is configured is not a lint that
+# is run.
 
 # 3. validate-code-refs — hallucination-class citation gate (unconditional;
 #    push validates the publishable state). Output captured, surfaced only on

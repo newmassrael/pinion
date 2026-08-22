@@ -323,9 +323,51 @@ runs those tests before trusting them.
 `.githooks/pre-commit` runs:
 
 - `mnemosyne-cli validate-workspace` — T1 cross-ref + T2 frozen ledger + atomic-store consistency (store-direct since Mnemosyne R400)
-- `cargo clippy --workspace --all-targets --features pinion-runtime/vello` — only when staged files include `*.rs`; enforces the workspace.lints baseline (forbid unsafe / deny warnings / clippy::pedantic deny)
+- `cargo fmt --all --check` — only when staged files include `*.rs`
+- `mnemosyne-cli validate-code-refs` — hallucination-class citation gate
+- `tools/reference_names.py --check` — the confidentiality ratchet
 
-`.githooks/pre-push` repeats both gates unconditionally, so amends / rebases / `--no-verify` bypasses cannot publish a state that fails either check.
+`.githooks/pre-push` repeats those unconditionally (so amends / rebases cannot
+publish a state that fails them) and adds more. **Do not hand-maintain the
+list** — the hook announces every step it runs, so ask it:
+
+```bash
+grep -oE '^pre-push: [a-z][^.]*\.\.\.' <a push log> | sed 's/^pre-push: //; s/ \.\.\.$//'
+```
+
+Measured that way at R1779 it is thirteen steps, and the previous version of
+this section named eight of them — `counterfactual driver`, `focus population
+derivation`, `analysis-tool census`, `demo harness lifecycle tests` and
+`worktree tool selftest` were simply absent from the prose.
+
+**The statechart-emit ratchet is path-gated** (R1779): it runs only when the
+push carries a `.scxml`, the committed emit, the generator's `build.rs`, the
+`vendor/sce` gitlink or a manifest — the only things that can stale it. Before
+that gating it rode clippy's warm build, and removing clippy left it compiling
+the whole SCE chain by itself.
+
+### ★ The heavy pair runs in CI, not in the hooks (R1779)
+
+`cargo clippy --workspace --all-targets --features pinion-runtime/vello` and
+`cargo doc --workspace --no-deps --features pinion-runtime/vello
+--document-private-items` used to run in **both** hooks. They now run only in
+`.github/workflows/ci.yml`, with byte-identical flags, as consecutive steps of
+one job on one `target/` — the arrangement they need, since rustdoc is cheap
+only when clippy has warmed the build.
+
+**It was checked as a move before it was made**: a gate removed here and absent
+there would have been a gate removed.
+
+Why: the pair was the whole cost of a commit. An edit to `pinion-core`
+re-documents all 229 examples, and the push gate paid it a second time — a fully
+warmed `pre-push` still measured **237.33s** (R1775, timed with no SSH
+involved), which is what made every push race GitHub's idle timeout and lose.
+
+⚠ **What the trade costs**, stated rather than discovered later: a clippy or
+rustdoc violation now surfaces AFTER publishing rather than before. Two things
+bound that — the stop-the-line gate refuses to push onto a base whose last
+completed CI run failed, so a red cannot be built upon; and `cargo fmt` stays
+local, because formatting drift is what makes a diff unreadable.
 
 If a hook fails, **fix the underlying issue**. Never bypass with `--no-verify` unless the user explicitly requests it.
 
@@ -357,9 +399,12 @@ tests (`tools/test_hooks.sh`) before trusting them.
   The first draft used the flag and would have fail-opened forever; the unit
   tests missed it because the `gh` stub accepted any argument. The stub now
   rejects flags it was not taught.
-- **The hook libs are tested** (`tools/test_hooks.sh`, plain bash, runs in
-  milliseconds inside `pre-push`). Before R1495 nothing verified any of them —
-  including `commit-msg-lint.sh`, which gates every commit message.
+- **The hook libs are tested** (`tools/test_hooks.sh`, plain bash). Before R1495
+  nothing verified any of them — including `commit-msg-lint.sh`, which gates
+  every commit message.
+  ⚠ **It is not "milliseconds", which is what this line used to claim.** Timed
+  at R1779: **65.83s**, the single largest step anyone has attributed in this
+  hook. The claim was never measured; it was inferred from "plain bash".
 
 ### Exploration worktrees, and the gate that keeps closure in the main tree (R1743)
 

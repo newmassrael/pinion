@@ -80,20 +80,23 @@ if git diff --cached --name-only --diff-filter=ACMR | grep -qE '\.rs$'; then
     # clippy (cheaper, fail-fast) and only when staged files include `*.rs`.
     echo "pre-commit: cargo fmt --all --check ..." >&2
     cargo fmt --all --check
-    # R1214 — broken intra-doc link gate. `warnings = "deny"` (workspace.lints)
-    # already promotes every rustdoc lint (broken_intra_doc_links /
-    # redundant_explicit_links / private_intra_doc_links) to an error, so a
-    # plain `cargo doc` fails on regression. This gate was absent until R1214,
-    # which is why ~1000 broken links accreted invisibly from ~R683 (the
-    # commit gate ran clippy, never rustdoc). Nearly free once clippy has
-    # warmed the build (rustdoc reuses the compiled artifacts).
+    # ─────────────────────────────────────────────────────────────────────────
+    # WHAT USED TO RUN HERE, and what its history is worth keeping for.
     #
-    # ⚠ CLIPPY AND THE DOC GATE ARE ONE UNIT, and the note above is why: rustdoc
-    # is nearly free BECAUSE clippy warmed the build. Splitting them across
-    # machines destroys exactly that — clippy warms one `target/`, rustdoc then
-    # starts cold against another — so they travel together or not at all. The
-    # `&&` keeps clippy's fail-fast: a clippy failure still exits without ever
-    # documenting anything.
+    # R1214 — broken intra-doc link gate. `warnings = "deny"` (workspace.lints)
+    # promotes every rustdoc lint (broken_intra_doc_links /
+    # redundant_explicit_links / private_intra_doc_links) to an error, so a
+    # plain `cargo doc` fails on regression. Nothing checked this until R1214,
+    # which is why ~1000 broken links accreted invisibly from ~R683 — the commit
+    # gate ran clippy and never rustdoc. THE LESSON SURVIVES THE MOVE: a lint
+    # that is configured is not a lint that is run, and only a step that runs it
+    # somewhere makes the configuration true. CI is that somewhere now.
+    #
+    # ⚠ CLIPPY AND THE DOC GATE ARE ONE UNIT and must stay together WHEREVER
+    # they run: rustdoc is nearly free only BECAUSE clippy warmed the build, so
+    # splitting them across machines makes rustdoc start cold. In CI they are
+    # consecutive steps of one job, on one `target/`, which is the arrangement
+    # this note asks for.
     #
     # ⚠ ROUTED THROUGH THE BUILD-MACHINE WRAPPER WHEN ONE IS CONFIGURED, because
     # this pair is the heaviest thing the hook does to the machine it runs on.
@@ -136,13 +139,27 @@ if git diff --cached --name-only --diff-filter=ACMR | grep -qE '\.rs$'; then
     # and it picks whichever build machine is least loaded, which is not always
     # the one whose `target/` is warm. If commit latency matters more here than
     # the workstation's memory, unset `$BX` and this returns to running in place.
-    lint_and_doc='cargo clippy --workspace --all-targets --features pinion-runtime/vello && cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items'
-    echo "pre-commit: cargo clippy --workspace --all-targets && cargo doc --workspace --no-deps --document-private-items ..." >&2
-    if [ -n "${BX:-}" ] && [ -x "${BX}" ]; then
-        "${BX}" --label pre-commit-lint -- bash -c "$lint_and_doc"
-    else
-        bash -c "$lint_and_doc"
-    fi
+    # ★★★★★ R1779 — THE PAIR RUNS IN CI NOW, and nowhere else. `.github/
+    # workflows/ci.yml` runs both with byte-identical flags: clippy at its
+    # `clippy (-D pedantic via workspace.lints)` step and rustdoc at
+    # `cargo doc (broken intra-doc link gate, incl. private items)`. This is a
+    # MOVE and was checked as one before the removal — a gate deleted here and
+    # absent there would have been a gate deleted.
+    #
+    # WHY, measured on this repository: the pair is the whole cost of a commit.
+    # An edit to `pinion-core` re-documents all 229 examples, so R1778 — one
+    # framework file and three screens — spent minutes in rustdoc before git
+    # would take it. The push gate paid it a second time, and a fully warmed
+    # pre-push still measured 237s (R1775), which is what made every push race
+    # GitHub's idle SSH timeout.
+    #
+    # ⚠ WHAT THIS TRADE COSTS, stated rather than discovered later: a clippy or
+    # rustdoc violation is no longer caught before publishing. It is caught by
+    # CI, after. Two things make that survivable and neither is optional — the
+    # stop-the-line gate below refuses to push onto a base whose last CI run
+    # failed, so a red cannot be built upon; and `cargo fmt --all --check`
+    # stays here, because formatting drift is what makes a diff unreadable and
+    # it costs nothing to check.
 fi
 
 # 3. mnemosyne-cli validate-code-refs — hallucination-class citation gate
