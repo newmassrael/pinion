@@ -30,14 +30,13 @@
 #        clippy budget is paid once per push regardless of which files
 #        changed)
 #
-#   2b. `cargo doc --workspace --no-deps --document-private-items` (R1214,
-#      R1218) — broken intra-doc link gate (unconditional). `warnings =
-#      "deny"` makes rustdoc lints errors, so this fails on any broken /
-#      redundant / private intra-doc link. `--document-private-items`
-#      (R1218) extends the check to PRIVATE items' docs (~150 broken links
-#      that public-items-only rustdoc never saw). Absent before R1214,
-#      which let ~1000 links accrete from ~R683 unseen (ran clippy, never
-#      rustdoc).
+#   2b. ⚠ NOT HERE — the broken intra-doc link gate (R1214, R1218) runs in
+#      `.github/workflows/ci.yml` and nowhere else, since R1779. This list
+#      claimed otherwise until R1782, which is the shape of staleness a
+#      hand-maintained list of a program's own steps always takes: ask the
+#      hook instead (see the CLAUDE.md note that derives the step list from
+#      a push log). CI is its ONLY home, so `tools/test_hooks.sh` asserts
+#      it is still there.
 #
 # Install via `git config core.hooksPath .githooks` (one-time per clone).
 set -euo pipefail
@@ -69,14 +68,48 @@ source "$hook_dir/lib/worktree-guard.sh"
 # --- R1495. The libraries this hook decides with, verified first ---
 #
 # These libs are what stands between a working tree and a remote, and until
-# R1495 nothing checked any of them. They run in milliseconds, so the gate can
-# afford to prove itself every time rather than being trusted because it used
-# to work. Failing here fails the push: a gate that cannot pass its own tests
-# is not evidence about anything else.
+# R1495 nothing checked any of them. Failing here fails the push: a gate that
+# cannot pass its own tests is not evidence about anything else.
+#
+# ⚠ NOT "milliseconds", which is what this comment claimed until R1782. Timed
+# at R1779: 65.83s, the single largest step anyone has attributed in this hook.
+# The claim was never measured — it was inferred from "plain bash" — and the
+# CLAUDE.md copy of it was corrected while this one, the original, was not.
 echo "pre-push: hook library tests ..." >&2
 if ! bash "$repo_root/tools/test_hooks.sh" >&2; then
     echo "pre-push: the hook libraries failed their own tests" >&2
     exit 1
+fi
+
+# --- R1782. The transport this hook's own duration depends on ---
+#
+# git opens the connection to the remote BEFORE running this hook, so a hook
+# that takes minutes leaves a socket idle for that long. Seven consecutive
+# pushes died `rc=141` (SIGPIPE) after every gate had PASSED — the worst shape
+# a failure can take, because `git log` looks finished while `origin/main` has
+# not moved. R1782 restored clippy here, which makes the keepalive load-bearing
+# rather than incidental; measured the same round, it was living in one shell's
+# command line, with `core.sshCommand` and `GIT_SSH_COMMAND` both empty.
+#
+# Sits here, after the library tests, for the reason the worktree guard does:
+# this hook does not decide with a library it has not verified. One `git
+# config` call.
+#
+# Refuses rather than prints, because a printed reminder is exactly what the
+# seven failures already had.
+# shellcheck source=SCRIPTDIR/lib/ssh-keepalive.sh
+source "$hook_dir/lib/ssh-keepalive.sh"
+if [[ "${PINION_ALLOW_NO_KEEPALIVE:-}" != "1" ]]; then
+    _ka_url="$(git config --get "remote.${1:-origin}.url" 2>/dev/null || true)"
+    if [[ "$(keepalive_verdict "$_ka_url" "$(keepalive_configured_command)")" == "missing" ]]; then
+        echo "pre-push: this hook runs for minutes and the ssh connection is ALREADY open." >&2
+        echo "pre-push: with no keepalive the remote closes it and the push dies rc=141" >&2
+        echo "pre-push: AFTER every gate has passed. Configure it once, in this clone:" >&2
+        echo "  git config --local core.sshCommand 'ssh -o ServerAliveInterval=20 -o ServerAliveCountMax=60 -o TCPKeepAlive=yes'" >&2
+        echo "pre-push: override with PINION_ALLOW_NO_KEEPALIVE=1 if ~/.ssh/config sets it" >&2
+        echo "pre-push: (git never reports that file, so this check cannot see it)" >&2
+        exit 1
+    fi
 fi
 
 # A round is published from the main tree; exploration worktrees may not push.
@@ -376,23 +409,43 @@ if ! cargo fmt --all --check; then
     exit 1
 fi
 
-# ★★★★★ R1779 — CLIPPY AND RUSTDOC RUN IN CI NOW, and nowhere else.
-# `.github/workflows/ci.yml` runs both with byte-identical flags, as
-# consecutive steps of one job on one `target/` — which is the arrangement the
-# note in `pre-commit` asks for, since rustdoc is only cheap when clippy warmed
-# the build. Checked as a MOVE before the removal: a gate deleted here and
-# absent there would have been a gate deleted.
+# ★★★★★ R1782 — CLIPPY IS BACK HERE. RUSTDOC STAYS IN CI.
 #
-# WHY THIS ONE MEASUREMENT DECIDED IT: a fully warmed pre-push still took
-# 237.33s (R1775, timed with no SSH involved), and git opens the SSH connection
-# BEFORE running this hook — so every push spent four minutes racing GitHub's
-# idle timeout, and lost seven times running. The keepalive fixed the transport;
-# this fixes the cost.
+# R1779 removed the two together and justified it with ONE number: a fully
+# warmed pre-push took 237.33s. That number was never split between them, and
+# split it does not say what R1779 said. Timed on this tree, one variable at a
+# time:
 #
-# ⚠ WHAT THE TRADE COSTS: a violation now surfaces AFTER publishing rather than
-# before. The stop-the-line gate above is what keeps that bounded — it refuses
-# to push onto a base whose last completed CI run failed, so a red cannot be
-# built upon, and the override exists only to publish the fix.
+#   clippy, nothing changed since the last run ......   4.6s
+#   clippy, after an edit that invalidates the graph   119.6s
+#   rustdoc, same tree, started right after that ....  394.6s
+#
+# 86x apart. 4.6s is not "the whole cost of a commit". R1779's own commit body
+# already recorded the tell — removing clippy made the hook SLOWER, because the
+# emit ratchet had been riding its warm build — and the round wrote that down
+# while still treating the pair as one item.
+#
+# ⚠ AND THE PAIR IS NOT A PAIR. R1779's comment said rustdoc is cheap only once
+# clippy has warmed the build. That 394.6s run was started immediately after a
+# complete clippy run on this tree and spent minutes checking dependency crates
+# clippy had just checked: clippy writes clippy-driver rmeta and rustdoc cannot
+# read it. They do not warm each other, so bundling them charged the cheap gate
+# the expensive one's bill.
+#
+# WHAT THE SPLIT COSTS, on the evidence of the round that paid for it: R1780
+# published FOUR pedantic violations across two crates, CI went red, and
+# stop-the-line then refused R1781 — so the trade did not cost a violation, it
+# cost a ROUND. Against that, up to two minutes on a push that touched a core
+# crate is cheap; the frequency is right too, since what this protects is what
+# gets PUBLISHED, which is why it is here and not in `pre-commit`.
+#
+# Rustdoc stays in CI: its cost is real and its failure mode (a broken
+# intra-doc link) does not compile-break a consumer.
+echo "pre-push: cargo clippy --workspace --all-targets --features pinion-runtime/vello ..." >&2
+if ! cargo clippy --workspace --all-targets --features pinion-runtime/vello; then
+    echo "pre-push: clippy failed — fix violations before push" >&2
+    exit 1
+fi
 
 # R1766 — the committed statechart emit. `crates/pinion-core/generated/` is
 # tracked now rather than produced into OUT_DIR on every build, and `build.rs`

@@ -139,27 +139,23 @@ if git diff --cached --name-only --diff-filter=ACMR | grep -qE '\.rs$'; then
     # and it picks whichever build machine is least loaded, which is not always
     # the one whose `target/` is warm. If commit latency matters more here than
     # the workstation's memory, unset `$BX` and this returns to running in place.
-    # ★★★★★ R1779 — THE PAIR RUNS IN CI NOW, and nowhere else. `.github/
-    # workflows/ci.yml` runs both with byte-identical flags: clippy at its
-    # `clippy (-D pedantic via workspace.lints)` step and rustdoc at
-    # `cargo doc (broken intra-doc link gate, incl. private items)`. This is a
-    # MOVE and was checked as one before the removal — a gate deleted here and
-    # absent there would have been a gate deleted.
+    # ★★★★★ NEITHER RUNS AT COMMIT TIME. They are not in the same place
+    # either, and R1782 is why: clippy is at the PUSH gate and rustdoc is in
+    # CI. R1779 removed the two together as one item; R1782 timed them apart
+    # and found the bundle was the defect. See the block that runs clippy in
+    # `.githooks/pre-push` for the numbers.
     #
-    # WHY, measured on this repository: the pair is the whole cost of a commit.
-    # An edit to `pinion-core` re-documents all 229 examples, so R1778 — one
-    # framework file and three screens — spent minutes in rustdoc before git
-    # would take it. The push gate paid it a second time, and a fully warmed
-    # pre-push still measured 237s (R1775), which is what made every push race
-    # GitHub's idle SSH timeout.
+    # WHY NOT HERE, which R1779 got right: an edit to `pinion-core`
+    # re-documents all 229 examples, and a round commits many times and
+    # publishes once. The gate belongs at the boundary it protects, and that
+    # boundary is publication.
     #
-    # ⚠ WHAT THIS TRADE COSTS, stated rather than discovered later: a clippy or
-    # rustdoc violation is no longer caught before publishing. It is caught by
-    # CI, after. Two things make that survivable and neither is optional — the
-    # stop-the-line gate below refuses to push onto a base whose last CI run
-    # failed, so a red cannot be built upon; and `cargo fmt --all --check`
-    # stays here, because formatting drift is what makes a diff unreadable and
-    # it costs nothing to check.
+    # ⚠ WHAT REMAINS TRADED: a broken intra-doc link is still caught only by
+    # CI, after publishing. Two things bound it and neither is optional — the
+    # stop-the-line gate refuses to push onto a base whose last CI run failed,
+    # so a red cannot be built upon; and `cargo fmt --all --check` stays here,
+    # because formatting drift is what makes a diff unreadable and it costs
+    # nothing to check.
 fi
 
 # 3. mnemosyne-cli validate-code-refs — hallucination-class citation gate

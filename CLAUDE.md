@@ -346,28 +346,65 @@ push carries a `.scxml`, the committed emit, the generator's `build.rs`, the
 that gating it rode clippy's warm build, and removing clippy left it compiling
 the whole SCE chain by itself.
 
-### ★ The heavy pair runs in CI, not in the hooks (R1779)
+### ★ The two lint gates are in different places, and that is measured (R1779, split R1782)
 
-`cargo clippy --workspace --all-targets --features pinion-runtime/vello` and
-`cargo doc --workspace --no-deps --features pinion-runtime/vello
---document-private-items` used to run in **both** hooks. They now run only in
-`.github/workflows/ci.yml`, with byte-identical flags, as consecutive steps of
-one job on one `target/` — the arrangement they need, since rustdoc is cheap
-only when clippy has warmed the build.
+| gate | commit | push | CI |
+|---|:--:|:--:|:--:|
+| `cargo fmt --all --check` | ✓ | ✓ | ✓ |
+| `cargo clippy --workspace --all-targets --features pinion-runtime/vello` | — | **✓** | ✓ |
+| `cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items` | — | — | ✓ |
 
-**It was checked as a move before it was made**: a gate removed here and absent
-there would have been a gate removed.
+R1779 moved clippy **and** rustdoc out of both hooks together, as one item,
+justified by one number: a fully warmed `pre-push` took 237.33s. That number
+was never split between them. Split, on this tree, one variable at a time:
 
-Why: the pair was the whole cost of a commit. An edit to `pinion-core`
-re-documents all 229 examples, and the push gate paid it a second time — a fully
-warmed `pre-push` still measured **237.33s** (R1775, timed with no SSH
-involved), which is what made every push race GitHub's idle timeout and lose.
+| | measured R1782 |
+|---|---:|
+| clippy, nothing changed since the last run | **4.6s** |
+| clippy, after an edit that invalidates the graph | 119.6s |
+| rustdoc, same tree, run straight after that clippy | **394.6s** |
 
-⚠ **What the trade costs**, stated rather than discovered later: a clippy or
-rustdoc violation now surfaces AFTER publishing rather than before. Two things
-bound that — the stop-the-line gate refuses to push onto a base whose last
-completed CI run failed, so a red cannot be built upon; and `cargo fmt` stays
-local, because formatting drift is what makes a diff unreadable.
+**86x apart.** 4.6s is not "the whole cost of a commit", and R1779's own commit
+body already carried the tell — removing clippy made the hook *slower*, because
+the statechart-emit ratchet had been riding its warm build.
+
+⚠ **And the pair is not a pair.** R1779's comment said rustdoc is cheap only
+once clippy has warmed the build. That 394.6s rustdoc run was started *after* a
+complete clippy run on the same tree and spent minutes checking dependency
+crates clippy had already checked: clippy writes clippy-driver `.rmeta` and
+rustdoc cannot read it. **They do not warm each other**, so bundling them
+charged the cheap gate the expensive one's bill.
+
+So clippy is back at the **push** gate — not at commit, because a round commits
+many times and publishes once, and what this protects is what gets *published*.
+Rustdoc stays in CI: its cost is real, and a broken intra-doc link does not
+compile-break a consumer.
+
+**What the split cost before it was made**, on the evidence of the round that
+paid for it: R1780 published four `clippy::pedantic` violations across two
+crates, CI went red, and stop-the-line then refused R1781 — the trade did not
+cost a violation, it cost a **round**.
+
+⚠ **The remaining trade**: a broken intra-doc link still surfaces only after
+publishing. Stop-the-line bounds it — a red cannot be built upon.
+
+**`tools/test_hooks.sh` asserts the arrangement**, because "I checked it as a
+move" was an act performed once by hand and nothing re-performed it: the push
+hook and CI must run the *same* clippy flag for flag, both must run it at all
+(a bare equality passes vacuously when both are missing — the presence
+assertions come first), and rustdoc must still be in CI, its only home.
+
+⚠⚠ **The keepalive is load-bearing now, so it is a gate** (R1782). git opens
+the connection *before* running `pre-push`, so a hook that takes minutes leaves
+a socket idle that long; seven consecutive pushes died `rc=141` after every
+gate had **passed**. Measured at R1782, the fix was living in one shell's
+command line — neither `core.sshCommand` nor `GIT_SSH_COMMAND` carried it.
+`pre-push` now refuses an ssh remote with no positive `ServerAliveInterval`
+and prints the one-line `git config` that fixes it
+(`.githooks/lib/ssh-keepalive.sh`; `ServerAliveInterval=0` is ssh's default and
+means *never*, so the interval is read as a number). Override:
+`PINION_ALLOW_NO_KEEPALIVE=1`, for a keepalive set in `~/.ssh/config`, which
+git never reports.
 
 If a hook fails, **fix the underlying issue**. Never bypass with `--no-verify` unless the user explicitly requests it.
 

@@ -438,8 +438,8 @@ mod tests {
                 TextStyle::new().with_align(align),
             ));
             let blocks = collect_blocks(&scene, cache);
-            let block = blocks.first().expect("one text leaf").clone();
-            let line = block.lines.first().expect("one line").clone();
+            let block = blocks.first().expect("one text leaf");
+            let line = *block.lines.first().expect("one line");
             (line.x, line.advance - line.trailing_whitespace, block.width)
         };
 
@@ -471,7 +471,11 @@ mod tests {
 
         // ★ The same declaration in a box with no room reports none — which is
         // the case a reader saw and called a broken property.
-        #[allow(clippy::cast_possible_truncation, reason = "an inked width in px")]
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "an inked width in px, asserted positive above"
+        )]
         let tight_w = inked.ceil() as u32;
         let (tight_x, tight_inked, tight_box) = line_x(&mut cache, tight_w, TextAlign::Center);
         assert!(

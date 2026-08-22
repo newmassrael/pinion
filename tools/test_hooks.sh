@@ -36,6 +36,8 @@ source "$repo_root/.githooks/lib/phase-b-tally.sh"
 source "$repo_root/.githooks/lib/consumer-tests.sh"
 # shellcheck source=SCRIPTDIR/../.githooks/lib/worktree-guard.sh
 source "$repo_root/.githooks/lib/worktree-guard.sh"
+# shellcheck source=SCRIPTDIR/../.githooks/lib/ssh-keepalive.sh
+source "$repo_root/.githooks/lib/ssh-keepalive.sh"
 
 pass=0
 fail=0
@@ -1337,6 +1339,75 @@ ok "a continuation does not reserve its parent" "$(taken R1753)" "free"
 ok "a shorter number is not a prefix match" "$(taken R175)" "free"
 ok "a longer number is not a match either" "$(taken R17570)" "free"
 ok "an empty token is never taken" "$(taken '')" "free"
+
+# ---------------------------------------------------------------------------
+# R1782 — the ssh keepalive, which is a gate now because clippy came back
+# ---------------------------------------------------------------------------
+#
+# The verdict is a pure function precisely so it can be checked without a
+# remote, a network or a push. What it has to get right is not "is the option
+# there" but "is it ON", and those differ.
+ka() { keepalive_verdict "$1" "$2"; }
+
+REAL_KA='ssh -o ServerAliveInterval=20 -o ServerAliveCountMax=60 -o TCPKeepAlive=yes'
+
+ok "an ssh remote with a real keepalive is armed" \
+    "$(ka 'git@github.com:o/r.git' "$REAL_KA")" "armed"
+ok "the ssh:// spelling is an ssh remote too" \
+    "$(ka 'ssh://git@github.com/o/r.git' "$REAL_KA")" "armed"
+ok "an ssh remote with no ssh command at all is missing" \
+    "$(ka 'git@github.com:o/r.git' '')" "missing"
+ok "a bare ssh command is missing" \
+    "$(ka 'git@github.com:o/r.git' 'ssh')" "missing"
+# ★★★★★ THE CASE THAT MAKES THIS MORE THAN A GREP: `ServerAliveInterval=0` is
+# ssh's own default and means "never send one". A check that matched the option
+# NAME would call the default armed — which is the failure it exists to catch.
+ok "ServerAliveInterval=0 is ssh's default and means never" \
+    "$(ka 'git@github.com:o/r.git' 'ssh -o ServerAliveInterval=0')" "missing"
+ok "and the space spelling ssh also accepts is read" \
+    "$(ka 'git@github.com:o/r.git' 'ssh -o "ServerAliveInterval 30"')" "armed"
+# An https remote opens no ssh connection, so there is nothing to hold open and
+# refusing one would be a gate that fires where its reason does not reach.
+ok "an https remote is not an ssh remote" \
+    "$(ka 'https://github.com/o/r.git' '')" "not-ssh"
+ok "nor is a local path" "$(ka '/srv/mirror.git' '')" "not-ssh"
+# And the hook must actually consult it.
+ok "the push gate consults the keepalive" \
+    "$(grep -c 'keepalive_verdict' "$repo_root/.githooks/pre-push")" "1"
+
+# ---------------------------------------------------------------------------
+# R1782 — the lint gates live in two files, and "I checked it as a move"
+# ---------------------------------------------------------------------------
+#
+# R1779 moved clippy and rustdoc out of the hooks into CI and justified it with
+# a principle: "checked as a MOVE before the removal — a gate deleted here and
+# absent there would have been a gate deleted." That check was an ACT, done
+# once, by hand. Nothing re-performs it, so an edit to either file can delete a
+# gate while both files still look deliberate.
+#
+# R1782 then split the pair back apart on measurement, which leaves the two
+# lint gates in DIFFERENT places — clippy in both `pre-push` and CI, rustdoc in
+# CI alone. That arrangement is exactly the kind a reader cannot verify by
+# looking at one file, so it gets a check instead of a sentence.
+#
+# Reads the two files; runs nothing.
+hook_clippy="$(sed -n 's/^if ! \(car[g]o clippy [^;]*\); then$/\1/p' \
+    "$repo_root/.githooks/pre-push" | head -1)"
+ci_clippy="$(sed -n 's/^ *run: \(car[g]o clippy .*\)$/\1/p' \
+    "$repo_root/.github/workflows/ci.yml" | head -1)"
+ci_doc="$(sed -n 's/^ *run: \(car[g]o doc .*\)$/\1/p' \
+    "$repo_root/.github/workflows/ci.yml" | head -1)"
+
+# ★ The presence assertions come FIRST and are not optional: with both sides
+# missing, an equality test passes vacuously — which is the failure this whole
+# section exists to prevent.
+ok "the push gate runs clippy at all" "${hook_clippy:+present}" "present"
+ok "CI runs clippy at all" "${ci_clippy:+present}" "present"
+ok "and both run the SAME clippy, flag for flag" "$hook_clippy" "$ci_clippy"
+# Rustdoc has exactly one home. Before R1214 it had none, and ~1000 broken
+# links accreted from ~R683 unseen because the gate ran clippy and never
+# rustdoc. One home is enough; zero is how that happened.
+ok "rustdoc still runs in CI, its only home" "${ci_doc:+present}" "present"
 
 printf '[hooks] %d passed, %d failed\n' "$pass" "$fail"
 [[ "$fail" -eq 0 ]]

@@ -3329,7 +3329,11 @@ mod tests {
         let natural = {
             let runs = cache.positioned_runs(text, &base, &[], None);
             let first = runs.first().expect("the fixture font shapes this text");
-            #[allow(clippy::cast_possible_truncation, reason = "a run's width in px")]
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_sign_loss,
+                reason = "a shaped run's width in px: non-negative, far below u32::MAX"
+            )]
             let w = (first.end_x - first.start_x).ceil() as u32;
             w
         };
@@ -3366,12 +3370,14 @@ mod tests {
             "given room, centring must move the run: start {flush_wide} vs \
              {centred_wide} in a box of {wide} for text of {natural}",
         );
-        #[allow(clippy::cast_precision_loss, reason = "test widths are small")]
-        let expected = (f64::from(wide) - f64::from(natural)) as f32 / 2.0;
+        // Compared in f64 so no cast can lose anything: `u32 -> f64` and
+        // `f32 -> f64` are both widening, so this arithmetic needs no `allow`
+        // and the assertion is not weakened by the conversion's own rounding.
+        let expected = f64::from(wide - natural) / 2.0;
+        let moved = f64::from(centred_wide) - f64::from(flush_wide);
         assert!(
-            (centred_wide - flush_wide - expected).abs() < 2.0,
-            "and by half the slack: moved {} of an expected {expected}",
-            centred_wide - flush_wide,
+            (moved - expected).abs() < 2.0,
+            "and by half the slack: moved {moved} of an expected {expected}",
         );
 
         // ★★ And with NO width at all the layout is its own width, so the same
