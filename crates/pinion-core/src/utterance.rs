@@ -590,6 +590,149 @@ impl Serialize for Announced {
     }
 }
 
+/// ★★★★★ R1778 §5.12 §5.28 — **what a screen is saying, and for how much
+/// longer.**
+///
+/// # The defect this exists for, reported by a person
+///
+/// A reader ran this tree's assembled analysis tool and found two status boxes
+/// stacked at the foot of a mounted screen, over its palette and over its own
+/// hint strip — the host's and the guest's, both permanent. The overlap was the
+/// symptom. The defect was that NEITHER ONE EVER LEFT, and the reference this
+/// tool reproduces clears its own after 2600ms.
+///
+/// # Why the LIFETIME is the thing that lifted, and not the box
+///
+/// Three screens paint a status message and all three paint it differently — a
+/// floating box on a canvas, a label in an application bar, a box at a page's
+/// foot. That difference is real and a single widget over it would fight the
+/// reference, which is why the debt recording it deferred a lift twice.
+///
+/// The lifetime is not like that. It is not three different lifetimes; it is
+/// the same one absent three times, with the same number behind it. So this
+/// holds WHEN a sentence stops being current and WHERE it is kept, and every
+/// screen keeps its own painter.
+///
+/// # It also carries the holder, which is the half that was silently divergent
+///
+/// Measured before the lift: one screen held `Signal<Utterance>`, one
+/// `Signal<Option<Utterance>>`, and one `RefCell<Option<Utterance>>`. The third
+/// is the one that matters — **a `RefCell` is not reactive**, so a lifetime
+/// added to that screen alone would expire without anything repainting, and the
+/// screen would look unfixed while its code said otherwise.
+///
+/// # The clock is the framework's, and it is not `view`
+///
+/// [`Tickable`](crate::animation::Tickable), advanced by
+/// [`Owner::tick_animations`](crate::reactive::Owner::tick_animations) once per
+/// paint with the frame's `dt`. It cannot be `view`: §6.3 makes the view
+/// function sync and pure so `dry_run` holds, and a message that aged itself
+/// while being drawn would trade a binding invariant for a repair.
+///
+/// # One reactive slot, deliberately
+///
+/// Expiry writes `None` into the sentence, and that write IS the repaint
+/// signal, so the remaining time can be a plain [`Cell`](std::cell::Cell). The
+/// first screen to gain a lifetime carried two signals and a screen-local
+/// ticker; adopting this removes both. A lift that only ever adds is usually
+/// cutting along the wrong axis.
+pub struct Saying {
+    said: crate::reactive::Signal<Option<Utterance>>,
+    left: std::cell::Cell<f32>,
+    life: f32,
+}
+
+impl Saying {
+    /// A holder that keeps what it is told for `life` seconds, saying nothing
+    /// yet.
+    #[must_use]
+    pub fn new(life: f32) -> Self {
+        Self {
+            said: crate::reactive::Signal::new(None),
+            left: std::cell::Cell::new(0.0),
+            life,
+        }
+    }
+
+    /// Say something, and start its life over.
+    ///
+    /// Restarting rather than queueing is what makes a second message REPLACE a
+    /// first: a person watching a screen reads the latest thing that happened,
+    /// and a queue would show them a stale sentence while a fresh one waited.
+    pub fn say(&self, what: Utterance) {
+        self.said.set(Some(what));
+        self.left.set(self.life);
+    }
+
+    /// What is being said right now, or `None` once its time is up.
+    #[must_use]
+    pub fn showing(&self) -> Option<Utterance> {
+        self.said.get()
+    }
+
+    /// What a person reads, or an empty string when nothing is current.
+    ///
+    /// The spelling every screen's accessibility value and wire slot wants, so
+    /// three of them do not write three `unwrap_or_default` chains.
+    #[must_use]
+    pub fn sentence(&self) -> String {
+        self.said
+            .get()
+            .map(|said| said.sentence())
+            .unwrap_or_default()
+    }
+
+    /// How long the current sentence has left, in seconds.
+    ///
+    /// Zero when nothing is being said. Published because a screen's own gate
+    /// may want to drive time forward deliberately, and a test that guesses the
+    /// duration is a test that pins a number this type owns.
+    #[must_use]
+    pub fn left(&self) -> f32 {
+        self.left.get()
+    }
+
+    /// The whole life a sentence is given, in seconds.
+    #[must_use]
+    pub const fn life(&self) -> f32 {
+        self.life
+    }
+}
+
+impl crate::animation::Tickable for Saying {
+    fn tick(&self, dt: f32) {
+        if self.said.get().is_none() {
+            return;
+        }
+        let left = self.left.get() - dt;
+        if left <= 0.0 {
+            self.left.set(0.0);
+            // The write that is also the repaint.
+            self.said.set(None);
+        } else {
+            self.left.set(left);
+        }
+    }
+
+    fn is_at_rest(&self, _epsilon: f32) -> bool {
+        // A sentence with time left is NOT at rest even while nothing on screen
+        // is moving: what it is waiting for is its own expiry, and a driver
+        // that skipped it would leave the message up forever — which is the
+        // defect this type exists for.
+        self.said.get().is_none()
+    }
+}
+
+impl fmt::Debug for Saying {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Saying")
+            .field("said", &self.said.get())
+            .field("left", &self.left.get())
+            .field("life", &self.life)
+            .finish()
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -787,6 +930,147 @@ mod tests {
             .map(|(tone, name)| (name, Utterance::new(*tone, CLAUSE).sentence()))
             .collect();
         assert_speaks("Utterance", Tone::ARMS, &said, &[]);
+    }
+
+    /// ★★★★★ R1778 — what [`Saying`] puts in front of a person, both ways.
+    ///
+    /// Demanded by this crate's own speech census the moment the type existed,
+    /// and the demand is right even though `Saying` composes no wording of its
+    /// own: it has two arms a reader meets — a sentence is current, or nothing
+    /// is — and the SILENT one is the arm that could rot unnoticed. If expiry
+    /// ever left the last sentence behind, or answered some word for emptiness,
+    /// only this says so.
+    #[test]
+    fn what_a_saying_puts_in_front_of_a_person_is_driven_both_ways() {
+        use crate::animation::Tickable;
+        use crate::test_fixtures::speech::assert_speaks;
+
+        let owner = crate::reactive::Owner::new();
+        owner.run(|| {
+            let holder = Saying::new(2.6);
+            let quiet = holder.sentence();
+            holder.say(Utterance::done("R-01 is where it was"));
+            let current = holder.sentence();
+            for _ in 0..200 {
+                holder.tick(1.0 / 60.0);
+            }
+            let after = holder.sentence();
+
+            assert_eq!(
+                quiet, after,
+                "★ silence before anything was said and silence after it \
+                 expired are the SAME arm — a holder that answered differently \
+                 would be remembering what it stopped saying",
+            );
+            let said: Vec<(&str, String)> = vec![("current", current), ("silent", after)];
+            assert_speaks("Saying", 2, &said, &["silent"]);
+        });
+    }
+
+    /// ★★★★★ R1778 — a sentence is current, and then it is not.
+    ///
+    /// Driven in the steps a paint loop actually takes rather than in one jump:
+    /// a lifetime that only expires when handed its whole duration at once is
+    /// not one a running application would ever reach.
+    #[test]
+    fn what_is_said_stops_being_said_when_its_time_is_up() {
+        use crate::animation::Tickable;
+
+        let owner = crate::reactive::Owner::new();
+        owner.run(|| {
+            let said = Saying::new(2.6);
+            assert!(said.showing().is_none(), "nothing has been said yet");
+            assert_eq!(said.sentence(), "");
+
+            said.say(Utterance::done("a thing happened"));
+            assert!(said.showing().is_some());
+            assert_eq!(said.sentence(), "a thing happened");
+            assert!((said.left() - 2.6).abs() < 1e-6);
+
+            for _ in 0..60 {
+                said.tick(1.0 / 60.0);
+            }
+            assert!(
+                said.showing().is_some(),
+                "one second in, a 2.6s sentence is still current",
+            );
+
+            for _ in 0..120 {
+                said.tick(1.0 / 60.0);
+            }
+            assert!(said.showing().is_none(), "past its life it is gone");
+            assert_eq!(said.sentence(), "");
+            assert!(said.left().abs() < f32::EPSILON);
+        });
+    }
+
+    /// Saying again restarts the life rather than queueing behind it.
+    #[test]
+    fn a_second_sentence_replaces_the_first_and_gets_a_full_life() {
+        use crate::animation::Tickable;
+
+        let owner = crate::reactive::Owner::new();
+        owner.run(|| {
+            let said = Saying::new(2.6);
+            said.say(Utterance::done("first"));
+            for _ in 0..120 {
+                said.tick(1.0 / 60.0);
+            }
+            said.say(Utterance::done("second"));
+            assert_eq!(said.sentence(), "second");
+            assert!(
+                (said.left() - 2.6).abs() < 1e-6,
+                "the second sentence gets a whole life, not what the first left",
+            );
+        });
+    }
+
+    /// ★★ The clause a driver reads to decide whether to keep waking this.
+    ///
+    /// Both directions, because `is_at_rest` returning `true` while a sentence
+    /// is current is exactly how a message would come to stay up forever — the
+    /// defect this type was built for — and it would look like a working
+    /// lifetime in every other test.
+    #[test]
+    fn a_current_sentence_is_not_at_rest_and_an_expired_one_is() {
+        use crate::animation::Tickable;
+
+        let owner = crate::reactive::Owner::new();
+        owner.run(|| {
+            let said = Saying::new(2.6);
+            assert!(said.is_at_rest(0.001), "silence is at rest");
+            said.say(Utterance::done("something"));
+            assert!(
+                !said.is_at_rest(0.001),
+                "a sentence waiting to expire is work, even with nothing moving",
+            );
+            for _ in 0..200 {
+                said.tick(1.0 / 60.0);
+            }
+            assert!(
+                said.is_at_rest(0.001),
+                "once gone there is nothing to count"
+            );
+        });
+    }
+
+    /// A ticker that is never told anything must not count down from nothing.
+    #[test]
+    fn ticking_while_silent_changes_nothing() {
+        use crate::animation::Tickable;
+
+        let owner = crate::reactive::Owner::new();
+        owner.run(|| {
+            let said = Saying::new(2.6);
+            for _ in 0..200 {
+                said.tick(1.0 / 60.0);
+            }
+            assert!(said.showing().is_none());
+            assert!(
+                said.left().abs() < f32::EPSILON,
+                "it never had a life to spend"
+            );
+        });
     }
 
     /// R1718's gate, over the type this module puts in front of a developer.

@@ -670,16 +670,10 @@ struct ShellState {
     /// ★★★★★ R1719 — an [`Utterance`], the same value the other two screens of
     /// this tool now hold, so "was that a refusal?" is a field and not a prefix
     /// this file used to write two ways.
-    toast: Signal<Utterance>,
-    /// Seconds of life the toast has left, counted down by the paint loop.
-    ///
-    /// ★★★★★ R1776 — a SIGNAL rather than a `Cell`, because the thing that
-    /// reads it is the view and the thing that writes it is a
-    /// [`Tickable`](pinion_core::animation::Tickable) the owner drives. It is
-    /// not written in `view`: §6.3 makes the view function sync and pure so
-    /// `dry_run` holds, and a toast that aged itself while being drawn would
-    /// trade that invariant for a repair.
-    toast_life: Signal<f32>,
+    /// ★★★★★ R1778 — and its LIFETIME, in one holder the framework owns. Two
+    /// fields and a screen-local ticker collapsed into this when the two sibling
+    /// screens turned out to need the same thing.
+    toast: Rc<pinion_core::utterance::Saying>,
     /// The ordinal the next placed card takes.
     next_id: RefCell<u32>,
     /// R1662 — the board's scroll offset. A board is a grid whose row count is
@@ -785,7 +779,11 @@ fn screen_roster() -> ScreenRoster {
 }
 
 impl ShellState {
-    fn new(clock: Rc<TransportClock>, theme: Rc<ThemeProvider>) -> Self {
+    fn new(
+        clock: Rc<TransportClock>,
+        theme: Rc<ThemeProvider>,
+        toast: Rc<pinion_core::utterance::Saying>,
+    ) -> Self {
         let (light, dark) = reference_palettes();
         theme.set_palettes(light, dark);
         theme.set_mode(ThemeMode::Dark);
@@ -859,16 +857,14 @@ impl ShellState {
             ),
             float_grab: Signal::new(None),
             float_z: RefCell::new(0),
-            // ★ R1719 — this screen is the one that opens having ALREADY said
-            // something, so it holds an utterance rather than an option. The
-            // difference is real: the node lab and the packet viewer open
-            // silent and their toast has nothing to paint until an act.
-            toast: Signal::new(Utterance::done(format!("{} loaded", spec::PRESET))),
-            // ★★★★★ R1776 — and the life it opens with, because the reference's
-            // toast is transient and this one was not. Full, so the opening
+            // ★ R1719/R1778 — this screen is the one that opens having ALREADY
+            // said something; the node lab and the packet viewer open silent.
+            // That difference is now expressed by SAYING it at construction
+            // rather than by holding a different type, so all three screens
+            // hold the same thing. Its life starts full, so the opening
             // sentence behaves like every later one instead of being a special
             // case that never leaves.
-            toast_life: Signal::new(TOAST_SECONDS),
+            toast,
             next_id: RefCell::new(u(spec::BOARD.len())),
             canvas_scroll: Rc::new(ScrollState::with_tag(CANVAS_SCROLL)),
             settings_scroll: Rc::new(ScrollState::with_tag(SETTINGS_SCROLL)),
@@ -1140,10 +1136,7 @@ impl ShellState {
     /// `Debug`. The remembering now belongs to the constructor, which takes
     /// something that can say itself and names a `Debug` spelling as a fault.
     fn say(&self, what: Utterance) {
-        self.toast.set(what);
-        // ★ R1776 — saying something starts its life over, which is what makes
-        // a second message replace a first rather than queue behind it.
-        self.toast_life.set(TOAST_SECONDS);
+        self.toast.say(what);
     }
 }
 
@@ -1163,34 +1156,16 @@ const TOAST_W: u32 = 560;
 /// The toast's height.
 const TOAST_H: u32 = 34;
 
-/// The toast's clock: what the paint loop advances so the view does not have to.
-///
-/// Registered with the owner through
-/// [`register_animation`](pinion_core::reactive::Owner::register_animation),
-/// which backends drive once per paint cycle with the frame's `dt`
-/// (`pinion-runtime`'s core shell). That is the seam this repair needed and it
-/// already existed — what was missing was anything using it for a lifetime
-/// rather than for a spring.
-struct ToastLife {
-    left: Signal<f32>,
-}
-
-impl pinion_core::animation::Tickable for ToastLife {
-    fn tick(&self, dt: f32) {
-        let left = self.left.get();
-        if left <= 0.0 {
-            return;
-        }
-        self.left.set((left - dt).max(0.0));
-    }
-
-    fn is_at_rest(&self, _epsilon: f32) -> bool {
-        // Once it has expired there is nothing left to count, and the driver
-        // may stop waking it. A toast with life left is NOT at rest even while
-        // nothing is moving on screen, which is the whole point of it.
-        self.left.get() <= 0.0
-    }
-}
+// ★★★★★ R1778 — the clock and the holder that were HERE are gone, into
+// `pinion_core::utterance::Saying`. R1776 built them for this screen and the round
+// after it found the other two screens needed the same thing, one of them
+// keeping its sentence in a `RefCell` where a lifetime could expire with nothing
+// repainting. What went up is the lifetime and the holder; what stayed is where
+// this screen paints the box, because that genuinely differs across the three
+// and a single widget over it would fight the reference.
+//
+// The adoption REMOVED two signals and a screen-local `Tickable` from this file.
+// A lift that only ever adds is usually cutting along the wrong axis.
 
 // ★★★★★ R1700 — the scope-free `Weak` handle that used to live here is GONE,
 // and the compiler is what found it. R1671 introduced it for one reason: the
@@ -1207,20 +1182,21 @@ fn use_shell_state() -> Rc<ShellState> {
     let clock = use_transport_clock(TRANSPORT_KEY, REPLAY_SECS);
     let theme = use_theme(THEME_TAG);
     let owner = Owner::current().expect("use_shell_state requires an active Owner scope");
-    let state = owner.cache(STATE_KEY, move || ShellState::new(clock, theme));
-    // ★★★★★ R1776 — the toast's clock, registered ONCE. `register_animation_once`
-    // is gated on the cache, which matters here for the reason its own
+    // ★★★★★ R1776/R1778 — the toast's holder is REGISTERED rather than
+    // constructed, because it is also the thing the paint loop ticks.
+    // `register_animation_once` is gated on the cache for the reason its own
     // documentation gives: this hook re-runs on every view pass, and a second
-    // registration would count the toast's life down twice per frame.
+    // registration would count the sentence's life down twice per frame.
     //
-    // The returned handle is deliberately dropped, and that is not the
-    // swallowed-value pattern this file argues against elsewhere: it is a
-    // convenience `Rc` on a ticker the OWNER now holds, and everything this
-    // shell reads about the toast it reads through `toast_life`. Keeping a
-    // second handle here would be a second way to reach one fact.
-    let life = Signal::clone(&state.toast_life);
-    let _ticker = owner.register_animation_once(TOAST_LIFE_KEY, move || ToastLife { left: life });
-    state
+    // The opening sentence is said INSIDE the factory, so it runs once and
+    // "this screen opens having already spoken" is an act rather than a
+    // different type from its two siblings.
+    let toast = owner.register_animation_once(TOAST_LIFE_KEY, || {
+        let said = pinion_core::utterance::Saying::new(TOAST_SECONDS);
+        said.say(Utterance::done(format!("{} loaded", spec::PRESET)));
+        said
+    });
+    owner.cache(STATE_KEY, move || ShellState::new(clock, theme, toast))
 }
 
 // --- Geometry: ONE source, read by the paint and by the gesture --------------
@@ -3229,12 +3205,18 @@ impl ExternalIntrospect for ShellOracle {
             ),
             "remedies" => text(Remedy::ALL.map(Remedy::wire).join(",")),
             "steppers" => text(STEPPERS.map(|(verb, _)| verb).join(",")),
-            "toast" => text(state.toast.get().sentence()),
+            "toast" => text(state.toast.sentence()),
             // ★★★★★ R1719 — the same fact with its KIND on it, spelled `said`
             // on all three screens of this tool. `toast` stays the sentence a
             // person reads, because that is what its readers ask for.
+            //
+            // ★ R1778 — an OPTION on the wire now, because a sentence whose
+            // time is up is not being said. A client that read the old shape
+            // could not tell "nothing is showing" from "the last thing is still
+            // showing", which is the fact the lifetime introduced.
             "said" => Ok(IntrospectValue::Json(
-                serde_json::to_value(state.toast.get()).map_err(|_| ReadRefusal::UnknownPath)?,
+                serde_json::to_value(state.toast.showing())
+                    .map_err(|_| ReadRefusal::UnknownPath)?,
             )),
             "cursor" => {
                 let (x, y) = state.cursor.get();
@@ -3452,7 +3434,7 @@ impl ExternalIntrospect for ShellOracle {
                         )));
                     }
                 }
-                Ok(IntrospectValue::Text(state.toast.get().sentence()))
+                Ok(IntrospectValue::Text(state.toast.sentence()))
             }
             "key" => {
                 let chord = Self::text(&args)?;
@@ -8124,15 +8106,20 @@ fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
 /// remains open, because this shell has no text measurement of its own and
 /// inventing a third approximation of one would be adding the duplication a
 /// later round has to remove.
-fn toast_scene(state: &ShellState, palette: Palette) -> Scene {
+///
+/// ★★ R1778 — returns `None` once the sentence's time is up, so ONE place knows
+/// whether there is a toast. The call site used to hold that condition too, and
+/// two places knowing when a thing is drawn is how one of them comes to be
+/// wrong.
+fn toast_scene(state: &ShellState, palette: Palette) -> Option<Scene> {
+    let said = state.toast.showing()?;
     let rect = Rect::new(
         (win_w().saturating_sub(TOAST_W)) / 2,
         win_h().saturating_sub(22 + TOAST_H),
         TOAST_W,
         TOAST_H,
     );
-    let said = state.toast.get();
-    Scene::Container(
+    Some(Scene::Container(
         ContainerNode::new(vec![
             // ★★★★★ R1719 — the bullet was `accent_fg` whatever had been said.
             // A refusal and a confirmation were one picture, on the screen and
@@ -8152,7 +8139,7 @@ fn toast_scene(state: &ShellState, palette: Palette) -> Scene {
                 .with_border(Border::new(palette.outline, 1)),
         )
         .with_layout(absolute(rect)),
-    )
+    ))
 }
 
 /// Every colour the painters here read, resolved from one theme.
@@ -8279,7 +8266,7 @@ fn view(_state: ScreenState, frame: Frame) -> Scene {
         // still in the scene, still in the accessibility tree, and still over
         // the guest as far as `pinion_screen::layering` is concerned — and the
         // reader who reported this saw exactly what a permanent one does.
-        .chain((state.toast_life.get() > 0.0).then(|| toast_scene(&state, palette)))
+        .chain(toast_scene(&state, palette))
         // ★ R1695 — the layout bar and the palette are the DASHBOARD's. They sit
         // outside the region because they sit outside its rectangle, so the
         // substrate's guarantee does not reach them; the specification's
@@ -8787,8 +8774,19 @@ impl WidgetA11y for AnalyzerShellView {
             // change got the same treatment.
             AccessNode::new("shell.toast", AriaRole::Status)
                 .with_name("Activity")
-                .with_value(AccessValue::Text(state.toast.get().sentence()))
-                .with_live(AccessLive::for_urgency(state.toast.get().urgency())),
+                .with_value(AccessValue::Text(state.toast.sentence()))
+                // ★★ R1778 — the urgency of what is CURRENTLY said, and the
+                // polite one when nothing is. A live region stays in the tree
+                // whether or not it holds a sentence, so this needs an answer
+                // for silence; `Done`'s is the right one, because an empty
+                // region has nothing to interrupt a reader about.
+                .with_live(AccessLive::for_urgency(
+                    state
+                        .toast
+                        .showing()
+                        .map_or(Tone::Done, |said| said.tone())
+                        .urgency(),
+                )),
         );
         nodes
     }

@@ -45,7 +45,6 @@ mod painted;
 #[cfg(test)]
 mod tests;
 
-use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::rc::Rc;
 
@@ -110,6 +109,10 @@ const TREE_W: u32 = spec::PANES[1].width;
 const BYTES_W: u32 = spec::PANES[2].width;
 
 const PAD: u32 = 12;
+
+/// R1778 — how long this screen's message stays, in seconds. The reference's
+/// own number, and the same one its two sibling screens use.
+const TOAST_SECONDS: f32 = 2.6;
 
 /// R1707 — how wide the query box is. Wide enough for the reference's own
 /// three-clause query at this face, which is the longest thing the screen ever
@@ -448,7 +451,14 @@ struct ViewState {
     /// ★★★★★ R1719 — an [`Utterance`], so the one fact downstream needs (was
     /// this a refusal?) is a value rather than a `"query refused: "` prefix.
     /// `None` is "has not said anything yet", the only spelling of it now.
-    said: RefCell<Option<Utterance>>,
+    ///
+    /// ★★★★★ R1778 — and a `Saying` rather than a `RefCell`, which is the half of
+    /// this lift that only this screen needed. **A `RefCell` is not reactive.**
+    /// Of the three screens that keep a status message, this was the one whose
+    /// sentence nothing could observe changing, so a lifetime added here alone
+    /// would have expired with nothing repainting — the screen would have
+    /// looked unfixed while its code said otherwise.
+    said: Rc<pinion_core::utterance::Saying>,
 }
 
 impl ViewState {
@@ -458,16 +468,16 @@ impl ViewState {
     /// off the tone. This screen was measured announcing everything politely,
     /// including a query it refused to run.
     fn say(&self, what: Utterance) {
-        *self.said.borrow_mut() = Some(what);
+        self.said.say(what);
     }
 
     /// What a person reads, or an empty string when nothing has been said.
+    ///
+    /// ★ R1778 — the holder's own method now. Three screens had written this
+    /// same chain, which is what made it a thing to lift rather than a helper
+    /// to copy a fourth time.
     fn said_sentence(&self) -> String {
-        self.said
-            .borrow()
-            .as_ref()
-            .map(Utterance::sentence)
-            .unwrap_or_default()
+        self.said.sentence()
     }
 
     /// ★★★ R1707 — the running query, parsed.
@@ -577,6 +587,13 @@ fn use_view_state() -> Rc<ViewState> {
     let query = use_text_edit_state(QUERY_TAG);
     let owner = pinion_core::reactive::Owner::current()
         .expect("use_view_state requires an active Owner scope");
+    // ★★★★★ R1778 — the status holder is REGISTERED, because it is also what
+    // the paint loop ticks, and resolved out here for the same reason as the
+    // five above: a factory that calls another `use_*` hook re-enters
+    // `Owner::cache`, which refuses.
+    let said = owner.register_animation_once("packet_view.said", || {
+        pinion_core::utterance::Saying::new(TOAST_SECONDS)
+    });
     owner.cache("packet_view.state", || ViewState {
         row: Signal::new(spec::OPENING_ROW),
         field: Signal::new(spec::OPENING_FIELD.to_owned()),
@@ -604,7 +621,7 @@ fn use_view_state() -> Rc<ViewState> {
         tree_scroll,
         bytes_scroll,
         cursor: Signal::new((0, 0)),
-        said: RefCell::new(None),
+        said,
     })
 }
 
@@ -2706,8 +2723,8 @@ impl ExternalIntrospect for ViewOracle {
             // for `["sentence"]` instead — cheaper than three screens spelling
             // one concept three ways, which is the defect one level up from the
             // one this round is about.
-            "said" => Ok(IntrospectValue::Json(match state.said.borrow().as_ref() {
-                Some(said) => serde_json::to_value(said).map_err(|_| ReadRefusal::UnknownPath)?,
+            "said" => Ok(IntrospectValue::Json(match state.said.showing() {
+                Some(said) => serde_json::to_value(&said).map_err(|_| ReadRefusal::UnknownPath)?,
                 None => serde_json::Value::Null,
             })),
             "cursor" => {
@@ -3201,15 +3218,9 @@ fn app_bar_nodes(state: &Rc<ViewState>) -> Vec<AccessNode> {
         AccessNode::new("pv.appbar.said", AriaRole::Status)
             .with_name("activity")
             .with_value(AccessValue::Text(state.said_sentence()))
-            .with_live(
-                state
-                    .said
-                    .borrow()
-                    .as_ref()
-                    .map_or(AccessLive::Polite, |said| {
-                        AccessLive::for_urgency(said.urgency())
-                    }),
-            ),
+            .with_live(state.said.showing().map_or(AccessLive::Polite, |said| {
+                AccessLive::for_urgency(said.urgency())
+            })),
     ]
 }
 

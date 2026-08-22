@@ -805,7 +805,10 @@ struct LabState {
     /// express that: an [`Utterance`] refuses an empty clause, so the empty
     /// string this field used to hold — a screen announcing, and announcing
     /// nothing — has no spelling.
-    toast: Signal<Option<Utterance>>,
+    /// ★★★★★ R1778 — and its LIFETIME, in the holder the framework owns. This
+    /// screen's message used to stay up forever; a reader saw it stacked under
+    /// the host's over this very canvas.
+    toast: Rc<pinion_core::utterance::Saying>,
     /// ★★ R1683 — what the shared field is editing, or `None` while it is shut.
     editing: Signal<Option<Editing>>,
     /// ★★★★★ R1732 — the inspector row whose roster is open, and where in it
@@ -972,7 +975,7 @@ fn app_storage() -> Rc<AppStorage> {
 }
 
 fn use_lab_state() -> Rc<LabState> {
-    STATE.with(|slot| {
+    let state = STATE.with(|slot| {
         let mut slot = slot.borrow_mut();
         if let Some(state) = slot.as_ref() {
             return Rc::clone(state);
@@ -980,7 +983,29 @@ fn use_lab_state() -> Rc<LabState> {
         let state = Rc::new(LabState::opening());
         *slot = Some(Rc::clone(&state));
         state
-    })
+    });
+    // ★★★★★ R1778 — the toast's clock, registered ONCE PER OWNER.
+    //
+    // The sibling shell registers through `register_animation_once`, which
+    // builds the holder inside the owner's cache. That cannot be copied here,
+    // and the difference is the point: THIS screen's state is a `thread_local`
+    // that OUTLIVES owners. A holder built per owner would be a second one,
+    // leaving the state's own untouched; a holder built once and registered on
+    // every pass would be counted down once per view.
+    //
+    // So the holder belongs to the state and the REGISTRATION is what the
+    // owner-scoped marker makes once. Without it a fresh owner — which is what
+    // every test builds — would keep the state's toast and tick nothing, and
+    // the lifetime would be silently absent exactly where it is checked.
+    if let Some(owner) = pinion_core::reactive::Owner::current()
+        && !owner.cache_contains::<()>(TOAST_TICKER_KEY)
+    {
+        owner.register_animation(
+            Rc::clone(&state.toast) as Rc<dyn pinion_core::animation::Tickable>
+        );
+        let _marker = owner.cache(TOAST_TICKER_KEY, || ());
+    }
+    state
 }
 
 impl LabState {
@@ -1057,7 +1082,9 @@ impl LabState {
             cursor: Signal::new((0, 0)),
             drag: Signal::new(None),
             pressed: RefCell::new(None),
-            toast: Signal::new(None),
+            // ★ R1778 — silent at open, which every screen of this tool now
+            // spells the same way: a holder with nothing said yet.
+            toast: Rc::new(pinion_core::utterance::Saying::new(TOAST_SECONDS)),
             editing: Signal::new(None),
             picking: Signal::new(None),
             buffer: use_text_edit_state(EDIT_TAG),
@@ -1109,7 +1136,7 @@ impl LabState {
     /// neither can be set to a constant that is right for half of what this
     /// screen says.
     fn say(&self, what: Utterance) {
-        self.toast.set(Some(what));
+        self.toast.say(what);
     }
 
     /// The node the canvas labels `id`, or `None`.
@@ -3977,7 +4004,7 @@ fn toast_rect(state: &LabState) -> Option<Rect> {
     // spelling of that: the emptiness test this line used to make could not
     // tell a screen that had said nothing from one that had announced an empty
     // sentence, and an `Utterance` cannot be the second thing.
-    let said = state.toast.get()?.sentence();
+    let said = state.toast.showing()?.sentence();
     let canvas = canvas_rect();
     let hint = hint_rect();
     let gate = gate_rect(state);
@@ -4153,6 +4180,13 @@ fn host_row(state: &LabState, node: NodeId, stored: &ConfigForm) -> Option<Confi
 /// loop that holds it back, and the gate that judges it — and a fourth spelling
 /// of a dotted path is how a screen starts editing a key nothing ships.
 const DIALLED_KEY: &str = "connect.endpoints";
+
+/// R1778 — the owner-scoped marker that registers this screen's toast clock once.
+const TOAST_TICKER_KEY: &str = "hello-node-lab/toast-ticker";
+
+/// How long this screen's message stays, in seconds — the reference's own
+/// number, the same one its two sibling screens use.
+const TOAST_SECONDS: f32 = 2.6;
 
 /// The `connect.endpoints` row: **what somebody wrote and what this canvas
 /// draws, composed**.
@@ -6277,7 +6311,7 @@ fn canvas_toast(state: &LabState, ink: Ink) -> Option<Scene> {
     let seat = toast_rect(state)?;
     let seat = Rect::new(seat.x - pane.x, seat.y - pane.y, seat.w, seat.h);
     let inner = panel_content(seat);
-    let said = state.toast.get()?;
+    let said = state.toast.showing()?;
     let dot = Rect::new(inner.x + TOAST_PAD, inner.y + TOAST_PAD + 3, 7, 7);
     Some(panel(
         "lab.toast",
@@ -7839,14 +7873,10 @@ impl ExternalIntrospect for LabOracle {
                     .collect::<Vec<_>>()
                     .join(","),
             ),
-            "toast" => text(
-                state
-                    .toast
-                    .get()
-                    .map(|said| said.sentence())
-                    .unwrap_or_default(),
-            ),
-            "said" => Ok(IntrospectValue::Json(match state.toast.get() {
+            // ★ R1778 — the `map(..).unwrap_or_default()` chain that was here is
+            // the holder's own method now; three screens were writing it.
+            "toast" => text(state.toast.sentence()),
+            "said" => Ok(IntrospectValue::Json(match state.toast.showing() {
                 Some(said) => serde_json::to_value(&said)
                     .map_err(|_| ReadRefusal::UnknownPath)?,
                 None => serde_json::Value::Null,
@@ -8316,13 +8346,7 @@ impl ExternalIntrospect for LabOracle {
                         )));
                     }
                 }
-                Ok(IntrospectValue::Text(
-                    state
-                        .toast
-                        .get()
-                        .map(|said| said.sentence())
-                        .unwrap_or_default(),
-                ))
+                Ok(IntrospectValue::Text(state.toast.sentence()))
             }
             "key" => {
                 let chord = Self::text(&args)?;
@@ -11436,7 +11460,7 @@ fn gate_access(state: &LabState) -> Vec<AccessNode> {
     // driving it: `selected R-01` interrupted a screen reader. It comes off the
     // tone now, so a confirmation waits and a refusal cuts in, and neither is a
     // constant anybody can get half right.
-    if let Some(said) = state.toast.get() {
+    if let Some(said) = state.toast.showing() {
         nodes.push(
             AccessNode::new("lab.toast", AriaRole::Status)
                 .with_name(said.sentence())

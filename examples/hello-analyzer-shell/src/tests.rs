@@ -1658,7 +1658,7 @@ fn r1699_choosing_a_member_from_the_keyboard_does_something() {
                 .map(|(tag, r)| (tag, (r.x, r.y, r.w, r.h)))
                 .collect();
             tags.sort();
-            (tags, state.toast.get())
+            (tags, state.toast.showing())
         };
         let mut silent = Vec::new();
         let mut checked = 0;
@@ -2008,7 +2008,7 @@ fn r1701_a_click_on_a_header_that_moved_nothing_says_nothing() {
         oracle.attach_state(state.clone());
 
         let opened = board_layout(&state);
-        let said = state.toast.get();
+        let said = state.toast.showing();
         let (_, ax, ay) = grip_centre(0);
 
         point(&mut oracle, ax, ay);
@@ -2021,7 +2021,7 @@ fn r1701_a_click_on_a_header_that_moved_nothing_says_nothing() {
             "a click that carried nothing leaves the board alone"
         );
         assert_eq!(
-            state.toast.get(),
+            state.toast.showing(),
             said,
             "\u{2605} and says nothing, because there is nothing to say"
         );

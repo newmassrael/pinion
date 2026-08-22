@@ -2125,7 +2125,7 @@ fn r1688_the_jump_lands_on_the_card_the_first_finding_is_on() {
         assert_eq!(state.active_card(), Some(target));
         assert_eq!(said, first.sentence);
         assert_eq!(
-            state.toast.get().map(|said| said.sentence()),
+            state.toast.showing().map(|said| said.sentence()),
             Some(first.sentence.clone()),
             "and the person is told which finding they were taken to"
         );

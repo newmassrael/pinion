@@ -2041,3 +2041,56 @@ fn r1774_the_sweep_reaches_both_sides_of_every_clamp() {
     // and reads as a screen with no unexercised guard.
     census.assert_both_sides_reached("capture viewer", 3);
 }
+
+/// ★★★★★ R1778 — **what this screen says stops being said, and the SCREEN sees
+/// it stop.**
+///
+/// # The clause only this screen needed
+///
+/// Three screens of this tool keep a status message and none of them used to
+/// clear it; a reader found two of them stacked over a mounted screen. The
+/// lifetime that fixes that is the framework's now
+/// ([`pinion_core::utterance::Saying`]), and its own tests cover expiry.
+///
+/// What they cannot cover is THIS screen's particular hazard. Of the three, it
+/// was the one holding its sentence in a `RefCell` — **not reactive** — so a
+/// lifetime added to it alone would have expired with nothing repainting, and
+/// the screen would have looked unfixed while its code said otherwise. So this
+/// asks the question through the PAINT rather than through the holder: the
+/// sentence is on the frame, the clock runs, and the sentence is off the frame.
+///
+/// A test that read `state.said` on both sides would pass on the broken version.
+#[test]
+fn r1778_what_this_screen_says_leaves_the_frame_it_was_on() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_view_state();
+        state.say(pinion_core::utterance::Utterance::done("a thing happened"));
+
+        let before = painted_at(&state, (WIN_W, WIN_H)).0;
+        let showing = |shot: &Painted| {
+            shot.runs
+                .iter()
+                .any(|(text, _, _)| text == "a thing happened")
+        };
+        assert!(
+            showing(&before),
+            "the sentence must be PAINTED before the clock runs, or this gate \
+             would pass on a screen that never draws what it says",
+        );
+
+        // In the steps a paint loop takes, not one jump: a lifetime that only
+        // expires when handed its whole duration at once is not one a running
+        // application reaches.
+        for _ in 0..200 {
+            owner.tick_animations(1.0 / 60.0);
+        }
+
+        let after = painted_at(&state, (WIN_W, WIN_H)).0;
+        assert!(
+            !showing(&after),
+            "the sentence is still on the frame after its life ran out — which \
+             is what a non-reactive holder looks like from the outside",
+        );
+    });
+}

@@ -541,7 +541,7 @@ fn declared_tags(state: &LabState) -> Vec<String> {
     // something. Conditional for the same reason the four gated resets are: a
     // message region that was always there would be an empty box on the canvas,
     // and the reference paints its own only while there is something in it.
-    if state.toast.get().is_some() {
+    if state.toast.showing().is_some() {
         want.push("lab.toast".to_owned());
         want.push("lab.toast.dot".to_owned());
         want.push("lab.toast.text".to_owned());
@@ -3551,12 +3551,12 @@ fn r1684_the_centre_of_every_control_answers_a_press() {
                         _ => field.source().derived_from().map(str::to_owned),
                     });
                 let before = (witness(&state, "form"), witness(&state, "editing"));
-                let said_before = state.toast.get();
+                let said_before = state.toast.showing();
                 press_at(&state, at);
                 let after = (witness(&state, "form"), witness(&state, "editing"));
                 checked += 1;
                 if let Some(from) = derived {
-                    let said = state.toast.get();
+                    let said = state.toast.showing();
                     // ★★ R1719 — the tone is asked for as well as the words. A
                     // press on a row somebody cannot write is a REFUSAL, and
                     // before the tone was a value this check could only look
@@ -3787,7 +3787,7 @@ fn r1684_leaving_the_field_applies_what_is_in_it() {
         );
         // ★★ R1719 — asked as "did it refuse", not "does the wording contain
         // the word already". The tone is what the question was always about.
-        let said = state.toast.get().expect("the screen said something");
+        let said = state.toast.showing().expect("the screen said something");
         assert_eq!(
             said.tone(),
             Tone::Refused,
@@ -5785,4 +5785,55 @@ fn scope_witness(scope: super::ResetScope) -> &'static str {
         .find(|op| op.name == name)
         .unwrap_or_else(|| panic!("the operation table holds {name:?}"))
         .witness
+}
+
+/// ★★★★★ R1778 — **what this screen says stops being said, and the SCREEN sees
+/// it stop.**
+///
+/// The sibling clause on the capture viewer, and this screen needs its own for
+/// a different reason. There, the hazard was a non-reactive holder. Here it is
+/// the REGISTRATION: this screen keeps its state in a `thread_local` that
+/// OUTLIVES owners, so its status holder cannot be built by the owner's cache
+/// the way the shell's is. The holder belongs to the state and only the
+/// registration is made once per owner — and if that were wrong, a fresh owner
+/// would tick nothing while the state kept its sentence.
+///
+/// **Every test in this file builds a fresh owner.** So a mistake there would
+/// be invisible in exactly the place it is checked, which is why this drives
+/// the framework's own clock rather than calling the holder's `tick`.
+#[test]
+fn r1778_what_this_screen_says_leaves_the_frame_it_was_on() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        super::set_and_sync(&state, "id", "renamed-by-the-gate");
+
+        let sentence = state.toast.sentence();
+        assert!(
+            !sentence.is_empty(),
+            "the screen must have said something for this gate to be about \
+             anything",
+        );
+        let showing = |shot: &Painted| shot.runs.iter().any(|(text, _, _)| *text == sentence);
+
+        let before = painted_at(&state, (WIN_W, WIN_H)).0;
+        assert!(
+            showing(&before),
+            "{sentence:?} must be PAINTED before the clock runs, or this gate \
+             would pass on a screen that never draws what it says",
+        );
+
+        // Through the OWNER, which is what a backend drives once per paint, and
+        // in the steps a paint loop takes rather than one jump.
+        for _ in 0..200 {
+            owner.tick_animations(1.0 / 60.0);
+        }
+
+        let after = painted_at(&state, (WIN_W, WIN_H)).0;
+        assert!(
+            !showing(&after),
+            "{sentence:?} is still on the frame after its life ran out — either \
+             the lifetime is absent or this owner never registered the clock",
+        );
+    });
 }

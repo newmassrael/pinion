@@ -2694,12 +2694,12 @@ fn r1697_a_click_on_a_panel_does_not_announce_a_move() {
     owner.run(|| {
         let state = use_shell_state();
         let panel = detached(&state, "packet#0");
-        let opening = state.toast.get();
+        let opening = state.toast.showing();
 
         let shot = painted();
         press_tag(&state, &shot, "float.packet#0");
         assert_eq!(
-            state.toast.get(),
+            state.toast.showing(),
             opening,
             "a press and release that moved nothing said nothing new"
         );
@@ -2714,14 +2714,14 @@ fn r1697_a_click_on_a_panel_does_not_announce_a_move() {
         let shot = painted();
         drag_tag(&state, &shot, "float.packet#0", (30, 20));
         assert_ne!(
-            state.toast.get(),
+            state.toast.showing(),
             opening,
             "a drag that moved the panel announced it"
         );
         assert!(
-            state.toast.get().sentence().contains("moved"),
+            state.toast.sentence().contains("moved"),
             "and said what happened: {:?}",
-            state.toast.get()
+            state.toast.showing()
         );
     });
 }
