@@ -31,8 +31,9 @@ mod sm {
     include!("../generated/app_sm.rs");
 }
 
-use sce_rust_runtime::{Engine, StatePolicy};
+use sce_rust_runtime::{ConfigurationRejection, Engine, StatePolicy};
 
+use crate::resume::{Configuration, configuration_of};
 use crate::topology;
 use crate::widgets::Sent;
 
@@ -77,6 +78,42 @@ impl App {
     #[must_use]
     pub fn state(&self) -> AppState {
         self.engine.get_current_state()
+    }
+
+    /// ★ R1768 — the configuration the application machine is in.
+    ///
+    /// The window-topology twin of the widget facade's method of the same
+    /// name; both forward to [`crate::resume`] so the rule lives in one place
+    /// and has two doors.
+    #[must_use]
+    pub fn configuration(&self) -> Configuration<AppState> {
+        configuration_of(&self.engine)
+    }
+
+    /// ★★★★★ R1768 — put the application machine back into `saved`, running no
+    /// `<onentry>`.
+    ///
+    /// What this buys at the topology level: a host bringing an application
+    /// back in a new process gets its window configuration without re-running
+    /// the entry actions that opened those windows the first time.
+    ///
+    /// # Errors
+    ///
+    /// Returns the engine's `ConfigurationRejection` when `saved` is not a
+    /// configuration of `app.scxml`. A refused call leaves the machine
+    /// untouched.
+    ///
+    /// ⚠ A `<parallel>` root whose regions are atomic — the multi-window shape
+    /// §5.17 declares — currently publishes a pair the engine's own validator
+    /// refuses. That is an upstream contract hole, recorded in
+    /// `memory/sce-upstream-debts.md` and pinned by a test in
+    /// [`crate::resume`]; it does not affect the single-root `app.scxml` this
+    /// type is built on today.
+    pub fn resume_at(
+        &mut self,
+        saved: &Configuration<AppState>,
+    ) -> Result<(), ConfigurationRejection<AppState>> {
+        crate::resume::resume_at(&mut self.engine, saved)
     }
 
     /// Initial window — §5.18 absent-prefix short-circuit target.

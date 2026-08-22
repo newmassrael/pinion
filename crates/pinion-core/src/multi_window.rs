@@ -33,7 +33,11 @@ use sce_rust_runtime::StatePolicy;
 
 use crate::topology;
 
-use sm::MultiWindowPolicy;
+// R1768 — `pub(crate)` because `crate::resume`'s tests need the one policy in
+// this tree with a `<parallel>` root: it is the only one the generator emits
+// `set_active_states` for, so it is the only one that can prove the restore
+// door reaches a machine that keeps its own active set.
+pub(crate) use sm::MultiWindowPolicy;
 pub use sm::MultiWindowState;
 
 /// Parallel-root window fixture exposing the same topology surface as

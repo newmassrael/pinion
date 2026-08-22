@@ -58060,6 +58060,68 @@
         "conforms\" is a claim about the two that were measured."
       ]
     },
+    "R1768": {
+      "decision_summary": "R1768 moves the SCE pin nine commits to 3e640b130a and takes the restore door it opens: a statechart can be put back into a configuration it was in WITHOUT re-running the entry actions that first got it there. The consumption is `pinion_core::resume`, reached from every widget through `Widget::resume_at` and from the application through `App::resume_at`. The round's largest finding is not the feature but a hole in it, found by consuming rather than by reading: for a `<parallel>` root whose regions are ATOMIC, the engine's two published readers produce a pair its own validator refuses, which makes the one generated line this bump added unreachable in this tree. Registered upstream as SCE-006 and pinned by a test that is meant to go red the day upstream closes it.",
+      "changes_bullets": [
+        "SCE pin 6399fad49c -> 3e640b130a across the triple pin (gitlink, two manifest revs, lock), `pin_sync.py --check-dual-pin` reporting `manifest = lock = vendor/sce`",
+        "`crates/pinion-core/generated/` regenerated against the new pin and committed, the diff being the measurement rather than a build-twice-and-compare",
+        "`pinion_core::resume` -- `Configuration<S>` carrying both readers' values, `configuration_of` and `resume_at`, the rejection passed through unflattened",
+        "`Widget::configuration` / `Widget::resume_at` and `App::configuration` / `App::resume_at`, two doors onto one rule",
+        "`crates/pinion-rpc/src/rewind.rs` module doc corrected: the clause it waited on since it was written is spent"
+      ],
+      "verification_bullets": [
+        "`pin_sync.py --check-dual-pin` -> `dual pin: SCE@3e640b1 (manifest = lock = vendor/sce)`, run after the lock was regenerated so the state that ships is the state that was checked",
+        "THE EMIT IS THE MEASUREMENT (R1766): `git diff crates/pinion-core/generated/` = 15 files, 27 insertions, 15 deletions -- fourteen of them the `template-hash` header line ALONE, and `multi_window_sm.rs` +14/-1 carrying a generated `set_active_states`. R1765 needed two builds against two revisions and a hand diff of two OUT_DIRs to answer the same question",
+        "`cargo test -p pinion-core --test statechart_emit` 4 passed 0 failed, including `committed_statechart_emit_equals_what_the_pinned_generator_produces` -- so the committed bytes are the pinned generator's, not a hand edit",
+        "`cargo test -p pinion-core` 3,870 lib assertions passed 0 failed, of which 8 are this round's: 7 in `resume::tests` and `widgets::widget::tests::r1768_a_shipped_widget_round_trips_through_the_facade`",
+        "THE HEADLINE IS A COUNTER, NOT AN ARGUMENT: driving into `spin` costs `truncated_macrosteps() == 1` and resuming into it costs `0`, both landing in the same state -- which is why the assertion is written against the counter and not against the state",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello` 0 warnings and 0 errors. It caught the first draft twice: `assert!` on an associated const is optimised out, and the const-context rewrite was `items_after_statements`. The repair was neither override -- the fact belongs to the emit gate, so the assertion was REMOVED as a second account",
+        "`cargo test --workspace` exit 0 with no target reporting FAILED, 350 targets reporting a result. Deliberately not quoted as a total: R1766 measured that a regex over `test result:` lines silently loses some under parallel test threads, so cargo's exit status and the absence of a FAILED line is the verdict",
+        "NOT RUN and stated: the demo sweep, and any RPC demo -- this round's capability has no wire surface, which is registered as its own debt rather than left as a silent gap",
+        "`cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items` exit 0. ⚠ The PLAIN form was run first and ICEd in `hello-node-lab` (`no resolutions for a doc link`) -- that is R1728's still-open debt, not this round's change, and the gate's own command is the one with the flags"
+      ],
+      "impact_refs": [
+        "5.4",
+        "5.8",
+        "5.17",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "SCE-006 (memory/sce-upstream-debts.md) -- a `<parallel>` with atomic regions publishes a (chain, current) pair its own engine refuses. Not fixable from here: another repository. Pinned by `resume::tests::r1768_a_parallel_with_atomic_regions_publishes_a_pair_its_own_engine_refuses`, which asserts the DEFECT and is meant to go red when upstream closes it.",
+        "memory/debt-the-resume-door-is-not-on-the-wire.md -- the RPC leg is unbuilt: a widget's machine has no address in the `/external/<path>` space and a configuration has no wire form. Two design decisions this round never had an answer to, which is why it is registered rather than carried silently. NOT \"no consumer\" -- that is not a valid carry reason here.",
+        "The one newer upstream commit (ebee8c932a) is deliberately left for its own round, per the one-bump-one-round shape R1765 and R1766 established."
+      ],
+      "publishable_decision_summary": "R1768 moves the SCE pin nine commits to 3e640b130a and takes the restore door it opens: a statechart can be put back into a configuration it was in WITHOUT re-running the entry actions that first got it there. The consumption is `pinion_core::resume`, reached from every widget through `Widget::resume_at` and from the application through `App::resume_at`. The round's largest finding is not the feature but a hole in it, found by consuming rather than by reading: for a `<parallel>` root whose regions are ATOMIC, the engine's two published readers produce a pair its own validator refuses, which makes the one generated line this bump added unreachable in this tree. Registered upstream as SCE-006 and pinned by a test that is meant to go red the day upstream closes it.",
+      "publishable_changes_bullets": [
+        "SCE pin 6399fad49c -> 3e640b130a across the triple pin (gitlink, two manifest revs, lock), `pin_sync.py --check-dual-pin` reporting `manifest = lock = vendor/sce`",
+        "`crates/pinion-core/generated/` regenerated against the new pin and committed, the diff being the measurement rather than a build-twice-and-compare",
+        "`pinion_core::resume` -- `Configuration<S>` carrying both readers' values, `configuration_of` and `resume_at`, the rejection passed through unflattened",
+        "`Widget::configuration` / `Widget::resume_at` and `App::configuration` / `App::resume_at`, two doors onto one rule",
+        "`crates/pinion-rpc/src/rewind.rs` module doc corrected: the clause it waited on since it was written is spent"
+      ],
+      "publishable_verification_bullets": [
+        "`pin_sync.py --check-dual-pin` -> `dual pin: SCE@3e640b1 (manifest = lock = vendor/sce)`, run after the lock was regenerated so the state that ships is the state that was checked",
+        "THE EMIT IS THE MEASUREMENT (R1766): `git diff crates/pinion-core/generated/` = 15 files, 27 insertions, 15 deletions -- fourteen of them the `template-hash` header line ALONE, and `multi_window_sm.rs` +14/-1 carrying a generated `set_active_states`. R1765 needed two builds against two revisions and a hand diff of two OUT_DIRs to answer the same question",
+        "`cargo test -p pinion-core --test statechart_emit` 4 passed 0 failed, including `committed_statechart_emit_equals_what_the_pinned_generator_produces` -- so the committed bytes are the pinned generator's, not a hand edit",
+        "`cargo test -p pinion-core` 3,870 lib assertions passed 0 failed, of which 8 are this round's: 7 in `resume::tests` and `widgets::widget::tests::r1768_a_shipped_widget_round_trips_through_the_facade`",
+        "THE HEADLINE IS A COUNTER, NOT AN ARGUMENT: driving into `spin` costs `truncated_macrosteps() == 1` and resuming into it costs `0`, both landing in the same state -- which is why the assertion is written against the counter and not against the state",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello` 0 warnings and 0 errors. It caught the first draft twice: `assert!` on an associated const is optimised out, and the const-context rewrite was `items_after_statements`. The repair was neither override -- the fact belongs to the emit gate, so the assertion was REMOVED as a second account",
+        "`cargo test --workspace` exit 0 with no target reporting FAILED, 350 targets reporting a result. Deliberately not quoted as a total: R1766 measured that a regex over `test result:` lines silently loses some under parallel test threads, so cargo's exit status and the absence of a FAILED line is the verdict",
+        "NOT RUN and stated: the demo sweep, and any RPC demo -- this round's capability has no wire surface, which is registered as its own debt rather than left as a silent gap",
+        "`cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items` exit 0. ⚠ The PLAIN form was run first and ICEd in `hello-node-lab` (`no resolutions for a doc link`) -- that is R1728's still-open debt, not this round's change, and the gate's own command is the one with the flags"
+      ],
+      "publishable_impact_refs": [
+        "5.4",
+        "5.8",
+        "5.17",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "SCE-006 (memory/sce-upstream-debts.md) -- a `<parallel>` with atomic regions publishes a (chain, current) pair its own engine refuses. Not fixable from here: another repository. Pinned by `resume::tests::r1768_a_parallel_with_atomic_regions_publishes_a_pair_its_own_engine_refuses`, which asserts the DEFECT and is meant to go red when upstream closes it.",
+        "memory/debt-the-resume-door-is-not-on-the-wire.md -- the RPC leg is unbuilt: a widget's machine has no address in the `/external/<path>` space and a configuration has no wire form. Two design decisions this round never had an answer to, which is why it is registered rather than carried silently. NOT \"no consumer\" -- that is not a valid carry reason here.",
+        "The one newer upstream commit (ebee8c932a) is deliberately left for its own round, per the one-bump-one-round shape R1765 and R1766 established."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

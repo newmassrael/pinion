@@ -13,9 +13,10 @@
 //! with sidecar state (Toggle's `value: bool`) is a newtype that
 //! holds a `Widget<P>` and adds its own fields and methods.
 
-use sce_rust_runtime::{Engine, StatePolicy};
+use sce_rust_runtime::{ConfigurationRejection, Engine, StatePolicy};
 
 use crate::intent::Intent;
+use crate::resume::{Configuration, configuration_of};
 
 /// ★★★★★ R1739 — what driving an event through a statechart did.
 ///
@@ -141,6 +142,41 @@ impl<P: StatePolicy> Widget<P> {
     /// see*.
     pub fn discarded(&self) -> u32 {
         self.engine.discarded_external_events()
+    }
+
+    /// ★ R1768 — the configuration this widget's machine is in, as a value a
+    /// host can keep.
+    ///
+    /// Free of side effects: taking a snapshot never drives the machine. See
+    /// [`crate::resume`] for what the pair carries and why it is two values.
+    #[must_use]
+    pub fn configuration(&self) -> Configuration<P::State> {
+        configuration_of(&self.engine)
+    }
+
+    /// ★★★★★ R1768 — put this widget's machine back into `saved`, running no
+    /// `<onentry>`.
+    ///
+    /// This is the door that makes a persisted widget restorable without
+    /// replaying how it got there. Constructing the widget and driving it to
+    /// the same state re-runs every entry action on the way in, which for a
+    /// chart whose entry action sends or raises means doing it all a second
+    /// time to a world that already saw it once.
+    ///
+    /// The engine is left running and settled; drive it on with
+    /// [`send`](Self::send) as usual.
+    ///
+    /// # Errors
+    ///
+    /// Returns the engine's `ConfigurationRejection` when `saved` is not a
+    /// configuration of this widget's document — naming which rule failed, not
+    /// merely refusing. Validation runs before any mutation, so a refused call
+    /// leaves the widget exactly where it was.
+    pub fn resume_at(
+        &mut self,
+        saved: &Configuration<P::State>,
+    ) -> Result<(), ConfigurationRejection<P::State>> {
+        crate::resume::resume_at(&mut self.engine, saved)
     }
 }
 
@@ -351,6 +387,54 @@ mod tests {
     //! * `None` does not push (silent transitions)
     use super::*;
     use crate::external::IntrospectValue;
+
+    /// ★★★★★ R1768 — **a widget the framework ships is restorable, which is
+    /// what makes the engine's new door a pinion capability rather than a
+    /// dependency's feature.**
+    ///
+    /// `crate::resume`'s own tests drive a fixture chart, because an
+    /// entry-raising chart is the only thing that makes *entering* observable.
+    /// This one drives a **product** widget through the facade, which is the
+    /// claim a consumer actually needs: a button parked somewhere other than
+    /// its initial state comes back there in a machine that never went through
+    /// the press.
+    #[test]
+    fn r1768_a_shipped_widget_round_trips_through_the_facade() {
+        use crate::widgets::button::{Button, ButtonEvent, ButtonState};
+
+        let mut pressed = Button::new();
+        pressed.send(ButtonEvent::PointerEnter);
+        pressed.send(ButtonEvent::PointerDown);
+        assert_eq!(
+            pressed.state(),
+            ButtonState::Pressed,
+            "the premise: this widget is somewhere other than where it starts"
+        );
+        let saved = pressed.configuration();
+
+        let mut fresh = Button::new();
+        assert_eq!(
+            fresh.state(),
+            ButtonState::Idle,
+            "and the other premise: a new one starts at the initial state"
+        );
+
+        fresh
+            .resume_at(&saved)
+            .expect("a configuration a real button was in");
+
+        assert_eq!(
+            fresh.state(),
+            ButtonState::Pressed,
+            "a persisted widget comes back where it was, without being pressed"
+        );
+        assert_eq!(
+            fresh.discarded(),
+            0,
+            "and without any event having been driven through it to get there — \
+             a resume that replayed the way in would have sent two"
+        );
+    }
 
     /// Minimal `WidgetTransition` fixture with explicit state control.
     /// `Event` carries the next state directly so tests fully control

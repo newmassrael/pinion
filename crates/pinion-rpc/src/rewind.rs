@@ -7,9 +7,18 @@
 //! [`ExternalIntrospect::intervene`](pinion_core::external::ExternalIntrospect::intervene).
 //!
 //! Combined with `scene/query`, this is the symbolic snapshot/restore
-//! primitive that anchors §5.8 `dry_run` once an engine-level hook is
-//! wired in; for now it is the standalone state-write half of the RPC
-//! surface.
+//! primitive that anchors §5.8 `dry_run`; for now it is the standalone
+//! state-write half of the RPC surface.
+//!
+//! ★ R1768 — **the engine-level hook this used to be waiting on now exists.**
+//! The sentence here read "once an engine-level hook is wired in" for as long
+//! as this module has, and that clause is spent: `pinion_core::resume` takes a
+//! statechart's configuration and puts it back without re-running `<onentry>`,
+//! reached from a widget through `Widget::resume_at` and from the application
+//! through `App::resume_at`. What is still absent is the *wire* leg — an
+//! address for a widget's machine and a wire form for a configuration — so
+//! this module and that one do not yet meet. See
+//! `memory/debt-the-resume-door-is-not-on-the-wire.md`.
 
 use pinion_core::Scene;
 use pinion_core::external::{InterveneError, IntrospectValue};

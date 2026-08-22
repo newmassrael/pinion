@@ -53,6 +53,12 @@ mod sm {
     include!("../generated/self_answering_raise_sm.rs");
 }
 
+// R1768 — `crate::resume`'s tests drive this same chart, because an entry
+// action that raises is the only thing in this tree that makes *entering* a
+// state observable from outside. Re-exported rather than duplicated: a second
+// runaway fixture would be a second account of one fact.
+pub(crate) use sm::{SelfAnsweringRaiseEvent, SelfAnsweringRaisePolicy, SelfAnsweringRaiseState};
+
 #[cfg(test)]
 mod tests {
     use super::sm::{SelfAnsweringRaiseEvent, SelfAnsweringRaisePolicy, SelfAnsweringRaiseState};

@@ -1,6 +1,6 @@
 // SCE-GENERATED — DO NOT EDIT
 // source-hash: 8d5d5f55c59a80f286590ac9ad0a651ea8efb4491f4acc85280b39aa71b27c23
-// template-hash: 9e58079798860750ba2c09dba99dbb82e1b3cc898d83db8c612e2ee667ca8b06
+// template-hash: a28d7ea5ccf74928e821c800f68250a93c021efbe7635eb04a0348f81decc1d0
 // generated-at: 0
 
 
@@ -392,6 +392,18 @@ impl StatePolicy for MultiWindowPolicy {
     // both resolve correctly.
     fn get_active_states(&self) -> ::sce_rust_runtime::helpers::hierarchy::StateChain<Self::State> {
         self.active_states.clone()
+    }
+
+    // SCE scxml-3.4: the write half of the pair above, for `Engine::enter_at`.
+    // Emitted under the same condition as the read half because the same fact
+    // decides both — this machine keeps its own active set, so this machine is
+    // the one that can be handed one back. The trait default is a tripwire, so
+    // emitting the reader without this one would turn a restore into a panic.
+    fn set_active_states(
+        &mut self,
+        states: ::sce_rust_runtime::helpers::hierarchy::StateChain<Self::State>,
+    ) {
+        self.active_states = states;
     }
 
 
