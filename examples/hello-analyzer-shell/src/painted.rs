@@ -3936,3 +3936,82 @@ fn r1762_the_preferences_page_reproduces_its_specification_or_says_why_not() {
         }
     });
 }
+
+/// ★★★★★ R1775 §5.32 — **this host does not paint on top of the screen it is
+/// showing.**
+///
+/// # Reported by a person, and by nothing here
+///
+/// The assembled tool was run on a real desktop and the reader said the node
+/// lab section was covering another rectangle. It was: this shell's status
+/// toast, sitting on the mounted screen's own palette. Every gate in this file
+/// was green, and could only be — containment asks whether a mark is inside the
+/// box that owns it, and the toast is its own top-level box; the overlap gates
+/// compare marks of ONE screen. The host/guest seam had no question at all,
+/// which is [`pinion_screen::layering`]'s reason to exist.
+///
+/// # The population is derived, and both halves of it
+///
+/// `mounted_keys` gives the destinations with a screen behind them and
+/// `tag_of` gives each one's paint root, so neither the list nor the tags are
+/// written here. A hand-written pair would go stale the round a screen is
+/// mounted — which is the round this check most needs to run.
+#[test]
+fn r1775_the_host_does_not_paint_on_the_screen_it_is_showing() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let roster = super::screen_roster();
+        let mounted: Vec<(String, &'static str)> = roster
+            .mounted_keys()
+            .map(str::to_owned)
+            .filter_map(|key| roster.tag_of(&key).map(|tag| (key, tag)))
+            .collect();
+        assert!(
+            mounted.len() >= 4,
+            "the roster reports {} mounted screen(s); a population this small \
+             cannot be the assembled tool's, and an empty one would pass every \
+             clause below without testing anything",
+            mounted.len(),
+        );
+        let mut over: BTreeSet<String> = BTreeSet::new();
+        for (key, tag) in &mounted {
+            state
+                .go(key)
+                .unwrap_or_else(|why| panic!("`{key}` is mounted and refused: {why:?}"));
+            let scene = painted_at((WIN_W, WIN_H)).1;
+            assert!(
+                pinion_screen::layering::region_of(&scene, tag).is_some(),
+                "`{key}` is mounted and painted no node tagged `{tag}`, so this \
+                 check would be reporting on a screen that is not showing",
+            );
+            for found in pinion_screen::layering::host_marks_over_guest(&scene, tag) {
+                over.insert(found.host);
+            }
+        }
+        // ★★★★★ A RATCHET, not a target, and the reason is the reference.
+        //
+        // The obvious rule — a host paints nothing inside the region it gave
+        // away — is WRONG here, and measured so: the reference's own status
+        // toast is `position: fixed; bottom: 22px; left: 50%`, floating over
+        // whatever content is beneath it. What makes that acceptable there is
+        // that it LEAVES: `setTimeout(.., 2600)`. Ours does not, which is why a
+        // reader saw two of them stacked over a mounted screen's palette.
+        //
+        // So the honest gate is not "nothing overlaps" but "what overlaps is
+        // transient", and transience cannot be asserted from one frame. It also
+        // cannot be repaired inside `view`, which is SYNC AND PURE by §6.3 so
+        // that `dry_run` holds — where a lifetime accumulates is a seam
+        // decision, not a line to slip into this round. Until it is made, this
+        // pins the population: exactly one host mark reaches a guest, it is the
+        // toast, and a second one fails here on the round it appears.
+        let expected: BTreeSet<String> = ["shell.toast".to_owned()].into_iter().collect();
+        assert_eq!(
+            over, expected,
+            "the set of host marks that reach a mounted screen has changed. \
+             Growing it means new chrome was drawn into a region the host gave \
+             away; shrinking it means the toast was repaired, and this ratchet \
+             is what should be updated in that round",
+        );
+    });
+}

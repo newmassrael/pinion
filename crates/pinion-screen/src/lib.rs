@@ -76,6 +76,7 @@
 pub mod conformance;
 pub mod coverage;
 pub mod journey;
+pub mod layering;
 mod mount;
 mod roster;
 

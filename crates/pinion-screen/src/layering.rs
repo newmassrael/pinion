@@ -1,0 +1,254 @@
+//! R1775 §5.32 — **does the host paint on top of the screen it is showing?**
+//!
+//! A host with a destination roster hands one of its destinations a region and
+//! a guest fills it. Everything the host draws *around* that region — its
+//! navigation, its application bar — is chrome the guest is told about through
+//! [`HostChrome`](pinion_core::chrome::HostChrome) so it can omit its own.
+//! Nothing has ever asked the other question: **does the host draw anything
+//! INSIDE the region it gave away?**
+//!
+//! # Why nothing here could see it
+//!
+//! The containment gates screens carry ask whether a mark lies inside the box
+//! that owns it. A host's floating overlay is its own top-level box, so it is
+//! inside itself and every such gate passes. Overlap gates ask whether two
+//! marks of ONE screen cover each other. Between the two there is no question
+//! that spans the host/guest seam, and the defect that prompted this module
+//! lived there: an analysis tool's status toast was positioned against the
+//! rectangle its dashboard uses for a canvas, which was the whole page while
+//! the host painted every page itself. Once screens were mounted, the region a
+//! destination receives became a *different, larger* rectangle, and the toast
+//! landed on the guest's own palette. A person saw it; no gate could.
+//!
+//! # The host is derived from the scene, not from a name
+//!
+//! A mark belongs to the guest when the guest's node is one of its ancestors,
+//! which is a fact about the tree rather than about a tag's spelling. That
+//! matters here: a prefix convention would make this check a second place where
+//! naming is load-bearing, and this repository has paid for that before.
+//!
+//! **An ancestor of the guest is not over it.** The window root contains the
+//! page and so intersects it in the trivial way; a check that counted that
+//! would report every host as covering every guest and would be useless. What
+//! is reported is a mark that is neither inside the guest nor a container
+//! holding it — something drawn *beside* the page in the tree and *on* it in
+//! the window.
+
+use std::collections::BTreeSet;
+
+use pinion_core::Scene;
+use pinion_core::scene::Rect;
+
+/// One host mark found lying over one guest mark.
+///
+/// Both tags and both rectangles, because a report of an overlap owes the
+/// reader the overlap: a count cannot be acted on, and this repository spent
+/// three wrong repairs on a sibling gate that named a number and not a place.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Overlap {
+    /// The host's mark — what is on top.
+    pub host: String,
+    /// The guest's mark it covers.
+    pub guest: String,
+    /// Where the host's mark is, in window coordinates.
+    pub host_rect: Rect,
+    /// Where the guest's mark is, in the same coordinates.
+    pub guest_rect: Rect,
+}
+
+/// Whether two rectangles share any pixel.
+fn meets(a: Rect, b: Rect) -> bool {
+    !(a.x >= b.x + b.w || b.x >= a.x + a.w || a.y >= b.y + b.h || b.y >= a.y + a.h)
+}
+
+/// Every mark of the host that lies over a mark of the guest at `guest_tag`.
+///
+/// Returns empty when the scene holds no node with that tag: a host showing no
+/// guest cannot be covering one. Callers that need to know the guest was
+/// actually there should assert that separately — see
+/// [`assert_host_clears_guest`], which does.
+#[must_use]
+pub fn host_marks_over_guest(scene: &Scene, guest_tag: &str) -> Vec<Overlap> {
+    let mut guest: Vec<(String, Rect)> = Vec::new();
+    let mut host: Vec<(String, Rect)> = Vec::new();
+    scene.for_each_node(&mut |visit| {
+        let (Some(tag), Some(rect)) = (visit.node.tag(), visit.absolute_rect()) else {
+            return;
+        };
+        let inside_guest = tag == guest_tag
+            || visit
+                .ancestors
+                .iter()
+                .any(|a| a.tag().is_some_and(|t| t == guest_tag));
+        if inside_guest {
+            // The guest's own root is the region itself. Its members are what a
+            // host can cover; the region is what the host GAVE, so an overlay
+            // over the region alone is not yet evidence of anything.
+            if tag != guest_tag {
+                guest.push((tag.to_owned(), rect));
+            }
+        } else {
+            host.push((tag.to_owned(), rect));
+        }
+    });
+    // ★★★★★ An ancestor of the guest holds it and does not cover it — and
+    // ancestry is read from the TREE, not from the rectangles.
+    //
+    // The first draft asked whether the mark geometrically contained the
+    // guest's region, and the very first run refused the window root: measured,
+    // the region a mounted screen receives was `(52, 52, 1425, 848)` in a
+    // 1440-wide window, so `52 + 1425 = 1477` puts it OUTSIDE its own root and
+    // no ancestor contains it. Geometry cannot answer a question about
+    // structure — least of all here, where a region overflowing its window is
+    // one of the defects this module exists to help find.
+    let held_by = ancestors_of(scene, guest_tag);
+    host.retain(|(tag, _)| !held_by.contains(tag.as_str()));
+
+    let mut found = Vec::new();
+    for (host_tag, host_rect) in &host {
+        for (guest_tag_found, guest_rect) in &guest {
+            if meets(*host_rect, *guest_rect) {
+                found.push(Overlap {
+                    host: host_tag.clone(),
+                    guest: guest_tag_found.clone(),
+                    host_rect: *host_rect,
+                    guest_rect: *guest_rect,
+                });
+            }
+        }
+    }
+    found
+}
+
+/// The tags of every container the guest's node hangs beneath.
+///
+/// Read from the ancestor chain the walk already carries, because that is what
+/// "holds" means. See the note at its one call site for what asking this
+/// geometrically cost on the first run.
+fn ancestors_of(scene: &Scene, guest_tag: &str) -> BTreeSet<String> {
+    let mut held = BTreeSet::new();
+    scene.for_each_node(&mut |visit| {
+        if visit.node.tag() == Some(guest_tag) {
+            for above in visit.ancestors {
+                if let Some(tag) = above.tag() {
+                    held.insert(tag.to_owned());
+                }
+            }
+        }
+    });
+    held
+}
+
+/// The rectangle the guest's own node occupies, when it is in the scene.
+#[must_use]
+pub fn region_of(scene: &Scene, guest_tag: &str) -> Option<Rect> {
+    let mut found = None;
+    scene.for_each_node(&mut |visit| {
+        if found.is_none() && visit.node.tag() == Some(guest_tag) {
+            found = visit.absolute_rect();
+        }
+    });
+    found
+}
+
+/// ★★★★★ The whole rule as one call: the guest is on this frame, it drew
+/// something, and nothing of the host's lies on top of any of it.
+///
+/// # Panics
+///
+/// With the tags and both rectangles named, on any of the three counts. The
+/// population clauses come first for the reason every census in this tree
+/// carries one: a frame with no guest, or a guest with no marks, satisfies the
+/// overlap clause vacuously and would read as *the host keeps out of the page*.
+pub fn assert_host_clears_guest(scene: &Scene, guest_tag: &str) {
+    let region = region_of(scene, guest_tag);
+    assert!(
+        region.is_some(),
+        "no node tagged `{guest_tag}` is on this frame, so the question of \
+         whether the host covers it cannot be asked — a check that passed here \
+         would be reporting on a screen that is not showing",
+    );
+    let over = host_marks_over_guest(scene, guest_tag);
+    let drew = {
+        let mut n = 0usize;
+        scene.for_each_node(&mut |visit| {
+            if let Some(tag) = visit.node.tag()
+                && tag != guest_tag
+                && visit
+                    .ancestors
+                    .iter()
+                    .any(|a| a.tag().is_some_and(|t| t == guest_tag))
+            {
+                n += 1;
+            }
+        });
+        n
+    };
+    assert!(
+        drew > 0,
+        "`{guest_tag}` is on this frame and painted no marks of its own, so \
+         nothing of the host's could be over one",
+    );
+    assert!(
+        over.is_empty(),
+        "the host paints on top of the screen it is showing — {over:#?}",
+    );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Overlap, meets};
+    use pinion_core::scene::Rect;
+
+    #[test]
+    fn two_rectangles_that_share_a_pixel_meet() {
+        assert!(meets(Rect::new(0, 0, 10, 10), Rect::new(9, 9, 10, 10)));
+    }
+
+    #[test]
+    fn rectangles_that_only_touch_edges_do_not_meet() {
+        assert!(!meets(Rect::new(0, 0, 10, 10), Rect::new(10, 0, 10, 10)));
+        assert!(!meets(Rect::new(0, 0, 10, 10), Rect::new(0, 10, 10, 10)));
+    }
+
+    /// ★★★★★ The measurement that settled how ancestry is read here.
+    ///
+    /// A container holding the page was first identified by asking whether it
+    /// geometrically CONTAINED the page, and the first run of this module
+    /// against the assembled tool refused that immediately. These are its
+    /// numbers: the region a mounted screen received reaches 52 + 1425 = 1477
+    /// in a 1440-wide window, so the window root does not contain the page it
+    /// holds. Ancestry is structural and is read from the tree — geometry
+    /// cannot answer it, least of all here, where a region overflowing its
+    /// window is one of the defects this module helps find.
+    #[test]
+    fn a_holder_can_be_smaller_than_what_it_holds() {
+        let root = Rect::new(0, 0, 1440, 900);
+        let region = Rect::new(52, 52, 1425, 848);
+        assert!(
+            region.x + region.w > root.x + root.w,
+            "the measured region overflows its root, which is what makes a \
+             geometric test for ancestry answer wrongly",
+        );
+        assert!(meets(root, region), "and it does still overlap it");
+    }
+
+    /// A mark that merely straddles the page is exactly what this module
+    /// reports, and it must not be mistaken for a container of it.
+    #[test]
+    fn a_mark_that_straddles_the_page_is_an_overlap_not_a_holder() {
+        assert!(meets(Rect::new(0, 0, 20, 20), Rect::new(10, 10, 20, 20)));
+    }
+
+    #[test]
+    fn an_overlap_carries_both_places() {
+        let over = Overlap {
+            host: "shell.toast".into(),
+            guest: "lab.palette".into(),
+            host_rect: Rect::new(76, 842, 560, 34),
+            guest_rect: Rect::new(68, 100, 230, 800),
+        };
+        assert_eq!(over.host, "shell.toast");
+        assert!(meets(over.host_rect, over.guest_rect));
+    }
+}
