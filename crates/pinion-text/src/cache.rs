@@ -3282,6 +3282,107 @@ mod tests {
              set on a no-op boot call",
         );
     }
+
+    // ---------------------------------------------------------------
+    // R1780 §5.36 — WHAT A DECLARED ALIGNMENT ALIGNS WITHIN.
+    // ---------------------------------------------------------------
+
+    /// ★★★★★ **An alignment moves a run inside the width it was given, and a
+    /// width equal to the run cannot move it.**
+    ///
+    /// # The question this answers, open since R1695
+    ///
+    /// A debt has stood for 84 rounds saying `TextAlign::Center` "does nothing
+    /// on an absolutely placed run", measured three times off rendered pixels:
+    /// a chip's label inked at the node's left edge with centring asked for.
+    /// The property survives the whole pipeline — it is published, it round
+    /// trips through `scene/snapshot`, it is part of this cache's key, it is
+    /// mapped to parley, and the self-hosted fast path refuses anything that is
+    /// not `Start` — so the debt could only record that SOMETHING made it
+    /// inert, and that "which node shape honours it" was unknown.
+    ///
+    /// Measured here rather than read: alignment is applied by
+    /// `layout.align(..)` after `break_all_lines(break_at)`, and `break_at` is
+    /// the `max_width` this cache is handed. The paint adapter hands it the
+    /// node's own rectangle (`if t.rect.w > 0`). So the discriminator is NOT
+    /// absolute placement — it is whether that rectangle is WIDER THAN THE
+    /// TEXT. A label given a box its own size is centred in a box its own
+    /// size, which is where it already was.
+    ///
+    /// The debt's own comparison is the same fact from the other side: the
+    /// pixel rig it cites as "works" builds its node with a header's box width,
+    /// and the repair that fixed the screens put the label in a flex row that
+    /// is wider than it.
+    #[test]
+    fn r1780_an_alignment_moves_a_run_within_the_width_it_was_given() {
+        use pinion_core::style::TextAlign;
+
+        let text = "Dark";
+        let base = style(14);
+        let mut centred = base.clone();
+        centred.text_align = TextAlign::Center;
+
+        let mut cache = crate::test_font::own_font_cache();
+
+        // The run's own width, which is what a caller who sized the box to the
+        // text would have passed.
+        let natural = {
+            let runs = cache.positioned_runs(text, &base, &[], None);
+            let first = runs.first().expect("the fixture font shapes this text");
+            #[allow(clippy::cast_possible_truncation, reason = "a run's width in px")]
+            let w = (first.end_x - first.start_x).ceil() as u32;
+            w
+        };
+        assert!(natural > 0, "the premise: this text inks something");
+
+        let start_x_at = |cache: &mut LayoutCache, style: &TextStyle, w: Option<u32>| -> f32 {
+            cache
+                .positioned_runs(text, style, &[], w)
+                .first()
+                .expect("shaped")
+                .start_x
+        };
+
+        // ★ A box the size of the text: centring is an IDENTITY, and this is
+        // the case the debt was looking at.
+        let flush_tight = start_x_at(&mut cache, &base, Some(natural));
+        let centred_tight = start_x_at(&mut cache, &centred, Some(natural));
+        assert!(
+            (flush_tight - centred_tight).abs() < 0.5,
+            "a box the width of its own text cannot move the text: \
+             start {flush_tight} vs {centred_tight}",
+        );
+
+        // ★ A box wider than the text: centring MOVES it, by half the slack.
+        //
+        // The second assertion is the one that makes this a measurement rather
+        // than a smoke test: "it moved" passes for any movement at all, and
+        // only "by half the slack" says the alignment is an alignment.
+        let wide = natural * 3;
+        let flush_wide = start_x_at(&mut cache, &base, Some(wide));
+        let centred_wide = start_x_at(&mut cache, &centred, Some(wide));
+        assert!(
+            centred_wide > flush_wide + 1.0,
+            "given room, centring must move the run: start {flush_wide} vs \
+             {centred_wide} in a box of {wide} for text of {natural}",
+        );
+        #[allow(clippy::cast_precision_loss, reason = "test widths are small")]
+        let expected = (f64::from(wide) - f64::from(natural)) as f32 / 2.0;
+        assert!(
+            (centred_wide - flush_wide - expected).abs() < 2.0,
+            "and by half the slack: moved {} of an expected {expected}",
+            centred_wide - flush_wide,
+        );
+
+        // ★★ And with NO width at all the layout is its own width, so the same
+        // identity holds — which is the second way a caller gets silence.
+        let flush_none = start_x_at(&mut cache, &base, None);
+        let centred_none = start_x_at(&mut cache, &centred, None);
+        assert!(
+            (flush_none - centred_none).abs() < 0.5,
+            "no width means nothing to align within: {flush_none} vs {centred_none}",
+        );
+    }
 }
 
 /// R1550 §5.36 §5.7 — what the shape cache is holding, in bytes.

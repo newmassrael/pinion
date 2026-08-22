@@ -284,7 +284,29 @@ pub fn handle_scene_text_blocks(blocks: Option<&[TextBlockReport]>) -> Result<Va
 /// Whether `t` declares itself a paragraph: a block format, a text indent, or
 /// both.
 fn is_block(t: &TextNode) -> bool {
-    t.block.is_some() || !t.style.text_indent.is_none()
+    // ★★★★★ R1780 — a declared ALIGNMENT makes a paragraph too, and until this
+    // round it did not.
+    //
+    // The two halves of the wire were saying different kinds of thing about the
+    // same node. `scene/snapshot` reports the `text_align` that was ASKED FOR,
+    // for any text node. This surface reports where each line actually LANDED —
+    // and its own field documentation says the line's `x` is "where BOTH the
+    // text indent and the alignment land". So the one place a client could read
+    // an alignment's EFFECT excluded exactly the nodes whose only declaration
+    // was an alignment: the wire said what was requested and never what
+    // happened.
+    //
+    // That is the shape a debt recorded for 84 rounds as "a declared alignment
+    // does nothing" — measured at R1780, it does exactly what it says, within
+    // the width the node was given, and what was missing was any way to SEE
+    // that from outside.
+    //
+    // `Start` is excluded because it is the default: reporting every unstyled
+    // label would drown the paragraphs this surface exists for, and a default
+    // nobody asked for is not a declaration.
+    t.block.is_some()
+        || !t.style.text_indent.is_none()
+        || t.style.text_align != pinion_core::style::TextAlign::Start
 }
 
 /// Report one painted paragraph.
@@ -381,5 +403,86 @@ mod tests {
         let b = blocks[0].block.expect("declared");
         assert_eq!(b.heading_level, 9);
         assert_eq!(b.aria_level, Some(6));
+    }
+
+    /// ★★★★★ R1780 — **a client can see whether a declared alignment had room
+    /// to act, and the wire's own numbers say so.**
+    ///
+    /// # Why this needed asserting
+    ///
+    /// A debt stood for 84 rounds saying a declared `TextAlign` "does nothing"
+    /// and that a consumer "has no way to know". Measured at R1780, both halves
+    /// were off. Alignment aligns within the width the node is given, so a box
+    /// the size of its own text is a box with nowhere to move — that is the
+    /// property behaving as specified, not failing. And this report already
+    /// carries everything needed to see it: the block's `width`, and each
+    /// line's `x` — which its own documentation calls the place "where BOTH the
+    /// text indent and the alignment land" — with `advance` and
+    /// `trailing_whitespace` beside it.
+    ///
+    /// What was missing is this: **nothing checked that those fields move.** A
+    /// client author had the numbers and no evidence they were live, and a
+    /// regression that froze `x` at zero would have been invisible on the wire
+    /// while every paint gate stayed green.
+    #[test]
+    fn r1780_the_wire_shows_whether_an_alignment_had_room() {
+        use pinion_core::style::TextAlign;
+
+        let text = "centre me";
+        let mut cache = LayoutCache::new();
+
+        let line_x = |cache: &mut LayoutCache, box_w: u32, align: TextAlign| -> (f64, f64, u32) {
+            let scene = Scene::Text(TextNode::styled(
+                text.to_string(),
+                Rect::new(0, 0, box_w, 20),
+                TextStyle::new().with_align(align),
+            ));
+            let blocks = collect_blocks(&scene, cache);
+            let block = blocks.first().expect("one text leaf").clone();
+            let line = block.lines.first().expect("one line").clone();
+            (line.x, line.advance - line.trailing_whitespace, block.width)
+        };
+
+        // ★★ ONE declaration, two boxes — which is what this question actually
+        // is, and the first draft got it wrong in a way worth keeping.
+        //
+        // That draft took its flush baseline from `TextAlign::Start`, which is
+        // the DEFAULT and which this surface deliberately does not report: a
+        // default nobody asked for is not a declaration. So the baseline call
+        // came back empty and the test failed on its own premise. Comparing the
+        // same declaration across two widths needs no baseline and is the
+        // sentence in the test's name.
+        let (wide_x, inked, wide_box) = line_x(&mut cache, 400, TextAlign::Center);
+        assert!(
+            inked > 0.0 && f64::from(wide_box) > inked + 2.0,
+            "the premise: a box of {wide_box} holding {inked} of ink has slack",
+        );
+        assert!(
+            wide_x > 1.0,
+            "given room, the wire must SHOW where centring put the line, not \
+             just that it was asked for: x {wide_x} in a box of {wide_box}",
+        );
+        // And by half the slack, or "it moved" would pass for any movement.
+        let expected = (f64::from(wide_box) - inked) / 2.0;
+        assert!(
+            (wide_x - expected).abs() < 2.0,
+            "and by half the slack: x {wide_x} against an expected {expected}",
+        );
+
+        // ★ The same declaration in a box with no room reports none — which is
+        // the case a reader saw and called a broken property.
+        #[allow(clippy::cast_possible_truncation, reason = "an inked width in px")]
+        let tight_w = inked.ceil() as u32;
+        let (tight_x, tight_inked, tight_box) = line_x(&mut cache, tight_w, TextAlign::Center);
+        assert!(
+            f64::from(tight_box) - tight_inked < 2.0,
+            "the premise: this box has no slack — {tight_box} against {tight_inked}",
+        );
+        assert!(
+            tight_x.abs() < 1.0,
+            "with no slack the declaration cannot move anything, and the wire \
+             reports exactly that rather than an alignment that did something: \
+             x {tight_x}",
+        );
     }
 }
