@@ -59528,6 +59528,108 @@
         "rounds."
       ]
     },
+    "R1777": {
+      "decision_summary": "R1777 — THE ENGINE PIN MOVES TEN COMMITS, AND THE EMIT DOES NOT MOVE AT ALL.\n\nAsked for directly. What makes it worth an entry is not the bump — it is that\nthis tree can now ANSWER the question a bump raises, and could not two rounds\nago.\n\nWHAT MOVED. `vendor/sce` from `ebee8c932a` to `c00722f06f`, ten commits.\n\nWHAT THE PIN BUMP IS, and the gate said each leg out loud. This repository's\npin is a TRIPLE — the submodule gitlink, two `rev =` sites in `Cargo.toml`, and\nthe lock — and `pin_sync.py --check-dual-pin` refused twice before it agreed,\neach time naming a different leg: first that the gitlink and the manifest\ndisagreed, then that the submodule was CHECKED OUT at the new rev while the\nINDEX still recorded the old one. That last one is the leg a person forgets,\nbecause the working tree looks right. Settled at `dual pin: SCE@c00722f\n(manifest = lock = vendor/sce)`.\n\n★★★★★ THE ROUND'S REAL CONTENT: THE EMIT WAS ASKED, NOT ASSUMED. Since R1766\nthe statechart emit is a TRACKED artifact rather than an `OUT_DIR` product, and\n`committed_statechart_emit_equals_what_the_pinned_generator_produces` compares\nthe committed bytes against a fresh run of the newly pinned generator. It\npasses: the emit is byte-identical under the new pin.\n\nThe order that made that an answer rather than a ritual: the gate was run BEFORE\nany regeneration. Regenerating first would have produced a green tree and\ndestroyed the question — the diff would have been applied and nobody would ever\nknow whether there was one. R1765 could only answer this by building the crate\ntwice against two pins and diffing two `OUT_DIR`s by hand; R1766 made the emit\ntracked precisely so a later round could ask it in one command. This is that\nlater round.\n\nREADING PREDICTED IT AND THE GATE PROVED IT, which is the correct division.\nMeasured before touching anything: `sce-build/src` — the generator — does not\nappear in the ten commits at all; only `sce-build/tests/`. The Rust runtime this\nframework links does appear, and its whole diff is FIVE LINES, every one of them\na `///` doc comment shortening an intra-doc link. The rest is upstream's own CI,\ngate registry, mutation harness and C++/Go tests, which pinion does not consume.\nSo this bump is behaviourally a no-op for this tree, and the emit result is what\nthat predicts — but the prediction is not what makes it true.\n\n★★ AND A DEBT THAT WAS NOT MOVED, CHECKED RATHER THAN ASSUMED. `SCE-006` — the\none R1768 opened, where an engine with atomic `<parallel>` regions publishes a\n`(chain, current)` pair its own validator refuses — names two files as its\nsource: `helpers/configuration.rs`'s `validate` and `engine.rs`'s\n`get_current_state`. THOSE ARE EXACTLY THE TWO FILES THIS BUMP TOUCHES. The\ntemptation to read that as \"upstream fixed it\" is the reason it was checked: all\nfive changed lines are comments, `CurrentNotAtomic` is untouched, and the debt\nstands. A file moving and a rule moving are different facts.",
+      "changes_bullets": [
+        "PIN — `vendor/sce` `ebee8c932a` -> `c00722f06f`, all three legs in one commit:",
+        "the submodule gitlink, both `rev =` sites in `Cargo.toml` (`sce-rust-runtime`",
+        "and `sce-build`), and `Cargo.lock`.",
+        "NOTHING ELSE CHANGED. The committed statechart emit under",
+        "`crates/pinion-core/generated/` is byte-identical under the new pin, so there is",
+        "no regeneration in this commit and no source edit anywhere in the tree."
+      ],
+      "verification_bullets": [
+        "RE-MEASURED BEFORE TOUCHING ANYTHING, and every claim below is a gate's answer",
+        "rather than a reading:",
+        "* `pin_sync.py --check-dual-pin` — refused twice, each time naming a different",
+        "leg, then `dual pin: SCE@c00722f (manifest = lock = vendor/sce)`.",
+        "* THE EMIT GATE, run BEFORE any regeneration so the question could still be",
+        "asked: 4 passed 0 failed, including",
+        "`committed_statechart_emit_equals_what_the_pinned_generator_produces`. The emit",
+        "is byte-identical under the new pin and this commit contains no regeneration.",
+        "* `cargo test -p pinion-core -p pinion-runtime` — 3889 + 600 + 3 + 1 + 4 + 4 +",
+        "47 passed, 0 failed. These are the crates that consume the engine.",
+        "* THE WIRE DEMO, which is the blast-radius proof rather than a compile check:",
+        "`r1769_a_client_hands_a_configuration_back.py` PASS in 5.18s. It drives",
+        "`hello-toggle` over `scene/query` and `scene/invoke`, and separates DRIVING to a",
+        "configuration from RESUMING to it by the mark the activation edge leaves — same",
+        "statechart state, different `value`. An engine whose entry semantics moved would",
+        "fail there, and it is the reason a bump is proved by a demo and not by a build.",
+        "NOT MOVED, AND CHECKED RATHER THAN ASSUMED: `SCE-006`. Its two source files are",
+        "exactly the two this bump touches, and all five changed lines in them are `///`",
+        "doc comments — `CurrentNotAtomic` is untouched and the debt stands."
+      ],
+      "impact_refs": [
+        "5.4",
+        "5.14"
+      ],
+      "carry_forward_bullets": [
+        "* `SCE-006` REMAINS OPEN and was re-checked this round rather than carried",
+        "blindly: an engine whose `<parallel>` regions are atomic publishes a",
+        "`(chain, current)` pair its own `validate` refuses. Upstream touched both files",
+        "it names, in comments only.",
+        "* THE TEN COMMITS ARE MOSTLY UPSTREAM'S OWN GATES — a gate registry, a mutation",
+        "harness, per-gate timing, a five-minute push ceiling. None of it reaches this",
+        "tree, but it is worth knowing the neighbour is working on the same problem this",
+        "session spent seven failed pushes on: what a push costs and what it is allowed",
+        "to take.",
+        "* WHAT THIS ROUND DID NOT DO: the toast lifetime lift",
+        "(`debt-three-screens-each-paint-their-own-status-message`) was the planned next",
+        "round and is displaced, not dropped. Its shape is measured and written down —",
+        "lift the LIFETIME and the HOLDER, leave the placement, three consumers, and the",
+        "capture viewer's `RefCell` is the one with no reactivity at all."
+      ],
+      "publishable_decision_summary": "R1777 — THE ENGINE PIN MOVES TEN COMMITS, AND THE EMIT DOES NOT MOVE AT ALL.\n\nAsked for directly. What makes it worth an entry is not the bump — it is that\nthis tree can now ANSWER the question a bump raises, and could not two rounds\nago.\n\nWHAT MOVED. `vendor/sce` from `ebee8c932a` to `c00722f06f`, ten commits.\n\nWHAT THE PIN BUMP IS, and the gate said each leg out loud. This repository's\npin is a TRIPLE — the submodule gitlink, two `rev =` sites in `Cargo.toml`, and\nthe lock — and `pin_sync.py --check-dual-pin` refused twice before it agreed,\neach time naming a different leg: first that the gitlink and the manifest\ndisagreed, then that the submodule was CHECKED OUT at the new rev while the\nINDEX still recorded the old one. That last one is the leg a person forgets,\nbecause the working tree looks right. Settled at `dual pin: SCE@c00722f\n(manifest = lock = vendor/sce)`.\n\n★★★★★ THE ROUND'S REAL CONTENT: THE EMIT WAS ASKED, NOT ASSUMED. Since R1766\nthe statechart emit is a TRACKED artifact rather than an `OUT_DIR` product, and\n`committed_statechart_emit_equals_what_the_pinned_generator_produces` compares\nthe committed bytes against a fresh run of the newly pinned generator. It\npasses: the emit is byte-identical under the new pin.\n\nThe order that made that an answer rather than a ritual: the gate was run BEFORE\nany regeneration. Regenerating first would have produced a green tree and\ndestroyed the question — the diff would have been applied and nobody would ever\nknow whether there was one. R1765 could only answer this by building the crate\ntwice against two pins and diffing two `OUT_DIR`s by hand; R1766 made the emit\ntracked precisely so a later round could ask it in one command. This is that\nlater round.\n\nREADING PREDICTED IT AND THE GATE PROVED IT, which is the correct division.\nMeasured before touching anything: `sce-build/src` — the generator — does not\nappear in the ten commits at all; only `sce-build/tests/`. The Rust runtime this\nframework links does appear, and its whole diff is FIVE LINES, every one of them\na `///` doc comment shortening an intra-doc link. The rest is upstream's own CI,\ngate registry, mutation harness and C++/Go tests, which pinion does not consume.\nSo this bump is behaviourally a no-op for this tree, and the emit result is what\nthat predicts — but the prediction is not what makes it true.\n\n★★ AND A DEBT THAT WAS NOT MOVED, CHECKED RATHER THAN ASSUMED. `SCE-006` — the\none R1768 opened, where an engine with atomic `<parallel>` regions publishes a\n`(chain, current)` pair its own validator refuses — names two files as its\nsource: `helpers/configuration.rs`'s `validate` and `engine.rs`'s\n`get_current_state`. THOSE ARE EXACTLY THE TWO FILES THIS BUMP TOUCHES. The\ntemptation to read that as \"upstream fixed it\" is the reason it was checked: all\nfive changed lines are comments, `CurrentNotAtomic` is untouched, and the debt\nstands. A file moving and a rule moving are different facts.",
+      "publishable_changes_bullets": [
+        "PIN — `vendor/sce` `ebee8c932a` -> `c00722f06f`, all three legs in one commit:",
+        "the submodule gitlink, both `rev =` sites in `Cargo.toml` (`sce-rust-runtime`",
+        "and `sce-build`), and `Cargo.lock`.",
+        "NOTHING ELSE CHANGED. The committed statechart emit under",
+        "`crates/pinion-core/generated/` is byte-identical under the new pin, so there is",
+        "no regeneration in this commit and no source edit anywhere in the tree."
+      ],
+      "publishable_verification_bullets": [
+        "RE-MEASURED BEFORE TOUCHING ANYTHING, and every claim below is a gate's answer",
+        "rather than a reading:",
+        "* `pin_sync.py --check-dual-pin` — refused twice, each time naming a different",
+        "leg, then `dual pin: SCE@c00722f (manifest = lock = vendor/sce)`.",
+        "* THE EMIT GATE, run BEFORE any regeneration so the question could still be",
+        "asked: 4 passed 0 failed, including",
+        "`committed_statechart_emit_equals_what_the_pinned_generator_produces`. The emit",
+        "is byte-identical under the new pin and this commit contains no regeneration.",
+        "* `cargo test -p pinion-core -p pinion-runtime` — 3889 + 600 + 3 + 1 + 4 + 4 +",
+        "47 passed, 0 failed. These are the crates that consume the engine.",
+        "* THE WIRE DEMO, which is the blast-radius proof rather than a compile check:",
+        "`r1769_a_client_hands_a_configuration_back.py` PASS in 5.18s. It drives",
+        "`hello-toggle` over `scene/query` and `scene/invoke`, and separates DRIVING to a",
+        "configuration from RESUMING to it by the mark the activation edge leaves — same",
+        "statechart state, different `value`. An engine whose entry semantics moved would",
+        "fail there, and it is the reason a bump is proved by a demo and not by a build.",
+        "NOT MOVED, AND CHECKED RATHER THAN ASSUMED: `SCE-006`. Its two source files are",
+        "exactly the two this bump touches, and all five changed lines in them are `///`",
+        "doc comments — `CurrentNotAtomic` is untouched and the debt stands."
+      ],
+      "publishable_impact_refs": [
+        "5.4",
+        "5.14"
+      ],
+      "publishable_carry_forward_bullets": [
+        "* `SCE-006` REMAINS OPEN and was re-checked this round rather than carried",
+        "blindly: an engine whose `<parallel>` regions are atomic publishes a",
+        "`(chain, current)` pair its own `validate` refuses. Upstream touched both files",
+        "it names, in comments only.",
+        "* THE TEN COMMITS ARE MOSTLY UPSTREAM'S OWN GATES — a gate registry, a mutation",
+        "harness, per-gate timing, a five-minute push ceiling. None of it reaches this",
+        "tree, but it is worth knowing the neighbour is working on the same problem this",
+        "session spent seven failed pushes on: what a push costs and what it is allowed",
+        "to take.",
+        "* WHAT THIS ROUND DID NOT DO: the toast lifetime lift",
+        "(`debt-three-screens-each-paint-their-own-status-message`) was the planned next",
+        "round and is displaced, not dropped. Its shape is measured and written down —",
+        "lift the LIFETIME and the HOLDER, leave the placement, three consumers, and the",
+        "capture viewer's `RefCell` is the one with no reactivity at all."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [
