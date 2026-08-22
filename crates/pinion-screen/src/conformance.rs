@@ -64,6 +64,15 @@
 //! that is precisely the reading the measurement above found, and a report that
 //! permitted it would be the defect with a type around it.
 //!
+//! ★★★★★ R1767 — **and this module answers about ONE FRAME, which for a
+//! multi-section application means that predicate can never be true.** Not a
+//! defect: one frame paints one section, the others are away, and an away
+//! surface reconciles nothing. The question an assembled application can
+//! actually answer is a walk's, and it lives in [`crate::journey`] — every open
+//! section stood in, every verdict read from a painted frame, and each one
+//! naming the step it came from. The two are peers and neither replaces the
+//! other; this one is what a reader asks about the page in front of them.
+//!
 //! # Floor, measured by building a probe against the reference toolkit 6.11.1
 //!
 //! The probe assembles a paged application out of three pages, gives one page a
@@ -470,6 +479,21 @@ impl ApplicationConformance {
     /// per surface with [`Built::Away`](pinion_core::conformance::Built::Away)
     /// and a reason. That is a narrower claim than asserting a roster, and it
     /// is the one R1742 made non-escapable — an away surface reconciles nothing.
+    ///
+    /// ★★★★★ R1767 — **and for an application with two open sections this is
+    /// unreachable, by construction rather than by defect.** One frame paints
+    /// one section, so every other section is away, and an away surface
+    /// reconciles nothing; there is no build of such an application that makes
+    /// this true. That is the honest reading of *a verdict is about a frame*,
+    /// and it is a fact about the question rather than an answer to it, so it
+    /// is recorded here where somebody trying to make this true will look.
+    ///
+    /// The question that HAS an answer for an assembled application is
+    /// [`JourneyConformance::conforms`](crate::JourneyConformance::conforms):
+    /// how much of its specification each section reproduced somewhere along a
+    /// walk, with every credited verdict naming the step it was read at. This
+    /// one stays, unchanged and still the right question about the frame in
+    /// front of a reader.
     #[must_use]
     pub fn conforms(&self) -> bool {
         self.unjudged() == 0
