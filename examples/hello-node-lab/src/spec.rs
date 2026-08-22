@@ -497,11 +497,42 @@ pub const RAIL: &[(&str, Option<&'static str>)] = &[
     ("logs", None),
     ("lab", None),
     ("topology", Some("requirement 12")),
-    ("sessions", Some("requirement 14")),
+    // ★★ R1773 — `requirement 14` here until that round, where the reference
+    // books this seat under 18. Nothing could see it: the shape gate accepts
+    // any number and the census counts what is drawn, so the wrong number sat
+    // in a locked seat's tooltip for as long as the seat existed.
+    ("sessions", Some("requirement 18")),
+    // ★★★★★ R1773 — the eighth seat, absent from this screen's copy while the
+    // reference and the assembled shell both carry it. One application has one
+    // navigation; this screen held a second copy of the roster and it had lost
+    // a destination.
+    ("settings", None),
 ];
 
 /// Which rail seat is the one this screen is.
 pub const RAIL_ACTIVE: &str = "lab";
+
+/// ★★★★★ R1773 — the reference's rail, as `docs/analyzer-rail-spec.json`
+/// states it, compiled in so the gate cannot pass by finding no file.
+///
+/// [`RAIL`] above is what this screen draws; this is what it is supposed to
+/// be, and they are two artifacts on purpose — a specification written by the
+/// same hand in the same edit as the thing it judges is a gate asking the
+/// subject for the answer. The sibling screen has had both halves since R1728;
+/// this one had only the first, and measured at R1773 its hand-written copy had
+/// drifted **twice** without anything noticing.
+///
+/// ⚠ Second parser of this pin in the tree (the assembled shell has the other).
+/// A third should lift the parsing rather than copy it again.
+///
+/// ⚠ `cfg(test)` because only the gate reads it: this crate is also built as a
+/// library by the assembled shell, where an unread constant is a dead-code
+/// error. The sibling screen's copy is not gated because its running screen
+/// derives its destinations from the pin, and this one does not — it keeps its
+/// own roster and is CHECKED against the pin, which is the comparison that can
+/// fail for the right reason.
+#[cfg(test)]
+pub const RAIL_SPEC_JSON: &str = include_str!("../../../docs/analyzer-rail-spec.json");
 
 /// ★★★ R1677 — **what the screen can be asked to DO**, which nothing in this
 /// table said until now.

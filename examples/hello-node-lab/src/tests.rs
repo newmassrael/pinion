@@ -969,6 +969,89 @@ fn r1669_a_reserved_seat_names_a_requirement() {
     );
 }
 
+/// ★★★★★ R1773 — **the rail this screen draws is the one the reference
+/// states**, seat for seat.
+///
+/// The check the round above says it cannot make. `r1669_a_reserved_seat_names_a_requirement`
+/// pins the SHAPE of a booking and says in as many words why it cannot pin the
+/// value: both sides read the same constant, and a thing compared with itself
+/// is not compared. This compares against the OTHER document —
+/// `docs/analyzer-rail-spec.json`, extracted from the behaviour reference by
+/// another hand — which is the only comparison that can fail for the right
+/// reason.
+///
+/// # What it found the first time it ran (R1773)
+///
+/// The sibling screen has read this pin since R1728. This screen never did, and
+/// its hand-written copy had drifted **twice**:
+///
+/// * **a missing seat** — the reference's rail has eight and this had seven,
+///   with `settings` absent;
+/// * **a wrong requirement** — `sessions` was booked under `requirement 14`
+///   where the reference books it under 18.
+///
+/// Neither was reachable by any check that existed: the shape gate accepts any
+/// number, and the census counts what is drawn.
+#[test]
+fn r1773_the_rail_this_screen_draws_is_the_one_the_reference_states() {
+    let doc: serde_json::Value = serde_json::from_str(super::spec::RAIL_SPEC_JSON)
+        .expect("the rail specification is readable JSON");
+    let canon = doc["canon"]
+        .as_array()
+        .expect("the rail specification declares a canon array");
+
+    let stated: Vec<&str> = canon
+        .iter()
+        .map(|seat| seat["key"].as_str().expect("a specified seat has a key"))
+        .collect();
+    let drawn: Vec<&str> = super::spec::RAIL.iter().map(|(key, _)| *key).collect();
+    assert_eq!(
+        drawn, stated,
+        "★ this screen's rail and the reference's are different rosters. One \
+         application has one navigation, and a second copy of the seats is how \
+         two screens of this tool came to disagree about what the tool contains",
+    );
+
+    for (seat, (key, booking)) in canon.iter().zip(super::spec::RAIL) {
+        let standing = seat["standing"].as_str().expect("a seat has a standing");
+        assert_eq!(
+            booking.is_some(),
+            standing == "closed",
+            "★ `{key}` is {standing} in the reference and this screen {} it",
+            if booking.is_some() { "locks" } else { "opens" },
+        );
+        // ★★ The requirement NUMBER, against the reference's own note rather
+        // than against this screen's constant. The note is prose — the pin has
+        // no machine-readable field for it — so the parse is narrow and the
+        // limitation is stated rather than hidden: this checks the number a
+        // seat is booked under, and nothing about the wording around it.
+        if let Some(booked) = booking {
+            let note = seat["$note"]
+                .as_str()
+                .expect("a closed seat carries the note that books it");
+            let stated_number = note
+                .split("requirement ")
+                .nth(1)
+                .and_then(|rest| {
+                    rest.split(|c: char| !c.is_ascii_digit())
+                        .next()
+                        .filter(|d| !d.is_empty())
+                })
+                .expect("the reference books a closed seat under a numbered requirement");
+            let drawn_number = booked
+                .strip_prefix("requirement ")
+                .expect("this screen books a seat under a numbered requirement");
+            assert_eq!(
+                drawn_number, stated_number,
+                "★★ `{key}` is booked under requirement {drawn_number} here and \
+                 under {stated_number} in the reference. Nothing could see this \
+                 before: the shape gate accepts any number and the census counts \
+                 what is drawn",
+            );
+        }
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────
 // R1681 — a link's life
 // ─────────────────────────────────────────────────────────────────

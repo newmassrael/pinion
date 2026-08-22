@@ -241,7 +241,12 @@ def b_nothing_is_out_of_reach_anywhere_in_the_band(
 
 def c_the_recipe_names_the_pan_and_works(app: RpcSubprocess, name: str) -> None:
     """★★★★★ The repair, checked by doing what it says."""
-    at = (PREVIOUS_FLOOR - 1, 360)
+    # ★ R1773 — 360 -> 410: the node lab's floor rose when that round restored
+    # the reference's eighth rail seat, which its copy of the roster had lost.
+    # The height here only has to be a size the window will take; it is written
+    # as the current floor so a future move of the floor fails here rather than
+    # silently testing a size the window resolves upward.
+    at = (PREVIOUS_FLOOR - 1, 410)
     reach = reach_at(app, at)
     ok(
         f"C/{name}: at {at[0]} — one pixel under the floor the round before this "

@@ -318,7 +318,41 @@ const CANVAS_FLOOR: u32 = 260;
 /// same derivation the width already used. A floor set by content nobody could
 /// scroll to is a window a person cannot make small, and it was 420 pixels of
 /// it ([[debt-the-node-lab-panes-do-not-scroll]]).
-const MIN_H: u32 = APP_BAR_H + TOOLBAR_H + CANVAS_FLOOR;
+const MIN_H: u32 = if RAIL_FLOOR > APP_BAR_H + TOOLBAR_H + CANVAS_FLOOR {
+    RAIL_FLOOR
+} else {
+    APP_BAR_H + TOOLBAR_H + CANVAS_FLOOR
+};
+
+/// ★★★★★ R1773 — the height the RAIL needs, derived from the roster rather
+/// than asserted.
+///
+/// R1656 already made the floor's WIDTH a derivation of what the toolbar's
+/// clusters need, on the ground that "a declared minimum the screen cannot
+/// actually paint is a claim nobody was checking". The height had no such term,
+/// and the reason it never showed is that this screen's rail had DRIFTED to
+/// seven seats while the reference states eight — measured R1773. `spec::PANES`
+/// justified giving the rail no scrollable body with *the rail's content is the
+/// specification's own list and cannot outgrow the pane*, and that sentence was
+/// true only of the shorter list.
+///
+/// So the eighth seat overflowed the moment it was restored: at the old floor
+/// the `settings` seat hung 37 pixels below the pane that owns it. Derived here
+/// rather than bumped, so a ninth seat moves the floor by itself — the same
+/// posture `MIN_W`, `INSP_HEAD_H` and `CANVAS_FLOOR` already take.
+///
+/// ⚠ It is a floor for CHROME, which is why it belongs here and not behind the
+/// scrolling R1662 gave the other panes: the rail is how a reader reaches every
+/// other section, and a destination you must scroll a chrome strip to find is
+/// a destination the screen has hidden.
+const RAIL_FLOOR: u32 = APP_BAR_H + RAIL_SEAT_TOP + RAIL_SEAT_PITCH * SEATS + RAIL_SEAT_TOP;
+
+/// How many seats the rail draws — the specification's own count.
+#[allow(
+    clippy::cast_possible_truncation,
+    reason = "the roster is a compile-time constant of eight entries"
+)]
+const SEATS: u32 = spec::RAIL.len() as u32;
 
 /// ★★★★★ R1712 — the width the WINDOW stops at, which is no longer the width
 /// the LAYOUT stops at.
@@ -3332,10 +3366,19 @@ fn link_into_pin(state: &LabState, node: NodeId, at: (i64, i64)) -> Option<LinkI
 
 // ── Chrome rectangles ───────────────────────────────────────────────────────
 
+/// Where the first seat sits below the app bar, and the gap between seats.
+///
+/// ★ R1773 — named because [`RAIL_FLOOR`] derives the screen's minimum height
+/// from them. They were literals inside `rail_seat`, which is why no floor
+/// could account for the rail: the numbers existed in one expression and
+/// nothing else could read them.
+const RAIL_SEAT_TOP: u32 = 10;
+const RAIL_SEAT_PITCH: u32 = 42;
+
 fn rail_seat(n: usize) -> Rect {
     Rect::new(
         8,
-        APP_BAR_H + 10 + u32::try_from(n).unwrap_or(0) * 42,
+        APP_BAR_H + RAIL_SEAT_TOP + u32::try_from(n).unwrap_or(0) * RAIL_SEAT_PITCH,
         38,
         38,
     )

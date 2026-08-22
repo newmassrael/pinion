@@ -92,7 +92,14 @@ CONCEDING = "hello-node-lab"
 #:
 #: The floor is asserted as a DECISION still, just not as a number: below the
 #: layout and at or under the display R1689 wrote its loss against.
-CONCEDED_FLOOR = (748, 360)
+#: ★ R1773 — the height moved 360 -> 410, and the move is the point rather than
+#: a maintenance edit. That round restored the reference's EIGHTH rail seat to
+#: the node lab, whose copy of the roster had drifted to seven with nothing
+#: checking it, and the eighth seat does not fit above the old floor: the seat
+#: hung 37 pixels below the pane that owns it. So the floor is now DERIVED from
+#: the roster's length, and a ninth seat would move it again — which is exactly
+#: what "the floor is a decision on record" should mean.
+CONCEDED_FLOOR = (748, 410)
 DISPLAY = 1600
 
 CHECKS: list[str] = []
