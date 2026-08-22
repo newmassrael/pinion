@@ -47,12 +47,48 @@ next round reaches for it; a wrong `have` inflates a number nobody trips over).
 
 ## What this proves and what it does not
 
-Completeness, only. Every declared capability carries a verdict, the verdicts
-are from the closed set above, `have` rows name what covers them, and the counts
-sum to the row count. Whether a `have` is TRUE is a separate question, and the
-answer to it is the same as the reference census's: a test that exercises the
-capability through the public API. `proven_by` is where that goes, and it is
-empty on most rows today — which this reports rather than hides.
+Completeness, and — since R1771 — that every proof it cites is real. Every
+declared capability carries a verdict, the verdicts are from the closed set
+above, `have` rows name what covers them, and the counts sum to the row count.
+Whether a `have` is TRUE is a separate question, and the answer to it is the same
+as the reference census's: a test that exercises the capability through the
+public API. `proven_by` is where that goes, and how many rows carry one is
+reported rather than hidden.
+
+★★★★★ R1771 — and what a `proven_by` names is now **checked against the test
+runner**. It was checked against nothing: `assembled_by` had had every path it
+names verified since R1648, while the field carrying this file's STRONGEST
+claim went unexamined, so a citation to a renamed or deleted test passed
+silently on the rows a reader trusts most. `--check-proofs` asks
+`cargo test -- --list` whether each cited name is a test that can be SELECTED —
+not whether the string appears in the source, because a census that checked its
+proofs with a search would be breaking its own rule in the act of enforcing it,
+and a search also cannot tell a test that runs from one behind a `cfg` this
+build does not enable. Measured the round it was written: three of the eleven
+citations added that same round named the wrong crate, and the gate caught all
+three before they were committed.
+
+### Why this and `reference_census.py` stay two designs (R1771, obligation 3b)
+
+The sibling census validates `proven_by` too, and has since before this one did
+— which is the sharper half of what R1771 found: the two censuses in this tree
+DISAGREED about whether a proof needs checking, while this file's own prose said
+its answer was *the same as the reference census's*.
+
+They are not merged, and the reason is written here so the next round does not
+merge them. That tool checks the ADDRESS (`<crate>::<test>`, and that the crate
+has a proof file) and says in as many words that whether the named test exists is
+"deliberately only half" — deferred to a per-crate bijection test where **the
+compiler** is the reader, because asking it there would be a census over text.
+That is a sound design and a stronger one where it applies: a compiler cannot be
+fooled by a stale string.
+
+It does not apply here. This pin's citations are not one address per row — they
+are sentences naming several tests across several crates, in three forms, beside
+the demo files that drive them end to end, because a capability is rarely one
+test. There is no single crate to hold a bijection for a row like that. So this
+file answers the deferred half by a third route that is also not a text census:
+it asks the thing that runs the tests.
 
 ## Two verdicts, two kinds of evidence (R1648)
 
@@ -76,8 +112,9 @@ hold the "the framework owes N" figure down.
 
 Usage:
     python3 tools/analyzer_census.py             # the report
-    python3 tools/analyzer_census.py --selftest  # the tool's own tests
-    python3 tools/analyzer_census.py --check-pin # completeness only, for a hook
+    python3 tools/analyzer_census.py --selftest     # the tool's own tests
+    python3 tools/analyzer_census.py --check-pin    # completeness only, for a hook
+    python3 tools/analyzer_census.py --check-proofs # every cited proof runs (R1771)
 """
 
 from __future__ import annotations
@@ -181,6 +218,71 @@ def check_assemblies(rows: list[dict], exists) -> list[str]:
         for path in assembly_paths(row)
         if not exists(path)
     ]
+
+
+def proof_names(row: dict) -> list[str]:
+    """The Rust test names a `proven_by` cites.
+
+    ★★★★★ R1771 — the peer of [`assembly_paths`], and it did not exist. That
+    asymmetry is the defect this function is half of: `assembled_by` has had
+    every path it names checked for existence since R1648, and `proven_by` — the
+    field carrying the census's STRONGEST claim, that a capability was exercised
+    through the public API — was checked for nothing at all. A citation to a
+    test that was renamed, moved or never written passed silently, and the rows
+    it supports are the ones a reader trusts most.
+
+    Loose about the prose around the names, for the reason its sibling is: the
+    field has to read as a sentence or the reason goes unwritten. A token counts
+    as a citation when it is a `::` path (`crate::module::test`) or a bare
+    snake_case identifier long enough not to be a word — measured over this
+    pin, the two forms in use are `pinion-node-graph::r1645_…` and a file path
+    followed by bare names.
+
+    The `::` form's own tail is what is checked, because a citation names a
+    CRATE and this project's crate names are not module paths (`pinion-core::`
+    is not a segment of `widgets::field_bytes::tests::…`). A module citation —
+    a `::` path whose tail is not itself a test — is checked as a prefix by
+    [`check_proofs`], so `…::row_query::tests` means *the tests under here*.
+    """
+    out: list[str] = []
+    for token in str(row.get("proven_by", "")).split():
+        word = token.strip(",;.+()")
+        if "/" in word:
+            continue  # a path — `check_proofs` hands those to the path oracle
+        if "::" in word:
+            out.append(word)
+        elif "_" in word and len(word) >= 12 and word.replace("_", "").isalnum():
+            out.append(word)
+    return out
+
+
+def proof_paths(row: dict) -> list[str]:
+    """The files a `proven_by` cites — the end-to-end demos beside the tests."""
+    return [token.strip(",;") for token in str(row.get("proven_by", "")).split() if "/" in token]
+
+
+def check_proofs(rows: list[dict], known, exists) -> list[str]:
+    """Every proof a `proven_by` names that nothing in the tree answers for.
+
+    `known` is asked for a test name and answers whether the TEST RUNNER can
+    select it — not whether the string appears somewhere. That distinction is
+    the whole point: this project's rule is *prove it with a test, not with a
+    grep*, and a census that checked its proofs by searching source text would
+    be breaking that rule in the act of enforcing it.
+    `exists` answers for the demo files cited beside the tests.
+
+    Both are injected so the rule is testable without a toolchain, the same
+    purity [`check_assemblies`] has.
+    """
+    out: list[str] = []
+    for row in rows:
+        for name in proof_names(row):
+            if not known(name):
+                out.append(f"{row['id']}: proven_by names {name}, which no test answers to")
+        for path in proof_paths(row):
+            if not exists(path):
+                out.append(f"{row['id']}: proven_by names {path}, which is not there")
+    return out
 
 
 def report(rows: list[dict]) -> list[str]:
@@ -307,6 +409,95 @@ def selftest() -> int:
         check_assemblies(ok_app, lambda _p: True) == [],
     )
 
+    # ★★★★★ R1771 — the same rules for the OTHER kind of evidence, which had
+    # none. Every case below is a shape this pin actually carries.
+    ok_proof = [
+        {
+            **good[0],
+            "proven_by": (
+                "crates/pinion-core/src/widgets/field_bytes.rs "
+                "the_two_directions_are_inverse_for_every_field_with_bytes + "
+                "owner_is_the_last_link_of_the_layer_chain; end to end "
+                "tools/demos/r1663_a_field_says_which_bytes.py section D"
+            ),
+        }
+    ]
+    check(
+        "the test names are picked out of the prose around them",
+        proof_names(ok_proof[0])
+        == [
+            "the_two_directions_are_inverse_for_every_field_with_bytes",
+            "owner_is_the_last_link_of_the_layer_chain",
+        ],
+    )
+    check(
+        "★ and the prose is not — `end`, `to`, `end`, `section` and `D` are words",
+        all(w not in proof_names(ok_proof[0]) for w in ("end", "to", "section", "D")),
+    )
+    check(
+        "the files it cites are picked out too, and not counted as tests",
+        proof_paths(ok_proof[0])
+        == [
+            "crates/pinion-core/src/widgets/field_bytes.rs",
+            "tools/demos/r1663_a_field_says_which_bytes.py",
+        ],
+    )
+    check(
+        "a test nothing answers to is reported by row and by name",
+        check_proofs(
+            ok_proof,
+            lambda n: n != "owner_is_the_last_link_of_the_layer_chain",
+            lambda _p: True,
+        )
+        == [
+            "capture.t0.1: proven_by names owner_is_the_last_link_of_the_layer_chain,"
+            " which no test answers to"
+        ],
+    )
+    check(
+        "a cited file that is gone is reported too",
+        len(check_proofs(ok_proof, lambda _n: True, lambda p: not p.endswith(".py"))) == 1,
+    )
+    check(
+        "and a proof that answers everywhere is silent",
+        check_proofs(ok_proof, lambda _n: True, lambda _p: True) == [],
+    )
+
+    crate_cited = [{**good[0], "proven_by": "pinion-node-graph::r1645_the_layer_is_derived"}]
+    check(
+        "a `crate::test` citation names its crate, so the oracle knows what to list",
+        cited_crates(crate_cited) == ["pinion-node-graph"],
+    )
+    check(
+        "and a bare name asks for no crate, because it cannot say which",
+        cited_crates(ok_proof) == [],
+    )
+
+    # The oracle: three citation forms, each matched the way it is written.
+    listed = {
+        "widgets::field_bytes::tests::owner_is_the_last_link_of_the_layer_chain",
+        "widgets::row_query::tests::a_filter_is_total_over_its_operators",
+    }
+    known = proof_oracle(listed)
+    check("a bare name matches a test's tail", known("owner_is_the_last_link_of_the_layer_chain"))
+    check(
+        "a `crate::…::name` matches past the crate segment",
+        known("pinion-core::widgets::field_bytes::tests::owner_is_the_last_link_of_the_layer_chain"),
+    )
+    check(
+        "★ a MODULE citation matches the tests under it, which is what it means",
+        known("pinion-core::widgets::row_query::tests"),
+    )
+    check(
+        "and a name nothing answers to is refused",
+        not known("a_test_that_was_deleted_two_rounds_ago"),
+    )
+    check(
+        "★★ a name that is only a SUBSTRING of a real test is refused — the "
+        "failure a grep-shaped oracle would let through",
+        not known("owner_is_the_last_link"),
+    )
+
     # The report sums, which is the property the capability list itself asks
     # for: a meter whose numbers do not add up is not a meter.
     mixed = [
@@ -319,6 +510,76 @@ def selftest() -> int:
 
     print(f"selftest: {'PASS' if not failures else 'FAIL'} ({failures} failure(s))")
     return 1 if failures else 0
+
+
+#: The crates a `proven_by` may cite, derived from the pin rather than listed.
+#: Deriving it is what keeps the oracle honest: a citation into a crate this
+#: never asks about would be checked against a set that cannot contain it, and
+#: would fail for the wrong reason.
+def cited_crates(rows: list[dict]) -> list[str]:
+    """The crate each `::` citation names, in the order the pin declares them."""
+    out: list[str] = []
+    for row in rows:
+        for name in proof_names(row):
+            if "::" not in name:
+                continue
+            crate = name.split("::", 1)[0]
+            if crate not in out:
+                out.append(crate)
+    return out
+
+
+def runner_tests(crates: list[str]) -> set[str]:
+    """Every test the TEST RUNNER can select in `crates`.
+
+    ★ R1771 — `cargo test -- --list` rather than a search of the source, for the
+    reason stated on [`check_proofs`]: the census's rule is that a capability is
+    proven by a test, and the only thing that knows what tests exist is the
+    thing that runs them. A regex over `#[test]` would also see a test behind a
+    `cfg` this build does not enable, which is exactly a proof that does not run.
+
+    Returns the full `module::path::name` of each, so a caller can match a bare
+    name against the tail or a module citation against a prefix.
+    """
+    import subprocess
+
+    if not crates:
+        return set()
+    argv = ["cargo", "test", "--all-targets"]
+    for crate in crates:
+        argv += ["-p", crate]
+    argv += ["--", "--list"]
+    done = subprocess.run(argv, cwd=ROOT, capture_output=True, text=True, check=False)
+    if done.returncode != 0:
+        raise Finding(
+            "the test runner could not list this workspace's tests, so no proof "
+            f"can be checked: {done.stderr.strip().splitlines()[-1:] or ['(no output)']}"
+        )
+    return {
+        line.rsplit(":", 1)[0].strip()
+        for line in done.stdout.splitlines()
+        if line.endswith(": test")
+    }
+
+
+def proof_oracle(listed: set[str]):
+    """An answer to *can the runner select this citation*, over `listed`.
+
+    Three citation forms, and each is matched the way it is written:
+    a bare name against any test's tail, a `crate::…::name` against any test
+    whose path ends with the segments after the crate, and a module citation
+    against any test whose path passes through it.
+    """
+
+    def known(name: str) -> bool:
+        if "::" not in name:
+            return any(full.rsplit("::", 1)[-1] == name for full in listed)
+        tail = name.split("::", 1)[1]
+        return any(full == tail or full.endswith(f"::{tail}") for full in listed) or any(
+            full.startswith(f"{tail}::") or f"::{tail}::" in full for full in listed
+        )
+
+    return known
 
 
 def main() -> int:
@@ -337,6 +598,26 @@ def main() -> int:
         for gone in missing:
             print(f"analyzer census: {gone}", file=sys.stderr)
         return 1
+    if "--check-proofs" in sys.argv:
+        # ★★★★★ R1771 — the proofs, against the test runner. Separate from
+        # `--check-pin` because this one BUILDS: the pin's shape is cheap to
+        # check on every push and this is not, and a check that made every push
+        # wait for a test build is a check somebody would eventually route
+        # around. It runs in the round that touches the census and in CI.
+        try:
+            listed = runner_tests(cited_crates(rows))
+        except Finding as why:
+            print(f"analyzer census: {why}", file=sys.stderr)
+            return 1
+        broken = check_proofs(rows, proof_oracle(listed), lambda p: (ROOT / p).exists())
+        for gone in broken:
+            print(f"analyzer census: {gone}", file=sys.stderr)
+        cited = sum(len(proof_names(r)) + len(proof_paths(r)) for r in rows)
+        print(
+            f"analyzer census: {cited} proof citation(s) checked against "
+            f"{len(listed)} selectable test(s), {len(broken)} unanswered"
+        )
+        return 1 if broken else 0
     if "--check-pin" in sys.argv:
         print(f"analyzer census: {len(rows)} capability(ies), pin well-formed")
         return 0

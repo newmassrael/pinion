@@ -13,7 +13,8 @@
     "tier": "t0",
     "capability": "an N-layer decode tree with collapse and expand",
     "verdict": "have",
-    "covered_by": "`row_dissect` (a value-to-tree transducer whose module doc names this view) plus the tree widget's expand/collapse"
+    "covered_by": "`row_dissect` (a value-to-tree transducer whose module doc names this view) plus the tree widget's expand/collapse",
+    "proven_by": "pinion-core::widgets::row_dissect::tests::dissect_row_object_yields_field_nodes_with_paths (the N layers, each addressable) + dissect_flat_omits_collapsed_descendants (collapse) + external_invoke_select_toggle_expand_collapse_clear (both, driven through the External rather than the transducer)"
   },
   {
     "id": "capture.t0.3",
@@ -376,7 +377,8 @@
     "tier": "t1",
     "capability": "a virtualised packet stream at capture scale",
     "verdict": "have",
-    "covered_by": "the virtualised list/table/tree at 1M rows, LRU-paged, with tail-follow"
+    "covered_by": "the virtualised list/table/tree at 1M rows, LRU-paged, with tail-follow",
+    "proven_by": "pinion-widget-paint::table::tests::r775_virtual_table_windows_body_not_whole_dataset (the property that makes capture scale possible: what is built is the window, not the data) + r775_virtual_table_window_slides_with_offset + r775_virtual_table_rendered_count_grows_with_measured_height; pinion-widget-paint::tree_view::r819_virtual_tree_tests::renders_only_the_window_not_the_whole_tree + sizer_height_spans_the_full_dataset_not_the_window. ⚠ The LRU paging and the tail-follow in `covered_by` are NOT proven here and this says so rather than letting the row read as fully exercised."
   },
   {
     "id": "dashboard.t1.2",
@@ -384,7 +386,8 @@
     "tier": "t1",
     "capability": "a decode inspector pane",
     "verdict": "have",
-    "covered_by": "`row_dissect`"
+    "covered_by": "`row_dissect`",
+    "proven_by": "pinion-core::widgets::row_dissect::tests::dissect_kind_classifies_each_json_type + display_renders_leaf_and_branch_rows (what an inspector pane shows for each kind of value)"
   },
   {
     "id": "dashboard.t1.3",
@@ -400,7 +403,8 @@
     "tier": "t1",
     "capability": "a throughput time series",
     "verdict": "have",
-    "covered_by": "`pinion_chart::LineChart`, with stacking (R1622)"
+    "covered_by": "`pinion_chart::LineChart`, with stacking (R1622)",
+    "proven_by": "pinion-chart::line::tests::r1622_a_stacked_chart_draws_bands_and_scales_to_the_total + r1628_a_stacked_band_curves_on_both_of_its_edges + inspect_emits_crosshair_markers_and_tooltip (reading a value off the series)"
   },
   {
     "id": "dashboard.t1.5",
@@ -408,7 +412,8 @@
     "tier": "t1",
     "capability": "a share view: treemap or donut",
     "verdict": "have",
-    "covered_by": "`pinion_chart::treemap` and `donut`"
+    "covered_by": "`pinion_chart::treemap` and `donut`",
+    "proven_by": "pinion-chart::treemap::tests::bigger_value_gets_bigger_area (the tiling is a share) + a_tiny_tile_is_left_unlabelled; pinion-chart::donut::tests::a_sector_is_a_closed_filled_bezier_path + a_zero_or_non_finite_slice_draws_no_sector_but_keeps_its_legend"
   },
   {
     "id": "dashboard.t1.6",
@@ -424,7 +429,8 @@
     "tier": "t1",
     "capability": "a loss timeline in lanes",
     "verdict": "have",
-    "covered_by": "`pinion_chart::timeline`"
+    "covered_by": "`pinion_chart::timeline`",
+    "proven_by": "pinion-chart::timeline::tests::lanes_stack_vertically_without_overlap (the lanes) + one_span_box_per_span_plus_lanes_ruler_and_gridlines + a_pinned_domain_clips_out_of_window_spans"
   },
   {
     "id": "dashboard.t1.8",
@@ -474,7 +480,8 @@
     "tier": "t2",
     "capability": "hover tooltips on marks",
     "verdict": "have",
-    "covered_by": "`widgets::tooltip` (`TooltipExternal`), which distinguishes hovered from focused from dismissed rather than treating a tooltip as a hover side effect"
+    "covered_by": "`widgets::tooltip` (`TooltipExternal`), which distinguishes hovered from focused from dismissed rather than treating a tooltip as a hover side effect",
+    "proven_by": "pinion-widget-paint::tooltip::tests::r695_above_places_flush_over_anchor + r1674_a_tooltip_keeps_its_label_inside_its_tip; and ON A MARK rather than on a widget, which is what this row is about: pinion-chart::bar::tests::inspect_emits_a_highlight_ring_and_a_value_tooltip + inspect_tooltip_flips_left_at_the_right_edge_and_stays_in_the_chart"
   },
   {
     "id": "dashboard.t2.2",
@@ -482,7 +489,8 @@
     "tier": "t2",
     "capability": "brush and zoom",
     "verdict": "have",
-    "covered_by": "`pinion_chart::brush`"
+    "covered_by": "`pinion_chart::brush`",
+    "proven_by": "pinion-chart::brush::tests::domain_maps_fractions_onto_the_x_extent (the brush IS the zoom window) + read_recovers_the_window_from_a_tagged_range_external (over the wire, not from the model) + domain_widens_a_collapsed_window_to_min_span"
   },
   {
     "id": "dashboard.t2.3",
@@ -507,7 +515,8 @@
     "tier": "t2",
     "capability": "live, paused and scrubbed playback states",
     "verdict": "have",
-    "covered_by": "`widgets::transport` — `TransportStatus` (stopped / playing / paused) plus `TransportClock` for the playhead, with one canonical state name a readout and a screen reader share"
+    "covered_by": "`widgets::transport` — `TransportStatus` (stopped / playing / paused) plus `TransportClock` for the playhead, with one canonical state name a readout and a screen reader share",
+    "proven_by": "pinion-core::widgets::transport::tests::as_str_names_each_state (the one canonical name, total over the states) + new_is_stopped_at_zero + pause_freezes_across_ticks + play_from_the_end_rewinds_first + a_paused_or_stopped_clock_ignores_ticks (the scrub, and that a stopped clock is not merely a slow one)"
   },
   {
     "id": "dashboard.t2.6",
@@ -550,7 +559,8 @@
     "tier": "t2",
     "capability": "a colour-blind-safe categorical palette",
     "verdict": "have",
-    "covered_by": "`pinion_chart::palette` is Okabe-Ito, the de-facto colour-blind-safe qualitative set"
+    "covered_by": "`pinion_chart::palette` is Okabe-Ito, the de-facto colour-blind-safe qualitative set",
+    "proven_by": "pinion-chart::palette::tests::default_is_eight_okabe_ito_colours — the test asserts the exact set, so the claim and its proof are the same sentence"
   },
   {
     "id": "dashboard.t2.11",
@@ -558,7 +568,8 @@
     "tier": "t2",
     "capability": "dense label overlap avoidance",
     "verdict": "have",
-    "covered_by": "R1633: an axis thins its labels and REPORTS which it dropped"
+    "covered_by": "R1633: an axis thins its labels and REPORTS which it dropped",
+    "proven_by": "pinion-chart::chart::tests::r1634_a_thinned_axis_still_names_every_row (the REPORT half — thinning the paint does not thin what is announced) + pinion-chart::bar::tests::r1634_a_thinned_axis_loses_labels_and_keeps_rows"
   },
   {
     "id": "dashboard.t2.12",

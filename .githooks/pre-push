@@ -148,6 +148,17 @@ if ! python3 "$repo_root/tools/analyzer_census.py" --check-pin >&2; then
     echo "pre-push: docs/analyzer-census.json is malformed" >&2
     exit 1
 fi
+# ★★★★★ R1771 — and the PROOFS, against the test runner rather than a search.
+# The pin's `assembled_by` has had every path it names checked since R1648;
+# `proven_by` — which carries the census's strongest claim, that a capability
+# was exercised through the public API — was checked for nothing at all, so a
+# citation to a renamed or deleted test passed silently on the rows a reader
+# trusts most. Measured R1771: 3.5s on a warm tree, and the first time after a
+# clean build it pays for the cited crates' test binaries once.
+if ! python3 "$repo_root/tools/analyzer_census.py" --check-proofs >&2; then
+    echo "pre-push: a proof the analysis-tool census cites is not a test that runs" >&2
+    exit 1
+fi
 
 echo "pre-push: reference census ..." >&2
 if ! python3 "$repo_root/tools/reference_census.py" --selftest >&2; then
