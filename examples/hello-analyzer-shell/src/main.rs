@@ -192,6 +192,8 @@ const VIEW_TAG: &str = "analyzer_shell";
 const THEME_TAG: &str = "app";
 const STATE_KEY: &str = "hello-analyzer-shell/state";
 const TRANSPORT_KEY: &str = "hello-analyzer-shell/transport";
+/// R1776 — the cache key the toast's clock registers under, so it registers once.
+const TOAST_LIFE_KEY: &str = "hello-analyzer-shell/toast-life";
 
 /// The replay window a scrub moves through, in seconds.
 const REPLAY_SECS: f32 = 12.0;
@@ -669,6 +671,15 @@ struct ShellState {
     /// this tool now hold, so "was that a refusal?" is a field and not a prefix
     /// this file used to write two ways.
     toast: Signal<Utterance>,
+    /// Seconds of life the toast has left, counted down by the paint loop.
+    ///
+    /// ★★★★★ R1776 — a SIGNAL rather than a `Cell`, because the thing that
+    /// reads it is the view and the thing that writes it is a
+    /// [`Tickable`](pinion_core::animation::Tickable) the owner drives. It is
+    /// not written in `view`: §6.3 makes the view function sync and pure so
+    /// `dry_run` holds, and a toast that aged itself while being drawn would
+    /// trade that invariant for a repair.
+    toast_life: Signal<f32>,
     /// The ordinal the next placed card takes.
     next_id: RefCell<u32>,
     /// R1662 — the board's scroll offset. A board is a grid whose row count is
@@ -853,6 +864,11 @@ impl ShellState {
             // difference is real: the node lab and the packet viewer open
             // silent and their toast has nothing to paint until an act.
             toast: Signal::new(Utterance::done(format!("{} loaded", spec::PRESET))),
+            // ★★★★★ R1776 — and the life it opens with, because the reference's
+            // toast is transient and this one was not. Full, so the opening
+            // sentence behaves like every later one instead of being a special
+            // case that never leaves.
+            toast_life: Signal::new(TOAST_SECONDS),
             next_id: RefCell::new(u(spec::BOARD.len())),
             canvas_scroll: Rc::new(ScrollState::with_tag(CANVAS_SCROLL)),
             settings_scroll: Rc::new(ScrollState::with_tag(SETTINGS_SCROLL)),
@@ -1125,6 +1141,54 @@ impl ShellState {
     /// something that can say itself and names a `Debug` spelling as a fault.
     fn say(&self, what: Utterance) {
         self.toast.set(what);
+        // ★ R1776 — saying something starts its life over, which is what makes
+        // a second message replace a first rather than queue behind it.
+        self.toast_life.set(TOAST_SECONDS);
+    }
+}
+
+/// How long the toast stays, in seconds.
+///
+/// ★★★★★ R1776 — **the reference's own number**, read from it rather than
+/// chosen: `setTimeout(() => this.setState({toast: null}), 2600)`. Before this
+/// the toast never left at all, and a reader running the assembled tool saw two
+/// of them stacked over a mounted screen's palette — this shell's and the
+/// guest's, both permanent. The overlap was the symptom; the missing lifetime
+/// was the defect.
+const TOAST_SECONDS: f32 = 2.6;
+
+/// The toast's box. The width is a constant and the reference sizes to content
+/// — see [`toast_scene`] for why that half is deliberately still open.
+const TOAST_W: u32 = 560;
+/// The toast's height.
+const TOAST_H: u32 = 34;
+
+/// The toast's clock: what the paint loop advances so the view does not have to.
+///
+/// Registered with the owner through
+/// [`register_animation`](pinion_core::reactive::Owner::register_animation),
+/// which backends drive once per paint cycle with the frame's `dt`
+/// (`pinion-runtime`'s core shell). That is the seam this repair needed and it
+/// already existed — what was missing was anything using it for a lifetime
+/// rather than for a spring.
+struct ToastLife {
+    left: Signal<f32>,
+}
+
+impl pinion_core::animation::Tickable for ToastLife {
+    fn tick(&self, dt: f32) {
+        let left = self.left.get();
+        if left <= 0.0 {
+            return;
+        }
+        self.left.set((left - dt).max(0.0));
+    }
+
+    fn is_at_rest(&self, _epsilon: f32) -> bool {
+        // Once it has expired there is nothing left to count, and the driver
+        // may stop waking it. A toast with life left is NOT at rest even while
+        // nothing is moving on screen, which is the whole point of it.
+        self.left.get() <= 0.0
     }
 }
 
@@ -1142,9 +1206,21 @@ impl ShellState {
 fn use_shell_state() -> Rc<ShellState> {
     let clock = use_transport_clock(TRANSPORT_KEY, REPLAY_SECS);
     let theme = use_theme(THEME_TAG);
-    Owner::current()
-        .expect("use_shell_state requires an active Owner scope")
-        .cache(STATE_KEY, move || ShellState::new(clock, theme))
+    let owner = Owner::current().expect("use_shell_state requires an active Owner scope");
+    let state = owner.cache(STATE_KEY, move || ShellState::new(clock, theme));
+    // ★★★★★ R1776 — the toast's clock, registered ONCE. `register_animation_once`
+    // is gated on the cache, which matters here for the reason its own
+    // documentation gives: this hook re-runs on every view pass, and a second
+    // registration would count the toast's life down twice per frame.
+    //
+    // The returned handle is deliberately dropped, and that is not the
+    // swallowed-value pattern this file argues against elsewhere: it is a
+    // convenience `Rc` on a ticker the OWNER now holds, and everything this
+    // shell reads about the toast it reads through `toast_life`. Keeping a
+    // second handle here would be a second way to reach one fact.
+    let life = Signal::clone(&state.toast_life);
+    let _ticker = owner.register_animation_once(TOAST_LIFE_KEY, move || ToastLife { left: life });
+    state
 }
 
 // --- Geometry: ONE source, read by the paint and by the gesture --------------
@@ -8033,10 +8109,28 @@ fn palette_scene(state: &ShellState, palette: Palette) -> Scene {
     )
 }
 
-/// The toast: what just happened, floating at the foot of the canvas.
+/// The toast: what just happened, floating at the foot of the WINDOW.
+///
+/// ★★★★★ R1776 — of the window, and centred, because that is where the
+/// reference puts it: `position: fixed; bottom: 22px; left: 50%;
+/// transform: translateX(-50%)`. It used to be `canvas.x + 24, win_h() - 58`,
+/// and the x is the part that mattered — `canvas_rect()` is the rectangle the
+/// DASHBOARD uses for its canvas, and once screens were mounted that stopped
+/// being the region a destination receives (`page_rect` is the function that
+/// knows the difference). A reader saw the result sitting on a mounted screen's
+/// palette.
+///
+/// The width is still a constant and the reference sizes to content; that
+/// remains open, because this shell has no text measurement of its own and
+/// inventing a third approximation of one would be adding the duplication a
+/// later round has to remove.
 fn toast_scene(state: &ShellState, palette: Palette) -> Scene {
-    let canvas = canvas_rect();
-    let rect = Rect::new(canvas.x + 24, win_h() - 58, 560, 34);
+    let rect = Rect::new(
+        (win_w().saturating_sub(TOAST_W)) / 2,
+        win_h().saturating_sub(22 + TOAST_H),
+        TOAST_W,
+        TOAST_H,
+    );
     let said = state.toast.get();
     Scene::Container(
         ContainerNode::new(vec![
@@ -8179,11 +8273,13 @@ fn view(_state: ScreenState, frame: Frame) -> Scene {
     );
 
     let children = std::iter::once(page)
-        .chain([
-            app_bar_scene(&state, palette),
-            rail_scene(&state, palette),
-            toast_scene(&state, palette),
-        ])
+        .chain([app_bar_scene(&state, palette), rail_scene(&state, palette)])
+        // ★★★★★ R1776 — the toast is on the frame only while it has life left.
+        // Absent rather than transparent: a mark that is painted invisibly is
+        // still in the scene, still in the accessibility tree, and still over
+        // the guest as far as `pinion_screen::layering` is concerned — and the
+        // reader who reported this saw exactly what a permanent one does.
+        .chain((state.toast_life.get() > 0.0).then(|| toast_scene(&state, palette)))
         // ★ R1695 — the layout bar and the palette are the DASHBOARD's. They sit
         // outside the region because they sit outside its rectangle, so the
         // substrate's guarantee does not reach them; the specification's

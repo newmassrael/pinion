@@ -4010,8 +4010,69 @@ fn r1775_the_host_does_not_paint_on_the_screen_it_is_showing() {
             over, expected,
             "the set of host marks that reach a mounted screen has changed. \
              Growing it means new chrome was drawn into a region the host gave \
-             away; shrinking it means the toast was repaired, and this ratchet \
-             is what should be updated in that round",
+             away; shrinking it means the toast stopped being painted at all, \
+             which is not the repair — see the transience gate below",
+        );
+    });
+}
+
+/// ★★★★★ R1776 — **what the host paints over a guest LEAVES.**
+///
+/// The rule the sibling ratchet above cannot state. The obvious gate — a host
+/// paints nothing inside the region it handed over — is wrong, and the
+/// reference is what says so: its own toast is `position: fixed; bottom: 22px;
+/// left: 50%` and floats over whatever is beneath it. What makes that
+/// acceptable there is `setTimeout(.., 2600)`.
+///
+/// So the honest question is not *does it overlap* but *does it go*, and that
+/// takes two frames and a clock between them. Both clauses are asserted: it has
+/// to be there first, or a screen that painted no toast at all would pass this
+/// while reproducing nothing.
+///
+/// The clock is the framework's — [`Owner::tick_animations`], which backends
+/// call once per paint with the frame's `dt`. Driving it here is what makes
+/// this a test of the shipped mechanism rather than of a number in a field.
+#[test]
+fn r1776_the_hosts_toast_leaves_the_screen_it_is_showing() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_shell_state();
+        let roster = super::screen_roster();
+        let mounted: Vec<(String, &'static str)> = roster
+            .mounted_keys()
+            .map(str::to_owned)
+            .filter_map(|key| roster.tag_of(&key).map(|tag| (key, tag)))
+            .collect();
+        assert!(!mounted.is_empty(), "no screen is mounted");
+        let (key, tag) = &mounted[0];
+        state
+            .go(key)
+            .unwrap_or_else(|why| panic!("`{key}` is mounted and refused: {why:?}"));
+        // Say something, so the toast is alive for a reason a person can cause
+        // rather than because the application happens to open having spoken.
+        state.say(super::Utterance::done("a thing happened"));
+
+        let before = painted_at((WIN_W, WIN_H)).1;
+        let over_before = pinion_screen::layering::host_marks_over_guest(&before, tag);
+        assert!(
+            over_before.iter().any(|found| found.host == "shell.toast"),
+            "the toast must be over the guest BEFORE the clock runs, or this \
+             gate would pass on a shell that never paints one: {over_before:#?}",
+        );
+
+        // Past its life, in the steps a paint loop actually takes rather than
+        // in one jump: a lifetime that only expires when handed its whole
+        // duration at once is not one a running application would reach.
+        for _ in 0..200 {
+            owner.tick_animations(1.0 / 60.0);
+        }
+
+        let after = painted_at((WIN_W, WIN_H)).1;
+        let over_after = pinion_screen::layering::host_marks_over_guest(&after, tag);
+        assert!(
+            over_after.is_empty(),
+            "the host still paints over the guest after its toast's life ran \
+             out — {over_after:#?}",
         );
     });
 }
