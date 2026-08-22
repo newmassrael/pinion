@@ -62,6 +62,25 @@ fn check(label: &str, surface: &dyn ExternalIntrospect) -> (usize, usize) {
             );
         }
     }
+
+    // ★★★★★ R1769 — **the snapshot slot and the action that takes it back are
+    // a PAIR, and this is what makes that a gate rather than a habit.**
+    //
+    // A surface answering `configuration` without a `resume` publishes a value
+    // a client can read and never give back, and a `resume` without a
+    // `configuration` takes a value nothing can produce. Either half alone is
+    // worse than neither, because the schema advertises a round trip that is
+    // not there. Eight surfaces adopted the pair in one round; the ninth is
+    // whoever adds a statechart widget next, and they will be told here.
+    let declares = |path: &str| surface.schema().fields.iter().any(|f| f.path == path);
+    assert_eq!(
+        declares("configuration"),
+        declares("resume"),
+        "{label}: `configuration` and `resume` are a round trip and must be \
+         declared together — one without the other advertises a trip a client \
+         cannot make"
+    );
+
     (reads, actions)
 }
 

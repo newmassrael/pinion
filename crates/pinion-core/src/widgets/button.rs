@@ -275,11 +275,21 @@ impl ExternalIntrospect for ButtonExternal {
                 &[
                     SchemaField::new("state", "string"),
                     SchemaField::new("focused", "bool"),
+                    // R1769 — the statechart configuration, and the action that
+                    // takes it back. A round trip: what this slot answers is
+                    // exactly what `resume` accepts.
+                    SchemaField::new("configuration", "json"),
                     SchemaField::action_with(
                         "send",
                         "string",
                         ArgForm::Scalar,
                         const { &[SchemaArg::event(&ButtonEvent::DRIVABLE_NAMES)] },
+                    ),
+                    SchemaField::action_with(
+                        "resume",
+                        "json",
+                        ArgForm::Scalar,
+                        const { &[SchemaArg::open("configuration", "json")] },
                     ),
                 ]
             },
@@ -291,6 +301,9 @@ impl ExternalIntrospect for ButtonExternal {
             "state" => Ok(IntrospectValue::Text(self.state().as_name().to_string())),
             // R694 §5.39 — keyboard-focus posture for the focus-ring read.
             "focused" => Ok(IntrospectValue::Bool(self.focused)),
+            // R1769 — the whole configuration, for a client that means to hand
+            // it back. `state` stays the scalar read; this is the lossless one.
+            "configuration" => crate::widget_core::widget_configuration("button", &self.em.inner),
             _ => Err(ReadRefusal::UnknownPath),
         }
     }
@@ -335,6 +348,12 @@ impl ExternalIntrospect for ButtonExternal {
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
+            // R1769 — enter a configuration this widget was in, running no
+            // `<onentry>`. A different verb from `send` on the same channel:
+            // that one drives an event and runs the entry actions on the way
+            // in, this one runs none. R17's decision that state mutation does
+            // not flow through `intervene` is untouched.
+            "resume" => crate::widget_core::resume_widget("button", &mut self.em.inner, args),
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -897,6 +916,141 @@ mod tests {
         assert_refused_saying(&r, "read-only copy");
     }
 
+    /// ★★★★★ R1769 §5.15 §2 #2 — **an RPC client reads a widget's
+    /// configuration and hands it back, and the widget arrives there without
+    /// being driven.**
+    ///
+    /// This is the whole wire leg in one test. The round trip goes through the
+    /// two channels a client actually has — `query` then `invoke` — and the
+    /// value crossing between them is untouched, which is what makes it a round
+    /// trip rather than two coincidences.
+    #[test]
+    fn r1769_a_client_reads_a_configuration_and_hands_it_back() {
+        let mut pressed = ButtonExternal::new();
+        pressed
+            .invoke("send", IntrospectValue::Text("PointerEnter".into()))
+            .expect("a drivable event");
+        pressed
+            .invoke("send", IntrospectValue::Text("PointerDown".into()))
+            .expect("a drivable event");
+        assert_eq!(
+            pressed.query("state"),
+            Ok(IntrospectValue::Text("Pressed".into())),
+            "the premise: this widget is somewhere other than where it starts"
+        );
+
+        let saved = pressed.query("configuration").expect("the slot answers");
+        assert!(
+            matches!(saved, IntrospectValue::Json(_)),
+            "it is the lossless read, so it is not a scalar: {saved:?}"
+        );
+
+        let mut fresh = ButtonExternal::new();
+        assert_eq!(
+            fresh.query("state"),
+            Ok(IntrospectValue::Text("Idle".into()))
+        );
+
+        let answered = fresh
+            .invoke("resume", saved)
+            .expect("a configuration this widget was in");
+
+        assert_eq!(
+            answered,
+            IntrospectValue::Text("Pressed".into()),
+            "the action answers where the machine ended up, in one round trip"
+        );
+        assert_eq!(
+            fresh.query("state"),
+            Ok(IntrospectValue::Text("Pressed".into()))
+        );
+    }
+
+    /// ★★★ R1769 — **`resume` refuses what is not a configuration, in a
+    /// sentence.**
+    ///
+    /// The two refusals a client can actually cause, kept apart because the fix
+    /// differs: an argument of the wrong *shape* is a client bug, and an
+    /// argument of the right shape that is not a configuration of THIS document
+    /// is a stale or mismatched snapshot.
+    #[test]
+    fn r1769_resume_refuses_a_non_configuration_saying_why() {
+        let mut bx = ButtonExternal::new();
+
+        assert_eq!(
+            bx.invoke("resume", IntrospectValue::Text("Pressed".into())),
+            Err(InvokeError::TypeMismatch),
+            "a bare state name is not a configuration and is refused on shape"
+        );
+
+        let r = bx.invoke(
+            "resume",
+            IntrospectValue::Json(serde_json::json!({"nope": 1})),
+        );
+        assert_refused_saying(&r, "hand back the value `configuration` answered");
+    }
+
+    /// ★★★★★ R1769 — **another widget's configuration is refused, even when it
+    /// parses perfectly. Found by a demo, pinned here.**
+    ///
+    /// `ButtonState` and `ToggleState` come from the same statechart template,
+    /// so their variant names are identical and a toggle's configuration
+    /// deserialises into the button's type without complaint AND is a valid
+    /// configuration of the button's document. The engine was right to take it;
+    /// the wire was wrong to offer it, because the client knew which widget the
+    /// snapshot came from and the value dropped that.
+    ///
+    /// The demo asserted this against two live applications and went red. This
+    /// test is the gate — a demo runs in a sweep, and the rule needs something
+    /// that runs with the crate.
+    #[test]
+    fn r1769_a_configuration_from_another_widget_is_refused() {
+        use crate::widgets::toggle::ToggleExternal;
+
+        let tog = ToggleExternal::new();
+        let theirs = tog.query("configuration").expect("the toggle answers");
+
+        let mut bx = ButtonExternal::new();
+        let was = bx.state();
+        let r = bx.invoke("resume", theirs);
+
+        assert_refused_saying(&r, "is a toggle's, and this is a button");
+        assert_eq!(
+            bx.state(),
+            was,
+            "and the button did not move — the refusal is before any mutation"
+        );
+    }
+
+    /// ★★★ R1769 — **an unstamped value is refused too.**
+    ///
+    /// The sibling above covers a value stamped with the WRONG widget. This
+    /// covers one carrying no stamp at all, which is what every configuration
+    /// looked like before the demo found the hole — so a client holding a
+    /// snapshot taken by an older build is told, rather than silently restored
+    /// from a value nothing vouches for.
+    #[test]
+    fn r1769_an_unstamped_configuration_is_refused() {
+        let mut bx = ButtonExternal::new();
+        let r = bx.invoke(
+            "resume",
+            IntrospectValue::Json(serde_json::json!({"states": ["Idle"], "current": "Idle"})),
+        );
+        assert_refused_saying(&r, "does not say which widget it came from");
+    }
+
+    /// ★★★ R1769 — **a read-only copy takes no `resume` either.**
+    ///
+    /// `ButtonStateSnapshot` refuses every action, and this pins that the new
+    /// verb did not open a door in it: a snapshot holds a state word, not a
+    /// machine, so there is nothing there to put back.
+    #[test]
+    fn r1769_a_snapshot_takes_no_resume() {
+        let mut snap = ButtonStateSnapshot::new(ButtonState::Pressed);
+        let r = snap.invoke("resume", IntrospectValue::Json(serde_json::json!({})));
+        assert_refused_saying(&r, "read-only copy");
+    }
+
     #[test]
     fn button_external_schema_includes_send_action() {
         let bx = ButtonExternal::new();
@@ -904,14 +1058,24 @@ mod tests {
         assert_eq!(
             schema.fields,
             // R694 §5.39 — `focused` joins the read-only state slot.
+            // R1769 — `configuration` and `resume` join as a PAIR, and the
+            // pairing is the point: the read is lossless where `state` is not,
+            // and the action takes back exactly what the read answered.
             &[
                 SchemaField::new("state", "string"),
                 SchemaField::new("focused", "bool"),
+                SchemaField::new("configuration", "json"),
                 SchemaField::action_with(
                     "send",
                     "string",
                     ArgForm::Scalar,
                     const { &[SchemaArg::event(&ButtonEvent::DRIVABLE_NAMES)] },
+                ),
+                SchemaField::action_with(
+                    "resume",
+                    "json",
+                    ArgForm::Scalar,
+                    const { &[SchemaArg::open("configuration", "json")] },
                 )
             ]
         );

@@ -321,11 +321,21 @@ impl ExternalIntrospect for ColorAreaExternal {
                     SchemaField::new("state", "string"),
                     SchemaField::new("x", "float"),
                     SchemaField::new("y", "float"),
+                    // R1769 — the lossless read of the statechart, and the
+                    // action that takes it back. ⚠ It restores the MACHINE and
+                    // not `x` / `y`, which are this widget's own sidecar.
+                    SchemaField::new("configuration", "json"),
                     SchemaField::action_with(
                         "send",
                         "string",
                         ArgForm::Scalar,
                         const { &[SchemaArg::event(&ColorAreaEvent::DRIVABLE_NAMES)] },
+                    ),
+                    SchemaField::action_with(
+                        "resume",
+                        "json",
+                        ArgForm::Scalar,
+                        const { &[SchemaArg::open("configuration", "json")] },
                     ),
                 ]
             },
@@ -337,6 +347,9 @@ impl ExternalIntrospect for ColorAreaExternal {
             "state" => Ok(IntrospectValue::Text(self.state().as_name().to_string())),
             "x" => Ok(IntrospectValue::Float(f64::from(self.x()))),
             "y" => Ok(IntrospectValue::Float(f64::from(self.y()))),
+            "configuration" => {
+                crate::widget_core::widget_configuration("color_area", &self.em.inner.inner)
+            }
             _ => Err(ReadRefusal::UnknownPath),
         }
     }
@@ -385,6 +398,11 @@ impl ExternalIntrospect for ColorAreaExternal {
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
+            // R1769 — enter a configuration this widget was in, running no
+            // `<onentry>`; a different verb from `send` on the same channel.
+            "resume" => {
+                crate::widget_core::resume_widget("color_area", &mut self.em.inner.inner, args)
+            }
             _ => Err(InvokeError::UnknownPath),
         }
     }

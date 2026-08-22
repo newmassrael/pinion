@@ -272,11 +272,23 @@ impl ExternalIntrospect for CheckboxExternal {
                 &[
                     SchemaField::new("state", "string"),
                     SchemaField::new("checked", "bool"),
+                    // R1769 — the lossless read of the statechart, and the
+                    // action that takes it back. ⚠ It restores the MACHINE and
+                    // not `checked`, which is this widget's own sidecar and has
+                    // its own writable slot; a client restoring a session uses
+                    // both.
+                    SchemaField::new("configuration", "json"),
                     SchemaField::action_with(
                         "send",
                         "string",
                         ArgForm::Scalar,
                         const { &[SchemaArg::event(&CheckboxEvent::DRIVABLE_NAMES)] },
+                    ),
+                    SchemaField::action_with(
+                        "resume",
+                        "json",
+                        ArgForm::Scalar,
+                        const { &[SchemaArg::open("configuration", "json")] },
                     ),
                 ]
             },
@@ -287,6 +299,9 @@ impl ExternalIntrospect for CheckboxExternal {
         match path {
             "state" => Ok(IntrospectValue::Text(self.state().as_name().to_string())),
             "checked" => Ok(IntrospectValue::Bool(self.is_checked())),
+            "configuration" => {
+                crate::widget_core::widget_configuration("checkbox", &self.em.inner.inner)
+            }
             _ => Err(ReadRefusal::UnknownPath),
         }
     }
@@ -330,6 +345,11 @@ impl ExternalIntrospect for CheckboxExternal {
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
+            // R1769 — enter a configuration this widget was in, running no
+            // `<onentry>`; a different verb from `send` on the same channel.
+            "resume" => {
+                crate::widget_core::resume_widget("checkbox", &mut self.em.inner.inner, args)
+            }
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -482,19 +502,30 @@ mod tests {
     }
 
     #[test]
-    fn external_schema_declares_three_slots() {
+    fn external_schema_declares_its_five_slots() {
         let cx = CheckboxExternal::new();
         let schema = cx.schema();
         assert_eq!(
             schema.fields,
+            // R1769 — `configuration` + `resume` joined as a pair, and the
+            // count in this test's NAME moved with them: three was a fact about
+            // the schema, so leaving it would have left the name lying about
+            // what the test asserts.
             &[
                 SchemaField::new("state", "string"),
                 SchemaField::new("checked", "bool"),
+                SchemaField::new("configuration", "json"),
                 SchemaField::action_with(
                     "send",
                     "string",
                     ArgForm::Scalar,
                     const { &[SchemaArg::event(&CheckboxEvent::DRIVABLE_NAMES)] },
+                ),
+                SchemaField::action_with(
+                    "resume",
+                    "json",
+                    ArgForm::Scalar,
+                    const { &[SchemaArg::open("configuration", "json")] },
                 )
             ]
         );

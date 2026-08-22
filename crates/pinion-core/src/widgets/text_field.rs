@@ -99,9 +99,9 @@ use crate::WidgetStateName;
 use crate::clipboard::{Clipboard, ClipboardSelection};
 use crate::composite_tag::split_send_payload;
 use crate::external::{
-    Backend, BackendFallback, BackendSupport, External, ExternalIntrospect, InterveneError,
-    IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner, SchemaField,
-    ThreadOwnership,
+    ArgForm, Backend, BackendFallback, BackendSupport, External, ExternalIntrospect,
+    InterveneError, IntrospectSchema, IntrospectValue, InvokeError, ReadRefusal, RepaintOwner,
+    SchemaArg, SchemaField, ThreadOwnership,
 };
 use crate::input::is_activation_event;
 use crate::intent::Intent;
@@ -1355,6 +1355,14 @@ impl ExternalIntrospect for TextFieldExternal {
                     // without walking the paint tree.
                     SchemaField::new("style_runs", "json"),
                     SchemaField::new("preedit", "string"),
+                    // R1769 — the lossless read of the statechart, and the
+                    // action that takes it back. ⚠ It restores the MACHINE and
+                    // none of the buffer: `text`, `caret`, `selection` and
+                    // `style_runs` live in the attached `TextEditState`, which
+                    // is this widget's own state and has its own slots. This is
+                    // the surface where that split matters most, so it is said
+                    // here rather than left to be discovered.
+                    SchemaField::new("configuration", "json"),
                     SchemaField::send("string"),
                     SchemaField::action("key", "string"),
                     SchemaField::action("composition", "string"),
@@ -1377,6 +1385,14 @@ impl ExternalIntrospect for TextFieldExternal {
                     // [`StyleRun`]: crate::scene::StyleRun
                     SchemaField::action("apply-style", "boolean"),
                     SchemaField::action("clear-style", "boolean"),
+                    // R1769 — takes back exactly what the `configuration` slot
+                    // above answered.
+                    SchemaField::action_with(
+                        "resume",
+                        "json",
+                        ArgForm::Scalar,
+                        const { &[SchemaArg::open("configuration", "json")] },
+                    ),
                     // R967 §5.36 — toggle ONE style field (bold / italic / underline /
                     // strikethrough) over the selection / caret, preserving the run's
                     // other fields (the AI-first peer of the toolbar B / I toggle —
@@ -1463,6 +1479,12 @@ impl ExternalIntrospect for TextFieldExternal {
     fn query(&self, path: &str) -> Result<IntrospectValue, ReadRefusal> {
         match path {
             "state" => Ok(IntrospectValue::Text(self.state().as_name().to_string())),
+            // R1769 — the lossless read of the interaction machine. Unlike the
+            // slots below it needs no attached `TextEditState`: the statechart
+            // is always there, so this one always answers.
+            "configuration" => {
+                crate::widget_core::widget_configuration("text_field", &self.em.inner.inner)
+            }
             // R56.1.b §5.38 — text + caret read through the attached
             // [`TextEditState`]. `None` when no handle is attached;
             // the AI client treats that as "widget not bound to
@@ -1898,6 +1920,13 @@ impl ExternalIntrospect for TextFieldExternal {
             // twins of Alt+Up / Alt+Down + Shift+Alt copy).
             "move-line-up" | "move-line-down" | "duplicate-line-up" | "duplicate-line-down" => {
                 self.invoke_line_move(path, &args)
+            }
+            // R1769 — enter a configuration this widget was in, running no
+            // `<onentry>`; a different verb from `send` on the same channel.
+            // It restores the interaction machine only — the buffer is the
+            // attached `TextEditState`'s and has its own slots.
+            "resume" => {
+                crate::widget_core::resume_widget("text_field", &mut self.em.inner.inner, args)
             }
             _ => Err(InvokeError::UnknownPath),
         }
@@ -2847,7 +2876,7 @@ mod tests {
     use crate::test_fixtures::assert_refused_saying;
 
     use super::{TextField, TextFieldEvent, TextFieldExternal, TextFieldState};
-    use crate::external::SchemaField;
+    use crate::external::{ArgForm, SchemaArg, SchemaField};
     use crate::external::{
         Backend, External, ExternalIntrospect, InterveneError, IntrospectValue, InvokeError,
         RepaintOwner, ThreadOwnership,
@@ -3024,7 +3053,11 @@ mod tests {
     // ─────────────────────────────────────────────────────────────
 
     #[test]
-    fn external_schema_declares_thirty_five_slots() {
+    fn external_schema_declares_thirty_seven_slots() {
+        // R1769 grew the surface: + configuration (the lossless statechart
+        // read) + resume (the action that takes it back). The count in this
+        // test's NAME moved with them — it is a fact about the schema, and a
+        // name left behind would say something false about what is asserted.
         // R56.1.b grew the surface: state + text + caret + send.
         // R56.1.d grew the surface: + key (W3C UI Events keystroke
         // dispatch).
@@ -3072,12 +3105,19 @@ mod tests {
                 SchemaField::new("selection", "object"),
                 SchemaField::new("style_runs", "json"),
                 SchemaField::new("preedit", "string"),
+                SchemaField::new("configuration", "json"),
                 SchemaField::send("string"),
                 SchemaField::action("key", "string"),
                 SchemaField::action("composition", "string"),
                 SchemaField::action("paste-primary", "boolean"),
                 SchemaField::action("apply-style", "boolean"),
                 SchemaField::action("clear-style", "boolean"),
+                SchemaField::action_with(
+                    "resume",
+                    "json",
+                    ArgForm::Scalar,
+                    const { &[SchemaArg::open("configuration", "json")] },
+                ),
                 SchemaField::action("toggle-format", "boolean"),
                 SchemaField::new("find_query", "string"),
                 SchemaField::new("find_case_sensitive", "boolean"),

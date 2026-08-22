@@ -22,11 +22,13 @@
 //!   applications compose the visual the same way they would for any
 //!   Scene primitive.
 //! * **AI introspect**: `ToggleExternal` exposes the §5.15 8-item
-//!   contract (state read / value read / send action). Schema slots
-//!   are `("state", "string")`, `("value", "bool")`, and
-//!   `("send", "string")`, so the §5.12 `scene/query` and
-//!   `scene/invoke` paths cover every observable + every action
-//!   without screenshot inspection (Scene-as-data invariant §2 #7).
+//!   contract, so the §5.12 `scene/query` and `scene/invoke` paths
+//!   cover every observable + every action without screenshot
+//!   inspection (Scene-as-data invariant §2 #7). ⚠ The slots are NOT
+//!   listed here: R1769 added `configuration` + `resume` and this
+//!   sentence still named the original three, which is the failure mode
+//!   a written-down census has. `external_schema_declares_its_five_slots`
+//!   is the list, and it is a gate.
 
 // `unsafe_code` intentionally absent — the workspace `forbid` policy
 // (Cargo.toml) rejects per-site overrides, and the sce-build codegen
@@ -325,11 +327,24 @@ impl ExternalIntrospect for ToggleExternal {
                 &[
                     SchemaField::new("state", "string"),
                     SchemaField::new("value", "bool"),
+                    // R1769 — the lossless read of the statechart, and the
+                    // action that takes it back. ⚠ It restores the MACHINE and
+                    // not `value`, which already has its own writable slot
+                    // above; a client restoring a session uses both, and that
+                    // split is the same one the comment at the top of this
+                    // schema draws between the SCXML and the sidecar.
+                    SchemaField::new("configuration", "json"),
                     SchemaField::action_with(
                         "send",
                         "string",
                         ArgForm::Scalar,
                         const { &[SchemaArg::event(&ToggleEvent::DRIVABLE_NAMES)] },
+                    ),
+                    SchemaField::action_with(
+                        "resume",
+                        "json",
+                        ArgForm::Scalar,
+                        const { &[SchemaArg::open("configuration", "json")] },
                     ),
                 ]
             },
@@ -340,6 +355,9 @@ impl ExternalIntrospect for ToggleExternal {
         match path {
             "state" => Ok(IntrospectValue::Text(self.state().as_name().to_string())),
             "value" => Ok(IntrospectValue::Bool(self.is_on())),
+            "configuration" => {
+                crate::widget_core::widget_configuration("toggle", &self.em.inner.inner)
+            }
             _ => Err(ReadRefusal::UnknownPath),
         }
     }
@@ -398,6 +416,9 @@ impl ExternalIntrospect for ToggleExternal {
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
+            // R1769 — enter a configuration this widget was in, running no
+            // `<onentry>`; a different verb from `send` on the same channel.
+            "resume" => crate::widget_core::resume_widget("toggle", &mut self.em.inner.inner, args),
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -706,18 +727,27 @@ mod tests {
     }
 
     #[test]
-    fn external_schema_declares_all_three_slots() {
+    fn external_schema_declares_its_five_slots() {
         let tx = ToggleExternal::new();
         assert_eq!(
             tx.schema().fields,
+            // R1769 — `configuration` + `resume` joined as a pair; the count in
+            // this test's NAME moved with them rather than being left to lie.
             &[
                 SchemaField::new("state", "string"),
                 SchemaField::new("value", "bool"),
+                SchemaField::new("configuration", "json"),
                 SchemaField::action_with(
                     "send",
                     "string",
                     ArgForm::Scalar,
                     const { &[SchemaArg::event(&ToggleEvent::DRIVABLE_NAMES)] },
+                ),
+                SchemaField::action_with(
+                    "resume",
+                    "json",
+                    ArgForm::Scalar,
+                    const { &[SchemaArg::open("configuration", "json")] },
                 )
             ]
         );

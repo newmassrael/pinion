@@ -64,6 +64,9 @@
 
 use sce_rust_runtime::helpers::hierarchy::StateChain;
 use sce_rust_runtime::{ConfigurationRejection, Engine, StatePolicy};
+use serde::{Deserialize, Serialize};
+
+use crate::widget_core::WidgetStateName;
 
 /// A configuration a machine was in, and can be put back into.
 ///
@@ -77,7 +80,26 @@ use sce_rust_runtime::{ConfigurationRejection, Engine, StatePolicy};
 /// Opaque on purpose beyond the two accessors: a caller that could build one
 /// field-by-field would be building chains the engine then has to refuse, and
 /// the only chain worth having is one a real machine was actually in.
-#[derive(Debug, Clone, PartialEq, Eq)]
+///
+/// ★ R1769 — **it serialises, and that is what puts it on the wire.** The
+/// statechart codegen already derives `Serialize` / `Deserialize` on every
+/// generated state enum (the SCE-002/004 caller-injectable derives), so this
+/// needed nothing new from the generator. A client therefore reads a
+/// configuration and hands the same value back, rather than naming a state and
+/// leaving the framework to invent the chain around it — which it cannot do
+/// honestly, because the engine's ancestor walk publishes leaf-first and
+/// `hierarchy::build_entry_chain` builds root-first, and choosing between them
+/// would be this crate deciding a fact about somebody else's document.
+///
+/// ⚠ **This type carries no document identity, and deliberately does not.**
+/// Two widgets generated from one statechart template have identical state
+/// vocabularies, so one's configuration deserialises into the other's type and
+/// validates against the other's document — measured on `button` and `toggle`.
+/// Refusing that is a judgment about *which widget a snapshot came from*, which
+/// this module cannot make and the wire layer can: `widget_core`'s
+/// `widget_configuration` stamps the kind and its `resume_widget` checks it.
+/// Keeping the split means this stays a statement about statecharts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Configuration<S> {
     states: StateChain<S>,
     current: S,
@@ -129,9 +151,84 @@ pub fn resume_at<P: StatePolicy>(
     engine.enter_at(&saved.states, saved.current)
 }
 
+/// ★★★★★ R1769 §5.15 — **why a resume was refused, as a sentence naming the
+/// word the caller sent.**
+///
+/// The engine's rejection is a Rust value whose `Debug` prints GENERATED
+/// identifiers, and this tree refuses a refusal spelled that way: R1699 fixed it
+/// on the person's channel and R1720 on the agent's, and `Fault::DebugSpelling`
+/// is the gate. So an operator who hands back a configuration this document
+/// cannot hold gets a clause naming the rule and the state, not
+/// `CurrentNotAtomic { current: Root }`.
+///
+/// ⚠ **It renders with `WidgetStateName::as_name`, deliberately NOT with the
+/// engine's advice.** Upstream's own doc says to render a rejected state with
+/// `StatePolicy::get_state_name`, "the vocabulary a host persisted it under" —
+/// and for a host reading SCXML ids that is right. It is wrong HERE: this
+/// framework's wire answers `query("state")` from `as_name`, so a caller's
+/// vocabulary is `Pressed` while `get_state_name` would say `pressed`. A
+/// refusal that names a word the caller never sent is a refusal they cannot act
+/// on, so the rule is the caller's spelling wins.
+///
+/// The match is exhaustive on purpose: `ConfigurationRejection` is not
+/// `#[non_exhaustive]`, so an arm upstream adds arrives here as a build error,
+/// which is the moment to decide what it should say rather than a silent
+/// fallback sentence.
+pub fn refusal_sentence<S: WidgetStateName + Copy>(
+    rejection: &ConfigurationRejection<S>,
+) -> String {
+    let n = |s: S| s.as_name();
+    match *rejection {
+        ConfigurationRejection::Empty => {
+            "that configuration holds no states; a configuration always holds at least a root"
+                .to_string()
+        }
+        ConfigurationRejection::Duplicate { state } => {
+            format!("{} appears twice in that configuration", n(state))
+        }
+        ConfigurationRejection::AncestorMissing { state, parent } => format!(
+            "{} is in that configuration and its parent {} is not, so the set is not closed upward",
+            n(state),
+            n(parent)
+        ),
+        ConfigurationRejection::RootCount { found } => format!(
+            "that configuration closes on {found} states with no parent; a configuration has exactly one"
+        ),
+        ConfigurationRejection::CompoundChildCount { parent, found } => format!(
+            "{} is a compound state and that configuration gives it {found} active children; it takes exactly one",
+            n(parent)
+        ),
+        ConfigurationRejection::ParallelRegionMissing { parallel, region } => format!(
+            "{} is a parallel state and that configuration omits its region {}; a parallel state is active in all of its regions at once",
+            n(parallel),
+            n(region)
+        ),
+        ConfigurationRejection::ParallelChildCount {
+            parallel,
+            found,
+            regions,
+        } => format!(
+            "{} declares {regions} regions and that configuration gives it {found} children; a parallel state is entered with all of its regions and nothing else",
+            n(parallel)
+        ),
+        ConfigurationRejection::AtomicHasChildren { state } => format!(
+            "{} is atomic and that configuration gives it children",
+            n(state)
+        ),
+        ConfigurationRejection::CurrentNotActive { current } => format!(
+            "the configuration does not hold {}, which it names as the current state",
+            n(current)
+        ),
+        ConfigurationRejection::CurrentNotAtomic { current } => format!(
+            "{} is not atomic, so it is not a state a settled machine can be at; name one of its descendants instead",
+            n(current)
+        ),
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use super::{Configuration, configuration_of, resume_at};
+    use super::{Configuration, configuration_of, refusal_sentence, resume_at};
     use crate::self_answering_raise::{
         SelfAnsweringRaiseEvent, SelfAnsweringRaisePolicy, SelfAnsweringRaiseState,
     };
@@ -350,6 +447,80 @@ mod tests {
             matches!(refusal, ConfigurationRejection::CurrentNotAtomic { .. }),
             "and the refusal names the rule: a parallel root is not atomic, so \
              the leaf the engine published cannot be claimed as one: {refusal:?}"
+        );
+    }
+
+    /// ★★★★★ R1769 — **a refusal arrives as a sentence, in the caller's own
+    /// spelling.**
+    ///
+    /// This is the one refusal in this tree that a wire client can actually
+    /// provoke by handing back what the wire gave it (SCE-006), so it is the
+    /// one that most needs to be readable. Two things are asserted and the
+    /// second is the harder one: the sentence names the state, and it names it
+    /// with the WIRE's word — upstream's own doc recommends
+    /// `StatePolicy::get_state_name`, which for this document would say `root`,
+    /// and `query("state")` answers `Root`. A refusal spelled the other way
+    /// names a word the caller never sent.
+    #[test]
+    fn r1769_a_refusal_is_a_sentence_in_the_wire_vocabulary() {
+        use crate::multi_window::MultiWindowPolicy;
+        use sce_rust_runtime::StatePolicy;
+
+        let mut ran = Engine::new(MultiWindowPolicy::new());
+        ran.initialize();
+        let saved = configuration_of(&ran);
+
+        let mut fresh = Engine::new(MultiWindowPolicy::new());
+        fresh.initialize();
+        let refusal = resume_at(&mut fresh, &saved).expect_err("SCE-006 refuses this pair");
+        let said = refusal_sentence(&refusal);
+
+        assert!(
+            said.contains("Root"),
+            "it must name the state that tripped, in the vocabulary the wire \
+             answers `state` with: {said}"
+        );
+        assert_ne!(
+            <MultiWindowPolicy as StatePolicy>::get_state_name(saved.current()),
+            "Root",
+            "the premise of the assertion above: the engine's own recommended \
+             spelling is a DIFFERENT word, so containing `Root` is evidence of \
+             which vocabulary was used and not a coincidence"
+        );
+        assert!(
+            !said.contains('{') && !said.contains("::"),
+            "and it must not be a Debug spelling — `CurrentNotAtomic {{ .. }}` \
+             is what R1699 and R1720 refuse on the two channels: {said}"
+        );
+    }
+
+    /// ★★★ R1769 — **a configuration survives the wire round trip.**
+    ///
+    /// `Configuration` serialises so a client can hand back exactly what it
+    /// read, rather than naming a state and leaving the framework to invent the
+    /// chain around it. If this ever stopped holding, a client's saved session
+    /// would restore into a machine that is somewhere else.
+    #[test]
+    fn r1769_a_configuration_survives_a_json_round_trip() {
+        let (_driven, saved) = spun();
+
+        let wire = serde_json::to_value(&saved).expect("a configuration serialises");
+        let back: Configuration<SelfAnsweringRaiseState> =
+            serde_json::from_value(wire).expect("and parses back");
+
+        assert_eq!(
+            back, saved,
+            "the value a client hands back is the one it read"
+        );
+
+        let mut fresh = engine();
+        resume_at(&mut fresh, &back).expect("and it is still a configuration the engine accepts");
+        assert_eq!(fresh.get_current_state(), SelfAnsweringRaiseState::Spin);
+        assert_eq!(
+            fresh.truncated_macrosteps(),
+            0,
+            "and it still arrives without the entry action firing, which is the \
+             property the wire leg exists to carry"
         );
     }
 

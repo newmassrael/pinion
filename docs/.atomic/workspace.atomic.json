@@ -58122,6 +58122,68 @@
         "The one newer upstream commit (ebee8c932a) is deliberately left for its own round, per the one-bump-one-round shape R1765 and R1766 established."
       ]
     },
+    "R1769": {
+      "decision_summary": "R1769 moves the SCE pin one commit to ebee8c932a — whose emit is byte-identical, measured rather than argued — and spends the round on the leg R1768 registered rather than carried: the restore door reaching the wire. Eight widget surfaces now answer a `configuration` read and take a `resume` action, a round trip in which what `query` answers is exactly what `invoke` accepts. THE ROUND'S LARGEST FINDING CAME FROM THE DEMO AND NOT FROM THE DESIGN: a block written to assert that a toggle's configuration is refused by a button went GREEN, because both charts come from one statechart template, so their state vocabularies are identical and the toggle's value really is a valid configuration of the button's document. The engine was right; the wire was wrong to offer it. A configuration is now STAMPED with the widget kind it came from, and the stamp is checked before the value is parsed.",
+      "changes_bullets": [
+        "SCE pin 3e640b130a -> ebee8c932a across the triple pin; the regenerated emit is byte-identical, so the bump consumes nothing on its own and says so",
+        "`pinion_core::resume::Configuration` serialises, and `refusal_sentence` renders the engine's ten-arm rejection as prose in the vocabulary the wire answers `state` with",
+        "`widget_core::widget_configuration` / `resume_widget` — one rule, eight doors, and the widget STAMP that a demo demanded",
+        "Eight surfaces adopted the pair: button, checkbox, radio, toggle, disclosure, text_field, listbox_item, color_area — the same eight whose `intervene(\"state\")` is read-only, counted rather than assumed",
+        "`declared_channels_are_true` asserts `configuration` and `resume` are declared TOGETHER, on an already drift-audited roster"
+      ],
+      "verification_bullets": [
+        "`pin_sync.py --check-dual-pin` -> `dual pin: SCE@ebee8c9 (manifest = lock = vendor/sce)`, run after the lock was regenerated",
+        "THE BUMP CONSUMES NOTHING, MEASURED: `git diff crates/pinion-core/generated/` is EMPTY at the new pin -- all fifteen modules byte-identical. R1766's tracked artifact answers in one command what R1765 needed two builds and a hand diff for",
+        "`cargo test -p pinion-core` 3,877 lib assertions passed 0 failed, of which this round's are the serde round trip, the refusal sentence in the wire's vocabulary, the wire round trip on a shipped widget, two refusal shapes, the read-only snapshot, and the two the DEMO demanded: a configuration from another widget refused, and an unstamped one refused",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello` 0 warnings 0 errors",
+        "`cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items` exit 0. ⚠ The PLAIN form still ICEs in `hello-node-lab` -- R1728's open debt, not this change",
+        "`cargo test --workspace` exit 0 with no target reporting FAILED, 350 targets reporting a result. Not quoted as a total: R1766 measured that a regex over those lines silently loses some under parallel test threads",
+        "THE DEMO: `tools/demos/r1769_a_client_hands_a_configuration_back.py`, 37 named assertions, PASS twice with identical output (3.78s / 3.71s). It drives four live applications over `scene/query` and `scene/invoke` only",
+        "BLAST RADIUS COMPUTED FROM THE CAPABILITY RATHER THAN THE FILES: eight widgets' introspect surfaces changed, so the population is every demo driving one of them -- 34 demos, 34 passing on Xvfb :97",
+        "NOT RUN and stated: the full 638-demo sweep, which is CI's"
+      ],
+      "impact_refs": [
+        "5.15",
+        "5.12",
+        "5.8",
+        "5.38"
+      ],
+      "carry_forward_bullets": [
+        "SCE-006 stays open and now reaches the wire: a `<parallel>` document whose regions are atomic publishes a configuration its own engine refuses, so a client handed one gets the refusal as a sentence. Another repository, not fixable from here.",
+        "`debt-intents-are-empty-at-rpc-cadence` was RE-MEASURED by accident and its observation reproduced (empty immediately after an activation edge, boot drained first) — its DIAGNOSIS is still unverified, and this round did not verify it either: only one of the three readings that file asks for was taken. Recorded in the debt file rather than left as a demo failure nobody wrote down.",
+        "`App::resume_at` is reachable from Rust and not from the wire, because the topology machine has no External surface. Not registered as a new debt: it is the same shape as every other unexposed core API and nothing consumes it. Stated rather than left silent."
+      ],
+      "publishable_decision_summary": "R1769 moves the SCE pin one commit to ebee8c932a — whose emit is byte-identical, measured rather than argued — and spends the round on the leg R1768 registered rather than carried: the restore door reaching the wire. Eight widget surfaces now answer a `configuration` read and take a `resume` action, a round trip in which what `query` answers is exactly what `invoke` accepts. THE ROUND'S LARGEST FINDING CAME FROM THE DEMO AND NOT FROM THE DESIGN: a block written to assert that a toggle's configuration is refused by a button went GREEN, because both charts come from one statechart template, so their state vocabularies are identical and the toggle's value really is a valid configuration of the button's document. The engine was right; the wire was wrong to offer it. A configuration is now STAMPED with the widget kind it came from, and the stamp is checked before the value is parsed.",
+      "publishable_changes_bullets": [
+        "SCE pin 3e640b130a -> ebee8c932a across the triple pin; the regenerated emit is byte-identical, so the bump consumes nothing on its own and says so",
+        "`pinion_core::resume::Configuration` serialises, and `refusal_sentence` renders the engine's ten-arm rejection as prose in the vocabulary the wire answers `state` with",
+        "`widget_core::widget_configuration` / `resume_widget` — one rule, eight doors, and the widget STAMP that a demo demanded",
+        "Eight surfaces adopted the pair: button, checkbox, radio, toggle, disclosure, text_field, listbox_item, color_area — the same eight whose `intervene(\"state\")` is read-only, counted rather than assumed",
+        "`declared_channels_are_true` asserts `configuration` and `resume` are declared TOGETHER, on an already drift-audited roster"
+      ],
+      "publishable_verification_bullets": [
+        "`pin_sync.py --check-dual-pin` -> `dual pin: SCE@ebee8c9 (manifest = lock = vendor/sce)`, run after the lock was regenerated",
+        "THE BUMP CONSUMES NOTHING, MEASURED: `git diff crates/pinion-core/generated/` is EMPTY at the new pin -- all fifteen modules byte-identical. R1766's tracked artifact answers in one command what R1765 needed two builds and a hand diff for",
+        "`cargo test -p pinion-core` 3,877 lib assertions passed 0 failed, of which this round's are the serde round trip, the refusal sentence in the wire's vocabulary, the wire round trip on a shipped widget, two refusal shapes, the read-only snapshot, and the two the DEMO demanded: a configuration from another widget refused, and an unstamped one refused",
+        "`cargo clippy --workspace --all-targets --features pinion-runtime/vello` 0 warnings 0 errors",
+        "`cargo doc --workspace --no-deps --features pinion-runtime/vello --document-private-items` exit 0. ⚠ The PLAIN form still ICEs in `hello-node-lab` -- R1728's open debt, not this change",
+        "`cargo test --workspace` exit 0 with no target reporting FAILED, 350 targets reporting a result. Not quoted as a total: R1766 measured that a regex over those lines silently loses some under parallel test threads",
+        "THE DEMO: `tools/demos/r1769_a_client_hands_a_configuration_back.py`, 37 named assertions, PASS twice with identical output (3.78s / 3.71s). It drives four live applications over `scene/query` and `scene/invoke` only",
+        "BLAST RADIUS COMPUTED FROM THE CAPABILITY RATHER THAN THE FILES: eight widgets' introspect surfaces changed, so the population is every demo driving one of them -- 34 demos, 34 passing on Xvfb :97",
+        "NOT RUN and stated: the full 638-demo sweep, which is CI's"
+      ],
+      "publishable_impact_refs": [
+        "5.15",
+        "5.12",
+        "5.8",
+        "5.38"
+      ],
+      "publishable_carry_forward_bullets": [
+        "SCE-006 stays open and now reaches the wire: a `<parallel>` document whose regions are atomic publishes a configuration its own engine refuses, so a client handed one gets the refusal as a sentence. Another repository, not fixable from here.",
+        "`debt-intents-are-empty-at-rpc-cadence` was RE-MEASURED by accident and its observation reproduced (empty immediately after an activation edge, boot drained first) — its DIAGNOSIS is still unverified, and this round did not verify it either: only one of the three readings that file asks for was taken. Recorded in the debt file rather than left as a demo failure nobody wrote down.",
+        "`App::resume_at` is reachable from Rust and not from the wire, because the topology machine has no External surface. Not registered as a new debt: it is the same shape as every other unexposed core API and nothing consumes it. Stated rather than left silent."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

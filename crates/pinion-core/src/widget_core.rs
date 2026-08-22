@@ -1262,6 +1262,162 @@ pub trait WidgetTag: Sized + 'static {
     fn from_tag(tag: &str) -> ::core::option::Option<Self>;
 }
 
+/// ★★★★★ R1769 §5.15 §2 #2 — read a widget's statechart configuration for the
+/// wire.
+///
+/// The `query`-side half of the pair whose other half is [`resume_widget`].
+/// Eight widget surfaces answer a `configuration` slot and every one of them
+/// would otherwise write the same three lines, which is the shape
+/// [`require_event`] was lifted out of.
+///
+/// The value is JSON rather than a scalar because a configuration is an
+/// **ordered set plus a leaf**, and a slot that flattened it to the leaf alone
+/// would be lossy for exactly the documents that most need restoring — a
+/// `<parallel>` machine's chain does not follow from its current state.
+///
+/// # ★★★★★ It is STAMPED with the widget, and that was found by a demo
+///
+/// The value carries `{"widget": "<kind>", "configuration": {...}}` rather than
+/// the bare configuration. R1769's demo handed a **toggle's** configuration to a
+/// **button** expecting a refusal, and the button accepted it: both charts come
+/// from the same `standard_button.sce-template.xml`, so their state vocabularies
+/// are identical and the toggle's value really is a configuration of the
+/// button's document. Structurally the engine was right to take it.
+///
+/// It is still the wrong outcome, one level above where the engine can see. A
+/// client restoring a session holds "this snapshot came from THAT widget", and
+/// a wire form that drops it turns a mixed-up restore into a machine that looks
+/// fine and is elsewhere — the outcome `Engine::enter_at` refuses inside one
+/// document, arriving between documents instead. So the stamp lives here, at
+/// the layer that knows the widget kind, and `pinion_core::resume` stays a
+/// statement about statecharts with no opinion about widgets.
+///
+/// # Errors
+///
+/// [`ReadRefusal::Unavailable`](crate::external::ReadRefusal::Unavailable) when
+/// the configuration cannot be rendered as JSON. That is not reachable for a
+/// generated state enum, and it is still stated rather than unwrapped: this
+/// crate forbids a panic on a wire path, and a refusal that names the surface
+/// is what a client can act on.
+pub fn widget_configuration<P>(
+    widget: &str,
+    w: &crate::widgets::Widget<P>,
+) -> Result<crate::external::IntrospectValue, crate::external::ReadRefusal>
+where
+    P: sce_rust_runtime::StatePolicy,
+    P::State: serde::Serialize,
+{
+    serde_json::to_value(w.configuration())
+        .map(|configuration| {
+            crate::external::IntrospectValue::Json(serde_json::json!({
+                WIDGET_KEY: widget,
+                CONFIGURATION_KEY: configuration,
+            }))
+        })
+        .map_err(|e| {
+            crate::external::ReadRefusal::unavailable(format!(
+                "{widget}.configuration: this widget's statechart configuration \
+                 could not be rendered for the wire ({e})"
+            ))
+        })
+}
+
+/// The key naming which widget kind a stamped configuration came from.
+///
+/// A `const` rather than a literal at each site for the reason R1638 gives
+/// about declared vocabularies: the reader and the writer are two places, and a
+/// spelling that lives in one of them is a spelling that can drift.
+const WIDGET_KEY: &str = "widget";
+
+/// The key holding the configuration itself inside the stamp.
+const CONFIGURATION_KEY: &str = "configuration";
+
+/// ★★★★★ R1769 §5.15 §2 #2 — put a widget's statechart back into a
+/// configuration the wire hands it, running no `<onentry>`.
+///
+/// The `invoke`-side half of [`widget_configuration`], and the two are a
+/// deliberate round trip: what `query` answers is exactly what this accepts.
+/// The alternative — an action taking a state NAME and deriving the chain — was
+/// measured and refused, because the engine's ancestor walk publishes leaf-first
+/// while `hierarchy::build_entry_chain` builds root-first, so deriving would
+/// mean this framework choosing an order for somebody else's document, and for
+/// a `<parallel>` machine that choice is observable afterwards.
+///
+/// ⚠ This does NOT overturn R17's decision that state mutation flows through
+/// the `send` action rather than through `intervene`. It is a different verb on
+/// the same channel: `send` drives an event and runs the entry actions on the
+/// way in, this one enters a configuration and runs none. `intervene("state")`
+/// stays read-only.
+///
+/// # Errors
+///
+/// [`InvokeError::TypeMismatch`](crate::external::InvokeError::TypeMismatch)
+/// when the argument is not JSON, and
+/// [`InvokeError::Rejected`](crate::external::InvokeError::Rejected) — carrying
+/// a sentence — when the JSON is not a configuration of this widget's document,
+/// which is the engine's own refusal rendered by
+/// `pinion_core::resume::refusal_sentence` in the vocabulary the wire answers
+/// `state` with.
+pub fn resume_widget<P>(
+    widget: &str,
+    w: &mut crate::widgets::Widget<P>,
+    args: crate::external::IntrospectValue,
+) -> Result<crate::external::IntrospectValue, crate::external::InvokeError>
+where
+    P: sce_rust_runtime::StatePolicy,
+    P::State: serde::de::DeserializeOwned + WidgetStateName,
+{
+    let crate::external::IntrospectValue::Json(raw) = args else {
+        return Err(crate::external::InvokeError::TypeMismatch);
+    };
+    // ★ The stamp is checked BEFORE the configuration is read, because a value
+    // from another widget can parse perfectly: widgets sharing a statechart
+    // template share a state vocabulary, so `from_value` would succeed and the
+    // engine would then validate against the wrong document and ACCEPT. See
+    // `widget_configuration` for the demo that found this.
+    match raw.get(WIDGET_KEY).and_then(serde_json::Value::as_str) {
+        Some(kind) if kind == widget => {}
+        Some(kind) => {
+            return Err(crate::external::InvokeError::rejected(format!(
+                "{widget}.resume: that configuration is a {kind}'s, and this is a \
+                 {widget}; hand back the value THIS widget's `configuration` answered"
+            )));
+        }
+        None => {
+            return Err(crate::external::InvokeError::rejected(format!(
+                "{widget}.resume: that value does not say which widget it came from; \
+                 hand back the value `configuration` answered, unchanged"
+            )));
+        }
+    }
+
+    let inner = raw.get(CONFIGURATION_KEY).cloned().ok_or_else(|| {
+        crate::external::InvokeError::rejected(format!(
+            "{widget}.resume: that value is stamped {widget} and carries no \
+             configuration; hand back the value `configuration` answered, unchanged"
+        ))
+    })?;
+
+    let saved: crate::resume::Configuration<P::State> =
+        serde_json::from_value(inner).map_err(|e| {
+            crate::external::InvokeError::rejected(format!(
+                "{widget}.resume: that is not a configuration this widget can read \
+                 back ({e}); hand back the value `configuration` answered"
+            ))
+        })?;
+
+    w.resume_at(&saved).map_err(|rejection| {
+        crate::external::InvokeError::rejected(format!(
+            "{widget}.resume: {}",
+            crate::resume::refusal_sentence(&rejection)
+        ))
+    })?;
+
+    Ok(crate::external::IntrospectValue::Text(
+        w.state().as_name().to_string(),
+    ))
+}
+
 #[cfg(test)]
 mod r51_166_tests {
     //! R51.166 §5.23 R27 — `WidgetCore::update` reducer substrate

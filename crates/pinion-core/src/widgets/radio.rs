@@ -272,11 +272,21 @@ impl ExternalIntrospect for RadioExternal {
                 &[
                     SchemaField::new("state", "string"),
                     SchemaField::new("selected", "bool"),
+                    // R1769 — the lossless read of the statechart, and the
+                    // action that takes it back. ⚠ It restores the MACHINE and
+                    // not `selected`, which is this widget's own sidecar.
+                    SchemaField::new("configuration", "json"),
                     SchemaField::action_with(
                         "send",
                         "string",
                         ArgForm::Scalar,
                         const { &[SchemaArg::event(&RadioEvent::DRIVABLE_NAMES)] },
+                    ),
+                    SchemaField::action_with(
+                        "resume",
+                        "json",
+                        ArgForm::Scalar,
+                        const { &[SchemaArg::open("configuration", "json")] },
                     ),
                 ]
             },
@@ -287,6 +297,9 @@ impl ExternalIntrospect for RadioExternal {
         match path {
             "state" => Ok(IntrospectValue::Text(self.state().as_name().to_string())),
             "selected" => Ok(IntrospectValue::Bool(self.is_selected())),
+            "configuration" => {
+                crate::widget_core::widget_configuration("radio", &self.em.inner.inner)
+            }
             _ => Err(ReadRefusal::UnknownPath),
         }
     }
@@ -319,6 +332,9 @@ impl ExternalIntrospect for RadioExternal {
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
+            // R1769 — enter a configuration this widget was in, running no
+            // `<onentry>`; a different verb from `send` on the same channel.
+            "resume" => crate::widget_core::resume_widget("radio", &mut self.em.inner.inner, args),
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -472,19 +488,28 @@ mod tests {
     }
 
     #[test]
-    fn external_schema_declares_three_slots() {
+    fn external_schema_declares_its_five_slots() {
         let rx = RadioExternal::new();
         let schema = rx.schema();
         assert_eq!(
             schema.fields,
+            // R1769 — `configuration` + `resume` joined as a pair; the count in
+            // this test's NAME moved with them rather than being left to lie.
             &[
                 SchemaField::new("state", "string"),
                 SchemaField::new("selected", "bool"),
+                SchemaField::new("configuration", "json"),
                 SchemaField::action_with(
                     "send",
                     "string",
                     ArgForm::Scalar,
                     const { &[SchemaArg::event(&RadioEvent::DRIVABLE_NAMES)] },
+                ),
+                SchemaField::action_with(
+                    "resume",
+                    "json",
+                    ArgForm::Scalar,
+                    const { &[SchemaArg::open("configuration", "json")] },
                 )
             ]
         );

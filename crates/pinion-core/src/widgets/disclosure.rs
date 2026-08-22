@@ -259,11 +259,21 @@ impl ExternalIntrospect for DisclosureExternal {
                 &[
                     SchemaField::new("state", "string"),
                     SchemaField::new("expanded", "bool"),
+                    // R1769 — the lossless read of the statechart, and the
+                    // action that takes it back. ⚠ It restores the MACHINE and
+                    // not `expanded`, which is this widget's own sidecar.
+                    SchemaField::new("configuration", "json"),
                     SchemaField::action_with(
                         "send",
                         "string",
                         ArgForm::Scalar,
                         const { &[SchemaArg::event(&DisclosureEvent::DRIVABLE_NAMES)] },
+                    ),
+                    SchemaField::action_with(
+                        "resume",
+                        "json",
+                        ArgForm::Scalar,
+                        const { &[SchemaArg::open("configuration", "json")] },
                     ),
                 ]
             },
@@ -274,6 +284,9 @@ impl ExternalIntrospect for DisclosureExternal {
         match path {
             "state" => Ok(IntrospectValue::Text(self.state().as_name().to_string())),
             "expanded" => Ok(IntrospectValue::Bool(self.is_expanded())),
+            "configuration" => {
+                crate::widget_core::widget_configuration("disclosure", &self.em.inner.inner)
+            }
             _ => Err(ReadRefusal::UnknownPath),
         }
     }
@@ -307,6 +320,11 @@ impl ExternalIntrospect for DisclosureExternal {
                 }
                 _ => Err(InvokeError::TypeMismatch),
             },
+            // R1769 — enter a configuration this widget was in, running no
+            // `<onentry>`; a different verb from `send` on the same channel.
+            "resume" => {
+                crate::widget_core::resume_widget("disclosure", &mut self.em.inner.inner, args)
+            }
             _ => Err(InvokeError::UnknownPath),
         }
     }
@@ -456,18 +474,27 @@ mod tests {
     }
 
     #[test]
-    fn external_schema_declares_three_slots() {
+    fn external_schema_declares_its_five_slots() {
         let dx = DisclosureExternal::new();
         assert_eq!(
             dx.schema().fields,
+            // R1769 — `configuration` + `resume` joined as a pair; the count in
+            // this test's NAME moved with them rather than being left to lie.
             &[
                 SchemaField::new("state", "string"),
                 SchemaField::new("expanded", "bool"),
+                SchemaField::new("configuration", "json"),
                 SchemaField::action_with(
                     "send",
                     "string",
                     ArgForm::Scalar,
                     const { &[SchemaArg::event(&DisclosureEvent::DRIVABLE_NAMES)] },
+                ),
+                SchemaField::action_with(
+                    "resume",
+                    "json",
+                    ArgForm::Scalar,
+                    const { &[SchemaArg::open("configuration", "json")] },
                 )
             ]
         );
