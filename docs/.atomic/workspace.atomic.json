@@ -59994,6 +59994,110 @@
         "sitting off-centre in a window. Nothing on their screen has moved yet."
       ]
     },
+    "R1781": {
+      "decision_summary": "R1781 — THE ROUND KEPT TRYING TO BUILD SOMETHING THAT ALREADY EXISTED, AND THE\nTHING THAT DID NOT EXIST FOUND A SECOND DEFECT ON ITS FIRST RUN.\n\nA reader ran the assembled tool and found the node lab's inspector cut off. A\ndebt was opened for it the same day, saying the shipping window is below what a\nmounted screen declares it needs, and that the shipping size sat \"outside the\njudged population\". This round took that debt and re-measured it, as the rule\ndemands. THREE OF ITS PREMISES FELL, one after another, and every one of them\nwould have produced a duplicate of something already in the tree.\n\n★ ONE — \"the shipping size is outside the judged population\". No: R1767 measured\nthis exact size and recorded `118 of 133`, and `r1770_a_verdict_says_what_size_\nit_was_read_at` carries both readings in its own header.\n\n★ TWO — \"no gate asserts anything there\". No: that demo's SECTION D drives the\nreal binary at `SMALL = (1440, 900)` and asserts the whole story — that the tool\ndoes not claim to conform at the window it opens in, that the lab's three\nsurfaces DECLINE to be judged rather than failing, that the reason names BOTH\nthe width the screen declares it lays out at and the width it was actually\ngiven, and that the second is smaller than the first, which is what makes an\n\"away\" honest rather than a judge that would have failed. Nothing about the\nstate the reader met is unmeasured or unexplained.\n\n★ THREE — \"so re-ask it in process\". Not possible, and the failure said why\ntwice. A first draft painted once at the opening destination and got\n`reproduced = 26` against the demo's 118; walking every destination first\nchanged nothing. The cause is not a regression: this harness records ONE surface\n(`record_painted_surfaces(.., &[VIEW_TAG])`) where the running binary records\nevery mounted screen's, so a walk-level verdict cannot be assembled here at all.\nThat is `debt-the-in-process-sweep-cannot-mount-a-screens-extra-externals`, met\nfrom the inside — and R1767's own finding from the other side, since asking a\nwalk-level question of a single frame is the same error inverted.\n\n★★★★★ WHAT WAS ACTUALLY MISSING IS ONE LAYER DOWN. The demo says the tool\ndeclines at this size. NOTHING SAYS WHY IT HAD TO: that `WIN_W` and a mounted\nscreen's declared comfortable width were chosen in different rounds and cannot\nboth be satisfied. That is not a fact about a frame — it is two declarations\nsitting side by side, and comparing them needs no surface, no walk and no\nwindow. `r1781_the_shipping_window_cannot_give_every_screen_what_it_declares`\ndoes exactly that, and `ScreenRoster::shrink_policy_of` is what lets it: the\nsame asymmetry `tag_of` closed at R1729, one property over — a screen's size\npolicy reached `page_scene` and nothing else, so a host could not ask what its\nguests need without navigating to each of them.\n\n★★★★★ AND IT ANSWERED **TWO**, WHICH IS THE ROUND'S FINDING. The expected answer\nwas `[\"lab\"]` — that is what the reader saw and what the demo's prose describes.\nMeasured:\n\n    lab      declares 1625, given 1388 — short by 237\n    packets  declares 1425, given 1388 — SHORT BY 37\n\nThe capture viewer does not fit either, and nobody has ever said so — not a\ndemo, not a debt, not the reader. Thirty-seven pixels of a three-pane screen do\nnot announce themselves the way a missing inspector does. It was found by\ncomparing two constants rather than by looking at a window, on the check's first\nrun, and it is the reason this gate is not a duplicate of the one that already\nexisted: THAT one reads a frame, THIS one reads a declaration, and they cannot\nsubstitute for each other.\n\nWHAT IS NOT FIXED, deliberately: the ratchet pins the SET of screens that cannot\nfit, not a demand that it be empty. Closing it means choosing between a window\nbigger than most laptops, a toolbar overflow affordance that does not exist, and\na screen decision three rounds paid for. What may not happen is the set changing\nwhile nobody notices — which is exactly how the second entry got there.",
+      "changes_bullets": [
+        "FRAMEWORK — `ScreenRoster::shrink_policy_of(key)`: what the screen mounted at a",
+        "destination declares it needs to lay out in. The same asymmetry `tag_of` closed",
+        "at R1729, one property over — the policy reached `page_scene`, which applies its",
+        "recourse, and nothing else, so a host could not ask what its guests need without",
+        "navigating to each one. `None` both for a destination with no screen and for a",
+        "screen that declares no policy: one that concedes nothing did not ask and get",
+        "refused.",
+        "SHELL — `r1781_the_shipping_window_cannot_give_every_screen_what_it_declares`.",
+        "Derives what a mounted screen receives (the window less the host's rail) and",
+        "compares it with each screen's declared comfortable width. A ratchet on the SET",
+        "that falls short, with the measured widths in the failure message, and a floor",
+        "on the population so an empty roster cannot pass it vacuously."
+      ],
+      "verification_bullets": [
+        "RE-MEASURED FIRST, and it is most of the round: three premises of the debt fell",
+        "before any code was written, each one pointing at something the tree already",
+        "had. The evidence for each is named in the decision above.",
+        "LOCAL GATES, both crates whose behaviour changed, full suites:",
+        "`hello-analyzer-shell` 104 passed 0 failed; `pinion-screen` 8 + 14 + 27 + 2",
+        "passed 0 failed. `cargo fmt --all` clean.",
+        "THE RATCHET WAS SET FROM THE RUN, NOT FROM EXPECTATION. It was first written",
+        "`[\"lab\"]` — the reader's report and the demo's prose — and the first run",
+        "answered `[(\"packets\", 1425, 1388), (\"lab\", 1625, 1388)]`. The expected value",
+        "was corrected to what was measured, and the second entry is a defect nothing in",
+        "this tree had recorded.",
+        "★ WHAT THE FAILED ATTEMPTS PROVED, which is worth as much as the gate: a",
+        "walk-level conformance verdict cannot be assembled in this harness. Two runs",
+        "said so — `reproduced = 26` before walking the destinations and `26` after —",
+        "against a demo that measures 118 at the same size, because the harness records",
+        "one surface and the binary records every mounted screen's."
+      ],
+      "impact_refs": [
+        "5.32"
+      ],
+      "carry_forward_bullets": [
+        "* `debt-the-shipped-window-is-below-a-mounted-screens-minimum` stays OPEN and",
+        "its axis statement is corrected: the state is measured, gated and explained",
+        "already; what this round added is why it is forced. The three repairs remain a",
+        "design choice nobody has made.",
+        "* ★ NEW, AND UNREPORTED UNTIL NOW: the capture viewer is short by 37px at the",
+        "shipping size. It is in the ratchet rather than in a new debt because it is the",
+        "same conflict with a different pair of numbers, and splitting it would make two",
+        "files that must be closed together.",
+        "* ⚠ THE IN-PROCESS HARNESS CANNOT ANSWER WALK-LEVEL CONFORMANCE — recorded here",
+        "because this round spent two runs discovering it and the next round to reach for",
+        "that number will otherwise spend two more. The demo is the instrument for it.",
+        "★ A PERSON CLOSES WHAT A PERSON REPORTED (R1736). The reader's inspector is",
+        "still cut off; this round made the reason gated, not gone."
+      ],
+      "publishable_decision_summary": "R1781 — THE ROUND KEPT TRYING TO BUILD SOMETHING THAT ALREADY EXISTED, AND THE\nTHING THAT DID NOT EXIST FOUND A SECOND DEFECT ON ITS FIRST RUN.\n\nA reader ran the assembled tool and found the node lab's inspector cut off. A\ndebt was opened for it the same day, saying the shipping window is below what a\nmounted screen declares it needs, and that the shipping size sat \"outside the\njudged population\". This round took that debt and re-measured it, as the rule\ndemands. THREE OF ITS PREMISES FELL, one after another, and every one of them\nwould have produced a duplicate of something already in the tree.\n\n★ ONE — \"the shipping size is outside the judged population\". No: R1767 measured\nthis exact size and recorded `118 of 133`, and `r1770_a_verdict_says_what_size_\nit_was_read_at` carries both readings in its own header.\n\n★ TWO — \"no gate asserts anything there\". No: that demo's SECTION D drives the\nreal binary at `SMALL = (1440, 900)` and asserts the whole story — that the tool\ndoes not claim to conform at the window it opens in, that the lab's three\nsurfaces DECLINE to be judged rather than failing, that the reason names BOTH\nthe width the screen declares it lays out at and the width it was actually\ngiven, and that the second is smaller than the first, which is what makes an\n\"away\" honest rather than a judge that would have failed. Nothing about the\nstate the reader met is unmeasured or unexplained.\n\n★ THREE — \"so re-ask it in process\". Not possible, and the failure said why\ntwice. A first draft painted once at the opening destination and got\n`reproduced = 26` against the demo's 118; walking every destination first\nchanged nothing. The cause is not a regression: this harness records ONE surface\n(`record_painted_surfaces(.., &[VIEW_TAG])`) where the running binary records\nevery mounted screen's, so a walk-level verdict cannot be assembled here at all.\nThat is `debt-the-in-process-sweep-cannot-mount-a-screens-extra-externals`, met\nfrom the inside — and R1767's own finding from the other side, since asking a\nwalk-level question of a single frame is the same error inverted.\n\n★★★★★ WHAT WAS ACTUALLY MISSING IS ONE LAYER DOWN. The demo says the tool\ndeclines at this size. NOTHING SAYS WHY IT HAD TO: that `WIN_W` and a mounted\nscreen's declared comfortable width were chosen in different rounds and cannot\nboth be satisfied. That is not a fact about a frame — it is two declarations\nsitting side by side, and comparing them needs no surface, no walk and no\nwindow. `r1781_the_shipping_window_cannot_give_every_screen_what_it_declares`\ndoes exactly that, and `ScreenRoster::shrink_policy_of` is what lets it: the\nsame asymmetry `tag_of` closed at R1729, one property over — a screen's size\npolicy reached `page_scene` and nothing else, so a host could not ask what its\nguests need without navigating to each of them.\n\n★★★★★ AND IT ANSWERED **TWO**, WHICH IS THE ROUND'S FINDING. The expected answer\nwas `[\"lab\"]` — that is what the reader saw and what the demo's prose describes.\nMeasured:\n\n    lab      declares 1625, given 1388 — short by 237\n    packets  declares 1425, given 1388 — SHORT BY 37\n\nThe capture viewer does not fit either, and nobody has ever said so — not a\ndemo, not a debt, not the reader. Thirty-seven pixels of a three-pane screen do\nnot announce themselves the way a missing inspector does. It was found by\ncomparing two constants rather than by looking at a window, on the check's first\nrun, and it is the reason this gate is not a duplicate of the one that already\nexisted: THAT one reads a frame, THIS one reads a declaration, and they cannot\nsubstitute for each other.\n\nWHAT IS NOT FIXED, deliberately: the ratchet pins the SET of screens that cannot\nfit, not a demand that it be empty. Closing it means choosing between a window\nbigger than most laptops, a toolbar overflow affordance that does not exist, and\na screen decision three rounds paid for. What may not happen is the set changing\nwhile nobody notices — which is exactly how the second entry got there.",
+      "publishable_changes_bullets": [
+        "FRAMEWORK — `ScreenRoster::shrink_policy_of(key)`: what the screen mounted at a",
+        "destination declares it needs to lay out in. The same asymmetry `tag_of` closed",
+        "at R1729, one property over — the policy reached `page_scene`, which applies its",
+        "recourse, and nothing else, so a host could not ask what its guests need without",
+        "navigating to each one. `None` both for a destination with no screen and for a",
+        "screen that declares no policy: one that concedes nothing did not ask and get",
+        "refused.",
+        "SHELL — `r1781_the_shipping_window_cannot_give_every_screen_what_it_declares`.",
+        "Derives what a mounted screen receives (the window less the host's rail) and",
+        "compares it with each screen's declared comfortable width. A ratchet on the SET",
+        "that falls short, with the measured widths in the failure message, and a floor",
+        "on the population so an empty roster cannot pass it vacuously."
+      ],
+      "publishable_verification_bullets": [
+        "RE-MEASURED FIRST, and it is most of the round: three premises of the debt fell",
+        "before any code was written, each one pointing at something the tree already",
+        "had. The evidence for each is named in the decision above.",
+        "LOCAL GATES, both crates whose behaviour changed, full suites:",
+        "`hello-analyzer-shell` 104 passed 0 failed; `pinion-screen` 8 + 14 + 27 + 2",
+        "passed 0 failed. `cargo fmt --all` clean.",
+        "THE RATCHET WAS SET FROM THE RUN, NOT FROM EXPECTATION. It was first written",
+        "`[\"lab\"]` — the reader's report and the demo's prose — and the first run",
+        "answered `[(\"packets\", 1425, 1388), (\"lab\", 1625, 1388)]`. The expected value",
+        "was corrected to what was measured, and the second entry is a defect nothing in",
+        "this tree had recorded.",
+        "★ WHAT THE FAILED ATTEMPTS PROVED, which is worth as much as the gate: a",
+        "walk-level conformance verdict cannot be assembled in this harness. Two runs",
+        "said so — `reproduced = 26` before walking the destinations and `26` after —",
+        "against a demo that measures 118 at the same size, because the harness records",
+        "one surface and the binary records every mounted screen's."
+      ],
+      "publishable_impact_refs": [
+        "5.32"
+      ],
+      "publishable_carry_forward_bullets": [
+        "* `debt-the-shipped-window-is-below-a-mounted-screens-minimum` stays OPEN and",
+        "its axis statement is corrected: the state is measured, gated and explained",
+        "already; what this round added is why it is forced. The three repairs remain a",
+        "design choice nobody has made.",
+        "* ★ NEW, AND UNREPORTED UNTIL NOW: the capture viewer is short by 37px at the",
+        "shipping size. It is in the ratchet rather than in a new debt because it is the",
+        "same conflict with a different pair of numbers, and splitting it would make two",
+        "files that must be closed together.",
+        "* ⚠ THE IN-PROCESS HARNESS CANNOT ANSWER WALK-LEVEL CONFORMANCE — recorded here",
+        "because this round spent two runs discovering it and the next round to reach for",
+        "that number will otherwise spend two more. The demo is the instrument for it.",
+        "★ A PERSON CLOSES WHAT A PERSON REPORTED (R1736). The reader's inspector is",
+        "still cut off; this round made the reason gated, not gone."
+      ]
+    },
     "R232": {
       "decision_summary": "R51.88 §5.40 AccessFocus::with_active_descendant strict YAGNI 제거 — R51.84 vs R51.86 inconsistency 정정",
       "changes_bullets": [

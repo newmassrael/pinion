@@ -14,7 +14,7 @@ use std::collections::BTreeMap;
 
 use pinion_core::chrome::{HostChrome, with_host_chrome};
 use pinion_core::external::with_surface_extent;
-use pinion_core::shrink::pan;
+use pinion_core::shrink::{ShrinkPolicy, pan};
 use pinion_core::widget_core::ExtraExternal;
 use pinion_core::widgets::destination::{Destination, Destinations, Journey, Standing};
 use pinion_core::{Frame, Scene};
@@ -524,6 +524,24 @@ impl ScreenRoster {
     #[must_use]
     pub fn tag_of(&self, key: &str) -> Option<&'static str> {
         self.screens.get(key).map(|s| s.tag())
+    }
+
+    /// What the screen mounted at `key` declares it needs to lay out in.
+    ///
+    /// ★ R1781 — the same asymmetry `tag_of` closed, one property over: a
+    /// screen's size policy reached `page_scene` (which applies its recourse)
+    /// and nothing else, so a host could not ask what its guests need without
+    /// navigating to each one. That made an ordinary question — does the window
+    /// this application ships in satisfy every screen it mounts — answerable
+    /// only by driving the running binary, when it is two declarations sitting
+    /// side by side.
+    ///
+    /// `None` for a destination with no screen, and for a screen that declares
+    /// no policy: a screen that concedes nothing is not a screen that asked for
+    /// something and was refused.
+    #[must_use]
+    pub fn shrink_policy_of(&self, key: &str) -> Option<ShrinkPolicy> {
+        self.screens.get(key).and_then(|s| s.shrink_policy())
     }
 
     /// The current screen's paint-root tag, when the journey is at a mounted

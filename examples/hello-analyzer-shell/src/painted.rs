@@ -4016,6 +4016,98 @@ fn r1775_the_host_does_not_paint_on_the_screen_it_is_showing() {
     });
 }
 
+/// ★★★★★ R1781 — **the window this tool ships in is narrower than what its own
+/// screens declare they need, and that conflict is two constants nobody
+/// compared.**
+///
+/// # What this is NOT, because the round that wrote it nearly built the wrong
+/// thing twice
+///
+/// A reader ran the assembled tool and found the inspector cut off, and a debt
+/// was opened saying the shipping size was "outside the judged population".
+/// **Both halves of that were wrong**, and re-measuring is what said so: R1767
+/// measured this exact size, and `r1770_a_verdict_says_what_size_it_was_read_at`
+/// section D DRIVES THE BINARY AT IT and asserts the whole story — that the tool
+/// does not claim to conform there, that the lab's surfaces decline to be
+/// judged rather than failing, that the reason names both the width the screen
+/// declares and the width it was given, and that the second is smaller than the
+/// first. Nothing about the state a reader met is unmeasured or ungated.
+///
+/// A first draft of THIS test tried to re-ask that in process and got
+/// `reproduced = 26` against the demo's 118 — twice, once before walking the
+/// destinations and once after. The cause is not a regression: this harness
+/// records ONE surface (`record_painted_surfaces(.., &[VIEW_TAG])`) where the
+/// running binary records every mounted screen's, so a walk-level verdict
+/// cannot be assembled here at all. That is
+/// `debt-the-in-process-sweep-cannot-mount-a-screens-extra-externals`, met from
+/// the inside.
+///
+/// # What is genuinely missing, and is what this asserts
+///
+/// The demo says the tool declines at this size. Nothing says WHY it had to:
+/// that `WIN_W` and a mounted screen's declared comfortable width were chosen
+/// in different rounds and cannot both be satisfied. Those are two constants,
+/// available here without any surface, and comparing them is a fact about the
+/// application's own arrangement rather than about any frame.
+///
+/// It is a ratchet on the SET of screens that cannot fit, not a demand that the
+/// set be empty: closing it means choosing between a window bigger than most
+/// laptops, a toolbar overflow affordance that does not exist yet, and a screen
+/// decision three rounds paid for. What may not happen is the set changing
+/// while nobody notices.
+#[test]
+fn r1781_the_shipping_window_cannot_give_every_screen_what_it_declares() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let roster = super::screen_roster();
+        // What a mounted screen actually receives: the window less the rail the
+        // host keeps for itself. Derived rather than written down, so moving
+        // either constant moves this.
+        let granted = WIN_W.saturating_sub(spec::RAIL_W);
+
+        let mut short: Vec<(String, u32, u32)> = Vec::new();
+        let mut asked = 0usize;
+        for key in roster.mounted_keys().map(str::to_owned).collect::<Vec<_>>() {
+            let Some(policy) = roster.shrink_policy_of(&key) else {
+                continue;
+            };
+            asked += 1;
+            let wants = policy.comfortable().0;
+            if wants > granted {
+                short.push((key, wants, granted));
+            }
+        }
+
+        assert!(
+            asked >= 4,
+            "only {asked} mounted screen(s) declared a size policy — a \
+             population this small cannot be this tool's, and an empty one \
+             would make every clause below vacuous",
+        );
+
+        // ★★★★★ TWO, and the second one is why this ratchet was worth writing.
+        //
+        // A reader reported the node lab's inspector cut off, and that is the
+        // 237px one. The capture viewer is short by 37 and NOBODY HAS EVER SAID
+        // SO — not a demo, not a debt, not the reader, because 37px of a
+        // three-pane screen does not announce itself the way a missing
+        // inspector does. It was found on this check's first run, by comparing
+        // two declarations rather than by looking at a window.
+        let names: Vec<&str> = short.iter().map(|(k, ..)| k.as_str()).collect();
+        assert_eq!(
+            names,
+            ["packets", "lab"],
+            "★ the set of screens the shipping window cannot satisfy has \
+             changed. Measured: {short:?} — each is (screen, the width it \
+             declares it lays out at, the width {WIN_W} less the rail leaves \
+             it). Growing the set means a screen was mounted that does not fit; \
+             shrinking it means somebody chose one of the three repairs and \
+             this ratchet is what they update. See \
+             `debt-the-shipped-window-is-below-a-mounted-screens-minimum`",
+        );
+    });
+}
+
 /// ★★★★★ R1776 — **what the host paints over a guest LEAVES.**
 ///
 /// The rule the sibling ratchet above cannot state. The obvious gate — a host
