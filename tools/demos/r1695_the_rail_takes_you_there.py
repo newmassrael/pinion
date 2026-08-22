@@ -98,7 +98,7 @@ def refused(app: RpcSubprocess, path: str, value) -> str:
 
 def go(app: RpcSubprocess, key: str) -> None:
     app.intervene(f"{EXT}/nav", key)
-    app.tick(16)
+    app.tick_ms(16)
     assert_eq(q(app, "nav"), key, f"the journey reached {key}")
 
 
@@ -191,7 +191,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             "scene/click",
             {"button": "left", "at": {"x": seat[0] + seat[2] // 2, "y": seat[1] + seat[3] // 2}},
         )
-        app.tick(16)
+        app.tick_ms(16)
         assert_eq(q(app, "nav"), "dashboard", "B: already here stays here")
         assert_eq(
             frozenset(abs_rects_of(app.snapshot(source="paint"))),
@@ -264,7 +264,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             app.request(
                 "scene/click", {"button": "left", "at": {"x": x + w // 2, "y": y + h // 2}}
             )
-            app.tick(16)
+            app.tick_ms(16)
             assert_eq(q(app, "theme"), name.lower(), f"D: the {name} segment")
         # The two booked rows refuse, and say what they are booked under.
         tree = nodes_by_tag(app)
@@ -363,7 +363,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
                 ok(f"F2: {row['tag']} says what it holds", len(row["holds"]) > 10)
             # And the reader is told where they are.
             app.request("focus/set", {"tag": want[0]})
-            app.tick(16)
+            app.tick_ms(16)
             focus = app.request("scene/access").result.get("focus") or {}
             assert_eq(focus.get("tag"), want[0], f"F2: AT focus rests on {want[0]}")
             assert_eq(focus.get("resolved"), "tag", f"F2: and it resolved to a node")

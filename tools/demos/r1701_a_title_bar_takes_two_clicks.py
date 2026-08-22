@@ -101,14 +101,14 @@ def body() -> None:
 
         banner("A — the positive control: the header BUTTON moves the witness")
         app.click(aim(app, control))
-        app.tick(16)
+        app.tick_ms(16)
         assert_eq(
             app.query(f"{EXT}/maximized") != "",
             True,
             "A: pressing the maximize control maximises the card",
         )
         app.click(aim(app, control))
-        app.tick(16)
+        app.tick_ms(16)
         assert_eq(app.query(f"{EXT}/maximized"), "", "A: and pressing it again restores")
         assert_eq(
             app.query(f"{EXT}/layout"),
@@ -118,7 +118,7 @@ def body() -> None:
 
         banner("B — ★ two clicks on the TITLE BAR do the same thing")
         app.double_click(aim(app, grip))
-        app.tick(16)
+        app.tick_ms(16)
         grown = state(app)
         assert_eq(
             grown["maximized"] != "",
@@ -149,7 +149,7 @@ def body() -> None:
 
         banner("C — ★★ and it carries nothing else")
         app.double_click(aim(app, grip))
-        app.tick(16)
+        app.tick_ms(16)
         back = state(app)
         assert_eq(back["maximized"], "", "C: a second double-click restores it")
         assert_eq(
@@ -173,7 +173,7 @@ def body() -> None:
         banner("D — a click that carried nothing says nothing")
         said = app.query(f"{EXT}/toast")
         app.click(aim(app, grip))
-        app.tick(16)
+        app.tick_ms(16)
         assert_eq(
             app.query(f"{EXT}/layout"),
             opened["layout"],
@@ -199,7 +199,7 @@ def body() -> None:
                 continue
             before = state(app)
             app.double_click(aim(app, elsewhere))
-            app.tick(16)
+            app.tick_ms(16)
             assert_eq(
                 app.query(f"{EXT}/maximized"),
                 before["maximized"],
@@ -214,14 +214,14 @@ def body() -> None:
         banner("E — every card's header answers, not just the one")
         for other in cards[1:]:
             app.double_click(aim(app, f"{other}.grip"))
-            app.tick(16)
+            app.tick_ms(16)
             assert_eq(
                 app.query(f"{EXT}/maximized") != "",
                 True,
                 f"E: {other} maximises from its header too",
             )
             app.double_click(aim(app, f"{other}.grip"))
-            app.tick(16)
+            app.tick_ms(16)
             assert_eq(app.query(f"{EXT}/maximized"), "", f"E: and {other} restores")
             assert_eq(
                 app.query(f"{EXT}/layout"),

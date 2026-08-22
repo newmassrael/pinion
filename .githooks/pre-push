@@ -252,6 +252,29 @@ fi
 # know, because a key it cannot read is a round it would silently miscount —
 # which is how R1744 came to record a 34-round outage that did not exist. Reads
 # git log and the store's keys; boots nothing (~0.3s).
+# R1783 — the demo clock's UNIT. `tick(dt)` takes SECONDS and 172 sites
+# across 28 demos were written `tick(16)`, meaning one frame at 60 fps; that
+# call advances SIXTEEN SECONDS.
+#
+# It was invisible for as long as overshooting cost nothing — a 200 ms fade
+# settles the same either way, which `tick()`'s own docstring blesses. It
+# became visible the round a lifetime started being told the truth: before
+# R1778 the analyzer shell's 2.6 s toast left the SCREEN on expiry while the
+# WIRE went on reporting the sentence, so eight demos passed by reading
+# something the screen had stopped showing. R1778 made the two agree and all
+# eight went red.
+#
+# Pins the backlog rather than demanding zero: a count may fall or hold, and
+# a file may not acquire its first. Reads source with `ast`; boots nothing.
+echo "pre-push: demo clock units ..." >&2
+if ! python3 "$repo_root/tools/tick_units.py" --selftest >&2; then
+    echo "pre-push: the demo-clock ratchet failed its own tests" >&2
+    exit 1
+fi
+if ! python3 "$repo_root/tools/tick_units.py" --check >&2; then
+    exit 1
+fi
+
 echo "pre-push: round ledger ..." >&2
 if ! python3 "$repo_root/tools/changelog_rounds.py" --selftest >&2; then
     echo "pre-push: the round-ledger gate failed its own tests" >&2

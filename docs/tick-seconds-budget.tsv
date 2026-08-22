@@ -1,0 +1,32 @@
+# R1783 — the demo clock's unit budget. One row per file that still
+# passes a `tick()` a number of SECONDS large enough to be somebody's
+# millisecond count, with how many such sites it holds.
+#
+# The gate allows a count to FALL or hold and refuses a rise, and it
+# refuses a file that acquires its first one. The fix is `tick_ms(16)`.
+#
+# Rewritten by `tools/tick_units.py --write-budget`; do not hand-edit.
+tools/demos/r1413_transport.py	2
+tools/demos/r1414_replay.py	2
+tools/demos/r1426_textgrid_cursor_blink_phase.py	1
+tools/demos/r1649_the_analyzer_shell_matches_the_reference.py	2
+tools/demos/r1651_the_node_lab_matches_the_reference.py	1
+tools/demos/r1663_a_field_says_which_bytes.py	1
+tools/demos/r1693_a_screen_is_a_tree_a_reader_can_walk.py	2
+tools/demos/r1694_a_locked_seat_is_heard.py	5
+tools/demos/r1698_a_composite_has_a_cursor_inside_it.py	17
+tools/demos/r1700_what_is_drawn_is_what_is_pressed.py	1
+tools/demos/r1706_a_selection_is_a_set_with_a_leader.py	7
+tools/demos/r1707_a_filter_says_what_it_keeps.py	2
+tools/demos/r1724_the_tool_is_one_application.py	2
+tools/demos/r1726_what_you_hold_is_in_front.py	6
+tools/demos/r1728_the_rail_is_the_one_the_reference_draws.py	2
+tools/demos/r1730_a_section_is_the_one_the_reference_draws.py	8
+tools/demos/r1731_a_log_section_closes_the_rail.py	13
+tools/demos/r1732_an_enum_row_is_a_roster_that_collapses.py	6
+tools/demos/r1733_a_palette_hands_the_board_a_footprint.py	12
+tools/demos/r1742_a_screen_judges_what_is_on_screen.py	4
+tools/demos/r1747_the_capture_viewer_publishes_its_verdict.py	3
+tools/demos/r1762_the_last_unjudged_section_answers.py	3
+tools/demos/r1767_a_walk_reproduces_what_no_frame_can.py	1
+tools/demos/r1772_the_capture_viewer_says_what_it_can_do.py	1

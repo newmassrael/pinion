@@ -2937,6 +2937,29 @@ class RpcSubprocess(AbstractContextManager["RpcSubprocess"]):
         """
         self.request("scene/tick", {"dt": dt})
 
+    def tick_ms(self, ms: float) -> None:
+        """Advance the window's animation clock by `ms` MILLISECONDS.
+
+        ★★★★★ R1783 — this exists because `tick()` takes SECONDS and 172
+        call sites across 28 demos were written `tick(16)`, meaning one
+        frame. `tick(16)` advances sixteen seconds.
+
+        For most of those sites the difference never showed: overshooting a
+        200 ms fade lands on the same settled value, which is what `tick()`'s
+        own docstring blesses. It shows the moment something has a FINITE
+        LIFETIME that is supposed to still be running. Measured on
+        `hello-analyzer-shell`, whose toast lives 2.6 s: after one press,
+        `tick(2.5)` leaves the sentence standing and `tick(2.7)` empties it,
+        so a single `tick(16)` destroyed the very thing eight demos were
+        about — and they had been passing only because the wire went on
+        reporting a sentence the screen had already stopped showing.
+
+        Prefer this spelling whenever the test means "one frame" or "a few
+        frames". Keep `tick()` for a deliberate fast-forward, where the
+        number reads as seconds because it is.
+        """
+        self.tick(ms / 1000.0)
+
     def set_fps(self, fps: Optional[int], *, window: Optional[str] = None) -> None:
         """`scene/set_fps` typed wrapper (R829 §2 #4 §5.28).
 
@@ -4977,7 +5000,7 @@ def assert_router_press_moves(
     at = (x + w // 2, y + h // 2)
     before = read()
     tf.request("scene/click", {"button": "left", "at": {"x": at[0], "y": at[1]}})
-    tf.tick(16)
+    tf.tick_ms(16)
     after = read()
     assert after != before, (
         f"{what}: a press at {at}, the centre of `{tag}` — driven through the "
@@ -5089,7 +5112,7 @@ def assert_every_destination_arrives(
         before_at, before_page = read_at(), page_tags()
         x, y, w, h = abs_rects_of(tf.snapshot(source="paint", viewport=viewport))[tag]
         tf.request("scene/click", {"button": "left", "at": {"x": x + w // 2, "y": y + h // 2}})
-        tf.tick(16)
+        tf.tick_ms(16)
         if row["open"]:
             assert read_at() == key, (
                 f"a press at the centre of {tag!r}, driven through the §5.35 "

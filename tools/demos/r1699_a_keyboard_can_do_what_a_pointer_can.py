@@ -75,7 +75,7 @@ def stops(app: RpcSubprocess, limit: int = 14) -> list[str]:
     seen: list[str] = []
     for _ in range(limit):
         app.request("focus/next")
-        app.tick(16)
+        app.tick_ms(16)
         _, focus = tree(app)
         tag = focus.get("tag")
         if tag is None or tag in seen:
@@ -97,7 +97,7 @@ def go_to(app: RpcSubprocess, destination: str) -> None:
     if destination == "*" or app.query(f"{EXT}/nav") == destination:
         return
     app.intervene(f"{EXT}/nav", destination)
-    app.tick(16)
+    app.tick_ms(16)
     assert_eq(app.query(f"{EXT}/nav"), destination, f"the rail reached {destination}")
 
 
@@ -108,7 +108,7 @@ def dashboard(app: RpcSubprocess) -> None:
     composites = 0
     for stop in walked:
         app.request("focus/set", {"tag": stop})
-        app.tick(16)
+        app.tick_ms(16)
         nodes, _ = tree(app)
         nav = nodes[stop].get("navigation")
         if nav is None:
@@ -141,18 +141,18 @@ def dashboard(app: RpcSubprocess) -> None:
     for stop in walked:
         go_to(app, lives_at.get(stop, "*"))
         app.request("focus/set", {"tag": stop})
-        app.tick(16)
+        app.tick_ms(16)
         nodes, _ = tree(app)
         nav = nodes[stop].get("navigation")
         if nav is None:
             continue
         members = nav["members"]
         app.key(path=stop, name="Home")
-        app.tick(16)
+        app.tick_ms(16)
         for index, member in enumerate(members):
             if index:
                 app.key(path=stop, name=nav["keys"][0])
-                app.tick(16)
+                app.tick_ms(16)
             if member["composite"]:
                 continue
             assert_eq(cursor(app), member["tag"], f"B: the walk reached {member['tag']}")
@@ -163,7 +163,7 @@ def dashboard(app: RpcSubprocess) -> None:
             # entry refuses, which paints nothing and is entirely the sentence.
             before = (painted(app), app.query(f"{EXT}/toast"))
             app.key(path=stop, name="Enter")
-            app.tick(16)
+            app.tick_ms(16)
             after = (painted(app), app.query(f"{EXT}/toast"))
             if after == before:
                 silent.append(f"{stop} · {member['tag']}")
@@ -174,42 +174,42 @@ def dashboard(app: RpcSubprocess) -> None:
 
     banner("C — ★ choosing a rail seat NAVIGATES, which a keyboard could not do")
     app.request("focus/set", {"tag": "shell.rail"})
-    app.tick(16)
+    app.tick_ms(16)
     app.key(path="shell.rail", name="Home")
-    app.tick(16)
+    app.tick_ms(16)
     here = app.query(f"{EXT}/nav")
     nodes, _ = tree(app)
     seats = [m for m in nodes["shell.rail"]["navigation"]["members"] if m["enabled"]]
     target = next(m for m in seats if not m["tag"].endswith(f".{here}"))
     while cursor(app) != target["tag"]:
         app.key(path="shell.rail", name="ArrowDown")
-        app.tick(16)
+        app.tick_ms(16)
     app.key(path="shell.rail", name="Enter")
-    app.tick(16)
+    app.tick_ms(16)
     there = app.query(f"{EXT}/nav")
     assert_eq(there != here, True, "C: ★ Enter on a rail seat arrived at that destination")
     print(f"[demo] rail: {here} -> {there} by keyboard alone")
     # Back, so the rest of the run is at the destination the screen opens on.
     while app.query(f"{EXT}/nav") != here:
         app.key(path="shell.rail", name="Home")
-        app.tick(16)
+        app.tick_ms(16)
         app.key(path="shell.rail", name="Enter")
-        app.tick(16)
+        app.tick_ms(16)
 
     banner("D — a booked seat REFUSES rather than doing nothing quietly")
     app.request("focus/set", {"tag": "shell.palette"})
-    app.tick(16)
+    app.tick_ms(16)
     nodes, _ = tree(app)
     booked = [m for m in nodes["shell.palette"]["navigation"]["members"] if not m["enabled"]]
     ok("D: the palette has booked entries", len(booked) > 0)
     app.key(path="shell.palette", name="Home")
-    app.tick(16)
+    app.tick_ms(16)
     while cursor(app) != booked[0]["tag"]:
         app.key(path="shell.palette", name="ArrowDown")
-        app.tick(16)
+        app.tick_ms(16)
     before = app.query(f"{EXT}/toast")
     app.key(path="shell.palette", name="Enter")
-    app.tick(16)
+    app.tick_ms(16)
     assert_eq(
         app.query(f"{EXT}/toast") != before,
         True,
@@ -219,9 +219,9 @@ def dashboard(app: RpcSubprocess) -> None:
 
     banner("E — ★ the nested tab list is entered, walked, chosen and left")
     app.request("focus/set", {"tag": "shell.appbar"})
-    app.tick(16)
+    app.tick_ms(16)
     app.key(path="shell.appbar", name="Home")
-    app.tick(16)
+    app.tick_ms(16)
     nodes, _ = tree(app)
     bar = nodes["shell.appbar"]["navigation"]
     nested = [m["tag"] for m in bar["members"] if m["composite"]]
@@ -234,7 +234,7 @@ def dashboard(app: RpcSubprocess) -> None:
     assert_eq(inner["entered"], False, "E: and says nobody is inside it")
 
     app.key(path="shell.appbar", name=bar["entry_keys"][0])
-    app.tick(16)
+    app.tick_ms(16)
     assert_eq(
         cursor(app),
         inner["members"][0]["tag"],
@@ -253,11 +253,11 @@ def dashboard(app: RpcSubprocess) -> None:
     )
 
     app.key(path="shell.appbar", name=inner["keys"][0])
-    app.tick(16)
+    app.tick_ms(16)
     assert_eq(cursor(app), inner["members"][1]["tag"], "E: the INNER axis moves between tabs")
     before_tab = app.query(f"{EXT}/tab")
     app.key(path="shell.appbar", name="Enter")
-    app.tick(16)
+    app.tick_ms(16)
     assert_eq(
         app.query(f"{EXT}/tab") != before_tab,
         True,
@@ -265,12 +265,12 @@ def dashboard(app: RpcSubprocess) -> None:
     )
 
     app.key(path="shell.appbar", name="Escape")
-    app.tick(16)
+    app.tick_ms(16)
     assert_eq(cursor(app), nested[0], "E: Escape leaves ONE level, back onto the list")
     nodes, _ = tree(app)
     assert_eq(nodes["shell.appbar"]["navigation"]["entered"], False, "E: and says so")
     app.key(path="shell.appbar", name=bar["keys"][0])
-    app.tick(16)
+    app.tick_ms(16)
     assert_eq(
         cursor(app), bar["members"][1]["tag"], "E: and the bar's own axis answers again"
     )
@@ -279,7 +279,7 @@ def dashboard(app: RpcSubprocess) -> None:
     board = app.query(f"{EXT}/selected")
     before = painted(app)
     app.key(path="shell.appbar", name="ArrowDown")
-    app.tick(16)
+    app.tick_ms(16)
     assert_eq(
         cursor(app),
         bar["members"][1]["tag"],
@@ -330,7 +330,7 @@ def capture(app: RpcSubprocess) -> None:
         "H: the capture viewer's Tab ring, by name",
     )
     app.request("focus/set", {"tag": "pv.list"})
-    app.tick(16)
+    app.tick_ms(16)
     row = app.query(f"{EXT}/selected_row")
     assert_eq(cursor(app), f"pv.list.row.{row}", "H: the cursor opens on the row")
 
@@ -348,20 +348,20 @@ def capture(app: RpcSubprocess) -> None:
     ok("H: seven columns", len(cells) == 7)
 
     app.key(path="pv.list", name=nav["entry_keys"][0])
-    app.tick(16)
+    app.tick_ms(16)
     assert_eq(cursor(app), cells[0], "H: ★ entering a row lands on its first cell")
     app.key(path="pv.list", name="ArrowRight")
-    app.tick(16)
+    app.tick_ms(16)
     assert_eq(cursor(app), cells[1], "H: the inner axis walks the columns")
     app.key(path="pv.list", name="End")
-    app.tick(16)
+    app.tick_ms(16)
     assert_eq(cursor(app), cells[-1], "H: End reaches the last column")
     # ★ The ends policy is tested by an ADVANCE past the last member, not by
     # pressing End twice: `End` lands on the last index whatever the policy is,
     # so that assertion could not fail and a counterfactual flipping this row to
     # `Wrap` walked straight through it.
     app.key(path="pv.list", name="ArrowRight")
-    app.tick(16)
+    app.tick_ms(16)
     assert_eq(
         cursor(app),
         cells[-1],
@@ -382,10 +382,10 @@ def capture(app: RpcSubprocess) -> None:
     assert_eq(current, [cells[-1]], "H: ★ exactly one cell is current, and it is that one")
 
     app.key(path="pv.list", name="Escape")
-    app.tick(16)
+    app.tick_ms(16)
     assert_eq(cursor(app), f"pv.list.row.{row}", "H: Escape leaves the row, not the pane")
     app.key(path="pv.list", name="ArrowDown")
-    app.tick(16)
+    app.tick_ms(16)
     assert_eq(
         app.query(f"{EXT}/selected_row"),
         row + 1,
@@ -401,7 +401,7 @@ def capture(app: RpcSubprocess) -> None:
     # and one verb answers two keys — are asserted through that route.
     BAR = "pv.filter.saved"
     app.request("focus/set", {"tag": BAR})
-    app.tick(16)
+    app.tick_ms(16)
     nodes, _ = tree(app)
     bar = nodes[BAR]
     assert_eq(bar["role"], "listbox", "I: the bar announces what its rule makes it")
@@ -421,27 +421,27 @@ def capture(app: RpcSubprocess) -> None:
         assert_eq(nodes[chip]["role"], "option", f"I: {chip} announces itself an option")
         assert_eq(nodes[chip].get("navigation"), None, f"I: {chip} owns no cursor of its own")
         app.key(path=BAR, name="Home")
-        app.tick(16)
+        app.tick_ms(16)
         for _ in range(n):
             app.key(path=BAR, name=advance)
-            app.tick(16)
+            app.tick_ms(16)
         assert_eq(cursor(app), chip, f"I: the walk reached {chip}")
 
         before = on(chip)
         app.key(path=BAR, name="Enter")
-        app.tick(16)
+        app.tick_ms(16)
         assert_eq(on(chip) != before, True, f"I: ★ Enter applied {chip}")
         app.key(path=BAR, name="Space")
-        app.tick(16)
+        app.tick_ms(16)
         assert_eq(on(chip), before, "I: and Space cleared it — one verb, two keys")
 
     banner("J — and an arrow at the bar still reaches nothing it should not")
     row_before = app.query(f"{EXT}/selected_row")
     app.request("focus/set", {"tag": BAR})
-    app.tick(16)
+    app.tick_ms(16)
     for _ in range(3):
         app.key(path=BAR, name="ArrowDown")
-        app.tick(16)
+        app.tick_ms(16)
     assert_eq(
         app.query(f"{EXT}/selected_row"),
         row_before,

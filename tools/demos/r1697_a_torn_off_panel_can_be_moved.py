@@ -121,7 +121,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         card = q(app, "cards").split(",")[0]
         assert_eq(q(app, "floating"), "", "B: nothing is detached to begin with")
         act(app, card, "tear_off")
-        app.tick(16)
+        app.tick_ms(16)
         assert_eq(q(app, "floating"), card, "B: the card is now a panel")
         first = panels(app)[card]
         assert_eq((first["w"], first["h"]), (OPEN_W, OPEN_H), "B: the opening size")
@@ -134,7 +134,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         painted = rects(app)[f"float.{card}"]
         start = centre(painted)
         app.drag(from_at=start, to_at=(start[0] + 90, start[1] + 55))
-        app.tick(16)
+        app.tick_ms(16)
         after = panels(app)[card]
         assert_eq(
             (after["x"] - before["x"], after["y"] - before["y"]),
@@ -153,7 +153,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
 
         # A press that moves nothing is a click, not a move.
         app.request("scene/click", {"button": "left", "at": {"x": moved[0] + 8, "y": moved[1] + 8}})
-        app.tick(16)
+        app.tick_ms(16)
         assert_eq(panels(app)[card]["x"], after["x"], "C: a click moves nothing")
 
         # ── (D) the corner sizes it, and stops at the floor ────────────────
@@ -162,7 +162,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         ok("D: the corner is painted, so a person can find it", grip[2] > 0)
         base = panels(app)[card]
         app.drag(from_at=centre(grip), to_at=(centre(grip)[0] + 70, centre(grip)[1] + 45))
-        app.tick(16)
+        app.tick_ms(16)
         grown = panels(app)[card]
         assert_eq(
             (grown["w"] - base["w"], grown["h"] - base["h"]),
@@ -173,7 +173,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         # Pull it far past the floor, in both axes at once.
         grip = rects(app)[f"float.{card}.resize"]
         app.drag(from_at=centre(grip), to_at=(1.0, 1.0))
-        app.tick(16)
+        app.tick_ms(16)
         floored = panels(app)[card]
         assert_eq((floored["w"], floored["h"]), (MIN_W, MIN_H), "D: it clamps at the floor")
         ok(
@@ -185,7 +185,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         banner("E — two panels, and a press brings the one underneath forward")
         second = q(app, "cards").split(",")[1]
         act(app, second, "tear_off")
-        app.tick(16)
+        app.tick_ms(16)
         order = list(panels(app))
         assert_eq(order[0], second, "E: the newest panel arrives in front")
         ok("E: it is in front by its stacking number", panels(app)[second]["z"] > panels(app)[card]["z"])
@@ -201,7 +201,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         # computing where they ought to be.
         front = rects(app)[f"float.{second}"]
         app.drag(from_at=centre(front), to_at=(centre(front)[0] + 260, centre(front)[1]))
-        app.tick(16)
+        app.tick_ms(16)
         back = rects(app)[f"float.{card}"]
         front = rects(app)[f"float.{second}"]
         ok("E: the panels still overlap, which is what makes stacking a fact",
@@ -209,7 +209,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         showing = (back[0] + 6, back[1] + back[3] / 2)
         ok("E: the aim is on the back panel and not on the front one", showing[0] < front[0])
         app.request("scene/click", {"button": "left", "at": {"x": showing[0], "y": showing[1]}})
-        app.tick(16)
+        app.tick_ms(16)
         ok(
             "E: ★ the pressed panel came forward",
             panels(app)[card]["z"] > panels(app)[second]["z"],
@@ -220,11 +220,11 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         banner("F — a panel re-docks and closes, which is what it always could do")
         redock = rects(app)[f"float.{card}.redock"]
         app.request("scene/click", {"button": "left", "at": {"x": centre(redock)[0], "y": centre(redock)[1]}})
-        app.tick(16)
+        app.tick_ms(16)
         assert_eq(q(app, "floating"), second, "F: the re-docked panel left the roster")
         close = rects(app)[f"float.{second}.close"]
         app.request("scene/click", {"button": "left", "at": {"x": centre(close)[0], "y": centre(close)[1]}})
-        app.tick(16)
+        app.tick_ms(16)
         assert_eq(q(app, "floating"), "", "F: and the closed one too")
         assert_eq(q(app, "floats"), [], "F: no geometry is left behind")
 
@@ -234,11 +234,11 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         assert_eq(q(app, "maximized"), "", "G: nothing is maximised to begin with")
         mark = rects(app)[f"card.{card}.maximize"]
         app.request("scene/click", {"button": "left", "at": {"x": centre(mark)[0], "y": centre(mark)[1]}})
-        app.tick(16)
+        app.tick_ms(16)
         ok("G: the card maximised", q(app, "maximized") != "")
         mark = rects(app)[f"card.{card}.maximize"]
         app.request("scene/click", {"button": "left", "at": {"x": centre(mark)[0], "y": centre(mark)[1]}})
-        app.tick(16)
+        app.tick_ms(16)
         assert_eq(
             q(app, "maximized"),
             "",
@@ -249,7 +249,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
         # ── (H) the wire's two verbs stay precise ──────────────────────────
         banner("H — the wire keeps two verbs, because an agent asks for an outcome")
         app.invoke(f"{EXT}/maximize", card)
-        app.tick(16)
+        app.tick_ms(16)
         ok("H: the wire maximises", q(app, "maximized") != "")
         refused = ""
         try:
@@ -258,7 +258,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             refused = str(why)
         ok("H: ★ and asking for it again REFUSES rather than toggling", "already" in refused)
         app.invoke(f"{EXT}/restore", "")
-        app.tick(16)
+        app.tick_ms(16)
         assert_eq(q(app, "maximized"), "", "H: and restore is its own verb")
 
         print(f"\n[demo] {len(CHECKS)} narrated check(s) beyond the assertions")

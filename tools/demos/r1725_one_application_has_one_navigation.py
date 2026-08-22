@@ -82,7 +82,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
     banner("A — the application at the node lab: one rail, one navigation")
     with RpcSubprocess(SHELL, boot_grace=1.5) as app:
         app.intervene(f"{EXT}/nav", "lab")
-        app.tick(16)
+        app.tick_ms(16)
         assert_eq(app.query(f"{EXT}/nav"), "lab", "A: the journey reached the node lab")
 
         rects = abs_rects_of(app.snapshot(source="paint"))
@@ -157,7 +157,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             "scene/click",
             {"button": "left", "at": {"x": seat[0] + seat[2] // 2, "y": seat[1] + seat[3] // 2}},
         )
-        app.tick(16)
+        app.tick_ms(16)
         assert_eq(app.query(f"{EXT}/nav"), "dashboard", "C: the rail took us to the dashboard")
         after = abs_rects_of(app.snapshot(source="paint"))
         ok(
@@ -165,7 +165,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
             not [t for t in after if t == "node_lab" or t.startswith("lab.")],
         )
         app.intervene(f"{EXT}/nav", "lab")
-        app.tick(16)
+        app.tick_ms(16)
         back = abs_rects_of(app.snapshot(source="paint"))
         ok("C: returning brings the guest back", "lab.canvas" in back)
         ok(
@@ -238,7 +238,7 @@ def body() -> None:  # noqa: PLR0915 - one narrative, read top to bottom
                     "at": {"x": rect[0] + rect[2] // 2, "y": rect[1] + rect[3] // 2},
                 },
             )
-            lab.tick(16)
+            lab.tick_ms(16)
             said = lab.query(f"{EXT}/toast")
             ok(
                 f"B: pressing {seat} is refused, and says so ({said!r})",

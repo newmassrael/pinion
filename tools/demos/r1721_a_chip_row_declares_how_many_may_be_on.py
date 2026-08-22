@@ -111,7 +111,7 @@ def ring(app: RpcSubprocess, limit: int = 24) -> list[str]:
     seen: list[str] = []
     for _ in range(limit):
         app.request("focus/next")
-        app.tick(16)
+        app.tick_ms(16)
         _, focus = tree(app)
         tag = focus.get("tag")
         if tag is None or tag in seen:
@@ -152,7 +152,7 @@ def press_tag(app: RpcSubprocess, tag: str) -> None:
     nodes, _ = tree(app)
     box = nodes[tag]["bounds"]
     app.click((box["x"] + box["w"] / 2, box["y"] + box["h"] / 2))
-    app.tick(16)
+    app.tick_ms(16)
 
 
 def said(app: RpcSubprocess, slot: str) -> dict | None:
@@ -231,7 +231,7 @@ def b_the_tree_says_what_the_rule_says(app, example, row_tag, prefix, group, mem
 def c_the_cursor_moves(app, example, row_tag, chips):
     banner(f"C — {example}: the cursor inside the bar")
     app.request("focus/set", {"tag": row_tag})
-    app.tick(16)
+    app.tick_ms(16)
     nodes, _ = tree(app)
     nav = nodes[row_tag].get("navigation")
     ok(
@@ -243,11 +243,11 @@ def c_the_cursor_moves(app, example, row_tag, chips):
     ok(f"C[{example}]: the cursor rests on a chip ({first})", first is not None)
     advance = nav["keys"][0]
     app.key(path=row_tag, name=advance)
-    app.tick(16)
+    app.tick_ms(16)
     moved = cursor(app)
     assert_eq(moved != first, True, f"C[{example}]: {advance} moved the cursor")
     app.key(path=row_tag, name="End")
-    app.tick(16)
+    app.tick_ms(16)
     assert_eq(
         cursor(app),
         nav["members"][-1]["tag"],
@@ -255,7 +255,7 @@ def c_the_cursor_moves(app, example, row_tag, chips):
         f"Home and End move nothing inside a grouped set of buttons",
     )
     app.key(path=row_tag, name="Home")
-    app.tick(16)
+    app.tick_ms(16)
     assert_eq(cursor(app), nav["members"][0]["tag"], f"C[{example}]: Home reaches the first")
 
 
@@ -265,15 +265,15 @@ def c_the_cursor_moves(app, example, row_tag, chips):
 def d_walking_is_not_applying(app, example, row_tag, prefix, chips):
     banner(f"D — {example}: an arrow moves the cursor and applies nothing")
     app.request("focus/set", {"tag": row_tag})
-    app.tick(16)
+    app.tick_ms(16)
     app.key(path=row_tag, name="Home")
-    app.tick(16)
+    app.tick_ms(16)
     before = selected(app, prefix)
     nodes, _ = tree(app)
     advance = nodes[row_tag]["navigation"]["keys"][0]
     for _ in range(chips - 1):
         app.key(path=row_tag, name=advance)
-        app.tick(16)
+        app.tick_ms(16)
     ok(
         f"D[{example}]: ★★★★★ {chips - 1} arrow press(es) across the bar applied "
         f"nothing ({before} -> {selected(app, prefix)}) — the rule declares "
@@ -281,7 +281,7 @@ def d_walking_is_not_applying(app, example, row_tag, prefix, chips):
         selected(app, prefix) == before,
     )
     app.key(path=row_tag, name="Enter")
-    app.tick(16)
+    app.tick_ms(16)
     ok(
         f"D[{example}]: ★★★★ and `Enter` at the last chip applies it "
         f"({selected(app, prefix)})",

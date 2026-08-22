@@ -149,7 +149,7 @@ def focus_by_tab(tf, tag: str, limit: int = 14) -> None:
     """Walk the Tab ring to `tag` — the keyboard's own way into a text box."""
     for _ in range(limit):
         tf.request("focus/next")
-        tf.tick(16)
+        tf.tick_ms(16)
         landed = (tf.request("scene/access", {}).result.get("focus") or {}).get("tag")
         if landed == tag:
             return
@@ -160,7 +160,7 @@ def press_tag(tf, tag: str) -> None:
     """Press the middle of a painted mark, the way a person reaches it."""
     rect = abs_rects_of(tf.snapshot(source="paint"))[tag]
     tf.click((rect[0] + rect[2] // 2, rect[1] + rect[3] // 2))
-    tf.tick(16)
+    tf.tick_ms(16)
 
 
 def refuse(tf, path: str, args) -> str:

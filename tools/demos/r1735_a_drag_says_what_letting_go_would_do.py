@@ -171,7 +171,7 @@ def section_b(app: RpcSubprocess, kind: str) -> tuple[float, float]:
     aim = (canvas[0] + canvas[2] * 0.55, canvas[1] + canvas[3] * 0.45)
 
     app.drag(from_at=centre(row), to_at=aim, phase="begin")
-    app.tick(16)
+    app.tick_ms(16)
     now = standing(app)
     assert_eq(now["standing"], "accepted", "B: the board will take it")
     assert_eq(now["tag"], SURFACE, "B: and it names the surface that said so")
@@ -207,7 +207,7 @@ def section_c(app: RpcSubprocess, kind: str, aim: tuple[float, float]) -> None:
     rects = abs_rects_of(app.snapshot(source="paint"))
     row = rects[f"shell.palette.{kind}"]
     app.drag(from_at=aim, to_at=centre(row), phase="move")
-    app.tick(16)
+    app.tick_ms(16)
     now = standing(app)
     assert_eq(
         now["standing"],
@@ -246,11 +246,11 @@ def section_d(app: RpcSubprocess, kind: str) -> None:
     aim = (canvas[0] + canvas[2] * 0.55, canvas[1] + canvas[3] * 0.45)
 
     app.drag(from_at=centre(row), to_at=aim, phase="begin")
-    app.tick(16)
+    app.tick_ms(16)
     promised = standing(app)
     assert_eq(promised["standing"], "accepted", "D: the board will take it")
     app.drag(from_at=aim, to_at=aim, phase="end")
-    app.tick(16)
+    app.tick_ms(16)
 
     after = tiles(app)
     fresh = sorted(set(after) - before)
@@ -275,13 +275,13 @@ def section_e(app: RpcSubprocess, kind: str) -> None:
     aim = (canvas[0] + canvas[2] * 0.55, canvas[1] + canvas[3] * 0.45)
 
     app.drag(from_at=centre(row), to_at=aim, phase="begin")
-    app.tick(16)
+    app.tick_ms(16)
     app.drag(from_at=aim, to_at=centre(row), phase="move")
-    app.tick(16)
+    app.tick_ms(16)
     refused_why = standing(app)["why"]
     assert_eq(standing(app)["standing"], "refused", "E: refused where the cursor is")
     app.drag(from_at=centre(row), to_at=centre(row), phase="end")
-    app.tick(16)
+    app.tick_ms(16)
     assert_eq(tiles(app), before, "E: ★ and the board is exactly as it was")
     # ★★★★★ R1720's rule kept: the refusal reaches the PERSON, in the same
     # sentence the wire published and `drop_offered` produced. Before this round
@@ -316,7 +316,7 @@ def section_f(app: RpcSubprocess, kind: str) -> None:
     banner("F — and the palette's click still adds")
     before = set(tiles(app))
     app.click(path=f"shell.palette.{kind}")
-    app.tick(16)
+    app.tick_ms(16)
     fresh = sorted(set(tiles(app)) - before)
     assert_eq(
         len(fresh),
@@ -359,7 +359,7 @@ def section_g(app: RpcSubprocess, spec: dict, kind: str) -> None:
     aim = (canvas[0] + canvas[2] * 0.55, canvas[1] + canvas[3] * 0.45)
 
     app.drag(from_at=centre(row), to_at=aim, phase="begin")
-    app.tick(16)
+    app.tick_ms(16)
     live = standing(app)
     names_a_cell = "col" in live["landing"] and "row" in live["landing"]
     assert_eq(
@@ -372,7 +372,7 @@ def section_g(app: RpcSubprocess, spec: dict, kind: str) -> None:
     )
 
     app.drag(from_at=aim, to_at=centre(row), phase="move")
-    app.tick(16)
+    app.tick_ms(16)
     live = standing(app)
     assert_eq(
         f"{live['refusal']['refused']}, carrying the reason",
@@ -380,7 +380,7 @@ def section_g(app: RpcSubprocess, spec: dict, kind: str) -> None:
         "G: ★ and so does the refusal",
     )
     app.drag(from_at=centre(row), to_at=centre(row), phase="end")
-    app.tick(16)
+    app.tick_ms(16)
 
 
 def body() -> None:
@@ -391,7 +391,7 @@ def body() -> None:
         aim = section_b(app, kind)
         section_c(app, kind, aim)
         app.drag(from_at=aim, to_at=aim, phase="end")
-        app.tick(16)
+        app.tick_ms(16)
         section_d(app, kind)
         section_e(app, kind)
         section_f(app, kind)
