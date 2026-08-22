@@ -1,5 +1,11 @@
 {
+  "$at": { "width": 1440, "height": 900 },
   "$comment": [
+    "R1770 — `$at` is the SURFACE EXTENT this canon was written against, and",
+    "the shell's own paint sweep reads it from here rather than declaring a",
+    "size of its own. See `analyzer-inspector-spec.json` for what a pin that",
+    "named no size cost this tool.",
+    "",
     "R1761 — THE DASHBOARD SECTION'S PAINTED SURFACES, written down from the",
     "behaviour reference in neutral vocabulary, so the section can be judged",
     "against something other than its own tables.",

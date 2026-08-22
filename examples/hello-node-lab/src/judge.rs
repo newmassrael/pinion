@@ -106,6 +106,9 @@ pub fn conformance() -> DocumentReport {
 /// document's own.
 #[must_use]
 pub fn built(regions: &PaintedRegions, surface: &str) -> Built {
+    if let Some(why) = below_the_width_this_screen_lays_out_at(regions) {
+        return Built::away(why);
+    }
     match surface {
         "enum_row" => {
             let parts = regions.parts_of(FORM, spec::ENUM_KEY);
@@ -180,6 +183,59 @@ pub fn built(regions: &PaintedRegions, surface: &str) -> Built {
         "controls" => control_kinds(regions),
         other => panic!("no inspector surface named {other}"),
     }
+}
+
+/// ★★★★★ R1770 — **the surface is narrower than the width this screen declares
+/// it lays out at**, and the reason, or `None` when it is not.
+///
+/// # What was measured
+///
+/// Driven at R1770 across eight window sizes with one binary, standing in this
+/// section inside the assembled tool. The height moves nothing: at 900 tall and
+/// at 1531 tall the verdict is identical. The width moves everything — surface
+/// 1388 wide gives `controls` 1 of 5 and `enum_row` 1 of 7; 1548 gives 1 and 3;
+/// 1748 gives 5 and 7. The parts that go are the right-hand ones: the type
+/// word, the applies badge, the remove seat, the pick arrow.
+///
+/// That is not a defect and repairing it would undo a decision three rounds
+/// measured. This screen declares a shrink policy whose comfortable width was
+/// established at R1712–R1714 and whose own documentation says it in as many
+/// words: *below it the app bar's right end and the inspector are clipped, and
+/// above it nothing is*. So below that width the frame is not a frame of this
+/// screen laid out — it is a slice of one — and a specification comparison
+/// against it is a comparison with something the specification never described.
+///
+/// # ⚠ Why this is not the escape hatch R1742 refused
+///
+/// That round rejected an away-condition for `controls` and stated the test:
+/// the condition must be **a state the screen is in and can point at**, never
+/// *a case in which I would fail*. This one is the first kind, and by a wider
+/// margin than the two conditions already in this file:
+///
+/// * it names a number the screen **declares to the framework** — the same
+///   `comfortable` the window manager is told and `scene/size_floor` publishes,
+///   not a threshold invented here for this check;
+/// * it is read from the **host's** grant, so this screen cannot enter the
+///   state by drawing badly, only by being given less room than it asked for;
+/// * it makes the numbers **worse**, not better. Away counts as nothing
+///   reproduced (R1742's own rule), so at 1440x900 this section goes from
+///   2 of 12 reproduced to 0 of 12, and from a section that fails to one that
+///   is honestly not being asked. Nothing can be flattered by it.
+///
+/// The alternative was a ledger entry per clipped part, at each measured width.
+/// Refused: twelve entries would declare *this build does not reproduce its
+/// specification* as an accepted difference, which is exactly the reading a
+/// ledger must never be able to carry.
+fn below_the_width_this_screen_lays_out_at(regions: &PaintedRegions) -> Option<String> {
+    let extent = regions.extent()?;
+    let (comfortable, _) = crate::comfortable_size();
+    (extent.width() < comfortable).then(|| {
+        format!(
+            "this screen is laid out {comfortable} wide and clips below that, and the \
+             surface it was given is {extent} — so what is on this frame is a slice of \
+             the screen rather than the screen",
+        )
+    })
 }
 
 /// Where the roster's option boxes are addressed.

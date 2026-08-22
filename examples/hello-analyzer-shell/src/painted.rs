@@ -3683,6 +3683,42 @@ fn r1733_the_wire_places_at_a_cell_and_refuses_half_a_cell() {
 ///    surfaces may only be an **absence**, or a reordering with an absence
 ///    beside it to explain it: shrinking a window may take a part off the
 ///    frame, and it must never rename one or grow one the reference has not.
+///
+/// ★★★★★ R1770 — whether this frame is the one a specification describes.
+///
+/// Read off the PIN and compared with what the frame recorded, rather than
+/// against this module's own window constants. Two constants in two files
+/// agreeing is not the same claim as the surface actually having that extent,
+/// and the difference between them is what let the assembled tool judge one pin
+/// at a fifth of its area without anything noticing.
+#[cfg(test)]
+fn at_the_declared_extent(
+    regions: &pinion_core::painted::PaintedRegions,
+    doc: &pinion_core::conformance::SpecDocument,
+) -> bool {
+    regions.extent().is_some() && regions.extent() == doc.written_at()
+}
+
+/// ★ R1770 — a sweep over several sizes visited the one its pin was written at.
+///
+/// Counted rather than asserted per case, because such a sweep visits several
+/// sizes on purpose: a verdict read anywhere else is a different claim and the
+/// report says so, but the strict reading has to happen somewhere or the pin's
+/// `$at` is a number nothing checks.
+#[cfg(test)]
+fn assert_swept_the_declared_extent(
+    at_declared: usize,
+    doc: &pinion_core::conformance::SpecDocument,
+) {
+    assert!(
+        at_declared > 0,
+        "★★★★★ R1770 — this sweep never painted at the extent its pin says its \
+         canon was written against ({:?}), so every case judged a size the \
+         specification does not describe.",
+        doc.written_at(),
+    );
+}
+
 #[test]
 fn r1761_the_dashboard_reproduces_its_specification_or_says_why_not() {
     use pinion_core::conformance::{Built, PartDivergence, Unreconciled};
@@ -3690,10 +3726,12 @@ fn r1761_the_dashboard_reproduces_its_specification_or_says_why_not() {
 
     let mut judged = 0usize;
     let mut reconciled = 0usize;
+    let mut at_declared = 0usize;
     sweep(|_, _, _, case| {
         let regions =
             pinion_core::painted::painted_regions(super::VIEW_TAG).expect("the sweep just painted");
         let doc = spec::dashboard_document();
+        at_declared += usize::from(at_the_declared_extent(&regions, &doc));
         for surface in doc.surfaces() {
             let Built::Standing(parts) = super::judge::built(&regions, surface, Showing::OnScreen)
             else {
@@ -3728,7 +3766,12 @@ fn r1761_the_dashboard_reproduces_its_specification_or_says_why_not() {
                 .into_iter()
                 .filter_map(|entry| match entry {
                     Unreconciled::Undeclared { sentence, .. } => Some(sentence),
-                    Unreconciled::Paid { .. } | Unreconciled::Reworded { .. } => None,
+                    // ★ R1770 — `Unsized` joins the arms this filter drops: it
+                    // is a refusal to judge an entry, not a difference the
+                    // build has, and this set is the differences.
+                    Unreconciled::Paid { .. }
+                    | Unreconciled::Reworded { .. }
+                    | Unreconciled::Unsized { .. } => None,
                 })
                 .collect();
             let divergences: Vec<PartDivergence> = canon.diff(&parts);
@@ -3762,6 +3805,7 @@ fn r1761_the_dashboard_reproduces_its_specification_or_says_why_not() {
         reconciled, 5,
         "and all five reconcile in the one case the specification describes",
     );
+    assert_swept_the_declared_extent(at_declared, &spec::dashboard_document());
 
     // ★★ And the away this section DOES have, which no size or state can
     // produce: the reader standing somewhere else. Asserted here rather than
@@ -3875,17 +3919,32 @@ fn r1762_the_preferences_page_reproduces_its_specification_or_says_why_not() {
                 );
             };
             judged += 1;
+            // ★★★★★ R1770 — judged AT the extent this frame was painted into,
+            // because one entry of this page's ledger is a fold and a fold is a
+            // function of how tall the surface is. A gate that passed no extent
+            // would be refused by that entry rather than excused by it, which
+            // is the point: this page's verdict is a claim about a size.
             let said: Vec<String> = doc
-                .unreconciled(surface, &parts)
+                .unreconciled_at(surface, regions.extent(), &parts)
                 .iter()
                 .map(Unreconciled::sentence)
                 .collect();
             assert!(
                 said.is_empty(),
-                "`{surface}` is not what docs/analyzer-settings-spec.json declares:\n  {}",
+                "`{surface}` is not what docs/analyzer-settings-spec.json declares \
+                 at {:?}:\n  {}",
+                regions.extent(),
                 said.join("\n  "),
             );
         }
+        assert_eq!(
+            regions.extent(),
+            doc.written_at(),
+            "★★★★★ R1770 — this gate paints at the extent \
+             docs/analyzer-settings-spec.json declares its canon was written at. \
+             If these part company, every judgement above is about a size the \
+             specification does not describe.",
+        );
         assert_eq!(
             judged,
             doc.surfaces().count(),

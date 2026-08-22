@@ -86,6 +86,16 @@ LAB = "/node_lab/external"
 #: Every section a reader can arrive at, in the order this demo walks them.
 WALK = ["packets", "keys", "logs", "lab", "settings", "dashboard"]
 
+#: ★★★★★ R1770 — the window sections A-F stand in, and it is not the one the
+#: tool opens in. The node lab declares it lays out at 1625 wide and clips below
+#: that; the shell keeps 52 of the window; so at 1440x900 that section is handed
+#: 1388 and DECLINES to be judged. Sections A-F are about what a walk holds when
+#: sections answer, so they ask where the sections can. G goes back to the
+#: opening window on purpose and H maximises, which is what makes the pair a
+#: measurement of one variable.
+LAB_WINDOW = (1800, 900)
+OPENING_WINDOW = (1440, 900)
+
 CHECKS: list[str] = []
 
 
@@ -383,13 +393,39 @@ def section_f(app: RpcSubprocess, boot_frame: dict) -> None:
 
 def section_g(app: RpcSubprocess) -> list[tuple[str, str]]:
     banner("G — what is left, named rather than structural")
+    # ★★★★★ R1770 — back to the window the tool OPENS in, and walked again there
+    # so what follows is about that window rather than about the wider one the
+    # sections above needed. The re-walk is not a formality: since that round a
+    # credited verdict is dropped when the surface is next read at a different
+    # extent, so a report taken here without walking again would be crediting
+    # frames painted at a size that no longer exists.
+    resize_and_settle(app, OPENING_WINDOW)
+    for key in WALK:
+        app.intervene_painted(f"{EXT}/nav", key)
+        if key == "lab":
+            drive_the_lab(app)
     said = walk_report(app)
+    # ★★★★★ R1770 — every surface either stood on a frame of this walk or SAID
+    # WHY it could not, and the two together are the whole roster. It was a
+    # plain `stood == surfaces` when this section was written, and at this
+    # window that is now false: the node lab is handed 1388 of the 1625 it
+    # declares it lays out at, so its three surfaces decline. The claim this
+    # section exists to make is unweakened — nothing is missing from the walk,
+    # and nothing is silent — and it is now the claim rather than a stronger one
+    # that happened to hold at the size it was written at.
+    accounted = said["stood"] + sum(
+        1
+        for r in said["rows"]
+        for visit in r.get("surfaces", {}).values()
+        if not visit["stood"] and visit.get("why")
+    )
     eq(
-        said["stood"],
+        accounted,
         said["surfaces"],
         "G: ★★★★★ EVERY surface this application's specifications name was on "
-        "some frame of this walk. Before this round nothing could say that, "
-        "because a frame can hold at most one section's",
+        "some frame of this walk or says why it was not. Before this round "
+        "nothing could say either, because a frame can hold at most one "
+        "section's",
     )
     unreconciled = [
         (r["key"], name)
@@ -402,13 +438,32 @@ def section_g(app: RpcSubprocess) -> list[tuple[str, str]]:
         said["unreconciled"],
         "G: the count and the rows agree about what is unreconciled",
     )
+    # ★★★★★ R1770 — this walk is taken at the window the tool OPENS in, and at
+    # that window the node lab is handed 1388 of the 1625 it declares it lays
+    # out at, so its three surfaces decline to be judged rather than reporting
+    # parts the window took away. The application still does not conform here,
+    # and the reason moved one step further towards a reader: from *a named
+    # surface diverges* to *a named section was not given room to be asked*.
+    declined = [
+        (r["key"], name)
+        for r in said["rows"]
+        for name, visit in r.get("surfaces", {}).items()
+        if not visit["stood"] and visit.get("why")
+    ]
     ok(
         "G: ★★★★★ so the application still does not conform -- and the "
-        "difference this round makes is that it now fails at NAMED SURFACES a "
-        "reader can go and fix, instead of failing because one frame shows one "
-        "section",
-        said["conforms"] is False and len(unreconciled) >= 1,
+        "difference this round makes is that what is left is NAMED, per "
+        "surface, instead of being 'one frame shows one section'",
+        said["conforms"] is False and len(unreconciled) + len(declined) >= 1,
     )
+    for key, surface in declined:
+        why = row(said, key)["surfaces"][surface].get("why") or ""
+        ok(
+            f"G: ★ `{key}`/`{surface}` says why it declines rather than "
+            "reporting a shortfall the window caused",
+            why != "",
+        )
+    print(f"  [declined] {sorted(declined)}")
     for key, surface in unreconciled:
         visit = row(said, key)["surfaces"][surface]
         ok(
@@ -436,10 +491,23 @@ def unreconciled_of(said: dict) -> list[tuple[str, str]]:
 
 def section_h(app: RpcSubprocess, small: list[tuple[str, str]]) -> None:
     banner("H — ★ and the named failure is now ACTIONABLE: one variable moves it")
+    # ★★★★★ R1770 — this section's original claim was that the application had
+    # NO size at which it conforms, and this round is the one that made it
+    # false. It stays here as the measurement it was, with its outcome corrected
+    # rather than its question dropped: one variable — the window — still moves
+    # what is left, and what it now moves it to is conformance.
+    said_small = walk_report(app)
+    declined_small = sorted(
+        (r["key"], name)
+        for r in said_small["rows"]
+        for name, visit in r.get("surfaces", {}).items()
+        if not visit["stood"] and visit.get("why")
+    )
     ok(
-        "H: at the window this walk was taken in, the two failing surfaces are "
-        "the node lab's",
-        {key for key, _ in small} == {"lab"},
+        "H: at the window this walk was taken in, what is outstanding is the "
+        "node lab's -- whether it is a divergence or a section declining to be "
+        "asked",
+        {key for key, _ in small} | {key for key, _ in declined_small} == {"lab"},
     )
     # One variable: the window. The node lab's OWN gate paints the inspector at
     # 2494x1531; the assembled tool gives that section a page region less than
@@ -462,18 +530,24 @@ def section_h(app: RpcSubprocess, small: list[tuple[str, str]]) -> None:
         "variable, and not the screen",
         not any(key == "lab" for key, _ in big),
     )
-    ok(
-        "H: ★★★★★ while a DIFFERENT section fails instead, so this application "
-        "has no size at which it conforms -- a sentence nothing could say "
-        "before this round, because the frame's verdict was false at every size "
-        "for a reason that had nothing to do with any of them",
-        len(big) >= 1 and not set(big) & set(small),
+    eq(
+        big,
+        [],
+        "H: ★★★★★ and NOTHING is outstanding at this size. When this section was "
+        "written a different section failed here instead -- the preferences "
+        "ledger declared a fold that a taller window repaired, and demanded its "
+        "own deletion -- so the sentence recorded was `this application has no "
+        "size at which it conforms`. R1770 gave that entry the extent it was "
+        "measured at, and the sentence stopped being true",
     )
     ok(
-        "H: and it still refuses, which is the honest answer",
-        said["conforms"] is False,
+        "H: ★★★★★ so the application CONFORMS here. Read at one window it "
+        "declines to be asked and at another it reproduces its whole "
+        "specification, and both of those are now sentences it can say about "
+        "itself",
+        said["conforms"] is True,
     )
-    print(f"  [small window] {small}\n  [large window] {big}")
+    print(f"  [small window] {small} declined {declined_small}\n  [large window] {big}")
     print(
         f"  [large] {said['reproduced']} of {said['specified']} reproduced over "
         f"{said['steps']} steps"
@@ -482,6 +556,7 @@ def section_h(app: RpcSubprocess, small: list[tuple[str, str]]) -> None:
 
 def body() -> None:
     with RpcSubprocess(SHELL, boot_grace=1.5) as app:
+        resize_and_settle(app, LAB_WINDOW)
         boot_frame = section_a(app)
         section_b(app, boot_frame)
         walked, shut, opened = section_c(app)

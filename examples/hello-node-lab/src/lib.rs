@@ -409,6 +409,18 @@ const WIDEST_CARD: u32 = {
 /// The width was the axis R1689 wrote a real loss against.
 const SHRINK: ShrinkPolicy = ShrinkPolicy::panning((MIN_W, MIN_H), (FLOOR_W, MIN_H));
 
+/// ★ R1770 — the size this screen declares it lays out at, for a reader inside
+/// this crate that is not the layout.
+///
+/// [`SHRINK`] is private and should stay so — it is one screen's policy, not a
+/// fact anybody else may set. But `judge` has to know it: a verdict read from a
+/// frame narrower than this is a verdict about a slice, and the module that
+/// says so must read the declared number rather than restate it. See
+/// `judge::built` for the measurement that made this necessary.
+pub(crate) const fn comfortable_size() -> (u32, u32) {
+    SHRINK.comfortable()
+}
+
 fn canvas_rect() -> Rect {
     let (w, h) = window_size();
     Rect::new(

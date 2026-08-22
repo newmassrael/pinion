@@ -4824,14 +4824,37 @@ fn r1691_a_rows_control_announces_the_kind_its_shape_is() {
 
 // ── The inspector, against the specification somebody wrote down (R1732) ────
 
-/// The size the conformance sweep paints at.
+/// The size the conformance sweep paints at, **read off the pin**.
 ///
 /// The maximised one, and for a stated reason rather than convenience: the
 /// inspector's form scrolls, a row below the fold is clipped away entirely, and
 /// a check that could not see it would report a missing part where a reader
 /// only has to scroll. R1662's `reachable` index is the other half of that
 /// question and is asked by its own test; this one is about what the row IS.
-const CONFORMANCE_SIZE: (u32, u32) = (2494, 1531);
+///
+/// ★★★★★ R1770 — it was the literal `(2494, 1531)` here, private to this
+/// module, and that is how the analysis tool came to judge one specification at
+/// two sizes without anybody noticing. The assembled tool gives this section a
+/// page of 1388x848 at its opening window and compares what it draws there
+/// against this same file — a fifth of the area this gate uses. Neither
+/// artifact said so, because the number was in neither of them: it was here.
+///
+/// The pin now carries it (`$at`), this reads it, and
+/// `r1770_the_gate_paints_at_the_size_the_pin_declares` asserts that what the
+/// sweep actually recorded has exactly that extent. So the two gates are one
+/// claim, and moving the pin moves the gate.
+///
+/// # Panics
+///
+/// If the pin declares no `$at`. A specification whose canon does not say what
+/// size it was written against cannot be judged reproducibly, and this gate
+/// would otherwise pick a size of its own — which is the defect.
+fn conformance_size() -> (u32, u32) {
+    let at = spec::inspector_document()
+        .written_at()
+        .expect("docs/analyzer-inspector-spec.json declares the extent its canon was written at");
+    (at.width(), at.height())
+}
 
 /// Put a card on the inspector and give it the enumeration row, the way a
 /// session does: select, then press the chip that offers the key.
@@ -4843,7 +4866,7 @@ const CONFORMANCE_SIZE: (u32, u32) = (2494, 1531);
 fn card_with_enum_row(state: &std::rc::Rc<LabState>) {
     let node = state.node_of("P-01").expect("the opening graph has it");
     state.selection.set(Selection::one(node));
-    let shot = painted_at(state, CONFORMANCE_SIZE).0;
+    let shot = painted_at(state, conformance_size()).0;
     let chip = *shot
         .tags
         .get(&format!("lab.form.add.{}", spec::ENUM_KEY))
@@ -4921,7 +4944,7 @@ fn r1732_the_inspector_reproduces_the_specification_or_says_where_it_does_not() 
         // open, because a shut one has no parts at all. Reading both from one
         // paint would make one of the two a claim about a state the file does
         // not describe.
-        let shot = painted_at(&state, CONFORMANCE_SIZE).0;
+        let shot = painted_at(&state, conformance_size()).0;
         judge("enum_row");
         judge("controls");
 
@@ -4938,7 +4961,7 @@ fn r1732_the_inspector_reproduces_the_specification_or_says_where_it_does_not() 
             state.picking.get().is_some(),
             "★ a press on the collapsed control opens its roster",
         );
-        painted_at(&state, CONFORMANCE_SIZE);
+        painted_at(&state, conformance_size());
         judge("enum_roster");
 
         // And every surface the file declares was judged — a gate that judged
@@ -4952,6 +4975,61 @@ fn r1732_the_inspector_reproduces_the_specification_or_says_where_it_does_not() 
             );
         }
         assert_eq!(declared.len(), judged.len());
+    });
+}
+
+/// ★★★★★ R1770 — **the size this gate paints at is the size the pin declares,
+/// and the frame proves it rather than the constant asserting it.**
+///
+/// `conformance_size` reads `$at` off the document, so the two numbers cannot
+/// drift by editing one. That alone would still leave a pin free to declare a
+/// size the surface never actually reaches: the value goes in as a *window*
+/// size and comes out as the extent of a *surface*, and those agree only while
+/// this screen fills its window. In the assembled tool they do not — measured
+/// R1770, a 2494x1531 window gives this section a 2442x1479 surface — so the
+/// agreement is a fact about this binary that has to be read from a frame.
+///
+/// It is read from the same store the verdict is: if the recorded extent and
+/// the declared one part company, every judgment this gate makes is about a
+/// size the specification does not describe, and that is the failure the
+/// assembled tool had been shipping silently.
+#[test]
+fn r1770_the_gate_paints_at_the_size_the_pin_declares() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        painted_at(&state, conformance_size());
+        let recorded = pinion_core::painted::painted_regions(super::VIEW_TAG)
+            .expect("the sweep just painted")
+            .extent()
+            .expect("the recorded frame carries the extent it was painted into");
+        let declared = spec::inspector_document()
+            .written_at()
+            .expect("the pin declares `$at`");
+        assert_eq!(
+            recorded, declared,
+            "★ this gate paints at the size docs/analyzer-inspector-spec.json declares, \
+             and the surface it recorded is {recorded} against a declared {declared}",
+        );
+
+        // ★ And the verdict the screen publishes carries both numbers, so a
+        // reader who did not run this test can still tell the two apart.
+        let report = super::judge::conformance();
+        assert_eq!(
+            report.at(),
+            Some(declared),
+            "the verdict says where it was read"
+        );
+        assert_eq!(
+            report.written_at(),
+            Some(declared),
+            "and what it was read against"
+        );
+        assert!(
+            report.read_where_written(),
+            "★ in its own window this screen is judged at exactly the size its \
+             specification was written at — the claim the assembled tool cannot make",
+        );
     });
 }
 
@@ -4976,7 +5054,7 @@ fn r1742_an_untouched_lab_says_its_surfaces_are_away_rather_than_missing() {
         // Painted, and nothing selected — the state a reader arriving at this
         // section is in.
         state.selection.set(Selection::default());
-        painted_at(&state, CONFORMANCE_SIZE);
+        painted_at(&state, conformance_size());
         let shut = super::judge::conformance();
 
         assert_eq!(
@@ -5003,7 +5081,7 @@ fn r1742_an_untouched_lab_says_its_surfaces_are_away_rather_than_missing() {
 
         // ★ And the session puts them there. Same build, same rule.
         card_with_enum_row(&state);
-        let frame = painted_at(&state, CONFORMANCE_SIZE).0;
+        let frame = painted_at(&state, conformance_size()).0;
         let shut = super::judge::conformance();
         assert_eq!(
             shut.standing(),
@@ -5026,7 +5104,7 @@ fn r1742_an_untouched_lab_says_its_surfaces_are_away_rather_than_missing() {
         super::move_cursor(&state, px, py);
         super::press(&state);
         super::release(&state);
-        painted_at(&state, CONFORMANCE_SIZE);
+        painted_at(&state, conformance_size());
 
         let open = super::judge::conformance();
         assert_eq!(
@@ -5123,7 +5201,7 @@ fn r1742_the_rows_the_verdict_is_computed_over_are_the_rows_the_form_holds() {
     owner.run(|| {
         let state = use_lab_state();
         card_with_enum_row(&state);
-        painted_at(&state, CONFORMANCE_SIZE);
+        painted_at(&state, conformance_size());
 
         let regions =
             pinion_core::painted::painted_regions(super::VIEW_TAG).expect("the sweep just painted");
@@ -5163,7 +5241,7 @@ fn r1742_the_roster_is_titled_by_the_words_the_frame_drew() {
     owner.run(|| {
         let state = use_lab_state();
         card_with_enum_row(&state);
-        let shot = painted_at(&state, CONFORMANCE_SIZE).0;
+        let shot = painted_at(&state, conformance_size()).0;
         let control = *shot
             .tags
             .get(&format!("lab.form.control.{}", spec::ENUM_KEY))
@@ -5172,7 +5250,7 @@ fn r1742_the_roster_is_titled_by_the_words_the_frame_drew() {
         super::move_cursor(&state, px, py);
         super::press(&state);
         super::release(&state);
-        painted_at(&state, CONFORMANCE_SIZE);
+        painted_at(&state, conformance_size());
 
         let built = built_inspector("enum_roster");
         let parts = built.parts().expect("the roster is open");
@@ -5218,7 +5296,7 @@ fn r1732_pressing_an_option_writes_it_and_shuts_the_roster() {
             super::release(&state);
         };
 
-        let shot = painted_at(&state, CONFORMANCE_SIZE).0;
+        let shot = painted_at(&state, conformance_size()).0;
         press_at(
             *shot
                 .tags
@@ -5226,7 +5304,7 @@ fn r1732_pressing_an_option_writes_it_and_shuts_the_roster() {
                 .expect("the row is painted"),
         );
 
-        let shot = painted_at(&state, CONFORMANCE_SIZE).0;
+        let shot = painted_at(&state, conformance_size()).0;
         // A word that is NOT the one the row holds, so the write is visible.
         let wanted = state
             .picking
@@ -5250,7 +5328,7 @@ fn r1732_pressing_an_option_writes_it_and_shuts_the_roster() {
             state.picking.get().is_none(),
             "★★ and shut the roster, so the row it changed is what a reader sees",
         );
-        let shot = painted_at(&state, CONFORMANCE_SIZE).0;
+        let shot = painted_at(&state, conformance_size()).0;
         assert!(
             !shot
                 .tags
@@ -5365,7 +5443,7 @@ fn r1732_the_roster_is_driveable_from_the_keyboard_without_writing_as_it_moves()
         };
         let opening = held();
 
-        let shot = painted_at(&state, CONFORMANCE_SIZE).0;
+        let shot = painted_at(&state, conformance_size()).0;
         let (px, py) = centre(
             *shot
                 .tags

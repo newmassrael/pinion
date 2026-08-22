@@ -64,10 +64,22 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-from rpc_verify import RpcSubprocess, assert_eq, run_demo  # noqa: E402
+from rpc_verify import (  # noqa: E402
+    RpcSubprocess,
+    assert_eq,
+    resize_and_settle,
+    run_demo,
+)
 
 SHELL = "hello-analyzer-shell"
 EXT = "/external"
+
+#: ★★★★★ R1770 — the window this demo stands in, and it is no longer the one the
+#: tool opens in. The node lab declares it lays out at 1625 wide and clips below
+#: that; the shell keeps 52 of the window; so at 1440x900 that section is handed
+#: 1388 and declines to be judged. This demo asserts that standing in a section
+#: puts its surfaces on the frame, which needs a window where they fit.
+LAB_WINDOW = (1800, 900)
 
 #: Every section a reader can arrive at, in the order this demo walks them.
 WALK = ["packets", "keys", "logs", "lab", "settings"]
@@ -211,6 +223,7 @@ def section_d(app: RpcSubprocess) -> None:
 
 def body() -> None:
     with RpcSubprocess(SHELL, boot_grace=1.5) as app:
+        resize_and_settle(app, LAB_WINDOW)
         at_boot = section_a(app)
         section_b(app, at_boot)
         section_c(app)

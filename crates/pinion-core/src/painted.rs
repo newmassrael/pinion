@@ -94,6 +94,70 @@ thread_local! {
 /// assert_eq!(regions.topmost_at(80, 80), Some("board"));
 /// assert_eq!(regions.topmost_at(400, 400), None);
 /// ```
+/// ★★★★★ R1770 — **the size of the surface a frame was painted into.**
+///
+/// # Why a verdict that does not carry this is incomplete
+///
+/// Measured at R1767 on this tree's own analysis tool, walking the same binary
+/// twice and moving one variable — the window: at 1440x900 two of the node
+/// lab's surfaces do not reproduce their specification, and at 2494x1531 those
+/// two reconcile and a **different** section's does not. Both walks reported
+/// `conforms=false`, the two failing sets are disjoint, and nothing in either
+/// report said which window it was read at. So the two readings could not be
+/// told apart by anything except a person remembering which run was which.
+///
+/// It is the same rule R1752 wrote for a duration (*a number that says how many
+/// must say what of*) and R1758 wrote for evidence (*a verdict says what it was
+/// read from*), one turn further: **a verdict says what size it was read at**.
+///
+/// # Why the SURFACE and not the window
+///
+/// A section mounted as a page of an assembled tool is given a fraction of the
+/// window — measured R1761, 1096x802 of a 1440x900 window — and what it can
+/// draw is a fact about that fraction, not about the window. The store records
+/// each surface's own rectangle already, so this is the size the marks below
+/// are in the coordinates of, and no caller has to relate two frames of
+/// reference to use it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct Extent {
+    width: u32,
+    height: u32,
+}
+
+impl Extent {
+    /// The extent `width` by `height`.
+    #[must_use]
+    pub const fn new(width: u32, height: u32) -> Self {
+        Self { width, height }
+    }
+
+    /// The extent of a rectangle — its size, with its position discarded.
+    #[must_use]
+    pub const fn of(rect: Rect) -> Self {
+        Self::new(rect.w, rect.h)
+    }
+
+    /// How wide.
+    #[must_use]
+    pub const fn width(self) -> u32 {
+        self.width
+    }
+
+    /// How tall.
+    #[must_use]
+    pub const fn height(self) -> u32 {
+        self.height
+    }
+}
+
+impl core::fmt::Display for Extent {
+    /// `1096x802` — the spelling a specification pin and a wire report both
+    /// use, so a size read off one can be searched for in the other.
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{}x{}", self.width, self.height)
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct PaintedRegions {
     /// Tag and rectangle, in the order the frame drew them: earliest first.
@@ -102,6 +166,13 @@ pub struct PaintedRegions {
     ///
     /// See [`reads`](Self::reads) for what this is for and what it is not.
     reads: BTreeMap<String, String>,
+    /// ★ R1770 — the size of the surface these marks were painted into.
+    ///
+    /// `None` for a caller that built the store by hand out of marks alone and
+    /// therefore knows of no frame. See [`extent`](Self::extent) for why that
+    /// absence is not the same as a size of zero, and [`Extent`] for what a
+    /// verdict read without one cannot say.
+    extent: Option<Extent>,
 }
 
 impl PaintedRegions {
@@ -116,6 +187,7 @@ impl PaintedRegions {
         Self {
             marks,
             reads: BTreeMap::new(),
+            extent: None,
         }
     }
 
@@ -124,6 +196,35 @@ impl PaintedRegions {
     pub fn with_reads(mut self, reads: BTreeMap<String, String>) -> Self {
         self.reads = reads;
         self
+    }
+
+    /// ★ R1770 — the same marks, with the size of the surface they were
+    /// painted into.
+    ///
+    /// Separate from the constructor for the reason
+    /// [`with_reads`](Self::with_reads) is: most readers of this store are
+    /// asking *where*, and a caller with no frame to speak of should not have
+    /// to invent a size to say so.
+    #[must_use]
+    pub fn with_extent(mut self, extent: Extent) -> Self {
+        self.extent = Some(extent);
+        self
+    }
+
+    /// ★★★★★ R1770 — the size of the surface this frame was painted into, or
+    /// `None` for a store built without one.
+    ///
+    /// # Why `None` is not `0x0`
+    ///
+    /// A verdict read from a store with no extent cannot say what size it is
+    /// about, and a conformance ledger whose entries are size-dependent
+    /// **refuses** such a verdict rather than judging it — see that module's
+    /// unreconciled arm for a verdict of unknown size. Collapsing the two would
+    /// make the most flattering reading of an unknown size the default, which
+    /// is the failure mode every refusal in that module exists to prevent.
+    #[must_use]
+    pub const fn extent(&self) -> Option<Extent> {
+        self.extent
     }
 
     /// ★★★★★ R1742 — **what `tag` reads**: the text the frame drew inside it,
@@ -219,6 +320,7 @@ impl PaintedRegions {
     pub fn of_scene(scene: &Scene) -> Self {
         let mut marks: Vec<(String, Rect)> = Vec::new();
         let mut reads: BTreeMap<String, String> = BTreeMap::new();
+        let mut extent: Option<Extent> = None;
         scene.for_each_node(&mut |visit| {
             let Some(rect) = visit.absolute_rect() else {
                 return;
@@ -238,11 +340,23 @@ impl PaintedRegions {
                         .or_insert_with(|| text.content.clone());
                 }
             }
+            if visit.ancestors.is_empty() {
+                // ★ R1770 — the root's own rectangle IS the extent this walk is
+                // in the coordinates of. Taken here rather than from the caller
+                // so a fixture cannot hand a size the scene does not have,
+                // which is the same one-directional rule the recorded path gets
+                // for free from the surface rectangle it already holds.
+                extent = Some(Extent::of(rect));
+            }
             if let Some(tag) = visit.node.tag() {
                 marks.push((tag.to_owned(), rect));
             }
         });
-        Self { marks, reads }
+        Self {
+            marks,
+            reads,
+            extent,
+        }
     }
 
     /// ★ R1742 — the parts under `stem` whose remainder names a part, in paint

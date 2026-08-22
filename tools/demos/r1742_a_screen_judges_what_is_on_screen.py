@@ -103,12 +103,32 @@ from rpc_verify import (  # noqa: E402
     assert_eq,
     resize_and_settle,
     run_demo,
+    without_extent,
 )
 
 SHELL = "hello-analyzer-shell"
 LAB = "hello-node-lab"
 EXT = "/external"
 SEAT = "lab"
+
+#: ★★★★★ R1770 — the window this demo stands in, and it is no longer the one the
+#: tool opens in.
+#:
+#: The node lab declares it lays out at 1625 wide and CLIPS below that — a policy
+#: R1712-R1714 measured three times — and the shell keeps 52 of the window for
+#: its own chrome. So at 1440x900 that section is handed 1388 and, since R1770,
+#: declines to be judged in a sentence naming both numbers. Everything below
+#: reads what the lab draws, so it reads at a window where the lab is whole.
+#:
+#: ⚠ This was never a choice before: the section was clipped at the opening
+#: window the whole time, reporting `controls` 1 of 5 and `enum_row` 1 of 7 as
+#: though the BUILD were short, and nothing in the verdict said the window was
+#: what took those parts away.
+LAB_WINDOW = (1800, 900)
+
+#: The window this tool actually opens in, kept because section C measures what
+#: happens there on purpose.
+OPENING_WINDOW = (1440, 900)
 
 CHECKS: list[str] = []
 PARTS_COMPARED = 0
@@ -368,21 +388,31 @@ def section_c(app: RpcSubprocess) -> str:
         surfaces["enum_roster"]["standing"] is False,
     )
 
-    # 🟥★★★★★ MEASURED HERE, AND IT IS THE ROUND'S SHARPEST FINDING. At the
-    # window the tool opens at, the page it gives the lab leaves the inspector
-    # **74 pixels wide**, and at that width the row drops four of its seven
-    # parts. So the section reproduces its specification in its own window and
-    # NOT as a page — "two builds wearing one name", which R1738 named as the
-    # risk and nothing could measure until a section published a verdict a host
-    # could read. It is reported, not hidden: the verdict says so.
+    # 🟥★★★★★ MEASURED HERE, AND IT WAS THE ROUND'S SHARPEST FINDING — now
+    # stated the way R1770 made sayable. At the window the tool OPENS at, the
+    # page it gives the lab leaves the inspector a fraction of its width, and
+    # this demo used to report that as the row reproducing 3 of its 7 parts:
+    # "two builds wearing one name", inferred from a SHORTFALL.
+    #
+    # R1770 measured what the shortfall was — the section is handed 1388 of the
+    # 1625 it declares it lays out at, and below that width it clips by
+    # declaration — so the section now DECLINES to be judged there and says so
+    # in a sentence carrying both numbers. That is the same finding with the
+    # inference taken out of it, and it is strictly better: a build that had
+    # genuinely stopped drawing those parts would have been indistinguishable
+    # from a clipped one under the old reading, and is not under this one.
+    resize_and_settle(app, OPENING_WINDOW)
+    app.tick(16)
     cramped = lab_surfaces(app)["enum_row"]
     body = abs_rects_of(app.snapshot(source="paint")).get("lab.inspector.body")
     ok(
         f"C: 🟥★★★★★ at the opening window the inspector is {body[2]}px wide and "
-        f"the row reproduces {cramped['reproduced']} of {cramped['specified']} "
-        f"parts -- the section is judged AS A PAGE and says where it falls "
-        f"short: {[d['key'] for d in cramped['divergences']]}",
-        cramped["standing"] is True and cramped["reproduced"] < cramped["specified"],
+        f"the row DECLINES rather than reporting a shortfall the window caused: "
+        f"{cramped.get('why')}",
+        cramped["standing"] is False
+        and cramped["reproduced"] == 0
+        and "1388" in (cramped.get("why") or "")
+        and "1625" in (cramped.get("why") or ""),
     )
 
     # ★ And at a window where the page is big enough to draw the section, the
@@ -547,7 +577,7 @@ def section_e(app: RpcSubprocess, key: str) -> None:
             "session, so two processes in different sessions must differ",
             fresh["surfaces"]["enum_row"]["standing"] is False
             and fresh["surfaces"]["enum_roster"]["standing"] is False
-            and fresh != own,
+            and without_extent(fresh) != without_extent(own),
         )
         # The SAME gestures, over the same painted rectangles, in a process
         # that has never seen the shell.
@@ -556,9 +586,12 @@ def section_e(app: RpcSubprocess, key: str) -> None:
         press_tag(alone, f"lab.form.add.{key}")
         reveal(alone, f"lab.form.control.{key}")
         press_tag(alone, f"lab.form.control.{key}")
+        # ★ R1770 — apart from the size each was read at; the two are in
+        # different windows and the round that introduced the extent asserts
+        # that difference separately rather than folding it in here.
         assert_eq(
-            alone.query(f"{EXT}/conformance"),
-            own,
+            without_extent(alone.query(f"{EXT}/conformance")),
+            without_extent(own),
             "E: ★★★★★ and driven into the SAME session it publishes the SAME "
             "verdict -- a section that conforms in its own window and is never "
             "asked as a page would be two builds wearing one name",
@@ -577,6 +610,7 @@ def body() -> None:
     )
 
     with RpcSubprocess(SHELL, boot_grace=1.5) as app:
+        resize_and_settle(app, LAB_WINDOW)
         section_a(app)
         section_b(app)
         key = section_c(app)

@@ -900,3 +900,114 @@ fn the_wire_carries_the_walk() {
          on the frame now"
     );
 }
+
+/// ★★★★★ R1770 — **a credited verdict is dropped when the surface is next read
+/// at a different extent.**
+///
+/// Found by running, not by reading. The analysis tool this module exists for
+/// was walked maximised, where it conforms; the window was shrunk, where one
+/// section is given less width than it declares it lays out at and therefore
+/// declines to be judged; and the walk **still reported `conforms=true`**, on
+/// the strength of frames painted at a size that no longer existed.
+///
+/// The asymmetry this module is built on — a standing frame replaces the
+/// credit, an away frame does not — is unchanged and right: *the reader closed
+/// it again* leaves the frame that verdict came from intact. *The reader
+/// resized the window* does not, and until R1770 a verdict did not carry the
+/// size it was read at, so the difference could not be written down.
+#[test]
+fn a_credit_is_dropped_when_the_surface_is_next_read_at_another_extent() {
+    use pinion_core::painted::Extent;
+
+    /// The inspector's frame for the state it is in, at a stated extent.
+    ///
+    /// The inspector is the fixture with an away path — its roster is on the
+    /// frame or it is not — and an away is what the case this test is about
+    /// produces: a section given less room than it declares it lays out at
+    /// declines to be judged rather than drawing badly.
+    fn inspector_at(extent: Extent, roster_open: bool) {
+        ROSTER_OPEN.with(|open| open.set(roster_open));
+        let marks: Vec<(String, Rect)> = if roster_open {
+            ["first", "second", "third"]
+                .iter()
+                .enumerate()
+                .map(|(row, key)| {
+                    (
+                        format!("fixture_inspector.roster.{key}"),
+                        Rect::new(10, 40 + 20 * u32::try_from(row).unwrap_or(0), 120, 18),
+                    )
+                })
+                .collect()
+        } else {
+            ["label", "value"]
+                .iter()
+                .enumerate()
+                .map(|(column, key)| {
+                    (
+                        format!("fixture_inspector.row.{key}"),
+                        Rect::new(10 + 130 * u32::try_from(column).unwrap_or(0), 20, 120, 18),
+                    )
+                })
+                .collect()
+        };
+        record_painted_regions(
+            INSPECTOR_TAG,
+            PaintedRegions::from_marks(marks).with_extent(extent),
+        );
+    }
+
+    let big = Extent::new(1200, 800);
+    let small = Extent::new(600, 800);
+    let empty = Scene::Container(ContainerNode::new(Vec::new()));
+
+    fresh();
+    let first = roster();
+    walk_to(&first, "dashboard");
+
+    // One frame with the roster open, at a known extent: `roster` is credited
+    // there and `row` is away, which is this fixture's pair of alternatives.
+    let inspector = at("inspector");
+    let _ = first.latch(&inspector, &empty);
+    inspector_at(big, true);
+    let walked = first.journey_conformance(&inspector);
+    let credited = visit(&walked, "inspector", "roster");
+    assert!(credited.stood(), "the roster was on a frame of this walk");
+    assert!(credited.reconciles(), "and it reproduced its specification");
+    assert_eq!(
+        credited.at(),
+        Some(big),
+        "★ and the credit names the extent it was read at",
+    );
+
+    // ⚠ First, the asymmetry this rule must NOT weaken: at the SAME extent, an
+    // away frame leaves the credit alone. That is R1767's rule and the only
+    // thing that lets two mutually exclusive surfaces of one section both be
+    // credited over one walk.
+    let _ = first.latch(&inspector, &empty);
+    inspector_at(big, false);
+    let same_size = first.journey_conformance(&inspector);
+    assert!(
+        visit(&same_size, "inspector", "roster").stood(),
+        "★★ shutting the roster does not take away the frame it was open on -- \
+         the new rule is about the SIZE changing, not about a surface going \
+         quiet",
+    );
+
+    // Now the window changes, and the away arrives at a different extent.
+    let _ = first.latch(&inspector, &empty);
+    inspector_at(small, false);
+    let after = first.journey_conformance(&inspector);
+    let now = visit(&after, "inspector", "roster");
+    assert!(
+        !now.stood(),
+        "★★★★★ the earlier credit is gone: it was read at {big} and this surface \
+         is {small} now, so the frame it came from is not a frame of this \
+         application any more",
+    );
+    assert_eq!(now.reproduced(), 0, "and it credits nothing");
+    assert!(
+        !after.conforms(),
+        "★★★★★ so the walk stops claiming conformance on the strength of a size \
+         that no longer exists -- which it did, measured, before this rule",
+    );
+}

@@ -110,6 +110,19 @@ pub struct SurfaceVisit {
     stood: Option<(u32, SurfaceStanding)>,
 }
 
+/// ★★★★★ R1770 — whether a credited verdict was read at a size the new
+/// observation says the surface no longer has.
+///
+/// Both sizes must be known for this to be a claim: a verdict that named no
+/// extent cannot be shown stale by one that does, and saying otherwise would
+/// discard credits on every path that has no frame to take a size from. So the
+/// predicate is *two known sizes that differ* — which is the same shape as
+/// [`pinion_core::conformance::DocumentReport::read_where_written`], and for the
+/// same reason: a missing number supports no claim in either direction.
+fn stale_at(credited: &SurfaceStanding, now: &SurfaceStanding) -> bool {
+    matches!((credited.at(), now.at()), (Some(was), Some(is)) if was != is)
+}
+
 impl SurfaceVisit {
     /// Begin a record for the surface this standing is about.
     ///
@@ -139,11 +152,45 @@ impl SurfaceVisit {
     /// surface that has been on a frame does not stop having been on it because
     /// the reader closed it again, and a surface that has never been on one is
     /// not credited for the reason it gives.
+    ///
+    /// ★★★★★ R1770 — **with one exception, and it was found by running.** A
+    /// credit is dropped when the new observation was read at a **different
+    /// extent**. Measured that round on this tree's own analysis tool: walk it
+    /// maximised, where it conforms; shrink the window and walk it again, where
+    /// one section is given less width than it declares it lays out at and
+    /// therefore declines to be judged; and the walk still reported
+    /// `conforms=true` — on the strength of frames painted at a size that no
+    /// longer exists.
+    ///
+    /// The asymmetry above is right and this does not weaken it: *the reader
+    /// closed it again* leaves the frame that verdict came from intact, and
+    /// *the reader resized the window* does not. It is R1763's rule — a section
+    /// that leaves takes its verdict with it — applied to the other way a frame
+    /// can stop being the frame it was. It could not be written before this
+    /// round because a verdict did not carry the size it was read at.
     fn record(&mut self, step: u32, standing: SurfaceStanding) {
+        if self
+            .stood
+            .as_ref()
+            .is_some_and(|(_, credited)| stale_at(credited, &standing))
+        {
+            self.stood = None;
+        }
         if standing.is_standing() {
             self.stood = Some((step, standing.clone()));
         }
         self.latest = standing;
+    }
+
+    /// The extent the credited verdict was read at, or `None` while nothing is
+    /// credited or the verdict named no size.
+    ///
+    /// ★ R1770 — published so a reader of a walk can see that its rows were not
+    /// all read at one size, which for an assembled tool they never are: a
+    /// section mounted as a page is given a fraction of the window.
+    #[must_use]
+    pub fn at(&self) -> Option<pinion_core::painted::Extent> {
+        self.stood.as_ref().and_then(|(_, standing)| standing.at())
     }
 
     /// The surface this is about.

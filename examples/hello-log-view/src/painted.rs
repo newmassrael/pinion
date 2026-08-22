@@ -193,9 +193,24 @@ fn record(scene: &Scene) {
 #[test]
 fn r1731_every_specified_surface_is_the_one_the_paint_draws() {
     let doc = spec::document();
+    // ★★★★★ R1770 — how many of the swept sizes are the size the pin was
+    // written at. Counted rather than assumed: the sweep's first case is
+    // `(WIN_W, WIN_H)` and the pin's `$at` is that pair, but those are two
+    // constants in two files, and a verdict's extent is the SURFACE's rather
+    // than the window's — three ways for the agreement to be untrue that no
+    // reading of either file would catch.
+    let at_declared = std::cell::Cell::new(0_u32);
     sweep(|_, _, scene, _, case| {
         record(scene);
         let report = crate::judge::conformance();
+        assert!(
+            report.at().is_some(),
+            "{case}: ★ R1770 — a verdict read from a frame names the extent it was \
+             read at, and this one does not",
+        );
+        if report.read_where_written() {
+            at_declared.set(at_declared.get() + 1);
+        }
         assert_eq!(
             report.evidence(),
             pinion_core::conformance::Evidence::Paint,
@@ -232,6 +247,15 @@ fn r1731_every_specified_surface_is_the_one_the_paint_draws() {
             "{case}: every surface the pin fixes is in the verdict",
         );
     });
+    assert!(
+        at_declared.get() > 0,
+        "★★★★★ R1770 — this sweep never painted at the extent \
+         docs/analyzer-logs-spec.json says its canon was written against \
+         ({:?}), so every case above judged a size the specification does not \
+         describe. That is the failure the assembled analysis tool had been \
+         shipping silently: one pin, two gates, five times the area between them.",
+        doc.written_at(),
+    );
 }
 
 /// ★★ The specification itself is the reference's, rather than whatever this

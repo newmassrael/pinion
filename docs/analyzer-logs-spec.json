@@ -1,5 +1,11 @@
 {
+  "$at": { "width": 1220, "height": 760 },
   "$comment": [
+    "R1770 — `$at` is the SURFACE EXTENT this canon was written against, and",
+    "this screen's own paint sweep reads it from here rather than declaring a",
+    "size of its own. See `analyzer-inspector-spec.json` for what a pin that",
+    "named no size cost this tool.",
+    "",
     "R1731 — the analysis tool's LOG section, written down once, in neutral",
     "vocabulary, as the behaviour reference draws it. The reference's fourth",
     "rail seat and the last one this build owed.",

@@ -1,5 +1,13 @@
 {
+  "$at": { "width": 1440, "height": 900 },
   "$comment": [
+    "R1770 — `$at` is the SURFACE EXTENT this canon was written against, and it",
+    "is load-bearing here rather than merely informative: the `theme` entry in",
+    "`rows` below is a FOLD, and a fold is a function of how tall the surface",
+    "is. At 2494x1531 the row fits, the difference is gone, and a ledger with",
+    "no size reported that entry paid and demanded its deletion — which would",
+    "have broken this same tool at 1440x900. The entry now names its extent.",
+    "",
     "R1762 — THE PREFERENCES SECTION'S PAINTED SURFACES, written down from the",
     "behaviour reference in neutral vocabulary, so the last unjudged section of",
     "the assembled application can be judged against something other than its",
@@ -75,7 +83,8 @@
         "key": "theme",
         "sentence": "`theme` is specified as \"Theme Both themes are first-class\" and reads \"Theme\"",
         "since": "R1762",
-        "why": "The last row of ten, and the page scrolls — exactly as the reference's does. Measured at the opening scroll position: the appearance group is painted at y=872 in a region ending at y=900, so the row's own title is on the frame and the sentence under it is 34 pixels lower, which is below the fold. A verdict read from the paint is about the frame, so it reports what the frame has; scrolling to the foot puts the sentence back and this entry is what says that is the reason rather than a row this build draws short. The alternative was an away-condition of `the page can not show all ten rows at once`, refused for R1742's reason: it would swallow a page that had genuinely stopped drawing a row."
+        "why": "The last row of ten, and the page scrolls — exactly as the reference's does. Measured at the opening scroll position: the appearance group is painted at y=872 in a region ending at y=900, so the row's own title is on the frame and the sentence under it is 34 pixels lower, which is below the fold. A verdict read from the paint is about the frame, so it reports what the frame has; scrolling to the foot puts the sentence back and this entry is what says that is the reason rather than a row this build draws short. The alternative was an away-condition of `the page can not show all ten rows at once`, refused for R1742's reason: it would swallow a page that had genuinely stopped drawing a row. R1770 — a fold is a function of how tall the surface is, so this entry now names the extent it was read at. Measured that round by walking one binary twice: at 1440x900 the sentence is below the fold exactly as described; at 2494x1531 the whole row fits, the difference is gone, and the ledger — which had no way to know the size — reported this entry PAID and demanded it be deleted. Deleting it would have broken the same tool at the smaller size.",
+        "at": [{ "width": 1440, "height": 900 }]
       }
     ]
   },

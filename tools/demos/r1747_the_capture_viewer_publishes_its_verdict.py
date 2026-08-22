@@ -100,6 +100,7 @@ from rpc_verify import (  # noqa: E402
     resize_and_settle,
     run_demo,
     text_of_tag,
+    without_extent,
 )
 
 SHELL = "hello-analyzer-shell"
@@ -597,10 +598,23 @@ def section_f(app: RpcSubprocess, derived: str) -> None:
 
     with RpcSubprocess(VIEWER, boot_grace=1.5) as alone:
         fresh = alone.query(f"{EXT}/conformance")
+        # ★★★★★ R1770 — compared APART FROM the size each was read at, and the
+        # sizes are asserted to differ below. Until that round this was a plain
+        # equality and it passed, because neither verdict said what extent it
+        # came from: one process reads its whole window, the other a page inside
+        # a bigger one, and nothing in either answer could say so. The sameness
+        # is about the BUILD; the difference is about the WINDOW; folding them
+        # together is what stopped this check failing for the right reason.
         ok(
             "F: a second process running the same section standalone, in its "
             "own window, publishes the same verdict as the page does",
-            fresh == own,
+            without_extent(fresh) == without_extent(own),
+        )
+        ok(
+            f"F: ★★★★★ and they were read at DIFFERENT sizes -- standalone "
+            f"{fresh['at']}, as a page {own['at']} -- which is what makes the "
+            "sameness above a claim about the build",
+            fresh["at"] != own["at"] and fresh["at"] and own["at"],
         )
         ok(
             "F: ★ and it reconciles there too, so the verdict is not an "
@@ -624,12 +638,15 @@ def section_f(app: RpcSubprocess, derived: str) -> None:
             "F: ★★★★★ driven somewhere the host has not been, the standalone "
             "verdict PARTS from the host's -- so the equality above is a fact "
             "about the build rather than about a value that cannot move",
-            parted != own and parted["surfaces"]["selection"]["standing"] is False,
+            without_extent(parted) != without_extent(own)
+            and parted["surfaces"]["selection"]["standing"] is False,
         )
         press_tag(app, f"pv.tree.field.{derived}")
+        # ★ R1770 — apart from the size each was read at; the two are in
+        # different windows and that difference is asserted separately above.
         assert_eq(
-            alone.query(f"{EXT}/conformance"),
-            app.query(f"/{here['tag']}{EXT}/conformance"),
+            without_extent(alone.query(f"{EXT}/conformance")),
+            without_extent(app.query(f"/{here['tag']}{EXT}/conformance")),
             "F: ★★★★★ and driven into the SAME session the two publish the SAME "
             "verdict again -- a section that conforms in its own window and is "
             "never asked as a page would be two builds wearing one name",

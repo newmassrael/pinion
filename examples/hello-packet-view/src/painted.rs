@@ -1392,12 +1392,14 @@ fn r1747_the_capture_viewer_reproduces_its_specification_or_says_why_not() {
 
     let mut reasons: BTreeSet<String> = BTreeSet::new();
     let mut judged = 0usize;
+    let mut at_declared = 0usize;
     let mut off_frame: BTreeSet<String> = BTreeSet::new();
-    sweep(|_, _, _, size, case| {
+    sweep(|_, _, _, _, case| {
         let regions =
             pinion_core::painted::painted_regions(super::VIEW_TAG).expect("the sweep just painted");
         let doc = spec::packets_document();
-        let opening = size == (WIN_W, WIN_H);
+        let opening = at_the_declared_extent(&regions, &doc);
+        at_declared += usize::from(opening);
         for surface in doc.surfaces() {
             match super::judge::built(&regions, surface) {
                 Built::Away(why) => {
@@ -1433,7 +1435,12 @@ fn r1747_the_capture_viewer_reproduces_its_specification_or_says_why_not() {
                         .into_iter()
                         .filter_map(|entry| match entry {
                             Unreconciled::Undeclared { sentence, .. } => Some(sentence),
-                            Unreconciled::Paid { .. } | Unreconciled::Reworded { .. } => None,
+                            // ★ R1770 — a refusal to judge a sized entry is not
+                            // a difference this build has, and this set is the
+                            // differences.
+                            Unreconciled::Paid { .. }
+                            | Unreconciled::Reworded { .. }
+                            | Unreconciled::Unsized { .. } => None,
                         })
                         .collect();
                     let divergences: Vec<PartDivergence> = canon
@@ -1500,7 +1507,41 @@ fn r1747_the_capture_viewer_reproduces_its_specification_or_says_why_not() {
          ever becomes empty the two-part rule above has stopped distinguishing \
          anything and should be collapsed into part 1",
     );
+    assert_swept_the_declared_extent(at_declared);
     println!("off the frame at a smaller size: {off_frame:?}");
+}
+
+/// ★★★★★ R1770 — whether this frame is the one the specification describes.
+///
+/// Read off the PIN and compared with what the frame recorded, rather than
+/// being this module's own `(WIN_W, WIN_H)`. Two constants in two files
+/// agreeing is not the same claim as the surface actually having that extent,
+/// and the difference between them is what let the assembled tool judge one pin
+/// at a fifth of its area without anything noticing.
+#[cfg(test)]
+fn at_the_declared_extent(
+    regions: &pinion_core::painted::PaintedRegions,
+    doc: &pinion_core::conformance::SpecDocument,
+) -> bool {
+    regions.extent().is_some() && regions.extent() == doc.written_at()
+}
+
+/// ★ R1770 — the sweep visited the size the pin was written at.
+///
+/// Counted rather than asserted per case, because this sweep visits several
+/// sizes on purpose: a verdict read anywhere else is a different claim and the
+/// report says so, but the strict reading has to happen somewhere or the pin's
+/// `$at` is a number nothing checks.
+#[cfg(test)]
+fn assert_swept_the_declared_extent(at_declared: usize) {
+    assert!(
+        at_declared > 0,
+        "★★★★★ R1770 — this sweep never painted at the extent \
+         docs/analyzer-packets-spec.json says its canon was written against \
+         ({:?}), so `opening` was false everywhere and the strict half of that \
+         gate never ran.",
+        spec::packets_document().written_at(),
+    );
 }
 
 /// ★★★★★ R1747, restated by R1758 — the query box is **a mark of the screen

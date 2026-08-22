@@ -15355,11 +15355,20 @@ fn record_painted_marks(paint_scene: &Scene, surfaces: &[(String, Rect)]) {
         }
     });
     for (tag, into) in marks {
-        pinion_core::painted::record_painted_regions(
-            tag,
-            pinion_core::painted::PaintedRegions::from_marks(into)
-                .with_reads(reads.remove(tag).unwrap_or_default()),
-        );
+        // ★ R1770 — the surface's own rectangle is the extent its marks are in
+        // the coordinates of, and is already in hand here. Recording it beside
+        // them is what lets a verdict read from this store say what SIZE it was
+        // read at; see `pinion_core::painted::Extent`.
+        let extent = surfaces
+            .iter()
+            .find(|(name, _)| name == tag)
+            .map(|(_, rect)| pinion_core::painted::Extent::of(*rect));
+        let mut regions = pinion_core::painted::PaintedRegions::from_marks(into)
+            .with_reads(reads.remove(tag).unwrap_or_default());
+        if let Some(extent) = extent {
+            regions = regions.with_extent(extent);
+        }
+        pinion_core::painted::record_painted_regions(tag, regions);
     }
 }
 

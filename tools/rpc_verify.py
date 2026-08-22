@@ -4065,6 +4065,41 @@ def wait_until(
         time.sleep(interval)
 
 
+def without_extent(verdict: dict) -> dict:
+    """A conformance verdict with the size it was read at taken off it.
+
+    ★★★★★ R1770 — lifted the round the extent was introduced, because three
+    demos needed it in the same edit and they are the three that compare ONE
+    build in TWO placements: a section standalone in its own window against the
+    same section as a page of the assembled tool. Those two verdicts are equal
+    in everything except where they were read, and until this round that was
+    invisible — the comparison was a plain equality and it passed, because
+    neither answer said what extent it came from.
+
+    Dropping the qualifier here rather than in each demo keeps the claim those
+    checks exist for (*one build, two placements*) and leaves the new fact to be
+    asserted separately, which is the honest split: the sameness is about the
+    BUILD and the difference is about the WINDOW, and a check that folded them
+    together could no longer fail for the right reason.
+
+    Removes `at` and `read_where_written` from the report and `at` from every
+    surface row. `written_at` is KEPT — it is a fact about the specification
+    rather than about this reading, and two placements judged against different
+    canons would be exactly the drift these checks watch for.
+    """
+    stripped = {
+        key: value
+        for key, value in verdict.items()
+        if key not in ("at", "read_where_written")
+    }
+    if isinstance(stripped.get("surfaces"), dict):
+        stripped["surfaces"] = {
+            name: {key: value for key, value in row.items() if key != "at"}
+            for name, row in stripped["surfaces"].items()
+        }
+    return stripped
+
+
 def resize_and_settle(
     tf: "RpcSubprocess",
     size: "tuple[int, int]",

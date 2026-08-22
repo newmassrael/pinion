@@ -82,10 +82,23 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from analyzer_spec import DOCS  # noqa: E402
-from rpc_verify import RpcSubprocess, assert_eq, run_demo  # noqa: E402
+from rpc_verify import (  # noqa: E402
+    RpcSubprocess,
+    assert_eq,
+    resize_and_settle,
+    run_demo,
+    without_extent,
+)
 
 SHELL = "hello-analyzer-shell"
 EXT = "/external"
+
+#: ★★★★★ R1770 — the window this demo stands in, and it is no longer the one the
+#: tool opens in. The node lab declares it lays out at 1625 wide and clips below
+#: that; the shell keeps 52 of the window; so at 1440x900 that section is handed
+#: 1388 and declines to be judged. This demo watches surfaces move from away to
+#: reproduced, which needs a window where they CAN be reproduced.
+LAB_WINDOW = (1800, 900)
 
 #: The standalone binary of each judged section, so "one build, two placements"
 #: is checked against a second PROCESS and not only a second slot of this one.
@@ -337,19 +350,38 @@ def section_e(app: RpcSubprocess) -> None:
     app.intervene_painted(f"{EXT}/nav", "keys")
     page = next(r for r in report(app)["rows"] if r["key"] == "keys")["conformance"]
     with RpcSubprocess(STANDALONE["keys"], boot_grace=1.5) as alone:
+        standalone = alone.query(f"{EXT}/conformance")
+        # ★★★★★ R1770 — compared APART FROM the size each was read at, with the
+        # sizes asserted to differ below. Until that round this was a plain
+        # equality and it passed, because neither verdict said what extent it
+        # came from: one process was reading its whole window and the other a
+        # page inside a bigger one, and nothing in either answer could say so.
         assert_eq(
-            alone.query(f"{EXT}/conformance"),
-            page,
+            without_extent(standalone),
+            without_extent(page),
             "E: ★★★★★ and the standalone binary of that section publishes the "
             "SAME verdict as the page does -- a section that conforms in its "
             "own window and is never asked as a page would be two builds "
             "wearing one name",
+        )
+        ok(
+            f"E: ★★★★★ and they were read at DIFFERENT sizes -- standalone "
+            f"{standalone['at']}, as a page {page['at']} -- which is what makes "
+            "the sameness above a claim about the BUILD rather than about the "
+            "window each happened to be in",
+            standalone["at"] != page["at"] and standalone["at"] and page["at"],
+        )
+        ok(
+            "E: ★★ while both name the same canon extent, so the two readings "
+            "are of one specification and not of two",
+            standalone["written_at"] == page["written_at"] is not None,
         )
     app.intervene_painted(f"{EXT}/nav", "dashboard")
 
 
 def body() -> None:
     with RpcSubprocess(SHELL, boot_grace=1.5) as app:
+        resize_and_settle(app, LAB_WINDOW)
         section_a(app)
         section_b(app)
         section_c(app)

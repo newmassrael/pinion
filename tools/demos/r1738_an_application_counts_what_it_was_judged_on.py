@@ -81,12 +81,18 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     abs_rects_of,
     assert_eq,
+    resize_and_settle,
     run_demo,
+    without_extent,
 )
 
 SHELL = "hello-analyzer-shell"
 KEYS_SECTION = "hello-key-patterns"
 EXT = "/external"
+
+#: ★ R1770 — a window at which every section of this tool is given the width it
+#: declares it lays out at. See the comment in `body` for the measurement.
+LAB_WINDOW = (1800, 900)
 
 CHECKS: list[str] = []
 PARTS_COMPARED = 0
@@ -338,12 +344,33 @@ def section_c(app: RpcSubprocess) -> None:
     app.intervene_painted(f"{EXT}/nav", "keys")
     keys_row = next(r for r in report(app)["rows"] if r["key"] == "keys")
     with RpcSubprocess(KEYS_SECTION, boot_grace=1.5) as standalone:
+        alone = standalone.query(f"{EXT}/conformance")
+        page = keys_row["conformance"]
+        # ★★★★★ R1770 — the verdicts are compared APART FROM the size each was
+        # read at, and the sizes are then asserted to DIFFER. Until that round
+        # this was a plain equality and it passed, because neither verdict said
+        # what extent it came from: one process was reading its whole window and
+        # the other a page inside a bigger one, and nothing in either answer
+        # could tell you so. Dropping the qualifier and asserting it separately
+        # keeps the claim this check exists for -- one build, two placements --
+        # and adds the one it could not make.
         assert_eq(
-            standalone.query(f"{EXT}/conformance"),
-            keys_row["conformance"],
+            without_extent(alone),
+            without_extent(page),
             "C: ★★★★★ and the standalone binary of that section publishes the "
             "SAME verdict -- a section that conforms in its own window and is "
             "never asked as a page would be two builds wearing one name",
+        )
+        ok(
+            f"C: ★★★★★ and they were read at DIFFERENT sizes -- standalone "
+            f"{alone['at']}, as a page {page['at']} -- which is exactly why the "
+            "sameness above is a claim about the build and not about the window",
+            alone["at"] != page["at"] and alone["at"] and page["at"],
+        )
+        ok(
+            "C: ★★ while both name the same canon extent, so 'the same verdict' "
+            "is about the same specification read the same way",
+            alone["written_at"] == page["written_at"] is not None,
         )
     app.intervene_painted(f"{EXT}/nav", "dashboard")
 
@@ -560,6 +587,16 @@ def body() -> None:
         )
 
     with RpcSubprocess(SHELL, boot_grace=1.5) as app:
+        # ★★★★★ R1770 — taken at a window where every section is given the width
+        # it declares it lays out at. The node lab declares 1625 and clips below
+        # it; the shell keeps 52 of the window for its own chrome; so at the
+        # 1440x900 this tool opens in that section is handed 1388 and DECLINES
+        # to be judged, in a sentence naming both numbers. This demo stands in
+        # it and asks what it reproduces, which is a question about a whole
+        # frame — so it asks at a window where the frame is whole. Before R1770
+        # nothing could tell the two situations apart and this walk was reading
+        # a clipped screen without knowing it.
+        resize_and_settle(app, LAB_WINDOW)
         section_a(app)
         section_b(app)
         section_c(app)

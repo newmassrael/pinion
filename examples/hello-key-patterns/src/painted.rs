@@ -240,9 +240,21 @@ fn record(scene: &Scene) {
 #[test]
 fn r1730_every_specified_surface_is_the_one_the_paint_draws() {
     let doc = spec::document();
+    // ★★★★★ R1770 — see the log section's gate of the same name: how many of
+    // the swept sizes are the size the pin was written at, counted rather than
+    // assumed, because a window constant and a surface extent are two things.
+    let at_declared = std::cell::Cell::new(0_u32);
     sweep(|_, _, scene, _, case| {
         record(scene);
         let report = crate::judge::conformance();
+        assert!(
+            report.at().is_some(),
+            "{case}: ★ R1770 — a verdict read from a frame names the extent it was \
+             read at, and this one does not",
+        );
+        if report.read_where_written() {
+            at_declared.set(at_declared.get() + 1);
+        }
         assert_eq!(
             report.evidence(),
             pinion_core::conformance::Evidence::Paint,
@@ -279,6 +291,13 @@ fn r1730_every_specified_surface_is_the_one_the_paint_draws() {
             "{case}: every surface the pin fixes is in the verdict",
         );
     });
+    assert!(
+        at_declared.get() > 0,
+        "★★★★★ R1770 — this sweep never painted at the extent \
+         docs/analyzer-keys-spec.json says its canon was written against ({:?}), \
+         so every case above judged a size the specification does not describe.",
+        doc.written_at(),
+    );
 }
 
 /// ★★ The specification itself is the reference's, rather than whatever this

@@ -653,6 +653,23 @@ pub struct Owed {
     pub since: String,
     /// Why it is accepted.
     pub why: String,
+    /// ★★★★★ R1770 — the surface extents this entry is a claim about, or empty
+    /// for a difference that is not a function of the surface's size.
+    ///
+    /// # Why a list of measured sizes and not a band
+    ///
+    /// The obvious shape is *holds at every extent no taller than H*, and it is
+    /// the wrong one: it is a claim about infinitely many sizes derived from a
+    /// measurement at one, which is precisely the error R1656 and R1764 each
+    /// paid for. Every extent in this list was *stood at and read*.
+    ///
+    /// It is strict in the safe direction. At an extent this list does not
+    /// name, the entry excuses nothing — so a build that still diverges there
+    /// reports the difference as undeclared and the gate goes red, and the only
+    /// way to quiet it is to go and measure that size too. Narrowing the list
+    /// can never hide a divergence; it can only stop the entry claiming a size
+    /// nobody read it at.
+    pub at: Vec<crate::painted::Extent>,
 }
 
 impl Owed {
@@ -669,7 +686,28 @@ impl Owed {
             sentence: sentence.into(),
             since: since.into(),
             why: why.into(),
+            at: Vec::new(),
         }
+    }
+
+    /// ★ R1770 — narrow this entry to the extents it was measured at.
+    ///
+    /// See [`at`](Self::at) for why the list is measurements rather than a
+    /// band, and why narrowing it can only make a gate stricter.
+    #[must_use]
+    pub fn only_at(mut self, at: Vec<crate::painted::Extent>) -> Self {
+        self.at = at;
+        self
+    }
+
+    /// Whether this entry is a claim about a verdict read at `at`.
+    ///
+    /// An entry that names no extent claims every one of them, which is what
+    /// every entry written before R1770 means and what an entry about a
+    /// difference the window cannot move should keep meaning.
+    #[must_use]
+    pub fn in_force_at(&self, at: Option<crate::painted::Extent>) -> bool {
+        self.at.is_empty() || at.is_some_and(|read| self.at.contains(&read))
     }
 }
 
@@ -750,6 +788,21 @@ pub enum Unreconciled {
         /// What the build actually produces.
         found: String,
     },
+    /// ★★★★★ R1770 — the entry holds only at extents it names, and the verdict
+    /// being judged does not say what extent it was read at.
+    ///
+    /// The arm that keeps [`Owed::at`] from being an escape hatch. Without it,
+    /// a reader that hands no extent would find every sized entry out of force
+    /// and every declared difference quietly excused — the most flattering
+    /// possible reading of *I did not say where I was standing*. It is the same
+    /// one-directional rule [`Evidence`] carries: a claim that cannot name its
+    /// own basis is refused rather than believed.
+    Unsized {
+        /// The key the entry claims.
+        key: String,
+        /// The extents the entry was measured at, as the pin writes them.
+        declared_at: Vec<crate::painted::Extent>,
+    },
 }
 
 impl Unreconciled {
@@ -759,7 +812,8 @@ impl Unreconciled {
         match self {
             Unreconciled::Undeclared { key, .. }
             | Unreconciled::Paid { key, .. }
-            | Unreconciled::Reworded { key, .. } => key,
+            | Unreconciled::Reworded { key, .. }
+            | Unreconciled::Unsized { key, .. } => key,
         }
     }
 
@@ -779,6 +833,17 @@ impl Unreconciled {
                 declared,
                 found,
             } => format!("`{key}` is declared as \"{declared}\" and now reads \"{found}\""),
+            Unreconciled::Unsized { key, declared_at } => {
+                let sizes = declared_at
+                    .iter()
+                    .map(ToString::to_string)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!(
+                    "`{key}` is declared only at {sizes} and this verdict does not say what \
+                     extent it was read at"
+                )
+            }
         }
     }
 }
@@ -910,11 +975,46 @@ impl Ledger {
                     });
                 }
             };
+            // ★ R1770 — the extents this entry was measured at. Absent means
+            // *every* extent, which is what every entry written before that
+            // round means; present and empty is refused, because an entry that
+            // claims no size at all excuses nothing anywhere and is a mistake
+            // rather than a statement.
+            let at = match entry.get("at") {
+                None => Vec::new(),
+                Some(serde_json::Value::Array(sizes)) if !sizes.is_empty() => {
+                    let mut read = Vec::with_capacity(sizes.len());
+                    for size in sizes {
+                        let side = |name: &str| {
+                            size.get(name)
+                                .and_then(serde_json::Value::as_u64)
+                                .and_then(|n| u32::try_from(n).ok())
+                        };
+                        let (Some(width), Some(height)) = (side("width"), side("height")) else {
+                            return Err(LedgerDefect::Malformed {
+                                what: format!(
+                                    "owed entry {at} carries `at` as sizes of `width` and `height`"
+                                ),
+                            });
+                        };
+                        read.push(crate::painted::Extent::new(width, height));
+                    }
+                    read
+                }
+                Some(_) => {
+                    return Err(LedgerDefect::Malformed {
+                        what: format!(
+                            "owed entry {at} carries `at` as a non-empty array of sizes, or omits it"
+                        ),
+                    });
+                }
+            };
             owed.push(Owed {
                 key: field("key")?,
                 sentence: field("sentence")?,
                 since: field("since")?,
                 why,
+                at,
             });
         }
         Self::new(owed)
@@ -954,6 +1054,37 @@ impl Ledger {
     /// the difference it quotes and not a family of them.
     #[must_use]
     pub fn judge<D: Divergent>(&self, found: &[D]) -> Vec<Unreconciled> {
+        self.judge_at(None, found)
+    }
+
+    /// ★★★★★ R1770 — the same judgement, told **what extent the verdict was
+    /// read at**.
+    ///
+    /// An entry that names extents ([`Owed::at`]) is a claim about those and
+    /// nowhere else, so at any other extent it neither excuses a difference nor
+    /// is owed one. That is the whole repair: measured at R1767, one entry of
+    /// this tree's analysis tool declares a row that falls below the fold, and
+    /// the fold is a function of how tall the surface is — so at a taller
+    /// window the difference is gone and the ledger, judged without an extent,
+    /// reported it [`Paid`](Unreconciled::Paid) and demanded the entry be
+    /// deleted. Deleting it would have made the same tool fail at the smaller
+    /// size instead. The entry was never wrong; it was never told where it
+    /// applies.
+    ///
+    /// # What this cannot be used to hide
+    ///
+    /// A verdict of unknown extent against a sized entry is
+    /// [`Unsized`](Unreconciled::Unsized) rather than silence, and a difference
+    /// found at an extent no entry names is
+    /// [`Undeclared`](Unreconciled::Undeclared) as it always was. So narrowing
+    /// an entry's extents can only ever make more gates fail, never fewer.
+    #[must_use]
+    pub fn judge_at<D: Divergent>(
+        &self,
+        at: Option<crate::painted::Extent>,
+        found: &[D],
+    ) -> Vec<Unreconciled> {
+        let in_force: Vec<bool> = self.owed.iter().map(|e| e.in_force_at(at)).collect();
         let mut out = Vec::new();
         let mut matched = vec![false; self.owed.len()];
         for difference in found {
@@ -962,7 +1093,7 @@ impl Ledger {
                 .owed
                 .iter()
                 .enumerate()
-                .find(|(at, e)| !matched[*at] && e.key == difference.key());
+                .find(|(at, e)| !matched[*at] && in_force[*at] && e.key == difference.key());
             match entry {
                 Some((at, e)) if e.sentence == sentence => matched[at] = true,
                 Some((at, e)) => {
@@ -979,11 +1110,21 @@ impl Ledger {
                 }),
             }
         }
-        for (at, entry) in self.owed.iter().enumerate() {
-            if !matched[at] {
+        for (index, entry) in self.owed.iter().enumerate() {
+            if matched[index] {
+                continue;
+            }
+            if in_force[index] {
                 out.push(Unreconciled::Paid {
                     key: entry.key.clone(),
                     sentence: entry.sentence.clone(),
+                });
+            } else if at.is_none() {
+                // Out of force only because the reader said nothing. Refusing
+                // is what keeps `at` from being a way to be excused everywhere.
+                out.push(Unreconciled::Unsized {
+                    key: entry.key.clone(),
+                    declared_at: entry.at.clone(),
                 });
             }
         }
@@ -994,6 +1135,17 @@ impl Ledger {
     #[must_use]
     pub fn reconciles<D: Divergent>(&self, found: &[D]) -> bool {
         self.judge(found).is_empty()
+    }
+
+    /// ★ R1770 — whether `found`, read at `at`, is exactly what this ledger
+    /// declares for that extent.
+    #[must_use]
+    pub fn reconciles_at<D: Divergent>(
+        &self,
+        at: Option<crate::painted::Extent>,
+        found: &[D],
+    ) -> bool {
+        self.judge_at(at, found).is_empty()
     }
 }
 
@@ -1079,6 +1231,9 @@ pub struct SpecDocument {
     order: Vec<String>,
     canon: BTreeMap<String, SurfaceSpec>,
     owed: BTreeMap<String, Ledger>,
+    /// ★★★★★ R1770 — the surface extent this document's canon was written
+    /// against, from the pin's top-level `$at`.
+    written_at: Option<crate::painted::Extent>,
 }
 
 impl SpecDocument {
@@ -1141,7 +1296,33 @@ impl SpecDocument {
         if order.is_empty() {
             return Err(SpecDefect::NoSurfaces);
         }
-        Ok(Self { order, canon, owed })
+        // ★ R1770 — the extent the whole document's canon was written against.
+        // Under `$at` rather than a surface name because it is a fact about the
+        // reading that produced the pin, not about any one surface, and the `$`
+        // prefix is already this format's word for *not a surface*.
+        let written_at = match object.get("$at") {
+            None => None,
+            Some(declared) => {
+                let side = |name: &str| {
+                    declared
+                        .get(name)
+                        .and_then(serde_json::Value::as_u64)
+                        .and_then(|n| u32::try_from(n).ok())
+                };
+                let (Some(width), Some(height)) = (side("width"), side("height")) else {
+                    return Err(SpecDefect::Malformed {
+                        what: "`$at` is a size of `width` and `height`".to_owned(),
+                    });
+                };
+                Some(crate::painted::Extent::new(width, height))
+            }
+        };
+        Ok(Self {
+            order,
+            canon,
+            owed,
+            written_at,
+        })
     }
 
     /// ★★★★★ R1761 — a pinned document, or a panic naming **both** the file and
@@ -1176,6 +1357,36 @@ impl SpecDocument {
         self.order.iter().map(String::as_str)
     }
 
+    /// ★★★★★ R1770 — the surface extent this document's canon was **written
+    /// against**, or `None` for a pin that does not say.
+    ///
+    /// # What was measured, and why this is the root of it
+    ///
+    /// Counted at R1770 over this tree's twelve analyzer pins: **none** of them
+    /// named a size. Meanwhile the node lab's own gate held the size it judges
+    /// itself at as a private constant inside one screen's test module —
+    /// `2494x1531` — while the assembled tool gives that same section a page of
+    /// `1096x802` and judges it against the same pin. So two gates disagreed by
+    /// a factor of five in area about what the specification means, and neither
+    /// artifact said so, because the number was not in either of them.
+    ///
+    /// Reading it off the pin is what makes the two gates one claim. A screen
+    /// that paints its own conformance frame takes the size from here rather
+    /// than declaring one, so moving the pin moves the gate.
+    ///
+    /// # What it does NOT do
+    ///
+    /// It does not excuse a verdict read at another size. A report knows both
+    /// numbers — this one and [`DocumentReport::at`] — and publishing the pair
+    /// is the whole of it: *judged at 1096x802 against a canon written at
+    /// 2494x1531* is a sentence a reader can act on, and *conforms: false* is
+    /// not. Turning the difference into an away would be the escape hatch
+    /// R1742 refused.
+    #[must_use]
+    pub const fn written_at(&self) -> Option<crate::painted::Extent> {
+        self.written_at
+    }
+
     /// One surface's canon, or `None` for a name this document does not fix.
     #[must_use]
     pub fn canon(&self, surface: &str) -> Option<&SurfaceSpec> {
@@ -1196,13 +1407,31 @@ impl SpecDocument {
     /// this" must not read the same.
     #[must_use]
     pub fn unreconciled(&self, surface: &str, built: &[Part]) -> Vec<Unreconciled> {
+        self.unreconciled_at(surface, None, built)
+    }
+
+    /// ★★★★★ R1770 — the same comparison, told **what extent the built side was
+    /// read at**.
+    ///
+    /// The entry point a gate that has a frame should take: an accepted
+    /// difference that only holds at certain surface extents
+    /// ([`Owed::at`]) can only be judged by a caller that says where it stood,
+    /// and one that does not is refused rather than excused. See
+    /// [`Ledger::judge_at`] for the measurement.
+    #[must_use]
+    pub fn unreconciled_at(
+        &self,
+        surface: &str,
+        at: Option<crate::painted::Extent>,
+        built: &[Part],
+    ) -> Vec<Unreconciled> {
         let (Some(canon), Some(ledger)) = (self.canon(surface), self.ledger(surface)) else {
             return vec![Unreconciled::Undeclared {
                 key: surface.to_owned(),
                 sentence: format!("`{surface}` is a surface no specification declares"),
             }];
         };
-        ledger.judge(&canon.diff(built))
+        ledger.judge_at(at, &canon.diff(built))
     }
 
     /// ★★★★★ R1738 — the whole comparison, as a value that can be **added up**.
@@ -1225,7 +1454,7 @@ impl SpecDocument {
     /// earns the other one.
     #[must_use]
     pub fn report(&self, built: &dyn Fn(&str) -> Built) -> DocumentReport {
-        self.report_with(Evidence::Declaration, built)
+        self.report_with(Evidence::Declaration, None, built)
     }
 
     /// [`report`](Self::report), told where the built side came from.
@@ -1233,9 +1462,16 @@ impl SpecDocument {
     /// Private because the stamp is not a caller's to choose: it is a fact
     /// about which entry point was taken, and a public parameter would make it
     /// a claim a screen could simply assert.
-    fn report_with(&self, evidence: Evidence, built: &dyn Fn(&str) -> Built) -> DocumentReport {
+    fn report_with(
+        &self,
+        evidence: Evidence,
+        at: Option<crate::painted::Extent>,
+        built: &dyn Fn(&str) -> Built,
+    ) -> DocumentReport {
         DocumentReport {
             evidence,
+            at,
+            written_at: self.written_at,
             surfaces: self
                 .surfaces()
                 .map(|surface| {
@@ -1245,12 +1481,13 @@ impl SpecDocument {
                         Built::Standing(parts) => {
                             let divergences = canon.diff(&parts);
                             SurfaceStanding {
-                                unreconciled: ledger.judge(&divergences),
+                                unreconciled: ledger.judge_at(at, &divergences),
                                 surface: surface.to_owned(),
                                 canon: canon.parts().to_vec(),
                                 away: None,
                                 divergences,
                                 owed: ledger.owed().to_vec(),
+                                at,
                             }
                         }
                         // ★ Nothing is judged, so nothing is recorded as
@@ -1266,6 +1503,7 @@ impl SpecDocument {
                             away: Some(why),
                             divergences: Vec::new(),
                             owed: ledger.owed().to_vec(),
+                            at,
                         },
                     }
                 })
@@ -1303,7 +1541,14 @@ impl SpecDocument {
         built: &dyn Fn(&crate::painted::PaintedRegions, &str) -> Built,
     ) -> DocumentReport {
         let regions = crate::painted::painted_regions(surface_tag);
-        self.report_with(Evidence::Paint, &|surface| match regions.as_deref() {
+        // ★ R1770 — the extent comes off the STORE, never off the caller. A
+        // screen cannot claim to have been read at a size it did not paint at,
+        // for the same reason it cannot claim `Evidence::Paint` without a
+        // frame: the fact and its qualifier come from one place.
+        let at = regions
+            .as_deref()
+            .and_then(crate::painted::PaintedRegions::extent);
+        self.report_with(Evidence::Paint, at, &|surface| match regions.as_deref() {
             Some(regions) => built(regions, surface),
             None => {
                 Built::away("this screen has not painted a frame yet, so none of it is on screen")
@@ -1368,6 +1613,7 @@ impl SpecDocument {
                             "says": entry.sentence,
                             "since": entry.since,
                             "why": entry.why,
+                            "at": extents_json(&entry.at),
                         }))
                         .collect::<Vec<_>>(),
                 }),
@@ -1444,6 +1690,9 @@ pub struct SurfaceStanding {
     divergences: Vec<PartDivergence>,
     unreconciled: Vec<Unreconciled>,
     owed: Vec<Owed>,
+    /// ★ R1770 — the extent this verdict was read at, or `None` for one read
+    /// from a declaration rather than a frame.
+    at: Option<crate::painted::Extent>,
 }
 
 impl SurfaceStanding {
@@ -1451,6 +1700,17 @@ impl SurfaceStanding {
     #[must_use]
     pub fn surface(&self) -> &str {
         &self.surface
+    }
+
+    /// ★★★★★ R1770 — the extent this verdict was read at.
+    ///
+    /// `None` for a verdict read from a declaration, which has no frame and
+    /// therefore no size. See [`crate::painted::Extent`] for the measurement
+    /// that made this compulsory: the same binary, walked twice with only the
+    /// window moved, failing at two disjoint sets of surfaces.
+    #[must_use]
+    pub const fn at(&self) -> Option<crate::painted::Extent> {
+        self.at
     }
 
     /// How many parts the specification fixes.
@@ -1596,6 +1856,10 @@ impl SurfaceStanding {
                     "says": entry.sentence,
                     "since": entry.since,
                     "why": entry.why,
+                    // ★ R1770 — beside the reason, because a reader who cannot
+                    // see WHERE an entry applies cannot tell an exception that
+                    // is still true from one the window has already repaired.
+                    "at": extents_json(&entry.at),
                 }))
                 .collect::<Vec<_>>(),
             "unreconciled": self
@@ -1603,12 +1867,27 @@ impl SurfaceStanding {
                 .iter()
                 .map(|u| serde_json::json!({ "key": u.key(), "says": u.sentence() }))
                 .collect::<Vec<_>>(),
+            // ★ R1770 — the size this row was read at, null for a verdict read
+            // from a declaration.
+            "at": self.at.map(|e| e.to_string()),
         });
         if let Some(why) = self.why() {
             row["why"] = serde_json::Value::String(why.to_owned());
         }
         row
     }
+}
+
+/// The extents an owed entry names, as the wire and the pin both spell them.
+///
+/// One writer for both directions of the same list, so a size read off a
+/// report can be pasted into a pin.
+fn extents_json(at: &[crate::painted::Extent]) -> serde_json::Value {
+    serde_json::Value::Array(
+        at.iter()
+            .map(|e| serde_json::json!({ "width": e.width(), "height": e.height() }))
+            .collect(),
+    )
 }
 
 /// ★★★★★ R1738 — every surface one specification names, and how much of each
@@ -1622,6 +1901,10 @@ impl SurfaceStanding {
 pub struct DocumentReport {
     surfaces: Vec<SurfaceStanding>,
     evidence: Evidence,
+    /// ★ R1770 — the extent every row of this report was read at.
+    at: Option<crate::painted::Extent>,
+    /// ★ R1770 — the extent the specification's canon was written against.
+    written_at: Option<crate::painted::Extent>,
 }
 
 impl DocumentReport {
@@ -1629,6 +1912,38 @@ impl DocumentReport {
     #[must_use]
     pub fn surfaces(&self) -> &[SurfaceStanding] {
         &self.surfaces
+    }
+
+    /// ★★★★★ R1770 — the extent this whole report was read at.
+    ///
+    /// One size for every row, because one frame painted them all. `None` for
+    /// a report built from a declaration, which has no frame — the same
+    /// distinction [`evidence`](Self::evidence) draws, one question further
+    /// along: not only *where did this come from* but *how big was it there*.
+    #[must_use]
+    pub const fn at(&self) -> Option<crate::painted::Extent> {
+        self.at
+    }
+
+    /// ★★★★★ R1770 — the extent the specification's canon was written against.
+    ///
+    /// See [`SpecDocument::written_at`]. Carried on the report so the two
+    /// numbers a reader must compare arrive together: a verdict read at one
+    /// size against a canon written at another is not wrong, but it is not the
+    /// same claim, and before this round nothing published either half.
+    #[must_use]
+    pub const fn written_at(&self) -> Option<crate::painted::Extent> {
+        self.written_at
+    }
+
+    /// ★ R1770 — whether this verdict was read at the extent its specification
+    /// was written against.
+    ///
+    /// `false` when either is unknown, because *the sizes agree* is a claim and
+    /// a missing number cannot support one.
+    #[must_use]
+    pub fn read_where_written(&self) -> bool {
+        matches!((self.at, self.written_at), (Some(read), Some(written)) if read == written)
     }
 
     /// ★★★★★ R1758 — where the built side of this verdict came from.
@@ -1702,6 +2017,12 @@ impl DocumentReport {
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::json!({
             "evidence": self.evidence.wire(),
+            // ★ R1770 — beside `evidence` and for its reason: it governs how
+            // the rest is read. A reader comparing two of these reports without
+            // it is comparing two builds that may only differ by a window.
+            "at": self.at.map(|e| e.to_string()),
+            "written_at": self.written_at.map(|e| e.to_string()),
+            "read_where_written": self.read_where_written(),
             "specified": self.specified(),
             "reproduced": self.reproduced(),
             "standing": self.standing(),
@@ -1725,9 +2046,10 @@ impl DocumentReport {
 #[cfg(test)]
 mod tests {
     use super::{
-        Built, Ledger, LedgerDefect, Owed, Part, PartDivergence, SpecDocument, SurfaceDefect,
-        SurfaceSpec, Unreconciled,
+        Built, Ledger, LedgerDefect, Owed, Part, PartDivergence, SpecDefect, SpecDocument,
+        SurfaceDefect, SurfaceSpec, Unreconciled,
     };
+    use crate::Scene;
 
     fn spec() -> SurfaceSpec {
         SurfaceSpec::new(vec![
@@ -2674,5 +2996,299 @@ mod tests {
              arms are told apart by more than one of them failing",
         );
         forget_painted_regions("a-surface-that-painted");
+    }
+
+    // ── R1770: a verdict says what SIZE it was read at ──────────────────────
+
+    /// A document whose one accepted difference holds only at one measured
+    /// extent, plus the two readings that extent tells apart.
+    fn sized_ledger() -> Ledger {
+        Ledger::new(vec![
+            Owed::new(
+                "status",
+                "`status` is specified as \"Status of the run\" and reads \"Status\"",
+                "R1770",
+                "The box is too narrow at this size to hold the whole heading, and \
+                 the reference truncates there too.",
+            )
+            .only_at(vec![crate::painted::Extent::new(400, 300)]),
+        ])
+        .expect("the entry names its part, its round and its reason")
+    }
+
+    /// ★★★★★ The repair, in one assertion pair: the same divergence list is
+    /// reconciled at the extent the entry names and **undeclared** at one it
+    /// does not.
+    ///
+    /// The second half is what makes the first safe. If an entry out of force
+    /// merely went quiet, narrowing `at` would be a way to be excused
+    /// everywhere; instead the difference reappears with nobody to own it.
+    #[test]
+    fn r1770_an_entry_excuses_a_difference_only_at_the_extent_it_names() {
+        let ledger = sized_ledger();
+        let spec = SurfaceSpec::new(vec![Part::new("status", "Status of the run")])
+            .expect("the fixture is a roster of named parts");
+        let found = spec.diff(&[Part::new("status", "Status")]);
+        assert_eq!(found.len(), 1, "the fixture diverges exactly once");
+
+        let named = crate::painted::Extent::new(400, 300);
+        assert!(
+            ledger.reconciles_at(Some(named), &found),
+            "at the extent the entry was measured at, it is the declared difference",
+        );
+
+        let wider = crate::painted::Extent::new(1200, 300);
+        let judged = ledger.judge_at(Some(wider), &found);
+        assert!(
+            matches!(judged.as_slice(), [Unreconciled::Undeclared { key, .. }] if key == "status"),
+            "★ at an extent nobody measured, the SAME difference is undeclared \
+             rather than excused: {judged:?}",
+        );
+    }
+
+    /// The other direction, which is the one R1767 measured on the running
+    /// tool: the build stops diverging because the surface grew, and the entry
+    /// must not be reported paid for a size it never claimed.
+    #[test]
+    fn r1770_an_entry_out_of_force_is_not_owed_a_difference() {
+        let ledger = sized_ledger();
+        let spec = SurfaceSpec::new(vec![Part::new("status", "Status of the run")])
+            .expect("the fixture is a roster of named parts");
+        let reproduced = spec.diff(&[Part::new("status", "Status of the run")]);
+        assert!(reproduced.is_empty(), "the wider build reproduces the part");
+
+        let named = crate::painted::Extent::new(400, 300);
+        assert!(
+            matches!(
+                ledger.judge_at(Some(named), &reproduced).as_slice(),
+                [Unreconciled::Paid { .. }]
+            ),
+            "★ at the size it WAS measured at, an entry the build no longer needs \
+             is still reported paid — the ratchet is unchanged",
+        );
+
+        let wider = crate::painted::Extent::new(1200, 300);
+        assert!(
+            ledger.reconciles_at(Some(wider), &reproduced),
+            "★★★★★ and at a size it never claimed it is silent, which is the whole \
+             repair: before this, a taller window made the tool demand the \
+             deletion of an entry that a shorter one still needs",
+        );
+    }
+
+    /// ★★★★★ The refusal that stops `at` being an escape hatch: a reader that
+    /// does not say where it stood is told, per entry, that it cannot be
+    /// judged — never quietly excused.
+    #[test]
+    fn r1770_a_verdict_that_names_no_extent_is_refused_by_a_sized_entry() {
+        let ledger = sized_ledger();
+        let spec = SurfaceSpec::new(vec![Part::new("status", "Status of the run")])
+            .expect("the fixture is a roster of named parts");
+        let reproduced = spec.diff(&[Part::new("status", "Status of the run")]);
+
+        let judged = ledger.judge_at(None, &reproduced);
+        assert!(
+            matches!(judged.as_slice(), [Unreconciled::Unsized { key, .. }] if key == "status"),
+            "an unsized verdict is refused rather than believed: {judged:?}",
+        );
+        assert!(
+            judged[0].sentence().contains("400x300"),
+            "and the refusal names the extents the entry WAS measured at: {}",
+            judged[0].sentence(),
+        );
+        assert_eq!(
+            ledger.judge(&reproduced),
+            judged,
+            "★ the plain `judge` is the unsized one, so an existing caller cannot \
+             silently pass a sized ledger",
+        );
+    }
+
+    /// An entry that names no extent means every extent — which is what every
+    /// entry written before this round means, and what an entry about a
+    /// difference the window cannot move should keep meaning.
+    #[test]
+    fn r1770_an_entry_naming_no_extent_holds_everywhere() {
+        let ledger = Ledger::new(vec![Owed::new(
+            "status",
+            "part 0 `status` (Status) is specified and the surface has no such part",
+            "R1770",
+            "This build has no such part at any size, and the reason has nothing \
+             to do with how much room it is given.",
+        )])
+        .expect("the entry names its part, its round and its reason");
+        let spec = SurfaceSpec::new(vec![Part::new("status", "Status")])
+            .expect("the fixture is a roster of named parts");
+        let found = spec.diff(&[]);
+
+        assert!(ledger.reconciles(&found), "with no extent handed to it");
+        for extent in [(1, 1), (400, 300), (4000, 3000)] {
+            assert!(
+                ledger.reconciles_at(
+                    Some(crate::painted::Extent::new(extent.0, extent.1)),
+                    &found
+                ),
+                "and at {extent:?}",
+            );
+        }
+    }
+
+    /// The pin's two halves, parsed: `$at` for the document and `at` for one
+    /// entry, with the refusals that keep a malformed size from reading as an
+    /// absent one.
+    #[test]
+    fn r1770_a_document_declares_the_extent_its_canon_was_written_at() {
+        let doc = SpecDocument::parse(
+            r#"{
+              "$at": { "width": 2494, "height": 1531 },
+              "columns": {
+                "canon": [{ "key": "id", "title": "ID" }],
+                "owed": [{
+                  "key": "id",
+                  "sentence": "`id` is specified as \"ID\" and reads \"I\"",
+                  "since": "R1770",
+                  "why": "The column is too narrow at this size for the whole word.",
+                  "at": [{ "width": 2494, "height": 1531 }]
+                }]
+              }
+            }"#,
+        )
+        .expect("the fixture is a specification");
+        assert_eq!(
+            doc.written_at(),
+            Some(crate::painted::Extent::new(2494, 1531)),
+        );
+        assert_eq!(
+            doc.ledger("columns")
+                .expect("the surface is declared")
+                .owed()[0]
+                .at,
+            vec![crate::painted::Extent::new(2494, 1531)],
+        );
+
+        // A pin that says nothing says nothing — the state every pin in this
+        // tree was in before this round, and the one this type must keep
+        // reading as "no claim" rather than as a size of zero.
+        assert_eq!(
+            two_surface_document().written_at(),
+            None,
+            "a document with no `$at` claims no extent",
+        );
+
+        for malformed in [
+            r#"{ "$at": { "width": 100 }, "s": { "canon": [{"key":"a","title":"A"}], "owed": [] } }"#,
+            r#"{ "$at": 100, "s": { "canon": [{"key":"a","title":"A"}], "owed": [] } }"#,
+        ] {
+            assert!(
+                matches!(
+                    SpecDocument::parse(malformed),
+                    Err(SpecDefect::Malformed { .. })
+                ),
+                "a size that is not a size is refused rather than dropped: {malformed}",
+            );
+        }
+        assert!(
+            matches!(
+                SpecDocument::parse(
+                    r#"{ "s": { "canon": [{"key":"a","title":"A"}],
+                         "owed": [{ "key": "a", "sentence": "`a` is specified as \"A\" and reads \"\"",
+                                    "since": "R1770",
+                                    "why": "A reason long enough for the ledger to accept it here.",
+                                    "at": [] }] } }"#
+                ),
+                Err(SpecDefect::Ledger { .. })
+            ),
+            "★ an empty `at` is refused: an entry that claims NO size excuses \
+             nothing anywhere, which is a mistake rather than a statement",
+        );
+    }
+
+    /// ★★★★★ The whole rule, end to end on the paint path: the extent comes
+    /// off the store, not off the caller, and the report publishes it beside
+    /// the size the document was written at.
+    #[test]
+    fn r1770_a_report_read_from_paint_says_what_extent_it_was_read_at() {
+        use crate::painted::{
+            Extent, PaintedRegions, forget_painted_regions, record_painted_regions,
+        };
+        use crate::scene::Rect;
+
+        let doc = SpecDocument::parse(
+            r#"{
+              "$at": { "width": 800, "height": 600 },
+              "columns": {
+                "canon": [{ "key": "id", "title": "ID" }],
+                "owed": []
+              }
+            }"#,
+        )
+        .expect("the fixture is a specification");
+        let built = |regions: &PaintedRegions, _: &str| {
+            Built::Standing(
+                regions
+                    .parts_under("row.")
+                    .into_iter()
+                    .map(|(key, _)| Part::new(key, "ID"))
+                    .collect(),
+            )
+        };
+
+        let tag = "r1770-a-surface-with-an-extent";
+        record_painted_regions(
+            tag,
+            PaintedRegions::from_marks(vec![("row.id".to_owned(), Rect::new(0, 0, 10, 10))])
+                .with_extent(Extent::new(800, 600)),
+        );
+        let read = doc.report_from_paint(tag, &built);
+        assert_eq!(read.at(), Some(Extent::new(800, 600)));
+        assert_eq!(read.written_at(), Some(Extent::new(800, 600)));
+        assert!(read.read_where_written(), "the two sizes agree here");
+        assert_eq!(read.to_json()["at"], "800x600");
+        assert_eq!(read.to_json()["written_at"], "800x600");
+
+        // The same document, the same build, a smaller surface — which is the
+        // assembled tool's case, and the sentence it could not say before.
+        record_painted_regions(
+            tag,
+            PaintedRegions::from_marks(vec![("row.id".to_owned(), Rect::new(0, 0, 10, 10))])
+                .with_extent(Extent::new(400, 300)),
+        );
+        let elsewhere = doc.report_from_paint(tag, &built);
+        assert_eq!(elsewhere.at(), Some(Extent::new(400, 300)));
+        assert!(
+            !elsewhere.read_where_written(),
+            "★ judged at 400x300 against a canon written at 800x600 — a reader can \
+             now tell this apart from the reading above, which they could not",
+        );
+
+        // A store with no extent cannot claim one, and a report built from a
+        // declaration has no frame to take one from.
+        record_painted_regions(
+            tag,
+            PaintedRegions::from_marks(vec![("row.id".to_owned(), Rect::new(0, 0, 10, 10))]),
+        );
+        assert_eq!(doc.report_from_paint(tag, &built).at(), None);
+        assert_eq!(
+            doc.report(&|_| Built::Standing(vec![Part::new("id", "ID")]))
+                .at(),
+            None,
+            "a declaration has no size, and saying so is the point of the option",
+        );
+        forget_painted_regions(tag);
+    }
+
+    /// A scene-built store takes its extent from the root it walked, so a
+    /// fixture cannot hand in a size the scene does not have.
+    #[test]
+    fn r1770_a_store_built_from_a_scene_takes_the_roots_extent() {
+        use crate::painted::{Extent, PaintedRegions};
+        use crate::scene::{ContainerNode, Rect};
+        use crate::style::{LayoutStyle, Size};
+
+        let mut root = ContainerNode::new(vec![]);
+        root.rect = Rect::new(0, 0, 640, 480);
+        root.layout = LayoutStyle::new().with_size(Size::px(640, 480));
+        let regions = PaintedRegions::of_scene(&Scene::Container(root));
+        assert_eq!(regions.extent(), Some(Extent::new(640, 480)));
     }
 }
