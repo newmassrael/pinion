@@ -115,6 +115,19 @@ comment_only = true
 # document this workspace does not own — and pinion could not act on a
 # finding there even if the citation-gate produced one. Declared, not
 # scanned, is the honest state.
+#
+# R1766 MEASURED WHAT THIS KEY IS, because it reached for it and it was the
+# wrong tool. Tracking the SCE generator's output under
+# `crates/pinion-core/generated/` put the generator's own spec citations
+# (SCE scxml-D, SCE synth-5-J-2) inside a path `paths` covers, and the citation
+# gate rejected them as claims about THIS store — correctly. Adding that
+# directory here did NOT remove it from the scan: `scan_exclusions` DECLARES
+# files that `paths` does not reach, so the coverage census can say "not
+# missing, chosen"; it does not subtract. Measured — scanned went 1106 -> 1122
+# with the exclusion in place, and the three violations stood. The emit's
+# citations are re-spelled at the import boundary instead (see
+# `crates/pinion-core/tests/statechart_emit.rs`), which is where a foreign
+# repository's numbering stops being a claim about ours.
 scan_exclusions = ["vendor/"]
 # Hallucination-class (dead §-section / unknown Round-id citation) is now a
 # hard gate — pinion's source is at zero such violations (MNEMO-GAP-001

@@ -27,7 +27,7 @@
     clippy::all
 )]
 mod sm {
-    include!(concat!(env!("OUT_DIR"), "/radio_sm.rs"));
+    include!("../../generated/radio_sm.rs");
 }
 
 pub use sm::{RadioEvent, RadioState};

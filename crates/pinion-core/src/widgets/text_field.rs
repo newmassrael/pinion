@@ -77,7 +77,7 @@
 )]
 mod sm {
     use crate::external::ReadRefusal;
-    include!(concat!(env!("OUT_DIR"), "/text_field_sm.rs"));
+    include!("../../generated/text_field_sm.rs");
 }
 
 pub use sm::{TextFieldEvent, TextFieldState};

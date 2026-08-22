@@ -280,7 +280,7 @@ fn thumb_at(
     clippy::all
 )]
 mod sm {
-    include!(concat!(env!("OUT_DIR"), "/scroll_bar_sm.rs"));
+    include!("../../generated/scroll_bar_sm.rs");
 }
 
 pub use sm::{ScrollBarEvent, ScrollBarState};

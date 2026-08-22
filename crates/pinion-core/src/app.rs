@@ -28,7 +28,7 @@
     clippy::all
 )]
 mod sm {
-    include!(concat!(env!("OUT_DIR"), "/app_sm.rs"));
+    include!("../generated/app_sm.rs");
 }
 
 use sce_rust_runtime::{Engine, StatePolicy};

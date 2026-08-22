@@ -50,7 +50,7 @@
     clippy::all
 )]
 mod sm {
-    include!(concat!(env!("OUT_DIR"), "/self_answering_raise_sm.rs"));
+    include!("../generated/self_answering_raise_sm.rs");
 }
 
 #[cfg(test)]

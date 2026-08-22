@@ -64,7 +64,7 @@
     clippy::all
 )]
 mod sm {
-    include!(concat!(env!("OUT_DIR"), "/key_sequence_sm.rs"));
+    include!("../../generated/key_sequence_sm.rs");
 }
 
 use sm::KeySequencePolicy;

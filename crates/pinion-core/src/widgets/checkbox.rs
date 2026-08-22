@@ -26,7 +26,7 @@
     clippy::all
 )]
 mod sm {
-    include!(concat!(env!("OUT_DIR"), "/checkbox_sm.rs"));
+    include!("../../generated/checkbox_sm.rs");
 }
 
 use sm::CheckboxPolicy;

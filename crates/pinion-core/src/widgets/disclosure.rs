@@ -35,7 +35,7 @@
     clippy::all
 )]
 mod sm {
-    include!(concat!(env!("OUT_DIR"), "/disclosure_sm.rs"));
+    include!("../../generated/disclosure_sm.rs");
 }
 
 use sm::DisclosurePolicy;

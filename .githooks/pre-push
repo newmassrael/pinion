@@ -359,6 +359,22 @@ if ! cargo clippy --workspace --all-targets --features pinion-runtime/vello; the
     exit 1
 fi
 
+# R1766 — the committed statechart emit. `crates/pinion-core/generated/` is
+# tracked now rather than produced into OUT_DIR on every build, and `build.rs`
+# compares the SCE drift hashes on every build, which catches a chart edited
+# without regenerating. What hashes over the INPUTS cannot catch is a
+# hand-edited emit or a generator gone non-deterministic — neither moves an
+# input hash. This is that half: a byte comparison against a fresh run of the
+# pinned generator. It is a ratchet rather than a test suite, which is why it
+# runs here and not only in CI, and it is near-free once clippy has warmed the
+# build (the three assertions themselves measured 0.16s).
+echo "pre-push: statechart emit matches the pinned generator ..." >&2
+if ! cargo test -p pinion-core --test statechart_emit; then
+    echo "pre-push: the committed statechart emit is stale or hand-edited — run" >&2
+    echo "  PINION_REGEN_STATECHARTS=1 cargo test -p pinion-core --test statechart_emit" >&2
+    exit 1
+fi
+
 # R1214 — broken intra-doc link gate (unconditional; push validates the
 # publishable state). `warnings = "deny"` (workspace.lints) promotes rustdoc
 # lints to errors, so a plain `cargo doc` fails on any broken/redundant/private

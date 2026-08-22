@@ -41,7 +41,7 @@
     clippy::all
 )]
 mod sm {
-    include!(concat!(env!("OUT_DIR"), "/color_area_sm.rs"));
+    include!("../../generated/color_area_sm.rs");
 }
 
 use sm::ColorAreaPolicy;

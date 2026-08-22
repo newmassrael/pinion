@@ -18,7 +18,7 @@
     clippy::all
 )]
 mod sm {
-    include!(concat!(env!("OUT_DIR"), "/button_sm.rs"));
+    include!("../../generated/button_sm.rs");
 }
 
 use sm::ButtonPolicy;

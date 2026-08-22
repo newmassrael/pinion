@@ -36,7 +36,7 @@
     clippy::all
 )]
 mod sm {
-    include!(concat!(env!("OUT_DIR"), "/dock_panel_sm.rs"));
+    include!("../../generated/dock_panel_sm.rs");
 }
 
 pub use sm::DockPanelPolicy;

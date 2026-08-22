@@ -48,7 +48,7 @@
     clippy::all
 )]
 mod sm {
-    include!(concat!(env!("OUT_DIR"), "/toggle_sm.rs"));
+    include!("../../generated/toggle_sm.rs");
 }
 
 pub use sm::{ToggleEvent, ToggleState};

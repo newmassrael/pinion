@@ -26,7 +26,7 @@
     clippy::all
 )]
 mod sm {
-    include!(concat!(env!("OUT_DIR"), "/multi_window_sm.rs"));
+    include!("../generated/multi_window_sm.rs");
 }
 
 use sce_rust_runtime::StatePolicy;

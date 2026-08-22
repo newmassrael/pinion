@@ -181,6 +181,12 @@ Cargo.toml              workspace root (resolver=3, edition 2024, MSRV 1.88)
 rust-toolchain.toml     stable channel pin + rustfmt + clippy
 crates/
   pinion-core/          scene primitives, Style trait, Modifier, view-fn types, Event enum
+    generated/          TRACKED statechart emit — the 15 `{chart}_sm.rs` modules
+                        the SCE generator produces, committed rather than made
+                        into OUT_DIR (R1766). Never hand-edit: `build.rs` and
+                        `tests/statechart_emit.rs` both refuse it. Regenerate
+                        with `PINION_REGEN_STATECHARTS=1 cargo test -p
+                        pinion-core --test statechart_emit`
   pinion-runtime/       render loop, SCE hierarchical state machinery
   pinion-rpc/           JSON-RPC 2.0 server (7 typed methods + path/filter)
   pinion-cli/           developer CLI binary
@@ -217,6 +223,18 @@ mnemosyne.toml          workspace config (schema, locale, validators, ledgers)
   other reasons, so only a CLEAN machine ever saw it.
 - Lints (workspace-wide): `unsafe_code = "forbid"`, `clippy::pedantic = "warn"`
 - All new Rust code lives in `crates/`; no top-level Rust files
+- **The statechart emit is a tracked artifact, not a build product** (R1766).
+  Editing a `.scxml` under `crates/pinion-core/` means regenerating —
+  `PINION_REGEN_STATECHARTS=1 cargo test -p pinion-core --test statechart_emit`
+  — and committing `crates/pinion-core/generated/` alongside the chart. Three
+  things refuse a tree where those disagree: `build.rs` on **every build** (the
+  SCE drift hashes, which see an edited chart or a moved SCE pin), the test
+  itself (a byte comparison against a fresh run of the pinned generator — the
+  only thing that sees a hand edit or a non-deterministic generator), and
+  `pre-push`. Before R1766 the emit went to `OUT_DIR`: 9,591 lines of the code
+  this framework actually runs, invisible to git, never reviewed, readable only
+  by building — and R1765 had to build the crate twice against two pins and
+  diff two `OUT_DIR`s by hand to answer whether an engine bump changed anything
 - `view-fn` is **sync** (purity invariant per §6.3 — required for dry_run guarantee)
 - RPC and IO are **async via tokio** (boundary at `pinion-rpc` server entry per §6.3)
 - Commit message style: include section refs (e.g. `impl §5.2 + §5.11 scene primitive enum`)

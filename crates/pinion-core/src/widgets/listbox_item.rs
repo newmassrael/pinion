@@ -47,7 +47,7 @@
     clippy::all
 )]
 mod sm {
-    include!(concat!(env!("OUT_DIR"), "/listbox_item_sm.rs"));
+    include!("../../generated/listbox_item_sm.rs");
 }
 
 pub use sm::{ListboxItemEvent, ListboxItemState};

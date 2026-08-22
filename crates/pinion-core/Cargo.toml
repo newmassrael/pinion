@@ -54,6 +54,11 @@ criterion = { workspace = true }
 # only there when another crate happens to be in the same invocation is a gate
 # that is not there.
 pinion-core = { path = ".", features = ["test-fixtures"] }
+# R1766 — `tests/statechart_emit.rs` regenerates the committed emit and proves
+# it equals a fresh run of the pinned generator. It is the same dependency
+# `[build-dependencies]` already carries; a dev-dep adds no requirement a
+# consumer of this crate has to satisfy.
+sce-build = { workspace = true }
 
 [[bench]]
 name = "listbox_dispatch"

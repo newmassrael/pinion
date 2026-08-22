@@ -36,7 +36,7 @@
     clippy::all
 )]
 mod sm {
-    include!(concat!(env!("OUT_DIR"), "/slider_sm.rs"));
+    include!("../../generated/slider_sm.rs");
 }
 
 pub use sm::{SliderEvent, SliderState};
