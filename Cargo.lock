@@ -529,7 +529,7 @@ dependencies = [
  "bitflags 2.11.1",
  "cexpr",
  "clang-sys",
- "itertools 0.10.5",
+ "itertools 0.13.0",
  "proc-macro2",
  "quote",
  "regex",
@@ -6996,7 +6996,7 @@ dependencies = [
 [[package]]
 name = "sce-build"
 version = "0.1.0"
-source = "git+https://github.com/newmassrael/scxml-core-engine.git?rev=0ac56f1a455f3dadb313b64f3516a3073a3daee8#0ac56f1a455f3dadb313b64f3516a3073a3daee8"
+source = "git+https://github.com/newmassrael/scxml-core-engine.git?rev=6399fad49c3dd5284d1efe8a3e4b506fc20b40ff#6399fad49c3dd5284d1efe8a3e4b506fc20b40ff"
 dependencies = [
  "libxml",
  "minijinja",
@@ -7013,7 +7013,7 @@ dependencies = [
 [[package]]
 name = "sce-portable-bytes"
 version = "0.1.0"
-source = "git+https://github.com/newmassrael/scxml-core-engine.git?rev=0ac56f1a455f3dadb313b64f3516a3073a3daee8#0ac56f1a455f3dadb313b64f3516a3073a3daee8"
+source = "git+https://github.com/newmassrael/scxml-core-engine.git?rev=6399fad49c3dd5284d1efe8a3e4b506fc20b40ff#6399fad49c3dd5284d1efe8a3e4b506fc20b40ff"
 dependencies = [
  "heapless",
 ]
@@ -7021,7 +7021,7 @@ dependencies = [
 [[package]]
 name = "sce-rust-runtime"
 version = "0.1.0"
-source = "git+https://github.com/newmassrael/scxml-core-engine.git?rev=0ac56f1a455f3dadb313b64f3516a3073a3daee8#0ac56f1a455f3dadb313b64f3516a3073a3daee8"
+source = "git+https://github.com/newmassrael/scxml-core-engine.git?rev=6399fad49c3dd5284d1efe8a3e4b506fc20b40ff#6399fad49c3dd5284d1efe8a3e4b506fc20b40ff"
 dependencies = [
  "log",
  "portable-atomic",
