@@ -424,8 +424,9 @@
     "plane": "dashboard",
     "tier": "t1",
     "capability": "a latency distribution: a histogram",
-    "verdict": "gap",
-    "covered_by": "NO BINNING IN THE CRATE — measured: `Density` (KDE), box and violin exist, and a histogram is assembled by the application out of `BarChart` bins it computes itself"
+    "verdict": "have",
+    "covered_by": "R1793 `pinion_chart::histogram` — `Binned::of(samples, BinRule)` derives the bin edges and counts, `bars()` hands them to `BarChart` already carrying the numeric extents `select_x_range` cross-filters on (R1395), and the chart publishes WHICH rule chose the bins plus the `Basis` it read (n, sigma, IQR) so a reader can tell a shape in the data from a shape the binning made. The prior reason was true and precise — nothing computed bins — and re-measuring found it stronger than written: `hello-histogram-brush`, the one screen named for a histogram, starts from counts somebody already aggregated and bins nothing either",
+    "proven_by": "pinion-chart::histogram::tests::r1793_latency_samples_become_a_chart_a_brush_can_cross_filter (samples to a drawn, brushable chart through the public API only) + r1793_the_robust_rule_and_the_sigma_rule_disagree_on_an_outlier (the rule is a decision, not a detail: same samples, two shapes) + r1793_every_sample_lands_in_exactly_one_bin"
   },
   {
     "id": "dashboard.t1.7",

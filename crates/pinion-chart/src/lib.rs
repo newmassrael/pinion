@@ -311,6 +311,7 @@ mod distribution;
 mod donut;
 mod draw;
 mod fit;
+mod histogram;
 mod interpolate;
 mod legend;
 mod line;
@@ -346,6 +347,7 @@ pub use distribution::{
 };
 pub use donut::{DonutChart, Slice};
 pub use fit::{Along, FitRule, Fitted, Room};
+pub use histogram::{Basis, BinError, BinRule, Binned, MAX_BINS};
 pub use interpolate::{CurveSegment, Interpolation, Overshoot, curve, is_graph, overshoot};
 pub use legend::{
     ChartLegend, Legend, LegendEntry, LegendInteraction, LegendPostures, LegendSeat, LegendSeating,
