@@ -478,9 +478,24 @@ def body() -> None:
             # (R1719) and the run of text.
             "lab.toast": 3,
         }
+        # ★★★★★ R1792 — a CAPTION is part of its box, not an element beside it.
+        # `pinion_widget_paint::caption::captioned` gives a caption its box's tag
+        # plus this suffix (`CAPTION_SUFFIX` there is the SSOT for the spelling),
+        # so a box that learned to hold its own word would otherwise read here as
+        # five undeclared elements — which is exactly what it did on the first
+        # run after the five protocol chips adopted it.
+        #
+        # Stripped rather than skipped, and the STRIPPED tag still has to be
+        # declared: a caption cannot smuggle in a box the specification never
+        # named, which a blanket exclusion would have allowed.
+        CAPTION_SUFFIX = ".caption"
+        undeclared = [
+            (tag.removesuffix(CAPTION_SUFFIX) if tag.endswith(CAPTION_SUFFIX) else tag)
+            for tag in painted
+        ]
         undeclared = [
             tag
-            for tag in painted
+            for tag in undeclared
             if tag not in declared
             and not any(tag == f or tag.startswith(f + ".") for f in FAMILIES)
         ]

@@ -1370,6 +1370,21 @@ fn r1653_the_painted_screen_invented_nothing() {
         let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
         let mut unaccounted = Vec::new();
         for tag in shot.tags.keys() {
+            // ★★★★★ R1792 — a caption is PART OF its box, not a second member of
+            // the box's family. `captioned` gives a caption its box's tag plus
+            // one suffix, so a family counted by prefix doubles the moment a
+            // box learns to hold its own word: this gate read
+            // `lab.palette.protocol.` as 10 where the specification sizes it 5,
+            // and said so on the first run.
+            //
+            // Subtracted by the FRAMEWORK's name for the suffix rather than by
+            // a literal, because a census that spells the rule again is a second
+            // copy of it — and this file already holds the argument about what
+            // a tag prefix may and may not sweep up
+            // (`debt-a-rail-tag-prefix-holds-seats-and-chrome-alike`).
+            if tag.ends_with(pinion_widget_paint::caption::CAPTION_SUFFIX) {
+                continue;
+            }
             if declared.contains(tag) {
                 if let Some((prefix, _)) = families.iter().find(|(p, _)| tag.starts_with(p)) {
                     *counts.entry(prefix).or_default() += 1;
@@ -1781,6 +1796,115 @@ fn r1655_every_tag_but_the_root_is_pointer_transparent() {
              and forwards nothing — the screen is dead to a real mouse wherever \
              they are painted: {opaque:?}",
             opaque.len()
+        );
+    });
+}
+
+/// ★★★★★ R1792 — **no caption is drawn outside the box a reader sees around
+/// it**, in every state this screen reaches.
+///
+/// # The gate this tree did not have
+///
+/// A reader opened the assembled tool and reported the words in the protocol
+/// chips as not centred. Measured through the paint it was worse than
+/// off-centre: the caption was placed at `chip.x + 7` with a width of 32 in a
+/// box 36 wide, so **3px of every one of the five hung off the right edge**.
+///
+/// Nothing here could see it. This file's containment sweep asks whether a mark
+/// is inside *its own* box, and the caption's own box is itself; the disjoint
+/// sweep asks whether two runs cover each other. A caption drawn as a SIBLING of
+/// the tagged rectangle it appears in is related to that rectangle by nothing at
+/// all — which is also why three of the capture viewer's chips arrive as one run
+/// of a pane (`debt-a-word-painted-beside-its-box-is-filed-under-the-container`).
+///
+/// So the question is asked here, from the paint, against every state: for each
+/// run, the smallest box of a caption's own scale that it sits in, and whether
+/// it is inside it. The predicate is the framework's
+/// ([`pinion_widget_paint::caption::escapes`]) so a second screen arms it in one
+/// line rather than writing a second one that can disagree.
+#[test]
+fn r1792_no_caption_is_drawn_outside_the_box_it_appears_in() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let mut found = Vec::new();
+        let mut judged = 0;
+        for (when, mutate) in STATES {
+            mutate(&state);
+            let shot = painted(&state);
+            // Boxes that paint no text of their own: those are the ones a
+            // caption can be drawn beside rather than in.
+            let owners: BTreeSet<&String> = shot
+                .runs
+                .iter()
+                .filter_map(|(_, _, o)| o.as_ref())
+                .collect();
+            let boxes: Vec<(String, Rect)> = shot
+                .tags
+                .iter()
+                .filter(|(tag, _)| !owners.contains(*tag))
+                .map(|(tag, rect)| (tag.clone(), *rect))
+                .collect();
+            let runs: Vec<(String, Rect)> = shot
+                .runs
+                .iter()
+                .map(|(text, rect, _)| (text.clone(), *rect))
+                .collect();
+            judged += runs.len();
+            for escape in pinion_widget_paint::caption::escapes(&boxes, &runs) {
+                found.push(format!(
+                    "{when}: {:?} is drawn past {} by {:?}",
+                    escape.text, escape.box_tag, escape.past
+                ));
+            }
+        }
+        assert!(
+            judged > 1_000,
+            "the sweep has plenty of runs to judge: {judged}"
+        );
+        assert!(
+            found.is_empty(),
+            "{} caption(s) are drawn OUTSIDE the box a reader sees around them. \
+             This is what a reader reported and what no other gate here could \
+             ask: a caption that is a sibling of its box is related to it by \
+             nothing, so containment has to be checked against the box the \
+             caption LOOKS like it is in. {found:?}",
+            found.len()
+        );
+    });
+}
+
+/// ★★★★★ R1792 — the switch's caption keeps room on **both** sides of the box
+/// it is in.
+///
+/// The reader's second example. Its width was derived against the PANE
+/// (`PALETTE_W - toggle.x - 48 - PAD`) while it is drawn inside the switch's own
+/// box, whose right edge is already `PALETTE_W - PAD` — so the one `PAD`
+/// subtraction landed the text exactly flush with the border. Measured off the
+/// paint before the repair: caption `(117, 657, 154, 13)` in box
+/// `(69, 647, 202, 58)` — 48px of gap on the left and **zero** on the right.
+///
+/// Asserted from the paint rather than from the formula, because the formula is
+/// what was wrong: a test that recomputed it would agree with the defect.
+#[test]
+fn r1792_the_switch_caption_is_not_flush_with_its_own_border() {
+    let owner = Owner::new();
+    owner.run(|| {
+        let state = use_lab_state();
+        let shot = painted(&state);
+        let box_rect = shot.tags["lab.palette.discovery"];
+        let caption = shot.tags["lab.palette.discovery.state"];
+        let right = (box_rect.x + box_rect.w) - (caption.x + caption.w);
+        let left = caption.x - box_rect.x;
+        assert!(
+            right > 0,
+            "★★★★★ the caption stops short of the border it used to touch: \
+             caption {caption:?} in box {box_rect:?} leaves {right}px"
+        );
+        assert!(
+            left > right,
+            "and it is still left-aligned after the track, which is the layout \
+             this screen chose: {left} in, {right} out"
         );
     });
 }

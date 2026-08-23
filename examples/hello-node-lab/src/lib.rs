@@ -104,6 +104,7 @@ use pinion_node_graph::{
 };
 use pinion_platform_storage::AppStorage;
 use pinion_shell::{SizeStrategy, WidgetView, vello_renderer_impl};
+use pinion_widget_paint::caption::{self, captioned};
 use pinion_widget_paint::config_form::{
     FieldGrowth, FormGeometry, FormStyle, OpenPicker, RowWrap, Seat, form_geometry_showing,
     row_access_nodes, view_config_form_showing,
@@ -5573,22 +5574,34 @@ fn palette_legend(rect: Rect, ink: Ink) -> Vec<Scene> {
         // set is announced once as the pane's value and each chip says it is
         // part of that. Five nodes saying one word each would be five stops on
         // a reader's way through the palette for one fact.
-        children.push(quiet(
-            box_at(
-                &format!("lab.palette.protocol.{}", transport.word()),
-                chip,
-                ink.surface,
-                Some(transport_ink(transport)),
-                4,
-            ),
-            Silence::part_of("lab.palette"),
-        ));
-        children.push(label(
-            transport.word(),
-            Rect::new(chip.x + 7, chip.y + 4, 32, 12),
-            10,
-            transport_ink(transport),
-        ));
+        // ★★★★★ R1792 — through `captioned`, which puts the word INSIDE the
+        // box. These five chips are what a reader reported as not centred, and
+        // measured through the paint it was worse: the caption was placed at
+        // `chip.x + 7` with a width of 32 in a box 36 wide, so **3px of every
+        // one of them hung off the right edge**. The `+7` was arithmetic
+        // against a rectangle the word was not inside — they were siblings, so
+        // nothing in the tree related them and no gate could ask.
+        let word = transport.word();
+        let tag = format!("lab.palette.protocol.{word}");
+        let mut style = BoxStyle::filled(ink.surface).with_corner_radius(4);
+        style = style.with_border(Border::new(transport_ink(transport), 1));
+        let (chip_scene, _) = captioned(
+            &tag,
+            chip,
+            style,
+            &caption::Caption::new(word, (32, 12), run_style(10, transport_ink(transport)))
+                .centred()
+                // ★★ R1691's decision, unchanged and now carried by the node
+                // that makes it: what a reader who never sees the colours loses
+                // is the MEMBERSHIP of the set, not the individual chips, so the
+                // set is announced once as the pane's value and each chip says
+                // it is part of that. Five nodes saying one word each would be
+                // five stops on a reader's way through the palette for one fact.
+                .silent(Silence::part_of("lab.palette")),
+            // A colour key, not a control: a press falls through to the pane.
+            caption::Pointer::Transparent,
+        );
+        children.push(quiet(chip_scene, Silence::part_of("lab.palette")));
     }
 
     children
@@ -5604,6 +5617,10 @@ const fn discovery_caption(on: bool) -> &'static str {
         "discovery off · fully specified"
     }
 }
+
+/// How far in from the determinism switch's left edge its caption starts —
+/// clear of the track, which is 10 in and 30 wide.
+const DISCOVERY_CAPTION_INSET: u32 = 48;
 
 /// The determinism switch, off by default.
 fn palette_determinism(state: &LabState, rect: Rect, ink: Ink) -> Vec<Scene> {
@@ -5640,10 +5657,22 @@ fn palette_determinism(state: &LabState, rect: Rect, ink: Ink) -> Vec<Scene> {
     children.push(tagged_label(
         "lab.palette.discovery.state",
         discovery_caption(on),
+        // ★★★★★ R1792 — the room is what the BOX has left after the track, not
+        // what the PANE has left. This read `PALETTE_W - toggle.x - 48 - PAD`,
+        // derived against the pane, and the toggle's own right edge is already
+        // `PALETTE_W - PAD` — so subtracting `PAD` once landed the caption
+        // exactly flush with the box's right border. Measured off the paint:
+        // caption (117, 657, 154, 13) in box (69, 647, 202, 58), **48px of gap
+        // on the left and ZERO on the right**, which is what a reader sees as a
+        // word jammed against the panel edge.
+        //
+        // The same class as the protocol chips' `+7`: arithmetic against a
+        // rectangle the caption is not inside. Derived from `toggle` it cannot
+        // be flush, whatever the pane's width becomes.
         Rect::new(
-            toggle.x + 48,
+            toggle.x + DISCOVERY_CAPTION_INSET,
             toggle.y + 10,
-            PALETTE_W - toggle.x - 48 - PAD,
+            toggle.w.saturating_sub(DISCOVERY_CAPTION_INSET + PAD),
             13,
         ),
         FONT_SMALL,
