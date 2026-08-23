@@ -98,7 +98,7 @@ from rpc_verify import (  # noqa: E402
     assert_declared_panes_on_screen,
     assert_eq,
     abs_rects_of,
-    declared_and_painted,
+    settled_baseline,
     declared_but_unreachable,
     declared_panes,
     design_size,
@@ -573,7 +573,9 @@ def drive(name: str, example: str, resizer: Path | None) -> None:
         # opening size" — self-calibrating across three differently-shaped
         # specifications, and asserted non-empty so it cannot become the reason
         # nothing was checked.
-        declared = declared_and_painted(app, design)
+        # R1790 — settled, because this is compared against a later read and a
+        # region with a lifetime is not a stable member of a baseline.
+        declared = settled_baseline(app, design)
         ok(
             f"A2/{name}: the specification names things that are on screen "
             f"({len(declared)})",

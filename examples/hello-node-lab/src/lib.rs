@@ -7249,6 +7249,8 @@ const FIELDS: &[SchemaField] = &{
         // agent can ask whether the screen refused without matching a prefix.
         // Two derivations of one record, never two records.
         SchemaField::new("said", "object"),
+        // ★★★★★ R1790 — how long what is being said has left.
+        SchemaField::new("saying", "json"),
         // ★★ R1687 — what this screen has PRODUCED, which is not what it could
         // produce. `document` next to it answers the selected card's own
         // configuration; this answers the whole graph's, once somebody has
@@ -7937,6 +7939,9 @@ impl ExternalIntrospect for LabOracle {
                     .map_err(|_| ReadRefusal::UnknownPath)?,
                 None => serde_json::Value::Null,
             })),
+            // ★★★★★ R1790 — the sentence AND how long it has, so a gate advances
+            // time by asking rather than by guessing a number this screen owns.
+            "saying" => Ok(IntrospectValue::Json(state.toast.to_wire())),
             _ => Err(ReadRefusal::UnknownPath),
         }
     }

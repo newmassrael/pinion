@@ -2641,6 +2641,8 @@ impl ExternalIntrospect for ViewOracle {
                     SchemaField::new("saved", "json"),
                     SchemaField::new("folded", "json"),
                     SchemaField::new("said", "object"),
+                    // ★★★★★ R1790 — how long what is being said has left.
+                    SchemaField::new("saying", "json"),
                     SchemaField::new("cursor", "json"),
                     // ★★★★★ R1772 — where each of the three panes has been
                     // scrolled to. Found by writing this screen's operation
@@ -2808,6 +2810,9 @@ impl ExternalIntrospect for ViewOracle {
                 Some(said) => serde_json::to_value(&said).map_err(|_| ReadRefusal::UnknownPath)?,
                 None => serde_json::Value::Null,
             })),
+            // ★★★★★ R1790 — the sentence AND how long it has, so a gate advances
+            // time by asking rather than by guessing a number this screen owns.
+            "saying" => Ok(IntrospectValue::Json(state.said.to_wire())),
             "cursor" => {
                 let (x, y) = state.cursor.get();
                 Ok(IntrospectValue::Json(serde_json::json!({"x": x, "y": y})))

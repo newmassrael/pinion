@@ -5360,6 +5360,71 @@ def declared_but_unreachable(
     return sorted(set(declared) - painted - reachable)
 
 
+def settled_baseline(
+    app: "RpcSubprocess",
+    size: tuple[int, int],
+    external: str = "/external",
+    *,
+    step: float = 0.05,
+    tries: int = 8,
+) -> set[str]:
+    """★★★★★ R1790 — [`declared_and_painted`], taken once it has **stopped
+    moving**.
+
+    ## The defect this is the repair of
+
+    Three demos take a baseline of what a screen paints at its design size and
+    compare it against a later read at another size, calling the difference
+    *regions the reader can no longer reach*. That rule is false for any region
+    with a **lifetime**.
+
+    Measured on the analysis shell: it says `Overview loaded` at boot, so
+    `shell.toast` is alive and painted when the baseline is taken (214 regions);
+    2.6 seconds later it is gone (213). Whether it survives to the comparison is
+    therefore a fact about **how much wall-clock passed**, and a toast is not
+    scroll-reachable, so on a slow runner it lands in the unreachable list. That
+    is exactly what happened: R1787's CI run failed on
+    `r1709_a_resize_is_followed_by_pixels` with `got ['shell.toast']`, and the
+    same demo passes here in 8 seconds. A check whose verdict depends on machine
+    speed is a flake, and this project does not rerun those.
+
+    ## It ASKS how long, and does not guess
+
+    ★★★★★ The first draft of this took two reads a step apart and returned when
+    they agreed. **Running it disproved it**: a 2.6-second toast looks perfectly
+    stable across a one-second step, so the helper returned with the toast still
+    in the baseline — 214 regions, unchanged, and `STABLE False` when settled
+    twice. A predicate that detects *change* cannot establish *impermanence*.
+
+    So it asks. R1790 put `saying` on the wire — the sentence AND how long it
+    has left — because `Saying::left`'s own doc already argued for it: *"a test
+    that guesses the duration is a test that pins a number this type owns"*, and
+    the fact was reachable only from Rust. This advances by exactly what the
+    screen says is left, until the screen says nothing is, and then reads. No
+    lifetime constant here, no per-screen exemption table, and nothing that goes
+    stale when a screen changes its mind about how long it speaks for.
+
+    A screen with no `saying` slot holds no lifetime, so there is nothing to
+    settle and the baseline is taken as it stands. `step` and `tries` bound the
+    loop rather than drive it: a screen whose sentence never runs down is a
+    finding and is raised, not waited out.
+    """
+    for _ in range(tries):
+        try:
+            saying = app.query(f"{external}/saying")
+        except Exception:  # noqa: BLE001 - a screen without the slot has no lifetime
+            return declared_and_painted(app, size, external)
+        left = float(saying.get("left", 0.0)) if isinstance(saying, dict) else 0.0
+        if left <= 0.0:
+            return declared_and_painted(app, size, external)
+        # Past the end of it, by the smallest margin that is certainly past.
+        app.tick(left + step)
+    raise AssertionError(
+        f"the screen at {size} is still saying something after {tries} advances; "
+        f"a sentence whose time never runs down is a finding, not a wait"
+    )
+
+
 def assert_declared_panes_on_screen(
     app: "RpcSubprocess", size: tuple[int, int], *, label: str
 ) -> list[str]:

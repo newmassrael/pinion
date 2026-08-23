@@ -3019,6 +3019,9 @@ const FIELDS: &[SchemaField] = const {
         SchemaField::new("steppers", "string"),
         SchemaField::new("toast", "string"),
         SchemaField::new("said", "object"),
+        // ★★★★★ R1790 — how long what is being said has left, so a gate advances
+        // time by asking rather than by pinning a number this screen owns.
+        SchemaField::new("saying", "json"),
         // direct manipulation
         SchemaField::new("cursor", "string"),
         SchemaField::new("selected", "string"),
@@ -3306,6 +3309,12 @@ impl ExternalIntrospect for ShellOracle {
                 serde_json::to_value(state.toast.showing())
                     .map_err(|_| ReadRefusal::UnknownPath)?,
             )),
+            // ★★★★★ R1790 — the sentence AND how long it has. `said` answers
+            // WHAT is showing; this answers how long it will be, which is the
+            // fact a gate needs to advance time deliberately instead of
+            // guessing it. A guessed duration is a check whose verdict depends
+            // on machine speed, and R1787's CI run failed exactly that way.
+            "saying" => Ok(IntrospectValue::Json(state.toast.to_wire())),
             "cursor" => {
                 let (x, y) = state.cursor.get();
                 text(format!("{x},{y}"))

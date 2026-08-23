@@ -697,6 +697,49 @@ impl Saying {
     pub const fn life(&self) -> f32 {
         self.life
     }
+
+    /// ★★★★★ R1790 — **the sentence AND how long it has**, as one wire value.
+    ///
+    /// # What this is the repair of, measured
+    ///
+    /// [`left`](Self::left)'s own doc already argued for this — *"published
+    /// because a screen's own gate may want to drive time forward
+    /// deliberately, and a test that guesses the duration is a test that pins a
+    /// number this type owns"* — and the fact was reachable only from Rust. A
+    /// harness that talks over the wire could not ask, so it guessed, and a
+    /// guess about time is a check whose verdict depends on machine speed.
+    ///
+    /// R1787's CI run failed exactly that way. Three demos take a baseline of
+    /// what a screen paints and compare it against a later read; the analysis
+    /// shell says `Overview loaded` at boot, so its toast was IN the baseline
+    /// and gone by the comparison on a slow runner — reported as a region the
+    /// reader cannot bring into view. Measured here: 214 regions with the toast,
+    /// 213 without. The demo passes locally in 8 seconds and failed in CI, which
+    /// is the signature of a check that reads a clock it cannot see.
+    ///
+    /// With this on the wire the harness settles by **asking**: advance until
+    /// `left` is zero, then take the baseline. No lifetime constant in the
+    /// harness, no per-screen exemption table, and no number that goes stale
+    /// when a screen changes its mind about how long it speaks for.
+    ///
+    /// # Against the floor
+    ///
+    /// The reference's status bar takes a timeout when it is given a message
+    /// and offers no way to ask how much of it is left — a caller can read the
+    /// current text and cannot tell a sentence about to vanish from one that
+    /// just arrived. This publishes both, and `showing` stays the answer to
+    /// *is anything being said at all*.
+    #[must_use]
+    pub fn to_wire(&self) -> serde_json::Value {
+        let mut obj = serde_json::Map::new();
+        obj.insert(
+            "said".to_owned(),
+            serde_json::to_value(self.showing()).unwrap_or(serde_json::Value::Null),
+        );
+        obj.insert("left".to_owned(), serde_json::json!(self.left()));
+        obj.insert("life".to_owned(), serde_json::json!(self.life()));
+        serde_json::Value::Object(obj)
+    }
 }
 
 impl crate::animation::Tickable for Saying {

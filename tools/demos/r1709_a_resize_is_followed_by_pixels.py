@@ -106,6 +106,7 @@ from rpc_verify import (  # noqa: E402
     assert_declared_panes_on_screen,
     assert_eq,
     declared_and_painted,
+    settled_baseline,
     design_size,
     png_pixel,
     read_png_rgba8,
@@ -312,7 +313,12 @@ def drive(name: str, example: str) -> None:
             CHECKS.extend(made)
         else:
             print(f"[demo] A/{name}: the specification is not organised in panes")
-        declared = declared_and_painted(app, design)
+        # R1790 — settled, because this baseline is compared against a LATER
+        # read and a region with a lifetime is not a stable member of one. The
+        # shell says `Overview loaded` at boot, so `shell.toast` was in here and
+        # gone by the comparison on a slow runner; R1787's CI run failed exactly
+        # that way while this demo passed locally in 8 seconds.
+        declared = settled_baseline(app, design)
         ok(
             f"A/{name}: the specification names things that are on screen ({len(declared)})",
             len(declared) >= 8,

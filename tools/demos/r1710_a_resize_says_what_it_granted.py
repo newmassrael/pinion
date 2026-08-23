@@ -79,7 +79,7 @@ from rpc_verify import (  # noqa: E402
     RpcSubprocess,
     assert_declared_panes_on_screen,
     assert_eq,
-    declared_and_painted,
+    settled_baseline,
     declared_but_unreachable,
     design_size,
     png_pixel,
@@ -291,7 +291,10 @@ def the_specification_survives_a_clamped_resize(
     made = assert_declared_panes_on_screen(app, design, label=f"F/{name}")
     if made:
         CHECKS.append(f"F/{name}: {made} declared pane(s) tile the body at the design size")
-    declared = declared_and_painted(app, design)
+    # R1790 — settled: this is compared against a later read (`declared_but_
+    # unreachable` below), and a region with a lifetime is not a stable member
+    # of a baseline. See `settled_baseline` for the CI red that measured it.
+    declared = settled_baseline(app, design)
     ok(
         f"F/{name}: the specification names things that are on screen ({len(declared)})",
         len(declared) >= 8,
